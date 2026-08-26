@@ -38,15 +38,14 @@ bool managedRootWordBelongsTo(obelisk_rt_context *context,
   if ((word & UINT64_C(3)) != 0)
     return false;
   return obelisk_rt_managed_object_belongs_to(
-      context,
-      reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word)));
+      context, obelisk_rt_object_from_managed_word(word));
 }
 
 obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
                                               NativeAutomaticState state,
                                               uint64_t *outHandle) {
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     state.owner = context->activeNativeProcess;
     if (!state.owner)
@@ -62,10 +61,12 @@ obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
     *outHandle = obelisk_rt_stable_handle_encode(
         OBELISK_RT_STABLE_HANDLE_AUTOMATIC, id, 0);
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -82,7 +83,7 @@ obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
   uint32_t selectedID = UINT32_MAX;
   uint64_t selectedOffset = 0;
   if (!context->nativeStaticStateRangesValid) {
-    try {
+    OBELISK_RT_TRY {
       std::vector<NativeStaticStateRange> ranges;
       ranges.reserve(context->nativeStaticStates.size());
       for (const auto &[id, state] : context->nativeStaticStates)
@@ -101,7 +102,8 @@ obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
       }
       context->nativeStaticStateRanges = std::move(ranges);
       context->nativeStaticStateRangesValid = true;
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       // This lookup is noexcept and has always had an allocation-free linear
       // implementation. Preserve that fallback if building the cache fails.
     }
@@ -189,7 +191,7 @@ obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     for (size_t index = 0; index != bitOffsets.size(); ++index) {
       uint64_t bitOffset = bitOffsets[index];
       if ((bitOffset & 63) != 0 || bitOffset > bitWidth ||
@@ -215,10 +217,12 @@ obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
     if (unknown)
       state.unknown.assign(unknown, unknown + static_cast<size_t>(byteCount));
     return publishNativeAutomaticState(context, std::move(state), outHandle);
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -244,7 +248,7 @@ obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
   if (!decodeAutomatic(handle, id, offset))
     return validNonAutomaticHandle(handle) ? OBELISK_RT_OK
                                            : OBELISK_RT_INVALID_HANDLE;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     auto found = context->nativeAutomaticStates.find(id);
     if (found == context->nativeAutomaticStates.end())
@@ -255,7 +259,8 @@ obelisk_rt_v1_native_state_retain(obelisk_rt_context *context,
     }
     ++found->second.referenceCount;
     return OBELISK_RT_OK;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -272,7 +277,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
   if (!decodeAutomatic(handle, id, handleOffset) || handleOffset != 0)
     return OBELISK_RT_INVALID_HANDLE;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     auto found = context->nativeAutomaticStates.find(id);
     if (found == context->nativeAutomaticStates.end())
@@ -303,10 +308,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_register_managed_roots(
       return OBELISK_RT_INVALID_ARGUMENT;
     state.managedRootByteOffsets = std::move(byteOffsets);
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -328,8 +335,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_roots(
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_alloc_with_typed_roots(
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_alloc_with_typed_roots(
     obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
     const uint8_t *unknown, const obelisk_rt_managed_root_slot_v1 *slots,
     uint64_t count, uint64_t *outHandle) {
@@ -340,7 +346,7 @@ obelisk_rt_v1_native_state_alloc_with_typed_roots(
       bitWidth > INT32_MAX || count > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
-  try {
+  OBELISK_RT_TRY {
     NativeAutomaticState state;
     state.bitWidth = bitWidth;
     state.value.assign(value, value + static_cast<size_t>(byteCount));
@@ -360,8 +366,7 @@ obelisk_rt_v1_native_state_alloc_with_typed_roots(
       havePrevious = true;
       uint64_t byteOffset = slot.bit_offset / 8;
       if ((slot.flags & OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE) != 0) {
-        state.candidateRootByteOffsets.push_back(
-            {byteOffset, slot.kind_mask});
+        state.candidateRootByteOffsets.push_back({byteOffset, slot.kind_mask});
       } else {
         obelisk_rt_managed_word_v1 word = 0;
         std::memcpy(&word, value + byteOffset, sizeof(word));
@@ -379,10 +384,12 @@ obelisk_rt_v1_native_state_alloc_with_typed_roots(
                 return lhs.byteOffset < rhs.byteOffset;
               });
     return publishNativeAutomaticState(context, std::move(state), outHandle);
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -400,7 +407,7 @@ obelisk_rt_v1_native_state_release(obelisk_rt_context *context, uint64_t handle,
   if (!decodeAutomatic(handle, id, offset))
     return validNonAutomaticHandle(handle) ? OBELISK_RT_OK
                                            : OBELISK_RT_INVALID_HANDLE;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     auto found = context->nativeAutomaticStates.find(id);
     if (found == context->nativeAutomaticStates.end() ||
@@ -422,7 +429,8 @@ obelisk_rt_v1_native_state_release(obelisk_rt_context *context, uint64_t handle,
       context->nativeAutomaticStates.erase(found);
     }
     return OBELISK_RT_OK;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -462,10 +470,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
   }
   if (managed == 1) {
     if (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) {
-      if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
+      if (bitWidth != sizeof(obelisk_rt_managed_word_v1) * 8 ||
+          planeSize != sizeof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_INVALID_ARGUMENT;
-      return obelisk_rt_v1_object_field_load(
-          owner, payload, static_cast<obelisk_rt_object_v1 **>(outValue));
+      obelisk_rt_status status =
+          obelisk_rt_v1_object_read(owner, payload, outValue, planeSize);
+      if (status != OBELISK_RT_OK)
+        return status;
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, outValue, sizeof(word));
+      obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+      return word == obelisk_rt_managed_word_from_object(object)
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_HANDLE;
     }
     if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
       if (bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
@@ -545,11 +562,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
   }
   if (managed == 1) {
     if (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) {
-      if (bitWidth != sizeof(void *) * 8 || planeSize != sizeof(void *))
+      if (bitWidth != sizeof(obelisk_rt_managed_word_v1) * 8 ||
+          planeSize != sizeof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_INVALID_ARGUMENT;
-      obelisk_rt_object_v1 *stored = nullptr;
-      std::memcpy(&stored, value, sizeof(stored));
-      return obelisk_rt_v1_object_field_store(owner, payload, stored);
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, value, sizeof(word));
+      obelisk_rt_object_v1 *stored = obelisk_rt_object_from_managed_word(word);
+      if (word != obelisk_rt_managed_word_from_object(stored))
+        return OBELISK_RT_INVALID_HANDLE;
+      return obelisk_rt_v1_object_write(owner, payload, value, planeSize);
     }
     if (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) {
       if (bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
@@ -578,7 +599,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
   };
   thread_local TransitionScratch scratch;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     scratch.value.resize(static_cast<size_t>(planeSize));
     if (fourState)
       scratch.unknown.resize(static_cast<size_t>(planeSize));
@@ -620,10 +641,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
           static_cast<const uint8_t *>(value),
           fourState ? static_cast<const uint8_t *>(unknown) : nullptr);
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }

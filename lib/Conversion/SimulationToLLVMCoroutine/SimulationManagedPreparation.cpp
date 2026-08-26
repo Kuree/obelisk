@@ -60,8 +60,8 @@ struct ManagedClassLayout {
   };
 
   sim::SimClassDeclOp declaration;
-  uint64_t size = sizeof(void *);
-  uint32_t alignment = alignof(void *);
+  uint64_t size = sizeof(obelisk_rt_managed_word_v1);
+  uint32_t alignment = alignof(obelisk_rt_managed_word_v1);
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<ManagedRandomEdge> randomEdges;
   SmallVector<ManagedRandomVariable> randomVariables;

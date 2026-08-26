@@ -5,6 +5,7 @@
 #define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
 #include "DesignBytecodeImage.h"
+#include "ExceptionSupport.h"
 #include "StrengthFormat.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -12,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -45,6 +47,35 @@
 
 constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
     OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+
+/// Decode the fixed-width managed-word ABI without truncating it on 32-bit
+/// targets. Heap objects are aligned and therefore always use tag zero.
+inline obelisk_rt_object_v1 *
+obelisk_rt_object_from_managed_word(obelisk_rt_managed_word_v1 word) noexcept {
+  if (word > std::numeric_limits<uintptr_t>::max() || (word & UINT64_C(3)) != 0)
+    return nullptr;
+  return reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word));
+}
+
+inline obelisk_rt_managed_word_v1 obelisk_rt_managed_word_from_object(
+    const obelisk_rt_object_v1 *object) noexcept {
+  return static_cast<obelisk_rt_managed_word_v1>(
+      reinterpret_cast<uintptr_t>(object));
+}
+
+// Preserve the native runtime's status-based allocation failure handling. The
+// wasm runtime is compiled with -fno-exceptions and a noexcept libc++, so
+// explicitly detected unrepresentable allocations follow the same fatal path
+// as allocator failures there.
+[[noreturn]] inline void obelisk_rt_out_of_memory() {
+#if !defined(OBELISK_RT_IGNORE_EXCEPTIONS) &&                                  \
+    (defined(__cpp_exceptions) || defined(_CPPUNWIND))
+  throw std::bad_alloc();
+#else
+  std::fputs("obelisk runtime: out of memory\n", stderr);
+  std::abort();
+#endif
+}
 
 inline std::optional<uint64_t>
 obelisk_rt_scan_raw_size(uint64_t bitWidth, bool fourState) noexcept {
@@ -216,16 +247,15 @@ public:
       return insert(token);
     }
     randomStates.insert(state, {token, randomState});
-    try {
-      return insert(token);
-    } catch (...) {
+    OBELISK_RT_TRY { return insert(token); }
+    OBELISK_RT_CATCH_ALL {
       state = std::lower_bound(randomStates.begin(), randomStates.end(), token,
                                [](const auto &entry, uint64_t value) {
                                  return entry.first < value;
                                });
       if (state != randomStates.end() && state->first == token)
         randomStates.erase(state);
-      throw;
+      OBELISK_RT_RETHROW;
     }
   }
 
@@ -349,11 +379,12 @@ public:
         break;
     }
 
-    try {
+    OBELISK_RT_TRY {
       Bucket &bucket = buckets[bucketIndex(capacity)];
       std::lock_guard<std::mutex> lock(bucket.mutex);
       bucket.buffers.push_back(std::move(buffer));
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       cachedBytes.fetch_sub(capacity, std::memory_order_relaxed);
       cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
       // Recycling is an optimization; the buffer is freed by its destructor.
@@ -943,7 +974,7 @@ public:
       : byteCount((bitWidth + 7) / 8) {
     if (bitWidth > UINT64_MAX - 7 ||
         byteCount > std::numeric_limits<size_t>::max() / uint64_t{3})
-      throw std::bad_alloc();
+      obelisk_rt_out_of_memory();
     if (byteCount > kInlineBytes)
       overflow.assign(static_cast<size_t>(byteCount * 3), 0);
   }
@@ -1974,12 +2005,12 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
 template <typename Callable>
 obelisk_rt_status guarded(obelisk_rt_context *context,
                           Callable &&callable) noexcept {
-  try {
-    return callable();
-  } catch (const std::bad_alloc &) {
+  OBELISK_RT_TRY { return callable(); }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     setLastError(context, "runtime allocation failed");
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setLastError(context, "unexpected runtime exception");
     return OBELISK_RT_IO_ERROR;
   }
@@ -1991,12 +2022,12 @@ obelisk_rt_status guarded(obelisk_rt_context *context,
 template <typename Callable>
 OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_feature_guarded(
     obelisk_rt_context *context, Callable &&callable) noexcept {
-  try {
-    return callable();
-  } catch (const std::bad_alloc &) {
+  OBELISK_RT_TRY { return callable(); }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     setLastError(context, "runtime allocation failed");
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setLastError(context, "unexpected runtime exception");
     return OBELISK_RT_IO_ERROR;
   }

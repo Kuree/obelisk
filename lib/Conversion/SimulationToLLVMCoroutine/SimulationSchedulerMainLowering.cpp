@@ -14,6 +14,15 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+// Reserved names for the final-simulation-time channel. The accessors are
+// exported so a standalone host can read the value after main returns; the
+// storage itself stays internal.
+static constexpr llvm::StringLiteral kFinalTimeName = "__obelisk_final_time";
+static constexpr llvm::StringLiteral kFinalTimeAccessorName =
+    "obelisk_final_time";
+static constexpr llvm::StringLiteral kTimePrecisionAccessorName =
+    "obelisk_time_precision_fs";
+
 LogicalResult makeSchedulerMain(ModuleOp module,
                                 const NativeStateLayout &stateLayout,
                                 bool useAOT, bool directEval) {
@@ -32,6 +41,13 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     return module.emitError("design has multiple root processes");
   if (!root)
     return success();
+  // The time precision travels as femtoseconds per tick, matching the design
+  // attribute, so a host can render ticks without knowing anything else.
+  int64_t precisionFs = 1;
+  module.walk([&](sim::SimDesignOp design) {
+    if (auto attr = design->getAttrOfType<IntegerAttr>("time_precision_fs"))
+      precisionFs = attr.getInt();
+  });
   std::string rootSpawnName = root.getSymName().str();
   rootSpawnName += ".__obelisk_spawn";
   MLIRContext *context = module.getContext();
@@ -193,17 +209,15 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                                               "__obelisk_state_value");
       Value slot =
           byteGEP(builder, location, state, (bound.offset + rootOffset) / 8);
-      SmallVector<Value> rootArguments{runtimeContext, slot};
-      StringRef rootFunction = "obelisk_rt_v1_gc_static_root_register";
-      if (root.conditional) {
-        rootFunction = "obelisk_rt_v1_gc_candidate_static_root_register";
-        rootArguments.push_back(
-            llvmConstant(builder, location, i32, root.kindMask));
-      }
+      SmallVector<Value> rootArguments{
+          runtimeContext, slot,
+          llvmConstant(builder, location, i32, root.kindMask)};
       Value rootStatus =
-          LLVM::CallOp::create(builder, location, TypeRange{i32},
-                               SymbolRefAttr::get(context, rootFunction),
-                               rootArguments)
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(
+                  context, "obelisk_rt_v1_gc_candidate_static_root_register"),
+              rootArguments)
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
@@ -212,18 +226,13 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       if (hasDesignBytecode) {
         SmallVector<Value> designRootArguments{
             runtimeContext,
-            llvmConstant(builder, location, i64, bound.offset + rootOffset)};
-        StringRef designRootFunction = "obelisk_rt_v1_gc_design_root_register";
-        if (root.conditional) {
-          designRootFunction =
-              "obelisk_rt_v1_gc_design_candidate_root_register";
-          designRootArguments.push_back(
-              llvmConstant(builder, location, i32, root.kindMask));
-        }
+            llvmConstant(builder, location, i64, bound.offset + rootOffset),
+            llvmConstant(builder, location, i32, root.kindMask)};
         Value designRootStatus =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
-                SymbolRefAttr::get(context, designRootFunction),
+                SymbolRefAttr::get(
+                    context, "obelisk_rt_v1_gc_design_candidate_root_register"),
                 designRootArguments)
                 .getResult();
         LLVM::CallOp::create(
@@ -255,6 +264,16 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       SymbolRefAttr::get(context, useAOT ? "obelisk_rt_v1_scheduler_run_aot"
                                          : "obelisk_rt_v1_scheduler_run"),
       runtimeContext);
+  // Capture the design's own notion of elapsed time while the context that
+  // holds it still exists. A host has no other channel: once main returns, the
+  // context is gone and the module exposes nothing but its exports.
+  auto finalTime = LLVM::CallOp::create(
+      builder, location, TypeRange{i64},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_time"),
+      runtimeContext);
+  LLVM::StoreOp::create(
+      builder, location, finalTime.getResult(),
+      LLVM::AddressOfOp::create(builder, location, pointer, kFinalTimeName));
   // Nothing after this point can report: the context holding the diagnostic is
   // destroyed on the next line and the process exits with the status.
   LLVM::CallOp::create(
@@ -266,6 +285,33 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
       runtimeContext);
   LLVM::ReturnOp::create(builder, location, run.getResult());
+
+  // Storage for the captured time, plus the two accessors a host calls after
+  // main has returned. The precision is a compile-time constant, but it has to
+  // travel with the module: without it the raw tick count cannot be rendered
+  // as a time.
+  builder.setInsertionPointToEnd(module.getBody());
+  LLVM::GlobalOp::create(builder, location, i64, /*isConstant=*/false,
+                         LLVM::Linkage::Internal, kFinalTimeName,
+                         builder.getI64IntegerAttr(0));
+  auto defineAccessor = [&](StringRef name, function_ref<Value()> emitValue) {
+    auto accessor = LLVM::LLVMFuncOp::create(
+        builder, location, name, LLVM::LLVMFunctionType::get(i64, {}, false));
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(accessor.addEntryBlock(builder));
+    LLVM::ReturnOp::create(builder, location, emitValue());
+  };
+  defineAccessor(kFinalTimeAccessorName, [&]() -> Value {
+    Value address =
+        LLVM::AddressOfOp::create(builder, location, pointer, kFinalTimeName);
+    return LLVM::LoadOp::create(builder, location, i64, address);
+  });
+  defineAccessor(kTimePrecisionAccessorName, [&]() -> Value {
+    return LLVM::ConstantOp::create(builder, location, i64,
+                                    builder.getI64IntegerAttr(precisionFs));
+  });
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_time", i64,
+                           {pointer});
 
   if (hasExecution)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_create_for_design",

@@ -34,7 +34,7 @@ bool checkedBytes(uint64_t bits, size_t &bytes) {
 const obelisk_rt_execution_extension_v1 *
 executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
   return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
-      static_cast<uintptr_t>(execution.reserved));
+      reinterpret_cast<const uint8_t *>(&execution) + execution.reserved);
 }
 
 void copyPackedRange(uint8_t *destination, const uint8_t *source,
@@ -110,10 +110,9 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (!context->execution ||
-      (context->execution->flags &
-       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
+      (context->execution->flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
     return OBELISK_RT_OK;
-  try {
+  OBELISK_RT_TRY {
     const obelisk_rt_execution_descriptor_v1 &execution = *context->execution;
     const obelisk_rt_execution_extension_v1 &extension =
         *executionExtension(execution);
@@ -159,21 +158,20 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
                       stateBytes, range.source_bit_offset, range.bit_width);
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_sampled_read(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
-    uint8_t *outValue, uint8_t *outUnknown) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
+                           uint64_t bitWidth, uint8_t *outValue,
+                           uint8_t *outUnknown) {
   size_t bytes = 0;
   if (!context || !outValue || !outUnknown || !checkedBytes(bitWidth, bytes))
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t canonicalStart = 0, snapshotStart = 0;
     if (!resolveCanonicalRange(context, stableID, bitWidth, canonicalStart) ||
@@ -192,9 +190,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_read(
       setBit(outUnknown, bit, getBit(unknowns, snapshotStart + bit));
     }
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
@@ -209,7 +206,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
       depth > std::numeric_limits<size_t>::max() / bytes)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -245,11 +242,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
         ++history.count;
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
@@ -263,7 +258,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
       depth + 1 > std::numeric_limits<size_t>::max() / bytes)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t capacity = depth + 1;
     SampledHistoryState &history = context->clockedSampleHistories[siteID];
@@ -293,30 +288,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
     if (history.count < capacity)
       ++history.count;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
-    obelisk_rt_context *context, uint64_t siteID, uint64_t bitWidth,
-    uint64_t depth, uint64_t age, uint32_t fourState, uint8_t *outValue,
-    uint8_t *outUnknown) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t siteID,
+                                  uint64_t bitWidth, uint64_t depth,
+                                  uint64_t age, uint32_t fourState,
+                                  uint8_t *outValue, uint8_t *outUnknown) {
   size_t bytes = 0;
   if (!context || siteID == 0 || depth == UINT64_MAX || age > depth ||
       fourState > 1 || !outValue || !outUnknown ||
       !checkedBytes(bitWidth, bytes))
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     std::memset(outValue, 0, bytes);
     std::memset(outUnknown, fourState ? UINT8_MAX : 0, bytes);
     if (bitWidth % 8 != 0 && fourState)
-      outUnknown[bytes - 1] &=
-          static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
+      outUnknown[bytes - 1] &= static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
     auto found = context->clockedSampleHistories.find(siteID);
     if (found == context->clockedSampleHistories.end())
       return OBELISK_RT_OK;
@@ -330,7 +323,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_read(
     std::memcpy(outValue, history.value.data() + index * bytes, bytes);
     std::memcpy(outUnknown, history.unknown.data() + index * bytes, bytes);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }

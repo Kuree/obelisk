@@ -63,6 +63,24 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
     return failure();
   }
   uint32_t objectAlignment = static_cast<uint32_t>(pointerAlignment);
+  llvm::Type *managedWordType = llvm::Type::getInt64Ty(llvmContext);
+  llvm::TypeSize managedWordTypeSize =
+      localDataLayout.getTypeAllocSize(managedWordType);
+  if (managedWordTypeSize.isScalable() ||
+      managedWordTypeSize.getFixedValue() == 0) {
+    design.emitOpError("managed class layout requires fixed managed words");
+    return failure();
+  }
+  uint64_t managedWordSize = managedWordTypeSize.getFixedValue();
+  uint64_t managedWordABIAlignment =
+      localDataLayout.getABITypeAlign(managedWordType).value();
+  if (managedWordABIAlignment == 0 ||
+      managedWordABIAlignment > std::numeric_limits<uint32_t>::max()) {
+    design.emitOpError("managed class layout requires fixed managed words");
+    return failure();
+  }
+  uint32_t managedWordAlignment =
+      static_cast<uint32_t>(managedWordABIAlignment);
 
   llvm::StringSet<> active;
   std::function<LogicalResult(sim::SimClassDeclOp)> computeClass =
@@ -90,13 +108,13 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
 
     if (declaration.getWeakReferentAttr()) {
       uint64_t referentOffset;
-      if (!checkedAlignTo(layout.size, objectAlignment, referentOffset) ||
+      if (!checkedAlignTo(layout.size, managedWordAlignment, referentOffset) ||
           referentOffset >
-              std::numeric_limits<uint64_t>::max() - objectHeaderSize)
+              std::numeric_limits<uint64_t>::max() - managedWordSize)
         return declaration.emitOpError("weak referent layout overflows");
       layout.weakReferentOffset = referentOffset;
-      layout.size = referentOffset + objectHeaderSize;
-      layout.alignment = std::max(layout.alignment, objectAlignment);
+      layout.size = referentOffset + managedWordSize;
+      layout.alignment = std::max(layout.alignment, managedWordAlignment);
     }
 
     for (sim::SimClassFieldDeclOp field : fields[declaration.getSymName()]) {

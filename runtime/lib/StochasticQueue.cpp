@@ -53,7 +53,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_stochastic_queue(
   setUnknown(outSecondaryValue, outSecondaryUnknown);
   *outQueueStatus = OBELISK_RT_STOCHASTIC_QUEUE_OK;
 
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (idUnknown) {
       *outQueueStatus = OBELISK_RT_STOCHASTIC_QUEUE_UNDEFINED_ID;
@@ -74,15 +74,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_stochastic_queue(
         *outQueueStatus = OBELISK_RT_STOCHASTIC_QUEUE_DUPLICATE_ID;
         return OBELISK_RT_OK;
       }
-      try {
+      OBELISK_RT_TRY {
         StochasticQueueState queue;
         queue.type = firstValue;
         queue.maximumLength = secondValue;
         queue.entries.reserve(secondValue);
         context->stochasticQueues.emplace(id, std::move(queue));
-      } catch (const std::bad_alloc &) {
+      }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
         *outQueueStatus = OBELISK_RT_STOCHASTIC_QUEUE_OUT_OF_MEMORY;
-      } catch (const std::length_error &) {
+      }
+      OBELISK_RT_CATCH(const std::length_error &) {
         *outQueueStatus = OBELISK_RT_STOCHASTIC_QUEUE_OUT_OF_MEMORY;
       }
       return OBELISK_RT_OK;
@@ -209,7 +211,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_stochastic_queue(
     *outPrimaryValue = statistic;
     *outPrimaryUnknown = 0;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
 }

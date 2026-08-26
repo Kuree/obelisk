@@ -1,5 +1,6 @@
 //===- RandSolveWide.cpp - Wide constrained-random fallback --------------===//
 
+#include "ExceptionSupport.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -428,9 +429,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       if (instruction.operand >= encodedCaptureCount ||
           instruction.auxiliary != 0)
         return false;
-      result.captureWidths[instruction.operand] =
-          std::max(result.captureWidths[instruction.operand],
-                   instruction.width);
+      result.captureWidths[instruction.operand] = std::max(
+          result.captureWidths[instruction.operand], instruction.width);
       ++depth;
       break;
     case OBELISK_RT_RANDOM_PUSH_LITERAL_V1: {
@@ -577,10 +577,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   for (size_t index = 0; index != result.captureWidths.size(); ++index) {
     uint32_t logicalWidth = result.captureWidths[index];
     uint32_t storageWidth = captureWidths[index];
-    uint64_t logicalWords =
-        (static_cast<uint64_t>(logicalWidth) + 63) / 64;
-    uint64_t storageWords =
-        (static_cast<uint64_t>(storageWidth) + 63) / 64;
+    uint64_t logicalWords = (static_cast<uint64_t>(logicalWidth) + 63) / 64;
+    uint64_t storageWords = (static_cast<uint64_t>(storageWidth) + 63) / 64;
     if (storageWidth < logicalWidth || storageWords != logicalWords)
       return false;
     result.captureOffsets[index] = requiredCaptureWords;
@@ -865,12 +863,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       (captureCount != 0 && !captureWidths) ||
       programSize > std::numeric_limits<size_t>::max() ||
       assignmentWordCount > maxAddressableWords ||
-      captureWordCount > maxAddressableWords ||
-      (rngIncrement & 1) == 0)
+      captureWordCount > maxAddressableWords || (rngIncrement & 1) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
   *outRngState = rngState;
-  try {
+  OBELISK_RT_TRY {
     WideProgram program;
     if (!parseWideProgram(programBytes, static_cast<size_t>(programSize),
                           program, captureWidths, captureCount,
@@ -1028,9 +1025,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     }
     *outRngState = randomState.state;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }

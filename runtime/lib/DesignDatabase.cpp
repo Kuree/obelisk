@@ -255,12 +255,11 @@ bool validateDatabaseImpl(const Database &database) {
         kind == OBELISK_RT_DESIGN_RECORD_TYPE)
       return false;
     uint32_t caps = read32(record + 4);
-    uint32_t supportedCaps = OBELISK_RT_DESIGN_CAP_READ |
-                             OBELISK_RT_DESIGN_CAP_WRITE |
-                             OBELISK_RT_DESIGN_CAP_ITERATE |
-                             OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                             OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
-                             OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+    uint32_t supportedCaps =
+        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
+        OBELISK_RT_DESIGN_CAP_ITERATE | OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+        OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+        OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
          (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
@@ -315,14 +314,12 @@ bool validateDatabaseImpl(const Database &database) {
       }
       uint32_t portCaps = caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
                                   OBELISK_RT_DESIGN_CAP_PORT_OUTPUT);
-      uint32_t ordinalCaps =
-          caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+      uint32_t ordinalCaps = caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
       if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
         if (portCaps == 0 ||
             caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps))
           return false;
-      } else if (portCaps != 0 &&
-                 kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+      } else if (portCaps != 0 && kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
                  kind != OBELISK_RT_DESIGN_RECORD_NET) {
         return false;
       } else if (portCaps == 0 && ordinalCaps != 0) {
@@ -582,14 +579,12 @@ bool validateDatabaseImpl(const Database &database) {
 // graph corner cases from unwinding through callers that cannot catch C++
 // exceptions; design_validate retains its explicit outer guard as well.
 obelisk_rt_status validateDatabase(const Database &database) noexcept {
-  try {
+  OBELISK_RT_TRY {
     return validateDatabaseImpl(database) ? OBELISK_RT_OK
                                           : OBELISK_RT_INVALID_DESIGN;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 uint64_t nameHash(const uint8_t *name, uint64_t size) {
@@ -693,14 +688,12 @@ bool registeredDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
 obelisk_rt_status
 loadValidatedDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
                       Database &database) noexcept {
-  try {
+  OBELISK_RT_TRY {
     if (registeredDatabase(execution, database))
       return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
   if (!parseHeader(execution, database))
     return OBELISK_RT_INVALID_DESIGN;
   return validateDatabase(database);
@@ -895,7 +888,7 @@ obelisk_rt_status obelisk_rt_initialize_design_database(
     DesignDatabaseCache &cache) noexcept {
   if (!execution)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     Database database;
     obelisk_rt_status status = loadValidatedDatabase(execution, database);
     if (status != OBELISK_RT_OK)
@@ -903,11 +896,9 @@ obelisk_rt_status obelisk_rt_initialize_design_database(
     database.validated = true;
     cache = database;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 obelisk_rt_status obelisk_rt_register_design_database(
@@ -915,7 +906,7 @@ obelisk_rt_status obelisk_rt_register_design_database(
     const DesignDatabaseCache &cache) noexcept {
   if (!matchesExecution(cache, execution))
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     DatabaseRegistry &registry = databaseRegistry();
     std::lock_guard<std::mutex> lock(registry.mutex);
     auto [entry, inserted] = registry.databases.try_emplace(execution);
@@ -930,18 +921,16 @@ obelisk_rt_status obelisk_rt_register_design_database(
     }
     ++entry->second.contextCount;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 void obelisk_rt_unregister_design_database(
     const obelisk_rt_execution_descriptor_v1 *execution) noexcept {
   if (!execution)
     return;
-  try {
+  OBELISK_RT_TRY {
     DatabaseRegistry &registry = databaseRegistry();
     std::lock_guard<std::mutex> lock(registry.mutex);
     auto found = registry.databases.find(execution);
@@ -952,7 +941,8 @@ void obelisk_rt_unregister_design_database(
       return;
     }
     registry.databases.erase(found);
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     // Context teardown cannot recover from a registry synchronization failure.
   }
 }
@@ -1051,25 +1041,22 @@ obelisk_rt_status obelisk_rt_cached_design_name(
 bool obelisk_rt_checked_design_record(
     const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
     const uint8_t *&record, uint32_t &kind) noexcept {
-  try {
+  OBELISK_RT_TRY {
     Database database;
     return loadValidatedDatabase(execution, database) == OBELISK_RT_OK &&
            getRecord(database, offset, record, kind);
-  } catch (...) {
-    return false;
   }
+  OBELISK_RT_CATCH_ALL { return false; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_design_validate(
     const obelisk_rt_execution_descriptor_v1 *execution) {
-  try {
+  OBELISK_RT_TRY {
     Database database;
     return loadValidatedDatabase(execution, database);
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status
@@ -1287,7 +1274,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   std::vector<uint8_t> overflowPublishedPlanes;
   uint8_t *publishedPlanes = nullptr;
   if (write && width > 64) {
-    try {
+    OBELISK_RT_TRY {
       wideTransitions.emplace(width);
       size_t bytes = static_cast<size_t>((width + 7) / 8);
       if (bytes <= inlinePublishedBytes) {
@@ -1297,11 +1284,11 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         overflowPublishedPlanes.assign(bytes * 2, 0);
         publishedPlanes = overflowPublishedPlanes.data();
       }
-    } catch (const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (...) {
-      return OBELISK_RT_INVALID_DESIGN;
     }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
   }
   bool stateChanged = false;
   bool runClockCoordinator = false;
@@ -1545,7 +1532,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
         context, stateOffset, bitWidth,
         reinterpret_cast<const uint8_t *>(value),
         reinterpret_cast<const uint8_t *>(unknown));
-  try {
+  OBELISK_RT_TRY {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->forceMask.empty())
@@ -1564,11 +1551,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
                                                    bitWidth, true);
     }
     return status;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status
@@ -1592,11 +1577,8 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
   if (kind == OBELISK_RT_DESIGN_RECORD_NET)
     return obelisk_rt_release_design_nets(context, stateOffset, bitWidth);
   std::vector<std::pair<uint64_t, uint32_t>> transitions;
-  try {
-    transitions.reserve(static_cast<size_t>(bitWidth));
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  }
+  OBELISK_RT_TRY { transitions.reserve(static_cast<size_t>(bitWidth)); }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   uint64_t signalBase = UINT64_MAX;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1614,13 +1596,11 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                       (context->assignMask[limb] & mask) != 0;
       bool retained = limb < context->continuousMask.size() &&
                       (context->continuousMask[limb] & mask) != 0;
-      if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
-          (assigned || retained)) {
+      if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE && (assigned || retained)) {
         bool oldValue = (context->stateValue[limb] & mask) != 0;
         bool oldUnknown = (context->stateUnknown[limb] & mask) != 0;
-        bool newValue = assigned
-                            ? (context->assignValue[limb] & mask) != 0
-                            : (context->continuousValue[limb] & mask) != 0;
+        bool newValue = assigned ? (context->assignValue[limb] & mask) != 0
+                                 : (context->continuousValue[limb] & mask) != 0;
         bool newUnknown = assigned
                               ? (context->assignUnknown[limb] & mask) != 0
                               : (context->continuousUnknown[limb] & mask) != 0;

@@ -370,11 +370,13 @@ async function onMessage(message) {
 async function execute(binary, compileMs, counts) {
   const started = performance.now();
   const files = [];
+  let simulatedTime = null;
   try {
     const code = await runSimulation(binary, (text, stream) => {
       record(text, stream === 'stderr' ? 'stderr' : '');
     }, {
       onFile: (file) => files.push(file),
+      onSimulatedTime: (time) => { simulatedTime = time; },
     });
     const runMs = Math.round(performance.now() - started);
     const waveform = files.find((file) => isVcd(file));
@@ -395,7 +397,13 @@ async function execute(binary, compileMs, counts) {
     }
     record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
     const note = counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
-    finishRecording(`${note}compile ${compileMs} ms · run ${runMs} ms`, code === 0 ? 'ok' : 'err');
+    const simulated = simulatedTime
+      ? ` · simulated ${formatSimulatedTime(simulatedTime)}`
+      : '';
+    finishRecording(
+      `${note}compile ${compileMs} ms · run ${runMs} ms${simulated}`,
+      code === 0 ? 'ok' : 'err',
+    );
   } catch (error) {
     record(`\nsimulation aborted: ${error?.message ?? error}\n`, 'stderr');
     finishRecording('aborted', 'err');
@@ -876,6 +884,35 @@ function initHandle() {
 }
 
 /* -------------------------------------------------------------------- misc */
+
+// Simulated time is reported as a tick count plus the design's precision in
+// femtoseconds, which is the only pair that survives the module boundary. Pick
+// the largest unit that leaves a value at or above one, so a nanosecond design
+// reads in nanoseconds rather than as a large femtosecond count.
+const TIME_UNITS = [
+  [1000000000000000n, 's'],
+  [1000000000000n, 'ms'],
+  [1000000000n, 'us'],
+  [1000000n, 'ns'],
+  [1000n, 'ps'],
+  [1n, 'fs'],
+];
+
+function formatSimulatedTime({ ticks, precisionFs }) {
+  const femtoseconds = ticks * precisionFs;
+  if (femtoseconds === 0n) return '0 s';
+  for (const [scale, unit] of TIME_UNITS) {
+    if (femtoseconds < scale) continue;
+    const whole = femtoseconds / scale;
+    const remainder = femtoseconds % scale;
+    if (remainder === 0n) return `${whole} ${unit}`;
+    // Three decimals is enough to distinguish adjacent units without
+    // implying precision the timescale does not have.
+    const fraction = (remainder * 1000n) / scale;
+    return `${whole}.${fraction.toString().padStart(3, '0')} ${unit}`;
+  }
+  return `${femtoseconds} fs`;
+}
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;

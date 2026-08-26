@@ -1766,7 +1766,8 @@ LogicalResult SimDesignOp::verifyRegions() {
         continue;
       uint64_t width = *getPackedWidth(net.getType());
       for (uint64_t bit = 0; bit != width; ++bit) {
-        size_t index = delays->size() == 3 ? 0 : size_t{bit} * 3;
+        size_t index =
+            delays->size() == 3 ? 0 : static_cast<size_t>(bit) * 3;
         if ((*delays)[index] == -1 || (*delays)[index + 2] != -1)
           continue;
         uint64_t root = findRoot(netBases.lookup(id) + bit);

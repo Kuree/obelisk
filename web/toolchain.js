@@ -3,17 +3,17 @@
 // importScripts; the smoke test uses the same global entry point under Node.
 
 (() => {
-  const TARGET = '/lib/obelisk/targets/wasm64-unknown-emscripten';
+  const TARGET = '/lib/obelisk/targets/wasm32-unknown-emscripten';
   const ASSETS = [
     ['libobelisk_rt.a', `${TARGET}/libobelisk_rt.a`],
-    ['libstubs.a', '/sysroot/lib/wasm64-emscripten/libstubs.a'],
-    ['libnoexit.a', '/sysroot/lib/wasm64-emscripten/libnoexit.a'],
-    ['libc.a', '/sysroot/lib/wasm64-emscripten/libc.a'],
-    ['libdlmalloc.a', '/sysroot/lib/wasm64-emscripten/libdlmalloc.a'],
-    ['libc++.a', '/sysroot/lib/wasm64-emscripten/libc++.a'],
-    ['libc++abi.a', '/sysroot/lib/wasm64-emscripten/libc++abi.a'],
-    ['libcompiler_rt.a', '/sysroot/lib/wasm64-emscripten/libcompiler_rt.a'],
-    ['libunwind.a', '/sysroot/lib/wasm64-emscripten/libunwind.a'],
+    ['libstubs.a', '/sysroot/lib/wasm32-emscripten/libstubs.a'],
+    ['libnoexit.a', '/sysroot/lib/wasm32-emscripten/libnoexit.a'],
+    ['libc.a', '/sysroot/lib/wasm32-emscripten/libc.a'],
+    ['libdlmalloc.a', '/sysroot/lib/wasm32-emscripten/libdlmalloc.a'],
+    ['libc++.a', '/sysroot/lib/wasm32-emscripten/libc++.a'],
+    ['libc++abi.a', '/sysroot/lib/wasm32-emscripten/libc++abi.a'],
+    ['libcompiler_rt.a', '/sysroot/lib/wasm32-emscripten/libcompiler_rt.a'],
+    ['libunwind.a', '/sysroot/lib/wasm32-emscripten/libunwind.a'],
   ];
 
   function ensureDirectory(FS, path) {

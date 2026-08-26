@@ -59,7 +59,7 @@ if(NOT EMSCRIPTEN)
 else()
   # A wasm build of the compiler cannot produce x86-64, so its only target is
   # the one it also runs on.
-  set(OBELISK_DEFAULT_TARGET "wasm64")
+  set(OBELISK_DEFAULT_TARGET "wasm32")
 endif()
 
 add_llvm_executable(obelisk

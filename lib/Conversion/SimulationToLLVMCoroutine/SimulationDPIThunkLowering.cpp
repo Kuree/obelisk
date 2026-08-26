@@ -165,9 +165,12 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   Value inputs = entry->getArgument(2);
   Value outputs = entry->getArgument(4);
-  auto descriptorPointer = [&](Value base, uint64_t index, uint64_t offset) {
-    return byteGEP(builder, location, base,
-                   index * sizeof(obelisk_rt_import_input_v1) + offset);
+  Type descriptorType = LLVM::LLVMStructType::getLiteral(
+      context, {i8, i8, builder.getI16Type(), i32, pointer, pointer, i64});
+  auto descriptorPointer = [&](Value base, uint64_t index, uint32_t field) {
+    Value descriptor =
+        elementGEP(builder, location, base, descriptorType, index);
+    return fieldGEP(builder, location, descriptor, descriptorType, field);
   };
   Value descriptorsMatch =
       llvmConstant(builder, location, builder.getI1Type(), 1);
@@ -181,39 +184,25 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
                                 const DPIOperandABI &entryABI) {
     requireEqual(
         LLVM::LoadOp::create(
-            builder, location, i8,
-            descriptorPointer(base, index,
-                              offsetof(obelisk_rt_import_input_v1, kind)),
-            1),
+            builder, location, i8, descriptorPointer(base, index, 0), 1),
         llvmConstant(builder, location, i8, dpiDescriptorKind(entryABI)));
     requireEqual(
         LLVM::LoadOp::create(
-            builder, location, i8,
-            descriptorPointer(base, index,
-                              offsetof(obelisk_rt_import_input_v1, flags)),
-            1),
+            builder, location, i8, descriptorPointer(base, index, 1), 1),
         llvmConstant(builder, location, i8,
                      entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
     requireEqual(
         LLVM::LoadOp::create(
             builder, location, builder.getI16Type(),
-            descriptorPointer(base, index,
-                              offsetof(obelisk_rt_import_input_v1, reserved)),
-            2),
+            descriptorPointer(base, index, 2), 2),
         llvmConstant(builder, location, builder.getI16Type(), 0));
     requireEqual(
         LLVM::LoadOp::create(
-            builder, location, i32,
-            descriptorPointer(base, index,
-                              offsetof(obelisk_rt_import_input_v1, bit_width)),
-            4),
+            builder, location, i32, descriptorPointer(base, index, 3), 4),
         llvmConstant(builder, location, i32, entryABI.width));
     requireEqual(
         LLVM::LoadOp::create(
-            builder, location, i64,
-            descriptorPointer(base, index,
-                              offsetof(obelisk_rt_import_input_v1, limb_count)),
-            8),
+            builder, location, i64, descriptorPointer(base, index, 6), 8),
         llvmConstant(builder, location, i64,
                      (uint64_t{entryABI.width} + 63) / 64));
   };
@@ -227,11 +216,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   auto planePointer = [&](Value base, uint64_t index, bool unknown) -> Value {
     return LLVM::LoadOp::create(
         builder, location, pointer,
-        descriptorPointer(base, index,
-                          unknown
-                              ? offsetof(obelisk_rt_import_input_v1, unknown)
-                              : offsetof(obelisk_rt_import_input_v1, value)),
-        alignof(const uint64_t *));
+        descriptorPointer(base, index, unknown ? 5 : 4));
   };
   auto readWord = [&](Value plane, uint64_t word) -> Value {
     return LLVM::LoadOp::create(builder, location, i32,

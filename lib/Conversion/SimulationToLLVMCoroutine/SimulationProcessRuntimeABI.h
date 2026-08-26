@@ -3,43 +3,61 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
 
-#include "obelisk/Runtime/Runtime.h"
-
-#include <cstddef>
 #include <cstdint>
 
 namespace obelisk::detail {
 
-inline constexpr uint64_t kInstanceAllocationOffset =
-    offsetof(obelisk_rt_process_instance_v1, allocation);
-inline constexpr uint64_t kInstanceFrameOffset =
-    offsetof(obelisk_rt_process_instance_v1, frame);
-inline constexpr uint64_t kInstanceScratchOffset =
-    offsetof(obelisk_rt_process_instance_v1, scratch_offset);
-inline constexpr uint64_t kInstanceNativeHandleOffset =
-    offsetof(obelisk_rt_process_instance_v1, native_handle);
-inline constexpr uint64_t kInstanceContinuationOffset =
-    offsetof(obelisk_rt_process_instance_v1, continuation);
-inline constexpr uint64_t kInstanceStatusOffset =
-    offsetof(obelisk_rt_process_instance_v1, status);
-inline constexpr uint64_t kInstanceContextOffset =
-    offsetof(obelisk_rt_process_instance_v1, context);
-inline constexpr uint64_t kInstanceActionOffset =
-    offsetof(obelisk_rt_process_instance_v1, action);
-inline constexpr uint64_t kActionKindOffset =
-    offsetof(obelisk_rt_fragment_action_v1, kind);
-inline constexpr uint64_t kActionSuspendKindOffset =
-    offsetof(obelisk_rt_fragment_action_v1, suspend_kind);
-inline constexpr uint64_t kActionContinuationOffset =
-    offsetof(obelisk_rt_fragment_action_v1, continuation);
-inline constexpr uint64_t kActionFlagsOffset =
-    offsetof(obelisk_rt_fragment_action_v1, flags);
-inline constexpr uint64_t kActionPayloadOffset =
-    offsetof(obelisk_rt_fragment_action_v1, payload);
-inline constexpr uint64_t kActionAuxiliaryOffset =
-    offsetof(obelisk_rt_fragment_action_v1, auxiliary);
+// Field indices, not host byte offsets. Loads and stores turn these into typed
+// LLVM GEPs, leaving the selected target DataLayout to place each field.
+enum class ProcessInstanceField : uint32_t {
+  Descriptor,
+  Allocation,
+  Frame,
+  FrameSize,
+  ScratchOffset,
+  ScratchSize,
+  NativeHandle,
+  Continuation,
+  Tier,
+  Lifecycle,
+  Status,
+  Context,
+  Action,
+  OwnershipContext,
+  ObserverPinCount,
+  ObserverDestroyPending,
+};
+
+enum class FragmentActionField : uint32_t {
+  Kind,
+  SuspendKind,
+  Continuation,
+  Flags,
+  Payload,
+  Auxiliary,
+};
+
+inline constexpr auto kInstanceAllocationField =
+    ProcessInstanceField::Allocation;
+inline constexpr auto kInstanceFrameField = ProcessInstanceField::Frame;
+inline constexpr auto kInstanceScratchField =
+    ProcessInstanceField::ScratchOffset;
+inline constexpr auto kInstanceNativeHandleField =
+    ProcessInstanceField::NativeHandle;
+inline constexpr auto kInstanceContinuationField =
+    ProcessInstanceField::Continuation;
+inline constexpr auto kInstanceStatusField = ProcessInstanceField::Status;
+inline constexpr auto kInstanceContextField = ProcessInstanceField::Context;
+inline constexpr auto kInstanceActionField = ProcessInstanceField::Action;
+inline constexpr auto kActionKindField = FragmentActionField::Kind;
+inline constexpr auto kActionSuspendKindField =
+    FragmentActionField::SuspendKind;
+inline constexpr auto kActionContinuationField =
+    FragmentActionField::Continuation;
+inline constexpr auto kActionFlagsField = FragmentActionField::Flags;
+inline constexpr auto kActionPayloadField = FragmentActionField::Payload;
+inline constexpr auto kActionAuxiliaryField = FragmentActionField::Auxiliary;
 
 } // namespace obelisk::detail
 
 #endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
-

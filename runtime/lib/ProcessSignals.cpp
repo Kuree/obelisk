@@ -63,12 +63,13 @@ bool appendSignalSubscriptionUnlocked(
     SignalSubscriptionBucketKey key{kind, objectID, page};
     bool bucketEntryAppended = false;
     size_t slotIndex = stored.bucketSlots.size();
-    try {
+    OBELISK_RT_TRY {
       auto &bucket = context->signalSubscriptionBuckets[key];
       bucket.push_back({&stored, slotIndex});
       bucketEntryAppended = true;
       stored.bucketSlots.push_back({key, bucket.size() - 1});
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       auto found = context->signalSubscriptionBuckets.find(key);
       if (found != context->signalSubscriptionBuckets.end()) {
         if (bucketEntryAppended && !found->second.empty() &&
@@ -78,7 +79,7 @@ bool appendSignalSubscriptionUnlocked(
         if (found->second.empty())
           context->signalSubscriptionBuckets.erase(found);
       }
-      throw;
+      OBELISK_RT_RETHROW;
     }
     if (page == indexedLast)
       break;
@@ -130,12 +131,13 @@ bool appendClockOccurrenceSubscriptionUnlocked(
     SignalSubscriptionBucketKey key{kind, objectID, page};
     bool bucketEntryAppended = false;
     size_t slotIndex = stored.bucketSlots.size();
-    try {
+    OBELISK_RT_TRY {
       auto &bucket = feature.subscriptionBuckets[key];
       bucket.push_back({&stored, slotIndex});
       bucketEntryAppended = true;
       stored.bucketSlots.push_back({key, bucket.size() - 1});
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       auto found = feature.subscriptionBuckets.find(key);
       if (found != feature.subscriptionBuckets.end()) {
         if (bucketEntryAppended && !found->second.empty() &&
@@ -145,7 +147,7 @@ bool appendClockOccurrenceSubscriptionUnlocked(
         if (found->second.empty())
           feature.subscriptionBuckets.erase(found);
       }
-      throw;
+      OBELISK_RT_RETHROW;
     }
     if (page == indexedLast)
       break;
@@ -165,8 +167,7 @@ void eraseClockOccurrenceSubscriptionsUnlocked(obelisk_rt_context *context,
     if (!pointer)
       continue;
     ClockOccurrenceSubscription &subscription = *pointer;
-    for (const SignalSubscriptionBucketSlot &slot :
-         subscription.bucketSlots) {
+    for (const SignalSubscriptionBucketSlot &slot : subscription.bucketSlots) {
       auto bucket = feature.subscriptionBuckets.find(slot.key);
       if (bucket == feature.subscriptionBuckets.end())
         continue;
@@ -217,11 +218,10 @@ bool appendManagedSubscriptionUnlocked(
   subscription->latch = latch;
   subscriptions.push_back(std::move(subscription));
   SignalSubscription *stored = subscriptions.back().get();
-  try {
-    context->managedWatchWaiters[token].insert(stored);
-  } catch (...) {
+  OBELISK_RT_TRY { context->managedWatchWaiters[token].insert(stored); }
+  OBELISK_RT_CATCH_ALL {
     subscriptions.pop_back();
-    throw;
+    OBELISK_RT_RETHROW;
   }
   if (context->nativeSchedulePlan &&
       context->nativeSchedulePlan->specialization_fast)
@@ -277,9 +277,8 @@ void obelisk_rt_unregister_signal_wait_unlocked(
       context->designConditionalSignalWaiters.erase(waiterToken);
     else
       context->nativeConditionalSignalWaiters.erase(waiterToken);
-    uint64_t logicalToken = designWaiter
-                                ? waiterToken
-                                : kNativeLogicalProcessTag | waiterToken;
+    uint64_t logicalToken =
+        designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
     if (context->clockOccurrences) {
       ClockOccurrenceFeatureState &feature = *context->clockOccurrences;
       if (auto occurrence = feature.waits.find(logicalToken);
@@ -353,25 +352,23 @@ bool obelisk_rt_register_signal_wait_unlocked(
   if (wait->kind != OBELISK_RT_SUSPEND_CHANGE &&
       wait->kind != OBELISK_RT_SUSPEND_EDGE)
     return true;
-  uint32_t behaviorFlags =
-      wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  uint32_t behaviorFlags = wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE) {
     if (waiterToken == 0 || wait->payload == 0 || wait->count == 0 ||
         wait->count > 128)
       return false;
-    uint32_t conditionCount = static_cast<uint32_t>(
-        __builtin_popcountll(wait->auxiliary));
+    uint32_t conditionCount =
+        static_cast<uint32_t>(__builtin_popcountll(wait->auxiliary));
     if (conditionCount >= wait->count)
       return false;
     uint32_t primaryCount = wait->count - conditionCount;
     if (primaryCount == 0 || primaryCount > 64 ||
         (primaryCount != 64 && (wait->auxiliary >> primaryCount) != 0))
       return false;
-    uint64_t logicalToken = designWaiter
-                                ? waiterToken
-                                : kNativeLogicalProcessTag | waiterToken;
+    uint64_t logicalToken =
+        designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
     const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
-    try {
+    OBELISK_RT_TRY {
       if (!context->clockOccurrences)
         context->clockOccurrences =
             std::make_unique<ClockOccurrenceFeatureState>();
@@ -395,8 +392,8 @@ bool obelisk_rt_register_signal_wait_unlocked(
                 context, logicalToken, entries[index].stable_id,
                 entries[index].reserved, entries[index].edge, waiterToken,
                 !designWaiter, static_cast<uint8_t>(index))) {
-          obelisk_rt_unregister_signal_wait_unlocked(
-              context, subscriptions, waiterToken, designWaiter);
+          obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
+                                                     waiterToken, designWaiter);
           return false;
         }
       // Cohort subscriptions live in the feature-local index above, but a
@@ -405,9 +402,11 @@ bool obelisk_rt_register_signal_wait_unlocked(
       // branches; feature actors alone pay for this one pointer.
       subscriptions.emplace_back(nullptr);
       return true;
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
     }
     obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
@@ -418,12 +417,13 @@ bool obelisk_rt_register_signal_wait_unlocked(
     if ((behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE ||
          behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF) &&
         waiterToken != 0) {
-      try {
+      OBELISK_RT_TRY {
         if (designWaiter)
           context->designConditionalSignalWaiters.insert(waiterToken);
         else
           context->nativeConditionalSignalWaiters.insert(waiterToken);
-      } catch (const std::bad_alloc &) {
+      }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
         context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
         return false;
       }
@@ -432,15 +432,16 @@ bool obelisk_rt_register_signal_wait_unlocked(
   }
   bool suppressActiveSelf =
       (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
-  try {
+  OBELISK_RT_TRY {
     if (!latch)
       latch = std::make_unique<SignalWaitLatch>();
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return false;
   }
   const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
-  try {
+  OBELISK_RT_TRY {
     subscriptions.reserve(wait->count);
     for (uint32_t index = 0; index != wait->count; ++index) {
       if (entries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED) {
@@ -468,9 +469,11 @@ bool obelisk_rt_register_signal_wait_unlocked(
       }
     }
     return true;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
   }
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
@@ -496,9 +499,8 @@ bool obelisk_rt_same_clock_occurrence_wait_unlocked(
   if (primaryCount == 0 || primaryCount > 64 ||
       (primaryCount != 64 && (wait->auxiliary >> primaryCount) != 0))
     return false;
-  uint64_t logicalToken = designWaiter
-                              ? waiterToken
-                              : kNativeLogicalProcessTag | waiterToken;
+  uint64_t logicalToken =
+      designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
   const ClockOccurrenceFeatureState &feature = *context->clockOccurrences;
   auto state = feature.waits.find(logicalToken);
   auto subscriptions = feature.subscriptions.find(logicalToken);
@@ -552,13 +554,14 @@ bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
         continue;
     }
     subscription->latch->triggered = true;
-    try {
+    OBELISK_RT_TRY {
       auto &candidates =
           subscription->target == SignalSubscription::NativeManagedWait
               ? context->nativePollCandidates
               : context->designPollCandidates;
       candidates.insert(subscription->waiterToken);
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
       return false;
     }
@@ -584,7 +587,7 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
   context->nativeScheduleGuardedFanoutActive = false;
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
                                              waiterToken, designWaiter);
-  try {
+  OBELISK_RT_TRY {
     if (!latch)
       latch = std::make_unique<SignalWaitLatch>();
     latch->triggered = false;
@@ -597,8 +600,7 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
     for (uint32_t index = 0; index != wait->dependency_count; ++index) {
       const obelisk_rt_computed_dependency_v1 &dependency = dependencies[index];
       if (dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
-          dependency.stable_id ==
-              OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT)
+          dependency.stable_id == OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT)
         context->preponedObserverPresent = true;
       if (dependency.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL)
         continue;
@@ -614,9 +616,11 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
       }
     }
     return true;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
   }
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
@@ -722,9 +726,8 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
       consider(currentWait(process), process.suspendKind,
                process.signalTriggered);
       if (!wasTriggered && process.signalTriggered) {
-        try {
-          context->nativePollCandidates.insert(token);
-        } catch (const std::bad_alloc &) {
+        OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
+        OBELISK_RT_CATCH(const std::bad_alloc &) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
           return false;
         }
@@ -749,9 +752,8 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
     bool wasTriggered = task.signalTriggered;
     consider(wait, task.suspendKind, task.signalTriggered);
     if (!wasTriggered && task.signalTriggered) {
-      try {
-        context->designPollCandidates.insert(id);
-      } catch (const std::bad_alloc &) {
+      OBELISK_RT_TRY { context->designPollCandidates.insert(id); }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
         context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
         return false;
       }

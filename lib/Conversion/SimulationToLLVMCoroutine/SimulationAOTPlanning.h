@@ -17,6 +17,10 @@
 
 #include <tuple>
 
+namespace llvm {
+class DataLayout;
+}
+
 namespace obelisk::detail {
 
 struct NativeStateLayout;
@@ -232,7 +236,8 @@ buildNativePeriodicAliasPlan(
 mlir::LogicalResult materializeNativePeriodicClockPlan(
     mlir::ModuleOp module, mlir::ArrayRef<NativePeriodicClock> periodicClocks);
 mlir::LogicalResult makeNativeAOTPlanLegacy(
-    mlir::ModuleOp module, uint32_t actorCount,
+    mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
+    uint32_t actorCount,
     mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
@@ -242,7 +247,8 @@ mlir::LogicalResult makeNativeAOTPlanLegacy(
     bool enableStaticFanout, bool enableCleanSuperstep, bool fullyStatic,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);
 mlir::LogicalResult makeNativeEvalPlan(
-    mlir::ModuleOp module, uint32_t actorCount,
+    mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
+    uint32_t actorCount,
     mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,

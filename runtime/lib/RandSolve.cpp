@@ -1,5 +1,6 @@
 //===- RandSolve.cpp - Constrained-random residual solver -----------------===//
 
+#include "ExceptionSupport.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -574,8 +575,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                       static_cast<uint64_t>(solveEdgeCount) *
                           OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
   }
-  bool encodedDist =
-      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+  bool encodedDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   uint32_t distGroupCount = 0;
   uint32_t distRecordCount = 0;
   uint64_t distRecordsOffset = 0;
@@ -595,16 +595,14 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
   uint32_t domainRecordCount = 0;
   uint64_t domainRecordsOffset = 0;
   if (encodedDomains) {
-    if (instructionEnd >
-            UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+    if (instructionEnd > UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
         programSize < instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
       return OBELISK_RT_INVALID_ARGUMENT;
     domainGroupCount = read32(program + instructionEnd);
     domainRecordCount = read32(program + instructionEnd + 4);
     domainRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
-    if (domainRecordCount >
-        (UINT64_MAX - domainRecordsOffset) /
-            OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+    if (domainRecordCount > (UINT64_MAX - domainRecordsOffset) /
+                                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
       return OBELISK_RT_INVALID_ARGUMENT;
     instructionEnd =
         domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
@@ -613,7 +611,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
   if (programSize != instructionEnd)
     return OBELISK_RT_INVALID_ARGUMENT;
 
-  try {
+  OBELISK_RT_TRY {
     std::vector<Instruction> instructions;
     instructions.reserve(instructionCount);
     size_t depth = 0, maxDepth = 0;
@@ -687,13 +685,12 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                         read32(cursor + 40), read32(cursor + 44)};
         uint16_t reserved = read16(cursor + 14);
         cursor += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
-        uint64_t rangeMask = range.width == 64
-                                 ? UINT64_MAX
-                                 : range.width == 0
-                                       ? 0
-                                       : (uint64_t{1} << range.width) - 1;
-        bool fullDomain = range.cardinality == 0 && range.width == 64 &&
-                          range.lower == 0;
+        uint64_t rangeMask = range.width == 64 ? UINT64_MAX
+                             : range.width == 0
+                                 ? 0
+                                 : (uint64_t{1} << range.width) - 1;
+        bool fullDomain =
+            range.cardinality == 0 && range.width == 64 && range.lower == 0;
         if (group >= distGroupCount || range.width == 0 || range.width > 64 ||
             range.targetOffset > aggregateWidth ||
             range.width > aggregateWidth - range.targetOffset ||
@@ -971,23 +968,21 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       }
       return 0;
     };
-    auto candidateDistWeight = [&](uint64_t assignment,
-                                   uint64_t &result) {
+    auto candidateDistWeight = [&](uint64_t assignment, uint64_t &result) {
       result = 1;
       for (const std::vector<DistRange> &group : distGroups) {
         const DistRange &first = group.front();
         if (!constraintEnabled(first.constraintBlock, constraintMask))
           continue;
-        uint64_t field = (assignment >> first.targetOffset) &
-                         widthMask(first.width);
+        uint64_t field =
+            (assignment >> first.targetOffset) & widthMask(first.width);
         if ((first.flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED) != 0)
           field ^= uint64_t{1} << (first.width - 1);
         uint64_t groupWeight = 0;
         for (const DistRange &range : group) {
           bool matches =
               range.cardinality == 0 ||
-              (field >= range.lower &&
-               field - range.lower < range.cardinality);
+              (field >= range.lower && field - range.lower < range.cardinality);
           if (!matches)
             continue;
           uint64_t weight = captures[range.weightCapture];
@@ -1155,11 +1150,9 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       *outSuccess = 1;
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_modes(

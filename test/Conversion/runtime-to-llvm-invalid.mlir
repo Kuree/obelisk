@@ -23,14 +23,14 @@ module {
 
 // -----
 
-// expected-error @+1 {{runtime lowering currently requires a 64-bit little-endian target}}
-module attributes {llvm.data_layout = "e-p:32:32"} {
+// expected-error @+1 {{runtime lowering requires a little-endian target with 32-bit or 64-bit pointers}}
+module attributes {llvm.data_layout = "e-p:16:16"} {
   func.func private @target(!obelisk_rt.context)
 }
 
 // -----
 
-// expected-error @+1 {{runtime lowering currently requires a 64-bit little-endian target}}
+// expected-error @+1 {{runtime lowering requires a little-endian target with 32-bit or 64-bit pointers}}
 module attributes {llvm.data_layout = "E-p:64:64"} {
   func.func private @target(!obelisk_rt.context)
 }
@@ -150,7 +150,7 @@ module attributes {
 
 // -----
 
-// expected-error @+1 {{llvm.target_triple is inconsistent with the supported 64-bit little-endian runtime ABI}}
+// expected-error @+1 {{llvm.target_triple is inconsistent with the supported little-endian 32-bit and 64-bit runtime ABIs}}
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "powerpc64-unknown-linux-gnu"

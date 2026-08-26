@@ -82,7 +82,7 @@ endmodule
 
     phase = `compiling the design at ${optimization}`;
     const status = mod.callMain([
-      '--compile-threads=1', '--sysroot=/sysroot', '--target=wasm64',
+      '--compile-threads=1', '--sysroot=/sysroot', '--target=wasm32',
       optimization, '-o', '/work/design.wasm', '/work/design.sv',
     ]) ?? 0;
     if (status !== 0) {

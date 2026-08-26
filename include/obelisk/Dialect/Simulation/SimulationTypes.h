@@ -63,6 +63,12 @@ enum class ManagedHandleKind : uint32_t {
   ReferencePath = 1u << 3,
 };
 
+/// Runtime managed values use an ABI-stable 64-bit tagged word even when the
+/// target has 32-bit pointers.
+constexpr unsigned managedHandleBitWidth = 64;
+constexpr unsigned managedHandleByteWidth = managedHandleBitWidth / 8;
+constexpr unsigned managedHandleByteAlignment = managedHandleByteWidth;
+
 /// Runtime trace-layout encoding shared by native class and container
 /// descriptors. Exact slots use the one-based managed kind enumerators;
 /// candidate slots carry this flag plus a ManagedHandleKind mask.

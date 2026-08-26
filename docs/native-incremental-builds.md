@@ -6,10 +6,10 @@ module by worker count is deliberately not the contract: it makes cache keys
 and object membership change with the host and leaves the expensive lowering
 as one monolithic step.
 
-This contract is initially specific to the native ELF backend. The wasm64
+This contract is initially specific to the native ELF backend. The wasm32
 backend continues to lower and optimize one module and links the prebuilt
 wasm-object runtime. Native partition metadata is neither planned nor consumed
-for wasm64 until WebAssembly partitioning has its own linkage and performance
+for wasm32 until WebAssembly partitioning has its own linkage and performance
 validation; the unsplit wasm path is not inferred from native behavior.
 
 ## Partition contract

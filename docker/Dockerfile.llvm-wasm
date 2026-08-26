@@ -1,16 +1,20 @@
-# LLVM + MLIR + LLD 22.1.6 built for wasm64, for the in-browser Obelisk compiler.
+# LLVM + MLIR + LLD 22.1.6 built for wasm, for the in-browser Obelisk compiler.
+#
+# This SDK is unconditionally wasm32: no Safari release implements the
+# Memory64 proposal, and the surrounding compiler/runtime build now has one
+# target ABI instead of a partially supported build argument.
 #
 # Produces the same CMake package layout Obelisk's top-level CMakeLists.txt
 # validates (lib/cmake/{llvm,mlir,lld}), so the result is consumable through
 # the existing OBELISK_LLVM_PREBUILT_URL file:// path with no code change.
 #
 # Build the artifact (tarball lands in ./dist):
-#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.llvm-wasm64 \
+#   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.llvm-wasm \
 #     --target artifact --output type=local,dest=./dist docker/
 #
 # Then configure Obelisk against it:
 #   cmake -S . -B build-wasm -G Ninja \
-#     -DOBELISK_LLVM_PREBUILT_URL=file:///abs/path/dist/llvm-mlir-lld-wasm64.tar.xz \
+#     -DOBELISK_LLVM_PREBUILT_URL=file:///abs/path/dist/llvm-mlir-lld-wasm32.tar.xz \
 #     -DOBELISK_LLVM_PREBUILT_SHA256=<sha printed at the end of the build>
 #
 # Scope notes:
@@ -97,18 +101,21 @@ RUN cmake -G Ninja -S /src/llvm-project/llvm -B /build/native \
  && rm -rf /build/native
 
 #-----------------------------------------------------------------------------
-# LLVM #2 of 2: the wasm64 cross build, at /opt/llvm-wasm64.
+# LLVM #2 of 2: the wasm32 cross build, at /opt/llvm-wasm32.
 #
-# MEMORY64 is mandatory, not a preference: Obelisk's runtime ABI hard-asserts
-# 64-bit pointers (runtime/lib/ABI.cpp), and every descriptor layout assertion
-# depends on it. wasm32 would require an ABI redesign.
+# -fexceptions, not -fwasm-exceptions, and it is not optional here even though
+# LLVM is built without exceptions: libLLVMSupport still lands try/catch opcodes
+# in the archive. Any wasm exception opcode ties the module to one Safari
+# generation, because Safari 26 implements exnref and earlier releases only the
+# superseded encoding. -fexceptions implements the same C++ semantics in
+# JavaScript and emits no exception opcodes at all, so no Safari version can
+# reject it. CI disassembles the SDK archives and final modules to enforce this.
 #-----------------------------------------------------------------------------
-ENV WASM_FLAGS="-sMEMORY64=1 -fwasm-exceptions"
-
 RUN source /emsdk/emsdk_env.sh \
- && emcmake cmake -G Ninja -S /src/llvm-project/llvm -B /build/wasm64 \
+ && WASM_FLAGS="-fexceptions" \
+ && emcmake cmake -G Ninja -S /src/llvm-project/llvm -B /build/wasm \
       -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-      -DCMAKE_INSTALL_PREFIX=/opt/llvm-wasm64 \
+      -DCMAKE_INSTALL_PREFIX=/opt/llvm-wasm32 \
       -DCMAKE_C_FLAGS="${WASM_FLAGS}" \
       -DCMAKE_CXX_FLAGS="${WASM_FLAGS}" \
       -DCMAKE_C_FLAGS_MINSIZEREL="-Oz -DNDEBUG" \
@@ -116,8 +123,8 @@ RUN source /emsdk/emsdk_env.sh \
       -DCMAKE_EXE_LINKER_FLAGS="${WASM_FLAGS}" \
       \
       -DLLVM_NATIVE_TOOL_DIR=/opt/llvm-native/bin \
-      -DLLVM_HOST_TRIPLE=wasm64-unknown-emscripten \
-      -DLLVM_DEFAULT_TARGET_TRIPLE=wasm64-unknown-emscripten \
+      -DLLVM_HOST_TRIPLE=wasm32-unknown-emscripten \
+      -DLLVM_DEFAULT_TARGET_TRIPLE=wasm32-unknown-emscripten \
       \
       -DLLVM_ENABLE_PROJECTS="mlir;lld" \
       -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
@@ -153,7 +160,7 @@ RUN source /emsdk/emsdk_env.sh \
       -Wno-dev
 
 RUN source /emsdk/emsdk_env.sh \
- && cmake --build /build/wasm64 -j"${JOBS}" --target install
+ && cmake --build /build/wasm -j"${JOBS}" --target install
 
 #-----------------------------------------------------------------------------
 # Ship the native TableGen tools and clang inside the SDK.
@@ -170,17 +177,17 @@ RUN source /emsdk/emsdk_env.sh \
 # ABI matches Emscripten's libc++ and libunwind archives.
 RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
                 mlir-linalg-ods-yaml-gen; do \
-      cp "/opt/llvm-native/bin/$tool" /opt/llvm-wasm64/bin/; \
+      cp "/opt/llvm-native/bin/$tool" /opt/llvm-wasm32/bin/; \
     done \
- && cp /opt/llvm-native/bin/clang-22 /opt/llvm-wasm64/bin/ \
- && ln -s clang-22 /opt/llvm-wasm64/bin/clang \
- && ln -s clang /opt/llvm-wasm64/bin/clang++ \
- && mkdir -p /opt/llvm-wasm64/lib/clang \
- && cp -a /opt/llvm-native/lib/clang/22 /opt/llvm-wasm64/lib/clang/ \
- && test -x /opt/llvm-wasm64/bin/llvm-tblgen \
- && test -x /opt/llvm-wasm64/bin/mlir-tblgen \
- && test -x /opt/llvm-wasm64/bin/clang++ \
- && du -sh /opt/llvm-wasm64
+ && cp /opt/llvm-native/bin/clang-22 /opt/llvm-wasm32/bin/ \
+ && ln -s clang-22 /opt/llvm-wasm32/bin/clang \
+ && ln -s clang /opt/llvm-wasm32/bin/clang++ \
+ && mkdir -p /opt/llvm-wasm32/lib/clang \
+ && cp -a /opt/llvm-native/lib/clang/22 /opt/llvm-wasm32/lib/clang/ \
+ && test -x /opt/llvm-wasm32/bin/llvm-tblgen \
+ && test -x /opt/llvm-wasm32/bin/mlir-tblgen \
+ && test -x /opt/llvm-wasm32/bin/clang++ \
+ && du -sh /opt/llvm-wasm32
 
 #-----------------------------------------------------------------------------
 # Package. Deterministic tar so the SHA-256 is stable across rebuilds, which
@@ -198,10 +205,10 @@ RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
 # change the archive bytes and break the reproducible checksum.
 RUN mkdir -p /out \
  && XZ_OPT='-T8 -3' tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
-        -cJf /out/llvm-mlir-lld-wasm64.tar.xz -C /opt llvm-wasm64 \
+        -cJf /out/llvm-mlir-lld-wasm32.tar.xz -C /opt llvm-wasm32 \
  && cd /out \
- && sha256sum llvm-mlir-lld-wasm64.tar.xz | tee llvm-mlir-lld-wasm64.tar.xz.sha256 \
- && sha256sum -c llvm-mlir-lld-wasm64.tar.xz.sha256 \
+ && sha256sum llvm-mlir-lld-wasm32.tar.xz | tee llvm-mlir-lld-wasm32.tar.xz.sha256 \
+ && sha256sum -c llvm-mlir-lld-wasm32.tar.xz.sha256 \
  && ls -lh /out/
 
 # Just the tarball and its checksum, for publishing or local use. Keep this
@@ -222,8 +229,8 @@ COPY --from=builder /out/ /
 # file:// URL into this image therefore needs no source change:
 #
 #   emcmake cmake -S . -B build-wasm -G Ninja \
-#     -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM64_SDK" \
-#     -DOBELISK_LLVM_PREBUILT_SHA256="$OBELISK_LLVM_WASM64_SHA256"
+#     -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
+#     -DOBELISK_LLVM_PREBUILT_SHA256="$OBELISK_LLVM_WASM_SHA256"
 #-----------------------------------------------------------------------------
 FROM emscripten/emsdk:${EMSDK_VERSION} AS toolchain
 
@@ -236,10 +243,10 @@ COPY --from=builder /out/ /opt/obelisk-sdk/
 # The bare checksum lands in a file consumers can read; it cannot be an ENV
 # because its value is only known at build time. Verified here so a corrupted
 # layer fails at image build rather than at someone else's configure step.
-ENV OBELISK_LLVM_WASM64_SDK=/opt/obelisk-sdk/llvm-mlir-lld-wasm64.tar.xz \
-    OBELISK_LLVM_WASM64_SHA256_FILE=/opt/obelisk-sdk/SHA256
-RUN cut -d' ' -f1 /opt/obelisk-sdk/llvm-mlir-lld-wasm64.tar.xz.sha256 \
+ENV OBELISK_LLVM_WASM_SDK=/opt/obelisk-sdk/llvm-mlir-lld-wasm32.tar.xz \
+    OBELISK_LLVM_WASM_SHA256_FILE=/opt/obelisk-sdk/SHA256
+RUN cut -d' ' -f1 /opt/obelisk-sdk/llvm-mlir-lld-wasm32.tar.xz.sha256 \
       > /opt/obelisk-sdk/SHA256 \
- && (cd /opt/obelisk-sdk && sha256sum -c llvm-mlir-lld-wasm64.tar.xz.sha256)
+ && (cd /opt/obelisk-sdk && sha256sum -c llvm-mlir-lld-wasm32.tar.xz.sha256)
 
 WORKDIR /work

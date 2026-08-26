@@ -337,12 +337,12 @@ NetAliasCache *getNetAliasCache(const Image &image,
         context->delayedMosContributions.try_emplace(key, strengthBit(0));
         continue;
       }
-      cache.passNeighbors[lhsRoot].push_back(
-          {rhsRoot, connection.tailReserved, resistive, controlled, directed,
-           !directed || rhsToLhs});
-      cache.passNeighbors[rhsRoot].push_back(
-          {lhsRoot, connection.tailReserved, resistive, controlled, directed,
-           !directed || !rhsToLhs});
+      cache.passNeighbors[lhsRoot].push_back({rhsRoot, connection.tailReserved,
+                                              resistive, controlled, directed,
+                                              !directed || rhsToLhs});
+      cache.passNeighbors[rhsRoot].push_back({lhsRoot, connection.tailReserved,
+                                              resistive, controlled, directed,
+                                              !directed || !rhsToLhs});
     }
   }
   std::unordered_map<uint64_t, uint64_t> passParents;
@@ -388,8 +388,7 @@ NetAliasCache *getNetAliasCache(const Image &image,
       for (const NetPassNeighbor &edge : cache.passNeighbors.at(lhsRoot)) {
         uint32_t lhs = static_cast<uint32_t>(rootIndex.at(lhsRoot));
         uint32_t rhs = static_cast<uint32_t>(rootIndex.at(edge.root));
-        if ((edge.directed && !edge.receives) ||
-            (!edge.directed && lhs >= rhs))
+        if ((edge.directed && !edge.receives) || (!edge.directed && lhs >= rhs))
           continue;
         size_t forward = static_cast<size_t>(lhs) * roots.size() + rhs;
         size_t reverse = static_cast<size_t>(rhs) * roots.size() + lhs;
@@ -400,20 +399,17 @@ NetAliasCache *getNetAliasCache(const Image &image,
           cache.controlledPassStates.try_emplace(edge.passSwitchId, 3);
           cache.controlledPassEdges[edge.passSwitchId].push_back(
               {component, lhs, rhs, edge.resistive, edge.directed});
-          auto &possible = edge.resistive
-                               ? passComponent.possibleResistive
-                               : passComponent.possibleNonresistive;
+          auto &possible = edge.resistive ? passComponent.possibleResistive
+                                          : passComponent.possibleNonresistive;
           ++possible[forward];
           if (!edge.directed)
             ++possible[reverse];
           continue;
         }
-        auto &definite = edge.resistive
-                             ? passComponent.definiteResistive
-                             : passComponent.definiteNonresistive;
-        auto &possible = edge.resistive
-                             ? passComponent.possibleResistive
-                             : passComponent.possibleNonresistive;
+        auto &definite = edge.resistive ? passComponent.definiteResistive
+                                        : passComponent.definiteNonresistive;
+        auto &possible = edge.resistive ? passComponent.possibleResistive
+                                        : passComponent.possibleNonresistive;
         ++definite[forward];
         if (!edge.directed)
           ++definite[reverse];
@@ -743,8 +739,7 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
 
 static bool computeResolvedStrengths(const NetAliasCache &cache,
                                      obelisk_rt_context *context, uint64_t root,
-                                     bool useNativeState,
-                                     bool useSchedulePlan,
+                                     bool useNativeState, bool useSchedulePlan,
                                      uint16_t &resolvedStrengths) {
   auto members = cache.members.find(root);
   if (members == cache.members.end())
@@ -765,8 +760,8 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   const uint8_t *nativeUnknown = nullptr;
   uint64_t nativeBits = 0;
   if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
-        context->nativeSchedulePlan->state_bit_count ==
-            context->execution->state_bit_count) {
+      context->nativeSchedulePlan->state_bit_count ==
+          context->execution->state_bit_count) {
     nativeValue = context->nativeSchedulePlan->state_value;
     nativeUnknown = context->nativeSchedulePlan->state_unknown;
     nativeBits = context->nativeSchedulePlan->state_bit_count;
@@ -980,16 +975,17 @@ static bool scheduleDelayedMosEdge(obelisk_rt_context *context,
   auto scheduled = context->scheduledPassSwitchEvents.emplace(key, event);
   if (!scheduled.second)
     return false;
-  try {
+  OBELISK_RT_TRY {
     if (!context->delayedMosPending
              .emplace(edge.key, DelayedMosPending{scheduled.first, target})
              .second) {
       context->scheduledPassSwitchEvents.erase(scheduled.first);
       return false;
     }
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->scheduledPassSwitchEvents.erase(scheduled.first);
-    throw;
+    OBELISK_RT_RETHROW;
   }
   return true;
 }
@@ -1046,8 +1042,7 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
     uint8_t resolution = cache.resolutionByRoot.at(root);
     uint16_t resolvedStrengths = 0;
     if (!computeResolvedStrengths(cache, context, root, useNativeState,
-                                  /*useSchedulePlan=*/false,
-                                  resolvedStrengths))
+                                  /*useSchedulePlan=*/false, resolvedStrengths))
       return false;
     if (auto outgoing = cache.delayedMosBySource.find(root);
         outgoing != cache.delayedMosBySource.end())
@@ -1277,14 +1272,14 @@ extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
   return combineStrengthRanges(lhs, rhs);
 }
 
-obelisk_rt_status
-obelisk_rt_design_net_strength(obelisk_rt_context *context, uint64_t netHandle,
-                               uint16_t *outStrengths,
-                               bool useNativeState) noexcept {
+obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
+                                                 uint64_t netHandle,
+                                                 uint16_t *outStrengths,
+                                                 bool useNativeState) noexcept {
   if (!context || !context->execution || !outStrengths)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outStrengths = 0;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image))
@@ -1318,11 +1313,9 @@ obelisk_rt_design_net_strength(obelisk_rt_context *context, uint64_t netHandle,
                                   *outStrengths))
       return OBELISK_RT_INVALID_HANDLE;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 obelisk_rt_status obelisk_rt_count_design_drivers(
@@ -1333,7 +1326,7 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
       !outOne || !outUnknown)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outForced = *outTotal = *outZero = *outOne = *outUnknown = 0;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image))
@@ -1478,11 +1471,9 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
         contribution(strengths->second);
       }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" obelisk_rt_status
@@ -1497,9 +1488,9 @@ obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context, uint64_t netHandle,
 
 namespace obelisk::designbytecode {
 
-obelisk_rt_status
-applyPassSwitchControl(obelisk_rt_context *context, uint32_t passSwitchId,
-                       uint8_t nextState, bool &changed) {
+obelisk_rt_status applyPassSwitchControl(obelisk_rt_context *context,
+                                         uint32_t passSwitchId,
+                                         uint8_t nextState, bool &changed) {
   if (!context || !context->designBytecodeImageValidated ||
       passSwitchId == UINT32_MAX || nextState > 2)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -1540,10 +1531,10 @@ applyPassSwitchControl(obelisk_rt_context *context, uint32_t passSwitchId,
           --counts[reverse];
       }
     };
-    auto &definite = edge.resistive ? pass.definiteResistive
-                                    : pass.definiteNonresistive;
-    auto &possible = edge.resistive ? pass.possibleResistive
-                                    : pass.possibleNonresistive;
+    auto &definite =
+        edge.resistive ? pass.definiteResistive : pass.definiteNonresistive;
+    auto &possible =
+        edge.resistive ? pass.possibleResistive : pass.possibleNonresistive;
     if (previousState != 3 || nextState != 2) {
       uint8_t effectivePrevious = previousState == 3 ? 2 : previousState;
       if (effectivePrevious == 1)
@@ -1567,9 +1558,8 @@ applyPassSwitchControl(obelisk_rt_context *context, uint32_t passSwitchId,
   }
   if (!resolveNetRoots(*cache, context, std::move(roots), changed,
                        context->nativeStateValue != nullptr))
-    return context->schedulerStatus == OBELISK_RT_OK
-               ? OBELISK_RT_INVALID_DESIGN
-               : context->schedulerStatus;
+    return context->schedulerStatus == OBELISK_RT_OK ? OBELISK_RT_INVALID_DESIGN
+                                                     : context->schedulerStatus;
   return OBELISK_RT_OK;
 }
 
@@ -1600,13 +1590,14 @@ obelisk_rt_status applyDelayedMosEvent(obelisk_rt_context *context,
 
 } // namespace obelisk::designbytecode
 
-extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control(
-    obelisk_rt_context *context, uint32_t passSwitchId, uint32_t value,
-    uint32_t unknown) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_pass_switch_control(obelisk_rt_context *context,
+                                  uint32_t passSwitchId, uint32_t value,
+                                  uint32_t unknown) {
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     obelisk::designbytecode::Image image;
@@ -1622,11 +1613,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control(
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
@@ -1636,7 +1625,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     obelisk::designbytecode::Image image;
@@ -1656,8 +1645,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
     if (current->second == 3) {
       bool initialized = false;
       obelisk_rt_status status =
-          obelisk::designbytecode::applyPassSwitchControl(
-              context, passSwitchId, 2, initialized);
+          obelisk::designbytecode::applyPassSwitchControl(context, passSwitchId,
+                                                          2, initialized);
       if (status != OBELISK_RT_OK)
         return status;
       if (initialized && ++context->schedulerEpoch == 0)
@@ -1704,7 +1693,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
         key, ScheduledPassSwitchEvent{passSwitchId, nextState});
     if (!scheduled.second)
       return OBELISK_RT_INVALID_DESIGN;
-    try {
+    OBELISK_RT_TRY {
       if (!context->delayedPassSwitchPending
                .emplace(passSwitchId,
                         DelayedPassSwitchPending{scheduled.first, nextState})
@@ -1712,16 +1701,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
         context->scheduledPassSwitchEvents.erase(scheduled.first);
         return OBELISK_RT_INVALID_DESIGN;
       }
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       context->scheduledPassSwitchEvents.erase(scheduled.first);
-      throw;
+      OBELISK_RT_RETHROW;
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" obelisk_rt_status
@@ -1732,7 +1720,7 @@ obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
@@ -1766,11 +1754,9 @@ obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
                    : context->schedulerStatus;
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs,
@@ -1785,7 +1771,7 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
     return OBELISK_RT_INVALID_ARGUMENT;
   if ((context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
     return OBELISK_RT_OK;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image))
@@ -1827,11 +1813,9 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
       }
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
@@ -1840,7 +1824,7 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
   if (!context || !context->execution || begin > end ||
       end > uint64_t{INT64_MAX})
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
@@ -1856,11 +1840,9 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" obelisk_rt_status
@@ -1876,7 +1858,7 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
   if (!context || !context->execution || !value || width == 0 ||
       begin > UINT64_MAX - width)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
@@ -1937,11 +1919,9 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 uint64_t
@@ -1957,7 +1937,7 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
   if (!context || !context->execution || width == 0 ||
       begin > UINT64_MAX - width)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
@@ -1992,11 +1972,9 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 obelisk_rt_status
@@ -2004,7 +1982,7 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
                                    uint64_t end, bool *outConnected) noexcept {
   if (!context || !context->execution || !outConnected || begin > end)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image))
@@ -2030,9 +2008,7 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
       }
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }

@@ -29,30 +29,32 @@ function writeCString(pointer, value) {
   bytes[pointer + length] = 0;
 }
 
+// wasm32: an iovec is two 32-bit fields, and WASI sizes and pointers are
+// 32-bit with it. File offsets stay 64-bit at either pointer width.
 function setIovec(pointer, dataPointer, length) {
-  view.setBigUint64(pointer, BigInt(dataPointer), true);
-  view.setBigUint64(pointer + 8, BigInt(length), true);
+  view.setUint32(pointer, dataPointer, true);
+  view.setUint32(pointer + 4, length, true);
 }
 
 function write(fd, text, iovec = 128, data = 1024, written = 256) {
   const length = writeBytes(data, text);
   setIovec(iovec, data, length);
-  assert.equal(host.fd_write(fd, BigInt(iovec), 1, BigInt(written)), 0);
-  assert.equal(view.getBigUint64(written, true), BigInt(length));
+  assert.equal(host.fd_write(fd, iovec, 1, written), 0);
+  assert.equal(view.getUint32(written, true), length);
 }
 
-assert.equal(host.args_sizes_get(16n, 24n), 0);
-assert.equal(view.getBigUint64(16, true), 2n);
-assert.equal(view.getBigUint64(24, true), 13n);
-assert.equal(host.args_get(32n, 64n), 0);
-assert.equal(view.getBigUint64(32, true), 64n);
-assert.equal(view.getBigUint64(40, true), 68n);
+assert.equal(host.args_sizes_get(16, 24), 0);
+assert.equal(view.getUint32(16, true), 2);
+assert.equal(view.getUint32(24, true), 13);
+assert.equal(host.args_get(32, 64), 0);
+assert.equal(view.getUint32(32, true), 64);
+assert.equal(view.getUint32(36, true), 68);
 assert.equal(decoder.decode(bytes.subarray(64, 67)), 'sim');
 assert.equal(decoder.decode(bytes.subarray(68, 76)), '--seed=7');
 
-assert.equal(host.environ_sizes_get(16n, 24n), 0);
-assert.equal(view.getBigUint64(16, true), 0n);
-assert.equal(view.getBigUint64(24, true), 0n);
+assert.equal(host.environ_sizes_get(16, 24), 0);
+assert.equal(view.getUint32(16, true), 0);
+assert.equal(view.getUint32(24, true), 0);
 
 write(1, 'partial');
 assert.deepEqual(outputs, []);
@@ -64,14 +66,14 @@ wasi.flushAll();
 assert.deepEqual(outputs.at(-1), { text: 'rest', stream: 'stdout' });
 
 writeCString(2048, 'waves.vcd');
-assert.equal(imports.env.__syscall_openat(-1, 2048n, 0), -38);
-const descriptor = imports.env.__syscall_openat(-1, 2048n, 1);
+assert.equal(imports.env.__syscall_openat(-1, 2048, 0), -38);
+const descriptor = imports.env.__syscall_openat(-1, 2048, 1);
 assert.equal(descriptor, 3);
 write(descriptor, 'abcd');
-assert.equal(host.fd_seek(descriptor, 1n, 0, 272n), 0);
+assert.equal(host.fd_seek(descriptor, 1n, 0, 272), 0);
 assert.equal(view.getBigUint64(272, true), 1n);
 write(descriptor, 'XY');
-assert.equal(host.fd_seek(descriptor, -1n, 0, 272n), 28);
+assert.equal(host.fd_seek(descriptor, -1n, 0, 272), 28);
 assert.equal(host.fd_close(descriptor), 0);
 assert.equal(files.length, 1);
 assert.equal(files[0].name, 'waves.vcd');

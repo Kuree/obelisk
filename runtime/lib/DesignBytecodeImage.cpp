@@ -3206,7 +3206,7 @@ obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
     Image &outImage) noexcept {
   if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
     Image image;
     if (!parseImage(entry, image) || !validateImage(image) ||
@@ -3214,9 +3214,9 @@ obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
       return OBELISK_RT_INVALID_DESIGN;
     outImage = image;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL {
     rejectImage(__LINE__, "exception while validating bytecode image");
     return OBELISK_RT_INVALID_DESIGN;
   }
@@ -3226,7 +3226,7 @@ obelisk_rt_status obelisk_rt_validate_design_bytecode(
     const obelisk_rt_design_bytecode_entry_v1 &entry,
     obelisk_rt_context *context, uint64_t *outScratchSize,
     uint64_t *outScratchAlignment) noexcept {
-  try {
+  OBELISK_RT_TRY {
     Image image;
     if (!loadValidatedImage(entry, context, image))
       return OBELISK_RT_INVALID_BYTECODE;
@@ -3236,9 +3236,9 @@ obelisk_rt_status obelisk_rt_validate_design_bytecode(
     if (outScratchAlignment)
       *outScratchAlignment = function.scratchAlignment;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL {
     rejectImage(__LINE__, "exception while loading bytecode image");
     return OBELISK_RT_INVALID_BYTECODE;
   }

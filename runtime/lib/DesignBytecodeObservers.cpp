@@ -217,9 +217,10 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
         }
       }
       if (!affected) {
-        try {
+        OBELISK_RT_TRY {
           context->pendingDesignComputedWaiters.push_back(taskID);
-        } catch (const std::bad_alloc &) {
+        }
+        OBELISK_RT_CATCH(const std::bad_alloc &) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
           return false;
         }
@@ -308,9 +309,8 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
             updated && !updated->terminated) {
           updated->signalTriggered = true;
           context->prioritySignalPending |= updated->prioritySignal;
-          try {
-            context->designPollCandidates.insert(taskID);
-          } catch (const std::bad_alloc &) {
+          OBELISK_RT_TRY { context->designPollCandidates.insert(taskID); }
+          OBELISK_RT_CATCH(const std::bad_alloc &) {
             context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
             return false;
           }

@@ -819,9 +819,11 @@ public:
                          << llvm::toString(parsed.takeError());
       return signalPassFailure();
     }
-    if (!parsed->isLittleEndian() || parsed->getPointerSizeInBits() != 64) {
-      module.emitError(
-          "bytecode encoding requires a 64-bit little-endian target");
+    unsigned pointerBits = parsed->getPointerSizeInBits();
+    if (!parsed->isLittleEndian() ||
+        (pointerBits != 32 && pointerBits != 64)) {
+      module.emitError("bytecode encoding requires a little-endian target "
+                       "with 32-bit or 64-bit pointers");
       return signalPassFailure();
     }
     SmallVector<sim::SimDesignOp> designs;
@@ -921,9 +923,11 @@ encodeSimulationDesign(sim::SimDesignOp design,
                          << llvm::toString(parsed.takeError());
     return failure();
   }
-  if (!parsed->isLittleEndian() || parsed->getPointerSizeInBits() != 64)
-    return design.emitOpError(
-        "bytecode encoding requires a 64-bit little-endian target");
+  unsigned pointerBits = parsed->getPointerSizeInBits();
+  if (!parsed->isLittleEndian() ||
+      (pointerBits != 32 && pointerBits != 64))
+    return design.emitOpError("bytecode encoding requires a little-endian "
+                              "target with 32-bit or 64-bit pointers");
   bytecode::Encoder encoder(design, options, *parsed);
   return encoder.encode();
 }

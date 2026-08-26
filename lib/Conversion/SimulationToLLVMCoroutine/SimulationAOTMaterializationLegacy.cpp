@@ -10,13 +10,14 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/DataLayout.h"
 
 using namespace mlir;
 
 namespace obelisk::detail {
 
 LogicalResult makeNativeAOTPlanLegacy(
-    ModuleOp module, uint32_t actorCount,
+    ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
@@ -862,7 +863,7 @@ LogicalResult makeNativeAOTPlanLegacy(
         value =
             insertValue(initializerBuilder, location, value,
                         llvmConstant(initializerBuilder, location, i32,
-                                     sizeof(obelisk_rt_native_schedule_plan)),
+                                     getNativeSchedulePlanSize(dataLayout)),
                         NativeSchedulePlanField::Size);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
@@ -875,7 +876,8 @@ LogicalResult makeNativeAOTPlanLegacy(
                         NativeSchedulePlanField::MutableState);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
-                                         uint64_t{actorCount} * sizeof(void *)),
+                                         uint64_t{actorCount} *
+                                             dataLayout.getPointerSize()),
                             NativeSchedulePlanField::MutableStateSize);
         value = insertValue(
             initializerBuilder, location, value,

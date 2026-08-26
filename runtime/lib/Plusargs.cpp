@@ -143,8 +143,7 @@ bool splitValueFormat(std::string_view format, std::string &prefix,
   prefix.clear();
   prefix.reserve(percent);
   for (size_t index = 0; index < percent; ++index) {
-    if (format[index] == '%' && index + 1 < percent &&
-        format[index + 1] == '%')
+    if (format[index] == '%' && index + 1 < percent && format[index + 1] == '%')
       ++index;
     prefix.push_back(format[index]);
   }
@@ -172,14 +171,13 @@ void setPlaneBit(uint8_t *plane, uint64_t bit) {
 } // namespace
 
 extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
-    obelisk_rt_string_v1 string, uint32_t radix, uint64_t bitWidth,
-    void *value, uint64_t valueSize, void *unknown, uint64_t unknownSize) {
+    obelisk_rt_string_v1 string, uint32_t radix, uint64_t bitWidth, void *value,
+    uint64_t valueSize, void *unknown, uint64_t unknownSize) {
   if (!value || !unknown || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
       (radix != 2 && radix != 8 && radix != 10 && radix != 16))
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
-  if (byteCount > valueSize || byteCount > unknownSize ||
-      byteCount > SIZE_MAX)
+  if (byteCount > valueSize || byteCount > unknownSize || byteCount > SIZE_MAX)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto *valueBytes = static_cast<uint8_t *>(value);
   auto *unknownBytes = static_cast<uint8_t *>(unknown);
@@ -218,7 +216,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
         character >= '0' && character <= '9'   ? character - '0'
         : character >= 'a' && character <= 'f' ? character - 'a' + 10
         : character >= 'A' && character <= 'F' ? character - 'A' + 10
-                                                : UINT32_MAX;
+                                               : UINT32_MAX;
     if (isX || isZ) {
       if (radix != 10) {
         hasUnknown = true;
@@ -244,14 +242,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     return OBELISK_RT_OK;
 
   if (decimalUnknown) {
-    bool highImpedance = decimalUnknown == 'z' || decimalUnknown == 'Z' ||
-                         decimalUnknown == '?';
+    bool highImpedance =
+        decimalUnknown == 'z' || decimalUnknown == 'Z' || decimalUnknown == '?';
     std::memset(valueBytes, highImpedance ? 0xff : 0,
                 static_cast<size_t>(byteCount));
     std::memset(unknownBytes, 0xff, static_cast<size_t>(byteCount));
     if ((bitWidth & 7) != 0) {
-      uint8_t mask =
-          static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+      uint8_t mask = static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
       valueBytes[byteCount - 1] &= mask;
       unknownBytes[byteCount - 1] &= mask;
     }
@@ -271,10 +268,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
         continue;
       bool isX = character == 'x' || character == 'X';
       bool isZ = character == 'z' || character == 'Z' || character == '?';
-      uint32_t digit =
-          character >= '0' && character <= '9'   ? character - '0'
-          : character >= 'a' && character <= 'f' ? character - 'a' + 10
-                                                  : character - 'A' + 10;
+      uint32_t digit = character >= '0' && character <= '9' ? character - '0'
+                       : character >= 'a' && character <= 'f'
+                           ? character - 'a' + 10
+                           : character - 'A' + 10;
       scalarValue *= radix;
       scalarUnknown *= radix;
       if (isX || isZ) {
@@ -287,8 +284,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     }
     for (uint64_t byte = 0; byte != byteCount; ++byte) {
       valueBytes[byte] = static_cast<uint8_t>(scalarValue >> (byte * 8));
-      unknownBytes[byte] =
-          static_cast<uint8_t>(scalarUnknown >> (byte * 8));
+      unknownBytes[byte] = static_cast<uint8_t>(scalarUnknown >> (byte * 8));
     }
   } else if (radix == 10) {
     for (uint64_t index = begin; index != size; ++index) {
@@ -312,10 +308,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
         continue;
       bool isX = character == 'x' || character == 'X';
       bool isZ = character == 'z' || character == 'Z' || character == '?';
-      uint32_t digit =
-          character >= '0' && character <= '9'   ? character - '0'
-          : character >= 'a' && character <= 'f' ? character - 'a' + 10
-                                                  : character - 'A' + 10;
+      uint32_t digit = character >= '0' && character <= '9' ? character - '0'
+                       : character >= 'a' && character <= 'f'
+                           ? character - 'a' + 10
+                           : character - 'A' + 10;
       if (ordinal <= (bitWidth - 1) / digitBits) {
         uint64_t base = ordinal * digitBits;
         for (unsigned bit = 0; bit != digitBits && base + bit < bitWidth;
@@ -343,16 +339,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     }
   }
   if ((bitWidth & 7) != 0) {
-    uint8_t mask =
-        static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
+    uint8_t mask = static_cast<uint8_t>((UINT32_C(1) << (bitWidth & 7)) - 1);
     valueBytes[byteCount - 1] &= mask;
     unknownBytes[byteCount - 1] &= mask;
   }
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
-    obelisk_rt_string_v1 string, double *outValue) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_plusarg_parse_real(obelisk_rt_string_v1 string,
+                                 double *outValue) {
   if (!outValue)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outValue = 0.0;
@@ -367,7 +363,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
     return OBELISK_RT_OK;
   if (size > SIZE_MAX)
     return OBELISK_RT_OUT_OF_RESOURCES;
-  try {
+  OBELISK_RT_TRY {
     std::string spelling;
     spelling.reserve(static_cast<size_t>(size));
     for (uint64_t index = 0; index != size; ++index)
@@ -385,9 +381,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
     if (parsed.ec == std::errc{} && parsed.ptr == end)
       *outValue = value;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
 }
 
 extern "C" obelisk_rt_status
@@ -413,10 +408,11 @@ obelisk_rt_v1_plusarg_test(obelisk_rt_context *context,
   });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_value(
-    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 prefix, obelisk_rt_string_v1 *outTail,
-    uint32_t *outFound) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
+                            obelisk_rt_gc_lane_v1 *lane,
+                            obelisk_rt_string_v1 prefix,
+                            obelisk_rt_string_v1 *outTail, uint32_t *outFound) {
   if (!context || !outTail || !outFound)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outTail = 0;

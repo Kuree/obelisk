@@ -9,9 +9,8 @@
 namespace {
 
 int32_t saturateI32(uint64_t value) {
-  return value > static_cast<uint64_t>(INT32_MAX)
-             ? INT32_MAX
-             : static_cast<int32_t>(value);
+  return value > static_cast<uint64_t>(INT32_MAX) ? INT32_MAX
+                                                  : static_cast<int32_t>(value);
 }
 
 uint64_t saturatingAdd(uint64_t left, uint64_t right) {
@@ -27,8 +26,7 @@ struct CoverageResult {
 obelisk_rt_status collectCoverpointBins(const uint64_t *coverpointBins,
                                         uint64_t coverpointCount,
                                         std::vector<uint32_t> &bins) {
-  if (!coverpointBins || !coverpointCount ||
-      coverpointCount > bins.max_size())
+  if (!coverpointBins || !coverpointCount || coverpointCount > bins.max_size())
     return OBELISK_RT_INVALID_ARGUMENT;
   bins.reserve(static_cast<size_t>(coverpointCount));
   for (uint64_t index = 0; index < coverpointCount; ++index) {
@@ -40,10 +38,10 @@ obelisk_rt_status collectCoverpointBins(const uint64_t *coverpointBins,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status
-findOrRegisterCoverageType(obelisk_rt_context *context, uint64_t typeID,
-                           const std::vector<uint32_t> &bins,
-                           CoverageTypeState *&result) {
+obelisk_rt_status findOrRegisterCoverageType(obelisk_rt_context *context,
+                                             uint64_t typeID,
+                                             const std::vector<uint32_t> &bins,
+                                             CoverageTypeState *&result) {
   auto found = context->coverageTypes.find(typeID);
   if (found != context->coverageTypes.end()) {
     if (found->second.coverpointBins != bins)
@@ -99,15 +97,15 @@ obelisk_rt_status writeResult(const CoverageResult &result,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
-    obelisk_rt_context *context, uint64_t typeID,
-    const uint64_t *coverpointBins, uint64_t coverpointCount,
-    obelisk_rt_covergroup_v1 *outHandle) {
-  if (!context || !typeID || !coverpointBins || !coverpointCount ||
-      !outHandle)
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_create(obelisk_rt_context *context, uint64_t typeID,
+                                const uint64_t *coverpointBins,
+                                uint64_t coverpointCount,
+                                obelisk_rt_covergroup_v1 *outHandle) {
+  if (!context || !typeID || !coverpointBins || !coverpointCount || !outHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::vector<uint32_t> bins;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_status status =
         collectCoverpointBins(coverpointBins, coverpointCount, bins);
     if (status != OBELISK_RT_OK)
@@ -137,17 +135,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     type->instances.push_back(handle);
     ++context->nextCoverageInstance;
     *outHandle = handle;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (const std::length_error &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
     return OBELISK_RT_OUT_OF_RESOURCES;
   }
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_enabled(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint32_t enabled) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_set_enabled(obelisk_rt_context *context,
+                                     obelisk_rt_covergroup_v1 handle,
+                                     uint32_t enabled) {
   if (!context || enabled > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -158,9 +157,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_enabled(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample_enabled(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint32_t *outEnabled) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_sample_enabled(obelisk_rt_context *context,
+                                        obelisk_rt_covergroup_v1 handle,
+                                        uint32_t *outEnabled) {
   if (!context || !outEnabled)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -171,9 +171,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample_enabled(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_bin_hit(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint32_t coverpoint, uint32_t bin) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_bin_hit(obelisk_rt_context *context,
+                                 obelisk_rt_covergroup_v1 handle,
+                                 uint32_t coverpoint, uint32_t bin) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -192,9 +193,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_bin_hit(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    const uint8_t *hits, uint64_t hitCount) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_sample(obelisk_rt_context *context,
+                                obelisk_rt_covergroup_v1 handle,
+                                const uint8_t *hits, uint64_t hitCount) {
   if (!context || (hitCount != 0 && !hits))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -243,7 +245,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
       !outPercentage || !outCovered || !outTotal)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::vector<uint32_t> bins;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_status status =
         collectCoverpointBins(coverpointBins, coverpointCount, bins);
     if (status != OBELISK_RT_OK)
@@ -266,9 +268,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
     if (!type->instances.empty())
       result.percentage /= static_cast<double>(type->instances.size());
     return writeResult(result, outPercentage, outCovered, outTotal);
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (const std::length_error &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
     return OBELISK_RT_OUT_OF_RESOURCES;
   }
 }

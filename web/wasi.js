@@ -93,12 +93,17 @@ export class Wasi {
     return new DataView(this.memory.buffer);
   }
 
-  // Pointers are 64-bit under MEMORY64; the ABI requires it (see ABI.cpp).
+  // The module is wasm32, so pointers and WASI sizes are both 32-bit. Offsets
+  // into files are the exception: WASI filesize stays 64-bit at either width.
   #readPtr(offset) {
-    return Number(this.view.getBigUint64(offset, true));
+    return this.view.getUint32(offset, true);
   }
 
   #writeSize(offset, value) {
+    this.view.setUint32(offset, value, true);
+  }
+
+  #writeFilesize(offset, value) {
     this.view.setBigUint64(offset, BigInt(value), true);
   }
 
@@ -172,6 +177,11 @@ export class Wasi {
         },
         __syscall_fcntl64: () => -LINUX_ENOSYS,
         __syscall_ioctl: () => -LINUX_ENOTTY,
+        // Emscripten's libc references system() from paths a design never
+        // reaches, but the import still has to resolve for the module to
+        // instantiate at all. There is no shell in a browser, and system()
+        // reports failure as -1 rather than as a negative errno.
+        _emscripten_system: () => -1,
         emscripten_get_now: () => performance.now(),
         emscripten_date_now: () => Date.now(),
         _tzset_js(timezonePtr, daylightPtr, stdNamePtr, dstNamePtr) {
@@ -179,7 +189,8 @@ export class Wasi {
           const winterOffset = new Date(currentYear, 0, 1).getTimezoneOffset();
           const summerOffset = new Date(currentYear, 6, 1).getTimezoneOffset();
           const standardOffset = Math.max(winterOffset, summerOffset);
-          self.view.setBigInt64(Number(timezonePtr), BigInt(standardOffset * 60), true);
+          // `timezone` is a long, which is 32-bit on wasm32.
+          self.view.setInt32(Number(timezonePtr), standardOffset * 60, true);
           self.view.setInt32(
             Number(daylightPtr), Number(winterOffset !== summerOffset), true,
           );
@@ -232,7 +243,9 @@ export class Wasi {
           const daylight = winterOffset !== summerOffset
             && date.getTimezoneOffset() === Math.min(winterOffset, summerOffset);
           view.setInt32(pointer + 32, Number(daylight), true);
-          view.setBigInt64(pointer + 40, BigInt(-date.getTimezoneOffset() * 60), true);
+          // tm_gmtoff is a long following nine ints, so it sits at 36 on
+          // wasm32 rather than at 40.
+          view.setInt32(pointer + 36, -date.getTimezoneOffset() * 60, true);
           return 0;
         },
         _abort_js() {
@@ -244,7 +257,7 @@ export class Wasi {
           if (requested <= current) return 1;
           const pages = Math.ceil((requested - current) / 65536);
           try {
-            self.memory.grow(BigInt(pages));
+            self.memory.grow(pages);
             return 1;
           } catch {
             return 0;
@@ -259,11 +272,11 @@ export class Wasi {
           const file = self.files.get(fd);
           if (fd !== 1 && fd !== 2 && !file) return WASI_EBADF;
           let text = '';
-          // Each iovec is {ptr, len}, both 64-bit under MEMORY64.
+          // Each iovec is {ptr, len}, both 32-bit, so the stride is 8 bytes.
           for (let i = 0; i < Number(iovsLen); i++) {
-            const base = Number(iovsPtr) + i * 16;
-            const ptr = Number(view.getBigUint64(base, true));
-            const len = Number(view.getBigUint64(base + 8, true));
+            const base = Number(iovsPtr) + i * 8;
+            const ptr = view.getUint32(base, true);
+            const len = view.getUint32(base + 4, true);
             if (len === 0) continue;
             if (file) file.write(bytes.subarray(ptr, ptr + len));
             else text += self.decoder.decode(bytes.subarray(ptr, ptr + len));
@@ -296,7 +309,7 @@ export class Wasi {
           let ptrOffset = Number(argvPtr);
           for (const arg of self.args) {
             self.#writeSize(ptrOffset, bufOffset);
-            ptrOffset += 8;
+            ptrOffset += 4;
             for (let i = 0; i < arg.length; i++) bytes[bufOffset++] = arg.charCodeAt(i);
             bytes[bufOffset++] = 0;
           }
@@ -334,7 +347,7 @@ export class Wasi {
           if (!file) return WASI_EBADF;
           const numericOffset = Number(offset);
           if (!file.seek(numericOffset, Number(whence))) return WASI_EINVAL;
-          self.#writeSize(Number(newOffsetPtr), file.position);
+          self.#writeFilesize(Number(newOffsetPtr), file.position);
           return WASI_ESUCCESS;
         },
         fd_read: () => WASI_ENOSYS,
@@ -357,16 +370,38 @@ export class Wasi {
  * @param {(file: {name: string, data: Uint8Array}) => void} options.onFile
  * @returns {Promise<number>} the process exit code
  */
-export async function runSimulation(wasmBinary, onOutput, { onFile = () => {} } = {}) {
+export async function runSimulation(
+  wasmBinary, onOutput, { onFile = () => {}, onSimulatedTime = () => {} } = {},
+) {
   const wasi = new Wasi({ onOutput, onFile });
   const { instance } = await WebAssembly.instantiate(wasmBinary, wasi.imports);
   wasi.bindMemory(instance.exports.memory);
+
+  // Reported through a callback rather than the return value so the exit code
+  // stays the thing runSimulation resolves to. A module built before these
+  // exports existed simply never reports.
+  const reportSimulatedTime = () => {
+    const readTime = instance.exports.obelisk_final_time;
+    const readPrecision = instance.exports.obelisk_time_precision_fs;
+    if (typeof readTime !== 'function' || typeof readPrecision !== 'function')
+      return;
+    try {
+      onSimulatedTime({
+        ticks: BigInt(readTime()),
+        precisionFs: BigInt(readPrecision()),
+      });
+    } catch {
+      // A module that trapped on the way out has nothing meaningful to report.
+    }
+  };
 
   try {
     if (typeof instance.exports._start === 'function') {
       instance.exports._start();
     } else if (typeof instance.exports.main === 'function') {
-      instance.exports.main(0, 0n);
+      // argc, argv. Both are 32-bit on wasm32, so argv is a plain zero rather
+      // than a BigInt.
+      instance.exports.main(0, 0);
     } else {
       throw new Error('simulation module exports neither _start nor main');
     }
@@ -374,6 +409,7 @@ export async function runSimulation(wasmBinary, onOutput, { onFile = () => {} } 
     if (!(error instanceof WasiExit)) throw error;
     return error.code;
   } finally {
+    reportSimulatedTime();
     wasi.flushAll();
     wasi.closeAllFiles();
   }

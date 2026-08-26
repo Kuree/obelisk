@@ -29,12 +29,15 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
   } else if (isa<sim::TimeType>(type)) {
     llvmType = llvm::Type::getInt64Ty(llvmContext);
   } else if (sim::isManagedHandleType(type)) {
-    llvmType = llvm::PointerType::get(llvmContext, 0);
+    // Runtime managed handles are fixed-width tagged words, not target
+    // pointers.  Keep their storage representation stable across wasm32 and
+    // native targets.
+    llvmType = llvm::Type::getInt64Ty(llvmContext);
   } else if (isa<sim::ManagedRefType>(type)) {
     // A managed reference is physically {object, byte offset}. Each word has
-    // pointer size and alignment; process-frame layout describes the object
-    // word separately as a precise managed root.
-    llvmType = llvm::PointerType::get(llvmContext, 0);
+    // the fixed-width managed-word size and alignment; process-frame layout
+    // describes the object word separately as a precise managed root.
+    llvmType = llvm::Type::getInt64Ty(llvmContext);
   } else if (isa<sim::ArgumentRefType>(type)) {
     // {owner root, ordinary handle or managed byte offset, managed tag}.
     llvmType = llvm::IntegerType::get(llvmContext, 192);
@@ -62,13 +65,13 @@ getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
   if (typeSize.isScalable() || typeSize.getFixedValue() == 0)
     return failure();
 
-  llvm::Type *pointerType = llvm::PointerType::get(llvmContext, 0);
-  llvm::TypeSize pointerSize = dataLayout.getTypeAllocSize(pointerType);
-  if (pointerSize.isScalable() || pointerSize.getFixedValue() == 0)
+  llvm::Type *managedWordType = llvm::Type::getInt64Ty(llvmContext);
+  llvm::TypeSize managedWordSize = dataLayout.getTypeAllocSize(managedWordType);
+  if (managedWordSize.isScalable() || managedWordSize.getFixedValue() == 0)
     return failure();
-  uint64_t managedRootSize = pointerSize.getFixedValue();
+  uint64_t managedRootSize = managedWordSize.getFixedValue();
   uint32_t managedRootAlignment =
-      dataLayout.getABITypeAlign(pointerType).value();
+      dataLayout.getABITypeAlign(managedWordType).value();
   SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
   SmallVector<uint64_t, 2> managedRootOffsets;
   if (isa<sim::ManagedRefType>(type)) {

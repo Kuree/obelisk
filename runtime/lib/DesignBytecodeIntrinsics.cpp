@@ -179,15 +179,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout layout = layoutAt(image, frame.function, reg);
     if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
       return nullptr;
-    obelisk_rt_object_v1 *object = nullptr;
-    std::memcpy(&object, frame.data + layout.offset, sizeof(object));
-    return object;
+    obelisk_rt_managed_word_v1 word = 0;
+    std::memcpy(&word, frame.data + layout.offset, sizeof(word));
+    return obelisk_rt_object_from_managed_word(word);
   };
   auto writeManaged = [&](uint32_t reg, obelisk_rt_object_v1 *object) {
     Layout layout = layoutAt(image, frame.function, reg);
     if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
       return false;
-    std::memcpy(frame.data + layout.offset, &object, sizeof(object));
+    obelisk_rt_managed_word_v1 word =
+        obelisk_rt_managed_word_from_object(object);
+    std::memcpy(frame.data + layout.offset, &word, sizeof(word));
     return true;
   };
   auto readString = [&](uint32_t reg, obelisk_rt_string_v1 &string) -> bool {
@@ -209,7 +211,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout layout = layoutAt(image, frame.function, reg);
     if (layout.kind != OBELISK_RT_DBREG_MANAGED_REF || layout.size != 16)
       return false;
-    std::memcpy(&object, frame.data + layout.offset, sizeof(object));
+    obelisk_rt_managed_word_v1 word = 0;
+    std::memcpy(&word, frame.data + layout.offset, sizeof(word));
+    object = obelisk_rt_object_from_managed_word(word);
     std::memcpy(&offset, frame.data + layout.offset + 8, sizeof(offset));
     return true;
   };
@@ -218,7 +222,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout layout = layoutAt(image, frame.function, reg);
     if (layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF || layout.size != 24)
       return false;
-    std::memcpy(&owner, frame.data + layout.offset, sizeof(owner));
+    obelisk_rt_managed_word_v1 ownerWord = 0;
+    std::memcpy(&ownerWord, frame.data + layout.offset, sizeof(ownerWord));
+    owner = obelisk_rt_object_from_managed_word(ownerWord);
     std::memcpy(&payload, frame.data + layout.offset + 8, sizeof(payload));
     uint64_t tag = 0;
     std::memcpy(&tag, frame.data + layout.offset + 16, sizeof(tag));
@@ -245,7 +251,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
       if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
         return false;
-      std::memcpy(&key.object, frame.data + layout.offset, sizeof(key.object));
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, frame.data + layout.offset, sizeof(word));
+      key.object = obelisk_rt_object_from_managed_word(word);
       return true;
     }
     if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
@@ -272,7 +280,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         std::memcpy(&key.unknown, frame.data + layout.offset + planeSize,
                     static_cast<size_t>(planeSize));
     } else {
-      try {
+      OBELISK_RT_TRY {
         assocValueScratch.assign(frame.data + layout.offset,
                                  frame.data + layout.offset + planeSize);
         assocUnknownScratch.clear();
@@ -280,9 +288,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           assocUnknownScratch.assign(frame.data + layout.offset + planeSize,
                                      frame.data + layout.offset +
                                          2 * planeSize);
-      } catch (const std::bad_alloc &) {
-        return false;
       }
+      OBELISK_RT_CATCH(const std::bad_alloc &) { return false; }
       key.value_data = assocValueScratch.data();
       if (!assocUnknownScratch.empty())
         key.unknown_data = assocUnknownScratch.data();
@@ -301,7 +308,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
       if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
         return false;
-      std::memcpy(frame.data + layout.offset, &key.object, sizeof(key.object));
+      obelisk_rt_managed_word_v1 word =
+          obelisk_rt_managed_word_from_object(key.object);
+      std::memcpy(frame.data + layout.offset, &word, sizeof(word));
       return true;
     }
     if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
@@ -1026,7 +1035,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Logic mutableMask = readLogic(frame.data, mutableLayout);
     std::vector<uint64_t> captures;
     std::vector<uint32_t> captureWidths;
-    try {
+    OBELISK_RT_TRY {
       for (uint32_t index = 7; index != site.inputCount; ++index) {
         Layout layout = layoutAt(image, frame.function, inputRegister(index));
         if (layout.kind != OBELISK_RT_DBREG_BITS)
@@ -1036,9 +1045,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         captures.insert(captures.end(), capture.value.begin(),
                         capture.value.end());
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (const std::length_error &) {
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     Logic assignment{start.width, false, LimbVector(limbCount(start.width)),
@@ -1064,7 +1075,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!type || site.inputCount < 2)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<uint64_t> bins;
-    try {
+    OBELISK_RT_TRY {
       bins.reserve(site.inputCount - 1);
       for (uint32_t index = 1; index != site.inputCount; ++index) {
         auto count = scalar(index);
@@ -1072,9 +1083,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         bins.push_back(*count);
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (const std::length_error &) {
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     obelisk_rt_covergroup_v1 handle = 0;
@@ -1115,7 +1128,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!handle || site.inputCount < 1)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<uint8_t> hits;
-    try {
+    OBELISK_RT_TRY {
       hits.reserve(site.inputCount - 1);
       for (uint32_t index = 1; index != site.inputCount; ++index) {
         auto hit = scalar(index);
@@ -1123,9 +1136,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         hits.push_back(static_cast<uint8_t>(*hit));
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (const std::length_error &) {
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     return obelisk_rt_v1_covergroup_sample(context, *handle, hits.data(),
@@ -1154,7 +1169,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!type || site.inputCount < 2)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<uint64_t> bins;
-    try {
+    OBELISK_RT_TRY {
       bins.reserve(site.inputCount - 1);
       for (uint32_t index = 1; index != site.inputCount; ++index) {
         auto count = scalar(index);
@@ -1162,9 +1177,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         bins.push_back(*count);
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (const std::length_error &) {
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     double percentage = 0.0;
@@ -1574,7 +1591,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     obelisk_rt_object_v1 *object = readManaged(inputRegister(0));
-    std::memcpy(frame.data + output.offset, &object, sizeof(object));
+    obelisk_rt_managed_word_v1 word =
+        obelisk_rt_managed_word_from_object(object);
+    std::memcpy(frame.data + output.offset, &word, sizeof(word));
     std::memcpy(frame.data + output.offset + 8, &*offset, sizeof(*offset));
     return OBELISK_RT_OK;
   }
@@ -1589,8 +1608,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     obelisk_rt_object_v1 *watchOwner = nullptr;
-    std::memcpy(&watchOwner, frame.data + ownerReference.offset,
-                sizeof(watchOwner));
+    obelisk_rt_managed_word_v1 ownerWord = 0;
+    std::memcpy(&ownerWord, frame.data + ownerReference.offset,
+                sizeof(ownerWord));
+    watchOwner = obelisk_rt_object_from_managed_word(ownerWord);
     std::memcpy(&ownerPayload, frame.data + ownerReference.offset + 8,
                 sizeof(ownerPayload));
     std::memcpy(&ownerManaged, frame.data + ownerReference.offset + 16,
@@ -1704,7 +1725,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_object_v1 *path = readManaged(inputRegister(0));
     std::memset(frame.data + output.offset, 0, output.size);
-    std::memcpy(frame.data + output.offset, &path, sizeof(path));
+    obelisk_rt_managed_word_v1 pathWord =
+        obelisk_rt_managed_word_from_object(path);
+    std::memcpy(frame.data + output.offset, &pathWord, sizeof(pathWord));
     uint64_t managed = 2;
     std::memcpy(frame.data + output.offset + 16, &managed, sizeof(managed));
     return OBELISK_RT_OK;
@@ -1812,9 +1835,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!bitOffset || (*bitOffset & 63) != 0 || *bitOffset > input.width ||
         64 > input.width - *bitOffset)
       return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_object_v1 *object = nullptr;
-    std::memcpy(&object, frame.data + input.offset + *bitOffset / 8,
-                sizeof(object));
+    obelisk_rt_managed_word_v1 word = 0;
+    std::memcpy(&word, frame.data + input.offset + *bitOffset / 8,
+                sizeof(word));
+    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
     return writeManaged(outputRegister(0), object)
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;
@@ -1833,11 +1857,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 sizeof(word));
     word = obelisk_rt_v1_gc_candidate_root(context, word,
                                            static_cast<uint32_t>(*kindMask));
-    obelisk_rt_object_v1 *object =
-        word != 0 && (word & UINT64_C(3)) == 0
-            ? reinterpret_cast<obelisk_rt_object_v1 *>(
-                  static_cast<uintptr_t>(word))
-            : nullptr;
+    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
     return writeManaged(outputRegister(0), object)
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;
@@ -1858,7 +1878,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       Layout input = layoutAt(image, frame.function, inputRegister(0));
       if (input.kind != OBELISK_RT_DBREG_MANAGED || input.size != 8)
         return OBELISK_RT_INVALID_BYTECODE;
-      std::memcpy(&object, frame.data + input.offset, sizeof(object));
+      object = readManaged(inputRegister(0));
       break;
     }
     default:
@@ -1878,14 +1898,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     if (output.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_object_v1 *))
+      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_INVALID_BYTECODE;
-      obelisk_rt_object_v1 *value = nullptr;
+      obelisk_rt_managed_word_v1 value = 0;
       obelisk_rt_status status =
-          obelisk_rt_v1_object_field_load(object, offset, &value);
-      return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), value)
-                 ? OBELISK_RT_INVALID_BYTECODE
-                 : status;
+          obelisk_rt_v1_object_read(object, offset, &value, sizeof(value));
+      if (status != OBELISK_RT_OK)
+        return status;
+      obelisk_rt_object_v1 *decoded =
+          obelisk_rt_object_from_managed_word(value);
+      return value != obelisk_rt_managed_word_from_object(decoded) ||
+                     !writeManaged(outputRegister(0), decoded)
+                 ? OBELISK_RT_INVALID_HANDLE
+                 : OBELISK_RT_OK;
     }
     if (output.kind == OBELISK_RT_DBREG_HANDLE) {
       if (*planeSize != sizeof(uint64_t) || output.size < 32)
@@ -1931,10 +1956,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     if (input.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_object_v1 *))
+      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_INVALID_BYTECODE;
-      return obelisk_rt_v1_object_field_store(object, offset,
-                                              readManaged(inputRegister(1)));
+      obelisk_rt_managed_word_v1 value =
+          obelisk_rt_managed_word_from_object(readManaged(inputRegister(1)));
+      return obelisk_rt_v1_object_write(object, offset, &value, sizeof(value));
     }
     if (input.kind == OBELISK_RT_DBREG_HANDLE) {
       if (*planeSize != sizeof(uint64_t) || input.size < 32)
@@ -2023,7 +2049,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     const void *value = frame.data + input.offset;
     const void *unknown = nullptr;
     if (input.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_object_v1 *))
+      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_INVALID_BYTECODE;
     } else {
       uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
@@ -2190,10 +2216,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       for (const auto &[automaticID, count] : retainedAutomaticStates)
         context->nativeAutomaticStates.find(automaticID)
             ->second.referenceCount += count;
-      try {
+      OBELISK_RT_TRY {
         context->scheduledDesignTasks.push_back(std::move(task));
         uint64_t scheduledID = context->scheduledDesignTasks.back().id;
-        try {
+        OBELISK_RT_TRY {
           context->scheduledDesignTaskIndices[scheduledID] =
               context->scheduledDesignTasks.size() - 1;
           context->designPollCandidates.insert(scheduledID);
@@ -2206,7 +2232,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             obelisk_rt_program_register_unlocked(
                 context, scheduledID,
                 context->scheduledDesignTasks.back().programOwner);
-        } catch (...) {
+        }
+        OBELISK_RT_CATCH_ALL {
           if (context->scheduledDesignTasks.back().programOwner)
             obelisk_rt_program_complete_unlocked(
                 context, scheduledID,
@@ -2216,15 +2243,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           obelisk_rt_unregister_unstarted_actor(
               context, context->scheduledDesignTasks.back().phase, scheduledID);
           context->scheduledDesignTasks.pop_back();
-          throw;
+          OBELISK_RT_RETHROW;
         }
         obelisk_rt_retain_controls_unlocked(
             context, context->scheduledDesignTasks.back().controls);
-      } catch (...) {
+      }
+      OBELISK_RT_CATCH_ALL {
         for (const auto &[automaticID, count] : retainedAutomaticStates)
           context->nativeAutomaticStates.find(automaticID)
               ->second.referenceCount -= count;
-        throw;
+        OBELISK_RT_RETHROW;
       }
     }
     if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PRIME) != 0) {
@@ -2445,10 +2473,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, value.width, *siteID,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
-        static_cast<uint32_t>(*groupCount),
-        static_cast<uint32_t>(*nonblocking), *rise, *fall, *turnoff,
-        packedValue.data(), packedUnknown.data(), masks[0].data(),
-        masks[1].data(), masks[2].data(), masks[3].data(), masks[4].data());
+        static_cast<uint32_t>(*groupCount), static_cast<uint32_t>(*nonblocking),
+        *rise, *fall, *turnoff, packedValue.data(), packedUnknown.data(),
+        masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data(),
+        masks[4].data());
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     if (!context || !context->execution)
@@ -4094,8 +4122,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!readString(inputRegister(0), input))
       return OBELISK_RT_INVALID_BYTECODE;
     double result = 0.0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_plusarg_parse_real(input, &result);
+    obelisk_rt_status status = obelisk_rt_v1_plusarg_parse_real(input, &result);
     return status == OBELISK_RT_OK ? writeReal(0, result) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_SYSTEM: {

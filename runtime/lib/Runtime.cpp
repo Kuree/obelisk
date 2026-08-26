@@ -100,8 +100,7 @@ bool validObserverInventory(
       if (abi.kind < OBELISK_RT_OBSERVER_CAPTURE_STORAGE ||
           abi.kind > OBELISK_RT_OBSERVER_CAPTURE_MANAGED || abi.width == 0 ||
           (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1) ||
-          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
-           abi.width != 64))
+          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED && abi.width != 64))
         return false;
     }
     bool hasBytecode =
@@ -117,12 +116,14 @@ bool validObserverInventory(
 
 const obelisk_rt_execution_extension_v1 *
 executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
-  if (execution.reserved == 0 ||
-      execution.reserved > std::numeric_limits<uintptr_t>::max() ||
-      execution.reserved % alignof(obelisk_rt_execution_extension_v1) != 0)
+  uintptr_t base = reinterpret_cast<uintptr_t>(&execution);
+  if (execution.reserved < sizeof(execution) ||
+      execution.reserved > std::numeric_limits<uintptr_t>::max() - base)
     return nullptr;
-  return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
-      static_cast<uintptr_t>(execution.reserved));
+  uintptr_t address = base + static_cast<uintptr_t>(execution.reserved);
+  if (address % alignof(obelisk_rt_execution_extension_v1) != 0)
+    return nullptr;
+  return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(address);
 }
 
 bool validSampledRanges(const obelisk_rt_execution_descriptor_v1 &execution) {
@@ -243,7 +244,7 @@ namespace {
 
 void destroyContextNow(obelisk_rt_context *context) noexcept {
   std::vector<ScheduledProcess> processes;
-  try {
+  OBELISK_RT_TRY {
     // Settle the final time slot before the state planes go away.
     obelisk_rt_dump_destroy(context);
     if (context->vpiState)
@@ -274,8 +275,8 @@ void destroyContextNow(obelisk_rt_context *context) noexcept {
         std::fclose(context->files[index].stream);
     }
     std::fflush(stdout);
-  } catch (...) {
   }
+  OBELISK_RT_CATCH_ALL {}
   delete context;
 }
 
@@ -312,7 +313,7 @@ ContextTransaction::~ContextTransaction() noexcept {
   threadTransactionContext = previousThreadContext;
   threadTransactionDepth = previousThreadDepth;
   bool destroy = false;
-  try {
+  OBELISK_RT_TRY {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->transactionDepth != 0 && --context->transactionDepth == 0) {
@@ -323,7 +324,8 @@ ContextTransaction::~ContextTransaction() noexcept {
     transactionLock.unlock();
     if (destroy)
       destroyContextNow(context);
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     // Transaction teardown must not replace the operation's status.
   }
 }
@@ -341,11 +343,11 @@ void setLastErrorUnlocked(obelisk_rt_context *context, std::string message) {
 void setLastError(obelisk_rt_context *context, std::string message) {
   if (!context)
     return;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     setLastErrorUnlocked(context, std::move(message));
-  } catch (...) {
   }
+  OBELISK_RT_CATCH_ALL {}
 }
 
 void obelisk_rt_retain_controls_unlocked(
@@ -438,26 +440,26 @@ extern "C" uint32_t
 obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context) {
   if (!context)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0)
       return 0;
     bool pending = context->controlEscapePending;
     context->controlEscapePending = false;
     return pending ? 1u : 0u;
-  } catch (...) {
-    return 0;
   }
+  OBELISK_RT_CATCH_ALL { return 0; }
 }
 
 extern "C" uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
                                               uint64_t siteID) {
   if (!context || siteID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return context->initializedStaticSites.insert(siteID).second ? 1u : 0u;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     if (context)
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
@@ -468,7 +470,7 @@ extern "C" uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
                                                 uint64_t siteID) {
   if (!context || siteID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0)
       return 0;
@@ -481,7 +483,8 @@ extern "C" uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
                    .second
                ? 1u
                : 0u;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     if (context)
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
@@ -536,8 +539,7 @@ bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
   if (!context || assertionID == 0)
     return false;
   resetDeferredImmediateReportsForTime(context);
-  auto assertion =
-      context->deferredImmediateAssertionReports.find(assertionID);
+  auto assertion = context->deferredImmediateAssertionReports.find(assertionID);
   if (assertion == context->deferredImmediateAssertionReports.end())
     return false;
   bool canceled = false;
@@ -585,12 +587,11 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
                                 uint64_t assertionID) {
   if (!context || assertionID == 0 || action < 1 || action > 11)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = context->assertionControlStates.find(assertionID);
-    uint8_t state = found == context->assertionControlStates.end()
-                        ? 0
-                        : found->second;
+    uint8_t state =
+        found == context->assertionControlStates.end() ? 0 : found->second;
     bool killApplied = false;
     if (action == 2) {
       state &= ~kAssertionLocked;
@@ -612,12 +613,12 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
         killApplied = true;
         break;
       case 6:
-        state &= ~(kAssertionNonvacuousPassDisabled |
-                   kAssertionVacuousPassDisabled);
+        state &=
+            ~(kAssertionNonvacuousPassDisabled | kAssertionVacuousPassDisabled);
         break;
       case 7:
-        state |= kAssertionNonvacuousPassDisabled |
-                 kAssertionVacuousPassDisabled;
+        state |=
+            kAssertionNonvacuousPassDisabled | kAssertionVacuousPassDisabled;
         break;
       case 8:
         state &= ~kAssertionFailDisabled;
@@ -645,7 +646,8 @@ obelisk_rt_v1_assertion_control(obelisk_rt_context *context, uint32_t action,
                                                               assertionID);
     }
     return OBELISK_RT_OK;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return OBELISK_RT_OUT_OF_MEMORY;
   }
@@ -655,14 +657,15 @@ extern "C" uint32_t obelisk_rt_v1_assertion_enabled(obelisk_rt_context *context,
                                                     uint64_t assertionID) {
   if (!context || assertionID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = context->assertionControlStates.find(assertionID);
     return found == context->assertionControlStates.end() ||
                    (found->second & kAssertionDisabled) == 0
                ? 1u
                : 0u;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
   }
@@ -673,12 +676,11 @@ obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
                                      uint64_t assertionID) {
   if (!context || assertionID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = context->assertionControlStates.find(assertionID);
-    uint8_t state = found == context->assertionControlStates.end()
-                        ? 0
-                        : found->second;
+    uint8_t state =
+        found == context->assertionControlStates.end() ? 0 : found->second;
     uint32_t enabled = 7;
     if ((state & kAssertionNonvacuousPassDisabled) != 0)
       enabled &= ~UINT32_C(1);
@@ -687,7 +689,8 @@ obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
     if ((state & kAssertionFailDisabled) != 0)
       enabled &= ~UINT32_C(4);
     return enabled;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
   }
@@ -698,11 +701,12 @@ obelisk_rt_v1_assertion_kill_epoch(obelisk_rt_context *context,
                                    uint64_t assertionID) {
   if (!context || assertionID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = context->assertionKillEpochs.find(assertionID);
     return found == context->assertionKillEpochs.end() ? 0 : found->second;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
   }
@@ -712,7 +716,7 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     obelisk_rt_context *context, uint64_t siteID, uint64_t assertionID) {
   if (!context || siteID == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0)
       return 0;
@@ -720,9 +724,8 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     uint64_t ticket = context->nextDeferredImmediateTicket++;
     if (ticket == 0)
       ticket = context->nextDeferredImmediateTicket++;
-    auto &sites =
-        context->latestDeferredImmediateReports
-            [context->activeLogicalProcessToken];
+    auto &sites = context->latestDeferredImmediateReports
+                      [context->activeLogicalProcessToken];
     auto previous = sites.find(siteID);
     if (previous != sites.end())
       eraseDeferredImmediateReportUnlocked(context, previous->second);
@@ -733,7 +736,8 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     if (assertionID != 0)
       context->deferredImmediateAssertionReports[assertionID].insert(ticket);
     return ticket;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     if (context)
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
@@ -749,7 +753,7 @@ extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
                                                   uint64_t ticket) {
   if (!context || ticket == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     resetDeferredImmediateReportsForTime(context);
     auto report = context->deferredImmediateReports.find(ticket);
@@ -769,7 +773,8 @@ extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
     }
     eraseDeferredImmediateReportUnlocked(context, ticket);
     return current ? 1u : 0u;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     if (context)
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
@@ -942,7 +947,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
   if (!outContext)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outContext = nullptr;
-  try {
+  OBELISK_RT_TRY {
     DesignDatabaseCache designDatabase;
     obelisk::designbytecode::Image designBytecodeImage;
     if (execution) {
@@ -1003,7 +1008,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     }
     if (execution && execution->state_bit_count != 0) {
       if (execution->state_bit_count > std::numeric_limits<size_t>::max() - 63)
-        throw std::bad_alloc();
+        obelisk_rt_out_of_memory();
       size_t limbs =
           static_cast<size_t>((execution->state_bit_count + 63) / 64);
       context->stateValue.assign(limbs, 0);
@@ -1031,11 +1036,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
     }
     *outContext = context;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" void obelisk_rt_v1_context_destroy(obelisk_rt_context *context) {
@@ -1138,7 +1141,7 @@ obelisk_rt_v1_scheduler_report_status(obelisk_rt_context *context,
   // failure to report: $finish is OK and $fatal already printed its message.
   if (!context || status == OBELISK_RT_OK || status == OBELISK_RT_FATAL)
     return;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto error = threadErrors.find(context);
     bool described =
@@ -1150,6 +1153,6 @@ obelisk_rt_v1_scheduler_report_status(obelisk_rt_context *context,
                    error->second.message.c_str(), status);
     else
       std::fprintf(stderr, "error: simulation ended with status %d\n", status);
-  } catch (...) {
   }
+  OBELISK_RT_CATCH_ALL {}
 }

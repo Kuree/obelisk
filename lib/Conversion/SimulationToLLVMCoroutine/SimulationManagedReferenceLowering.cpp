@@ -586,7 +586,6 @@ public:
             analysis::getSimulationPhysicalStorageCount(*storage))
       return failure();
 
-    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i64 = rewriter.getI64Type();
     Value object =
         managedObjectPointer(rewriter, op.getLoc(), adaptor.getReference()[0]);
@@ -594,50 +593,32 @@ public:
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     SmallVector<Value> results;
-    if (isa<sim::ClassHandleType>(op.getResult().getType())) {
-      Value output = entryAlloca(rewriter, op.getLoc(), pointer, 1, 8);
-      LLVM::StoreOp::create(
-          rewriter, op.getLoc(),
-          LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer), output, 8);
-      Value status =
-          LLVM::CallOp::create(
-              rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-              SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_object_field_load"),
-              ValueRange{object, baseOffset, output})
-              .getResult();
-      reportManagedStatus(rewriter, op.getLoc(), context, status);
-      Value loaded =
-          LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
-      results.push_back(managedObjectHandle(rewriter, op.getLoc(), loaded));
-    } else {
-      SmallVector<Value> outputs;
-      for (Type type : convertedTypes) {
-        Value output =
-            entryAlloca(rewriter, op.getLoc(), type, 1, storage->alignment);
-        LLVM::StoreOp::create(rewriter, op.getLoc(),
-                              LLVM::ZeroOp::create(rewriter, op.getLoc(), type),
-                              output, storage->alignment);
-        outputs.push_back(output);
-      }
-      SmallVector<Value> arguments{
-          object, baseOffset, outputs.front(),
-          llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
-      StringRef callee = "obelisk_rt_v1_object_read";
-      if (outputs.size() == 2) {
-        callee = "obelisk_rt_v1_object_read_planes";
-        arguments.insert(arguments.end() - 1, outputs[1]);
-      }
-      Value status =
-          LLVM::CallOp::create(
-              rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-              SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
-              .getResult();
-      reportManagedStatus(rewriter, op.getLoc(), context, status);
-      for (auto [type, output] : llvm::zip_equal(convertedTypes, outputs))
-        results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), type,
-                                               output, storage->alignment));
+    SmallVector<Value> outputs;
+    for (Type type : convertedTypes) {
+      Value output =
+          entryAlloca(rewriter, op.getLoc(), type, 1, storage->alignment);
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), type),
+                            output, storage->alignment);
+      outputs.push_back(output);
     }
+    SmallVector<Value> arguments{
+        object, baseOffset, outputs.front(),
+        llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
+    StringRef callee = "obelisk_rt_v1_object_read";
+    if (outputs.size() == 2) {
+      callee = "obelisk_rt_v1_object_read_planes";
+      arguments.insert(arguments.end() - 1, outputs[1]);
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    for (auto [type, output] : llvm::zip_equal(convertedTypes, outputs))
+      results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), type,
+                                             output, storage->alignment));
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
@@ -701,9 +682,8 @@ public:
       return failure();
     unsigned boundBits = std::max(
         2u, llvm::Log2_64_Ceil(static_cast<uint64_t>(std::max(
-                                      *inputWidth,
-                                      replacementType.getWidth())) +
-                                  1) +
+                                   *inputWidth, replacementType.getWidth())) +
+                               1) +
                 2);
     unsigned checkWidth = std::max(lowType.getWidth() + 1, boundBits);
     Value checkedLow = resizeSigned(low, checkWidth);
@@ -712,10 +692,9 @@ public:
         rewriter, location, arith::CmpIPredicate::sge, checkedLow,
         signedConstant(checkType,
                        -static_cast<int64_t>(replacementType.getWidth() - 1)));
-    Value belowField =
-        arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::slt,
-                              checkedLow,
-                              signedConstant(checkType, *inputWidth));
+    Value belowField = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::slt, checkedLow,
+        signedConstant(checkType, *inputWidth));
     Value valid =
         arith::AndIOp::create(rewriter, location, atLeastPartial, belowField);
 
@@ -771,38 +750,27 @@ public:
     Value baseOffset = adaptor.getReference()[1];
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
-    Value status;
-    if (isa<sim::ClassHandleType>(op.getValue().getType())) {
-      status = LLVM::CallOp::create(
-                   rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                   SymbolRefAttr::get(rewriter.getContext(),
-                                      "obelisk_rt_v1_object_field_store"),
-                   ValueRange{object, baseOffset,
-                              managedObjectPointer(rewriter, op.getLoc(),
-                                                   adaptor.getValue().front())})
-                   .getResult();
-    } else {
-      SmallVector<Value> inputs;
-      for (Value value : adaptor.getValue()) {
-        Value input = entryAlloca(rewriter, op.getLoc(), value.getType(), 1,
-                                  storage->alignment);
-        LLVM::StoreOp::create(rewriter, op.getLoc(), value, input,
-                              storage->alignment);
-        inputs.push_back(input);
-      }
-      SmallVector<Value> arguments{
-          object, baseOffset, inputs.front(),
-          llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
-      StringRef callee = "obelisk_rt_v1_object_write";
-      if (inputs.size() == 2) {
-        callee = "obelisk_rt_v1_object_write_planes";
-        arguments.insert(arguments.end() - 1, inputs[1]);
-      }
-      status = LLVM::CallOp::create(
-                   rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                   SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
-                   .getResult();
+    SmallVector<Value> inputs;
+    for (Value value : adaptor.getValue()) {
+      Value input = entryAlloca(rewriter, op.getLoc(), value.getType(), 1,
+                                storage->alignment);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), value, input,
+                            storage->alignment);
+      inputs.push_back(input);
     }
+    SmallVector<Value> arguments{
+        object, baseOffset, inputs.front(),
+        llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
+    StringRef callee = "obelisk_rt_v1_object_write";
+    if (inputs.size() == 2) {
+      callee = "obelisk_rt_v1_object_write_planes";
+      arguments.insert(arguments.end() - 1, inputs[1]);
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(), callee), arguments)
+            .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
     return success();

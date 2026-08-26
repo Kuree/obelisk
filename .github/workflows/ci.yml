@@ -129,16 +129,28 @@ jobs:
     name: Build and test wasm
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    # Runs inside the prebuilt toolchain image, which carries emsdk and the
-    # wasm64 LLVM SDK. Building that SDK here instead would add ~3.7 core-hours
-    # to every run for an artifact that only changes when the LLVM pin does.
-    # Rebuild and push with docker/Dockerfile.llvm-wasm64; see docker/README.md.
-    container:
-      image: ghcr.io/kuree/obelisk-llvm-wasm64:22.1.6-2@sha256:b46fd28bfdd9faa8b7262a1f047759f4bf9b68a00cf8aed8e6b42eabb27e0aba
+    # Build the checked-in SDK image instead of relying on a separately
+    # published GHCR package. BuildKit's cache makes the expensive LLVM layer
+    # reusable while a clean fork or fresh repository remains self-contained.
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      WASM_IMAGE: obelisk-llvm-wasm32:ci
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build wasm32 SDK image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile.llvm-wasm
+          target: toolchain
+          load: true
+          tags: ${{ env.WASM_IMAGE }}
+          build-args: JOBS=4
+          cache-from: type=gha,scope=obelisk-llvm-wasm32
+          cache-to: type=gha,mode=min,scope=obelisk-llvm-wasm32
 
       # A separate key from the native job: different compiler, different
       # target, so the two would only evict each other under one key.
@@ -151,27 +163,35 @@ jobs:
 
       - name: Prepare compiler cache
         run: |
-          ccache --max-size=2G
-          ccache --zero-stats
+          mkdir -p "$CCACHE_DIR"
+          docker run --rm -v "$CCACHE_DIR:/ccache" \
+            -e CCACHE_DIR=/ccache "$WASM_IMAGE" \
+            sh -c 'ccache --max-size=2G && ccache --zero-stats'
 
       # The SDK ships inside the image. CMakeLists.txt always downloads and
       # extracts OBELISK_LLVM_PREBUILT_URL, so it is consumed through a file://
       # URL rather than needing a source change.
-      - name: Build obelisk for wasm64
+      - name: Build obelisk for wasm32
         run: |
-          SHA=$(cat "$OBELISK_LLVM_WASM64_SHA256_FILE")
-          emcmake cmake -S . -B build-wasm -G Ninja \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DOBELISK_INCLUDE_TESTS=OFF \
-            -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM64_SDK" \
-            -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-wasm -j "$(nproc)" --target obelisk
+          docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
+            -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
+              set -euo pipefail
+              SHA=$(cat "$OBELISK_LLVM_WASM_SHA256_FILE")
+              emcmake cmake -S . -B build-wasm -G Ninja \
+                -DCMAKE_BUILD_TYPE=MinSizeRel \
+                -DOBELISK_INCLUDE_TESTS=OFF \
+                -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
+                -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+              cmake --build build-wasm -j "$(nproc)" --target obelisk
+            '
 
       - name: Compiler cache stats
         if: always()
-        run: ccache --show-stats --verbose
+        run: |
+          docker run --rm -v "$CCACHE_DIR:/ccache" \
+            -e CCACHE_DIR=/ccache "$WASM_IMAGE" ccache --show-stats --verbose
 
       - name: Save compiler cache
         if: github.ref == 'refs/heads/main'
@@ -182,32 +202,89 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p site/toolchain
-          cp -r web/* site/
-          cp build-wasm/tools/driver/obelisk.wasm site/
-          cp build-wasm/tools/driver/obelisk.js   site/
-          cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
-          # Materialize the exact wasm64 exception-runtime variants selected
-          # by Emscripten, then publish them under the stable names loaded by
-          # web/toolchain.js.
-          em++ /emsdk/upstream/emscripten/test/hello_world.cpp -O3 \
-            -sMEMORY64=1 -fwasm-exceptions -o /tmp/hello.js
-          SYSROOT_LIB=/emsdk/upstream/emscripten/cache/sysroot/lib/wasm64-emscripten
-          cp "$SYSROOT_LIB/libstubs.a" site/toolchain/libstubs.a
-          cp "$SYSROOT_LIB/libnoexit.a" site/toolchain/libnoexit.a
-          cp "$SYSROOT_LIB/libc.a" site/toolchain/libc.a
-          cp "$SYSROOT_LIB/libdlmalloc.a" site/toolchain/libdlmalloc.a
-          cp "$SYSROOT_LIB/libclang_rt.builtins-legacysjlj.a" \
-            site/toolchain/libcompiler_rt.a
-          cp "$SYSROOT_LIB/libc++-legacyexcept.a" site/toolchain/libc++.a
-          cp "$SYSROOT_LIB/libc++abi-legacyexcept.a" site/toolchain/libc++abi.a
-          cp "$SYSROOT_LIB/libunwind-legacyexcept.a" site/toolchain/libunwind.a
-          du -sh site
-          # Pages officially supports 1 GB; fail loudly rather than at deploy.
-          test "$(du -sm site | cut -f1)" -lt 1000
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" bash -c '
+            set -euo pipefail
+            mkdir -p site/toolchain
+            cp -r web/* site/
+            cp build-wasm/tools/driver/obelisk.wasm site/
+            cp build-wasm/tools/driver/obelisk.js site/
+            cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
+            # Populate Emscripten cache entries for the no-exception ABI, then
+            # publish exactly those libc++ variants for simulation links.
+            em++ /emsdk/upstream/emscripten/test/hello_world.cpp -O3 \
+              -fno-exceptions -o /tmp/hello.js
+            LIB=/emsdk/upstream/emscripten/cache/sysroot/lib/wasm32-emscripten
+            cp "$LIB/libstubs.a" site/toolchain/libstubs.a
+            cp "$LIB/libnoexit.a" site/toolchain/libnoexit.a
+            cp "$LIB/libc.a" site/toolchain/libc.a
+            cp "$LIB/libdlmalloc.a" site/toolchain/libdlmalloc.a
+            cp "$LIB/libclang_rt.builtins.a" site/toolchain/libcompiler_rt.a
+            cp "$LIB/libc++-noexcept.a" site/toolchain/libc++.a
+            cp "$LIB/libc++abi-noexcept.a" site/toolchain/libc++abi.a
+            cp "$LIB/libunwind-noexcept.a" site/toolchain/libunwind.a
+            du -sh site
+            test "$(du -sm site | cut -f1)" -lt 1000
+          '
+
+      - name: Reject wasm exception opcodes
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" bash -c '
+            set -euo pipefail
+            OBJDUMP=/emsdk/upstream/bin/llvm-objdump
+            test -x "$OBJDUMP"
+            PATTERN="^[[:space:]]+[0-9a-f]+: .*\\b(try|try_table|catch|catch_all|delegate|rethrow|throw|throw_ref)\\b"
+            EH_SYMBOLS="(__cxa_(allocate_exception|begin_catch|end_catch|rethrow|throw)|_Unwind_)"
+            DUMP=$(mktemp)
+            trap "rm -f \"$DUMP\"" EXIT
+            for input in site/obelisk.wasm site/toolchain/*.a; do
+              if ! "$OBJDUMP" -d "$input" >"$DUMP" 2>&1; then
+                echo "failed to disassemble $input" >&2
+                cat "$DUMP" >&2
+                exit 1
+              fi
+              if grep -Eq "$PATTERN" "$DUMP"; then
+                echo "wasm exception opcode found in $input" >&2
+                exit 1
+              fi
+              if [[ "$input" == *.a ]]; then
+                "$OBJDUMP" --syms "$input" >"$DUMP"
+                if grep -E "[[:space:]]\\*UND\\*[[:space:]].*$EH_SYMBOLS" \
+                    "$DUMP"; then
+                  echo "C++ exception runtime dependency in $input" >&2
+                  exit 1
+                fi
+              fi
+            done
+          '
+
+      - name: Run browser unit tests
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" bash -c '
+            set -euo pipefail
+            for test in web/*.test.mjs; do node "$test"; done
+          '
 
       - name: Run browser-toolchain smoke test
-        run: node site/smoke-test.mjs
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
+            node site/smoke-test.mjs
+
+      # Every design the page offers, at both optimization levels. The smoke
+      # test proves one small design works; these cover classes, randomization,
+      # assertions, tri-state nets and an RV32IM core, which is a far wider
+      # slice of the language and of the runtime ABI.
+      - name: Run every example design
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
+            node site/examples-test.mjs -O3
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
+            node site/examples-test.mjs -O0
+
+      - name: Remove test runners from Pages artifact
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
+            sh -c 'rm -f site/*.test.mjs site/smoke-test.mjs \
+              site/examples-test.mjs'
 
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'

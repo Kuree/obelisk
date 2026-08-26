@@ -123,8 +123,9 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = unknownEnd;
     } else if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
-      if (field.reserved != 0 || field.size != sizeof(obelisk_rt_object_v1 *) ||
-          field.alignment < alignof(obelisk_rt_object_v1 *))
+      if (field.reserved != 0 ||
+          field.size != sizeof(obelisk_rt_managed_word_v1) ||
+          field.alignment < alignof(obelisk_rt_managed_word_v1))
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = end;
     } else if (field.flags == OBELISK_RT_FRAME_CANDIDATE_ROOT) {
@@ -446,6 +447,7 @@ obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
   case OBELISK_RT_FRAGMENT_TASK_CALL:
     if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
         action.continuation == 0 || action.payload == 0 ||
+        action.payload > std::numeric_limits<uintptr_t>::max() ||
         action.auxiliary != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
     break;

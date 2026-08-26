@@ -54,13 +54,13 @@ assert.match(surfer, /ZoomToFit:\s*\{\s*viewport_idx:\s*0\s*\}/);
 assert.doesNotMatch(surfer, /LoadCommandFromData/);
 assert.doesNotMatch(surfer, /scope_add_recursive/);
 
-assert.match(app, /finishRecording\(`\$\{note\}compile \$\{compileMs\} ms · run \$\{runMs\} ms`/);
+assert.match(app, /`\$\{note\}compile \$\{compileMs\} ms · run \$\{runMs\} ms\$\{simulated\}`/);
 assert.match(app, /const\s+initialSource\s*=\s*saved\?\.source\s*\?\?\s*EXAMPLES\[0\]\.source/);
 assert.match(app, /initialExampleIndex\s*=\s*EXAMPLES\.findIndex/);
 assert.match(app, /if\s*\(ui\.examples\.value\s*===\s*''\)\s*return;/);
 assert.doesNotMatch(app, /ui\.examples\.value\s*=\s*'';/);
 assert.match(app, /setStatus\('running',\s*'busy'\)/);
-assert.match(app, /finishRecording\([^;]+code === 0 \? 'ok' : 'err'\)/s);
+assert.match(app, /finishRecording\(\s*`\$\{note\}compile[^;]+code === 0 \? 'ok' : 'err',?\s*\)/s);
 assert.match(app, /saveWaveform\(latestWaveform\)/);
 assert.match(app, /showSchedule\(text\)/);
 assert.match(app, /const\s+request\s*=\s*\+\+waveformRequest/);

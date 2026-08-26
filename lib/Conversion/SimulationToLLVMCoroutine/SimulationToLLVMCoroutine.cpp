@@ -179,7 +179,6 @@ using detail::prepareSuspendableProcess;
 using detail::specializeNativeAOTCaptures;
 using detail::stableProcessID;
 using detail::threadProcessStateThroughCFG;
-using detail::validateProcessABI;
 
 /// Preserve the compact-NBA conversion proof on the operation that consumes
 /// it. Function and NBA conversion patterns may run in either order, so the
@@ -3015,7 +3014,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         });
     if (evalScheduler) {
       if (failed(makeNativeEvalPlan(
-              module, aotEligibility.getActorSlots().size(), executableNodes,
+              module, dataLayout, aotEligibility.getActorSlots().size(),
+              executableNodes,
               *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
               *directFragments, evalOwnership, threeTierPlan.sourceGraph,
               periodicClocks, periodicAliases, directStaticState, staticNBA,
@@ -3023,7 +3023,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               aotEligibility.isFullyEligible(), rootSlotZero, vpi)))
         return failure();
     } else if (failed(makeNativeAOTPlanLegacy(
-                   module, aotEligibility.getActorSlots().size(),
+                   module, dataLayout, aotEligibility.getActorSlots().size(),
                    executableNodes, *stateLayout, staticNBAPlan,
                    staticFanoutPlan, staticActorRoots, directStaticState,
                    staticNBA, staticControl, staticFanout, cleanSuperstep,
@@ -4411,16 +4411,16 @@ public:
                          << llvm::toString(parsed.takeError());
       return signalPassFailure();
     }
-    if (!parsed->isLittleEndian() || parsed->getPointerSizeInBits() != 64) {
-      module.emitError("coroutine lowering currently requires a 64-bit "
-                       "little-endian target");
+    unsigned pointerBits = parsed->getPointerSizeInBits();
+    if (!parsed->isLittleEndian() ||
+        (pointerBits != 32 && pointerBits != 64)) {
+      module.emitError("coroutine lowering requires a little-endian target "
+                       "with 32-bit or 64-bit pointers");
       return signalPassFailure();
     }
-    if (failed(validateProcessABI(module, *parsed)))
-      return signalPassFailure();
     if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
       return signalPassFailure();
-    if (failed(materializeEmbeddedSimulationDesign(module)))
+    if (failed(materializeEmbeddedSimulationDesign(module, *parsed)))
       return signalPassFailure();
     markTiming("validation and embedded design");
 

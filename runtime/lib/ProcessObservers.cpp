@@ -115,7 +115,7 @@ bool evaluateNativeObserver(obelisk_rt_context *context, uint64_t processToken,
   ++context->observerDepth;
   {
     ContextCallbackUnlock unlock(context);
-    try {
+    OBELISK_RT_TRY {
       if ((waiter->tier == OBELISK_RT_TIER_BYTECODE ||
            !descriptor->native_evaluator) &&
           descriptor->bytecode_function != OBELISK_RT_OBSERVER_NO_BYTECODE) {
@@ -130,11 +130,11 @@ bool evaluateNativeObserver(obelisk_rt_context *context, uint64_t processToken,
       } else {
         status = OBELISK_RT_TIER_UNAVAILABLE;
       }
-    } catch (const std::bad_alloc &) {
-      status = OBELISK_RT_OUT_OF_MEMORY;
-    } catch (...) {
-      status = OBELISK_RT_INVALID_ARGUMENT;
     }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      status = OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH_ALL { status = OBELISK_RT_INVALID_ARGUMENT; }
   }
   --context->observerDepth;
   waiterControls = std::move(context->activeControls);
@@ -237,9 +237,10 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
         }
       }
       if (!affected) {
-        try {
+        OBELISK_RT_TRY {
           context->pendingNativeComputedWaiters.push_back(token);
-        } catch (const std::bad_alloc &) {
+        }
+        OBELISK_RT_CATCH(const std::bad_alloc &) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
           return false;
         }
@@ -328,9 +329,8 @@ bool evaluateNativeComputedWaiters(obelisk_rt_context *context,
             updated && updated->instance) {
           updated->signalTriggered = true;
           context->prioritySignalPending |= updated->prioritySignal;
-          try {
-            context->nativePollCandidates.insert(token);
-          } catch (const std::bad_alloc &) {
+          OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
+          OBELISK_RT_CATCH(const std::bad_alloc &) {
             context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
             return false;
           }

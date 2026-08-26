@@ -16,9 +16,11 @@ namespace obelisk::runtimelowering {
 
 FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                                            const llvm::DataLayout &layout) {
-  if (!layout.isLittleEndian() || layout.getPointerSizeInBits() != 64) {
-    module.emitError()
-        << "runtime lowering currently requires a 64-bit little-endian target";
+  unsigned pointerBits = layout.getPointerSizeInBits();
+  if (!layout.isLittleEndian() ||
+      (pointerBits != 32 && pointerBits != 64)) {
+    module.emitError() << "runtime lowering requires a little-endian target "
+                          "with 32-bit or 64-bit pointers";
     return failure();
   }
 
@@ -34,16 +36,9 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
   auto *span = llvm::StructType::get(context, {pointer, i64});
   auto *formatArgument =
       llvm::StructType::get(context, {i32, i32, i64, pointer, pointer});
-  auto *enumArgument =
-      llvm::StructType::get(context, {i64, i32, i32, pointer, pointer, i64});
-  auto *rawAggregateArgument = llvm::StructType::get(context, {i64, i64, i64});
   auto *formatEnvironment = llvm::StructType::get(
       context, {pointer, i64, pointer, i64, i32, i32, pointer, i64, i64});
-  auto *handle = llvm::StructType::get(context, {i32, i32, i64});
   auto *action = llvm::StructType::get(context, {i32, i32, i32, i32, i64, i64});
-  auto *bytecode = llvm::StructType::get(
-      context, {pointer, i64, pointer, i32, i32, i64, pointer, pointer, i64,
-                pointer, i32, i32, pointer, i64});
   auto checkType = [&](llvm::StringRef name, llvm::Type *type,
                        uint64_t expectedSize,
                        uint64_t expectedAlignment) -> LogicalResult {
@@ -59,89 +54,18 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
     }
     return success();
   };
-  auto checkStruct =
-      [&](llvm::StringRef name, llvm::ArrayRef<llvm::Type *> elements,
-          llvm::ArrayRef<uint64_t> offsets, uint64_t expectedSize,
-          uint64_t expectedAlignment) -> LogicalResult {
-    auto *type = llvm::StructType::get(context, elements);
-    if (failed(checkType(name, type, expectedSize, expectedAlignment)))
-      return failure();
-    const llvm::StructLayout *structLayout =
-        validationLayout.getStructLayout(type);
-    for (auto [index, offset] : llvm::enumerate(offsets))
-      if (structLayout->getElementOffset(index) != offset) {
-        module.emitError() << "LLVM data layout is incompatible with the "
-                              "Obelisk runtime ABI for "
-                           << name << " field " << index << " (expected offset "
-                           << offset << ")";
-        return failure();
-      }
-    return success();
-  };
-
-  if (failed(checkType("pointer", pointer, 8, 8)) ||
+  // The runtime-facing records are ordinary C structs made from these scalar
+  // types. Their padding and offsets are deliberately obtained from this
+  // DataLayout wherever lowering needs them; duplicating complete 32-bit and
+  // 64-bit offset tables here made the target layout a second, fallible source
+  // of truth. Validate only the scalar C ABI contract that those derived
+  // layouts rely on.
+  uint64_t pointerBytes = pointerBits / 8;
+  if (failed(checkType("pointer", pointer, pointerBytes, pointerBytes)) ||
       failed(checkType("i8", i8, 1, 1)) ||
       failed(checkType("i16", i16, 2, 2)) ||
       failed(checkType("i32", i32, 4, 4)) ||
-      failed(checkType("i64", i64, 8, 8)) ||
-      failed(checkStruct("byte span", {pointer, i64}, {0, 8}, 16, 8)) ||
-      failed(checkStruct("format argument", formatArgument->elements(),
-                         {0, 4, 8, 16, 24}, 32, 8)) ||
-      failed(checkStruct("enum format argument", enumArgument->elements(),
-                         {0, 8, 12, 16, 24, 32}, 40, 8)) ||
-      failed(checkStruct("raw aggregate format argument",
-                         rawAggregateArgument->elements(), {0, 8, 16}, 24,
-                         8)) ||
-      failed(checkStruct("stable handle", {i32, i32, i64}, {0, 4, 8}, 16, 8)) ||
-      failed(checkStruct("fragment action", {i32, i32, i32, i32, i64, i64},
-                         {0, 4, 8, 12, 16, 24}, 32, 8)) ||
-      failed(checkStruct("wait entry", {i64, i32, i32}, {0, 8, 12}, 16, 8)) ||
-      failed(checkStruct("format environment", formatEnvironment->elements(),
-                         {0, 8, 16, 24, 32, 36, 40, 48, 56}, 64, 8)) ||
-      failed(checkStruct("bytecode entry", {i32, i32}, {0, 4}, 8, 4)) ||
-      failed(checkStruct("bytecode validation", {i32, i32}, {0, 4}, 8, 4)) ||
-      failed(checkStruct("bytecode operand",
-                         {i8, i8, i8, i8, i32, i64, i64, i64},
-                         {0, 1, 2, 3, 4, 8, 16, 24}, 32, 8)) ||
-      failed(checkStruct("bytecode service site", {i32, i32, i16, i16, i32},
-                         {0, 4, 8, 10, 12}, 16, 4)) ||
-      failed(checkStruct("bytecode program",
-                         {pointer, i64, pointer, i32, i32, i64, pointer,
-                          pointer, i64, pointer, i32, i32, pointer, i64},
-                         {0, 8, 16, 24, 28, 32, 40, 48, 56, 64, 72, 76, 80, 88},
-                         96, 8)) ||
-      failed(checkStruct("fragment descriptor", {handle, i32, i32, bytecode},
-                         {0, 16, 20, 24}, 120, 8)) ||
-      failed(checkStruct("process frame field", {i32, i32, i64, i64, i32, i32},
-                         {0, 4, 8, 16, 24, 28}, 32, 8)) ||
-      failed(checkStruct("process frame layout",
-                         {i32, i32, i64, i64, pointer, i32, i32, pointer, i64},
-                         {0, 4, 8, 16, 24, 32, 36, 40, 48}, 56, 8)) ||
-      failed(checkStruct("activation descriptor", {i64, pointer, i32, i32},
-                         {0, 8, 16, 20}, 24, 8)) ||
-      failed(checkStruct("observer capture ABI", {i32, i32}, {0, 4}, 8, 4)) ||
-      failed(checkStruct("observer descriptor",
-                         {i64, pointer, i32, i32, i32, i32, pointer, i64},
-                         {0, 8, 16, 20, 24, 28, 32, 40}, 48, 8)) ||
-      failed(
-          checkStruct("execution descriptor",
-                      {i32, i32, i32, i32, pointer, i64, pointer, i64, i64, i64,
-                       pointer, i64, i32, i32, pointer, i64, pointer, i64},
-                      {0, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 84, 88,
-                       96, 104, 112},
-                      120, 8)) ||
-      failed(checkStruct("design bytecode entry", {pointer, i32, i32},
-                         {0, 8, 12}, 16, 8)) ||
-      failed(checkStruct("process descriptor",
-                         {handle, i32, i32, i32, i32, pointer, pointer, pointer,
-                          pointer, pointer, pointer, pointer},
-                         {0, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80}, 88,
-                         8)) ||
-      failed(checkStruct("process instance",
-                         {pointer, pointer, pointer, i64, i64, i64, pointer,
-                          i32, i32, i32, i32, pointer, pointer},
-                         {0, 8, 16, 24, 32, 40, 48, 56, 60, 64, 68, 72, 80}, 88,
-                         8)))
+      failed(checkType("i64", i64, 8, 8)))
     return failure();
 
   return ABIAlignments{

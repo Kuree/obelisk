@@ -383,7 +383,7 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
     return OBELISK_RT_INVALID_ARGUMENT;
   context->managedValueOverridePossible.store(true, std::memory_order_relaxed);
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     uint64_t absolute = 0;
     std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
@@ -529,11 +529,9 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
         context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
         publishedValue.data(), publishedUnknown.data());
     return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status
@@ -572,7 +570,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
       context->execution->state_bit_count != globalBitCount)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     uint64_t absolute = 0;
     std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
@@ -656,11 +654,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
           context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
           publishedValue.data(), publishedUnknown.data());
     return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
@@ -683,7 +679,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     maskPadding();
     return OBELISK_RT_OK;
   }
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     uint32_t id = 0;
     int64_t offset = 0;
@@ -697,7 +693,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       if (state.managedRootRegistered) {
         if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
           return OBELISK_RT_INVALID_HANDLE;
-        std::memcpy(outValue, &state.managedValue, sizeof(state.managedValue));
+        obelisk_rt_managed_word_v1 word =
+            obelisk_rt_managed_word_from_object(state.managedValue);
+        std::memcpy(outValue, &word, sizeof(word));
         return OBELISK_RT_OK;
       }
       const std::vector<uint8_t> &plane =
@@ -775,10 +773,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     }
     maskPadding();
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -798,7 +798,7 @@ static obelisk_rt_status nativeStateStorePlane(
   if (handle == UINT64_MAX)
     return OBELISK_RT_OK;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->activeExecRegion == OBELISK_RT_REGION_POSTPONED) {
       context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
@@ -816,8 +816,12 @@ static obelisk_rt_status nativeStateStorePlane(
       if (state.managedRootRegistered) {
         if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
           return OBELISK_RT_INVALID_HANDLE;
-        obelisk_rt_object_v1 *managed = nullptr;
-        std::memcpy(&managed, value, sizeof(managed));
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, value, sizeof(word));
+        obelisk_rt_object_v1 *managed =
+            obelisk_rt_object_from_managed_word(word);
+        if (word != obelisk_rt_managed_word_from_object(managed))
+          return OBELISK_RT_INVALID_HANDLE;
         if (!obelisk_rt_managed_object_belongs_to(context, managed))
           return OBELISK_RT_INVALID_HANDLE;
         *outChanged = managed != state.managedValue;
@@ -934,10 +938,12 @@ static obelisk_rt_status nativeStateStorePlane(
       }
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }

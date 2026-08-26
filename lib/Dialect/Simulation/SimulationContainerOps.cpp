@@ -1,12 +1,13 @@
-//===- SimulationContainerOps.cpp - Container, string, and managed op verifiers ===//
+//===- SimulationContainerOps.cpp - Container, string, and managed op verifiers
+//===//
 //
 // Verifiers for managed handles, dynamic arrays, queues, associative arrays,
 // and string operations, plus the aggregate field helpers they share.
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -14,12 +15,12 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -360,12 +361,11 @@ bool getManagedHandleSlots(Type type,
              ++index) {
           std::optional<std::pair<uint64_t, uint64_t>> child =
               getAggregateProvenanceSubelement(nestedType, index);
-          if (!child || child->first >
-                            std::numeric_limits<uint64_t>::max() - baseOffset)
+          if (!child ||
+              child->first > std::numeric_limits<uint64_t>::max() - baseOffset)
             return false;
           if (!collect(getAggregateElementType(nestedType, index),
-                       baseOffset + child->first,
-                       conditional || overlapping))
+                       baseOffset + child->first, conditional || overlapping))
             return false;
         }
         return true;
@@ -440,9 +440,38 @@ static bool isValidManagedTraceKind(int32_t signedKind) {
   return mask != 0 && (mask & ~allKinds) == 0;
 }
 
+static LogicalResult verifyManagedTraceInventory(Operation *operation,
+                                                 uint32_t elementKind,
+                                                 uint64_t valueSize,
+                                                 ArrayRef<int64_t> traceOffsets,
+                                                 ArrayRef<int32_t> traceKinds) {
+  if (traceOffsets.size() != traceKinds.size())
+    return operation->emitOpError(
+        "trace offset and kind inventories must match");
+  if (elementKind != 7 && !traceOffsets.empty())
+    return operation->emitOpError(
+        "only aggregate elements carry explicit trace slots");
+  int64_t previousOffset = -1;
+  for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
+    if (offset < 0 || static_cast<uint64_t>(offset) > valueSize ||
+        managedHandleByteWidth > valueSize - static_cast<uint64_t>(offset))
+      return operation->emitOpError(
+          "trace slot is outside the element value plane");
+    if (static_cast<uint64_t>(offset) % managedHandleByteAlignment != 0)
+      return operation->emitOpError("trace slot is not managed-word aligned");
+    if (!isValidManagedTraceKind(kind))
+      return operation->emitOpError(
+          "trace slot kind is outside the runtime ABI");
+    if (offset <= previousOffset)
+      return operation->emitOpError(
+          "trace slot offsets must be strictly increasing");
+    previousOffset = offset;
+  }
+  return success();
+}
+
 static LogicalResult
-collectExpectedManagedTrace(Type type,
-                            SmallVectorImpl<int64_t> &traceOffsets,
+collectExpectedManagedTrace(Type type, SmallVectorImpl<int64_t> &traceOffsets,
                             SmallVectorImpl<int32_t> &traceKinds) {
   SmallVector<ManagedHandleSlot, 2> slots;
   if (!getManagedHandleSlots(type, slots))
@@ -563,23 +592,10 @@ LogicalResult SimContainerCreateOp::verify() {
     return emitOpError("container kind is outside the runtime ABI");
   ArrayRef<int64_t> traceOffsets = getTraceOffsets();
   ArrayRef<int32_t> traceKinds = getTraceKinds();
-  if (traceOffsets.size() != traceKinds.size())
-    return emitOpError("trace offset and kind inventories must match");
-  if (getElementKind() != 7 && !traceOffsets.empty())
-    return emitOpError("only aggregate elements carry explicit trace slots");
-  int64_t previousOffset = -1;
-  for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
-    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
-        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
-      return emitOpError("trace slot is outside the element value plane");
-    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
-      return emitOpError("trace slot is not pointer aligned");
-    if (!isValidManagedTraceKind(kind))
-      return emitOpError("trace slot kind is outside the runtime ABI");
-    if (offset <= previousOffset)
-      return emitOpError("trace slot offsets must be strictly increasing");
-    previousOffset = offset;
-  }
+  if (failed(verifyManagedTraceInventory(getOperation(), getElementKind(),
+                                         getValueSize(), traceOffsets,
+                                         traceKinds)))
+    return failure();
   if (isa<DynamicArrayType>(type) && getContainerKind() != 1)
     return emitOpError("dynamic-array result requires dynamic-array metadata");
   if (isa<QueueType>(type) && getContainerKind() != 2)
@@ -605,14 +621,14 @@ LogicalResult SimContainerCreateOp::verify() {
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
     expectedKind = 4;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
     expectedKind = 8;
     expectedSize = sizeof(uint64_t);
@@ -636,8 +652,8 @@ LogicalResult SimContainerCreateOp::verify() {
     expectedKind = 7;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(
-            element, expectedTraceOffsets, expectedTraceKinds)))
+    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
+                                           expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
   if (expectedKind != 0 &&
@@ -733,23 +749,10 @@ LogicalResult SimMailboxCreateOp::verify() {
     return emitOpError("element size and alignment are invalid");
   ArrayRef<int64_t> traceOffsets = getTraceOffsets();
   ArrayRef<int32_t> traceKinds = getTraceKinds();
-  if (traceOffsets.size() != traceKinds.size())
-    return emitOpError("trace offset and kind inventories must match");
-  if (getElementKind() != 7 && !traceOffsets.empty())
-    return emitOpError("only aggregate elements carry explicit trace slots");
-  int64_t previousOffset = -1;
-  for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
-    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
-        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
-      return emitOpError("trace slot is outside the element value plane");
-    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
-      return emitOpError("trace slot is not pointer aligned");
-    if (!isValidManagedTraceKind(kind))
-      return emitOpError("trace slot kind is outside the runtime ABI");
-    if (offset <= previousOffset)
-      return emitOpError("trace slot offsets must be strictly increasing");
-    previousOffset = offset;
-  }
+  if (failed(verifyManagedTraceInventory(getOperation(), getElementKind(),
+                                         getValueSize(), traceOffsets,
+                                         traceKinds)))
+    return failure();
   uint32_t expectedKind = 0;
   uint64_t expectedSize = 0;
   uint64_t expectedWidth = 0;
@@ -771,14 +774,14 @@ LogicalResult SimMailboxCreateOp::verify() {
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
     expectedKind = 4;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
     expectedKind = 8;
     expectedSize = sizeof(uint64_t);
@@ -802,8 +805,8 @@ LogicalResult SimMailboxCreateOp::verify() {
     expectedKind = 7;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(
-            element, expectedTraceOffsets, expectedTraceKinds)))
+    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
+                                           expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
   if (expectedKind == 0 || getElementKind() != expectedKind ||
@@ -852,8 +855,7 @@ LogicalResult SimContainerWriteOp::verify() {
   return success();
 }
 
-LogicalResult verifyAssocKey(Operation *op, AssocArrayType array,
-                                    Type key) {
+LogicalResult verifyAssocKey(Operation *op, AssocArrayType array, Type key) {
   if (array.getWildcardIndex())
     return op->emitOpError("wildcard associative arrays are not executable");
   if (array.getKeyType() != key)
@@ -871,22 +873,10 @@ LogicalResult SimAssocCreateOp::verify() {
       getAlignment() == 0 || !llvm::isPowerOf2_64(getAlignment()) ||
       getValueSize() % getAlignment() != 0)
     return emitOpError("element descriptor has an invalid layout");
-  if (getTraceOffsets().size() != getTraceKinds().size())
-    return emitOpError("trace offset and kind inventories must match");
-  int64_t previousOffset = -1;
-  for (auto [offset, kind] :
-       llvm::zip_equal(getTraceOffsets(), getTraceKinds())) {
-    if (offset < 0 || static_cast<uint64_t>(offset) > getValueSize() ||
-        sizeof(void *) > getValueSize() - static_cast<uint64_t>(offset))
-      return emitOpError("trace slot is outside the element value plane");
-    if (static_cast<uint64_t>(offset) % alignof(void *) != 0)
-      return emitOpError("trace slot is not pointer aligned");
-    if (!isValidManagedTraceKind(kind))
-      return emitOpError("trace slot kind is outside the runtime ABI");
-    if (offset <= previousOffset)
-      return emitOpError("trace slot offsets must be strictly increasing");
-    previousOffset = offset;
-  }
+  if (failed(verifyManagedTraceInventory(getOperation(), getElementKind(),
+                                         getValueSize(), getTraceOffsets(),
+                                         getTraceKinds())))
+    return failure();
   Type element = array.getElementType();
   uint32_t expectedKind = 0;
   uint64_t expectedSize = 0;
@@ -909,14 +899,14 @@ LogicalResult SimAssocCreateOp::verify() {
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
     expectedKind = 4;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
     expectedKind = 5;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
     expectedKind = 6;
-    expectedSize = sizeof(void *);
+    expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
     expectedKind = 8;
     expectedSize = sizeof(uint64_t);
@@ -936,8 +926,8 @@ LogicalResult SimAssocCreateOp::verify() {
     expectedKind = 7;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(
-            element, expectedTraceOffsets, expectedTraceKinds)))
+    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
+                                           expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
   if (expectedKind != 0 &&
@@ -946,8 +936,6 @@ LogicalResult SimAssocCreateOp::verify() {
        ((getElementFlags() & 1u) != 0) != fourState))
     return emitOpError(
         "element metadata does not match the associative element type");
-  if (getElementKind() != 7 && !getTraceOffsets().empty())
-    return emitOpError("only aggregate elements carry explicit trace slots");
   if (getTraceOffsets() != ArrayRef<int64_t>(expectedTraceOffsets) ||
       getTraceKinds() != ArrayRef<int32_t>(expectedTraceKinds))
     return emitOpError(
@@ -964,8 +952,8 @@ LogicalResult SimAssocCreateOp::verify() {
       return emitOpError("process key metadata is inconsistent");
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
-    if (!width || *width == 0 ||
-        (getKeyKind() != 1 && getKeyKind() != 2) || getKeyWidth() != *width)
+    if (!width || *width == 0 || (getKeyKind() != 1 && getKeyKind() != 2) ||
+        getKeyWidth() != *width)
       return emitOpError("integral key metadata is inconsistent");
   }
   return success();
@@ -1051,6 +1039,5 @@ LogicalResult SimPlusargParseLogicOp::verify() {
 LogicalResult SimStringFormatIntegerOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }
-
 
 } // namespace obelisk::sim

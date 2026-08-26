@@ -1030,7 +1030,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     if (!delays)
       return std::nullopt;
     ArrayRef<int64_t> values = delays.asArrayRef();
-    size_t index = values.size() == 3 ? 0 : size_t{bit.offset} * 3;
+    size_t index =
+        values.size() == 3 ? 0 : static_cast<size_t>(bit.offset) * 3;
     if (index + 3 > values.size() || values[index] == -1)
       return std::nullopt;
     return DelayTriple{values[index], values[index + 1], values[index + 2]};

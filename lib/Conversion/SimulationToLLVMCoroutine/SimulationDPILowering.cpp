@@ -31,25 +31,6 @@ Value makeDPIPlaneStorage(OpBuilder &builder, Location location, Value value,
 
 namespace {
 
-static_assert(sizeof(obelisk_rt_import_input_v1) ==
-              sizeof(obelisk_rt_import_output_v1));
-static_assert(alignof(obelisk_rt_import_input_v1) ==
-              alignof(obelisk_rt_import_output_v1));
-static_assert(offsetof(obelisk_rt_import_input_v1, kind) ==
-              offsetof(obelisk_rt_import_output_v1, kind));
-static_assert(offsetof(obelisk_rt_import_input_v1, flags) ==
-              offsetof(obelisk_rt_import_output_v1, flags));
-static_assert(offsetof(obelisk_rt_import_input_v1, reserved) ==
-              offsetof(obelisk_rt_import_output_v1, reserved));
-static_assert(offsetof(obelisk_rt_import_input_v1, bit_width) ==
-              offsetof(obelisk_rt_import_output_v1, bit_width));
-static_assert(offsetof(obelisk_rt_import_input_v1, value) ==
-              offsetof(obelisk_rt_import_output_v1, value));
-static_assert(offsetof(obelisk_rt_import_input_v1, unknown) ==
-              offsetof(obelisk_rt_import_output_v1, unknown));
-static_assert(offsetof(obelisk_rt_import_input_v1, limb_count) ==
-              offsetof(obelisk_rt_import_output_v1, limb_count));
-
 uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
   return obelisk_stable_hash_append_uint_le(hash, value, bytes);
 }
@@ -174,21 +155,26 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     outputPlanes.emplace_back(value, unknown);
   }
 
+  Type descriptorType = LLVM::LLVMStructType::getLiteral(
+      context, {i8, i8, i16, i32, pointer, pointer, i64});
   auto makeDescriptorArray = [&](uint64_t count) -> Value {
     if (count == 0)
       return null;
-    Type descriptor = LLVM::LLVMStructType::getLiteral(
-        context, {i8, i8, i16, i32, pointer, pointer, i64});
-    return entryAlloca(rewriter, location, descriptor, count,
-                       alignof(obelisk_rt_import_input_v1));
+    return entryAlloca(rewriter, location, descriptorType, count, 8);
   };
   Value inputs = makeDescriptorArray(logicalInputs);
   Value outputs = makeDescriptorArray(logicalOutputs);
   auto writeDescriptor = [&](Value base, uint64_t index,
                              const DPIOperandABI &entry,
                              std::pair<Value, Value> planes) {
-    Value address = byteGEP(rewriter, location, base,
-                            index * sizeof(obelisk_rt_import_input_v1));
+    Value address =
+        elementGEP(rewriter, location, base, descriptorType, index);
+    auto storeField = [&](uint32_t field, Value value, unsigned alignment) {
+      LLVM::StoreOp::create(
+          rewriter, location, value,
+          fieldGEP(rewriter, location, address, descriptorType, field),
+          alignment);
+    };
     uint32_t kind =
         entry.category == static_cast<uint32_t>(sim::DPIABIKind::String)
             ? OBELISK_RT_DBREG_STRING
@@ -198,31 +184,19 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             ? OBELISK_RT_DBREG_REAL64
         : entry.fourState ? OBELISK_RT_DBREG_LOGIC
                           : OBELISK_RT_DBREG_BITS;
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, kind),
-            llvmConstant(rewriter, location, i8, kind), 1);
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, flags),
-            llvmConstant(rewriter, location, i8,
-                         entry.isSigned ? OBELISK_RT_DBREG_SIGNED : 0),
-            1);
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, reserved),
-            llvmConstant(rewriter, location, i16, 0), 2);
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, bit_width),
-            llvmConstant(rewriter, location, i32, entry.width), 4);
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, value), planes.first,
-            alignof(const uint64_t *));
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, unknown), planes.second,
-            alignof(const uint64_t *));
-    storeAt(rewriter, location, address,
-            offsetof(obelisk_rt_import_input_v1, limb_count),
-            llvmConstant(rewriter, location, i64,
-                         (uint64_t{entry.width} + 63) / 64),
-            alignof(uint64_t));
+    storeField(0, llvmConstant(rewriter, location, i8, kind), 1);
+    storeField(1,
+               llvmConstant(rewriter, location, i8,
+                            entry.isSigned ? OBELISK_RT_DBREG_SIGNED : 0),
+               1);
+    storeField(2, llvmConstant(rewriter, location, i16, 0), 2);
+    storeField(3, llvmConstant(rewriter, location, i32, entry.width), 4);
+    storeField(4, planes.first, 0);
+    storeField(5, planes.second, 0);
+    storeField(6,
+               llvmConstant(rewriter, location, i64,
+                            (uint64_t{entry.width} + 63) / 64),
+               8);
   };
   for (uint64_t index = 0; index != logicalInputs; ++index)
     writeDescriptor(inputs, index, abi[index], inputPlanes[index]);
@@ -232,8 +206,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
 
   Type siteType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, i64, pointer, i64, i32, i32, i64});
-  Value site = entryAlloca(rewriter, location, siteType, 1,
-                           alignof(obelisk_rt_import_site_v1));
+  Value site = entryAlloca(rewriter, location, siteType, 1, 8);
   uint32_t flags = (operation.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0u) |
                    (operation.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0u) |
                    (operation.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0u);
@@ -250,41 +223,34 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     rewriter.setInsertionPoint(operation);
     source = LLVM::AddressOfOp::create(rewriter, location, pointer, base);
   }
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, version),
-          llvmConstant(rewriter, location, i32, OBELISK_RT_VERSION),
-          alignof(uint32_t));
-  storeAt(rewriter, location, site, offsetof(obelisk_rt_import_site_v1, flags),
-          llvmConstant(rewriter, location, i32, flags), 4);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, import_id),
-          llvmConstant(rewriter, location, i32, operation.getImportId()), 4);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, reserved),
-          llvmConstant(rewriter, location, i32, 0), 4);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, scope_id),
-          llvmConstant(rewriter, location, i64, operation.getScopeId()), 8);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, source_file), source,
-          alignof(const char *));
-  storeAt(
-      rewriter, location, site,
-      offsetof(obelisk_rt_import_site_v1, source_file_size),
+  auto storeSiteField = [&](uint32_t field, Value value, unsigned alignment) {
+    LLVM::StoreOp::create(
+        rewriter, location, value,
+        fieldGEP(rewriter, location, site, siteType, field), alignment);
+  };
+  storeSiteField(0,
+                 llvmConstant(rewriter, location, i32, OBELISK_RT_VERSION), 4);
+  storeSiteField(1, llvmConstant(rewriter, location, i32, flags), 4);
+  storeSiteField(
+      2, llvmConstant(rewriter, location, i32, operation.getImportId()), 4);
+  storeSiteField(3, llvmConstant(rewriter, location, i32, 0), 4);
+  storeSiteField(4,
+                 llvmConstant(rewriter, location, i64, operation.getScopeId()),
+                 8);
+  storeSiteField(5, source, 8);
+  storeSiteField(
+      6,
       llvmConstant(rewriter, location, i64, operation.getSourceFile().size()),
       8);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, source_line),
-          llvmConstant(rewriter, location, i32, operation.getSourceLine()), 4);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, source_column),
-          llvmConstant(rewriter, location, i32, operation.getSourceColumn()),
-          4);
-  storeAt(rewriter, location, site,
-          offsetof(obelisk_rt_import_site_v1, abi_signature),
-          llvmConstant(rewriter, location, i64,
-                       sim::getDPISignatureHash(signature, logicalInputs)),
-          8);
+  storeSiteField(
+      7, llvmConstant(rewriter, location, i32, operation.getSourceLine()), 4);
+  storeSiteField(
+      8, llvmConstant(rewriter, location, i32, operation.getSourceColumn()), 4);
+  storeSiteField(
+      9,
+      llvmConstant(rewriter, location, i64,
+                   sim::getDPISignatureHash(signature, logicalInputs)),
+      8);
 
   Value statusBits =
       LLVM::CallOp::create(

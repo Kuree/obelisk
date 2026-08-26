@@ -3,6 +3,8 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
+#include "SimulationProcessRuntimeABI.h"
+
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -152,13 +154,12 @@ enum class NativeSchedulePlanField : int64_t {
 
 mlir::LLVM::LLVMStructType
 getNativeSchedulePlanLLVMType(mlir::MLIRContext *context);
+uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout);
 
 using ReferenceArgumentMap =
     llvm::DenseMap<mlir::Operation *, mlir::SmallVector<unsigned>>;
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
-mlir::LogicalResult validateProcessABI(mlir::ModuleOp module,
-                                       const llvm::DataLayout &layout);
 bool containsLogic(mlir::Type type);
 std::optional<unsigned> nativeStateWidth(mlir::Type type);
 mlir::Type convertProcessType(mlir::Type type, mlir::MLIRContext *context);
@@ -170,11 +171,29 @@ mlir::Value entryAlloca(mlir::OpBuilder &builder, mlir::Location location,
                         unsigned alignment);
 mlir::Value byteGEP(mlir::OpBuilder &builder, mlir::Location location,
                     mlir::Value base, uint64_t offset);
+mlir::Value elementGEP(mlir::OpBuilder &builder, mlir::Location location,
+                       mlir::Value base, mlir::Type elementType,
+                       uint64_t index);
+mlir::Value fieldGEP(mlir::OpBuilder &builder, mlir::Location location,
+                     mlir::Value base, mlir::Type structureType,
+                     uint32_t field);
 mlir::Value loadAt(mlir::OpBuilder &builder, mlir::Location location,
                    mlir::Value base, uint64_t offset, mlir::Type type,
                    unsigned alignment);
 void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              mlir::Value base, uint64_t offset, mlir::Value value,
+             unsigned alignment);
+mlir::Value loadAt(mlir::OpBuilder &builder, mlir::Location location,
+                   mlir::Value base, ProcessInstanceField field,
+                   mlir::Type type, unsigned alignment);
+void storeAt(mlir::OpBuilder &builder, mlir::Location location,
+             mlir::Value base, ProcessInstanceField field, mlir::Value value,
+             unsigned alignment);
+mlir::Value loadAt(mlir::OpBuilder &builder, mlir::Location location,
+                   mlir::Value base, FragmentActionField field,
+                   mlir::Type type, unsigned alignment);
+void storeAt(mlir::OpBuilder &builder, mlir::Location location,
+             mlir::Value base, FragmentActionField field, mlir::Value value,
              unsigned alignment);
 mlir::Value castIntegerWidth(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Value value, mlir::Type target);

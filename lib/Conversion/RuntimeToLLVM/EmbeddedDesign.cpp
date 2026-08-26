@@ -12,6 +12,9 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/LLVMContext.h"
 
 #include <cstdint>
 #include <cstring>
@@ -36,8 +39,6 @@ constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
 constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
 constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
 constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
-constexpr StringLiteral kExecutionExtensionName =
-    "__obelisk_execution_extension_v1";
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -154,7 +155,9 @@ LogicalResult appendRetentionEntry(ModuleOp module, LLVM::GlobalOp global,
 
 } // namespace
 
-LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
+LogicalResult
+materializeEmbeddedSimulationDesign(ModuleOp module,
+                                    const llvm::DataLayout &dataLayout) {
   if (module->hasAttr(kMaterializedAttr))
     return success();
   if (module.lookupSymbol(kExecutionName))
@@ -189,6 +192,7 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
+
   auto executionFlags =
       module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
   bool bytecodeOnly =
@@ -641,41 +645,42 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
   }
   Type executionExtensionType =
       LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
-  if (!sampledRanges.empty()) {
-    makeAggregateGlobal(
-        module, executionExtensionType, kExecutionExtensionName,
-        LLVM::Linkage::Internal, ".obelisk.execution", [&](OpBuilder &builder) {
-          Value value = LLVM::ZeroOp::create(builder, module.getLoc(),
-                                             executionExtensionType);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              integerConstant(builder, module.getLoc(), i32,
-                              OBELISK_RT_EXECUTION_EXTENSION_VERSION),
-              0);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              integerConstant(builder, module.getLoc(), i32,
-                              sizeof(obelisk_rt_execution_extension_v1)),
-              1);
-          value = insertValue(
-              builder, module.getLoc(), value,
-              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                        kSampledRangesName),
-              2);
-          value = insertValue(builder, module.getLoc(), value,
-                              integerConstant(builder, module.getLoc(), i64,
-                                              sampledRanges.size()),
-                              3);
-          return value;
-        });
-  }
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
                 i64, i32, i32, pointer, i64, pointer, i64});
+  Type executionStorageType =
+      sampledRanges.empty()
+          ? Type(executionType)
+          : Type(LLVM::LLVMStructType::getLiteral(
+                context, {executionType, executionExtensionType}));
+
+  // The reserved extension channel is a byte offset from the execution
+  // descriptor, not an integerized pointer. Keeping both records in one global
+  // makes that offset a plain target-layout constant and avoids the unsupported
+  // wasm32 pointer-to-i64 static relocation. Compute both ABI sizes from the
+  // selected target DataLayout; sizeof() here would describe the compiler host
+  // when a native compiler cross-emits wasm32.
+  llvm::LLVMContext layoutContext;
+  llvm::Type *layoutPointer = llvm::PointerType::get(layoutContext, 0);
+  llvm::Type *layoutI32 = llvm::Type::getInt32Ty(layoutContext);
+  llvm::Type *layoutI64 = llvm::Type::getInt64Ty(layoutContext);
+  auto *layoutExecution = llvm::StructType::get(
+      layoutContext,
+      {layoutI32, layoutI32, layoutI64, layoutPointer, layoutI64, layoutPointer,
+       layoutI64, layoutI64, layoutI64, layoutPointer, layoutI64, layoutI32,
+       layoutI32, layoutPointer, layoutI64, layoutPointer, layoutI64});
+  auto *layoutExtension = llvm::StructType::get(
+      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64});
+  auto *layoutStorage =
+      llvm::StructType::get(layoutContext, {layoutExecution, layoutExtension});
+  uint64_t extensionOffset =
+      dataLayout.getStructLayout(layoutStorage)->getElementOffset(1);
+  uint64_t extensionSize =
+      dataLayout.getTypeAllocSize(layoutExtension).getFixedValue();
   uint64_t checksum = bytecode ? read64(bytecode.asArrayRef(), 32) : 0;
 
   makeAggregateGlobal(
-      module, executionType, kExecutionName, LLVM::Linkage::External,
+      module, executionStorageType, kExecutionName, LLVM::Linkage::External,
       ".obelisk.execution", [&](OpBuilder &builder) {
         Value value =
             LLVM::ZeroOp::create(builder, module.getLoc(), executionType);
@@ -686,14 +691,11 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i32, flags), 1);
-        if (!sampledRanges.empty()) {
-          Value extension = LLVM::AddressOfOp::create(
-              builder, module.getLoc(), pointer, kExecutionExtensionName);
-          value = insertValue(builder, module.getLoc(), value,
-                              LLVM::PtrToIntOp::create(builder, module.getLoc(),
-                                                       i64, extension),
-                              2);
-        }
+        if (!sampledRanges.empty())
+          value = insertValue(
+              builder, module.getLoc(), value,
+              integerConstant(builder, module.getLoc(), i64, extensionOffset),
+              2);
         if (bytecode)
           value =
               insertValue(builder, module.getLoc(), value,
@@ -758,7 +760,32 @@ LogicalResult materializeEmbeddedSimulationDesign(ModuleOp module) {
               integerConstant(builder, module.getLoc(), i64, observers.size()),
               16);
         }
-        return value;
+        if (sampledRanges.empty())
+          return value;
+
+        Value extension = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                               executionExtensionType);
+        extension =
+            insertValue(builder, module.getLoc(), extension,
+                        integerConstant(builder, module.getLoc(), i32,
+                                        OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+                        0);
+        extension = insertValue(
+            builder, module.getLoc(), extension,
+            integerConstant(builder, module.getLoc(), i32, extensionSize), 1);
+        extension =
+            insertValue(builder, module.getLoc(), extension,
+                        LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                  pointer, kSampledRangesName),
+                        2);
+        extension = insertValue(builder, module.getLoc(), extension,
+                                integerConstant(builder, module.getLoc(), i64,
+                                                sampledRanges.size()),
+                                3);
+        Value storage = LLVM::ZeroOp::create(builder, module.getLoc(),
+                                             executionStorageType);
+        storage = insertValue(builder, module.getLoc(), storage, value, 0);
+        return insertValue(builder, module.getLoc(), storage, extension, 1);
       });
 
   auto entryType =

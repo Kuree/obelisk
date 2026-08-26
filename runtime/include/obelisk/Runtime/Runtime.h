@@ -532,9 +532,10 @@ typedef struct obelisk_rt_sampled_range_v1 {
   uint64_t bit_width;
 } obelisk_rt_sampled_range_v1;
 
-// Optional data carried by execution_descriptor_v1::reserved when the
-// Preponed snapshot capability is set. The descriptor keeps its original ABI
-// size while allowing sampled-state metadata to evolve independently.
+// Optional data carried at the byte offset in execution_descriptor_v1::reserved
+// when the Preponed snapshot capability is set. The offset is relative to the
+// execution descriptor, so generated static data needs no pointer-to-integer
+// relocation and has the same representation on wasm32 and native targets.
 #define OBELISK_RT_EXECUTION_EXTENSION_VERSION UINT32_C(1)
 typedef struct obelisk_rt_execution_extension_v1 {
   uint32_t version;
@@ -1476,8 +1477,8 @@ enum {
   OBELISK_RT_FRAME_FIELD_FLAGS_NONE = 0,
   OBELISK_RT_FRAME_FOUR_STATE_VALUE = 1u << 0,
   OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN = 1u << 1,
-  // The field is an aligned object-pointer slot traced for the lifetime of
-  // its process activation, including while that activation is suspended.
+  // The field is an aligned 64-bit managed-word slot traced for the lifetime
+  // of its process activation, including while that activation is suspended.
   OBELISK_RT_FRAME_MANAGED_ROOT = 1u << 2,
   // The field overlaps ordinary union bits. `reserved` carries an
   // OBELISK_RT_MANAGED_ROOT_KIND_* mask and the word is traced only when it
@@ -1871,9 +1872,9 @@ obelisk_rt_status obelisk_rt_v1_element_type_validate(
 obelisk_rt_status obelisk_rt_v1_element_type_register(
     obelisk_rt_context *context, const obelisk_rt_element_type_v1 *descriptor);
 
-// Register one 64-bit-aligned class-handle slot in the pointer-free design
-// state. This is used by the bytecode tier; the backing state allocation is
-// fixed for the context lifetime.
+// Register one 64-bit-aligned class managed-word slot in the pointer-free
+// design state. This is used by the bytecode tier; the backing state allocation
+// is fixed for the context lifetime.
 obelisk_rt_status
 obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
                                       uint64_t bit_offset);
@@ -3004,12 +3005,12 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
 obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
-    uint64_t site_id, uint32_t component, uint32_t group,
-    uint32_t group_count, uint32_t nonblocking, uint64_t rise_delay,
-    uint64_t fall_delay, uint64_t turnoff_delay, const uint8_t *value,
-    const uint8_t *unknown, const uint8_t *write_mask,
-    const uint8_t *active_mask, const uint8_t *rise_mask,
-    const uint8_t *fall_mask, const uint8_t *turnoff_mask);
+    uint64_t site_id, uint32_t component, uint32_t group, uint32_t group_count,
+    uint32_t nonblocking, uint64_t rise_delay, uint64_t fall_delay,
+    uint64_t turnoff_delay, const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *write_mask, const uint8_t *active_mask,
+    const uint8_t *rise_mask, const uint8_t *fall_mask,
+    const uint8_t *turnoff_mask);
 // Schedule the polarity-specific driver banks of one three-state primitive as
 // one inertial update. The transition planes carry the logical gate result
 // used for delay selection; both banks mature before the net is resolved.
@@ -3407,11 +3408,11 @@ enum {
   OBELISK_RT_ARG_TIME = 4,
   // data points to one obelisk_rt_string_v1 word; size must be zero.
   OBELISK_RT_ARG_MANAGED_STRING = 5,
-  // data points to one obelisk_rt_object_v1 pointer word naming a sequential
+  // data points to one obelisk_rt_managed_word_v1 naming a sequential
   // container; size must be zero.
   OBELISK_RT_ARG_MANAGED_CONTAINER = 6,
-  // data points to one obelisk_rt_object_v1 pointer word naming a class
-  // object; size must be zero. This representation is accepted by %p.
+  // data points to one obelisk_rt_managed_word_v1 naming a class object; size
+  // must be zero. This representation is accepted by %p.
   OBELISK_RT_ARG_MANAGED_OBJECT = 7,
   // data points to one uint64_t stable scope identity; size must be zero.
   // Zero is the null virtual-interface handle. This representation is
@@ -3964,8 +3965,8 @@ obelisk_rt_status obelisk_rt_v1_plusarg_scan(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     obelisk_rt_string_v1 string, uint32_t radix, uint64_t bit_width,
     void *value, uint64_t value_size, void *unknown, uint64_t unknown_size);
-obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(
-    obelisk_rt_string_v1 string, double *out_value);
+obelisk_rt_status obelisk_rt_v1_plusarg_parse_real(obelisk_rt_string_v1 string,
+                                                   double *out_value);
 
 // Execute a host command and return its normalized exit status. A process
 // terminated by a signal reports 128 plus the signal number.

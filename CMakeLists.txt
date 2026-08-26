@@ -210,19 +210,24 @@ include(AddMLIR)
 include(HandleLLVMOptions)
 
 if(EMSCRIPTEN)
-  # MEMORY64 is applied to every translation unit rather than left to the
-  # caller: runtime/lib/ABI.cpp asserts sizeof(void*) == 8, and a compiler
-  # built wasm32 against a wasm64 runtime archive would fail at link with no
-  # indication of the real cause. The exception scheme has to match across the
-  # whole link for the same reason.
-  foreach(flags CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
-    if(NOT ${flags} MATCHES "MEMORY64")
-      set(${flags} "${${flags}} -sMEMORY64=1 -fwasm-exceptions")
-    endif()
-  endforeach()
-  foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
-    if(NOT ${flags} MATCHES "MEMORY64")
-      set(${flags} "${${flags}} -sMEMORY64=1 -fwasm-exceptions")
+  # wasm32, not wasm64. No Safari release implements the Memory64 proposal,
+  # so a MEMORY64 module cannot run on any iPhone or Mac; runtime/lib/ABI.cpp
+  # carries layout tables for both pointer widths, so 32-bit costs nothing but
+  # the 4 GB address-space ceiling.
+  #
+  # The exception mode is the second half of running on Safari and is just as
+  # load-bearing as the pointer width. Native wasm exceptions would pick a
+  # Safari generation: 26 implements the standardised exnref encoding and
+  # earlier releases only the superseded one, so either choice excludes half the
+  # installed base. -fexceptions implements the same C++ semantics in JavaScript
+  # and emits no wasm exception opcodes at all, so nothing can reject it. The
+  # runtime only ever throws std::bad_alloc, so the slower throw path costs
+  # nothing outside an out-of-memory condition. Applied to every translation
+  # unit because the mode has to match across the whole link.
+  foreach(flags CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS
+                CMAKE_SHARED_LINKER_FLAGS)
+    if(NOT ${flags} MATCHES "fexceptions")
+      set(${flags} "${${flags}} -fexceptions")
     endif()
   endforeach()
   include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
@@ -232,7 +237,7 @@ elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
 else()
   message(FATAL_ERROR
     "native executable generation requires an x86-64 Linux host, or "
-    "configure with emcmake to target wasm64")
+    "configure with emcmake to target wasm32")
 endif()
 
 #===------------------------------------------------------------------------===
@@ -291,8 +296,8 @@ if(OBELISK_ENABLE_Z3)
   endif()
   if(EMSCRIPTEN)
     # The toolchain selects em++, but it does not carry the outer project's
-    # MEMORY64 and exception ABI flags into ExternalProject's isolated cache.
-    # Z3 is linked into the wasm64 compiler, so its objects must match both.
+    # exception ABI flags into ExternalProject's isolated cache. Z3 is linked
+    # into the wasm compiler, so its objects must match.
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
       "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}")
@@ -341,8 +346,8 @@ if(OBELISK_ENABLE_Z3)
     INTERFACE_INCLUDE_DIRECTORIES "${_obelisk_z3_install}/include")
   if(EMSCRIPTEN)
     # The solver benefits from a growable compiler heap. Exception handling is
-    # already fixed globally to -fwasm-exceptions; Emscripten's legacy
-    # DISABLE_EXCEPTION_CATCHING=0 setting is incompatible with that ABI.
+    # already fixed globally to -fexceptions, which is what Z3 needs; it throws
+    # far more than the runtime does.
     target_link_options(ObeliskZ3 INTERFACE
       "SHELL:-s ALLOW_MEMORY_GROWTH=1")
   else()

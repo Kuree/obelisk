@@ -142,7 +142,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   SmallVector<Value> operands(
       branch.getSuccessorOperands(0).getForwardedOperands().begin(),
       branch.getSuccessorOperands(0).getForwardedOperands().end());
-  Value frame = loadAt(builder, location, instance, kInstanceFrameOffset,
+  Value frame = loadAt(builder, location, instance, kInstanceFrameField,
                        LLVM::LLVMPointerType::get(builder.getContext()), 8);
   size_t physical = 0;
   for (const ProcessFrameValue &slot : layout) {
@@ -325,7 +325,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i64, 0),
                           outActivation, 8);
-    storeAt(builder, location, instance, kInstanceContinuationOffset,
+    storeAt(builder, location, instance, kInstanceContinuationField,
             llvmConstant(builder, location, i32, continuationID), 4);
     auto [context, lane] = managedContextAndLane(builder, location);
     Block *dispatch = new Block;
@@ -360,8 +360,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
             (conditional != 0 && conditional != 1) ||
             static_cast<uint64_t>(byteOffset) >
                 static_cast<uint64_t>(sizesAttr[argumentIndex]) ||
-            sizeof(void *) > static_cast<uint64_t>(sizesAttr[argumentIndex]) -
-                                 static_cast<uint64_t>(byteOffset))
+            sizeof(obelisk_rt_managed_word_v1) >
+                static_cast<uint64_t>(sizesAttr[argumentIndex]) -
+                    static_cast<uint64_t>(byteOffset))
           return task.emitOpError("has an invalid native argument root");
         Value root = LLVM::LoadOp::create(
             builder, location, i64,
@@ -378,7 +379,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                      .getResult();
         LLVM::StoreOp::create(
             builder, location, root,
-            byteGEP(builder, location, rootSlots, index * sizeof(void *)), 8);
+            elementGEP(builder, location, rootSlots, i64, index), 8);
       }
       Value pushStatus =
           LLVM::CallOp::create(
@@ -502,7 +503,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();
-    storeAt(builder, location, instance, kInstanceContinuationOffset,
+    storeAt(builder, location, instance, kInstanceContinuationField,
             llvmConstant(builder, location, i32, continuationID), 4);
     std::string helper = (task.getCallee() + ".__obelisk_activate").str();
     Value activation =
@@ -547,7 +548,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
       return failure();
   }
 
-  storeAt(builder, location, instance, kInstanceContinuationOffset,
+  storeAt(builder, location, instance, kInstanceContinuationField,
           llvmConstant(builder, location, i32, continuationID), 4);
   uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
   if (actionFlags == UINT32_MAX)
@@ -672,16 +673,16 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 
   builder.setInsertionPointToStart(execute);
   Value instance = entry->getArgument(0);
-  Value allocation = loadAt(builder, location, instance,
-                            kInstanceAllocationOffset, pointer, 8);
+  Value allocation =
+      loadAt(builder, location, instance, kInstanceAllocationField, pointer, 0);
   Value scratchOffset =
-      loadAt(builder, location, instance, kInstanceScratchOffset, i64, 8);
+      loadAt(builder, location, instance, kInstanceScratchField, i64, 8);
   Value scratch =
       LLVM::GEPOp::create(builder, location, pointer, builder.getI8Type(),
                           allocation, ValueRange{scratchOffset});
   Value handle =
       LLVM::CoroBeginOp::create(builder, location, pointer, id, scratch);
-  storeAt(builder, location, instance, kInstanceNativeHandleOffset, handle, 8);
+  storeAt(builder, location, instance, kInstanceNativeHandleField, handle, 0);
 
   // Fixed ABI temporaries and managed-root records were deliberately hoisted
   // to the source function entry. The coroutine ramp adds a new dispatch
@@ -735,7 +736,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     blocks.shims[continuation] = shim;
     builder.setInsertionPointToStart(shim);
     Value frame =
-        loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+        loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
     SmallVector<Value> loaded;
     size_t argumentIndex = 0;
     uint32_t continuationID = 0;
@@ -776,7 +777,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   builder.setInsertionPointToEnd(execute);
   SmallVector<Value> entryArguments;
   Value frame =
-      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+      loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
   ArrayRef<ProcessFrameValue> captureLayout = analysis.getEntryCaptureLayout();
   size_t physicalArgument = 0;
   auto refreshFrameArgument = [&](BlockArgument argument, Type type,
@@ -789,7 +790,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
       Location useLocation = use->getOwner()->getLoc();
       refreshBuilder.setInsertionPoint(use->getOwner());
       Value currentFrame = loadAt(refreshBuilder, useLocation, instance,
-                                  kInstanceFrameOffset, pointer, 8);
+                                  kInstanceFrameField, pointer, 0);
       use->set(loadAt(refreshBuilder, useLocation, currentFrame, offset, type,
                       alignment));
     }
@@ -797,7 +798,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   for (const ProcessFrameValue &slot : captureLayout) {
     if (!slot.hasValueStorage()) {
       entryArguments.push_back(loadAt(builder, location, instance,
-                                      kInstanceContextOffset, pointer, 8));
+                                      kInstanceContextField, pointer, 0));
       // The scheduler may supply a different transient context on every
       // invocation.  Do not let LLVM preserve the first context in the
       // coroutine frame: reload it through the runtime-owned instance at each
@@ -811,7 +812,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
         refreshBuilder.setInsertionPoint(use->getOwner());
         Value currentContext =
             loadAt(refreshBuilder, use->getOwner()->getLoc(), instance,
-                   kInstanceContextOffset, pointer, 8);
+                   kInstanceContextField, pointer, 0);
         use->set(currentContext);
       }
       ++physicalArgument;
@@ -851,7 +852,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
   Value continuationID =
-      loadAt(builder, location, instance, kInstanceContinuationOffset, i32, 4);
+      loadAt(builder, location, instance, kInstanceContinuationField, i32, 4);
   SmallVector<std::pair<uint32_t, Block *>> targets;
   targets.emplace_back(0, oldEntry);
   for (uint32_t idValue : analysis.getContinuations()) {
@@ -864,7 +865,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   Block *invalid = new Block;
   ramp.getBody().push_back(invalid);
   builder.setInsertionPointToStart(invalid);
-  storeAt(builder, location, instance, kInstanceStatusOffset,
+  storeAt(builder, location, instance, kInstanceStatusField,
           llvmConstant(builder, location, i32, OBELISK_RT_INVALID_CONTINUATION),
           4);
   cf::BranchOp::create(builder, location, blocks.cleanup);
@@ -910,8 +911,8 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   }
 
   builder.setInsertionPointToStart(blocks.cleanup);
-  storeAt(builder, location, instance, kInstanceNativeHandleOffset,
-          LLVM::ZeroOp::create(builder, location, pointer), 8);
+  storeAt(builder, location, instance, kInstanceNativeHandleField,
+          LLVM::ZeroOp::create(builder, location, pointer), 0);
   cf::BranchOp::create(builder, location, blocks.suspendReturn);
 
   SmallVector<Operation *> terminators;
@@ -948,7 +949,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     builder.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
         builder, location, builder.getI32Type(), status);
-    storeAt(builder, location, instance, kInstanceStatusOffset, bits, 4);
+    storeAt(builder, location, instance, kInstanceStatusField, bits, 4);
     if (!pushFailure)
       emitManagedRootRangePop(builder, location, ramp);
     cf::BranchOp::create(builder, location, blocks.terminate);

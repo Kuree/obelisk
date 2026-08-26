@@ -515,13 +515,11 @@ obelisk_rt_status executeStaticNativeAOT(
   instance->status = OBELISK_RT_OK;
   instance->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
   obelisk_rt_status status;
-  try {
-    status = instance->descriptor->native_execute(instance);
-  } catch (const std::bad_alloc &) {
+  OBELISK_RT_TRY { status = instance->descriptor->native_execute(instance); }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     status = OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    status = OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { status = OBELISK_RT_INVALID_ARGUMENT; }
   instance->context = nullptr;
   instance->action = nullptr;
   if (status == OBELISK_RT_OK && !generatedActions)
@@ -1756,7 +1754,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
   // slots.
   if (obelisk_rt_dump_active_unlocked(context))
     return OBELISK_RT_TIER_UNAVAILABLE;
-  try {
+  OBELISK_RT_TRY {
     obelisk_rt_status status =
         initializeNativeAOTNodesUnlocked(context, nodes, nodeCount);
     if (status != OBELISK_RT_OK)
@@ -2359,23 +2357,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     for (const ScheduledNBA &update : context->scheduledNBAs)
       considerDeadline(update.dueTime);
     if (!context->scheduledInertialPathNBAs.empty())
-      considerDeadline(
-          context->scheduledInertialPathNBAs.begin()->first.first);
+      considerDeadline(context->scheduledInertialPathNBAs.begin()->first.first);
     for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
       considerDeadline(update.dueTime);
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
       considerDeadline(event.dueTime);
     if (!context->scheduledPassSwitchEvents.empty())
-      considerDeadline(
-          context->scheduledPassSwitchEvents.begin()->first.first);
+      considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
     outControl->next_runtime_deadline = nextRuntimeDeadline;
     context->nativePeriodicRuntimeDeadline = nextRuntimeDeadline;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
@@ -2385,7 +2379,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
   if (!context || !clocks || clockCount == 0 || !nextEdges ||
       activeNativeAOTContext != context || lockedNativeAOTContext != context)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     for (uint32_t index = 0; index != clockCount; ++index) {
       const auto &clock = clocks[index];
       if (clock.actor_slot >= context->nativeScheduleActors.size())
@@ -2404,11 +2398,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
       setNativeAOTDeadlineUnlocked(context, clock.actor_slot, nextEdges[index]);
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 extern "C" obelisk_rt_status
@@ -2696,7 +2688,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
   if (!context || !outSnapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     if (!plan || context->nativeScheduleRunning ||
@@ -2802,11 +2794,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
                     0,
                     context->nextSchedulerSequence};
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_DESIGN;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 // This is the cold runtime boundary around a generated run-until invocation.
@@ -2920,13 +2910,11 @@ retryNativeSchedule:;
   {
     NativeAOTContextScope aotScope(context);
     auto invoke = [&] {
-      try {
-        return plan->run(plan->mutable_state, context);
-      } catch (const std::bad_alloc &) {
+      OBELISK_RT_TRY { return plan->run(plan->mutable_state, context); }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
         return OBELISK_RT_OUT_OF_MEMORY;
-      } catch (...) {
-        return OBELISK_RT_INVALID_ARGUMENT;
       }
+      OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
     };
     if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT) != 0 ||
         guardedFanout || specializationFast) {
@@ -3312,7 +3300,7 @@ void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept {
   if (!context || !context->nativeSchedulePlan)
     return;
-  try {
+  OBELISK_RT_TRY {
     if (context->nativeSchedulePlan->specialization_fast)
       *context->nativeSchedulePlan->specialization_fast = 0;
     if (context->nativeSchedulePlan->promotion_invalidate)
@@ -3328,8 +3316,8 @@ void obelisk_rt_release_native_schedule_plan(
     std::lock_guard<std::mutex> lock(nativeScheduleRegistryMutex);
     installedNativeScheduleStates.erase(
         context->nativeSchedulePlan->mutable_state);
-  } catch (...) {
   }
+  OBELISK_RT_CATCH_ALL {}
   context->nativeSchedulePlan = nullptr;
   context->nativeScheduleNBARoots = nullptr;
   context->nativeScheduleNBARootCount = 0;

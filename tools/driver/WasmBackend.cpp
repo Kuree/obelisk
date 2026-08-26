@@ -1,13 +1,13 @@
-//===- WasmBackend.cpp - wasm64 object and module emission ---------------===//
+//===- WasmBackend.cpp - wasm32 object and module emission ---------------===//
 //
-// The wasm64 TargetBackend, mirroring NativeBackend.cpp. The shared pipeline
+// The wasm32 TargetBackend, mirroring NativeBackend.cpp. The shared pipeline
 // in TargetBackend.cpp is unchanged; what differs is the backend to
 // initialize, the triple, the target features, and the link.
 //
-// wasm64 rather than wasm32 is not a preference: runtime/lib/ABI.cpp asserts
-// sizeof(void*) == 8 and every descriptor layout assertion depends on it, so
-// the runtime archive this links against only exists for a 64-bit pointer
-// target.
+// wasm32 rather than wasm64 because no Safari release implements the
+// Memory64 proposal, so a wasm64 module cannot run on an iPhone at all.
+// runtime/lib/ABI.cpp carries layout tables for both pointer widths, so the
+// runtime archive this links against exists for either.
 //
 //===----------------------------------------------------------------------===//
 
@@ -44,7 +44,7 @@ extern "C" void LLVMInitializeWebAssemblyAsmPrinter();
 namespace obelisk::driver {
 namespace {
 
-constexpr StringLiteral kTargetTriple = "wasm64-unknown-emscripten";
+constexpr StringLiteral kTargetTriple = "wasm32-unknown-emscripten";
 
 // Emscripten's own runtime is built with shared memory, and wasm-ld rejects
 // objects that lack these features against such a link. They are inert in a
@@ -100,11 +100,11 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
     return failure();
 
   SmallString<256> libraryDirectory(*sysroot);
-  sys::path::append(libraryDirectory, "lib", "wasm64-emscripten");
+  sys::path::append(libraryDirectory, "lib", "wasm32-emscripten");
   if (!sys::fs::is_directory(libraryDirectory)) {
     errs() << "obelisk: error: wasm sysroot '" << *sysroot
-           << "' has no wasm64-emscripten libraries; a wasm32 sysroot cannot "
-              "satisfy the 64-bit runtime ABI\n";
+           << "' has no wasm32-emscripten libraries; a wasm64 sysroot cannot "
+              "satisfy the 32-bit runtime ABI\n";
     return failure();
   }
 
@@ -138,10 +138,14 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
 
   SmallVector<std::string> owned;
   owned.push_back("wasm-ld");
-  owned.push_back("-mwasm64");
   owned.push_back("--gc-sections");
   owned.push_back("--no-entry");
   owned.push_back("--export=main");
+  // The host reads the design's final simulation time after main returns.
+  // Both accessors are optional to a host, but wasm-ld drops anything not
+  // reachable from an explicit export.
+  owned.push_back("--export=obelisk_final_time");
+  owned.push_back("--export=obelisk_time_precision_fs");
   owned.push_back("--export-memory");
   owned.push_back("--allow-undefined");
   owned.push_back("-o");
@@ -187,11 +191,11 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   return success();
 }
 
-/// The wasm64 target.
+/// The wasm32 target.
 class WasmBackend final : public TargetBackend {
 public:
   StringRef getTriple() const override { return kTargetTriple; }
-  StringRef getDescription() const override { return "wasm64"; }
+  StringRef getDescription() const override { return "wasm32"; }
 
   // The web toolchain ships an optimized wasm-object runtime. Emitting the
   // generated design as an object as well avoids rerunning Full LTO inside the

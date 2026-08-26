@@ -84,9 +84,10 @@ bool emitInvalidResumeRegion;
 
 std::vector<uint32_t> collapsedAliasObserverSamples;
 
-obelisk_rt_status collapsedAliasObserverEvaluator(
-    obelisk_rt_context *context, const uint64_t *, uint32_t captureCount,
-    uint64_t *value, uint64_t *unknown, uint32_t limbCount) {
+obelisk_rt_status
+collapsedAliasObserverEvaluator(obelisk_rt_context *context, const uint64_t *,
+                                uint32_t captureCount, uint64_t *value,
+                                uint64_t *unknown, uint32_t limbCount) {
   if (!context || captureCount != 0 || !value || !unknown || limbCount != 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   collapsedAliasObserverSamples.push_back(
@@ -248,9 +249,7 @@ unsigned schedulerPromotionInvalidationCount;
 unsigned schedulerPromotionReadyCount;
 bool schedulerPromotionReadyValue;
 
-void schedulerInvalidatePromotion() {
-  ++schedulerPromotionInvalidationCount;
-}
+void schedulerInvalidatePromotion() { ++schedulerPromotionInvalidationCount; }
 
 uint32_t schedulerPromotionReady() {
   ++schedulerPromotionReadyCount;
@@ -314,8 +313,8 @@ obelisk_rt_status aotCommitOneNBARoot(void *, obelisk_rt_context *context,
 }
 
 obelisk_rt_status aotCommitAllNBARoots(void *, obelisk_rt_context *context,
-                                      uint32_t barrierRegion,
-                                      uint32_t *outChanged) {
+                                       uint32_t barrierRegion,
+                                       uint32_t *outChanged) {
   return obelisk_rt_v1_static_nba_commit_roots(
       context, context->nativeScheduleNBARootCount, barrierRegion, outChanged);
 }
@@ -388,9 +387,9 @@ obelisk_rt_status runObserverPlaneAuthority(AOTTestState *state,
   if (!state || !context || !state->authorityPlane)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto load = [&](uint8_t &value) {
-    return obelisk_rt_v1_native_state_load_plane(
-        context, state->authorityPlane, 8, state->authorityHandle, 8, 0, 0,
-        &value);
+    return obelisk_rt_v1_native_state_load_plane(context, state->authorityPlane,
+                                                 8, state->authorityHandle, 8,
+                                                 0, 0, &value);
   };
   if (obelisk_rt_status status = load(state->ordinaryAOTLoad);
       status != OBELISK_RT_OK)
@@ -436,11 +435,10 @@ obelisk_rt_status runGeneratedCheckpoint(AOTTestState *state,
   if (state->runCalls != 1)
     return OBELISK_RT_OK;
   invalidGeneratedCheckpointStatus =
-      obelisk_rt_v1_scheduler_queue_aot_checkpoint(
-          context, 0, 2, generatedCheckpointCallback);
-  validGeneratedCheckpointStatus =
-      obelisk_rt_v1_scheduler_queue_aot_checkpoint(
-          context, 0, 1, generatedCheckpointCallback);
+      obelisk_rt_v1_scheduler_queue_aot_checkpoint(context, 0, 2,
+                                                   generatedCheckpointCallback);
+  validGeneratedCheckpointStatus = obelisk_rt_v1_scheduler_queue_aot_checkpoint(
+      context, 0, 1, generatedCheckpointCallback);
   return validGeneratedCheckpointStatus == OBELISK_RT_OK
              ? OBELISK_RT_AOT_CHECKPOINT
              : validGeneratedCheckpointStatus;
@@ -474,7 +472,7 @@ obelisk_rt_status runAOTNodes(AOTTestState *state,
 }
 
 obelisk_rt_status aotRunOneNodeThenFallback(void *opaque,
-                                           obelisk_rt_context *context) {
+                                            obelisk_rt_context *context) {
   obelisk_rt_status status = aotRunOneNode(opaque, context);
   return status == OBELISK_RT_OK ? OBELISK_RT_TIER_UNAVAILABLE : status;
 }
@@ -623,8 +621,8 @@ cachedSignalCohortExecute(obelisk_rt_process_instance_v1 *instance) {
         obelisk_rt_v1_scheduler_signal(instance->context,
                                        cachedCohortSecondarySignal, 1,
                                        OBELISK_RT_SIGNAL_CHANGE);
-      *instance->action = {OBELISK_RT_FRAGMENT_CONTINUE,
-                           OBELISK_RT_SUSPEND_NONE, 1, 0, 0, 0};
+      *instance->action = {
+          OBELISK_RT_FRAGMENT_CONTINUE, OBELISK_RT_SUSPEND_NONE, 1, 0, 0, 0};
       return OBELISK_RT_OK;
     }
     if (id == cachedCohortFrontierID && !cachedCohortFrontierSuspended) {
@@ -717,15 +715,15 @@ schedulerSelfTriggerExecute(obelisk_rt_process_instance_v1 *instance) {
   if (instance->continuation != 0) {
     ++schedulerSelfTriggerCount;
     if (schedulerSelfTriggerCount == 3) {
-      *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
-                           OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+      *instance->action = {
+          OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
       return OBELISK_RT_OK;
     }
     if (schedulerSelfTriggerStaticState != 0) {
       uint64_t oldValue = schedulerSelfTriggerCount & 1;
       obelisk_rt_v1_scheduler_static_transition(
-          instance->context, schedulerSelfTriggerStaticState, 0, 1, oldValue,
-          0, oldValue ^ 1, 0);
+          instance->context, schedulerSelfTriggerStaticState, 0, 1, oldValue, 0,
+          oldValue ^ 1, 0);
     } else {
       obelisk_rt_v1_scheduler_signal(instance->context, schedulerWaitHandle,
                                      schedulerWaitWidth,
@@ -789,13 +787,13 @@ groupedStaticActivationExecute(obelisk_rt_process_instance_v1 *instance) {
     *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
     *entry = {1, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
   }
-  *instance->action = {
-      OBELISK_RT_FRAGMENT_SUSPEND,
-      id == 90 ? OBELISK_RT_SUSPEND_DELAY : OBELISK_RT_SUSPEND_CHANGE,
-      1,
-      OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
-      0,
-      48};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       id == 90 ? OBELISK_RT_SUSPEND_DELAY
+                                : OBELISK_RT_SUSPEND_CHANGE,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       48};
   return OBELISK_RT_OK;
 }
 
@@ -1302,6 +1300,53 @@ TEST(RuntimeInternals, ReplacedAndReenabledMonitorsAreWokenInPostponed) {
   EXPECT_EQ(context->scheduledDesignTasks.front().queuedRegion,
             OBELISK_RT_REGION_POSTPONED);
   EXPECT_NE(context->schedulerSelectionGeneration, selectionGeneration);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, ManagedObjectWaitsRemainRootsAcrossCollection) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+
+  for (uint32_t suspendKind :
+       {OBELISK_RT_SUSPEND_SEMAPHORE, OBELISK_RT_SUSPEND_MAILBOX}) {
+    obelisk_rt_string_v1 string = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_create(lane, "waiting", 7, &string),
+              OBELISK_RT_OK);
+    const obelisk_rt_string_v1 stableID = string;
+
+    struct {
+      obelisk_rt_wait_record_v1 wait;
+      obelisk_rt_wait_entry_v1 entry;
+    } record{{OBELISK_RT_VERSION, suspendKind, 0, 1, 0, 0},
+             {stableID, OBELISK_RT_WAIT_EDGE_NONE, 0}};
+    ScheduledDesignTask task;
+    task.id = suspendKind;
+    task.started = true;
+    task.suspendKind = suspendKind;
+    task.waitSize = sizeof(record);
+    task.scratchOffset = sizeof(record);
+    task.frame.resize(sizeof(record));
+    std::memcpy(task.frame.data(), &record, sizeof(record));
+    context->scheduledDesignTasks.push_back(std::move(task));
+
+    string = 0;
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+    char inlineBytes[8]{};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(stableID, inlineBytes, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string_view(bytes, size), "waiting");
+
+    context->scheduledDesignTasks.clear();
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  }
+
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -2015,8 +2060,7 @@ TEST(Scheduler, PrimeFindsTailAndNonTailActors) {
   schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
   schedulerWaitHandle = 700;
   schedulerWaitWidth = 1;
-  obelisk_rt_process_instance_v1 *firstInstance =
-      makeSchedulerInstance(first);
+  obelisk_rt_process_instance_v1 *firstInstance = makeSchedulerInstance(first);
   obelisk_rt_process_instance_v1 *secondInstance =
       makeSchedulerInstance(second);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, firstInstance, 0),
@@ -2269,8 +2313,8 @@ TEST(Scheduler, CachedUrgentRequeueRebuildsOldCursorDistances) {
         makeSchedulerInstance(*fixtures.back());
     ASSERT_NE(instance, nullptr);
     instance->continuation = 1;
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, instance, OBELISK_RT_SCHEDULE_STARTUP),
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance,
+                                          OBELISK_RT_SCHEDULE_STARTUP),
               OBELISK_RT_OK);
   }
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
@@ -2424,8 +2468,7 @@ TEST(Scheduler, SignalChangedWhileExecutingRetriggersTheSameWait) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
 
   obelisk_rt_v1_scheduler_signal(context, schedulerWaitHandle,
-                                 schedulerWaitWidth,
-                                 OBELISK_RT_SIGNAL_CHANGE);
+                                 schedulerWaitWidth, OBELISK_RT_SIGNAL_CHANGE);
   EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerSelfTriggerCount, 3u);
   EXPECT_TRUE(context->scheduledProcesses.empty());
@@ -2701,9 +2744,9 @@ TEST(Scheduler, UnstartedPostponedActorsDoNotPreemptActiveResumes) {
   schedulerWaitWidth = 1;
   schedulerResumeCount = 0;
   schedulerOrder.clear();
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context,
-                                        makeSchedulerInstance(active), 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(active), 0),
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   ASSERT_TRUE(schedulerOrder.empty());
 
@@ -2713,8 +2756,7 @@ TEST(Scheduler, UnstartedPostponedActorsDoNotPreemptActiveResumes) {
   // the active region ran, and would leave the Postponed region reachable a
   // second time in the same time slot (IEEE 1800-2017 4.4.2.9).
   obelisk_rt_v1_scheduler_signal(context, schedulerWaitHandle,
-                                 schedulerWaitWidth,
-                                 OBELISK_RT_SIGNAL_CHANGE);
+                                 schedulerWaitWidth, OBELISK_RT_SIGNAL_CHANGE);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(
                 context, makeSchedulerInstance(monitor),
                 OBELISK_RT_SCHEDULE_HOME(OBELISK_RT_REGION_POSTPONED)),
@@ -2818,14 +2860,13 @@ TEST(Scheduler, AOTCheckpointRunsOneRuntimeActionAndReentersNatively) {
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   SchedulerFixture fixture(321);
   schedulerOrder.clear();
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context,
-                                        makeSchedulerInstance(fixture), 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_EQ(state.runCalls, 2u);
   EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{321}));
@@ -2842,8 +2883,7 @@ TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   SchedulerFixture fixture(22);
   schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
@@ -2854,17 +2894,16 @@ TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
   generatedCheckpointCallbackCount = 0;
   invalidGeneratedCheckpointStatus = OBELISK_RT_OK;
   validGeneratedCheckpointStatus = OBELISK_RT_INVALID_CONTINUATION;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
-                context, makeSchedulerInstance(fixture), 0, 0, 0, nullptr,
-                nullptr, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
   // Establish the source wait before the generated transaction takes direct
   // ownership of continuation 1.
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
 
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
-  EXPECT_EQ(invalidGeneratedCheckpointStatus,
-            OBELISK_RT_INVALID_CONTINUATION);
+  EXPECT_EQ(invalidGeneratedCheckpointStatus, OBELISK_RT_INVALID_CONTINUATION);
   EXPECT_EQ(validGeneratedCheckpointStatus, OBELISK_RT_OK);
   EXPECT_EQ(generatedCheckpointCallbackCount, 2u);
   EXPECT_EQ(state.runCalls, 2u);
@@ -2880,8 +2919,7 @@ TEST(Scheduler, AOTTimedCheckpointCommitsSameSlotNBAAndReentersNatively) {
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   uint8_t plane = 0;
   uint8_t replacement = 0xa5;
@@ -2921,8 +2959,7 @@ TEST(Scheduler, AOTClockKernelIngressSuppressesDuplicateBits) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 65),
             OBELISK_RT_OK);
@@ -2959,8 +2996,7 @@ TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
                OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
-  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -3049,13 +3085,13 @@ TEST(Scheduler, AOTGroupedStaticActivationSuppressesDuplicateWake) {
   target.descriptor.native_execute = groupedStaticActivationExecute;
   schedulerOrder.clear();
   schedulerResumeCount = 0;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
-                context, makeSchedulerInstance(source), 0, 0, 0, nullptr,
-                nullptr, 0, nullptr, 0),
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context,
+                                            makeSchedulerInstance(source), 0, 0,
+                                            0, nullptr, nullptr, 0, nullptr, 0),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
-                context, makeSchedulerInstance(target), 0, 1, 0, nullptr,
-                nullptr, 0, nullptr, 0),
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context,
+                                            makeSchedulerInstance(target), 0, 1,
+                                            0, nullptr, nullptr, 0, nullptr, 0),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{90, 91}));
@@ -3091,15 +3127,14 @@ TEST(Scheduler, AOTCleanSuperstepSnapshotsContinuationRankForHandover) {
   constexpr uint32_t continuation = 1;
   constexpr uint32_t continuationRank = 42;
   ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
-                context, makeSchedulerInstance(fixture), 0, 0, 0,
-                &continuation, &continuationRank, 1, nullptr, 0),
+                context, makeSchedulerInstance(fixture), 0, 0, 0, &continuation,
+                &continuationRank, 1, nullptr, 0),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_TRUE(context->nativeScheduleDeoptimized);
   EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 1u);
   ASSERT_EQ(context->scheduledProcesses.size(), 1u);
-  EXPECT_EQ(context->scheduledProcesses.front().scheduleRank,
-            continuationRank);
+  EXPECT_EQ(context->scheduledProcesses.front().scheduleRank, continuationRank);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -3256,8 +3291,7 @@ TEST(Scheduler, ExternalDirtyRootIndexSummarizesLeafPages) {
   ASSERT_EQ(context->nativeSchedulePersistentDirtySummary.size(), 1u);
   EXPECT_EQ(context->nativeSchedulePersistentDirtyMask[0], 0u);
   EXPECT_EQ(context->nativeSchedulePersistentDirtyMask[1], uint64_t{1} << 1);
-  EXPECT_EQ(context->nativeSchedulePersistentDirtySummary[0],
-            uint64_t{1} << 1);
+  EXPECT_EQ(context->nativeSchedulePersistentDirtySummary[0], uint64_t{1} << 1);
   EXPECT_EQ(obelisk_rt_v1_static_specialization_guard(
                 context, UINT32_MAX, 65, OBELISK_RT_STATIC_ROOT_READ),
             0u);
@@ -3474,9 +3508,8 @@ TEST(Scheduler, NativeTransitionKeepsOverriddenBits) {
   uint8_t oldUnknown = 0;
   uint8_t newValue = (1u << 1) | (1u << 2);
   uint8_t newUnknown = 1u << 1;
-  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
-                                            &oldUnknown, &newValue,
-                                            &newUnknown);
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, root, 8, &oldValue, &oldUnknown, &newValue, &newUnknown);
 
   // The forced bit keeps its overridden value; the unforced bit still lands.
   EXPECT_EQ((context->stateValue[0] >> 1) & 1, 1u);
@@ -3489,9 +3522,8 @@ TEST(Scheduler, NativeTransitionKeepsOverriddenBits) {
                 obelisk_rt_v1_native_handle_offset(root, 1), 1,
                 OBELISK_RT_DESCRIPTOR_STORAGE, 0),
             OBELISK_RT_OK);
-  obelisk_rt_v1_scheduler_signal_transition(context, root, 8, &oldValue,
-                                            &oldUnknown, &newValue,
-                                            &newUnknown);
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, root, 8, &oldValue, &oldUnknown, &newValue, &newUnknown);
   EXPECT_EQ((context->stateUnknown[0] >> 1) & 1, 1u);
 
   obelisk_rt_v1_context_destroy(context);
@@ -3532,10 +3564,9 @@ TEST(Scheduler, NativeOverrideWakesWaitersOnTheForcedValue) {
   uint8_t globalUnknown = 0;
   uint8_t forced = 1;
   uint8_t forcedUnknown = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_override(context, &globalValue, &globalUnknown,
-                                          8, root, 8,
-                                          OBELISK_RT_DESCRIPTOR_STORAGE, 0,
-                                          &forced, &forcedUnknown),
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, &globalValue, &globalUnknown, 8, root, 8,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0, &forced, &forcedUnknown),
             OBELISK_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 0xffu, 1u);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
@@ -4155,13 +4186,12 @@ TEST(Scheduler, AOTNativeCheckpointRunsBytecodeIslandAndReturnsToNative) {
   plan.promotion_invalidate = schedulerInvalidatePromotion;
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   SchedulerFixture fixture(35);
   std::vector<uint8_t> code;
-  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0,
-                    0, 0);
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0, 0,
+                    0);
   appendInstruction(code, OBELISK_RT_BC_SUSPEND, OBELISK_RT_BC_TYPE_NONE, 0,
                     OBELISK_RT_SUSPEND_EDGE, 0, 1);
   appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
@@ -4194,8 +4224,8 @@ TEST(Scheduler, AOTNativeCheckpointRunsBytecodeIslandAndReturnsToNative) {
   auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0};
   *entry = {16, OBELISK_RT_WAIT_EDGE_NEGEDGE, 8};
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context, instance, 0, 0, 0,
-                                            nullptr, nullptr, 0, nullptr, 0),
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context, instance, 0, 0, 0, nullptr,
+                                            nullptr, 0, nullptr, 0),
             OBELISK_RT_OK);
 
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
@@ -4204,16 +4234,14 @@ TEST(Scheduler, AOTNativeCheckpointRunsBytecodeIslandAndReturnsToNative) {
   EXPECT_EQ(instance->tier, OBELISK_RT_TIER_BYTECODE);
   EXPECT_EQ(instance->continuation, 1u);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
-  ASSERT_EQ(context->scheduledProcesses.front().signalSubscriptions.size(),
-            1u);
-  EXPECT_EQ(context->scheduledProcesses.front().signalSubscriptions.front()
-                ->stableID,
-            16u);
+  ASSERT_EQ(context->scheduledProcesses.front().signalSubscriptions.size(), 1u);
+  EXPECT_EQ(
+      context->scheduledProcesses.front().signalSubscriptions.front()->stableID,
+      16u);
   // Exercise the real signal subscription and AOT ready-bit routing on the
   // Tier-3 return continuation instead of mutating scheduler internals.
   obelisk_rt_v1_scheduler_signal(
-      context, 16, 8,
-      OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
+      context, 16, 8, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerResumeCount, 1u);
   EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
@@ -4267,8 +4295,7 @@ TEST(Scheduler, ProcessAssociativeKeysUseStableTombstoneIdentity) {
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
   SchedulerFixture first(100);
   SchedulerFixture second(200);
-  obelisk_rt_process_instance_v1 *firstInstance =
-      makeSchedulerInstance(first);
+  obelisk_rt_process_instance_v1 *firstInstance = makeSchedulerInstance(first);
   obelisk_rt_process_instance_v1 *secondInstance =
       makeSchedulerInstance(second);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, firstInstance, 0, 0),
@@ -4299,16 +4326,20 @@ TEST(Scheduler, ProcessAssociativeKeysUseStableTombstoneIdentity) {
 
   const uint64_t tokens[] = {0, firstToken, secondToken};
   for (uint64_t index = 0; index != std::size(tokens); ++index) {
-    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_PROCESS, 0, 0,
-                                tokens[index], 0, 0};
+    obelisk_rt_assoc_key_v1 key{
+        OBELISK_RT_ASSOC_KEY_PROCESS, 0, 0, tokens[index], 0, 0};
     uint64_t value = index + 20;
     ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
               OBELISK_RT_OK);
   }
 
-  obelisk_rt_assoc_key_v1 invalid{
-      OBELISK_RT_ASSOC_KEY_PROCESS, 0, 0,
-      OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | UINT64_C(0x123456), 0, 0};
+  obelisk_rt_assoc_key_v1 invalid{OBELISK_RT_ASSOC_KEY_PROCESS,
+                                  0,
+                                  0,
+                                  OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG |
+                                      UINT64_C(0x123456),
+                                  0,
+                                  0};
   uint64_t value = 99;
   EXPECT_EQ(obelisk_rt_v1_assoc_write(lane, array, &invalid, &value, nullptr),
             OBELISK_RT_INVALID_HANDLE);
@@ -4431,9 +4462,9 @@ TEST(Scheduler, NativeChildAttachIndexesAndReparentsActualProcess) {
   constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
   context->activeLogicalProcessToken = tag | 41;
   SchedulerFixture fixture(151);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                context, makeSchedulerInstance(fixture), 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+      OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledProcesses.size(), 1u);
   EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 41);
   EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 41), 1u);
@@ -4455,11 +4486,11 @@ TEST(Scheduler, DetachedChildlessTerminationDoesNotCreateParentIndex) {
   context->activeLogicalProcessToken = tag | 99;
   SchedulerFixture fixture(150);
   schedulerDestroyCount = 0;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                context, makeSchedulerInstance(fixture),
-                OBELISK_RT_SCHEDULE_STARTUP |
-                    OBELISK_RT_SCHEDULE_DETACHED_CONTROLS),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture),
+                                  OBELISK_RT_SCHEDULE_STARTUP |
+                                      OBELISK_RT_SCHEDULE_DETACHED_CONTROLS),
+      OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledProcesses.size(), 1u);
   EXPECT_EQ(context->scheduledProcesses.front().parent, 0u);
   EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
@@ -4492,8 +4523,8 @@ TEST(Scheduler, ParentIndexStaysBoundedAcrossNaturalAndKilledChurn) {
     obelisk_rt_process_instance_v1 *instance = makeSchedulerInstance(parent);
     ASSERT_NE(instance, nullptr);
     instance->continuation = 1;
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, instance, OBELISK_RT_SCHEDULE_STARTUP),
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance,
+                                          OBELISK_RT_SCHEDULE_STARTUP),
               OBELISK_RT_OK);
     ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
     EXPECT_TRUE(context->scheduledProcesses.empty());
@@ -4509,16 +4540,15 @@ TEST(Scheduler, ParentIndexStaysBoundedAcrossNaturalAndKilledChurn) {
     context->activeLogicalProcessToken = 0;
     SchedulerFixture parent(170);
     SchedulerFixture child(171);
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, makeSchedulerInstance(parent), 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(parent), 0),
+        OBELISK_RT_OK);
     ASSERT_FALSE(context->scheduledProcesses.empty());
-    uint64_t parentToken =
-        tag | context->scheduledProcesses.back().token;
+    uint64_t parentToken = tag | context->scheduledProcesses.back().token;
     context->activeLogicalProcessToken = parentToken;
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, makeSchedulerInstance(child), 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(child), 0),
+        OBELISK_RT_OK);
     EXPECT_EQ(context->logicalProcessParentsWithChildren.count(parentToken),
               1u);
 
@@ -4731,9 +4761,9 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
   for (uint32_t root = 0; root != rootCount; ++root)
-    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, root + 1,
-                                                         root, 1),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_native_state_register_static(context, root + 1, root, 1),
+        OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   generated[64].value[0] = 1;
@@ -4787,9 +4817,9 @@ TEST(Scheduler, AOTControlSelectsNBABarrierFromDirtyHierarchy) {
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
   for (uint32_t root = 0; root != rootCount; ++root)
-    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, root + 1,
-                                                         root, 1),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_native_state_register_static(context, root + 1, root, 1),
+        OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   generated[64].value[0] = 1;
@@ -5763,8 +5793,8 @@ TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
   context->stateValue[0] = 0b1001'0000'1111;
   context->stateUnknown[0] = 0b1100'0000'1111;
   bool changed = false;
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 12, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 12,
+                                                         changed));
   EXPECT_FALSE(changed);
   EXPECT_EQ(context->stateValue[0] & 0xf, 0xfu);
   ASSERT_EQ(context->scheduledNBAs.size(), 3u);
@@ -5785,19 +5815,19 @@ TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
   context->stateUnknown[0] &= ~uint64_t{1};
   context->stateValue[0] |= uint64_t{1} << 8;
   changed = false;
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 9, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
   ASSERT_EQ(context->scheduledNBAs.size(), 1u);
   EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
   context->schedulerTime = 14;
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 9, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
   ASSERT_EQ(context->scheduledNBAs.size(), 1u);
   EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
   context->schedulerTime = 15;
   context->stateValue[0] &= ~(uint64_t{1} << 8);
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 9, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
   EXPECT_TRUE(context->scheduledNBAs.empty());
   EXPECT_TRUE(context->inertialNetPending.empty());
   EXPECT_EQ(context->stateValue[0] & 1, 0u);
@@ -5812,9 +5842,8 @@ TEST(Scheduler, NetDeclarationDelaysApplyAfterDriverResolution) {
                 context,
                 reinterpret_cast<uint8_t *>(context->stateValue.data()),
                 reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 12,
-                driverHandle, 1, 99, 0,
-                OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY, 3, 3, 3, &one,
-                &known),
+                driverHandle, 1, 99, 0, OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY,
+                3, 3, 3, &one, &known),
             OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledNBAs.size(), 1u);
   EXPECT_EQ(context->scheduledNBAs.front().dueTime, 18u);
@@ -6157,8 +6186,7 @@ TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
   };
   writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor, 9, 0, 0);
   writeDescriptor(1, obelisk::designbytecode::kNetStateDescriptor, 9, 1, 24);
-  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor, 1, 8,
-                  0);
+  writeDescriptor(2, obelisk::designbytecode::kDriverStateDescriptor, 1, 8, 0);
   write64(connectivityOffset, 0);
   write64(connectivityOffset + 8, 1);
   write64(connectivityOffset + 16, 1);
@@ -6194,9 +6222,14 @@ TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
   write64(constantsOffset, 7);
 
   constexpr uint64_t observerID = 77;
-  obelisk_rt_observer_descriptor_v1 observer{
-      observerID, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-      collapsedAliasObserverEvaluator, 0};
+  obelisk_rt_observer_descriptor_v1 observer{observerID,
+                                             nullptr,
+                                             0,
+                                             1,
+                                             0,
+                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             collapsedAliasObserverEvaluator,
+                                             0};
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
   execution.state_bit_count = 9;
@@ -6236,22 +6269,22 @@ TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
                  0,
                  sizeof(AliasObserverWait),
                  0};
-  record.observer = {observerID,
-                     0,
-                     0,
-                     0,
-                     1,
-                     static_cast<uint32_t>(
-                         offsetof(AliasObserverWait, previousValue)),
-                     0};
+  record.observer = {
+      observerID,
+      0,
+      0,
+      0,
+      1,
+      static_cast<uint32_t>(offsetof(AliasObserverWait, previousValue)),
+      0};
   uint64_t aliasHandle =
       obelisk_rt_canonical_state_handle_unlocked(context, 0, 1);
   ASSERT_NE(aliasHandle, UINT64_MAX);
   record.dependency = {aliasHandle, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
   record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
                    OBELISK_RT_WAIT_EDGE_NEGEDGE, 0};
-  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(
-      &execution, &record.wait, sizeof(record)));
+  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(&execution, &record.wait,
+                                                       sizeof(record)));
   obelisk_rt_process_descriptor_v1 descriptor{};
   descriptor.execution = &execution;
   obelisk_rt_process_instance_v1 instance{};
@@ -6275,8 +6308,8 @@ TEST(Scheduler, DominatingNetDelayPublishesEveryCollapsedAlias) {
   context->stateValue[0] = (uint64_t{1} << 8) | 3;
   context->stateUnknown[0] = 3;
   bool changed = false;
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 9, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 9,
+                                                         changed));
   EXPECT_FALSE(changed);
   ASSERT_EQ(context->scheduledNBAs.size(), 2u);
   EXPECT_EQ(context->scheduledNBAs[0].dueTime, 7u);
@@ -6322,8 +6355,7 @@ TEST(Scheduler, BitwiseDominatingNetDelaysPreserveImmediateVectorBits) {
   };
   writeDescriptor(0, obelisk::designbytecode::kNetStateDescriptor,
                   /*four-state | delayed | bitwise=*/25, 0, 0);
-  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor, 1, 8,
-                  0);
+  writeDescriptor(1, obelisk::designbytecode::kDriverStateDescriptor, 1, 8, 0);
 
   obelisk::designbytecode::Image image{};
   image.data = bytes.data();
@@ -6350,8 +6382,8 @@ TEST(Scheduler, BitwiseDominatingNetDelaysPreserveImmediateVectorBits) {
   context->stateValue[0] = (uint64_t{3} << 8) | 3;
   context->stateUnknown[0] = 3;
   bool changed = false;
-  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(
-      image, context, 8, 10, changed));
+  ASSERT_TRUE(obelisk::designbytecode::resolveDrivenNets(image, context, 8, 10,
+                                                         changed));
   EXPECT_TRUE(changed);
   EXPECT_EQ(context->stateValue[0] & 3, 3u);
   EXPECT_EQ(context->stateUnknown[0] & 3, 1u);
@@ -6447,8 +6479,7 @@ TEST(Scheduler, InertialDriversAcceptGeneratedSchedulePlanes) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
   uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
   uint8_t one = 1;
   uint8_t zero = 0;
@@ -6560,12 +6591,11 @@ TEST(Scheduler, InertialKnownTargetsArePlaneRepresentationIndependent) {
                    OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
 
   // Native two-state lowering omits the unknown plane.
-  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
-                context,
-                reinterpret_cast<uint8_t *>(context->stateValue.data()),
-                nullptr, 4, handle, 4, 31, 7, flags, 10, 20, 30, &value,
-                nullptr),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_inertial_driver(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          nullptr, 4, handle, 4, 31, 7, flags, 10, 20, 30, &value, nullptr),
+      OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledNBAs.size(), 1u);
   EXPECT_EQ(context->scheduledNBAs.front().dueTime, 10u);
 
@@ -6609,8 +6639,8 @@ TEST(Scheduler, BytecodeInertialDriversClipAndSuppressDynamicViews) {
   writeLayout(0, OBELISK_RT_DBREG_LOGIC, 4, 0, 16);
   writeLayout(1, OBELISK_RT_DBREG_HANDLE, 0, 16, 32);
   for (uint32_t index = 2; index != 8; ++index)
-    writeLayout(index, OBELISK_RT_DBREG_BITS, 64,
-                48 + uint64_t{index - 2} * 8, 8);
+    writeLayout(index, OBELISK_RT_DBREG_BITS, 64, 48 + uint64_t{index - 2} * 8,
+                8);
   write32(intrinsicOffset, OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER);
   write32(intrinsicOffset + 4, 8);
   write32(siteOffset + 8, 8);
@@ -6634,8 +6664,8 @@ TEST(Scheduler, BytecodeInertialDriversClipAndSuppressDynamicViews) {
   frame.function.layoutCount = 8;
   frame.function.scratchSize = frameData.size();
   frame.data = frameData.data();
-  ASSERT_TRUE(obelisk::designbytecode::validIntrinsic(image, frame.function,
-                                                      0));
+  ASSERT_TRUE(
+      obelisk::designbytecode::validIntrinsic(image, frame.function, 0));
   uint64_t value = 0b1101;
   std::memcpy(frameData.data(), &value, sizeof(value));
   uint32_t kind = OBELISK_RT_DESCRIPTOR_DRIVER;
@@ -6646,9 +6676,10 @@ TEST(Scheduler, BytecodeInertialDriversClipAndSuppressDynamicViews) {
     std::memcpy(frameData.data() + 32, &start, sizeof(start));
     std::memcpy(frameData.data() + 40, &end, sizeof(end));
   };
-  const std::array<uint64_t, 6> arguments{{10, 20, 30, 37, 5,
-      OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
-          OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION}};
+  const std::array<uint64_t, 6> arguments{
+      {10, 20, 30, 37, 5,
+       OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+           OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION}};
   for (size_t index = 0; index != arguments.size(); ++index)
     std::memcpy(frameData.data() + 48 + index * 8, &arguments[index], 8);
 
@@ -6896,8 +6927,7 @@ TEST(Scheduler, AOTObserverPlaneAuthorityIsExplicitNotDepthDerived) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   uint8_t generatedPlane = UINT8_C(0xa5);
   context->stateValue[0] = UINT64_C(0x3c);
@@ -7639,14 +7669,18 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
 
 TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   obelisk_rt_sampled_range_v1 sampledRange{3, 0, 10};
-  obelisk_rt_execution_extension_v1 extension{
-      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
-      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
-  obelisk_rt_execution_descriptor_v1 execution{};
+  struct {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    obelisk_rt_execution_extension_v1 extension{};
+  } storage;
+  storage.extension = {OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+                       sizeof(obelisk_rt_execution_extension_v1), &sampledRange,
+                       1};
+  auto &execution = storage.execution;
   execution.version = OBELISK_RT_VERSION;
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
   execution.state_bit_count = 4096;
-  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  execution.reserved = offsetof(decltype(storage), extension);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -7659,8 +7693,8 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   // A later Active-region update must not affect the sampled result.
   context->stateValue[0] = 0;
   context->stateUnknown[0] = 0;
-  uint64_t handle = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 3);
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 3);
   uint8_t value[2] = {};
   uint8_t unknown[2] = {};
   EXPECT_EQ(obelisk_rt_v1_sampled_read(context, handle, 10, value, unknown),
@@ -7674,15 +7708,17 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
 
 std::vector<uint32_t> preponedObserverSamples;
 
-obelisk_rt_status preponedObserverEvaluator(
-    obelisk_rt_context *context, const uint64_t *, uint32_t captureCount,
-    uint64_t *value, uint64_t *unknown, uint32_t limbCount) {
+obelisk_rt_status preponedObserverEvaluator(obelisk_rt_context *context,
+                                            const uint64_t *,
+                                            uint32_t captureCount,
+                                            uint64_t *value, uint64_t *unknown,
+                                            uint32_t limbCount) {
   if (!context || captureCount != 0 || !value || !unknown || limbCount != 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint8_t sampledValue = 0;
   uint8_t sampledUnknown = 0;
-  uint64_t handle = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
   obelisk_rt_status status = obelisk_rt_v1_sampled_read(
       context, handle, 1, &sampledValue, &sampledUnknown);
   if (status != OBELISK_RT_OK)
@@ -7698,19 +7734,28 @@ obelisk_rt_status preponedObserverEvaluator(
 TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {
   constexpr uint64_t observerID = 99;
   obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
-  obelisk_rt_execution_extension_v1 extension{
-      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
-      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
-  obelisk_rt_observer_descriptor_v1 observer{
-      observerID, nullptr, 0, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-      preponedObserverEvaluator, 0};
-  obelisk_rt_execution_descriptor_v1 execution{};
+  struct {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    obelisk_rt_execution_extension_v1 extension{};
+  } storage;
+  storage.extension = {OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+                       sizeof(obelisk_rt_execution_extension_v1), &sampledRange,
+                       1};
+  obelisk_rt_observer_descriptor_v1 observer{observerID,
+                                             nullptr,
+                                             0,
+                                             1,
+                                             0,
+                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             preponedObserverEvaluator,
+                                             0};
+  auto &execution = storage.execution;
   execution.version = OBELISK_RT_VERSION;
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
   execution.state_bit_count = 1;
   execution.observers = &observer;
   execution.observer_count = 1;
-  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  execution.reserved = offsetof(decltype(storage), extension);
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -7739,20 +7784,17 @@ TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {
                  0,
                  sizeof(ObserverWait),
                  0};
-  record.observer = {observerID,
-                     0,
-                     0,
-                     0,
-                     1,
-                     static_cast<uint32_t>(
-                         offsetof(ObserverWait, previousValue)),
-                     0};
+  record.observer = {
+      observerID, 0,
+      0,          0,
+      1,          static_cast<uint32_t>(offsetof(ObserverWait, previousValue)),
+      0};
   record.dependency = {OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT,
                        OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
   record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
                    OBELISK_RT_WAIT_EDGE_NEGEDGE, 0};
-  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(
-      &execution, &record.wait, sizeof(record)));
+  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(&execution, &record.wait,
+                                                       sizeof(record)));
 
   obelisk_rt_process_descriptor_v1 descriptor{};
   descriptor.execution = &execution;
@@ -7789,8 +7831,8 @@ TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {
   EXPECT_EQ(preponedObserverSamples, std::vector<uint32_t>({0}));
   uint8_t sampledValue = 0;
   uint8_t sampledUnknown = 0;
-  uint64_t handle = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
   ASSERT_EQ(obelisk_rt_v1_sampled_read(context, handle, 1, &sampledValue,
                                        &sampledUnknown),
             OBELISK_RT_OK);
@@ -7816,7 +7858,15 @@ TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {
 }
 
 TEST(SampledValues, ValidatesExecutionExtension) {
-  obelisk_rt_execution_descriptor_v1 execution{};
+  obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
+  struct {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    obelisk_rt_execution_extension_v1 extension{};
+  } storage;
+  storage.extension = {OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+                       sizeof(obelisk_rt_execution_extension_v1), &sampledRange,
+                       1};
+  auto &execution = storage.execution;
   execution.version = OBELISK_RT_VERSION;
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
   execution.state_bit_count = 8;
@@ -7824,11 +7874,7 @@ TEST(SampledValues, ValidatesExecutionExtension) {
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
 
-  obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
-  obelisk_rt_execution_extension_v1 extension{
-      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
-      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
-  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  execution.reserved = offsetof(decltype(storage), extension);
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
@@ -7838,20 +7884,24 @@ TEST(SampledValues, ValidatesExecutionExtension) {
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
-  ++extension.version;
+  ++storage.extension.version;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(SampledValues, CapturesBoundNativePlanesWithoutWholeStateCopies) {
   obelisk_rt_sampled_range_v1 sampledRange{8, 0, 4};
-  obelisk_rt_execution_extension_v1 extension{
-      OBELISK_RT_EXECUTION_EXTENSION_VERSION,
-      sizeof(obelisk_rt_execution_extension_v1), &sampledRange, 1};
-  obelisk_rt_execution_descriptor_v1 execution{};
+  struct {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    obelisk_rt_execution_extension_v1 extension{};
+  } storage;
+  storage.extension = {OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+                       sizeof(obelisk_rt_execution_extension_v1), &sampledRange,
+                       1};
+  auto &execution = storage.execution;
   execution.version = OBELISK_RT_VERSION;
   execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
-  execution.reserved = reinterpret_cast<uintptr_t>(&extension);
+  execution.reserved = offsetof(decltype(storage), extension);
   execution.state_bit_count = 32;
 
   obelisk_rt_context *first = nullptr;
@@ -7864,8 +7914,9 @@ TEST(SampledValues, CapturesBoundNativePlanesWithoutWholeStateCopies) {
   uint8_t firstUnknown[4] = {};
   uint8_t secondValue[4] = {};
   uint8_t secondUnknown[4] = {};
-  ASSERT_EQ(obelisk_rt_v1_native_state_sync(first, firstValue, firstUnknown, 32),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_native_state_sync(first, firstValue, firstUnknown, 32),
+      OBELISK_RT_OK);
   ASSERT_EQ(
       obelisk_rt_v1_native_state_sync(second, secondValue, secondUnknown, 32),
       OBELISK_RT_OK);
@@ -7878,8 +7929,8 @@ TEST(SampledValues, CapturesBoundNativePlanesWithoutWholeStateCopies) {
   ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(first), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_capture_preponed_unlocked(second), OBELISK_RT_OK);
 
-  uint64_t handle = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 8);
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 8);
   uint8_t value = 0, unknown = 0;
   EXPECT_EQ(obelisk_rt_v1_sampled_read(first, handle, 4, &value, &unknown),
             OBELISK_RT_OK);
@@ -7902,8 +7953,8 @@ TEST(SampledValues, SharesCompilerPlannedAlternateClockHistory) {
 
   // Missing ages have the sampled-value default. A disabled clock tick does
   // not advance the shared ring.
-  ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(
-                context, site, 4, 2, 0, 1, &resultValue, &resultUnknown),
+  ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(context, site, 4, 2, 0, 1,
+                                              &resultValue, &resultUnknown),
             OBELISK_RT_OK);
   EXPECT_EQ(resultValue, UINT8_C(0x00));
   EXPECT_EQ(resultUnknown, UINT8_C(0x0f));
@@ -7924,14 +7975,14 @@ TEST(SampledValues, SharesCompilerPlannedAlternateClockHistory) {
   const uint8_t expectedUnknowns[] = {UINT8_C(0x00), UINT8_C(0x01),
                                       UINT8_C(0x00)};
   for (uint64_t age = 0; age != 3; ++age) {
-    ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(
-                  context, site, 4, 2, age, 1, &resultValue, &resultUnknown),
+    ASSERT_EQ(obelisk_rt_v1_clocked_sample_read(context, site, 4, 2, age, 1,
+                                                &resultValue, &resultUnknown),
               OBELISK_RT_OK);
     EXPECT_EQ(resultValue, expectedValues[age]);
     EXPECT_EQ(resultUnknown, expectedUnknowns[age]);
   }
-  EXPECT_EQ(obelisk_rt_v1_clocked_sample_read(
-                context, site, 4, 2, 3, 1, &resultValue, &resultUnknown),
+  EXPECT_EQ(obelisk_rt_v1_clocked_sample_read(context, site, 4, 2, 3, 1,
+                                              &resultValue, &resultUnknown),
             OBELISK_RT_INVALID_ARGUMENT);
   obelisk_rt_v1_context_destroy(context);
 }
@@ -7969,9 +8020,9 @@ TEST(SampledValues, UsesBoundedGatedPerProcessHistory) {
   auto sample = [&](uint8_t value, uint32_t gate) {
     currentValue = value;
     previousValue = previousUnknown = 0;
-    return obelisk_rt_v1_sampled_history(
-        context, 91, 4, 2, 1, gate, &currentValue, &currentUnknown,
-        &previousValue, &previousUnknown);
+    return obelisk_rt_v1_sampled_history(context, 91, 4, 2, 1, gate,
+                                         &currentValue, &currentUnknown,
+                                         &previousValue, &previousUnknown);
   };
 
   ASSERT_EQ(sample(1, 1), OBELISK_RT_OK);

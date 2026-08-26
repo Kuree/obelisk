@@ -80,9 +80,9 @@ obelisk_rt_v1_random_state_next64(obelisk_rt_random_state_v1 *state) {
   return state ? next64(*state) : 0;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_next(
-    uint64_t key, uint64_t position, uint32_t width,
-    uint64_t *outNextPosition, uint64_t *outValue) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_random_cycle_next(uint64_t key, uint64_t position, uint32_t width,
+                                uint64_t *outNextPosition, uint64_t *outValue) {
   if (!outNextPosition || !outValue || width == 0 || width > 32 ||
       (position & ~lowMask(width)) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -126,8 +126,9 @@ obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context) {
   return &context->random;
 }
 
-static obelisk_rt_random_state_v1 *processRandomStateUnlocked(
-    obelisk_rt_context *context, uint64_t logicalProcess) {
+static obelisk_rt_random_state_v1 *
+processRandomStateUnlocked(obelisk_rt_context *context,
+                           uint64_t logicalProcess) {
   if (!context || logicalProcess == 0)
     return nullptr;
   if (context->activeLogicalProcessToken == logicalProcess &&
@@ -164,29 +165,27 @@ extern "C" obelisk_rt_status
 obelisk_rt_v1_random_next(obelisk_rt_context *context, uint64_t *outValue) {
   if (!context || !outValue)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     *outValue = next64(*obelisk_rt_random_active_state_unlocked(context));
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_random_seed(obelisk_rt_context *context, uint64_t seed) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_random_state_v1 *state =
         obelisk_rt_random_active_state_unlocked(context);
     uint64_t sequence = state->increment >> 1;
     obelisk_rt_v1_random_state_seed(state, seed, sequence);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -194,13 +193,12 @@ obelisk_rt_v1_random_bounded(obelisk_rt_context *context, uint64_t bound,
                              uint64_t *outValue) {
   if (!context || !outValue || bound == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return obelisk_rt_v1_random_state_bounded(
         obelisk_rt_random_active_state_unlocked(context), bound, outValue);
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 namespace {
@@ -326,7 +324,7 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
                                   int32_t *outValue, int32_t *outNextSeed) {
   if (!context || !outValue || !outNextSeed)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     double value = 0.0;
     switch (distribution) {
@@ -359,9 +357,8 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
     *outValue = annexRound(value);
     *outNextSeed = seed;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -369,13 +366,12 @@ obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *outState) {
   if (!context || !outState)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     *outState = *obelisk_rt_random_active_state_unlocked(context);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -383,21 +379,21 @@ obelisk_rt_v1_random_set_state(obelisk_rt_context *context,
                                const obelisk_rt_random_state_v1 *state) {
   if (!context || !state || (state->increment & 1) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     *obelisk_rt_random_active_state_unlocked(context) = *state;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_random_get(
-    obelisk_rt_context *context, uint64_t logicalProcess,
-    obelisk_rt_random_state_v1 *outState) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_process_random_get(obelisk_rt_context *context,
+                                 uint64_t logicalProcess,
+                                 obelisk_rt_random_state_v1 *outState) {
   if (!context || logicalProcess == 0 || !outState)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_random_state_v1 *state =
         processRandomStateUnlocked(context, logicalProcess);
@@ -405,18 +401,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_random_get(
       return OBELISK_RT_INVALID_HANDLE;
     *outState = *state;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_random_set(
-    obelisk_rt_context *context, uint64_t logicalProcess,
-    const obelisk_rt_random_state_v1 *state) {
-  if (!context || logicalProcess == 0 || !state ||
-      (state->increment & 1) == 0)
+extern "C" obelisk_rt_status
+obelisk_rt_v1_process_random_set(obelisk_rt_context *context,
+                                 uint64_t logicalProcess,
+                                 const obelisk_rt_random_state_v1 *state) {
+  if (!context || logicalProcess == 0 || !state || (state->increment & 1) == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_random_state_v1 *target =
         processRandomStateUnlocked(context, logicalProcess);
@@ -424,7 +419,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_random_set(
       return OBELISK_RT_INVALID_HANDLE;
     *target = *state;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }

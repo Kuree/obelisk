@@ -66,11 +66,10 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
       return false;
     bool value = false;
     bool unknown = false;
-    uint64_t indexed =
-        bit <= uint64_t{INT64_MAX}
-            ? obelisk_rt_stable_handle_offset(condition.stableID,
-                                              static_cast<int64_t>(bit))
-            : UINT64_MAX;
+    uint64_t indexed = bit <= uint64_t{INT64_MAX}
+                           ? obelisk_rt_stable_handle_offset(
+                                 condition.stableID, static_cast<int64_t>(bit))
+                           : UINT64_MAX;
     auto snapshot = indexed == UINT64_MAX
                         ? context->signalValueSnapshots.end()
                         : context->signalValueSnapshots.find(indexed);
@@ -87,11 +86,10 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
           relative >= found->second.bitWidth)
         return false;
       value = !found->second.value.empty() &&
-              ((found->second.value[relative / 8] >> (relative % 8)) & 1) !=
-                  0;
-      unknown = !found->second.unknown.empty() &&
-                ((found->second.unknown[relative / 8] >> (relative % 8)) &
-                 1) != 0;
+              ((found->second.value[relative / 8] >> (relative % 8)) & 1) != 0;
+      unknown =
+          !found->second.unknown.empty() &&
+          ((found->second.unknown[relative / 8] >> (relative % 8)) & 1) != 0;
     } else {
       uint64_t absolute = relative;
       if (decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
@@ -119,10 +117,9 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
 bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
                                    ClockOccurrenceSubscription &subscription) {
   bool native = subscription.native;
-  uint64_t logicalToken = native
-                              ? kNativeLogicalProcessTag |
-                                    subscription.waiterToken
-                              : subscription.waiterToken;
+  uint64_t logicalToken =
+      native ? kNativeLogicalProcessTag | subscription.waiterToken
+             : subscription.waiterToken;
   if (!context->clockOccurrences) {
     context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
     return false;
@@ -153,8 +150,7 @@ bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
   }
   if (state.currentCohorts.size() <= ordinal)
     state.currentCohorts.resize(static_cast<size_t>(ordinal) + 1, 0);
-  state.currentCohorts[ordinal] |=
-      uint64_t{1} << subscription.occurrenceBit;
+  state.currentCohorts[ordinal] |= uint64_t{1} << subscription.occurrenceBit;
 
   bool wasTriggered = false;
   if (native) {
@@ -327,9 +323,8 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
                 subscription->target == SignalSubscription::NativeDirectWait
                     ? context->nativePollCandidates
                     : context->designPollCandidates;
-            try {
-              candidates.insert(subscription->waiterToken);
-            } catch (const std::bad_alloc &) {
+            OBELISK_RT_TRY { candidates.insert(subscription->waiterToken); }
+            OBELISK_RT_CATCH(const std::bad_alloc &) {
               context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
               return false;
             }
@@ -341,14 +336,15 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
         }
         if (!subscription->latch || subscription->latch->affected)
           continue;
-        try {
+        OBELISK_RT_TRY {
           auto &pending =
               subscription->target == SignalSubscription::NativeComputedWait
                   ? context->pendingNativeComputedWaiters
                   : context->pendingDesignComputedWaiters;
           pending.push_back(subscription->waiterToken);
           subscription->latch->affected = true;
-        } catch (const std::bad_alloc &) {
+        }
+        OBELISK_RT_CATCH(const std::bad_alloc &) {
           context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
           return false;
         }
@@ -368,13 +364,14 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
     }
   } else {
     std::vector<int64_t> pages;
-    try {
+    OBELISK_RT_TRY {
       for (const auto &[key, bucket] : context->signalSubscriptionBuckets) {
         (void)bucket;
         if (key.kind == kind && key.id == objectID)
           pages.push_back(key.page);
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
       return false;
     }
@@ -421,13 +418,14 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
     }
   } else {
     std::vector<int64_t> pages;
-    try {
+    OBELISK_RT_TRY {
       for (const auto &[key, bucket] : feature->subscriptionBuckets) {
         (void)bucket;
         if (key.kind == kind && key.id == objectID)
           pages.push_back(key.page);
       }
-    } catch (const std::bad_alloc &) {
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
       return false;
     }
@@ -444,8 +442,7 @@ static bool signalTransitionBatchMatches(const Subscription &subscription,
                                          const uint8_t *changed,
                                          const uint8_t *posedge,
                                          const uint8_t *negedge,
-                                         uint64_t edgeBitOffset,
-                                         bool direct) {
+                                         uint64_t edgeBitOffset, bool direct) {
   int64_t publishedOffset = 0;
   int64_t subscribedOffset = 0;
   if ((stableID & OBELISK_RT_STABLE_HANDLE_TAG_MASK) ==
@@ -726,9 +723,9 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t edgeBitOffset, uint64_t *outSequence) {
   if (!context->clockOccurrences && edgeBitOffset == 0 &&
-      publishStaticAOTSignalTransitionUnlocked(
-                                context, stableID, bitWidth, changed, posedge,
-                                negedge, outSequence, false)) {
+      publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
+                                               changed, posedge, negedge,
+                                               outSequence, false)) {
     return context->schedulerStatus == OBELISK_RT_OK;
   }
   return publishSignalTransitionBatchImpl(context, stableID, bitWidth, changed,
@@ -766,7 +763,7 @@ extern "C" void obelisk_rt_v1_scheduler_signal(obelisk_rt_context *context,
                  OBELISK_RT_SIGNAL_NEGEDGE)) != 0)
     return;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
@@ -801,10 +798,12 @@ extern "C" void obelisk_rt_v1_scheduler_signal(obelisk_rt_context *context,
       return;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -964,7 +963,7 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
       bitWidth > UINT64_MAX - 7 || !oldValue || !newValue)
     return;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
@@ -1054,9 +1053,11 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
           context, bitOffset, bitWidth, transitions.changed(),
           transitions.posedge(), transitions.negedge(), newValue, newUnknown,
           establishesOverride);
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
   }
 }
@@ -1363,7 +1364,7 @@ extern "C" void obelisk_rt_v1_scheduler_real_transition(
   if (!changed)
     return;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
@@ -1380,7 +1381,8 @@ extern "C" void obelisk_rt_v1_scheduler_real_transition(
       return;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
   }
 }
@@ -1397,7 +1399,7 @@ obelisk_rt_v1_scheduler_event_create(obelisk_rt_context *context,
   if (!context || !outStableID)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outStableID = UINT64_MAX;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return context->schedulerStatus;
@@ -1408,11 +1410,9 @@ obelisk_rt_v1_scheduler_event_create(obelisk_rt_context *context,
     *outStableID = OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG |
                    context->nextDynamicEventID++;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
@@ -1430,7 +1430,7 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
   if (stableID == UINT64_MAX)
     return;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
@@ -1486,10 +1486,12 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
       return;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -1500,34 +1502,33 @@ obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                         uint64_t stableID) {
   if (!context)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     auto found = context->events.find(stableID);
     return found != context->events.end() && found->second.generation != 0 &&
            found->second.lastTriggeredTime == context->schedulerTime;
-  } catch (...) {
-    return 0;
   }
+  OBELISK_RT_CATCH_ALL { return 0; }
 }
 
 extern "C" uint32_t
 obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context) {
   if (!context)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     return context->activeLogicalProcessToken != 0 &&
            context->activeWaitOrderFailed;
-  } catch (...) {
-    return 0;
   }
+  OBELISK_RT_CATCH_ALL { return 0; }
 }
 
-extern "C" uint64_t obelisk_rt_v1_clock_occurrence_consume(
-    obelisk_rt_context *context, uint64_t occurrenceSite) {
+extern "C" uint64_t
+obelisk_rt_v1_clock_occurrence_consume(obelisk_rt_context *context,
+                                       uint64_t occurrenceSite) {
   if (!context || occurrenceSite == 0)
     return 0;
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     uint64_t token = context->activeLogicalProcessToken;
     if (token == 0 || !context->clockOccurrences)
@@ -1555,19 +1556,20 @@ extern "C" uint64_t obelisk_rt_v1_clock_occurrence_consume(
       state.finalizedCohorts.clear();
       state.consumedCohorts = 0;
     } else if (state.consumedCohorts >= 1024 &&
-               state.consumedCohorts * 2 >=
-                   state.finalizedCohorts.size()) {
-      state.finalizedCohorts.erase(
-          state.finalizedCohorts.begin(),
-          state.finalizedCohorts.begin() + state.consumedCohorts);
+               state.consumedCohorts * 2 >= state.finalizedCohorts.size()) {
+      state.finalizedCohorts.erase(state.finalizedCohorts.begin(),
+                                   state.finalizedCohorts.begin() +
+                                       state.consumedCohorts);
       state.consumedCohorts = 0;
     }
     return result;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
     return 0;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     ContextMutexLock lock(context);
     context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
     return 0;

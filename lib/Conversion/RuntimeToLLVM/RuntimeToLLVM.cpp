@@ -225,7 +225,7 @@ public:
     }
     if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
       return signalPassFailure();
-    if (failed(materializeEmbeddedSimulationDesign(module)))
+    if (failed(materializeEmbeddedSimulationDesign(module, *parsed)))
       return signalPassFailure();
     if (failed(prepareRuntimeToLLVMByteGlobals(module)))
       return signalPassFailure();
@@ -322,10 +322,14 @@ validateRuntimeToLLVMPreconditions(ModuleOp module,
   if (auto tripleAttr =
           module->getAttrOfType<StringAttr>("llvm.target_triple")) {
     llvm::Triple triple(tripleAttr.getValue());
-    if (!triple.isArch64Bit() || !triple.isLittleEndian())
+    unsigned pointerBits = dataLayout.getPointerSizeInBits();
+    if (!triple.isLittleEndian() ||
+        (triple.isArch32Bit() && pointerBits != 32) ||
+        (triple.isArch64Bit() && pointerBits != 64) ||
+        (!triple.isArch32Bit() && !triple.isArch64Bit()))
       return module.emitError()
              << "llvm.target_triple is inconsistent with the supported "
-                "64-bit little-endian runtime ABI";
+                "little-endian 32-bit and 64-bit runtime ABIs";
   }
   return verifyRuntimeBufferOwnership(module);
 }

@@ -10,7 +10,7 @@ The native target build produces two forms of the same support code:
 `libobelisk_rt.a` contains native ELF objects used by `-O0` executable links,
 while `libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by `-O1` through
 `-O3` Full-LTO links. The wasm target instead produces one
-`libobelisk_rt.a` containing optimized wasm64 objects, used at every
+`libobelisk_rt.a` containing optimized wasm32 objects, used at every
 optimization level so the browser never recompiles runtime bitcode. The host
 CMake `obelisk_rt` target remains a native standalone C++17 archive for runtime
 unit tests. All forms expose the same lockstep C ABI; MLIR, slang, and

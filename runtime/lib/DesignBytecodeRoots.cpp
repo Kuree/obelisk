@@ -10,25 +10,14 @@ namespace {
 
 using namespace obelisk::designbytecode;
 
-void visitObjectWord(const uint8_t *address, ManagedRootVisit visit,
-                     void *visitorEnvironment) {
-  // Byte-backed interpreter and automatic-state storage does not promise
-  // pointer alignment. The collector is non-moving, so an aligned temporary
-  // is sufficient for precise marking and avoids undefined typed loads.
-  obelisk_rt_object_v1 *object = nullptr;
-  std::memcpy(&object, address, sizeof(object));
-  visit(visitorEnvironment, &object);
-}
-
 void visitManagedWord(const uint8_t *address, ManagedRootVisit visit,
                       void *visitorEnvironment) {
   obelisk_rt_managed_word_v1 word = 0;
   std::memcpy(&word, address, sizeof(word));
   if (word == 0 || (word & 3) != 0)
     return;
-  obelisk_rt_object_v1 *object =
-      reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word));
-  visit(visitorEnvironment, &object);
+  if (obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word))
+    visit(visitorEnvironment, &object);
 }
 
 } // namespace
@@ -53,8 +42,8 @@ void ScopedBytecodeFrameRoots::enumerate(void *environment,
         layout.kind != OBELISK_RT_DBREG_MANAGED_REF &&
         layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF)
       continue;
-    visitObjectWord(roots->frame->data + layout.offset, visit,
-                    visitorEnvironment);
+    visitManagedWord(roots->frame->data + layout.offset, visit,
+                     visitorEnvironment);
   }
 }
 
@@ -93,7 +82,7 @@ void obelisk_rt_enumerate_design_managed_roots(
     void *visitorEnvironment) noexcept {
   if (!context || !visit)
     return;
-  try {
+  OBELISK_RT_TRY {
     bool hasBytecode =
         context->execution &&
         (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
@@ -109,9 +98,10 @@ void obelisk_rt_enumerate_design_managed_roots(
         visit(visitorEnvironment, &state.managedValue);
       for (uint64_t offset : state.managedRootByteOffsets) {
         if (offset > state.value.size() ||
-            sizeof(obelisk_rt_object_v1 *) > state.value.size() - offset)
+            sizeof(obelisk_rt_managed_word_v1) > state.value.size() - offset)
           continue;
-        visitObjectWord(state.value.data() + offset, visit, visitorEnvironment);
+        visitManagedWord(state.value.data() + offset, visit,
+                         visitorEnvironment);
       }
       for (const NativeAutomaticState::CandidateRoot &root :
            state.candidateRootByteOffsets) {
@@ -123,10 +113,8 @@ void obelisk_rt_enumerate_design_managed_roots(
         std::memcpy(&word, state.value.data() + root.byteOffset, sizeof(word));
         word =
             obelisk_rt_v1_gc_candidate_root(context, word, root.allowedKinds);
-        if (word != 0 && (word & UINT64_C(3)) == 0) {
-          obelisk_rt_object_v1 *object =
-              reinterpret_cast<obelisk_rt_object_v1 *>(
-                  static_cast<uintptr_t>(word));
+        if (obelisk_rt_object_v1 *object =
+                obelisk_rt_object_from_managed_word(word)) {
           visit(visitorEnvironment, &object);
         }
       }
@@ -158,31 +146,31 @@ void obelisk_rt_enumerate_design_managed_roots(
         uint8_t *address =
             static_cast<uint8_t *>(instance->frame) + field.offset;
         if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
-          auto **slot = reinterpret_cast<obelisk_rt_object_v1 **>(address);
-          visit(visitorEnvironment, slot);
+          visitManagedWord(address, visit, visitorEnvironment);
         } else {
           obelisk_rt_managed_word_v1 word = 0;
           std::memcpy(&word, address, sizeof(word));
           word = obelisk_rt_v1_gc_candidate_root(context, word, field.reserved);
-          if (word != 0 && (word & UINT64_C(3)) == 0) {
-            obelisk_rt_object_v1 *object =
-                reinterpret_cast<obelisk_rt_object_v1 *>(
-                    static_cast<uintptr_t>(word));
+          if (obelisk_rt_object_v1 *object =
+                  obelisk_rt_object_from_managed_word(word)) {
             visit(visitorEnvironment, &object);
           }
         }
       }
     }
-    auto visitSemaphoreWait = [&](uint32_t suspendKind,
-                                  const obelisk_rt_wait_record_v1 *wait) {
-      if (suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE || !wait ||
-          wait->count != 1)
+    auto visitManagedWait = [&](uint32_t suspendKind,
+                                const obelisk_rt_wait_record_v1 *wait) {
+      if ((suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
+           suspendKind != OBELISK_RT_SUSPEND_MAILBOX) ||
+          !wait || wait->count != 1)
         return;
       const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
           reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-      auto *semaphore =
-          reinterpret_cast<obelisk_rt_object_v1 *>(entries[0].stable_id);
-      visit(visitorEnvironment, &semaphore);
+      obelisk_rt_managed_word_v1 word = entries[0].stable_id;
+      obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+      if (obelisk_rt_managed_word_from_object(object) != word)
+        return;
+      visit(visitorEnvironment, &object);
     };
     auto visitComputedWait = [&](uint32_t suspendKind,
                                  const obelisk_rt_wait_record_v1 *record,
@@ -217,8 +205,12 @@ void obelisk_rt_enumerate_design_managed_roots(
           if (descriptor->capture_abi[captureIndex].kind !=
               OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
             continue;
-          auto *object = reinterpret_cast<obelisk_rt_object_v1 *>(
-              captures[observer.capture_begin + captureIndex].stable_id);
+          obelisk_rt_managed_word_v1 word =
+              captures[observer.capture_begin + captureIndex].stable_id;
+          obelisk_rt_object_v1 *object =
+              obelisk_rt_object_from_managed_word(word);
+          if (obelisk_rt_managed_word_from_object(object) != word)
+            continue;
           visit(visitorEnvironment, &object);
         }
       }
@@ -227,7 +219,7 @@ void obelisk_rt_enumerate_design_managed_roots(
       if (process.instance) {
         const obelisk_rt_wait_record_v1 *wait =
             obelisk::process::currentWait(process);
-        visitSemaphoreWait(process.suspendKind, wait);
+        visitManagedWait(process.suspendKind, wait);
         visitComputedWait(process.suspendKind, wait, process.waitSize);
       }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
@@ -238,7 +230,7 @@ void obelisk_rt_enumerate_design_managed_roots(
         continue;
       const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
           task.frame.data() + task.waitOffset);
-      visitSemaphoreWait(task.suspendKind, wait);
+      visitManagedWait(task.suspendKind, wait);
       visitComputedWait(task.suspendKind, wait, task.waitSize);
     }
     for (ScheduledNBA &update : context->scheduledNBAs)
@@ -268,9 +260,9 @@ void obelisk_rt_enumerate_design_managed_roots(
             std::min<uint64_t>(scratchOffset, frame.size());
         auto visitOffset = [&](uint64_t offset) {
           if (offset > canonicalSize ||
-              sizeof(obelisk_rt_object_v1 *) > canonicalSize - offset)
+              sizeof(obelisk_rt_managed_word_v1) > canonicalSize - offset)
             return;
-          visitObjectWord(frame.data() + offset, visit, visitorEnvironment);
+          visitManagedWord(frame.data() + offset, visit, visitorEnvironment);
         };
         for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
           CaptureRecord capture = captureAt(image, index);
@@ -306,10 +298,8 @@ void obelisk_rt_enumerate_design_managed_roots(
                 std::memcpy(&word, address, sizeof(word));
                 word = obelisk_rt_v1_gc_candidate_root(context, word,
                                                        instruction.destination);
-                if (word != 0 && (word & UINT64_C(3)) == 0) {
-                  obelisk_rt_object_v1 *object =
-                      reinterpret_cast<obelisk_rt_object_v1 *>(
-                          static_cast<uintptr_t>(word));
+                if (obelisk_rt_object_v1 *object =
+                        obelisk_rt_object_from_managed_word(word)) {
                   visit(visitorEnvironment, &object);
                 }
               }
@@ -336,7 +326,8 @@ void obelisk_rt_enumerate_design_managed_roots(
       for (const DesignActivation &caller : task.callers)
         visitActivation(caller.function, caller.frame, caller.scratchOffset);
     }
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     // The image was validated when the context was created. A collector cannot
     // report through the C ABI, so malformed or concurrently destroyed state
     // is conservatively ignored here and is diagnosed by its owning entry.

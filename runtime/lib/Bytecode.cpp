@@ -1607,24 +1607,24 @@ executeFragment(const obelisk_rt_fragment_descriptor_v1 *descriptor,
   if (descriptor->code_kind == OBELISK_RT_FRAGMENT_NATIVE) {
     if (bytecodeOnly || !descriptor->code.native_entry)
       return OBELISK_RT_INVALID_ARGUMENT;
-    try {
+    OBELISK_RT_TRY {
       status = descriptor->code.native_entry(context, frame, frameSize,
                                              continuation, outAction);
-    } catch (const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (...) {
-      return OBELISK_RT_INVALID_ARGUMENT;
     }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
   } else if (descriptor->code_kind == OBELISK_RT_FRAGMENT_BYTECODE) {
-    try {
+    OBELISK_RT_TRY {
       status = executeBytecodeV1(descriptor->code.bytecode, context, frame,
                                  frameSize, continuation, instructionLimit,
                                  outAction);
-    } catch (const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
-    } catch (...) {
-      return OBELISK_RT_INVALID_BYTECODE;
     }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
   } else {
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -1638,7 +1638,7 @@ executeFragment(const obelisk_rt_fragment_descriptor_v1 *descriptor,
 obelisk_rt_status
 obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
                                      uint32_t continuation) noexcept {
-  try {
+  OBELISK_RT_TRY {
     if (!program.code || program.code_size == 0 ||
         program.code_size % OBELISK_RT_BYTECODE_INSTRUCTION_SIZE != 0 ||
         program.register_count > static_cast<uint32_t>(UINT16_MAX) + 1u ||
@@ -1658,11 +1658,9 @@ obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
     return entry != end && entry->continuation == continuation
                ? OBELISK_RT_OK
                : OBELISK_RT_TIER_UNAVAILABLE;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_fragment_execute(

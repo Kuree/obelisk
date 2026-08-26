@@ -7,6 +7,15 @@
 #include <stddef.h>
 #include <string.h>
 
+/* Structures that embed a pointer change size and field offsets with the
+   pointer width, so the assertions below carry both tables, matching
+   runtime/lib/ABI.cpp. */
+#if UINTPTR_MAX == UINT64_MAX
+#define SMOKE_PTR(Wide, Narrow) Wide
+#else
+#define SMOKE_PTR(Wide, Narrow) Narrow
+#endif
+
 _Static_assert(sizeof(obelisk_rt_status) == 4, "status ABI changed");
 _Static_assert(sizeof(obelisk_rt_arg_kind) == 4, "argument kind ABI changed");
 _Static_assert(sizeof(obelisk_rt_arg_flags) == 4, "argument flags ABI changed");
@@ -28,7 +37,7 @@ _Static_assert(sizeof(obelisk_rt_trace_entry_v1) == 40,
                "managed trace entry size changed");
 _Static_assert(sizeof(obelisk_rt_trace_layout_v1) == 40,
                "managed trace layout size changed");
-_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == 32,
+_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == SMOKE_PTR(32, 24),
                "managed method descriptor size changed");
 _Static_assert(sizeof(obelisk_rt_random_edge_v1) == 24,
                "managed random edge size changed");
@@ -38,15 +47,17 @@ _Static_assert(sizeof(obelisk_rt_random_variable_reference_v1) == 32,
                "managed random variable reference size changed");
 _Static_assert(sizeof(obelisk_rt_random_layout_v1) == 40,
                "managed random layout size changed");
-_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == 104,
+_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(104, 88),
                "managed class descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
                "managed class base offset changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) == 64,
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) ==
+                   SMOKE_PTR(64, 52),
                "managed class method table offset changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, random_layout) == 96,
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, random_layout) ==
+                   SMOKE_PTR(96, 80),
                "managed class random layout offset changed");
-_Static_assert(sizeof(obelisk_rt_gc_root_v1) == 24,
+_Static_assert(sizeof(obelisk_rt_gc_root_v1) == SMOKE_PTR(24, 16),
                "managed root size changed");
 _Static_assert(sizeof(obelisk_rt_gc_statistics_v1) == 72,
                "managed statistics size changed");
@@ -81,13 +92,15 @@ _Static_assert(offsetof(obelisk_rt_fragment_action_v1, auxiliary) == 24,
                "fragment auxiliary offset changed");
 _Static_assert(sizeof(obelisk_rt_frame_field_v1) == 32,
                "process frame field size changed");
-_Static_assert(sizeof(obelisk_rt_frame_layout_v1) == 56,
+_Static_assert(sizeof(obelisk_rt_frame_layout_v1) == SMOKE_PTR(56, 48),
                "process frame layout size changed");
 _Static_assert(offsetof(obelisk_rt_frame_layout_v1, fields) == 24,
                "process frame fields offset changed");
-_Static_assert(offsetof(obelisk_rt_frame_layout_v1, continuations) == 40,
+_Static_assert(offsetof(obelisk_rt_frame_layout_v1, continuations) ==
+                   SMOKE_PTR(40, 36),
                "process frame continuations offset changed");
-_Static_assert(offsetof(obelisk_rt_frame_layout_v1, checksum) == 48,
+_Static_assert(offsetof(obelisk_rt_frame_layout_v1, checksum) ==
+                   SMOKE_PTR(48, 40),
                "process frame checksum offset changed");
 _Static_assert(sizeof(obelisk_rt_wait_record_v1) == 32,
                "process wait record size changed");
@@ -95,16 +108,18 @@ _Static_assert(sizeof(obelisk_rt_wait_entry_v1) == 16,
                "process wait entry size changed");
 _Static_assert(offsetof(obelisk_rt_wait_entry_v1, edge) == 8,
                "process wait entry edge offset changed");
-_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == 88,
+_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == SMOKE_PTR(88, 64),
                "process descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, frame_layout) == 32,
                "process frame layout pointer offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) == 64,
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) ==
+                   SMOKE_PTR(64, 48),
                "process bytecode pointer offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, execution) == 72,
+_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, execution) ==
+                   SMOKE_PTR(72, 52),
                "process execution descriptor offset changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, design_bytecode) ==
-                   80,
+                   SMOKE_PTR(80, 56),
                "process design bytecode offset changed");
 _Static_assert(sizeof(obelisk_rt_dpi_scope_v1) == 48,
                "DPI scope descriptor size changed");
@@ -115,14 +130,14 @@ _Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
 _Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,
                "activation native entry offset changed");
 _Static_assert(offsetof(obelisk_rt_activation_descriptor_v1,
-                        bytecode_function) == 16,
+                        bytecode_function) == SMOKE_PTR(16, 12),
                "activation bytecode entry offset changed");
 _Static_assert(sizeof(obelisk_rt_observer_capture_abi_v1) == 8,
                "observer capture ABI size changed");
-_Static_assert(sizeof(obelisk_rt_observer_descriptor_v1) == 48,
+_Static_assert(sizeof(obelisk_rt_observer_descriptor_v1) == SMOKE_PTR(48, 40),
                "observer descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_observer_descriptor_v1, native_evaluator) ==
-                   32,
+                   SMOKE_PTR(32, 28),
                "observer native evaluator offset changed");
 _Static_assert(sizeof(obelisk_rt_sampled_range_v1) == 24,
                "sampled range size changed");
@@ -130,8 +145,7 @@ _Static_assert(offsetof(obelisk_rt_sampled_range_v1, snapshot_byte_offset) == 8,
                "sampled snapshot offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 24,
                "execution extension size changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) ==
-                   8,
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) == 8,
                "execution extension sampled ranges offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
@@ -159,36 +173,44 @@ _Static_assert(sizeof(obelisk_rt_computed_clause_v1) == 16,
                "computed observer clause size changed");
 _Static_assert(sizeof(obelisk_rt_import_site_v1) == 56,
                "DPI import site size changed");
-_Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == 16,
+_Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == SMOKE_PTR(16, 12),
                "design bytecode entry size changed");
 _Static_assert(sizeof(obelisk_rt_design_info_v1) == 56,
                "design info size changed");
-_Static_assert(sizeof(obelisk_rt_process_instance_v1) == 104,
+_Static_assert(sizeof(obelisk_rt_process_instance_v1) == SMOKE_PTR(104, 80),
                "process instance size changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, allocation) == 8,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, allocation) ==
+                   SMOKE_PTR(8, 4),
                "process allocation offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, frame) == 16,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, frame) ==
+                   SMOKE_PTR(16, 8),
                "process instance frame offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, scratch_offset) == 32,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, scratch_offset) ==
+                   SMOKE_PTR(32, 24),
                "process scratch offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, native_handle) == 48,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, native_handle) ==
+                   SMOKE_PTR(48, 40),
                "process native handle offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, continuation) == 56,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, continuation) ==
+                   SMOKE_PTR(56, 44),
                "process continuation offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, status) == 68,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, status) ==
+                   SMOKE_PTR(68, 56),
                "process status offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, context) == 72,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, context) ==
+                   SMOKE_PTR(72, 60),
                "process transient context offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, action) == 80,
+_Static_assert(offsetof(obelisk_rt_process_instance_v1, action) ==
+                   SMOKE_PTR(80, 64),
                "process transient action offset changed");
 _Static_assert(offsetof(obelisk_rt_process_instance_v1, ownership_context) ==
-                   88,
+                   SMOKE_PTR(88, 68),
                "process ownership context offset changed");
 _Static_assert(offsetof(obelisk_rt_process_instance_v1, observer_pin_count) ==
-                   96,
+                   SMOKE_PTR(96, 72),
                "process observer pin offset changed");
 _Static_assert(offsetof(obelisk_rt_process_instance_v1,
-                        observer_destroy_pending) == 100,
+                        observer_destroy_pending) == SMOKE_PTR(100, 76),
                "process observer pending-destroy offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
                "bytecode entry size changed");
@@ -196,36 +218,45 @@ _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
                "bytecode continuation offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, instruction) == 4,
                "bytecode instruction offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_v1) == 96,
+_Static_assert(sizeof(obelisk_rt_bytecode_v1) == SMOKE_PTR(96, 80),
                "bytecode descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_v1, code) == 0,
                "bytecode code offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, code_size) == sizeof(void *),
+/* Both offsets are the same under either pointer width: the uint64_t after the
+   leading pointer forces 8-byte alignment, so the narrow pointer only buys
+   padding. Spelling them as sizeof(void *) would be wrong on a 32-bit
+   target. */
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, code_size) == 8,
                "bytecode size offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, entries) ==
-                   sizeof(void *) + sizeof(uint64_t),
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, entries) == 16,
                "bytecode entries offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, entry_count) == 24,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, entry_count) ==
+                   SMOKE_PTR(24, 20),
                "bytecode entry count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_count) == 28,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_count) ==
+                   SMOKE_PTR(28, 24),
                "bytecode register count offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_v1, register_offset) == 32,
                "bytecode register offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_v1, validation) == 40,
                "bytecode validation offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, constants) == 48,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, constants) == SMOKE_PTR(48, 44),
                "bytecode constants offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, constant_size) == 56,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, constant_size) ==
+                   SMOKE_PTR(56, 48),
                "bytecode constant size offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_sites) == 64,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_sites) ==
+                   SMOKE_PTR(64, 56),
                "bytecode service sites offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_site_count) == 72,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_site_count) ==
+                   SMOKE_PTR(72, 60),
                "bytecode service count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, reserved) == 76,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, reserved) == SMOKE_PTR(76, 64),
                "bytecode reserved offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, operands) == 80,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, operands) == SMOKE_PTR(80, 68),
                "bytecode operands offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, operand_count) == 88,
+_Static_assert(offsetof(obelisk_rt_bytecode_v1, operand_count) ==
+                   SMOKE_PTR(88, 72),
                "bytecode operand count offset changed");
 _Static_assert(sizeof(obelisk_rt_bytecode_validation_v1) == 8,
                "bytecode validation record size changed");
@@ -265,7 +296,7 @@ _Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, flags) == 10,
                "bytecode service flags offset changed");
 _Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, reserved) == 12,
                "bytecode service reserved offset changed");
-_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == 120,
+_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == SMOKE_PTR(120, 104),
                "fragment descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, handle) == 0,
                "fragment handle offset changed");

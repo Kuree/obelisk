@@ -12,6 +12,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/DataLayout.h"
 #include <numeric>
 
 using namespace mlir;
@@ -19,7 +20,7 @@ using namespace mlir;
 namespace obelisk::detail {
 
 LogicalResult makeNativeEvalPlan(
-    ModuleOp module, uint32_t actorCount,
+    ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
@@ -1841,13 +1842,13 @@ LogicalResult makeNativeEvalPlan(
           llvmConstant(builder, location, i64, (stateLayout.bitCount + 7) / 8),
           /*isVolatile=*/false);
     Value preparedTerminationAddress =
-        loadAt(builder, location, control, 8, pointer, 8);
+        loadAt(builder, location, control, 8, pointer, 0);
     // The runtime is not re-entered while this generated transaction runs, so
     // its control addresses and deadline are immutable until handoff. Capture
     // them once outside the hot loop; direct bodies have no runtime escape
     // through which a new timed callback could be installed.
     Value preparedTimeAddress =
-        loadAt(builder, location, control, 0, pointer, 8);
+        loadAt(builder, location, control, 0, pointer, 0);
     Value preparedDeadline = loadAt(builder, location, control, 16, i64, 8);
     Value terminationSlot = LLVM::AddressOfOp::create(
         builder, location, pointer, periodicTerminationName);
@@ -3904,7 +3905,7 @@ LogicalResult makeNativeEvalPlan(
         value =
             insertValue(initializerBuilder, location, value,
                         llvmConstant(initializerBuilder, location, i32,
-                                     sizeof(obelisk_rt_native_schedule_plan)),
+                                     getNativeSchedulePlanSize(dataLayout)),
                         NativeSchedulePlanField::Size);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
@@ -3917,7 +3918,8 @@ LogicalResult makeNativeEvalPlan(
                         NativeSchedulePlanField::MutableState);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
-                                         uint64_t{actorCount} * sizeof(void *)),
+                                         uint64_t{actorCount} *
+                                             dataLayout.getPointerSize()),
                             NativeSchedulePlanField::MutableStateSize);
         value = insertValue(
             initializerBuilder, location, value,

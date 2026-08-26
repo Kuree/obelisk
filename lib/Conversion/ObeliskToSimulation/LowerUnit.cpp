@@ -142,12 +142,12 @@ describeContainerElementImpl(Type type, Location location) {
   }
   if (isa<sim::ClassHandleType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CLASS_HANDLE;
-    result.valueSize = sizeof(void *);
+    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
   if (isa<sim::StringType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_STRING;
-    result.valueSize = sizeof(void *);
+    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
   if (isa<sim::EventType>(type)) {
@@ -172,14 +172,14 @@ describeContainerElementImpl(Type type, Location location) {
   }
   if (isa<sim::ChandleType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_BITS;
-    result.valueSize = sizeof(void *);
-    result.bitWidth = sizeof(void *) * 8;
+    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
+    result.bitWidth = sizeof(obelisk_rt_managed_word_v1) * 8;
     return result;
   }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType, sim::BoxType,
           sim::SemaphoreType, sim::AssocArrayType>(type)) {
     result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
-    result.valueSize = sizeof(void *);
+    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
   if (Type scalar = sim::getPackedScalarType(type)) {

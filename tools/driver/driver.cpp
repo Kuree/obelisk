@@ -633,9 +633,9 @@ static int executeCompilation(const InputArgList &args) {
   // the compiler has no x86-64 backend linked in.
   StringRef targetName =
       args.getLastArgValue(OPT_target_EQ, OBELISK_DEFAULT_TARGET);
-  if (targetName != "native" && targetName != "wasm64") {
+  if (targetName != "native" && targetName != "wasm32") {
     emitDriverError(Twine("unsupported target '") + targetName +
-                    "'; expected native or wasm64");
+                    "'; expected native or wasm32");
     valid = false;
   }
   StringRef executionTier =
@@ -851,7 +851,7 @@ static int executeCompilation(const InputArgList &args) {
     nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);
     nativeOptions.timing = args.hasArg(OPT_mlir_timing);
     nativeOptions.compileThreads = resolvedCompilerThreads;
-    nativeOptions.target = targetName == "wasm64"
+    nativeOptions.target = targetName == "wasm32"
                                ? obelisk::driver::TargetKind::Wasm
                                : obelisk::driver::TargetKind::Native;
     return succeeded(obelisk::driver::emitTargetOutput(*module, nativeOptions))

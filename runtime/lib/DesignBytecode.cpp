@@ -29,7 +29,7 @@ using namespace obelisk::designbytecode;
 
 size_t checkedSizeSum(size_t lhs, size_t rhs) {
   if (rhs > std::numeric_limits<size_t>::max() - lhs)
-    throw std::bad_alloc();
+    obelisk_rt_out_of_memory();
   return lhs + rhs;
 }
 
@@ -208,7 +208,7 @@ PendingDesignActivation::~PendingDesignActivation() noexcept {
   if (!context)
     return;
   if (ownsRetainedAutomaticStates) {
-    try {
+    OBELISK_RT_TRY {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       for (const auto &[id, count] : retainedAutomaticStates) {
         auto found = context->nativeAutomaticStates.find(id);
@@ -226,7 +226,8 @@ PendingDesignActivation::~PendingDesignActivation() noexcept {
         } else {
           ++state;
         }
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       // Destructors on error paths must not obscure the scheduler failure.
     }
   }
@@ -325,7 +326,7 @@ bool copyMap(const Image &image, const Frame &source, Frame &destination,
       return false;
     Layout layout = layoutAt(image, source.function, sourceRegister);
     if (layout.size > std::numeric_limits<size_t>::max())
-      throw std::bad_alloc();
+      obelisk_rt_out_of_memory();
     byteCount = checkedSizeSum(byteCount, static_cast<size_t>(layout.size));
   }
   ScopedCopyMapBuffer values(context, byteCount);
@@ -1515,9 +1516,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     }
     case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
       if (!canonicalFrame || instruction.immediate > canonicalFrameSize ||
-          sizeof(void *) > canonicalFrameSize - instruction.immediate)
+          sizeof(obelisk_rt_managed_word_v1) >
+              canonicalFrameSize - instruction.immediate)
         return OBELISK_RT_INVALID_FRAME;
-      std::memset(canonicalFrame + instruction.immediate, 0, sizeof(void *));
+      std::memset(canonicalFrame + instruction.immediate, 0,
+                  sizeof(obelisk_rt_managed_word_v1));
       break;
     case OBELISK_RT_DB_FRAME_ROOT:
       break;
@@ -1715,15 +1718,22 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         // produce it, so it would mean a malformed image.
         if (start == kInvalidHandleStart || start < 0 || end - start < 64) {
           if (isLoad) {
-            obelisk_rt_object_v1 *none = nullptr;
+            obelisk_rt_managed_word_v1 none = 0;
             std::memcpy(frame.data + valueLayout.offset, &none, sizeof(none));
           }
           break;
         }
         if (start % 64 != 0)
           return OBELISK_RT_INVALID_HANDLE;
-        obelisk_rt_object_v1 *managed = nullptr;
-        obelisk_rt_object_v1 *previous = nullptr;
+        obelisk_rt_managed_word_v1 managed = 0;
+        obelisk_rt_managed_word_v1 previous = 0;
+        if (instruction.opcode != OBELISK_RT_DB_LOAD_STATE) {
+          std::memcpy(&managed, frame.data + valueLayout.offset,
+                      sizeof(managed));
+          if (managed != obelisk_rt_managed_word_from_object(
+                             obelisk_rt_object_from_managed_word(managed)))
+            return OBELISK_RT_INVALID_HANDLE;
+        }
         std::lock_guard<std::recursive_mutex> lock(context->mutex);
         if (automatic) {
           uint32_t id = 0;
@@ -1739,12 +1749,11 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (baseOffset != 0 || start != 0)
               return OBELISK_RT_INVALID_HANDLE;
             if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
-              managed = state.managedValue;
+              managed = obelisk_rt_managed_word_from_object(state.managedValue);
             else {
-              previous = state.managedValue;
-              std::memcpy(&managed, frame.data + valueLayout.offset,
-                          sizeof(managed));
-              state.managedValue = managed;
+              previous =
+                  obelisk_rt_managed_word_from_object(state.managedValue);
+              state.managedValue = obelisk_rt_object_from_managed_word(managed);
             }
           } else {
             if (start < 0 || baseOffset != start ||
@@ -1763,9 +1772,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             else {
               std::memcpy(&previous, state.value.data() + byteOffset,
                           sizeof(previous));
-              std::memcpy(state.value.data() + byteOffset,
-                          frame.data + valueLayout.offset, sizeof(managed));
-              std::memcpy(&managed, frame.data + valueLayout.offset,
+              std::memcpy(state.value.data() + byteOffset, &managed,
                           sizeof(managed));
             }
           }
@@ -1781,9 +1788,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             return OBELISK_RT_INVALID_HANDLE;
           uint64_t &slot = context->stateValue[absolute / 64];
           if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
-            std::memcpy(&managed, &slot, sizeof(managed));
+            managed = slot;
           else {
-            std::memcpy(&previous, &slot, sizeof(previous));
+            previous = slot;
             uint64_t mask = uint64_t{1} << (absolute % 64);
             bool forced = absolute / 64 < context->forceMask.size() &&
                           (context->forceMask[absolute / 64] & mask) != 0;
@@ -1792,10 +1799,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (forced || assigned) {
               managed = previous;
             } else {
-              std::memcpy(&slot, frame.data + valueLayout.offset,
-                          sizeof(managed));
-              std::memcpy(&managed, frame.data + valueLayout.offset,
-                          sizeof(managed));
+              slot = managed;
             }
           }
         }
@@ -1804,8 +1808,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                    static_cast<uint32_t>(start)
+              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                              static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -1954,7 +1958,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (state.managedRootRegistered) {
               if (start != 0)
                 return OBELISK_RT_INVALID_HANDLE;
-              std::memcpy(&previous, &state.managedValue, sizeof(previous));
+              previous =
+                  obelisk_rt_managed_word_from_object(state.managedValue);
             } else {
               if (byteOffset > state.value.size() ||
                   sizeof(previous) > state.value.size() - byteOffset)
@@ -2082,8 +2087,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                         static_cast<uint32_t>(absolute)
+                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                   static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -2106,8 +2111,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                      static_cast<uint32_t>(start)
+                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
@@ -2463,9 +2468,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_VIRTUAL_CALL:
     case OBELISK_RT_DB_INTERFACE_CALL: {
       Layout receiverLayout = layout(instruction.source0);
-      obelisk_rt_object_v1 *receiver = nullptr;
-      std::memcpy(&receiver, frame.data + receiverLayout.offset,
-                  sizeof(receiver));
+      obelisk_rt_managed_word_v1 receiverWord = 0;
+      std::memcpy(&receiverWord, frame.data + receiverLayout.offset,
+                  sizeof(receiverWord));
+      obelisk_rt_object_v1 *receiver =
+          obelisk_rt_object_from_managed_word(receiverWord);
+      if (obelisk_rt_managed_word_from_object(receiver) != receiverWord)
+        return OBELISK_RT_INVALID_BYTECODE;
       const obelisk_rt_method_descriptor_v1 *method = nullptr;
       obelisk_rt_status status;
       if (instruction.opcode == OBELISK_RT_DB_INTERFACE_CALL) {
@@ -2613,9 +2622,13 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
     case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
     case OBELISK_RT_DB_INTERFACE_TASK_CALL: {
       Layout receiverLayout = layout(instruction.source0);
-      obelisk_rt_object_v1 *receiver = nullptr;
-      std::memcpy(&receiver, frame.data + receiverLayout.offset,
-                  sizeof(receiver));
+      obelisk_rt_managed_word_v1 receiverWord = 0;
+      std::memcpy(&receiverWord, frame.data + receiverLayout.offset,
+                  sizeof(receiverWord));
+      obelisk_rt_object_v1 *receiver =
+          obelisk_rt_object_from_managed_word(receiverWord);
+      if (obelisk_rt_managed_word_from_object(receiver) != receiverWord)
+        return OBELISK_RT_INVALID_BYTECODE;
       const obelisk_rt_method_descriptor_v1 *method = nullptr;
       obelisk_rt_status status;
       if (instruction.opcode == OBELISK_RT_DB_INTERFACE_TASK_CALL) {
@@ -2873,7 +2886,7 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     uint64_t *value, uint64_t *unknown, uint32_t outputLimbs) noexcept {
   if (!context || !value || !unknown || (captureCount != 0 && !captures))
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ManagedExecutionScope managedExecution(context);
     if (managedExecution.getStatus() != OBELISK_RT_OK)
       return managedExecution.getStatus();
@@ -3028,11 +3041,9 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     if (evaluated.fourState)
       std::copy(evaluated.unknown.begin(), evaluated.unknown.end(), unknown);
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 static obelisk_rt_status executeDesignBytecode(
@@ -3043,7 +3054,7 @@ static obelisk_rt_status executeDesignBytecode(
     std::unique_ptr<PendingDesignActivation> *pendingActivation) noexcept {
   if (!outAction || (frameSize != 0 && !frame))
     return OBELISK_RT_INVALID_ARGUMENT;
-  try {
+  OBELISK_RT_TRY {
     ManagedExecutionScope managedExecution(context);
     if (managedExecution.getStatus() != OBELISK_RT_OK)
       return managedExecution.getStatus();
@@ -3075,11 +3086,9 @@ static obelisk_rt_status executeDesignBytecode(
                                             static_cast<const uint8_t *>(frame),
                                             scratchOffset);
     return status;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_BYTECODE;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 obelisk_rt_status obelisk_rt_execute_design_bytecode(
@@ -3106,7 +3115,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
                                            uint64_t root,
                                            uint64_t preservedActive,
                                            bool &preserved) {
-  try {
+  OBELISK_RT_TRY {
     preserved = false;
     std::vector<uint64_t> targets{root};
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
@@ -3299,11 +3308,9 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         result = status;
     }
     return result;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 } // namespace
@@ -3317,7 +3324,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
     return OBELISK_RT_INVALID_ARGUMENT;
   *outDisposition = OBELISK_RT_PROCESS_CONTROL_CONTINUE;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     uint64_t activeProcess = 0;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -3386,11 +3393,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
     if (status == OBELISK_RT_OK && killedActive)
       *outDisposition = OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT;
     return status;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -3404,7 +3409,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     uint64_t scratchOffset;
     std::vector<uint8_t> frame;
   };
-  try {
+  OBELISK_RT_TRY {
     std::vector<uint64_t> descendants;
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
     std::vector<CancelledDesignTask> designTasks;
@@ -3454,10 +3459,10 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         if (!process.instance || !contains(token) || token == root)
           continue;
         if (process.callers.size() == std::numeric_limits<size_t>::max())
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         size_t count = process.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - nativeActivationCount)
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         nativeActivationCount += count;
         ++nativeTaskCount;
       }
@@ -3465,10 +3470,10 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         if (task.terminated || !contains(task.id) || task.id == root)
           continue;
         if (task.callers.size() == std::numeric_limits<size_t>::max())
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         size_t count = task.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - designActivationCount)
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         designActivationCount += count;
         ++designTaskCount;
       }
@@ -3491,7 +3496,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
           context->killedDesignTasks.rangeCount(), designTaskCount));
-      try {
+      OBELISK_RT_TRY {
         for (const ScheduledProcess &process : context->scheduledProcesses) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
           if (!process.instance || !contains(token) || token == root)
@@ -3512,7 +3517,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           if (context->killedDesignTasks.insert(task.id).second)
             insertedDesignKills.push_back(task.id);
         }
-      } catch (...) {
+      }
+      OBELISK_RT_CATCH_ALL {
         for (uint64_t token : insertedNativeTerminations)
           context->terminatedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignTerminations)
@@ -3521,7 +3527,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
           context->killedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignKills)
           context->killedDesignTasks.erase(token);
-        throw;
+        OBELISK_RT_RETHROW;
       }
       for (ScheduledProcess &process : context->scheduledProcesses) {
         uint64_t token = (UINT64_C(1) << 63) | process.token;
@@ -3605,11 +3611,9 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         result = status;
     }
     return result;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -3625,7 +3629,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     bool releaseOwnedStates;
     std::vector<uint8_t> frame;
   };
-  try {
+  OBELISK_RT_TRY {
     std::vector<uint64_t> targets;
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
     std::vector<CancelledDesignTask> designTasks;
@@ -3850,18 +3854,18 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           size_t count = process.callers.size() - owner;
           if (count >
               std::numeric_limits<size_t>::max() - nativeActivationCount)
-            throw std::bad_alloc();
+            obelisk_rt_out_of_memory();
           nativeActivationCount += count;
           continue;
         }
         std::optional<UnwindBoundary> unwind = nativeUnwind(process);
         if (!unwind &&
             process.callers.size() == std::numeric_limits<size_t>::max())
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         size_t count = unwind ? process.callers.size() - unwind->caller
                               : process.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - nativeActivationCount)
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         nativeActivationCount += count;
         if (!unwind)
           ++nativeTaskCount;
@@ -3877,18 +3881,18 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           size_t count = task.callers.size() - owner;
           if (count >
               std::numeric_limits<size_t>::max() - designActivationCount)
-            throw std::bad_alloc();
+            obelisk_rt_out_of_memory();
           designActivationCount += count;
           continue;
         }
         std::optional<UnwindBoundary> unwind = designUnwind(task);
         if (!unwind &&
             task.callers.size() == std::numeric_limits<size_t>::max())
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         size_t count = unwind ? task.callers.size() - unwind->caller
                               : task.callers.size() + 1;
         if (count > std::numeric_limits<size_t>::max() - designActivationCount)
-          throw std::bad_alloc();
+          obelisk_rt_out_of_memory();
         designActivationCount += count;
         if (!unwind)
           ++designTaskCount;
@@ -3912,7 +3916,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           context->killedNativeProcesses.rangeCount(), nativeTaskCount));
       context->killedDesignTasks.reserveRanges(checkedSizeSum(
           context->killedDesignTasks.rangeCount(), designTaskCount));
-      try {
+      OBELISK_RT_TRY {
         for (const ScheduledProcess &process : context->scheduledProcesses) {
           uint64_t token = (UINT64_C(1) << 63) | process.token;
           if (!process.instance || (token == current && !cancelCurrent) ||
@@ -3937,7 +3941,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           if (context->killedDesignTasks.insert(task.id).second)
             insertedDesignKills.push_back(task.id);
         }
-      } catch (...) {
+      }
+      OBELISK_RT_CATCH_ALL {
         for (uint64_t token : insertedNativeTerminations)
           context->terminatedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignTerminations)
@@ -3946,7 +3951,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           context->killedNativeProcesses.erase(token);
         for (uint64_t token : insertedDesignKills)
           context->killedDesignTasks.erase(token);
-        throw;
+        OBELISK_RT_RETHROW;
       }
 
       // Clause 16.4 flushes reports when the outermost enclosing process
@@ -4272,11 +4277,9 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         result = status;
     }
     return result;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 template <bool EnableReadyCohort>
@@ -4291,7 +4294,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
   bool taskDequeued = false;
   bool currentFrameReleased = false;
   auto abandonTask = [&](obelisk_rt_status failure) noexcept {
-    try {
+    OBELISK_RT_TRY {
       if (taskDequeued && context->execution) {
         obelisk_rt_design_bytecode_entry_v1 entry{context->execution,
                                                   task.function, 0};
@@ -4312,9 +4315,9 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                   activation.scratchOffset);
         }
       }
-    } catch (...) {
     }
-    try {
+    OBELISK_RT_CATCH_ALL {}
+    OBELISK_RT_TRY {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       obelisk_rt_unregister_signal_wait_unlocked(
           context, task.signalSubscriptions, task.id, true);
@@ -4335,8 +4338,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
       context->designTaskExecuting = false;
-    } catch (...) {
     }
+    OBELISK_RT_CATCH_ALL {}
     if (taskDequeued) {
       context->designTaskFrames.release(std::move(task.frame));
       for (DesignActivation &activation : task.callers)
@@ -4344,7 +4347,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
     }
     return failure;
   };
-  try {
+  OBELISK_RT_TRY {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->designTaskExecuting)
@@ -4472,8 +4475,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
               if (wait->count == 1) {
                 obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-                    reinterpret_cast<obelisk_rt_object_v1 *>(
-                        entries[0].stable_id),
+                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
                     wait->flags, mailboxReady);
                 if (status != OBELISK_RT_OK) {
                   context->schedulerStatus = status;
@@ -4484,8 +4486,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               if (wait->count == 1 && wait->payload <= UINT32_MAX) {
                 obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
                     context,
-                    reinterpret_cast<obelisk_rt_object_v1 *>(
-                        entries[0].stable_id),
+                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
                     static_cast<int32_t>(wait->payload), iterator->waitSequence,
                     semaphoreReady);
                 if (status != OBELISK_RT_OK) {
@@ -4663,8 +4664,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
               if (wait->count == 1) {
                 obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-                    reinterpret_cast<obelisk_rt_object_v1 *>(
-                        entries[0].stable_id),
+                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
                     wait->flags, mailboxReady);
                 if (status != OBELISK_RT_OK) {
                   context->schedulerStatus = status;
@@ -4675,8 +4675,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               if (wait->count == 1 && wait->payload <= UINT32_MAX) {
                 obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
                     context,
-                    reinterpret_cast<obelisk_rt_object_v1 *>(
-                        entries[0].stable_id),
+                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
                     static_cast<int32_t>(wait->payload), iterator->waitSequence,
                     semaphoreReady);
                 if (status != OBELISK_RT_OK) {
@@ -5074,17 +5073,14 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                         behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE) ||
                        (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
                         (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF ||
-                         behaviorFlags ==
-                             OBELISK_RT_WAIT_CLOCK_OCCURRENCE)));
+                         behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE)));
         uint32_t occurrenceConditions =
             behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
-                ? static_cast<uint32_t>(
-                      __builtin_popcountll(wait->auxiliary))
+                ? static_cast<uint32_t>(__builtin_popcountll(wait->auxiliary))
                 : 0;
-        uint32_t occurrencePrimaries =
-            occurrenceConditions < wait->count
-                ? wait->count - occurrenceConditions
-                : 0;
+        uint32_t occurrencePrimaries = occurrenceConditions < wait->count
+                                           ? wait->count - occurrenceConditions
+                                           : 0;
         bool validOccurrence =
             behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE ||
             (wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
@@ -5092,8 +5088,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
              occurrencePrimaries <= 64 &&
              (occurrencePrimaries == 64 ||
               (wait->auxiliary >> occurrencePrimaries) == 0));
-        if (!validFlags ||
-            !validOccurrence ||
+        if (!validFlags || !validOccurrence ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&
@@ -5143,11 +5138,10 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         if (finalizeStatus != OBELISK_RT_OK)
           break;
         bool sameSignalWait =
-            signalWait &&
-            (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
-                 ? obelisk_rt_same_clock_occurrence_wait_unlocked(
-                       context, wait, task.id, true)
-                 : hasSameDirectSignalWait(task, wait));
+            signalWait && (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                               ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                                     context, wait, task.id, true)
+                               : hasSameDirectSignalWait(task, wait));
         if (!signalWait && !task.signalSubscriptions.empty())
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
@@ -5296,17 +5290,18 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         else {
           context->scheduledDesignTasks.push_back(std::move(task));
           uint64_t scheduledID = context->scheduledDesignTasks.back().id;
-          try {
+          OBELISK_RT_TRY {
             context->scheduledDesignTaskIndices[scheduledID] =
                 context->scheduledDesignTasks.size() - 1;
             if (!indexedSignalBlocked(context->scheduledDesignTasks.back()))
               context->designPollCandidates.insert(scheduledID);
-          } catch (...) {
+          }
+          OBELISK_RT_CATCH_ALL {
             context->scheduledDesignTaskIndices.erase(scheduledID);
             context->designPollCandidates.erase(scheduledID);
             task = std::move(context->scheduledDesignTasks.back());
             context->scheduledDesignTasks.pop_back();
-            throw;
+            OBELISK_RT_RETHROW;
           }
         }
         taskDequeued = false;
@@ -5316,18 +5311,18 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
       return abandonTask(finalizeStatus);
     *outProgress = true;
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return abandonTask(OBELISK_RT_OUT_OF_MEMORY);
-  } catch (...) {
-    return abandonTask(OBELISK_RT_INVALID_BYTECODE);
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    return abandonTask(OBELISK_RT_OUT_OF_MEMORY);
+  }
+  OBELISK_RT_CATCH_ALL { return abandonTask(OBELISK_RT_INVALID_BYTECODE); }
 }
 
 OBELISK_RT_FEATURE_TEXT obelisk_rt_status runOneDesignTaskCohort(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
     uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
   return runOneDesignTaskImpl<true>(context, maximumRegion, maximumRank,
-                                     maximumInsertionSequence, outProgress);
+                                    maximumInsertionSequence, outProgress);
 }
 
 obelisk_rt_status obelisk_rt_run_one_design_task(
@@ -5404,7 +5399,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
                                                  forcedDesignTask);
     }
   } activeState{context};
-  try {
+  OBELISK_RT_TRY {
     // A primed child executes inside its parent's SPAWN intrinsic. Temporarily
     // lend the active-context fields to the child, force scheduler selection
     // to that one task, and restore the parent before returning from the
@@ -5443,9 +5438,7 @@ obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
         return OBELISK_RT_OK;
     }
     return OBELISK_RT_OUT_OF_RESOURCES;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }

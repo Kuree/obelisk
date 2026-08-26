@@ -74,12 +74,12 @@ void setError(VPIState *state, const char *message, int level = vpiError,
               const char *code = "OBELISK_VPI") {
   if (!state)
     return;
-  try {
+  OBELISK_RT_TRY {
     state->errorMessage = message ? message : "VPI error";
     state->errorCode = code;
     state->errorLevel = level;
-  } catch (...) {
   }
+  OBELISK_RT_CATCH_ALL {}
 }
 
 VPIState *requireState() {
@@ -108,15 +108,17 @@ vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
 }
 
 vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor) {
-  try {
+  OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->cursor = cursor;
     return keepHandle(state, std::move(handle));
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI handle arena is out of memory", vpiSystem);
     return nullptr;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setError(state, "could not allocate VPI handle", vpiInternal);
     return nullptr;
   }
@@ -166,11 +168,12 @@ bool nameFor(__vpiHandle *handle, std::string &name) {
     setError(handle->owner, "design name lookup failed");
     return false;
   }
-  try {
+  OBELISK_RT_TRY {
     name.assign(reinterpret_cast<const char *>(data),
                 static_cast<size_t>(size));
     return true;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setError(handle->owner, "could not materialize design name", vpiSystem);
     return false;
   }
@@ -190,11 +193,12 @@ bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
              "VPI value access requires readable storage or net");
     return false;
   }
-  try {
+  OBELISK_RT_TRY {
     size_t limbs = static_cast<size_t>((info.bit_width + 63) / 64);
     handle->valueScratch.assign(limbs, 0);
     handle->unknownScratch.assign(limbs, 0);
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
@@ -214,7 +218,7 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
     setError(handle->owner, "VPI write value is null");
     return false;
   }
-  try {
+  OBELISK_RT_TRY {
     size_t limbs = static_cast<size_t>((width + 63) / 64);
     value.assign(limbs, 0);
     unknown.assign(limbs, 0);
@@ -288,7 +292,8 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
       unknown.back() &= mask;
     }
     return true;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setError(handle->owner, "could not decode VPI value", vpiSystem);
     return false;
   }
@@ -312,11 +317,8 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       (context->execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0)
     return OBELISK_RT_PERMISSION_DENIED;
   std::unique_ptr<VPIState> state;
-  try {
-    state = std::make_unique<VPIState>();
-  } catch (...) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  }
+  OBELISK_RT_TRY { state = std::make_unique<VPIState>(); }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
   state->context = context;
   activeState = state.get();
   for (uint64_t moduleIndex = 0; moduleIndex != moduleCount; ++moduleIndex) {
@@ -486,13 +488,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   }
   if (status != OBELISK_RT_EOF || items.empty())
     return nullptr;
-  try {
+  OBELISK_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = state;
     iterator->iterator = true;
     iterator->items = std::move(items);
     return keepHandle(state, std::move(iterator));
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     setError(state, "could not allocate VPI iterator", vpiSystem);
     return nullptr;
   }
@@ -561,11 +564,12 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   switch (destination->format) {
   case vpiVectorVal: {
     if (!destination->value.vector) {
-      try {
+      OBELISK_RT_TRY {
         handle->vectorScratch.resize(
             static_cast<size_t>((info.bit_width + 31) / 32));
         destination->value.vector = handle->vectorScratch.data();
-      } catch (...) {
+      }
+      OBELISK_RT_CATCH_ALL {
         setError(handle->owner, "VPI vector buffer is out of memory",
                  vpiSystem);
         return;
@@ -598,7 +602,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     break;
   }
   case vpiBinStrVal:
-    try {
+    OBELISK_RT_TRY {
       handle->scratch.assign(static_cast<size_t>(info.bit_width), '0');
       for (uint64_t bit = 0; bit != info.bit_width; ++bit) {
         uint64_t mask = uint64_t{1} << (bit % 64);
@@ -608,7 +612,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
             !u ? (v ? '1' : '0') : (v ? 'z' : 'x');
       }
       destination->value.str = handle->scratch.data();
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       setError(handle->owner, "could not format binary VPI value", vpiSystem);
     }
     break;

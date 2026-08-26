@@ -53,7 +53,7 @@ def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
   HelpText<"Use <dir> for target C and C++ link inputs">;
 def target_EQ : Joined<["--"], "target=">, Group<Output_Group>,
-  MetaVarName<"<native|wasm64>">,
+  MetaVarName<"<native|wasm32>">,
   HelpText<"Select the code-generation target">;
 
 def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,

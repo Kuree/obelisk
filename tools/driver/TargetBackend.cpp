@@ -353,8 +353,7 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     // Packing those definitions across a hardware-thread-sized set keeps all
     // cores busy without consuming every group and disabling ThinLTO for the
     // ordinary importable body of the design.
-    nativeGroupCount =
-        std::min(nativeUnitCount, std::max(1u, groupCount / 3));
+    nativeGroupCount = std::min(nativeUnitCount, std::max(1u, groupCount / 3));
   for (unsigned group = 0; group != nativeGroupCount; ++group)
     nativeObjectGroups.insert(group);
 
@@ -496,16 +495,15 @@ static bool formattedOutputMayReadNetStrength(ValueRange items,
     if (itemIndex == items.size())
       return true;
     mlir::Value item = items[itemIndex++];
-    if ((flags & (OBELISK_RT_OUTPUT_ITEM_ENUM |
-                  OBELISK_RT_OUTPUT_ITEM_NET)) != 0) {
+    if ((flags & (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_NET)) !=
+        0) {
       if (itemIndex == items.size())
         return true;
       ++itemIndex;
       continue;
     }
-    bool explicitFormat =
-        (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
-                  OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0;
+    bool explicitFormat = (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                                    OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0;
     if (isa<obelisk::sim::StringType>(item.getType()) && explicitFormat)
       return true;
     if (!isa<obelisk::sim::BytesType>(item.getType()) ||
@@ -654,7 +652,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   if (needsHybridBytecode || evalScheduler)
     manager.addPass(createObeliskSimOptimizeNativeRegionsPass());
   // Partition metadata is a native ELF object/ThinLTO contract. In
-  // particular, wasm64 keeps its current single-module lowering and staged
+  // particular, wasm32 keeps its current single-module lowering and staged
   // wasm-object runtime even when the source design is large.
   if (planSemanticPartitions)
     manager.nest<obelisk::sim::SimDesignOp>().addPass(
@@ -815,6 +813,27 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
   auto *executionInitializer =
       execution ? dyn_cast<llvm::ConstantStruct>(execution->getInitializer())
                 : nullptr;
+  // Sampled designs store the descriptor and its extension in one aggregate
+  // so `reserved` can be a target-layout-relative offset on wasm32. Peel that
+  // storage wrapper before inspecting descriptor fields.
+  auto isExecutionDescriptor = [](llvm::ConstantStruct *value) {
+    auto *type = value ? dyn_cast<llvm::StructType>(value->getType()) : nullptr;
+    return type && type->getNumElements() == 17 &&
+           value->getNumOperands() == 17 &&
+           type->getElementType(0)->isIntegerTy(32) &&
+           type->getElementType(1)->isIntegerTy(32) &&
+           type->getElementType(7)->isIntegerTy(64);
+  };
+  if (!isExecutionDescriptor(executionInitializer) && executionInitializer &&
+      executionInitializer->getNumOperands() == 2) {
+    auto *nested =
+        dyn_cast<llvm::ConstantStruct>(executionInitializer->getOperand(0));
+    auto *extension =
+        dyn_cast<llvm::ConstantStruct>(executionInitializer->getOperand(1));
+    if (isExecutionDescriptor(nested) && extension &&
+        extension->getNumOperands() == 4)
+      executionInitializer = nested;
+  }
   auto *stateBitCount =
       executionInitializer && executionInitializer->getNumOperands() > 7
           ? dyn_cast<llvm::ConstantInt>(executionInitializer->getOperand(7))
@@ -1030,9 +1049,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
       failed(optimizeLLVMModule(*llvmModule, *targetMachine, hostOptLevel)))
     return failure();
 
-  bool fullLTO = options.kind == NativeOutputKind::Executable &&
-                 !useBytecode && !options.noLTO &&
-                 backend->usesFullLTO(options.optLevel) && !thinLTO;
+  bool fullLTO = options.kind == NativeOutputKind::Executable && !useBytecode &&
+                 !options.noLTO && backend->usesFullLTO(options.optLevel) &&
+                 !thinLTO;
   if (fullLTO) {
     // LLD's explicit --lto=full mode selects LLVM's unified LTO pipeline.
     // Match Clang -flto=full -funified-lto bitcode so every module in the
@@ -1101,8 +1120,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         partitionBitcode[index].assign(storage.begin(), storage.end());
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
             options.outputPath,
-            (Twine(".part-") + Twine(index) +
-             (nativeObject ? ".o" : ".bc"))
+            (Twine(".part-") + Twine(index) + (nativeObject ? ".o" : ".bc"))
                 .str());
         if (failed(temporary)) {
           errs() << "obelisk: error: could not create ThinLTO partition "

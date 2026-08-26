@@ -1,4 +1,4 @@
-# Build-time provisioning for the wasm64 target.
+# Build-time provisioning for the wasm32 target.
 #
 # The counterpart to TargetNativeSupport.cmake. That file cross-compiles the
 # runtime with clang against a pinned Debian sysroot and stages glibc, the crt
@@ -7,9 +7,10 @@
 # runtime at link time, so this file only has to produce the precompiled wasm
 # runtime archive where the driver expects to find it.
 #
-# MEMORY64 is mandatory, not a preference. runtime/lib/ABI.cpp asserts
-# sizeof(void*) == 8 and every descriptor layout assertion depends on it, so a
-# wasm32 build fails to compile rather than silently disagreeing.
+# wasm32 rather than wasm64, because no Safari release implements the
+# Memory64 proposal. runtime/lib/ABI.cpp carries literal layout tables for both
+# pointer widths, so the archive is correct either way; what selects 32 is that
+# it is the only width an iPhone will load.
 
 set(_obelisk_source_dir "${PROJECT_SOURCE_DIR}")
 if(DEFINED OBELISK_SOURCE_DIR AND NOT OBELISK_SOURCE_DIR STREQUAL "")
@@ -22,7 +23,7 @@ if(DEFINED OBELISK_TARGET_RUNTIME_SOURCE_DIR AND
     "${OBELISK_TARGET_RUNTIME_SOURCE_DIR}" ABSOLUTE)
 endif()
 
-set(OBELISK_TARGET_TRIPLE "wasm64-unknown-emscripten" CACHE STRING
+set(OBELISK_TARGET_TRIPLE "wasm32-unknown-emscripten" CACHE STRING
     "wasm code-generation target triple")
 
 # Compile the runtime once while assembling the web toolchain. The browser
@@ -59,23 +60,26 @@ file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h")
 
-set(_obelisk_target_runtime_definitions)
+set(_obelisk_target_runtime_definitions
+  -DOBELISK_RT_IGNORE_EXCEPTIONS=1)
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   list(APPEND _obelisk_target_runtime_definitions
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
 endif()
 
-# The runtime uses C++ exceptions (RuntimeInternal.h, Bytecode.cpp), so the
-# wasm exception scheme has to be selected explicitly and has to match whatever
-# links against this archive.
+# Build the wasm runtime without exception support while retaining the
+# source-level guards used by native builds at C ABI boundaries. The runtime's
+# portability layer compiles those guards away under this strict mode, and the
+# explicit definition above selects fatal handling for locally detected
+# allocation overflow. Native builds continue to translate allocation and
+# library failures into the public status codes documented by the runtime API.
 #
 # +atomics,+bulk-memory are required for the archive to link against an
 # emscripten runtime built with shared memory; without them wasm-ld rejects
 # the objects outright. They are harmless in a single-threaded link.
 set(_obelisk_wasm_flags
   -std=c++17 -O3
-  -sMEMORY64=1
-  -fwasm-exceptions
+  -fno-exceptions
   -matomics -mbulk-memory
   -fvisibility=hidden
   -ffunction-sections -fdata-sections
@@ -109,7 +113,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     DEPENDS
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp"
       ${_obelisk_target_runtime_headers}
-    COMMENT "Building wasm64 target runtime ${source}.cpp"
+    COMMENT "Building wasm32 target runtime ${source}.cpp"
     VERBATIM)
 endforeach()
 
@@ -119,7 +123,7 @@ add_custom_command(
   COMMAND "${_obelisk_wasm_ar}" rcs "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
           ${_obelisk_target_runtime_objects}
   DEPENDS ${_obelisk_target_runtime_objects}
-  COMMENT "Archiving wasm64 libobelisk_rt.a"
+  COMMENT "Archiving wasm32 libobelisk_rt.a"
   VERBATIM)
 add_custom_target(obelisk_target_runtime
   DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}")
@@ -143,7 +147,7 @@ add_custom_command(
           "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E touch "${OBELISK_NATIVE_SUPPORT_STAMP}"
   DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
-  COMMENT "Staging wasm64 target-link support"
+  COMMENT "Staging wasm32 target-link support"
   VERBATIM)
 add_custom_target(obelisk_native_support
   DEPENDS "${OBELISK_NATIVE_SUPPORT_STAMP}")

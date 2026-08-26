@@ -31,7 +31,6 @@ endmodule
 // OUTPUT: past=x
 // OUTPUT-NEXT: past=1
 // LLVM: @__obelisk_execution_descriptor_v1 = constant
-// LLVM-SAME: { i32 1, i32 32,
-// LLVM-SAME: i64 ptrtoint (ptr @__obelisk_execution_extension_v1 to i64), ptr null, i64 0,
-// LLVM: @__obelisk_execution_extension_v1 = internal constant { i32, i32, ptr, i64 } { i32 1, i32 24, ptr @__obelisk_sampled_ranges_v1, i64 1 }
+// LLVM-SAME: { i32 1, i32 32, i64 120,
+// LLVM-SAME: { i32 1, i32 24, ptr @__obelisk_sampled_ranges_v1, i64 1 }
 // LLVM: @__obelisk_sampled_ranges_v1 = internal constant [1 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 2 }]

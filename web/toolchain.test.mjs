@@ -26,15 +26,15 @@ assert.deepEqual(loaded, [
   'libobelisk_rt.a', 'libstubs.a', 'libnoexit.a', 'libc.a', 'libdlmalloc.a',
   'libc++.a', 'libc++abi.a', 'libcompiler_rt.a', 'libunwind.a',
 ]);
-const target = '/lib/obelisk/targets/wasm64-unknown-emscripten';
+const target = '/lib/obelisk/targets/wasm32-unknown-emscripten';
 assert.equal(new TextDecoder().decode(files.get(`${target}/libobelisk_rt.a`)),
   'libobelisk_rt.a');
 for (const name of loaded.slice(1)) {
-  assert.ok(files.has(`/sysroot/lib/wasm64-emscripten/${name}`), name);
+  assert.ok(files.has(`/sysroot/lib/wasm32-emscripten/${name}`), name);
 }
 assert.equal(files.get(`${target}/.complete`), 'web toolchain\n');
 assert.ok(directories.has(target));
-assert.ok(directories.has('/sysroot/lib/wasm64-emscripten'));
+assert.ok(directories.has('/sysroot/lib/wasm32-emscripten'));
 
 await assert.rejects(
   globalThis.installObeliskToolchain({ FS }, {

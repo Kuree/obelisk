@@ -671,9 +671,8 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
         return OBELISK_RT_ARGUMENT_MISMATCH;
       const auto *net =
           static_cast<const obelisk_rt_net_arg_v1 *>(argument.data);
-      obelisk_rt_status status =
-          obelisk_rt_design_net_strength(context, net->handle, &strengths,
-                                         net->native_state != 0);
+      obelisk_rt_status status = obelisk_rt_design_net_strength(
+          context, net->handle, &strengths, net->native_state != 0);
       if (status != OBELISK_RT_OK)
         return status;
     } else {
@@ -832,8 +831,12 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
     if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
       if (argument.size != 0 || !argument.data || argument.unknown)
         return OBELISK_RT_INVALID_ARGUMENT;
-      obelisk_rt_object_v1 *container = nullptr;
-      std::memcpy(&container, argument.data, sizeof(container));
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, argument.data, sizeof(word));
+      obelisk_rt_object_v1 *container =
+          obelisk_rt_object_from_managed_word(word);
+      if (word != obelisk_rt_managed_word_from_object(container))
+        return OBELISK_RT_INVALID_HANDLE;
       std::string value;
       obelisk_rt_status status =
           obelisk_rt_container_pattern(container, value, 0);
@@ -844,8 +847,11 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
     if (argument.kind == OBELISK_RT_ARG_MANAGED_OBJECT) {
       if (argument.size != 0 || !argument.data || argument.unknown)
         return OBELISK_RT_INVALID_ARGUMENT;
-      obelisk_rt_object_v1 *object = nullptr;
-      std::memcpy(&object, argument.data, sizeof(object));
+      obelisk_rt_managed_word_v1 word = 0;
+      std::memcpy(&word, argument.data, sizeof(word));
+      obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+      if (word != obelisk_rt_managed_word_from_object(object))
+        return OBELISK_RT_INVALID_HANDLE;
       if (!object)
         return formatStringValue(output, "null", options);
       if (obelisk_rt_managed_object_kind(object) != OBELISK_RT_MANAGED_CLASS)
@@ -1205,24 +1211,23 @@ obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
   });
 }
 
-extern "C" double
-obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context, double value,
-                              uint64_t timeMultiplier,
-                              int32_t timePrecision) {
+extern "C" double obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context,
+                                                double value,
+                                                uint64_t timeMultiplier,
+                                                int32_t timePrecision) {
   if (!context || timeMultiplier == 0 || !std::isfinite(value))
     return value;
 
   int32_t units = timePrecision;
   uint32_t fractionDigits = 0;
-  try {
+  OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->timeFormat.active) {
       units = context->timeFormat.units;
       fractionDigits = context->timeFormat.fractionDigits;
     }
-  } catch (...) {
-    return value;
   }
+  OBELISK_RT_CATCH_ALL { return value; }
 
   // Table 21-8 first rounds in the unit and decimal precision selected by
   // $timeformat, then returns the value in the invoking scope's time unit.
@@ -1231,12 +1236,10 @@ obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context, double value,
   long double decimalScale =
       std::pow(10.0L, static_cast<long double>(fractionDigits));
   long double rounded =
-      std::round(static_cast<long double>(value) * decimalScale) /
-      decimalScale;
+      std::round(static_cast<long double>(value) * decimalScale) / decimalScale;
   long double designTicks =
-      rounded *
-      std::pow(10.0L, static_cast<long double>(units) -
-                          static_cast<long double>(timePrecision));
+      rounded * std::pow(10.0L, static_cast<long double>(units) -
+                                    static_cast<long double>(timePrecision));
   return static_cast<double>(designTicks /
                              static_cast<long double>(timeMultiplier));
 }

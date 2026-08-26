@@ -36,7 +36,7 @@ enum class NativeOutputKind { Object, LLVMIR, Executable };
 enum class TargetKind {
   /// Hermetic x86-64 ELF against a pinned glibc sysroot.
   Native,
-  /// wasm64 modules for a WebAssembly host.
+  /// wasm32 modules for a WebAssembly host.
   Wasm,
 };
 
@@ -103,7 +103,7 @@ public:
   virtual bool usesFullLTO(uint32_t optLevel) const { return optLevel != 0; }
 
   /// Whether this backend can consume stable semantic compilation
-  /// partitions. The default deliberately keeps targets such as wasm64 on
+  /// partitions. The default deliberately keeps targets such as wasm32 on
   /// their existing single-module path until their object/link semantics are
   /// implemented and validated independently.
   virtual bool supportsSemanticPartitions() const { return false; }

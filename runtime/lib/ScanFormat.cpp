@@ -79,7 +79,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
   obelisk_rt_status ownership = obelisk_rt_validate_string(context, format);
   if (ownership != OBELISK_RT_OK)
     return ownership;
-  try {
+  OBELISK_RT_TRY {
     uint64_t identity = 0;
     obelisk_rt_string_v1 inlineValue = 0;
     if ((format & UINT64_C(3)) == 0 && format != 0)
@@ -97,9 +97,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
         if (!context->dynamicScanState)
           return OBELISK_RT_OUT_OF_MEMORY;
         context->dynamicScanState->destroy =
-            [](DynamicScanState *state) OBELISK_RT_FEATURE_HELPER {
-              delete state;
-            };
+            [](DynamicScanState *state)
+                OBELISK_RT_FEATURE_HELPER { delete state; };
       }
       state = context->dynamicScanState;
     }
@@ -157,10 +156,12 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
     if (state->plans.size() > maxCachedDynamicScanPlans)
       state->plans.pop_back();
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
     plan.reset();
     return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
+  }
+  OBELISK_RT_CATCH_ALL {
     plan.reset();
     return OBELISK_RT_INVALID_ARGUMENT;
   }
@@ -192,8 +193,8 @@ obelisk_rt_v1_scan_dynamic_validate(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   }
   auto letter = [](uint32_t specifier) {
-    return static_cast<char>(std::tolower(
-        static_cast<unsigned char>(static_cast<char>(specifier))));
+    return static_cast<char>(
+        std::tolower(static_cast<unsigned char>(static_cast<char>(specifier))));
   };
   auto allowed = [&](uint32_t specifier) {
     char normalized = letter(specifier);
@@ -206,8 +207,7 @@ obelisk_rt_v1_scan_dynamic_validate(obelisk_rt_context *context,
     const DynamicScanConversion &conversion = plan->conversions[ordinal];
     char normalized = letter(conversion.specifier);
     if (conversion.suppressed) {
-      if ((normalized == 'u' || normalized == 'z') &&
-          conversion.width == 0) {
+      if ((normalized == 'u' || normalized == 'z') && conversion.width == 0) {
         std::fprintf(stderr,
                      "obelisk: dynamic %s assignment suppression for raw "
                      "%%%c requires an explicit byte count\n",

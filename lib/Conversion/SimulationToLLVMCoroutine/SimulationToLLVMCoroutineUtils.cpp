@@ -10,6 +10,9 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <cassert>
@@ -32,6 +35,21 @@ LLVM::LLVMStructType getNativeSchedulePlanLLVMType(MLIRContext *context) {
       pointer, i64,     pointer, pointer, pointer};
   assert(fields.size() == static_cast<size_t>(NativeSchedulePlanField::Count));
   return LLVM::LLVMStructType::getLiteral(context, fields);
+}
+
+uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout) {
+  llvm::LLVMContext context;
+  llvm::Type *pointer = llvm::PointerType::get(context, 0);
+  llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+  llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+  SmallVector<llvm::Type *> fields{
+      i32,     i64,     pointer, i64,     i32,     i32,     pointer, pointer,
+      i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
+      i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
+      i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
+      pointer, i64,     pointer, pointer, pointer};
+  auto *type = llvm::StructType::get(context, fields);
+  return dataLayout.getTypeAllocSize(type).getFixedValue();
 }
 
 std::optional<uint64_t> resolveCFGConstantInteger(Value value,
@@ -158,6 +176,82 @@ void storeAt(OpBuilder &builder, Location location, Value base, uint64_t offset,
              Value value, unsigned alignment) {
   LLVM::StoreOp::create(builder, location, value,
                         byteGEP(builder, location, base, offset), alignment);
+}
+
+Value elementGEP(OpBuilder &builder, Location location, Value base,
+                 Type elementType, uint64_t index) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  SmallVector<LLVM::GEPArg> indices;
+  if (index <= INT32_MAX)
+    indices.emplace_back(static_cast<int32_t>(index));
+  else
+    indices.emplace_back(
+        llvmConstant(builder, location, builder.getI64Type(), index));
+  return LLVM::GEPOp::create(builder, location, pointer, elementType, base,
+                             indices);
+}
+
+Value fieldGEP(OpBuilder &builder, Location location, Value base,
+               Type structure, uint32_t field) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  SmallVector<LLVM::GEPArg> indices{LLVM::GEPArg(0),
+                                    LLVM::GEPArg(static_cast<int32_t>(field))};
+  return LLVM::GEPOp::create(builder, location, pointer, structure, base,
+                             indices);
+}
+
+namespace {
+
+Type processInstanceType(MLIRContext *context) {
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  return LLVM::LLVMStructType::getLiteral(
+      context, {pointer, pointer, pointer, i64, i64, i64, pointer, i32, i32,
+                i32, i32, pointer, pointer, pointer, i32, i32});
+}
+
+Type fragmentActionType(MLIRContext *context) {
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  return LLVM::LLVMStructType::getLiteral(context,
+                                          {i32, i32, i32, i32, i64, i64});
+}
+
+} // namespace
+
+Value loadAt(OpBuilder &builder, Location location, Value base,
+             ProcessInstanceField field, Type type, unsigned alignment) {
+  Value address = fieldGEP(builder, location, base,
+                           processInstanceType(builder.getContext()),
+                           static_cast<uint32_t>(field));
+  return LLVM::LoadOp::create(builder, location, type, address, alignment);
+}
+
+void storeAt(OpBuilder &builder, Location location, Value base,
+             ProcessInstanceField field, Value value, unsigned alignment) {
+  LLVM::StoreOp::create(builder, location, value,
+                        fieldGEP(builder, location, base,
+                                 processInstanceType(builder.getContext()),
+                                 static_cast<uint32_t>(field)),
+                        alignment);
+}
+
+Value loadAt(OpBuilder &builder, Location location, Value base,
+             FragmentActionField field, Type type, unsigned alignment) {
+  Value address = fieldGEP(builder, location, base,
+                           fragmentActionType(builder.getContext()),
+                           static_cast<uint32_t>(field));
+  return LLVM::LoadOp::create(builder, location, type, address, alignment);
+}
+
+void storeAt(OpBuilder &builder, Location location, Value base,
+             FragmentActionField field, Value value, unsigned alignment) {
+  LLVM::StoreOp::create(builder, location, value,
+                        fieldGEP(builder, location, base,
+                                 fragmentActionType(builder.getContext()),
+                                 static_cast<uint32_t>(field)),
+                        alignment);
 }
 
 Value castIntegerWidth(OpBuilder &builder, Location location, Value value,

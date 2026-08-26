@@ -6,19 +6,19 @@ module {
 
 // -----
 
-// expected-error @+1 {{coroutine lowering currently requires a 64-bit little-endian target}}
+// expected-error @+1 {{coroutine lowering requires a little-endian target with 32-bit or 64-bit pointers}}
 module attributes {llvm.data_layout = "E-p:64:64"} {
 }
 
 // -----
 
-// expected-error @+1 {{LLVM data layout is incompatible with the Obelisk process ABI}}
+// expected-error @+1 {{LLVM data layout is incompatible with the Obelisk runtime ABI for i64}}
 module attributes {llvm.data_layout = "e-p:64:64-i64:32"} {
 }
 
 // -----
 
-// expected-error @+1 {{llvm.target_triple is inconsistent with the Obelisk process ABI}}
+// expected-error @+1 {{llvm.target_triple is inconsistent with the supported little-endian 32-bit and 64-bit runtime ABIs}}
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32",
   llvm.target_triple = "i386-unknown-linux-gnu"
@@ -82,7 +82,8 @@ module attributes {
 
 // -----
 
-// The process structs remain compatible, but the wider runtime ABI does not.
+// The process structs are derived from the data layout, but the scalar runtime
+// ABI still requires the C ABI's i16 size and alignment.
 // expected-error @+1 {{LLVM data layout is incompatible with the Obelisk runtime ABI}}
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:32-i8:8",

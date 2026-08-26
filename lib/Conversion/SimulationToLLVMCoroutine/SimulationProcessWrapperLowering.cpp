@@ -25,17 +25,17 @@ void publishAction(OpBuilder &builder, Location location, Value instance,
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   Value action =
-      loadAt(builder, location, instance, kInstanceActionOffset, pointer, 8);
-  storeAt(builder, location, action, kActionKindOffset,
+      loadAt(builder, location, instance, kInstanceActionField, pointer, 0);
+  storeAt(builder, location, action, kActionKindField,
           llvmConstant(builder, location, i32, actionKind), 4);
-  storeAt(builder, location, action, kActionSuspendKindOffset,
+  storeAt(builder, location, action, kActionSuspendKindField,
           llvmConstant(builder, location, i32, suspendKind), 4);
-  storeAt(builder, location, action, kActionContinuationOffset,
+  storeAt(builder, location, action, kActionContinuationField,
           llvmConstant(builder, location, i32, continuation), 4);
-  storeAt(builder, location, action, kActionFlagsOffset,
+  storeAt(builder, location, action, kActionFlagsField,
           llvmConstant(builder, location, i32, flags), 4);
-  storeAt(builder, location, action, kActionPayloadOffset, payload, 8);
-  storeAt(builder, location, action, kActionAuxiliaryOffset,
+  storeAt(builder, location, action, kActionPayloadField, payload, 8);
+  storeAt(builder, location, action, kActionAuxiliaryField,
           llvmConstant(builder, location, i64, auxiliary), 8);
 }
 
@@ -81,12 +81,12 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   builder.setInsertionPointToStart(executeEntry);
   Value instance = executeEntry->getArgument(0);
   Value runtimeContext =
-      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
+      loadAt(builder, location, instance, kInstanceContextField, pointer, 0);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
-  Value handle = loadAt(builder, location, instance,
-                        kInstanceNativeHandleOffset, pointer, 8);
+  Value handle = loadAt(builder, location, instance, kInstanceNativeHandleField,
+                        pointer, 0);
   Value bits =
       LLVM::PtrToIntOp::create(builder, location, builder.getI64Type(), handle);
   Value isNull = arith::CmpIOp::create(
@@ -105,7 +105,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   cf::BranchOp::create(builder, location, done);
   builder.setInsertionPointToStart(done);
   Value status =
-      loadAt(builder, location, instance, kInstanceStatusOffset, i32, 4);
+      loadAt(builder, location, instance, kInstanceStatusField, i32, 4);
   LLVM::ReturnOp::create(builder, location, status);
 
   builder.setInsertionPointAfter(execute);
@@ -121,7 +121,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   builder.setInsertionPointToStart(destroyEntry);
   Value destroyInstance = destroyEntry->getArgument(0);
   Value destroyHandle = loadAt(builder, location, destroyInstance,
-                               kInstanceNativeHandleOffset, pointer, 8);
+                               kInstanceNativeHandleField, pointer, 0);
   Value destroyBits = LLVM::PtrToIntOp::create(
       builder, location, builder.getI64Type(), destroyHandle);
   Value destroyIsNull = arith::CmpIOp::create(
@@ -133,8 +133,8 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   LLVM::CallIntrinsicOp::create(builder, location,
                                 builder.getStringAttr("llvm.coro.destroy"),
                                 destroyHandle);
-  storeAt(builder, location, destroyInstance, kInstanceNativeHandleOffset,
-          LLVM::ZeroOp::create(builder, location, pointer), 8);
+  storeAt(builder, location, destroyInstance, kInstanceNativeHandleField,
+          LLVM::ZeroOp::create(builder, location, pointer), 0);
   cf::BranchOp::create(builder, location, destroyDone);
   builder.setInsertionPointToStart(destroyDone);
   LLVM::ReturnOp::create(builder, location, ValueRange{});
@@ -177,19 +177,19 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   builder.setInsertionPointToStart(executeEntry);
   Value instance = executeEntry->getArgument(0);
   Value runtimeContext =
-      loadAt(builder, location, instance, kInstanceContextOffset, pointer, 8);
+      loadAt(builder, location, instance, kInstanceContextField, pointer, 0);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
   Value frame =
-      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+      loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
   SmallVector<Value> arguments;
   size_t physicalArgument = 0;
   Block &bodyEntry = body.getBody().front();
   for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
     if (!slot.hasValueStorage()) {
       arguments.push_back(loadAt(builder, location, instance,
-                                 kInstanceContextOffset, pointer, 8));
+                                 kInstanceContextField, pointer, 0));
       ++physicalArgument;
       continue;
     }
@@ -208,7 +208,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
         "converted entry arity disagrees with canonical capture layout");
   auto call = func::CallOp::create(builder, location, body.getSymName(),
                                    TypeRange{i32}, arguments);
-  storeAt(builder, location, instance, kInstanceContinuationOffset,
+  storeAt(builder, location, instance, kInstanceContinuationField,
           llvmConstant(builder, location, i32, 0), 4);
   publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
                 OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
@@ -226,10 +226,11 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   return success();
 }
 
-LogicalResult makeDirectFragmentWrapper(
-    ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
-    StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
-    const SimulationProcessFrameAnalysis &analysis) {
+LogicalResult
+makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
+                          sim::SimFuncOp actor, StringRef wrapperName,
+                          uint32_t actorSlot, uint32_t continuation,
+                          const SimulationProcessFrameAnalysis &analysis) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToEnd(module.getBody());
   Location location = body.getLoc();
@@ -271,11 +272,11 @@ LogicalResult makeDirectFragmentWrapper(
           operation->getName().getDialectNamespace() == "obelisk_rt";
       mayTerminate |=
           isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-              sim::SimProgramExitOp,
-              sim::SimErrorOp, sim::SimTerminationRequestedOp,
-              sim::SimStatusCheckOp, sim::SimDisplayOp, sim::SimFileOpenMCDOp,
-              sim::SimFileOpenOp, sim::SimFileCloseOp, sim::SimFileFlushOp,
-              sim::SimFileGetcOp, sim::SimFileUngetcOp, sim::SimFileGetlineOp,
+              sim::SimProgramExitOp, sim::SimErrorOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+              sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
+              sim::SimFileUngetcOp, sim::SimFileGetlineOp,
               sim::SimFileReadPackedOp, sim::SimFileEofOp, sim::SimFileSeekOp,
               sim::SimFileTellOp, sim::SimFileRewindOp, sim::SimDumpOpenOp,
               sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
@@ -320,9 +321,8 @@ LogicalResult makeDirectFragmentWrapper(
     call->setAttr("obelisk.eval.direct_call", builder.getUnitAttr());
     LLVM::ReturnOp::create(
         builder, location,
-        returnsStatus
-            ? call.getResult(0)
-            : llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        returnsStatus ? call.getResult(0)
+                      : llvmConstant(builder, location, i32, OBELISK_RT_OK));
     return success();
   }
   Block *invoke = new Block;
@@ -334,8 +334,8 @@ LogicalResult makeDirectFragmentWrapper(
   Value enterStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(
-              context, "obelisk_rt_v1_scheduler_direct_fragment_enter"),
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_scheduler_direct_fragment_enter"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot),
                      llvmConstant(builder, location, i32, continuation),
@@ -353,12 +353,12 @@ LogicalResult makeDirectFragmentWrapper(
   builder.setInsertionPointToStart(invoke);
   Value instance =
       LLVM::LoadOp::create(builder, location, pointer, instanceAddress, 8);
-  Value currentContext = LLVM::AddressOfOp::create(
-      builder, location, pointer, "__obelisk_current_context");
+  Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, entry->getArgument(0),
                         currentContext, 8);
   Value frame =
-      loadAt(builder, location, instance, kInstanceFrameOffset, pointer, 8);
+      loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
   SmallVector<Value> arguments;
   size_t physicalArgument = 0;
   Block &actorEntry = actor.getBody().front();
@@ -370,9 +370,8 @@ LogicalResult makeDirectFragmentWrapper(
     }
     if (physicalArgument >= actorEntry.getNumArguments())
       return actor.emitError("direct fragment capture layout is truncated");
-    Type valueType =
-        convertProcessType(actorEntry.getArgument(physicalArgument++).getType(),
-                           context);
+    Type valueType = convertProcessType(
+        actorEntry.getArgument(physicalArgument++).getType(), context);
     arguments.push_back(loadAt(builder, location, frame, slot.valueOffset,
                                valueType, slot.alignment));
     if (slot.hasSecondaryStorage()) {
@@ -433,8 +432,8 @@ LogicalResult makeDirectFragmentWrapper(
   Value leaveStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(
-              context, "obelisk_rt_v1_scheduler_direct_fragment_leave"),
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_scheduler_direct_fragment_leave"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot)})
           .getResult();

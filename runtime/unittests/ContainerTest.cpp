@@ -12,16 +12,25 @@
 namespace {
 
 const obelisk_rt_trace_entry_v1 managedWordTraceEntry{
-    0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CONTAINER,
+    0,      0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CONTAINER,
     nullptr};
 const obelisk_rt_trace_layout_v1 managedWordTraceLayout{
-    OBELISK_RT_VERSION,     0, sizeof(void *), alignof(void *),
-    &managedWordTraceEntry, 1};
+    OBELISK_RT_VERSION,
+    0,
+    sizeof(obelisk_rt_managed_word_v1),
+    alignof(obelisk_rt_managed_word_v1),
+    &managedWordTraceEntry,
+    1};
 const obelisk_rt_trace_entry_v1 stringTraceEntry{
-    0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
-    nullptr};
+    0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING, nullptr};
+// A managed string is a tagged 64-bit word, not a pointer, so its slot stays
+// eight bytes wide at any pointer width.
 const obelisk_rt_trace_layout_v1 stringTraceLayout{
-    OBELISK_RT_VERSION, 0, sizeof(void *), alignof(void *), &stringTraceEntry,
+    OBELISK_RT_VERSION,
+    0,
+    sizeof(obelisk_rt_string_v1),
+    alignof(obelisk_rt_string_v1),
+    &stringTraceEntry,
     1};
 const obelisk_rt_element_type_v1 wordElement{
     OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 1,  0,      0,
@@ -43,8 +52,8 @@ const obelisk_rt_element_type_v1 stringElement{OBELISK_RT_VERSION,
                                                2,
                                                0,
                                                0,
-                                               sizeof(void *),
-                                               alignof(void *),
+                                               sizeof(obelisk_rt_string_v1),
+                                               alignof(obelisk_rt_string_v1),
                                                0,
                                                &stringTraceLayout};
 const obelisk_rt_element_type_v1 containerElement{
@@ -53,8 +62,8 @@ const obelisk_rt_element_type_v1 containerElement{
     3,
     0,
     0,
-    sizeof(void *),
-    alignof(void *),
+    sizeof(obelisk_rt_managed_word_v1),
+    alignof(obelisk_rt_managed_word_v1),
     0,
     &managedWordTraceLayout};
 
@@ -158,10 +167,9 @@ TEST_F(ManagedValueTest, StringSSOCoversEveryLengthAndEmbeddedNullBytes) {
 TEST_F(ManagedValueTest, ScansNativeRawWordsWithoutTextInterpretation) {
   // Three native s_vpi_vecval records encode a non-byte-aligned 69-bit value.
   // Runtime logic stores aval^bval in its value plane and bval in unknown.
-  std::array<uint32_t, 6> records{
-      UINT32_C(0x80000001), UINT32_C(0x00000000),
-      UINT32_C(0x00000001), UINT32_C(0x00000003),
-      UINT32_C(0x00000010), UINT32_C(0x00000000)};
+  std::array<uint32_t, 6> records{UINT32_C(0x80000001), UINT32_C(0x00000000),
+                                  UINT32_C(0x00000001), UINT32_C(0x00000003),
+                                  UINT32_C(0x00000010), UINT32_C(0x00000000)};
   obelisk_rt_string_v1 input = 0;
   ASSERT_EQ(obelisk_rt_v1_string_create(
                 lane, reinterpret_cast<const char *>(records.data()),
@@ -172,9 +180,8 @@ TEST_F(ManagedValueTest, ScansNativeRawWordsWithoutTextInterpretation) {
   uint32_t cursor = UINT32_MAX;
   uint32_t ok = 0;
   ASSERT_EQ(obelisk_rt_v1_string_scan_raw(
-                input, 0, nullptr, 0, sizeof(records), 69, 1, 0,
-                value.data(), sizeof(value), unknown.data(), sizeof(unknown),
-                &cursor, &ok),
+                input, 0, nullptr, 0, sizeof(records), 69, 1, 0, value.data(),
+                sizeof(value), unknown.data(), sizeof(unknown), &cursor, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, sizeof(records));
@@ -184,8 +191,7 @@ TEST_F(ManagedValueTest, ScansNativeRawWordsWithoutTextInterpretation) {
   EXPECT_EQ(unknown[1] & UINT64_C(0x1f), 0u);
 
   std::array<uint32_t, 3> twoStateWords{
-      UINT32_C(0x80000001), UINT32_C(0x00000003),
-      UINT32_C(0x00000010)};
+      UINT32_C(0x80000001), UINT32_C(0x00000003), UINT32_C(0x00000010)};
   ASSERT_EQ(obelisk_rt_v1_string_create(
                 lane, reinterpret_cast<const char *>(twoStateWords.data()),
                 sizeof(twoStateWords), &input),
@@ -206,9 +212,8 @@ TEST_F(ManagedValueTest, ScansNativeRawWordsWithoutTextInterpretation) {
   // storage, while impossible typed widths fail before touching output spans.
   cursor = UINT32_MAX;
   ok = 0;
-  EXPECT_EQ(obelisk_rt_v1_string_scan_raw(
-                input, 0, nullptr, 0, 4, 0, 0, 4, nullptr, 0, nullptr, 0,
-                &cursor, &ok),
+  EXPECT_EQ(obelisk_rt_v1_string_scan_raw(input, 0, nullptr, 0, 4, 0, 0, 4,
+                                          nullptr, 0, nullptr, 0, &cursor, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(cursor, 4u);
   EXPECT_EQ(ok, 1u);
@@ -250,9 +255,9 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
   const uint8_t packed[] = {'D', 'C', 'B', 'A'};
   const uint8_t unknown[] = {0, 0xff, 0, 0};
   obelisk_rt_string_v1 string = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_from_packed(
-                lane, packed, unknown, 32, &string),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_string_from_packed(lane, packed, unknown, 32, &string),
+      OBELISK_RT_OK);
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
@@ -273,9 +278,9 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
 
   uint8_t narrowed[3] = {0xff, 0xff, 0xff};
   uint8_t narrowedUnknown[3] = {0xff, 0xff, 0xff};
-  ASSERT_EQ(obelisk_rt_v1_string_to_packed(repeated, narrowed,
-                                           narrowedUnknown, 20),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_string_to_packed(repeated, narrowed, narrowedUnknown, 20),
+      OBELISK_RT_OK);
   EXPECT_EQ(narrowed[0], 'D');
   EXPECT_EQ(narrowed[1], 'B');
   EXPECT_EQ(narrowed[2], 1u);
@@ -285,8 +290,8 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
 
   const uint8_t sparsePacked[] = {0, 'A', 0, 'B'};
   obelisk_rt_string_v1 sparse = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_from_packed(
-                lane, sparsePacked, nullptr, 32, &sparse),
+  ASSERT_EQ(obelisk_rt_v1_string_from_packed(lane, sparsePacked, nullptr, 32,
+                                             &sparse),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_string_view(sparse, scratch, &bytes, &size),
             OBELISK_RT_OK);
@@ -295,7 +300,7 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
   const uint32_t zero = 0;
   obelisk_rt_string_v1 convertedEmpty = UINT64_MAX;
   ASSERT_EQ(obelisk_rt_v1_string_from_packed(lane, &zero, nullptr, 32,
-                                              &convertedEmpty),
+                                             &convertedEmpty),
             OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_string_length(convertedEmpty), 0u);
 
@@ -303,8 +308,7 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
   EXPECT_EQ(obelisk_rt_v1_string_repeat(lane, string, 0, &empty),
             OBELISK_RT_OK);
   EXPECT_EQ(empty, 0u);
-  EXPECT_EQ(obelisk_rt_v1_string_repeat(
-                lane, string, UINT64_MAX, &empty),
+  EXPECT_EQ(obelisk_rt_v1_string_repeat(lane, string, UINT64_MAX, &empty),
             OBELISK_RT_OUT_OF_RESOURCES);
 }
 
@@ -343,9 +347,8 @@ TEST_F(ManagedValueTest, ParsesAndFormatsStringNumbers) {
                 lane, static_cast<uint64_t>(int64_t{-42}), 10, 1, &output),
             OBELISK_RT_OK);
   expectString(output, "-42");
-  ASSERT_EQ(
-      obelisk_rt_v1_string_format_integer(lane, 255, 16, 0, &output),
-      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_format_integer(lane, 255, 16, 0, &output),
+            OBELISK_RT_OK);
   expectString(output, "ff");
   ASSERT_EQ(obelisk_rt_v1_string_format_real(lane, 3.25, &output),
             OBELISK_RT_OK);
@@ -364,23 +367,23 @@ TEST_F(ManagedValueTest, FormatsManagedStringArguments) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_string_create(lane, "managed!", 8, &value),
             OBELISK_RT_OK);
-  obelisk_rt_arg_v1 argument{
-      OBELISK_RT_ARG_MANAGED_STRING, 0, 0, &value, nullptr};
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_STRING, 0, 0, &value,
+                             nullptr};
   obelisk_rt_format_env_v1 environment{};
   environment.time_multiplier = 1;
   obelisk_rt_buffer_v1 output{};
   char scratch[8] = {};
   const char *formatBytes = nullptr;
   uint64_t formatSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_view(format, scratch, &formatBytes,
-                                      &formatSize),
+  ASSERT_EQ(
+      obelisk_rt_v1_string_view(format, scratch, &formatBytes, &formatSize),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_format(context, formatBytes, formatSize, &argument, 1,
+                                 &environment, &output),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_format(context, formatBytes, formatSize, &argument,
-                                 1, &environment, &output),
-            OBELISK_RT_OK);
-  EXPECT_EQ(std::string(reinterpret_cast<const char *>(output.data),
-                        output.size),
-            "value=managed!");
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "value=managed!");
   obelisk_rt_v1_buffer_release(&output);
 }
 
@@ -470,10 +473,9 @@ TEST_F(ManagedValueTest, SeededBoundedRandomIsRepeatableAndBounded) {
 TEST(RandomStateTest, MatchesPublishedPcgXshRrVector) {
   obelisk_rt_random_state_v1 state{};
   obelisk_rt_v1_random_state_seed(&state, 42, 54);
-  constexpr uint32_t expected[] = {
-      UINT32_C(0xa15c02b7), UINT32_C(0x7b47f409),
-      UINT32_C(0xba1d3330), UINT32_C(0x83d2f293),
-      UINT32_C(0xbfa4784b)};
+  constexpr uint32_t expected[] = {UINT32_C(0xa15c02b7), UINT32_C(0x7b47f409),
+                                   UINT32_C(0xba1d3330), UINT32_C(0x83d2f293),
+                                   UINT32_C(0xbfa4784b)};
   for (uint32_t value : expected)
     EXPECT_EQ(obelisk_rt_v1_random_state_next32(&state), value);
   EXPECT_EQ(state.increment, UINT64_C(109));
@@ -495,9 +497,9 @@ TEST(RandomStateTest, RandCCyclesAreBijectiveThroughWidth16) {
     for (uint64_t index = 0; index != cardinality; ++index) {
       uint64_t nextPosition = 0;
       uint64_t value = 0;
-      ASSERT_EQ(obelisk_rt_v1_random_cycle_next(
-                    UINT64_C(0x0123456789abcdef), position, width,
-                    &nextPosition, &value),
+      ASSERT_EQ(obelisk_rt_v1_random_cycle_next(UINT64_C(0x0123456789abcdef),
+                                                position, width, &nextPosition,
+                                                &value),
                 OBELISK_RT_OK)
           << "width " << width << " position " << position;
       ASSERT_LT(value, cardinality);
@@ -513,11 +515,9 @@ TEST(RandomStateTest, RandCKeySelectsTheCyclePermutation) {
   bool differs = false;
   for (uint64_t position = 0; position != 256; ++position) {
     uint64_t nextA = 0, nextB = 0, valueA = 0, valueB = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(1, position, 8, &nextA,
-                                               &valueA),
+    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(1, position, 8, &nextA, &valueA),
               OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(2, position, 8, &nextB,
-                                               &valueB),
+    ASSERT_EQ(obelisk_rt_v1_random_cycle_next(2, position, 8, &nextB, &valueB),
               OBELISK_RT_OK);
     EXPECT_EQ(nextA, nextB);
     differs |= valueA != valueB;
@@ -556,14 +556,12 @@ TEST_F(ManagedValueTest, RandomSeedRestartsTheActiveStream) {
 TEST_F(ManagedValueTest, RandomStateSnapshotRestoresExactly) {
   ASSERT_EQ(obelisk_rt_v1_context_seed(context, 987654321), OBELISK_RT_OK);
   obelisk_rt_random_state_v1 snapshot{};
-  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &snapshot),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &snapshot), OBELISK_RT_OK);
   EXPECT_NE(snapshot.increment & 1, 0u);
   uint64_t first = 0;
   uint64_t second = 0;
   ASSERT_EQ(obelisk_rt_v1_random_next(context, &first), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_random_set_state(context, &snapshot),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_random_set_state(context, &snapshot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_random_next(context, &second), OBELISK_RT_OK);
   EXPECT_EQ(first, second);
   snapshot.increment &= ~uint64_t{1};
@@ -634,7 +632,7 @@ TEST_F(ManagedValueTest, StringOperationsSurviveCollectionAtEveryAllocation) {
   obelisk_rt_gc_managed_root_v1 substringRoot{};
   ASSERT_EQ(
       obelisk_rt_v1_gc_managed_root_push(lane, &substringRoot, &substring),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_string_view(substring, scratch, &bytes, &size),
             OBELISK_RT_OK);
   EXPECT_EQ(std::string(bytes, size), "world");
@@ -649,14 +647,11 @@ TEST_F(ManagedValueTest, StringOperationsSurviveCollectionAtEveryAllocation) {
 
   EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &substringRoot),
             OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &lowerRoot),
-            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &lowerRoot), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &joinedRoot),
             OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &rightRoot),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &leftRoot),
-            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &rightRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &leftRoot), OBELISK_RT_OK);
 }
 
 TEST_F(ManagedValueTest, AccountsActualSmallAndLargeStringExtents) {
@@ -679,10 +674,8 @@ TEST_F(ManagedValueTest, AccountsActualSmallAndLargeStringExtents) {
   EXPECT_EQ(statistics.live_bytes, 40'048u);
   EXPECT_EQ(statistics.large_allocation_count, 1u);
 
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &roots[1]),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &roots[0]),
-            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &roots[1]), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &roots[0]), OBELISK_RT_OK);
   small = 0;
   large = 0;
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
@@ -694,13 +687,23 @@ TEST_F(ManagedValueTest, AccountsActualSmallAndLargeStringExtents) {
 
 TEST_F(ManagedValueTest, RegistersEquivalentElementDescriptorsByStableID) {
   const obelisk_rt_trace_entry_v1 traceEntry{
-      0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
+      0,      0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
       nullptr};
-  const obelisk_rt_trace_layout_v1 traceLayout{
-      OBELISK_RT_VERSION, 0, sizeof(void *), alignof(void *), &traceEntry, 1};
-  const obelisk_rt_element_type_v1 first{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_STRING, 42, 0,           0,
-      sizeof(void *),     alignof(void *),           0,  &traceLayout};
+  const obelisk_rt_trace_layout_v1 traceLayout{OBELISK_RT_VERSION,
+                                               0,
+                                               sizeof(obelisk_rt_string_v1),
+                                               alignof(obelisk_rt_string_v1),
+                                               &traceEntry,
+                                               1};
+  const obelisk_rt_element_type_v1 first{OBELISK_RT_VERSION,
+                                         OBELISK_RT_ELEMENT_STRING,
+                                         42,
+                                         0,
+                                         0,
+                                         sizeof(obelisk_rt_string_v1),
+                                         alignof(obelisk_rt_string_v1),
+                                         0,
+                                         &traceLayout};
   obelisk_rt_trace_entry_v1 equivalentEntry = traceEntry;
   obelisk_rt_trace_layout_v1 equivalentLayout = traceLayout;
   equivalentLayout.entries = &equivalentEntry;
@@ -712,8 +715,21 @@ TEST_F(ManagedValueTest, RegistersEquivalentElementDescriptorsByStableID) {
   EXPECT_EQ(obelisk_rt_v1_element_type_register(context, &equivalent),
             OBELISK_RT_OK);
 
+  // Reusing the ID for a different kind must be rejected as a conflict, so the
+  // descriptor has to be valid on its own first.
   obelisk_rt_element_type_v1 conflicting = first;
   conflicting.kind = OBELISK_RT_ELEMENT_CLASS_HANDLE;
+  conflicting.value_size = sizeof(obelisk_rt_managed_word_v1);
+  conflicting.alignment = alignof(obelisk_rt_managed_word_v1);
+  obelisk_rt_trace_layout_v1 conflictingLayout = traceLayout;
+  conflictingLayout.size = conflicting.value_size;
+  conflictingLayout.alignment = conflicting.alignment;
+  obelisk_rt_trace_entry_v1 conflictingEntry = traceEntry;
+  conflictingEntry.kind = OBELISK_RT_TRACE_STRONG;
+  conflictingEntry.slot_kind = OBELISK_RT_MANAGED_SLOT_CLASS;
+  conflictingLayout.entries = &conflictingEntry;
+  conflicting.trace = &conflictingLayout;
+  ASSERT_EQ(obelisk_rt_v1_element_type_validate(&conflicting), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_element_type_register(context, &conflicting),
             OBELISK_RT_INVALID_DESIGN);
   conflicting = first;
@@ -820,8 +836,7 @@ TEST_F(ManagedValueTest, FourStateElementsPreserveBothPlanes) {
   ASSERT_EQ(obelisk_rt_v1_assoc_create(
                 lane, &wordElement, OBELISK_RT_ASSOC_KEY_UNSIGNED, 8, &assoc),
             OBELISK_RT_OK);
-  obelisk_rt_assoc_key_v1 xKey{
-      OBELISK_RT_ASSOC_KEY_UNSIGNED, 0, 8, 3, 1, 0};
+  obelisk_rt_assoc_key_v1 xKey{OBELISK_RT_ASSOC_KEY_UNSIGNED, 0, 8, 3, 1, 0};
   uint64_t stored = 12;
   ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, assoc, &xKey, &stored, nullptr),
             OBELISK_RT_OK);
@@ -843,12 +858,12 @@ TEST_F(ManagedValueTest, CheckedContainerAccessRejectsMismatchedPlanes) {
             OBELISK_RT_INVALID_ARGUMENT);
 
   uint64_t word = 42;
-  ASSERT_EQ(obelisk_rt_v1_container_write_checked(
-                lane, words, 0, &word, sizeof(word), nullptr, 0),
+  ASSERT_EQ(obelisk_rt_v1_container_write_checked(lane, words, 0, &word,
+                                                  sizeof(word), nullptr, 0),
             OBELISK_RT_OK);
   word = 0;
-  ASSERT_EQ(obelisk_rt_v1_container_read_checked(
-                words, 0, &word, sizeof(word), nullptr, 0),
+  ASSERT_EQ(obelisk_rt_v1_container_read_checked(words, 0, &word, sizeof(word),
+                                                 nullptr, 0),
             OBELISK_RT_OK);
   EXPECT_EQ(word, 42u);
   uint64_t paddedWord[2] = {84, UINT64_C(0xfeedfacecafebeef)};
@@ -867,15 +882,15 @@ TEST_F(ManagedValueTest, CheckedContainerAccessRejectsMismatchedPlanes) {
             OBELISK_RT_OK);
   uint8_t value = 0xa;
   uint8_t unknown = 0x4;
-  EXPECT_EQ(obelisk_rt_v1_container_write_checked(
-                lane, logic, 0, &value, sizeof(value), nullptr, 0),
+  EXPECT_EQ(obelisk_rt_v1_container_write_checked(lane, logic, 0, &value,
+                                                  sizeof(value), nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_container_read_checked(
-                logic, 0, &value, sizeof(value), &unknown, 0),
+  EXPECT_EQ(obelisk_rt_v1_container_read_checked(logic, 0, &value,
+                                                 sizeof(value), &unknown, 0),
             OBELISK_RT_INVALID_ARGUMENT);
-  ASSERT_EQ(obelisk_rt_v1_container_write_checked(
-                lane, logic, 0, &value, sizeof(value), &unknown,
-                sizeof(unknown)),
+  ASSERT_EQ(obelisk_rt_v1_container_write_checked(lane, logic, 0, &value,
+                                                  sizeof(value), &unknown,
+                                                  sizeof(unknown)),
             OBELISK_RT_OK);
 }
 
@@ -884,9 +899,9 @@ TEST_F(ManagedValueTest, CreateLikePreservesSequentialContainerMetadata) {
   ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &array),
             OBELISK_RT_OK);
   obelisk_rt_object_v1 *created = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_container_create_like(lane, array, nullptr, 3,
-                                                &created),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_container_create_like(lane, array, nullptr, 3, &created),
+      OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_container_size(created), 3u);
   uint64_t value = 17;
   ASSERT_EQ(obelisk_rt_v1_container_write(lane, created, 2, &value, nullptr),
@@ -921,8 +936,7 @@ TEST_F(ManagedValueTest, ContainersTraceStringsAndRecursivelyCloneContainers) {
   ASSERT_EQ(obelisk_rt_v1_container_write(lane, strings, 0, &text, nullptr),
             OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &stringsRoot), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &textRoot),
-            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &textRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &stringsRoot, &strings),
             OBELISK_RT_OK);
   text = 0;
@@ -1156,8 +1170,7 @@ TEST_F(ManagedValueTest,
   }
   EXPECT_EQ(obelisk_rt_v1_container_size(array), std::size(keys));
 
-  obelisk_rt_assoc_key_v1 missing{
-      OBELISK_RT_ASSOC_KEY_SIGNED, 0, 16, 88, 0, 0};
+  obelisk_rt_assoc_key_v1 missing{OBELISK_RT_ASSOC_KEY_SIGNED, 0, 16, 88, 0, 0};
   uint64_t value = UINT64_MAX;
   uint32_t present = 1;
   ASSERT_EQ(
@@ -1201,8 +1214,7 @@ TEST_F(ManagedValueTest,
   ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 copyRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
-  obelisk_rt_assoc_key_v1 changed{
-      OBELISK_RT_ASSOC_KEY_SIGNED, 0, 16, 7, 0, 0};
+  obelisk_rt_assoc_key_v1 changed{OBELISK_RT_ASSOC_KEY_SIGNED, 0, 16, 7, 0, 0};
   uint64_t replacement = 12345;
   ASSERT_EQ(
       obelisk_rt_v1_assoc_write(lane, copy, &changed, &replacement, nullptr),
@@ -1224,9 +1236,8 @@ TEST_F(ManagedValueTest,
   constexpr uint64_t width = 129;
   constexpr size_t bytes = 17;
   obelisk_rt_object_v1 *array = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &wordElement,
-                                       OBELISK_RT_ASSOC_KEY_SIGNED, width,
-                                       &array),
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(
+                lane, &wordElement, OBELISK_RT_ASSOC_KEY_SIGNED, width, &array),
             OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 root{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &array), OBELISK_RT_OK);
@@ -1278,9 +1289,9 @@ TEST_F(ManagedValueTest,
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   uint64_t replacement = 909;
-  ASSERT_EQ(obelisk_rt_v1_reference_path_store(lane, path, &replacement,
-                                               nullptr),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_store(lane, path, &replacement, nullptr),
+      OBELISK_RT_OK);
   value = 0;
   ASSERT_EQ(obelisk_rt_v1_reference_path_load(path, &value, nullptr, &present),
             OBELISK_RT_OK);
@@ -1322,8 +1333,8 @@ TEST_F(ManagedValueTest,
   ASSERT_EQ(obelisk_rt_v1_assoc_create_typed(
                 lane, wordElement.type_id, wordElement.kind, wordElement.flags,
                 wordElement.value_size, wordElement.alignment,
-                wordElement.bit_width, nullptr, 0,
-                OBELISK_RT_ASSOC_KEY_SIGNED, 12, &array),
+                wordElement.bit_width, nullptr, 0, OBELISK_RT_ASSOC_KEY_SIGNED,
+                12, &array),
             OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 root{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &array), OBELISK_RT_OK);
@@ -1332,8 +1343,7 @@ TEST_F(ManagedValueTest,
   ASSERT_EQ(obelisk_rt_v1_assoc_set_default_checked(
                 lane, array, &fallback, sizeof(fallback), nullptr, 0),
             OBELISK_RT_OK);
-  obelisk_rt_assoc_key_v1 missing{
-      OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12, 3, 0, 0};
+  obelisk_rt_assoc_key_v1 missing{OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12, 3, 0, 0};
   uint64_t value = 0;
   uint32_t present = 1;
   ASSERT_EQ(obelisk_rt_v1_assoc_read_checked(
@@ -1342,27 +1352,25 @@ TEST_F(ManagedValueTest,
   EXPECT_EQ(present, 0u);
   EXPECT_EQ(value, fallback);
 
-  for (auto [keyValue, stored] :
-       {std::pair<int16_t, uint64_t>{4, 9},
-        std::pair<int16_t, uint64_t>{-2, 5}}) {
-    obelisk_rt_assoc_key_v1 key{
-        OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12,
-        static_cast<uint16_t>(keyValue), 0, 0};
-    ASSERT_EQ(obelisk_rt_v1_assoc_write_checked(
-                  lane, array, &key, &stored, sizeof(stored), nullptr, 0),
+  for (auto [keyValue, stored] : {std::pair<int16_t, uint64_t>{4, 9},
+                                  std::pair<int16_t, uint64_t>{-2, 5}}) {
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_SIGNED,     0, 12,
+                                static_cast<uint16_t>(keyValue), 0, 0};
+    ASSERT_EQ(obelisk_rt_v1_assoc_write_checked(lane, array, &key, &stored,
+                                                sizeof(stored), nullptr, 0),
               OBELISK_RT_OK);
   }
-  obelisk_rt_arg_v1 argument{
-      OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array, nullptr};
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array,
+                             nullptr};
   obelisk_rt_format_env_v1 environment{};
   environment.time_multiplier = 1;
   obelisk_rt_buffer_v1 output{};
   ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, &environment,
                                  &output),
             OBELISK_RT_OK);
-  EXPECT_EQ(std::string(reinterpret_cast<const char *>(output.data),
-                        output.size),
-            "'{-2:5, 4:9}");
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "'{-2:5, 4:9}");
   obelisk_rt_v1_buffer_release(&output);
 
   obelisk_rt_object_v1 *copy = nullptr;
@@ -1405,9 +1413,9 @@ TEST_F(ManagedValueTest,
             OBELISK_RT_OK);
 
   obelisk_rt_object_v1 *outer = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_assoc_create(
-                lane, &containerElement, OBELISK_RT_ASSOC_KEY_UNSIGNED, 32,
-                &outer),
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &containerElement,
+                                       OBELISK_RT_ASSOC_KEY_UNSIGNED, 32,
+                                       &outer),
             OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 outerRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
@@ -1425,9 +1433,9 @@ TEST_F(ManagedValueTest,
       OBELISK_RT_ASSOC_KEY_UNSIGNED, 0, 32, 17, 0, 0};
   obelisk_rt_object_v1 *fallback = nullptr;
   uint32_t present = 1;
-  ASSERT_EQ(obelisk_rt_v1_assoc_read(outer, &missing, &fallback, nullptr,
-                                     &present),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(outer, &missing, &fallback, nullptr, &present),
+      OBELISK_RT_OK);
   EXPECT_EQ(present, 0u);
   ASSERT_NE(fallback, nullptr);
   uint64_t value = 0;
@@ -1485,8 +1493,7 @@ TEST_F(ManagedValueTest, AssociativeStringKeysRemainTracedByValue) {
   ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &stored, nullptr),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &keyRoot),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &keyRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
             OBELISK_RT_OK);
   keyText = 0;
@@ -1498,7 +1505,7 @@ TEST_F(ManagedValueTest, AssociativeStringKeysRemainTracedByValue) {
   obelisk_rt_gc_managed_root_v1 equivalentRoot{};
   ASSERT_EQ(
       obelisk_rt_v1_gc_managed_root_push(lane, &equivalentRoot, &equivalent),
-            OBELISK_RT_OK);
+      OBELISK_RT_OK);
   key.string = equivalent;
   uint64_t value = 0;
   uint32_t present = 0;
@@ -1541,8 +1548,7 @@ TEST_F(ManagedValueTest, AssociativeTraversalRootsStringCursorDuringRebuild) {
     uint64_t value = std::strlen(text);
     ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
               OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &keyRoot),
-              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &keyRoot), OBELISK_RT_OK);
   }
 
   obelisk_rt_string_v1 cursorString = 0;

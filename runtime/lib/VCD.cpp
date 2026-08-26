@@ -355,8 +355,7 @@ void appendRaw(State &state, const char *data, size_t size) {
   }
 }
 
-template <typename State>
-void append(State &state, std::string_view text) {
+template <typename State> void append(State &state, std::string_view text) {
   if (state.limitReached)
     return;
   if (limitEnabled(state) &&
@@ -369,8 +368,7 @@ void append(State &state, std::string_view text) {
   appendRaw(state, text.data(), text.size());
 }
 
-template <typename State>
-void appendUnsigned(State &state, uint64_t value) {
+template <typename State> void appendUnsigned(State &state, uint64_t value) {
   char digits[24];
   int length = std::snprintf(digits, sizeof(digits), "%llu",
                              static_cast<unsigned long long>(value));
@@ -378,8 +376,7 @@ void appendUnsigned(State &state, uint64_t value) {
     append(state, std::string_view(digits, static_cast<size_t>(length)));
 }
 
-template <typename State>
-void appendSigned(State &state, int64_t value) {
+template <typename State> void appendSigned(State &state, int64_t value) {
   char digits[24];
   int length = std::snprintf(digits, sizeof(digits), "%lld",
                              static_cast<long long>(value));
@@ -387,8 +384,7 @@ void appendSigned(State &state, int64_t value) {
     append(state, std::string_view(digits, static_cast<size_t>(length)));
 }
 
-template <typename State>
-void flushBuffer(State &state) {
+template <typename State> void flushBuffer(State &state) {
   if (state.file && !state.buffer.empty()) {
     std::fwrite(state.buffer.data(), 1, state.buffer.size(), state.file);
     state.buffer.clear();
@@ -397,8 +393,7 @@ void flushBuffer(State &state) {
     std::fflush(state.file);
 }
 
-template <typename State>
-void closeFile(State &state) {
+template <typename State> void closeFile(State &state) {
   if (!state.file)
     return;
   if (!state.buffer.empty()) {
@@ -872,8 +867,7 @@ void buildRanges(State &state, uint64_t stateBitCount) {
 // Emission
 //===----------------------------------------------------------------------===//
 
-template <typename State>
-void emitTime(State &state, uint64_t time) {
+template <typename State> void emitTime(State &state, uint64_t time) {
   if (state.haveEmittedTime && state.emittedTime == time)
     return;
   append(state, "#");
@@ -1144,11 +1138,10 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
     if (length == 0)
       continue;
-    bool moved =
-        std::memcmp(state.shadowValue.data() + range.byteBegin,
-                    valuePlane + range.byteBegin, length) != 0 ||
-        std::memcmp(state.shadowUnknown.data() + range.byteBegin,
-                    unknownPlane + range.byteBegin, length) != 0;
+    bool moved = std::memcmp(state.shadowValue.data() + range.byteBegin,
+                             valuePlane + range.byteBegin, length) != 0 ||
+                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                             unknownPlane + range.byteBegin, length) != 0;
     if (!moved)
       continue;
     for (uint32_t index = range.firstVariable; index != range.lastVariable;
@@ -1191,28 +1184,27 @@ char evcdValueChar(const TraceVariable &variable, bool value, bool unknown) {
 }
 
 void emitEVCDValue(EVCDSession &state, const TraceVariable &variable,
-                   const uint8_t *valuePlane,
-                   const uint8_t *unknownPlane) {
+                   const uint8_t *valuePlane, const uint8_t *unknownPlane) {
   state.scratch.clear();
   state.scratch.push_back('p');
   for (uint64_t bit = variable.width; bit != 0; --bit) {
     bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
-    bool unknown = variable.fourState &&
-                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    bool unknown =
+        variable.fourState && bitAt(unknownPlane, variable.sourceBit + bit - 1);
     state.scratch.push_back(evcdValueChar(variable, value, unknown));
   }
   state.scratch.push_back(' ');
   for (uint64_t bit = variable.width; bit != 0; --bit) {
     bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
-    bool unknown = variable.fourState &&
-                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    bool unknown =
+        variable.fourState && bitAt(unknownPlane, variable.sourceBit + bit - 1);
     state.scratch.push_back(unknown && value ? '0' : value ? '0' : '6');
   }
   state.scratch.push_back(' ');
   for (uint64_t bit = variable.width; bit != 0; --bit) {
     bool value = bitAt(valuePlane, variable.sourceBit + bit - 1);
-    bool unknown = variable.fourState &&
-                   bitAt(unknownPlane, variable.sourceBit + bit - 1);
+    bool unknown =
+        variable.fourState && bitAt(unknownPlane, variable.sourceBit + bit - 1);
     state.scratch.push_back(unknown ? (value ? '0' : '6')
                                     : (value ? '6' : '0'));
   }
@@ -1269,8 +1261,7 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
   writeHeader(context, state);
   uint32_t nextCode = 0;
   std::function<obelisk_rt_status(uint64_t, std::string_view)> emitScope =
-      [&](uint64_t scope,
-          std::string_view parentName) -> obelisk_rt_status {
+      [&](uint64_t scope, std::string_view parentName) -> obelisk_rt_status {
     const uint8_t *scopeRecord = database.data + scope;
     std::string_view scopeName;
     if (!getString(database, nameOffset(scopeRecord), scopeName))
@@ -1384,8 +1375,8 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context,
-                               EVCDSession &state, bool forceAll,
+obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
+                               bool forceAll,
                                std::string_view checkpoint = {}) {
   if (!state.file || state.limitReached || !state.planBuilt)
     return OBELISK_RT_OK;
@@ -1535,13 +1526,14 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
     return;
   if (context->vcdState) {
     VCDTraceState *state = context->vcdState;
-    try {
+    OBELISK_RT_TRY {
       if (state->file && !state->planBuilt && !state->planFailed &&
           !state->selections.empty())
         (void)buildPlan(context, *state);
       if (state->file && state->planBuilt)
         (void)emitSlot(context, *state);
-    } catch (...) {
+    }
+    OBELISK_RT_CATCH_ALL {
       // Teardown must not propagate; the file is still closed below.
     }
     closeFile(*state);
@@ -1551,13 +1543,13 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
   if (context->evcdState) {
     for (const std::unique_ptr<EVCDSession> &session :
          context->evcdState->sessions) {
-      try {
+      OBELISK_RT_TRY {
         if (session->file && !session->planBuilt)
           (void)prepareEVCDSession(context, *session);
         if (session->file && session->planBuilt)
           (void)emitEVCDSlot(context, *session, false);
-      } catch (...) {
       }
+      OBELISK_RT_CATCH_ALL {}
       closeFile(*session);
     }
     delete context->evcdState;
@@ -1571,7 +1563,7 @@ obelisk_rt_v1_dump_open(obelisk_rt_context *context, const uint8_t *path,
   if (!context || (!path && pathSize != 0) || pathSize == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
     obelisk_rt_status status = ensureState(context, state);
@@ -1587,11 +1579,9 @@ obelisk_rt_v1_dump_open(obelisk_rt_context *context, const uint8_t *path,
     if (status == OBELISK_RT_OK)
       finishLimit(*state);
     return status;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" obelisk_rt_status
@@ -1613,7 +1603,7 @@ obelisk_rt_v1_dump_timescale(obelisk_rt_context *context, int32_t exponent) {
   if (!context || exponent > 2 || exponent < -15)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
     obelisk_rt_status status = ensureState(context, state);
@@ -1629,9 +1619,8 @@ obelisk_rt_v1_dump_timescale(obelisk_rt_context *context, int32_t exponent) {
     state->timescaleSet = true;
     state->timescaleExponent = exponent;
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -1640,7 +1629,7 @@ obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
   if (!context || (!scope && scopeSize != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
     obelisk_rt_status status = ensureState(context, state);
@@ -1665,11 +1654,9 @@ obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
                              static_cast<size_t>(scopeSize));
     state->selections.push_back(std::move(selection));
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -1677,7 +1664,7 @@ obelisk_rt_v1_dump_all(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state || !state->file ||
@@ -1687,11 +1674,9 @@ obelisk_rt_v1_dump_all(obelisk_rt_context *context) {
     if (status != OBELISK_RT_OK)
       return status;
     return emitDumpAll(context, *state);
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" obelisk_rt_status
@@ -1699,7 +1684,7 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state || !state->file ||
@@ -1738,11 +1723,9 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
     updateShadow(*state, valuePlane, unknownPlane);
     finishLimit(*state);
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" obelisk_rt_status
@@ -1750,7 +1733,7 @@ obelisk_rt_v1_dump_limit(obelisk_rt_context *context, uint64_t bytes) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
     obelisk_rt_status status = ensureState(context, state);
@@ -1762,9 +1745,8 @@ obelisk_rt_v1_dump_limit(obelisk_rt_context *context, uint64_t bytes) {
       state->limitReached = true;
     finishLimit(*state);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_INVALID_ARGUMENT;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" obelisk_rt_status
@@ -1772,16 +1754,15 @@ obelisk_rt_v1_dump_flush(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state)
       return OBELISK_RT_OK;
     flushBuffer(*state);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" obelisk_rt_status
@@ -1789,7 +1770,7 @@ obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state)
@@ -1798,9 +1779,8 @@ obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
       (void)emitSlot(context, *state);
     closeFile(*state);
     return OBELISK_RT_OK;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
@@ -1814,8 +1794,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
   const char *scopeBytes = nullptr;
   uint64_t pathSize = 0;
   uint64_t scopeSize = 0;
-  obelisk_rt_status status = obelisk_rt_v1_string_view(
-      pathValue, pathScratch, &pathBytes, &pathSize);
+  obelisk_rt_status status =
+      obelisk_rt_v1_string_view(pathValue, pathScratch, &pathBytes, &pathSize);
   if (status != OBELISK_RT_OK)
     return status;
   status = obelisk_rt_v1_string_view(scopeValue, scopeScratch, &scopeBytes,
@@ -1823,7 +1803,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
   if (status != OBELISK_RT_OK || pathSize == 0 || scopeSize == 0)
     return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::string path;
     if (pathSize != 0)
       path.assign(pathBytes, static_cast<size_t>(pathSize));
@@ -1874,16 +1854,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
       return OBELISK_RT_INVALID_LIFECYCLE;
     session->selections.push_back(std::move(scope));
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports_control(
-    obelisk_rt_context *context, obelisk_rt_string_v1 pathValue,
-    uint32_t action, uint64_t value) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
+                                 obelisk_rt_string_v1 pathValue,
+                                 uint32_t action, uint64_t value) {
   if (!context || action > 4)
     return OBELISK_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
@@ -1894,7 +1873,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports_control(
   if (status != OBELISK_RT_OK)
     return status;
   ContextTransaction transaction(context);
-  try {
+  OBELISK_RT_TRY {
     std::string path;
     if (pathSize != 0)
       path.assign(pathBytes, static_cast<size_t>(pathSize));
@@ -1943,8 +1922,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports_control(
         for (const TraceVariable &variable : session.variables)
           emitEVCDValue(session, variable, valuePlane, unknownPlane);
         for (const TraceRange &range : session.ranges) {
-          size_t length =
-              static_cast<size_t>(range.byteEnd - range.byteBegin);
+          size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
           std::memcpy(session.shadowValue.data() + range.byteBegin,
                       valuePlane + range.byteBegin, length);
           std::memcpy(session.shadowUnknown.data() + range.byteBegin,
@@ -1957,9 +1935,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports_control(
       append(session, "$end\n");
     }
     return OBELISK_RT_OK;
-  } catch (const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  } catch (...) {
-    return OBELISK_RT_IO_ERROR;
   }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
 }

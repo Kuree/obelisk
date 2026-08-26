@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -45,10 +46,9 @@ bool managedOperationMayCollect(Operation *operation) {
       sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
       sim::SimStringFormatRealOp, sim::SimStringOutputFormatOp,
       sim::SimStringScanFieldOp, sim::SimScanDynamicValidateOp,
-      sim::SimStringScanDynamicOp,
-      sim::SimFileScanDynamicOp, sim::SimFileGetlineStringOp,
-      sim::SimFileErrorStringOp, sim::SimPlusargValueOp,
-      sim::SimPlusargScanOp, sim::SimCallOp,
+      sim::SimStringScanDynamicOp, sim::SimFileScanDynamicOp,
+      sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
+      sim::SimPlusargValueOp, sim::SimPlusargScanOp, sim::SimCallOp,
       sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
       sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation);
 }
@@ -142,10 +142,10 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
             SmallVector<Value> slots;
             slots.reserve(handles.size());
             Value slotsBase = LLVM::AllocaOp::create(builder, location, pointer,
-                                                     pointer, rootCount, 8);
+                                                     i64, rootCount, 8);
             for (size_t index = 0; index != handles.size(); ++index)
-              slots.push_back(byteGEP(builder, location, slotsBase,
-                                      index * sizeof(void *)));
+              slots.push_back(
+                  elementGEP(builder, location, slotsBase, i64, index));
             Value one = llvmConstant(builder, location, i64, 1);
             Value record = LLVM::AllocaOp::create(builder, location, pointer,
                                                   rootType, one, 8);
@@ -185,14 +185,14 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
                     builder, location, slotsBase,
                     llvmConstant(builder, location, builder.getI8Type(), 0),
                     llvmConstant(builder, location, i64,
-                                 handles.size() * sizeof(void *)),
+                                 handles.size() *
+                                     sizeof(obelisk_rt_managed_word_v1)),
                     /*isVolatile=*/false);
               } else {
                 for (Value slot : slots)
                   LLVM::StoreOp::create(
                       builder, location,
-                      LLVM::ZeroOp::create(builder, location, pointer), slot,
-                      8);
+                      LLVM::ZeroOp::create(builder, location, i64), slot, 8);
               }
               LLVM::StoreOp::create(
                   builder, location,
@@ -257,7 +257,8 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
                     llvmConstant(builder, collectionPoint->getLoc(),
                                  builder.getI8Type(), 0),
                     llvmConstant(builder, collectionPoint->getLoc(), i64,
-                                 handles.size() * sizeof(void *)),
+                                 handles.size() *
+                                     sizeof(obelisk_rt_managed_word_v1)),
                     /*isVolatile=*/false);
               for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
                 bool isLive = live.contains(handle.value) &&
@@ -276,7 +277,7 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
                 LLVM::StoreOp::create(
                     builder, collectionPoint->getLoc(),
                     LLVM::ZeroOp::create(builder, collectionPoint->getLoc(),
-                                         pointer),
+                                         i64),
                     slot, 8);
               }
             }
