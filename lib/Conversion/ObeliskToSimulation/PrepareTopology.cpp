@@ -387,34 +387,55 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   // formals before reaching a child-written formal that needs its own cell.
   // The fixpoint keeps that last edge live instead of freezing a time-zero
   // handle merely because its immediate source formal is itself aliased.
-  llvm::StringSet<> liveEventPaths = result.eventCellPaths;
-  bool changed;
-  do {
-    changed = false;
-    for (const EventInputCandidate &candidate : eventInputs) {
+  if (!eventInputs.empty()) {
+    llvm::StringSet<> liveEventPaths = result.eventCellPaths;
+    bool changed;
+    do {
+      changed = false;
+      // A whole-event ref port is the same cell under two elaborated paths.
+      // Propagate liveness in both directions so traversal order and which
+      // alias spelling an input uses cannot turn a live handle into
+      // PortInitialize.
+      for (const auto &[path, view] : result.refViews) {
+        bool wholeEvent = view.identity && view.offset == 0 &&
+                          view.packedOffset == 0 && view.indices.empty() &&
+                          isa<sim::EventType>(view.rootType) &&
+                          isa<sim::EventType>(view.viewType);
+        if (!wholeEvent)
+          continue;
+        bool live =
+            liveEventPaths.contains(path) || liveEventPaths.contains(view.path);
+        if (live) {
+          changed |= liveEventPaths.insert(path).second;
+          changed |= liveEventPaths.insert(view.path).second;
+        }
+      }
+      for (const EventInputCandidate &candidate : eventInputs) {
+        if (!isWholeEvent(candidate))
+          continue;
+        bool liveActual = liveEventPaths.contains(candidate.actual->path);
+        if (liveActual)
+          changed |= liveEventPaths.insert(candidate.internal).second;
+      }
+    } while (changed);
+    for (EventInputCandidate &candidate : eventInputs) {
       if (!isWholeEvent(candidate))
         continue;
       bool liveActual = liveEventPaths.contains(candidate.actual->path);
-      if (liveActual)
-        changed |= liveEventPaths.insert(candidate.internal).second;
+      bool writtenFormal = result.eventCellPaths.contains(candidate.internal);
+      if (!writtenFormal) {
+        // A read-only input may share either a direct scheduler descriptor or
+        // an event cell. The latter remains live without an executable
+        // process.
+        result.aliases[candidate.internal] = candidate.actual->path;
+        continue;
+      }
+      result.eventCellPaths.insert(candidate.internal);
+      if (!liveActual)
+        candidate.connection->setAttr(
+            "actual_is_constant",
+            BoolAttr::get(candidate.connection.getContext(), true));
     }
-  } while (changed);
-  for (EventInputCandidate &candidate : eventInputs) {
-    if (!isWholeEvent(candidate))
-      continue;
-    bool liveActual = liveEventPaths.contains(candidate.actual->path);
-    bool writtenFormal = result.eventCellPaths.contains(candidate.internal);
-    if (!writtenFormal) {
-      // A read-only input may share either a direct scheduler descriptor or
-      // an event cell. The latter remains live without an executable process.
-      result.aliases[candidate.internal] = candidate.actual->path;
-      continue;
-    }
-    result.eventCellPaths.insert(candidate.internal);
-    if (!liveActual)
-      candidate.connection->setAttr(
-          "actual_is_constant",
-          BoolAttr::get(candidate.connection.getContext(), true));
   }
   if (!eventInputs.empty())
     llvm::erase_if(
