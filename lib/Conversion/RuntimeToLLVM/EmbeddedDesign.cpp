@@ -11,7 +11,9 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
@@ -39,6 +41,7 @@ constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
 constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
 constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
 constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
+constexpr StringLiteral kExportsName = "__obelisk_dpi_exports_v1";
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -53,6 +56,224 @@ Value insertValue(OpBuilder &builder, Location location, Value aggregate,
                   Value element, int64_t index) {
   return LLVM::InsertValueOp::create(builder, location, aggregate, element,
                                      ArrayRef<int64_t>{index});
+}
+
+struct ExportInfo {
+  uint32_t exportID;
+  uint64_t scopeID;
+  uint64_t codeUnitID;
+  uint64_t abiSignature;
+  uint32_t inputCount;
+  uint32_t outputCount;
+  std::string symbol;
+  std::string bodySymbol;
+  std::string cIdentifier;
+  ArrayAttr abi;
+  std::optional<uint32_t> bytecodeFunction;
+};
+
+LLVM_ATTRIBUTE_NOINLINE LogicalResult
+collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
+                  SmallVectorImpl<ExportInfo> &exports) {
+  llvm::StringMap<Operation *> directSymbols;
+  for (Operation &operation : module.getBody()->getOperations())
+    if (auto name = operation.getAttrOfType<StringAttr>(
+            SymbolTable::getSymbolAttrName()))
+      directSymbols.try_emplace(name.getValue(), &operation);
+  llvm::StringMap<Operation *> importCIdentifiers;
+  module.walk([&](sim::SimCodeUnitDeclOp declaration) {
+    if (!declaration->hasAttr("obelisk_sim.dpi_import"))
+      return;
+    if (auto identifier = declaration->getAttrOfType<StringAttr>(
+            "obelisk_sim.dpi_c_identifier"))
+      importCIdentifiers.try_emplace(identifier.getValue(), declaration);
+  });
+  module.walk([&](sim::SimDPICallOp call) {
+    importCIdentifiers.try_emplace(call.getCIdentifier(), call);
+  });
+  bool invalid = false;
+  module.walk([&](sim::SimFuncOp function) {
+    if (!function->hasAttr("obelisk_sim.dpi_export_bridge"))
+      return;
+    auto exportID =
+        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_export_id");
+    auto scopeID =
+        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_scope_id");
+    auto identifier =
+        function->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
+    auto bodySymbol = function->getAttrOfType<StringAttr>(
+        "obelisk_sim.dpi_export_body_symbol");
+    auto signature =
+        function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+    auto inputs =
+        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+    std::optional<int64_t> codeUnitID = function.getCodeUnitId();
+    if (!exportID || !scopeID || !identifier || !bodySymbol || !signature ||
+        !inputs || !codeUnitID || *codeUnitID <= 0 ||
+        exportID.getValue().getActiveBits() > 32 ||
+        scopeID.getValue().getActiveBits() > 64 ||
+        inputs.getValue().getActiveBits() > 32 ||
+        exportID.getValue().getZExtValue() == 0 ||
+        identifier.getValue().empty()) {
+      function.emitOpError("has incomplete or invalid DPI export metadata");
+      invalid = true;
+      return;
+    }
+    uint64_t inputCount = inputs.getValue().getZExtValue();
+    if (signature.size() > UINT32_MAX || inputCount > signature.size()) {
+      function.emitOpError("has an invalid DPI export logical input count");
+      invalid = true;
+      return;
+    }
+    bool hasResult = false;
+    uint32_t copyOuts = 0;
+    for (auto [index, attribute] : llvm::enumerate(signature)) {
+      auto abi = dyn_cast<sim::DPIABIAttr>(attribute);
+      if (!abi) {
+        function.emitOpError("has malformed DPI export ABI metadata");
+        invalid = true;
+        return;
+      }
+      auto direction = abi.getDirection();
+      if (index < inputCount) {
+        if (direction == sim::DPIArgumentDirection::Result) {
+          function.emitOpError("has a result in its DPI formal inventory");
+          invalid = true;
+          return;
+        }
+        copyOuts += direction == sim::DPIArgumentDirection::Output ||
+                    direction == sim::DPIArgumentDirection::InOut;
+      } else if (direction == sim::DPIArgumentDirection::Result) {
+        if (index != inputCount || hasResult) {
+          function.emitOpError("has a misplaced DPI function result");
+          invalid = true;
+          return;
+        }
+        hasResult = true;
+      }
+    }
+    uint64_t outputCount = signature.size() - inputCount;
+    if (outputCount != copyOuts + (hasResult ? 1u : 0u)) {
+      function.emitOpError("has inconsistent DPI export copy-out metadata");
+      invalid = true;
+      return;
+    }
+    uint64_t outputCursor = inputCount + (hasResult ? 1 : 0);
+    for (uint64_t index = 0; index != inputCount; ++index) {
+      auto formal = cast<sim::DPIABIAttr>(signature[index]);
+      if (formal.getDirection() == sim::DPIArgumentDirection::Input)
+        continue;
+      if (outputCursor >= signature.size()) {
+        function.emitOpError("has a truncated DPI export copy-out inventory");
+        invalid = true;
+        return;
+      }
+      auto output = cast<sim::DPIABIAttr>(signature[outputCursor++]);
+      if (output.getDirection() != sim::DPIArgumentDirection::Output ||
+          output.getKind() != formal.getKind() ||
+          output.getWidth() != formal.getWidth() ||
+          output.getFourState() != formal.getFourState() ||
+          output.getIsSigned() != formal.getIsSigned()) {
+        function.emitOpError(
+            "has an out-of-order or incompatible DPI export copy-out");
+        invalid = true;
+        return;
+      }
+    }
+    if (outputCursor != signature.size()) {
+      function.emitOpError("has excess DPI export copy-out metadata");
+      invalid = true;
+      return;
+    }
+    if (importCIdentifiers.contains(identifier.getValue())) {
+      function.emitOpError() << "DPI C identifier '" << identifier.getValue()
+                             << "' is used by both an import and an export";
+      invalid = true;
+      return;
+    }
+    auto bytecodeFunction = function->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    if (bytecodeFunction && bytecodeFunction.getValue().getActiveBits() > 32) {
+      function.emitOpError("has an invalid DPI export bytecode function");
+      invalid = true;
+      return;
+    }
+    exports.push_back(
+        {static_cast<uint32_t>(exportID.getValue().getZExtValue()),
+         scopeID.getValue().getZExtValue(), static_cast<uint64_t>(*codeUnitID),
+         sim::getDPISignatureHash(signature, inputCount),
+         static_cast<uint32_t>(inputCount), static_cast<uint32_t>(outputCount),
+         function.getSymName().str(), bodySymbol.getValue().str(),
+         identifier.getValue().str(), signature,
+         bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
+                                bytecodeFunction.getValue().getZExtValue()))
+                          : std::nullopt});
+  });
+  if (invalid)
+    return failure();
+  llvm::sort(exports, [](const ExportInfo &lhs, const ExportInfo &rhs) {
+    return std::tie(lhs.exportID, lhs.scopeID) <
+           std::tie(rhs.exportID, rhs.scopeID);
+  });
+  llvm::DenseMap<uint32_t, size_t> exportIDs;
+  llvm::StringMap<size_t> exportNames;
+  for (auto [index, info] : llvm::enumerate(exports)) {
+    if (index != 0 && exports[index - 1].exportID == info.exportID &&
+        exports[index - 1].scopeID == info.scopeID)
+      return module.emitError() << "duplicate DPI export ID " << info.exportID
+                                << " in scope " << info.scopeID;
+    if (auto [found, inserted] = exportIDs.try_emplace(info.exportID, index);
+        !inserted && exports[found->second].cIdentifier != info.cIdentifier)
+      return module.emitError() << "DPI export ID " << info.exportID
+                                << " collides between C identifiers '"
+                                << exports[found->second].cIdentifier
+                                << "' and '" << info.cIdentifier << "'";
+    if (auto [found, inserted] =
+            exportNames.try_emplace(info.cIdentifier, index);
+        !inserted) {
+      const ExportInfo &previous = exports[found->second];
+      if (previous.exportID != info.exportID ||
+          previous.abiSignature != info.abiSignature ||
+          previous.inputCount != info.inputCount ||
+          previous.outputCount != info.outputCount || previous.abi != info.abi)
+        return module.emitError()
+               << "DPI export C identifier '" << info.cIdentifier
+               << "' has incompatible scope-specific signatures";
+    }
+    if (bytecodeOnly && !info.bytecodeFunction)
+      return module.emitError() << "DPI export '" << info.cIdentifier
+                                << "' has no bytecode implementation";
+  }
+  if (bytecodeOnly && !exports.empty())
+    module->setAttr("obelisk.feature.dpi_export_bytecode",
+                    UnitAttr::get(module.getContext()));
+
+  for (const ExportInfo &info : exports) {
+    if (bytecodeOnly)
+      continue;
+    std::string thunkName = info.symbol + ".__obelisk_dpi_export";
+    if (directSymbols.contains(thunkName))
+      return module.emitError()
+             << "symbol collision for DPI export thunk '" << thunkName << "'";
+    OpBuilder builder(module.getContext());
+    builder.setInsertionPointToStart(module.getBody());
+    auto thunk = LLVM::LLVMFuncOp::create(
+        builder, module.getLoc(), thunkName,
+        LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer, i32},
+                                    false));
+    thunk->setAttr("obelisk.dpi.export_bridge",
+                   builder.getStringAttr(info.symbol));
+    thunk->setAttr("obelisk.dpi.export_body",
+                   builder.getStringAttr(info.bodySymbol));
+    thunk->setAttr("obelisk_sim.dpi_c_identifier",
+                   builder.getStringAttr(info.cIdentifier));
+    thunk->setAttr("obelisk_sim.dpi_export_id",
+                   builder.getI32IntegerAttr(info.exportID));
+    thunk->setAttr("obelisk_sim.dpi_abi_signature", info.abi);
+    thunk->setAttr("obelisk_sim.dpi_logical_inputs",
+                   builder.getI32IntegerAttr(info.inputCount));
+    directSymbols.try_emplace(thunkName, thunk);
+  }
+  return success();
 }
 
 LLVM::GlobalOp makeByteGlobal(ModuleOp module, StringRef name,
@@ -84,6 +305,78 @@ LLVM::GlobalOp makeAggregateGlobal(ModuleOp module, Type type, StringRef name,
   builder.setInsertionPointToStart(block);
   LLVM::ReturnOp::create(builder, module.getLoc(), initializer(builder));
   return global;
+}
+
+LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
+    ModuleOp module, ArrayRef<ExportInfo> exports, bool bytecodeOnly,
+    Type pointer, Type i32, Type i64, size_t scopeCount) {
+  for (const ExportInfo &info : exports)
+    if (info.scopeID >= scopeCount)
+      return module.emitError() << "DPI export '" << info.cIdentifier
+                                << "' has invalid scope " << info.scopeID;
+
+  MLIRContext *context = module.getContext();
+  Type exportType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i64, i64, i64, i32, i32, i32, i32, pointer, i64});
+  Type exportsType = LLVM::LLVMArrayType::get(exportType, exports.size());
+  makeAggregateGlobal(
+      module, exportsType, kExportsName, LLVM::Linkage::Internal,
+      ".obelisk.execution", [&](OpBuilder &builder) {
+        Value records =
+            LLVM::ZeroOp::create(builder, module.getLoc(), exportsType);
+        for (auto [index, info] : llvm::enumerate(exports)) {
+          Value record =
+              LLVM::ZeroOp::create(builder, module.getLoc(), exportType);
+          uint32_t exportFlags = 0;
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i32, info.exportID), 0);
+          if (!bytecodeOnly)
+            exportFlags |= OBELISK_RT_EXPORT_HAS_NATIVE;
+          if (bytecodeOnly && info.bytecodeFunction)
+            exportFlags |= OBELISK_RT_EXPORT_HAS_BYTECODE;
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i32, exportFlags), 1);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i64, info.scopeID), 2);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i64, info.codeUnitID),
+              3);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i64, info.abiSignature),
+              4);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i32, info.inputCount),
+              5);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i32, info.outputCount),
+              6);
+          record = insertValue(
+              builder, module.getLoc(), record,
+              integerConstant(builder, module.getLoc(), i32,
+                              bytecodeOnly ? info.bytecodeFunction.value_or(
+                                                 OBELISK_RT_EXPORT_NO_BYTECODE)
+                                           : OBELISK_RT_EXPORT_NO_BYTECODE),
+              7);
+          if (!bytecodeOnly)
+            record = insertValue(builder, module.getLoc(), record,
+                                 LLVM::AddressOfOp::create(
+                                     builder, module.getLoc(), pointer,
+                                     info.symbol + ".__obelisk_dpi_export"),
+                                 9);
+          records = LLVM::InsertValueOp::create(
+              builder, module.getLoc(), records, record,
+              ArrayRef<int64_t>{static_cast<int64_t>(index)});
+        }
+        return records;
+      });
+  return success();
 }
 
 uint64_t read64(ArrayRef<int8_t> bytes, size_t offset) {
@@ -331,6 +624,11 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
             i32, {pointer, pointer, i32, pointer, pointer, i32}, false));
   }
 
+  SmallVector<ExportInfo> exports;
+  if (module->hasAttr("obelisk_sim.has_dpi_exports") &&
+      failed(collectDPIExports(module, bytecodeOnly, pointer, i32, exports)))
+    return failure();
+
   Type activationType =
       LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i32, i32});
   if (!activations.empty()) {
@@ -575,10 +873,17 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
           return records;
         });
   }
+  if (!exports.empty() &&
+      failed(materializeDPIExportDescriptors(module, exports, bytecodeOnly,
+                                             pointer, i32, i64, scopes.size())))
+    return failure();
+
   uint32_t flags = 0;
   uint64_t stateBits = 0;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
     flags = static_cast<uint32_t>(attr.getValue().getZExtValue());
+  if (!exports.empty())
+    flags |= OBELISK_RT_EXECUTION_DPI_EXPORTS;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {
@@ -643,16 +948,20 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
           return records;
         });
   }
-  Type executionExtensionType =
+  Type executionExtensionV1Type =
       LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
+  Type executionExtensionV2Type = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, pointer, i64, pointer, i64});
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
                 i64, i32, i32, pointer, i64, pointer, i64});
+  Type extensionType = !exports.empty()         ? executionExtensionV2Type
+                       : !sampledRanges.empty() ? executionExtensionV1Type
+                                                : Type{};
   Type executionStorageType =
-      sampledRanges.empty()
-          ? Type(executionType)
-          : Type(LLVM::LLVMStructType::getLiteral(
-                context, {executionType, executionExtensionType}));
+      extensionType ? Type(LLVM::LLVMStructType::getLiteral(
+                          context, {executionType, extensionType}))
+                    : Type(executionType);
 
   // The reserved extension channel is a byte offset from the execution
   // descriptor, not an integerized pointer. Keeping both records in one global
@@ -669,8 +978,13 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       {layoutI32, layoutI32, layoutI64, layoutPointer, layoutI64, layoutPointer,
        layoutI64, layoutI64, layoutI64, layoutPointer, layoutI64, layoutI32,
        layoutI32, layoutPointer, layoutI64, layoutPointer, layoutI64});
-  auto *layoutExtension = llvm::StructType::get(
+  auto *layoutExtensionV1 = llvm::StructType::get(
       layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64});
+  auto *layoutExtensionV2 = llvm::StructType::get(
+      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64,
+                      layoutPointer, layoutI64});
+  llvm::StructType *layoutExtension =
+      !exports.empty() ? layoutExtensionV2 : layoutExtensionV1;
   auto *layoutStorage =
       llvm::StructType::get(layoutContext, {layoutExecution, layoutExtension});
   uint64_t extensionOffset =
@@ -691,7 +1005,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         value = insertValue(
             builder, module.getLoc(), value,
             integerConstant(builder, module.getLoc(), i32, flags), 1);
-        if (!sampledRanges.empty())
+        if (extensionType)
           value = insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i64, extensionOffset),
@@ -760,28 +1074,42 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
               integerConstant(builder, module.getLoc(), i64, observers.size()),
               16);
         }
-        if (sampledRanges.empty())
+        if (!extensionType)
           return value;
 
-        Value extension = LLVM::ZeroOp::create(builder, module.getLoc(),
-                                               executionExtensionType);
-        extension =
-            insertValue(builder, module.getLoc(), extension,
-                        integerConstant(builder, module.getLoc(), i32,
-                                        OBELISK_RT_EXECUTION_EXTENSION_VERSION),
-                        0);
+        Value extension =
+            LLVM::ZeroOp::create(builder, module.getLoc(), extensionType);
+        extension = insertValue(
+            builder, module.getLoc(), extension,
+            integerConstant(builder, module.getLoc(), i32,
+                            !exports.empty()
+                                ? OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION
+                                : OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+            0);
         extension = insertValue(
             builder, module.getLoc(), extension,
             integerConstant(builder, module.getLoc(), i32, extensionSize), 1);
-        extension =
-            insertValue(builder, module.getLoc(), extension,
-                        LLVM::AddressOfOp::create(builder, module.getLoc(),
-                                                  pointer, kSampledRangesName),
-                        2);
+        if (!sampledRanges.empty())
+          extension = insertValue(
+              builder, module.getLoc(), extension,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kSampledRangesName),
+              2);
         extension = insertValue(builder, module.getLoc(), extension,
                                 integerConstant(builder, module.getLoc(), i64,
                                                 sampledRanges.size()),
                                 3);
+        if (!exports.empty()) {
+          extension =
+              insertValue(builder, module.getLoc(), extension,
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer, kExportsName),
+                          4);
+          extension = insertValue(
+              builder, module.getLoc(), extension,
+              integerConstant(builder, module.getLoc(), i64, exports.size()),
+              5);
+        }
         Value storage = LLVM::ZeroOp::create(builder, module.getLoc(),
                                              executionStorageType);
         storage = insertValue(builder, module.getLoc(), storage, value, 0);

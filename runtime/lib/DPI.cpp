@@ -8,17 +8,9 @@
 #include <limits>
 #include <string>
 
-namespace {
-
-struct ActiveDpiCall {
-  obelisk_rt_context *context = nullptr;
-  DpiScopeHandle *scope = nullptr;
-  std::string callerFile;
-  uint32_t callerLine = 0;
-  ActiveDpiCall *previous = nullptr;
-};
-
 thread_local ActiveDpiCall *activeDpiCall = nullptr;
+
+namespace {
 
 struct ActiveCallGuard {
   explicit ActiveCallGuard(ActiveDpiCall &call) : call(call) {
@@ -256,6 +248,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
                          outputCount, binding.userData);
     if (status != OBELISK_RT_OK)
       return status;
+    if (call.exportStatus != OBELISK_RT_OK)
+      return call.exportStatus;
     for (uint32_t index = 0; index != outputCount; ++index) {
       if (outputs[index].kind == OBELISK_RT_DBREG_STRING &&
           !validStringWord(outputs[index].value))

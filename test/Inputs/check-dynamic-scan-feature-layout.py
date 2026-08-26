@@ -17,6 +17,23 @@ llvm = pathlib.Path(sys.argv[3]) / "bin"
 no_feature_binaries = [pathlib.Path(sys.argv[index]) for index in (4, 5, 7)]
 feature_binaries = [pathlib.Path(sys.argv[index]) for index in (6, 8)]
 
+# ABI.cpp is compiled independently for native and wasm32 target runtimes.
+# These width-independent assertions lock the wasm32 rule that uint64_t keeps
+# eight-byte alignment in the v2 prefix and export tail.
+abi_source = (source / "runtime/lib/ABI.cpp").read_text()
+for assertion in (
+    "ABI_SIZE_ALIGN(obelisk_rt_export_descriptor_v1, 64, 8);",
+    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, bytecode_function, 40);",
+    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, native_entry, 48);",
+    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, reserved_tail, ABI_PTR(56, 56));",
+    "ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v2, 40, 8);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v2, sampled_range_count, 16);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v2, exports, 24);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v2, export_count, 32);",
+):
+    if assertion not in abi_source:
+        raise SystemExit(f"missing native/wasm32 DPI export ABI assertion: {assertion}")
+
 
 def run(arguments, *, input=None):
     result = subprocess.run(
@@ -52,11 +69,13 @@ expected_members = [pathlib.Path(item).name + ".o"
 if members != expected_members:
     raise SystemExit("built runtime archive does not preserve its declared "
                      "common/cold-tail grouping")
-if host_cold[:4] != [
+if host_cold[:6] != [
     "lib/ScanFormat.cpp",
     "lib/DynamicScanBytecode.cpp",
     "lib/ContainerBitstream.cpp",
     "lib/ContainerBitstreamBytecode.cpp",
+    "lib/DPIExport.cpp",
+    "lib/DPIExportBytecode.cpp",
 ]:
     raise SystemExit("feature services are not in the cold-tail group")
 
@@ -117,6 +136,35 @@ for symbol in (
 for symbol in ("readScalar", "readManaged"):
     require_feature_or_inlined(bitstream_bytecode_layout, symbol)
 
+dpi_export_layout = member_layout("DPIExport.cpp.o")
+for symbol in (
+    "obelisk_rt_validate_dpi_exports",
+    "obelisk_rt_v1_export_call",
+    "obelisk_rt_v1_export_string",
+    "obelisk_rt_v1_dpi_export_unpack_vector",
+    "obelisk_rt_v1_dpi_export_pack_vector",
+):
+    require_feature_symbol(dpi_export_layout, symbol)
+weak_export_bytecode_handler = re.search(
+    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
+    r"obelisk_rt_execute_dpi_export_bytecode[^\n]*\n"
+    r"(?:(?!Symbol \{).)*Binding: Weak\s*"
+    r"(?:(?!Symbol \{).)*Section: Undefined",
+    dpi_export_layout,
+    re.DOTALL,
+)
+if not weak_export_bytecode_handler:
+    raise SystemExit("native DPI export has a strong bytecode handler edge")
+
+dpi_export_bytecode_layout = member_layout("DPIExportBytecode.cpp.o")
+require_feature_symbol(
+    dpi_export_bytecode_layout,
+    "obelisk_rt_v1_dpi_export_bytecode_link_anchor",
+)
+require_feature_symbol(
+    dpi_export_bytecode_layout, "obelisk_rt_execute_dpi_export_bytecode"
+)
+
 for member, symbol in (
     ("Containers.cpp.o", "obelisk_rt_v1_string_scan_dynamic"),
     ("FileIO.cpp.o", "obelisk_rt_v1_file_scan_dynamic"),
@@ -129,6 +177,15 @@ for member, symbol in (
 runtime_layout = member_layout("Runtime.cpp.o")
 if "obelisk_rt_dynamic_scan_destroy" in runtime_layout:
     raise SystemExit("common runtime teardown strongly references scan format")
+weak_export_validator = re.search(
+    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*obelisk_rt_validate_dpi_exports"
+    r"[^\n]*\n(?:(?!Symbol \{).)*Binding: Weak\s*"
+    r"(?:(?!Symbol \{).)*Section: Undefined",
+    runtime_layout,
+    re.DOTALL,
+)
+if not weak_export_validator:
+    raise SystemExit("common runtime has a strong DPI export validator edge")
 dispatcher_layout = member_layout("DesignBytecodeIntrinsics.cpp.o")
 weak_handler = re.search(
     r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*invokeDynamicScanIntrinsic"
@@ -152,11 +209,13 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
              source / "cmake/TargetWasmSupport.cmake"):
     common = cmake_list(path, "_obelisk_target_runtime_common_sources")
     cold = cmake_list(path, "_obelisk_target_runtime_cold_tail_sources")
-    if cold[:4] != [
+    if cold[:6] != [
         "ScanFormat",
         "DynamicScanBytecode",
         "ContainerBitstream",
         "ContainerBitstreamBytecode",
+        "DPIExport",
+        "DPIExportBytecode",
     ]:
         raise SystemExit(f"feature services are not cold-tail sources in {path}")
     if set(common) & set(cold):
@@ -226,6 +285,15 @@ bitstream_symbols = (
     "invokeContainerBitstreamIntrinsic",
     "obelisk_rt_v1_container_export_bitstream",
 )
+dpi_export_symbols = (
+    "obelisk_rt_validate_dpi_exports",
+    "obelisk_rt_execute_dpi_export_bytecode",
+    "obelisk_rt_v1_export_call",
+    "obelisk_rt_v1_export_string",
+    "obelisk_rt_v1_dpi_export_unpack_vector",
+    "obelisk_rt_v1_dpi_export_pack_vector",
+    "obelisk_rt_v1_dpi_export_bytecode_link_anchor",
+)
 for binary in no_feature_binaries:
     sections, symbols = linked_layout(binary)
     # The shared feature section may contain unrelated cold services (for
@@ -233,7 +301,7 @@ for binary in no_feature_binaries:
     # Dynamic-scan pay-for-play is therefore identified by its complete symbol
     # set rather than by requiring the process-wide feature section to be
     # absent.
-    for symbol in feature_symbols + bitstream_symbols:
+    for symbol in feature_symbols + bitstream_symbols + dpi_export_symbols:
         if symbol in symbols:
             raise SystemExit(f"no-feature binary retained {symbol}: {binary}")
 

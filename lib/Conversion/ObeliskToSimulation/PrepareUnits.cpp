@@ -207,10 +207,21 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   for (auto [index, source] : llvm::enumerate(sourceUnits)) {
     if (auto exported =
             source->getAttrOfType<StringAttr>("dpi_export_c_identifier")) {
-      emitWarning(getSemanticLocation(source))
-          << "DPI export '" << exported.getValue()
-          << "' has no generated C entry point; lowering its SystemVerilog "
-             "body for internal calls only";
+      auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source);
+      if (!subroutine || exported.getValue().empty()) {
+        emitError(getSemanticLocation(source))
+            << "DPI export is missing its resolved function and C identifier";
+        invalid = true;
+        continue;
+      }
+      if (subroutine.getSubroutineKind() !=
+          semantic::SVSubroutineKind::Function) {
+        emitError(getSemanticLocation(source))
+            << "DPI exported tasks are not supported; only zero-time "
+               "functions can be exported";
+        invalid = true;
+        continue;
+      }
     }
     FailureOr<sim::EntryKind> entryKind = getEntryKind(source);
     if (failed(entryKind)) {

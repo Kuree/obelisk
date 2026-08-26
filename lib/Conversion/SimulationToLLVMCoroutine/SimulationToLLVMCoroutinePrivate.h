@@ -266,6 +266,8 @@ mlir::LogicalResult instrumentManagedRoots(mlir::ModuleOp module);
 void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Operation *scope);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
+mlir::LogicalResult materializeDPIExportWrappers(mlir::ModuleOp module);
+mlir::LogicalResult materializeNativeDPIExportThunks(mlir::ModuleOp module);
 void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                              mlir::TypeConverter &converter,
                                              const llvm::DataLayout &dataLayout,

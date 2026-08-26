@@ -28,6 +28,20 @@ def ObeliskSimPreparePass
   ];
 }
 
+def ObeliskSimMaterializeDPIExportsPass
+    : Pass<"obelisk-sim-materialize-dpi-exports", "mlir::ModuleOp"> {
+  let summary = "Materialize scope-specific zero-time DPI export bridges";
+  let description = [{
+    Builds one capture-free bridge for every elaborated exported function.
+    Each bridge resolves the owning scope's immutable descriptor captures
+    from its runtime context, so native and bytecode export dispatch share the
+    same ordinary simulation function body and result ordering.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimLowerUnitPass
     : Pass<"obelisk-sim-lower-unit", "obelisk::sim::SimFuncOp"> {
   let summary = "Lower one frozen simulation code unit to SSA and CF";

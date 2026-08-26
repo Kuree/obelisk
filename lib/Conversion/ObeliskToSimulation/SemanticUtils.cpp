@@ -1018,7 +1018,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   if (!packedAggregate || !width || *width == 0 ||
       *width > std::numeric_limits<uint32_t>::max()) {
     emitError(location)
-        << "DPI imports support only string, chandle, scalar predefined "
+        << "DPI-C supports only string, chandle, scalar predefined "
            "integers, scalar bit/logic, enums, and fixed packed integral "
            "values";
     return failure();

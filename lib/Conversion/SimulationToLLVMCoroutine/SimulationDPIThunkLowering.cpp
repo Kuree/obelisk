@@ -666,7 +666,7 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
     if (failed(materializeDPIThunk(module, spec)))
       return failure();
   }
-  return success();
+  return materializeDPIExportWrappers(module);
 }
 
 } // namespace obelisk::detail

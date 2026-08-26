@@ -14,6 +14,13 @@
 #include <string_view>
 #include <utility>
 
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool obelisk_rt_validate_dpi_exports(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    const obelisk_rt_execution_extension_v2 &extension) noexcept;
+
 namespace {
 
 thread_local obelisk_rt_context *threadTransactionContext = nullptr;
@@ -126,17 +133,31 @@ executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
   return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(address);
 }
 
-bool validSampledRanges(const obelisk_rt_execution_descriptor_v1 &execution) {
-  bool enabled =
+bool validExecutionExtension(
+    const obelisk_rt_execution_descriptor_v1 &execution) {
+  bool sampled =
       (execution.flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) != 0;
-  if (!enabled)
+  bool exported = (execution.flags & OBELISK_RT_EXECUTION_DPI_EXPORTS) != 0;
+  if (!sampled && !exported)
     return execution.reserved == 0;
   const obelisk_rt_execution_extension_v1 *extension =
       executionExtension(execution);
-  if (!extension ||
-      extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
-      extension->size != sizeof(*extension) || !extension->sampled_ranges ||
-      extension->sampled_range_count == 0)
+  if (!extension)
+    return false;
+  const obelisk_rt_execution_extension_v2 *exportExtension = nullptr;
+  if (exported) {
+    auto *v2 =
+        reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(extension);
+    if (v2->version != OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION ||
+        v2->size != sizeof(*v2) || !v2->exports || v2->export_count == 0)
+      return false;
+    exportExtension = v2;
+  } else if (extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
+             extension->size != sizeof(*extension)) {
+    return false;
+  }
+  if (sampled != (extension->sampled_ranges != nullptr) ||
+      sampled != (extension->sampled_range_count != 0))
     return false;
   uint64_t previousEnd = 0;
   uint64_t snapshotBytes = 0;
@@ -152,8 +173,12 @@ bool validSampledRanges(const obelisk_rt_execution_descriptor_v1 &execution) {
     previousEnd = range.source_bit_offset + range.bit_width;
     snapshotBytes += (range.bit_width + 7) / 8;
   }
-  return snapshotBytes <= std::numeric_limits<size_t>::max() &&
-         snapshotBytes <= UINT64_MAX / 8;
+  if (snapshotBytes > std::numeric_limits<size_t>::max() ||
+      snapshotBytes > UINT64_MAX / 8)
+    return false;
+  return !exported ||
+         (obelisk_rt_validate_dpi_exports &&
+          obelisk_rt_validate_dpi_exports(execution, *exportExtension));
 }
 
 } // namespace
@@ -957,7 +982,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_VPI_WRITE |
                                       OBELISK_RT_EXECUTION_REQUIRE_BYTECODE |
                                       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT |
-                                      OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
+                                      OBELISK_RT_EXECUTION_WAVEFORM_METADATA |
+                                      OBELISK_RT_EXECUTION_DPI_EXPORTS;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -975,7 +1001,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                   execution->checksum != 0)) ||
           !validActivationInventory(*execution) ||
           !validObserverInventory(*execution) ||
-          !validSampledRanges(*execution))
+          !validExecutionExtension(*execution))
         return OBELISK_RT_INVALID_DESIGN;
       if ((execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0) {
         obelisk_rt_status status = obelisk_rt_initialize_design_bytecode_image(

@@ -250,6 +250,8 @@ native_members = [
     "DynamicScanBytecode.o",
     "ContainerBitstream.o",
     "ContainerBitstreamBytecode.o",
+    "DPIExport.o",
+    "DPIExportBytecode.o",
 ]
 lto_members = [
     pathlib.Path(member).with_suffix(".bc").name for member in native_members

@@ -542,6 +542,11 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                     UnitAttr::get(module.getContext()));
   else
     module->removeAttr("obelisk.debug.native_timing");
+  // Export bridges must be part of both executable representations. The
+  // materializer is a no-op for ordinary designs, preserving their exact IR.
+  if (module->hasAttr("obelisk_sim.has_dpi_exports") &&
+      failed(materializeDPIExportBridges(module)))
+    return failure();
   bool hasLanguageOverride = false;
   bool hasDriverNBA = false;
   bool hasDelayedNet = false;

@@ -30,10 +30,18 @@ module dpi_header;
   import "DPI-C" function real floating_types(
       input shortreal narrow, inout realtime accumulated,
       output shortreal rounded);
+
+  function int exported_vector(
+      input bit [32:0] value, output logic [64:0] status);
+    status = value;
+    return 1;
+  endfunction
+  export "DPI-C" c_exported_vector = function exported_vector;
 endmodule
 
 // HEADER: #include <svdpi.h>
 // HEADER: extern "C" {
+// HEADER: int32_t c_exported_vector(const svBitVecVal *arg0, svLogicVecVal *arg1);
 // HEADER: double floating_types(float arg0, double *arg1, float *arg2);
 // HEADER: int64_t renamed(int8_t arg0, svLogic arg1);
 // HEADER: int transfer(const svLogicVecVal *arg0, svBitVecVal *arg1);

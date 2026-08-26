@@ -36,7 +36,7 @@ def c : Flag<["-"], "c">, Group<Action_Group>,
 def emit_llvm : Flag<["-"], "emit-llvm">, Group<Action_Group>,
   HelpText<"Emit textual LLVM IR for the selected target">;
 def emit_dpi_header : Flag<["--"], "emit-dpi-header">, Group<Action_Group>,
-  HelpText<"Emit exact C prototypes for DPI imports">;
+  HelpText<"Emit exact C prototypes for DPI imports and exports">;
 def print_resource_dir : Flag<["--"], "print-resource-dir">, Group<Action_Group>,
   HelpText<"Print the Obelisk resource directory and exit">;
 

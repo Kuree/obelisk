@@ -46,6 +46,8 @@ set(_obelisk_runtime_cold_tail_sources
   lib/DynamicScanBytecode.cpp
   lib/ContainerBitstream.cpp
   lib/ContainerBitstreamBytecode.cpp
+  lib/DPIExport.cpp
+  lib/DPIExportBytecode.cpp
 )
 add_library(obelisk_rt STATIC
   ${_obelisk_runtime_common_sources}

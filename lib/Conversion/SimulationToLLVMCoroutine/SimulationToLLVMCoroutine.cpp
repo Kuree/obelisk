@@ -150,6 +150,7 @@ using detail::makeSchedulerMain;
 using detail::makeStatePlane;
 using detail::markCleanStaticNBAsInGuardedBodies;
 using detail::materializeDPIThunks;
+using detail::materializeNativeDPIExportThunks;
 using detail::materializeGeneratedNBAAccumulators;
 using detail::materializeManagedMethodThunks;
 using detail::materializeNativeObserverThunks;
@@ -4597,6 +4598,10 @@ public:
       return;
     }
     if (failed(materializeNativeObserverThunks(module))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(materializeNativeDPIExportThunks(module))) {
       signalPassFailure();
       return;
     }

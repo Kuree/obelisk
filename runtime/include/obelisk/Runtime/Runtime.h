@@ -402,6 +402,9 @@ typedef struct obelisk_rt_handle_v1 {
 // waveform dumping. This grants no VPI access; the VPI permission bits remain
 // the sole authority for VPI handles and reads.
 #define OBELISK_RT_EXECUTION_WAVEFORM_METADATA (UINT32_C(1) << 6)
+// The optional execution extension is version two and contains scope-specific
+// zero-time DPI export descriptors.
+#define OBELISK_RT_EXECUTION_DPI_EXPORTS (UINT32_C(1) << 7)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced
@@ -543,6 +546,47 @@ typedef struct obelisk_rt_execution_extension_v1 {
   const obelisk_rt_sampled_range_v1 *sampled_ranges;
   uint64_t sampled_range_count;
 } obelisk_rt_execution_extension_v1;
+
+struct obelisk_rt_import_input_v1;
+struct obelisk_rt_import_output_v1;
+
+// Exported zero-time functions use the validated DPI value transport in the
+// opposite direction from imports. One immutable record exists for every
+// elaborated `(C identifier, scope)` binding.
+typedef obelisk_rt_status (*obelisk_rt_native_export_v1)(
+    obelisk_rt_context *context,
+    const struct obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    struct obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+
+#define OBELISK_RT_EXPORT_HAS_NATIVE (UINT32_C(1) << 0)
+#define OBELISK_RT_EXPORT_HAS_BYTECODE (UINT32_C(1) << 1)
+#define OBELISK_RT_EXPORT_NO_BYTECODE UINT32_MAX
+typedef struct obelisk_rt_export_descriptor_v1 {
+  uint32_t export_id;
+  uint32_t flags;
+  uint64_t scope_id;
+  uint64_t code_unit_id;
+  uint64_t abi_signature;
+  uint32_t input_count;
+  uint32_t output_count;
+  uint32_t bytecode_function;
+  uint32_t reserved;
+  obelisk_rt_native_export_v1 native_entry;
+  uint64_t reserved_tail;
+} obelisk_rt_export_descriptor_v1;
+
+// Export-bearing designs use version two of the optional execution extension.
+// Its prefix is the complete version-one sampled-range extension, so sampled
+// designs without exports retain byte-identical metadata.
+#define OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION UINT32_C(2)
+typedef struct obelisk_rt_execution_extension_v2 {
+  uint32_t version;
+  uint32_t size;
+  const obelisk_rt_sampled_range_v1 *sampled_ranges;
+  uint64_t sampled_range_count;
+  const obelisk_rt_export_descriptor_v1 *exports;
+  uint64_t export_count;
+} obelisk_rt_execution_extension_v2;
 
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
@@ -3808,6 +3852,25 @@ obelisk_rt_status obelisk_rt_v1_import_call(
     obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+// Enter a scope-specific exported SystemVerilog function from generated C.
+// The active DPI call supplies the hidden context and scope. A call made
+// outside that dynamic extent returns INVALID_LIFECYCLE.
+obelisk_rt_status obelisk_rt_v1_export_call(
+    uint32_t export_id, uint64_t abi_signature,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+// String export outputs are copied into per-thread C storage by export_call.
+// The address remains valid until the next exported call on this thread.
+const char *obelisk_rt_v1_export_string(uint32_t output_index);
+// Marshal DPI's 32-bit svBitVecVal/svLogicVecVal words to and from the
+// runtime's independent 64-bit value/unknown planes.
+void obelisk_rt_v1_dpi_export_unpack_vector(const void *source, void *value,
+                                            void *unknown, uint32_t width,
+                                            uint32_t four_state);
+void obelisk_rt_v1_dpi_export_pack_vector(void *destination,
+                                          const void *value,
+                                          const void *unknown, uint32_t width,
+                                          uint32_t four_state);
 // Copy one null-terminated DPI C string into simulator-owned managed storage.
 // A null C pointer is invalid: IEEE 1800 requires a valid initialized string
 // address for a string result or copy-out.

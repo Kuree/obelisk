@@ -322,11 +322,20 @@ static FailureOr<DPIHeaderType> getDPIHeaderType(mlir::Type type,
 static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   llvm::StringMap<std::string> prototypes;
   WalkResult walked = module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
-    if (!op.getIsDpiImport().value_or(false))
+    bool imported = op.getIsDpiImport().value_or(false);
+    StringAttr exported = op.getDpiExportCIdentifierAttr();
+    if (!imported && !exported)
       return WalkResult::advance();
-    StringAttr cIdentifier = op.getDpiCIdentifierAttr();
+    if (exported &&
+        op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task) {
+      op.emitError(
+          "DPI exported tasks are not supported; only zero-time functions "
+          "can be exported");
+      return WalkResult::interrupt();
+    }
+    StringAttr cIdentifier = imported ? op.getDpiCIdentifierAttr() : exported;
     if (!cIdentifier) {
-      op.emitError("DPI import has no resolved C identifier");
+      op.emitError("DPI subroutine has no resolved C identifier");
       return WalkResult::interrupt();
     }
     SmallVector<std::string> arguments;
@@ -401,7 +410,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
     auto inserted = prototypes.try_emplace(cIdentifier.getValue(), prototype);
     if (!inserted.second && inserted.first->second != prototype) {
       op.emitError() << "C identifier '" << cIdentifier.getValue()
-                     << "' is imported with incompatible DPI signatures";
+                     << "' has incompatible DPI import/export signatures";
       return WalkResult::interrupt();
     }
     return WalkResult::advance();

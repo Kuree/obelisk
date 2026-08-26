@@ -3050,6 +3050,141 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
+obelisk_rt_status obelisk_rt_execute_design_export(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    const obelisk_rt_export_descriptor_v1 &descriptor,
+    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
+    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+    uint32_t outputCount) noexcept {
+  if (!context || inputCount != descriptor.input_count ||
+      outputCount != descriptor.output_count || (inputCount != 0 && !inputs) ||
+      (outputCount != 0 && !outputs) ||
+      descriptor.bytecode_function == OBELISK_RT_EXPORT_NO_BYTECODE)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ManagedExecutionScope managedExecution(context);
+    if (managedExecution.getStatus() != OBELISK_RT_OK)
+      return managedExecution.getStatus();
+    uint32_t functionIndex = descriptor.bytecode_function;
+    obelisk_rt_design_bytecode_entry_v1 entry{&execution, functionIndex, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image) ||
+        functionIndex >= image.functionCount)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Function function = functionAt(image, functionIndex);
+    if (function.id != descriptor.code_unit_id ||
+        function.argumentCount != inputCount + 1 ||
+        function.resultCount != outputCount ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout contextLayout = layoutAt(image, function, 0);
+    if (contextLayout.kind != OBELISK_RT_DBREG_HANDLE ||
+        contextLayout.size != 32)
+      return OBELISK_RT_INVALID_BYTECODE;
+
+    auto matches = [](const Layout &layout, uint8_t kind, uint8_t flags,
+                      uint32_t width) {
+      if (layout.width != width)
+        return false;
+      if ((flags & ~uint8_t{OBELISK_RT_DBREG_SIGNED}) != 0)
+        return false;
+      switch (kind) {
+      case OBELISK_RT_DBREG_BITS:
+        return layout.kind == OBELISK_RT_DBREG_BITS &&
+               layout.size == limbCount(width) * sizeof(uint64_t);
+      case OBELISK_RT_DBREG_LOGIC:
+        return layout.kind == OBELISK_RT_DBREG_LOGIC &&
+               layout.size == limbCount(width) * sizeof(uint64_t) * 2;
+      case OBELISK_RT_DBREG_STRING:
+        return layout.kind == OBELISK_RT_DBREG_STRING && width == 64 &&
+               layout.size == 8 && flags == 0;
+      case OBELISK_RT_DBREG_REAL32:
+        return layout.kind == OBELISK_RT_DBREG_REAL32 && width == 32 &&
+               layout.size == 4 && flags == 0;
+      case OBELISK_RT_DBREG_REAL64:
+        return layout.kind == OBELISK_RT_DBREG_REAL64 && width == 64 &&
+               layout.size == 8 && flags == 0;
+      default:
+        return false;
+      }
+    };
+    auto copyIntoFrame = [&](uint8_t *frame, const Layout &layout,
+                             const obelisk_rt_import_input_v1 &input) {
+      if (!matches(layout, input.kind, input.flags, input.bit_width) ||
+          input.limb_count != limbCount(input.bit_width) || !input.value ||
+          (input.kind == OBELISK_RT_DBREG_LOGIC) != (input.unknown != nullptr))
+        return false;
+      uint64_t bytes = input.limb_count * sizeof(uint64_t);
+      if (input.kind == OBELISK_RT_DBREG_REAL32 ||
+          input.kind == OBELISK_RT_DBREG_REAL64)
+        bytes = input.bit_width / 8;
+      std::memcpy(frame + layout.offset, input.value,
+                  static_cast<size_t>(bytes));
+      if (input.unknown)
+        std::memcpy(frame + layout.offset + bytes, input.unknown,
+                    static_cast<size_t>(bytes));
+      return true;
+    };
+    auto copyFromFrame = [&](const uint8_t *frame, const Layout &layout,
+                             obelisk_rt_import_output_v1 &output) {
+      if (!matches(layout, output.kind, output.flags, output.bit_width) ||
+          output.limb_count != limbCount(output.bit_width) || !output.value ||
+          (output.kind == OBELISK_RT_DBREG_LOGIC) !=
+              (output.unknown != nullptr))
+        return false;
+      uint64_t bytes = output.limb_count * sizeof(uint64_t);
+      if (output.kind == OBELISK_RT_DBREG_REAL32 ||
+          output.kind == OBELISK_RT_DBREG_REAL64)
+        bytes = output.bit_width / 8;
+      std::memcpy(output.value, frame + layout.offset,
+                  static_cast<size_t>(bytes));
+      if (output.unknown)
+        std::memcpy(output.unknown, frame + layout.offset + bytes,
+                    static_cast<size_t>(bytes));
+      return true;
+    };
+
+    for (uint32_t index = 0; index != outputCount; ++index) {
+      const obelisk_rt_import_output_v1 &output = outputs[index];
+      Layout layout = layoutAt(image, function, function.argumentCount + index);
+      if (!matches(layout, output.kind, output.flags, output.bit_width) ||
+          output.limb_count != limbCount(output.bit_width) || !output.value ||
+          (output.kind == OBELISK_RT_DBREG_LOGIC) !=
+              (output.unknown != nullptr))
+        return OBELISK_RT_INVALID_BYTECODE;
+    }
+    if (function.scratchSize > std::numeric_limits<size_t>::max())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+
+    ScopedReusableByteBuffer storage(context,
+                                     static_cast<size_t>(function.scratchSize));
+    std::memset(storage.data(), 0, static_cast<size_t>(function.scratchSize));
+    Frame frame{function, functionIndex, storage.data(), 1};
+    for (uint32_t index = 0; index != inputCount; ++index)
+      if (!copyIntoFrame(frame.data, layoutAt(image, function, index + 1),
+                         inputs[index]))
+        return OBELISK_RT_INVALID_BYTECODE;
+    ExecutionState state;
+    state.frames[frame.id] = &frame;
+    StepBudget budget{UINT64_MAX, 0};
+    obelisk_rt_fragment_action_v1 action{};
+    obelisk_rt_status status = executeFunction(image, frame, context, nullptr,
+                                               0, function.firstInstruction,
+                                               budget, &action, state, nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+    for (uint32_t index = 0; index != outputCount; ++index)
+      if (!copyFromFrame(
+              frame.data,
+              layoutAt(image, function, function.argumentCount + index),
+              outputs[index]))
+        return OBELISK_RT_INVALID_BYTECODE;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+}
+
 static obelisk_rt_status executeDesignBytecode(
     const obelisk_rt_design_bytecode_entry_v1 &entry,
     obelisk_rt_context *context, void *frame, uint64_t frameSize,

@@ -73,6 +73,7 @@ module {
   }
 }
 
+// CHECK-NOT: obelisk_sim.has_dpi_exports
 // CHECK: obelisk_sim.dpi.call "c_add" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: context
 // CHECK-SAME: kind = int
@@ -94,3 +95,4 @@ module {
 // CHECK-NOT: direction = result
 // CHECK-NEXT: obelisk_sim.status.check
 // CHECK-NOT: obelisk.sv.
+// CHECK-NOT: obelisk_sim.has_dpi_exports

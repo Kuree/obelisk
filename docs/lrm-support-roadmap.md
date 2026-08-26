@@ -995,8 +995,9 @@ declarations cannot assign incompatible signatures to one C identifier.
 Native and bytecode O0/O3 tests include generated-header C compilation. The
 focused O3 design compiles in 0.07 seconds at 78 MB RSS for native and 0.04
 seconds at 74 MB RSS for bytecode, then simulates below 0.01 seconds in either
-tier. Open arrays and unpacked aggregates remain explicitly owned by D3/D4;
-exports and disable handling remain D1/D2/D6.
+tier. Zero-time exported functions are complete in D1. Open arrays and unpacked
+aggregates remain explicitly owned by D3/D4; exported-task re-entry and disable
+handling remain D2/D6.
 
 L12's twenty-second closure tranche implements nested-class out-of-block method
 definitions from 8.24. A definition such as `Outer::Nested::method` now parses,
@@ -1495,7 +1496,7 @@ Simulation, encoded-bytecode, and final LLVM IR against base `f6154368`.
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Executable for the audited surface | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. Configurations execute ordered default library lists; cell and exact-instance `use`, `liblist`, and parameter rules; multiple roots; nested configuration selection; arrays; and bind interaction. `-emit-bindings` deterministically reports the effective selected cell, config/root/liblist, bind provenance, and retained rule location. The boundary is intentionally effective elaboration: Slang does not expose the configuration declaration source AST to semantic visitors, so Obelisk does not reconstruct a source-rule tree. |
 | 34 Protected envelopes | Missing | Ordinary pragmas do not provide the standard encryption/decryption envelope flow. Implement required encodings, cipher/key/digest descriptors, key-provider integration, nested decrypted envelopes, diagnostics, and preprocessing order. |
-| 35 DPI | Partial | Imported zero-time functions and synchronous tasks, C thunks, every legal scalar formal type including four-state `integer` and `time`, fixed-packed/string/chandle marshalling, deprecated `"DPI"` spelling, context scope APIs, linking, signature-conflict diagnostics, and header generation execute. Exports, open/unpacked arrays and structs, suspending exported-task re-entry, and disable acknowledgement are missing. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
+| 35 DPI | Partial | Imported zero-time functions and synchronous tasks plus scope-specific exported zero-time functions execute through generated C thunks in native, hybrid, and bytecode-only tiers. Every legal scalar formal type including four-state `integer` and `time`, fixed-packed bit/logic vectors, strings, and chandles marshal; deprecated `"DPI"` spelling, context scope APIs, linking, signature-conflict diagnostics, and header generation execute. Packed and unpacked structs/unions, open/unpacked arrays, suspending exported-task re-entry, and disable acknowledgement remain. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
 | 36-39 PLI/VPI and assertion API | Excluded | Explicitly outside this project goal. |
 | 40 Code coverage | Excluded | Explicitly outside this project goal. |
 | 41 Data read API | Not applicable | The 2017 clause contains no API, only a deprecation notice referring to 1800-2005. |
@@ -1822,9 +1823,14 @@ one commit.
 
 ### DPI-C
 
-43. **D1 — Exported functions (35.4, 35.7).** Generate stable C entry points,
-    headers, scope activation, argument/result marshalling, and native/bytecode
-    call-through to zero-time SystemVerilog bodies.
+43. **D1 — Exported functions (35.4, 35.7), completed.** Stable C entry
+    points and headers select the active elaborated scope, marshal scalar,
+    fixed-packed bit/logic vector, string, and chandle arguments/results, and
+    call zero-time SystemVerilog bodies through pay-for-play native or validated
+    bytecode descriptors. Nested calls preserve managed roots and propagate the
+    first export failure through the enclosing import. Packed/unpacked
+    struct/union and open/unpacked-array formals remain D3/D4 work rather than
+    part of this scalar/vector tranche.
 44. **D2 — Exported tasks and re-entry (35.8).** Permit imported C tasks to
     call exported suspending tasks, retain simulator/process state across
     re-entry, and resume the import at the required point.

@@ -1029,6 +1029,20 @@ struct DpiScopeHandle {
   std::unordered_map<void *, void *> userData;
 };
 
+// Dynamic DPI call state is shared with the cold export service. Keeping the
+// export implementation in a separate archive member lets import-only and
+// no-DPI executables avoid linking it.
+struct ActiveDpiCall {
+  obelisk_rt_context *context = nullptr;
+  DpiScopeHandle *scope = nullptr;
+  std::string callerFile;
+  uint32_t callerLine = 0;
+  obelisk_rt_status exportStatus = OBELISK_RT_OK;
+  ActiveDpiCall *previous = nullptr;
+};
+
+extern thread_local ActiveDpiCall *activeDpiCall;
+
 class ManagedHeap;
 
 struct NetAliasRange {
@@ -2085,6 +2099,12 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
     obelisk_rt_context *context, uint32_t function,
     const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t *value, uint64_t *unknown, uint32_t limbCount) noexcept;
+obelisk_rt_status obelisk_rt_execute_design_export(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    const obelisk_rt_export_descriptor_v1 &descriptor,
+    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
+    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+    uint32_t outputCount) noexcept;
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
 

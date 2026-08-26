@@ -20,6 +20,10 @@ class RewritePatternSet;
 
 namespace obelisk {
 
+/// Materialize capture-free, scope-specific bridges for every prepared DPI
+/// exported function. This must run before bytecode encoding.
+mlir::LogicalResult materializeDPIExportBridges(mlir::ModuleOp module);
+
 /// Normalize packed and suspension-live state, then analyze and construct
 /// process ramps, continuation shims, descriptors, and native hooks before the
 /// terminal LLVM dialect conversion.

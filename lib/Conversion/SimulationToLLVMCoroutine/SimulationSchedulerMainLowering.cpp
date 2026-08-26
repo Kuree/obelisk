@@ -115,6 +115,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       module->hasAttr("obelisk.feature.dynamic_scan");
   bool requiresContainerBitstreamFeature =
       module->hasAttr("obelisk.feature.container_bitstream");
+  bool requiresDPIExportBytecodeFeature =
+      module->hasAttr("obelisk.feature.dpi_export_bytecode");
   if (requiresDynamicScanFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
@@ -125,6 +127,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
                            "obelisk_rt_v1_container_bitstream_link_anchor"),
+        ValueRange{});
+  if (requiresDPIExportBytecodeFeature)
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context,
+                           "obelisk_rt_v1_dpi_export_bytecode_link_anchor"),
         ValueRange{});
   Value configureStatus =
       LLVM::CallOp::create(
@@ -364,6 +372,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresContainerBitstreamFeature)
     getOrDeclareLLVMFunction(
         module, "obelisk_rt_v1_container_bitstream_link_anchor", voidType, {});
+  if (requiresDPIExportBytecodeFeature)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_dpi_export_bytecode_link_anchor", voidType, {});
   return success();
 }
 

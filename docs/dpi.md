@@ -27,14 +27,19 @@ copy-out C strings must be valid initialized null-terminated addresses and
 are copied immediately into simulator-owned managed strings. Neither side
 frees the other side's string storage.
 
-Open and unpacked arrays, `ref`, DPI exports, task suspension, and disable
-acknowledgement are not supported yet. They produce diagnostics instead of
-falling back to a different ABI.
+Generated headers include prototypes for zero-time DPI exported functions, and
+Simulation IR freezes one scalar/fixed-packed export signature and exact scope
+record per elaborated function clone. Generated C entry points select the
+active elaborated scope and dispatch through pay-for-play native, hybrid, or
+validated bytecode descriptors. Exported tasks, packed/unpacked aggregate
+formals, open and unpacked arrays, `ref`, task suspension, and disable
+acknowledgement produce diagnostics instead of falling back to a different
+ABI.
 
 ## Build an implementation
 
 Print the resource directory and generate prototypes from the elaborated
-imports:
+imports and zero-time function exports:
 
 ```sh
 RESOURCE_DIR=$(obelisk --print-resource-dir)

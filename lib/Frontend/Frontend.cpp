@@ -870,15 +870,41 @@ public:
 
   void markDPIExport(const slang::ast::SubroutineSymbol &subroutine,
                      StringRef cIdentifier) {
-    auto found = emittedSymbolOperations.find(&subroutine);
-    if (found == emittedSymbolOperations.end()) {
+    const slang::syntax::SyntaxNode *syntax = subroutine.getSyntax();
+    if (syntax && !dpiExportSyntaxIndexBuilt) {
+      for (auto [symbol, operation] : emittedSymbolOperations) {
+        if (symbol->kind != slang::ast::SymbolKind::Subroutine)
+          continue;
+        const auto &candidate = symbol->as<slang::ast::SubroutineSymbol>();
+        if (const slang::syntax::SyntaxNode *candidateSyntax =
+                candidate.getSyntax())
+          dpiExportOperationsBySyntax[candidateSyntax].push_back(operation);
+      }
+      dpiExportSyntaxIndexBuilt = true;
+    }
+    // Compilation::getDPIExports() may identify one elaborated clone of a
+    // module declaration. Every clone shares the declaration syntax and needs
+    // its own scope-specific export bridge downstream.
+    bool found = false;
+    auto mark = [&](Operation *operation) {
+      operation->setAttr("dpi_export_c_identifier",
+                         builder.getStringAttr(cIdentifier));
+      found = true;
+    };
+    if (syntax) {
+      if (auto clones = dpiExportOperationsBySyntax.find(syntax);
+          clones != dpiExportOperationsBySyntax.end())
+        for (Operation *operation : clones->second)
+          mark(operation);
+    } else if (auto operation = emittedSymbolOperations.find(&subroutine);
+               operation != emittedSymbolOperations.end()) {
+      mark(operation->second);
+    }
+    if (!found) {
       emitError(sourceLocation(subroutine.location))
           << "resolved DPI export subroutine was not imported";
       sawInvalidNode = true;
-      return;
     }
-    found->second->setAttr("dpi_export_c_identifier",
-                           builder.getStringAttr(cIdentifier));
   }
 
   LogicalResult finalizeReferences() {
@@ -4385,6 +4411,9 @@ private:
       emittedSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, Operation *>
       emittedSymbolOperations;
+  llvm::DenseMap<const slang::syntax::SyntaxNode *, SmallVector<Operation *, 1>>
+      dpiExportOperationsBySyntax;
+  bool dpiExportSyntaxIndexBuilt = false;
   SmallVector<std::string, 8> currentSymbolPath;
   SmallVector<const slang::ast::Scope *, 8> currentScopes;
   SmallVector<PendingReference, 0> pendingReferences;
