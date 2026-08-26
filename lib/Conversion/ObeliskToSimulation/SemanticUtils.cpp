@@ -311,10 +311,28 @@ std::optional<uint64_t> getSemanticBitstreamWidth(Type type) {
     return checkedArrayWidth(getSemanticBitstreamWidth(array.getElementType()),
                              array.getSize());
 
-  // The elaborator computes this from the full source field inventory,
-  // including tagged-union discriminants and unpacked aggregate members.
-  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type))
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+    // Packed aggregates are necessarily fixed-size, and the elaborator's
+    // width includes tagged-union discriminants and padding.  For unpacked
+    // aggregates, however, Slang reports zero for a dynamically sized field.
+    // Recurse through the source inventory so callers can distinguish an
+    // actual zero-width type from a value-dependent bitstream.
+    if (aggregate.getIsPacked())
+      return aggregate.getBitstreamWidth();
+    for (Attribute fieldAttr : aggregate.getFields()) {
+      auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+      if (!fieldType)
+        return std::nullopt;
+      if (isa<semantic::VoidType>(fieldType.getValue()))
+        continue;
+      if (!getSemanticBitstreamWidth(fieldType.getValue()))
+        return std::nullopt;
+    }
+    // Preserve the elaborator's exact fixed layout, including tags and
+    // padding, once recursion has established that every field is fixed.
     return aggregate.getBitstreamWidth();
+  }
 
   auto dictionaryWidth = [&](DictionaryAttr fields,
                              bool isUnion) -> std::optional<uint64_t> {

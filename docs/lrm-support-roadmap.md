@@ -1243,6 +1243,20 @@ reacts to queue and dynamic-array resizing without polling. Each query lowers
 to one size read, one truncation, and one multiplication; the existing static
 `$bits` constant-folding path remains unchanged.
 
+L12's twenty-fourth closure tranche extends live `$bits` through recursively
+dynamic unpacked aggregates. Fixed arrays and structs sum their live members,
+tagged unions select the active member, and nested dynamic arrays, queues, and
+associative arrays use one extent-independent traversal per dynamic level.
+Containers with fixed-width elements retain the compact size-times-stride
+lowering, fixed subtrees in mixed queries fold during canonicalization, and
+every fully fixed query retains the existing constant path.
+Implicit event control uses the value-semantic parent watch for dynamic
+containers and records stable leaf watches across a fixed aggregate shape, so
+no loop-local handle escapes its dominance region. A suspended implicit
+process holds one exact watch per independent fixed-shape dynamic leaf and
+does not poll. Designs without recursive queries—and recursive queries outside
+implicit controls—gain no additional runtime state or scheduler work.
+
 A1's next assertion-control closure makes the `levels` operand of
 `$assertcontrol` and every convenience task a runtime integer expression, as
 required by 20.12. The compiler still resolves assertion and hierarchy
@@ -1400,7 +1414,7 @@ no-feature path.
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
-| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, static and live dynamic `$bits`, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, all ten global-clock sampled functions, and the other implemented sampled functions execute. Remaining work includes complete assertion statistics/control behavior and recursively dynamic `$bits` aggregates. |
+| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, static and recursively live dynamic `$bits`, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, all ten global-clock sampled functions, and the other implemented sampled functions execute. Remaining work includes complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Partial | Display/write/strobe/monitor families, formatted strings, broad file I/O and scanning—including formatted-input field widths, assignment suppression, zero-byte hierarchy `%m`, `$timeformat`-scaled floating-point `%t`, and canonical scalar-strength `%v`, plus `$fread` into fixed, dynamic-array, and queue memories and captured dynamic, associative, and nested aggregate copy-out targets—read/write-memory across fixed, dynamic, queue, multidimensional, and integral associative forms, plusargs including runtime `$value$plusargs` formats, and VCD/dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format continue with ordinary default-radix formatting. Formatting and file corner cases remain. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Verifier-proven full-range wide hierarchical port forwarding uses bounded vector-shaped native lowering; irregular, delayed, resolved, or competing-driver topology retains scalar lowering. |

@@ -4898,6 +4898,33 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   };
   std::function<FailureOr<Value>(Value)> rematerializeManagedInput =
       [&](Value value) -> FailureOr<Value> {
+    if (auto extract = value.getDefiningOp<sim::SimAggregateExtractOp>()) {
+      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+      if (failed(input))
+        return failure();
+      return sim::SimAggregateExtractOp::create(builder, extract.getLoc(),
+                                                extract.getResult().getType(),
+                                                *input, extract.getIndexAttr())
+          .getResult();
+    }
+    if (auto extract = value.getDefiningOp<sim::SimUnionExtractOp>()) {
+      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+      if (failed(input))
+        return failure();
+      return sim::SimUnionExtractOp::create(builder, extract.getLoc(),
+                                            extract.getResult().getType(),
+                                            *input, extract.getIndexAttr())
+          .getResult();
+    }
+    if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+      if (failed(input))
+        return failure();
+      return sim::SimRefSubelementOp::create(builder, extract.getLoc(),
+                                             extract.getResult().getType(),
+                                             *input, extract.getIndicesAttr())
+          .getResult();
+    }
     if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
       FailureOr<Value> object = rematerializeManagedInput(field.getObject());
       if (failed(object))

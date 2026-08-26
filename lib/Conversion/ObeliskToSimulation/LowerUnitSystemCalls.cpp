@@ -1515,58 +1515,378 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     std::optional<uint64_t> width =
         getSemanticBitstreamWidth(semanticType.getValue());
     if (!width) {
-      Type elementType;
-      if (auto array =
-              dyn_cast<semantic::DynArrayType>(semanticType.getValue()))
-        elementType = array.getElementType();
-      else if (auto queue =
-                   dyn_cast<semantic::QueueType>(semanticType.getValue()))
-        elementType = queue.getElementType();
+      FailureOr<Value> operand = lowerExpression(children.front());
+      if (failed(operand))
+        return failure();
 
-      std::optional<uint64_t> elementWidth =
-          elementType ? getSemanticBitstreamWidth(elementType) : std::nullopt;
-      bool string = isa<semantic::StringType>(semanticType.getValue());
-      if ((!elementType || !elementWidth) && !string) {
+      auto constant32 = [&](uint64_t value) -> Value {
+        return arith::ConstantOp::create(
+            builder, location, i32,
+            builder.getIntegerAttr(i32, APInt(32, value)));
+      };
+      auto constant64 = [&](uint64_t value) -> Value {
+        return arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getIntegerAttr(i64, APInt(64, value)));
+      };
+      auto add = [&](Value lhs, Value rhs) -> Value {
+        return arith::AddIOp::create(builder, location, lhs, rhs);
+      };
+
+      // Implicit event controls need stable handles at their eventual wait
+      // point. Dynamic parents carry value-semantic nested mutations through
+      // their own watch. Fixed aggregates have no such identity, so enumerate
+      // only their fixed shape here and watch each dynamic leaf directly.
+      // Ordinary `$bits` calls do not build this dependency-only inventory.
+      std::function<LogicalResult(Value, Type)> recordLiveDependencies;
+      recordLiveDependencies = [&](Value value,
+                                   Type sourceType) -> LogicalResult {
+        if (getSemanticBitstreamWidth(sourceType) ||
+            isa<semantic::VoidType, semantic::StringType>(sourceType))
+          return success();
+
+        if (isa<semantic::DynArrayType, semantic::QueueType,
+                semantic::AssocArrayType>(sourceType)) {
+          if (!isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                  value.getType()))
+            return failure();
+          recordContainerSizeRead(value, location);
+          return success();
+        }
+
+        Type fixedElementType;
+        if (auto array =
+                dyn_cast<semantic::RangedUnpackedArrayType>(sourceType))
+          fixedElementType = array.getElementType();
+        else if (auto array = dyn_cast<semantic::UnpackedArrayType>(sourceType))
+          fixedElementType = array.getElementType();
+        if (fixedElementType) {
+          auto array = dyn_cast<sim::UnpackedArrayType>(value.getType());
+          if (!array)
+            return failure();
+          for (uint64_t ordinal = 0,
+                        count = sim::getAggregateNumElements(array);
+               ordinal != count; ++ordinal) {
+            Value element = sim::SimAggregateExtractOp::create(
+                builder, location, array.getElementType(), value, ordinal);
+            if (failed(recordLiveDependencies(element, fixedElementType)))
+              return failure();
+          }
+          return success();
+        }
+
+        SmallVector<Type> fieldTypes;
+        bool unionType = false;
+        bool taggedUnion = false;
+        if (auto aggregate =
+                dyn_cast<semantic::SourceAggregateType>(sourceType)) {
+          unionType = aggregate.getIsUnion();
+          taggedUnion = aggregate.getIsTagged();
+          for (Attribute fieldAttr : aggregate.getFields()) {
+            auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+            auto type = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+            if (!type)
+              return failure();
+            fieldTypes.push_back(type.getValue());
+          }
+        } else if (auto structure =
+                       dyn_cast<semantic::UnpackedStructType>(sourceType)) {
+          for (NamedAttribute field : structure.getFields()) {
+            auto type = dyn_cast<TypeAttr>(field.getValue());
+            if (!type)
+              return failure();
+            fieldTypes.push_back(type.getValue());
+          }
+        } else if (isa<semantic::UnpackedUnionType>(sourceType)) {
+          unionType = true;
+        }
+        if (fieldTypes.empty())
+          return failure();
+        if (unionType) {
+          auto unionValue = dyn_cast<sim::UnpackedUnionType>(value.getType());
+          if (!taggedUnion || !unionValue || !unionValue.getIsTagged())
+            return failure();
+        } else if (!isa<sim::UnpackedStructType>(value.getType())) {
+          return failure();
+        }
+        for (auto [ordinal, fieldType] : llvm::enumerate(fieldTypes)) {
+          if (getSemanticBitstreamWidth(fieldType) ||
+              isa<semantic::VoidType, semantic::StringType>(fieldType))
+            continue;
+          Type valueFieldType =
+              sim::getAggregateElementType(value.getType(), ordinal);
+          if (!valueFieldType)
+            return failure();
+          Value field =
+              unionType
+                  ? Value(sim::SimUnionExtractOp::create(
+                        builder, location, valueFieldType, value, ordinal))
+                  : Value(sim::SimAggregateExtractOp::create(
+                        builder, location, valueFieldType, value, ordinal));
+          if (failed(recordLiveDependencies(field, fieldType)))
+            return failure();
+        }
+        return success();
+      };
+
+      std::function<FailureOr<Value>(Value, Type, bool)> lowerLiveWidth;
+      lowerLiveWidth = [&](Value value, Type sourceType,
+                           bool recordDependency) -> FailureOr<Value> {
+        if (std::optional<uint64_t> fixed =
+                getSemanticBitstreamWidth(sourceType))
+          return constant32(*fixed);
+        if (isa<semantic::VoidType>(sourceType))
+          return constant32(0);
+
+        if (isa<semantic::StringType>(sourceType)) {
+          if (!isa<sim::StringType>(value.getType()))
+            return failure();
+          Value size =
+              sim::SimStringLengthOp::create(builder, location, i64, value);
+          Value size32 = arith::TruncIOp::create(builder, location, i32, size);
+          return Value(
+              arith::MulIOp::create(builder, location, size32, constant32(8)));
+        }
+
+        Type elementType;
+        if (auto array = dyn_cast<semantic::DynArrayType>(sourceType))
+          elementType = array.getElementType();
+        else if (auto queue = dyn_cast<semantic::QueueType>(sourceType))
+          elementType = queue.getElementType();
+        else if (auto associative =
+                     dyn_cast<semantic::AssocArrayType>(sourceType))
+          elementType = associative.getElementType();
+        if (elementType) {
+          Type valueElementType;
+          if (auto array = dyn_cast<sim::DynamicArrayType>(value.getType()))
+            valueElementType = array.getElementType();
+          else if (auto queue = dyn_cast<sim::QueueType>(value.getType()))
+            valueElementType = queue.getElementType();
+          else if (auto associative =
+                       dyn_cast<sim::AssocArrayType>(value.getType()))
+            valueElementType = associative.getElementType();
+          if (!valueElementType)
+            return failure();
+          // One managed-container watch covers every value-semantic mutation
+          // reachable through that container. Do not manufacture a
+          // non-dominating wait operand for a nested handle discovered only
+          // inside the generated traversal loop.
+          if (recordDependency)
+            recordContainerSizeRead(value, location);
+          Value size =
+              sim::SimContainerSizeOp::create(builder, location, i64, value);
+          if (std::optional<uint64_t> stride =
+                  getSemanticBitstreamWidth(elementType)) {
+            Value size32 =
+                arith::TruncIOp::create(builder, location, i32, size);
+            return Value(arith::MulIOp::create(builder, location, size32,
+                                               constant32(*stride)));
+          }
+
+          if (isa<sim::DynamicArrayType, sim::QueueType>(value.getType())) {
+            Block *header = addBlock();
+            header->addArgument(i64, location);
+            header->addArgument(i32, location);
+            Block *body = addBlock();
+            Block *exit = addBlock();
+            exit->addArgument(i32, location);
+            cf::BranchOp::create(builder, location, header,
+                                 ValueRange{constant64(0), constant32(0)});
+            setCurrent(header);
+            Value index = header->getArgument(0);
+            Value accumulated = header->getArgument(1);
+            Value more = arith::CmpIOp::create(
+                builder, location, arith::CmpIPredicate::ult, index, size);
+            cf::CondBranchOp::create(builder, location, more, body,
+                                     ValueRange{}, exit,
+                                     ValueRange{accumulated});
+            setCurrent(body);
+            Value element = sim::SimContainerReadOp::create(
+                builder, location, valueElementType, value, index);
+            FailureOr<Value> nested =
+                lowerLiveWidth(element, elementType, false);
+            if (failed(nested))
+              return failure();
+            Value next =
+                arith::AddIOp::create(builder, location, index, constant64(1));
+            cf::BranchOp::create(builder, location, header,
+                                 ValueRange{next, add(accumulated, *nested)});
+            setCurrent(exit);
+            return exit->getArgument(0);
+          }
+
+          auto associative = dyn_cast<sim::AssocArrayType>(value.getType());
+          if (!associative)
+            return failure();
+          Value initialKey =
+              createDefaultValue(builder, location, associative.getKeyType());
+          if (!initialKey)
+            return failure();
+          FailureOr<std::pair<Value, Value>> first =
+              traverseAssoc(value, initialKey, 1, true, location);
+          if (failed(first))
+            return failure();
+          Block *header = addBlock();
+          header->addArgument(associative.getKeyType(), location);
+          header->addArgument(builder.getI1Type(), location);
+          header->addArgument(i32, location);
+          Block *body = addBlock();
+          Block *exit = addBlock();
+          exit->addArgument(i32, location);
+          cf::BranchOp::create(
+              builder, location, header,
+              ValueRange{first->first, first->second, constant32(0)});
+          setCurrent(header);
+          Value key = header->getArgument(0);
+          Value valid = header->getArgument(1);
+          Value accumulated = header->getArgument(2);
+          cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                                   exit, ValueRange{accumulated});
+          setCurrent(body);
+          Value element = sim::SimAssocReadOp::create(
+              builder, location, valueElementType, value, key);
+          FailureOr<Value> nested = lowerLiveWidth(element, elementType, false);
+          if (failed(nested))
+            return failure();
+          FailureOr<std::pair<Value, Value>> next =
+              traverseAssoc(value, key, 1, false, location);
+          if (failed(next))
+            return failure();
+          cf::BranchOp::create(
+              builder, location, header,
+              ValueRange{next->first, next->second, add(accumulated, *nested)});
+          setCurrent(exit);
+          return exit->getArgument(0);
+        }
+
+        Type fixedElementType;
+        if (auto array =
+                dyn_cast<semantic::RangedUnpackedArrayType>(sourceType))
+          fixedElementType = array.getElementType();
+        else if (auto array = dyn_cast<semantic::UnpackedArrayType>(sourceType))
+          fixedElementType = array.getElementType();
+        if (fixedElementType) {
+          auto array = dyn_cast<sim::UnpackedArrayType>(value.getType());
+          if (!array)
+            return failure();
+          Value total = constant32(0);
+          for (uint64_t ordinal = 0,
+                        count = sim::getAggregateNumElements(array);
+               ordinal != count; ++ordinal) {
+            Value element = sim::SimAggregateExtractOp::create(
+                builder, location, array.getElementType(), value, ordinal);
+            FailureOr<Value> nested =
+                lowerLiveWidth(element, fixedElementType, false);
+            if (failed(nested))
+              return failure();
+            total = add(total, *nested);
+          }
+          return total;
+        }
+
+        SmallVector<Type> fieldTypes;
+        bool unionType = false;
+        bool taggedUnion = false;
+        if (auto aggregate =
+                dyn_cast<semantic::SourceAggregateType>(sourceType)) {
+          unionType = aggregate.getIsUnion();
+          taggedUnion = aggregate.getIsTagged();
+          for (Attribute fieldAttr : aggregate.getFields()) {
+            auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+            auto type = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+            if (!type)
+              return failure();
+            fieldTypes.push_back(type.getValue());
+          }
+        } else if (auto structure =
+                       dyn_cast<semantic::UnpackedStructType>(sourceType)) {
+          for (NamedAttribute field : structure.getFields()) {
+            auto type = dyn_cast<TypeAttr>(field.getValue());
+            if (!type)
+              return failure();
+            fieldTypes.push_back(type.getValue());
+          }
+        } else if (isa<semantic::UnpackedUnionType>(sourceType)) {
+          unionType = true;
+        }
+        if (unionType) {
+          auto unionValue = dyn_cast<sim::UnpackedUnionType>(value.getType());
+          if (!taggedUnion || !unionValue || !unionValue.getIsTagged() ||
+              fieldTypes.empty())
+            return failure();
+          Block *exit = addBlock();
+          exit->addArgument(i32, location);
+          for (auto [ordinal, fieldType] : llvm::enumerate(fieldTypes)) {
+            Value active = sim::SimUnionIsActiveOp::create(
+                builder, location, builder.getI1Type(), value, ordinal);
+            Block *selected = addBlock();
+            Block *next = addBlock();
+            cf::CondBranchOp::create(builder, location, active, selected,
+                                     ValueRange{}, next, ValueRange{});
+            setCurrent(selected);
+            FailureOr<Value> nested = failure();
+            if (isa<semantic::VoidType>(fieldType)) {
+              nested = constant32(0);
+            } else {
+              Type valueFieldType =
+                  sim::getAggregateElementType(value.getType(), ordinal);
+              if (!valueFieldType)
+                return failure();
+              Value field = sim::SimUnionExtractOp::create(
+                  builder, location, valueFieldType, value, ordinal);
+              nested = lowerLiveWidth(field, fieldType, false);
+            }
+            if (failed(nested))
+              return failure();
+            cf::BranchOp::create(builder, location, exit, ValueRange{*nested});
+            setCurrent(next);
+          }
+          cf::BranchOp::create(builder, location, exit,
+                               ValueRange{constant32(0)});
+          setCurrent(exit);
+          return exit->getArgument(0);
+        }
+        if (fieldTypes.empty() ||
+            !isa<sim::UnpackedStructType>(value.getType()))
+          return failure();
+
+        Value total = constant32(0);
+        for (auto [ordinal, fieldType] : llvm::enumerate(fieldTypes)) {
+          if (std::optional<uint64_t> fixed =
+                  getSemanticBitstreamWidth(fieldType)) {
+            total = add(total, constant32(*fixed));
+            continue;
+          }
+          Type valueFieldType =
+              sim::getAggregateElementType(value.getType(), ordinal);
+          if (!valueFieldType)
+            return failure();
+          Value field = sim::SimAggregateExtractOp::create(
+              builder, location, valueFieldType, value, ordinal);
+          FailureOr<Value> nested =
+              lowerLiveWidth(field, fieldType, recordDependency);
+          if (failed(nested))
+            return failure();
+          total = add(total, *nested);
+        }
+        return total;
+      };
+
+      if (observedDependencies &&
+          failed(recordLiveDependencies(*operand, semanticType.getValue()))) {
+        emitError(getSemanticLocation(children.front()))
+            << "$bits recursive dependency inventory is not executable";
+        return failure();
+      }
+      FailureOr<Value> result =
+          lowerLiveWidth(*operand, semanticType.getValue(), false);
+      if (failed(result)) {
         emitError(getSemanticLocation(children.front()))
             << "$bits of this dynamically sized bitstream is not yet "
                "executable";
         return failure();
       }
-
-      FailureOr<Value> operand = lowerExpression(children.front());
-      if (failed(operand))
-        return failure();
-      Value size;
-      if (string) {
-        Type stringType = sim::StringType::get(function.getContext());
-        FailureOr<Value> converted = convert(
-            *operand, stringType, isSignedNode(children.front()), location);
-        if (failed(converted))
-          return failure();
-        size = sim::SimStringLengthOp::create(builder, location, i64,
-                                              *converted);
-        elementWidth = 8;
-      } else {
-        if (!isa<sim::DynamicArrayType, sim::QueueType>((*operand).getType())) {
-          emitError(getSemanticLocation(children.front()))
-              << "$bits dynamic operand did not lower to a sequential "
-                 "container";
-          return failure();
-        }
-        recordContainerSizeRead(*operand, location);
-        size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                               *operand);
-      }
-
-      // `$bits` returns a signed 32-bit integer. Truncate the live element
-      // count first and multiply in i32 so exceptionally large bitstreams
-      // retain the same low-32-bit result as the static path.
-      Value size32 = arith::TruncIOp::create(builder, location, i32, size);
-      Value stride = arith::ConstantOp::create(
-          builder, location, i32,
-          builder.getIntegerAttr(i32, APInt(32, *elementWidth)));
-      Value result = arith::MulIOp::create(builder, location, size32, stride);
-      return convertResult(result);
+      return convertResult(*result);
     }
     // `$bits` is an inquiry function: its operand is unevaluated. Preserve
     // Slang/SystemVerilog's signed 32-bit result by retaining the low 32 bits
