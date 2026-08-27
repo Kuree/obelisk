@@ -24,6 +24,9 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimStringToPackedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicStringToPacked, {op.getInput()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimStringToPackedExactOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicStringToPacked, {op.getInput()},
+                         {op.getResult(), op.getMatched()}, 1);
   if (auto op = dyn_cast<sim::SimStringConcatOp>(operation)) {
     SmallVector<Value> inputs(op.getInputs());
     return emitIntrinsic(plan, kIntrinsicStringConcat, inputs,

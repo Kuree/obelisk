@@ -1238,8 +1238,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
                         ? frame.data + output.offset + planeSize
                         : nullptr;
-    return obelisk_rt_v1_string_to_packed(input, frame.data + output.offset,
-                                          unknown, output.width);
+    obelisk_rt_status status = obelisk_rt_v1_string_to_packed(
+        input, frame.data + output.offset, unknown, output.width);
+    if (status != OBELISK_RT_OK || signature.flags == 0)
+      return status;
+    return sentinel(1, obelisk_rt_v1_string_length(input) == output.width / 8);
   }
   case OBELISK_RT_INTRINSIC_V1_STRING_CONCAT: {
     std::vector<obelisk_rt_string_span_v1> spans(site.inputCount);

@@ -147,6 +147,54 @@ public:
   }
 };
 
+class StringToPackedExactConversion final
+    : public OpConversionPattern<sim::SimStringToPackedExactOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimStringToPackedExactOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto resultType = dyn_cast<IntegerType>(
+        getTypeConverter()->convertType(op.getResult().getType()));
+    if (!resultType || resultType.getWidth() == 0 ||
+        (resultType.getWidth() % 8) != 0 || adaptor.getInput().size() != 1)
+      return failure();
+    Value output = entryAlloca(rewriter, op.getLoc(), resultType, 1, 8);
+    LLVM::StoreOp::create(
+        rewriter, op.getLoc(),
+        LLVM::ZeroOp::create(rewriter, op.getLoc(), resultType), output, 8);
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_string_to_packed"),
+            ValueRange{adaptor.getInput().front(), output,
+                       LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(),
+                                    resultType.getWidth())})
+            .getResult();
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    Value length = LLVM::CallOp::create(
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
+                       SymbolRefAttr::get(rewriter.getContext(),
+                                          "obelisk_rt_v1_string_length"),
+                       adaptor.getInput())
+                       .getResult();
+    Value expected = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                                  resultType.getWidth() / 8);
+    Value matched = LLVM::ICmpOp::create(
+        rewriter, op.getLoc(), LLVM::ICmpPredicate::eq, length, expected);
+    Value packed =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), resultType, output, 8);
+    rewriter.replaceOp(op, ValueRange{packed, matched});
+    return success();
+  }
+};
+
 class StringConcatConversion final
     : public OpConversionPattern<sim::SimStringConcatOp> {
 public:
@@ -1119,7 +1167,8 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<
       StringLiteralConversion, StringFromPackedConversion,
-      StringToPackedConversion, StringConcatConversion, StringLengthConversion,
+      StringToPackedConversion, StringToPackedExactConversion,
+      StringConcatConversion, StringLengthConversion,
       StringGetcConversion, StringCompareConversion, StringScanFieldConversion,
       DynamicScanValidateConversion,
       DynamicScanConversion<sim::SimStringScanDynamicOp, false>,

@@ -782,6 +782,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimRandomCycleNextOp, sim::SimRandomSolveOp,
         sim::SimRandomSolveWideOp, sim::SimStringLiteralOp,
         sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
+        sim::SimStringToPackedExactOp,
         sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
         sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
         sim::SimStringCompareOp, sim::SimStringCaseConvertOp,

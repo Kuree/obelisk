@@ -382,6 +382,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
@@ -1127,8 +1128,11 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && numeric(input(0)) && string(output(0));
   case OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED:
-    return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 1 && string(input(0)) && numeric(output(0));
+    return site.inputCount == 1 && string(input(0)) && numeric(output(0)) &&
+           ((signature.flags == 0 && site.outputCount == 1) ||
+            (signature.flags == 1 && site.outputCount == 2 &&
+             twoStateBits(output(1), 1) && output(0)->width != 0 &&
+             (output(0)->width % 8) == 0));
   case OBELISK_RT_INTRINSIC_V1_STRING_CONCAT:
     if (signature.flags != 0 || site.outputCount != 1 || !string(output(0)))
       return false;

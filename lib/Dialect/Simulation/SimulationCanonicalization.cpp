@@ -1927,6 +1927,35 @@ struct FoldStringLength final : OpRewritePattern<SimStringLengthOp> {
   }
 };
 
+struct FoldExactStringToPacked final
+    : OpRewritePattern<SimStringToPackedExactOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimStringToPackedExactOp op,
+                                PatternRewriter &rewriter) const override {
+    auto literal = op.getInput().getDefiningOp<SimStringLiteralOp>();
+    auto resultType = dyn_cast<IntegerType>(op.getResult().getType());
+    if (!literal || !resultType || resultType.getWidth() > 1024 ||
+        (resultType.getWidth() % 8) != 0 ||
+        literal.getValue().size() != resultType.getWidth() / 8)
+      return failure();
+
+    APInt result = APInt::getZero(resultType.getWidth());
+    for (auto [index, byte] : llvm::enumerate(literal.getValue().bytes())) {
+      unsigned shift = resultType.getWidth() - (index + 1) * 8;
+      result |= APInt(resultType.getWidth(), byte).shl(shift);
+    }
+    Value packed = arith::ConstantOp::create(
+        rewriter, op.getLoc(), resultType,
+        rewriter.getIntegerAttr(resultType, result));
+    Value matched = arith::ConstantOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(),
+        rewriter.getBoolAttr(true));
+    rewriter.replaceOp(op, ValueRange{packed, matched});
+    return success();
+  }
+};
+
 } // namespace
 
 void SimPackedFlattenOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -2019,6 +2048,11 @@ void SimStringCompareOp::getCanonicalizationPatterns(
 void SimStringLengthOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldStringLength>(context);
+}
+
+void SimStringToPackedExactOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldExactStringToPacked>(context);
 }
 
 void SimLogicCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,

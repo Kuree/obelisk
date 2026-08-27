@@ -1112,6 +1112,13 @@ LogicalResult SimStringFromPackedOp::verify() {
   return success();
 }
 
+LogicalResult SimStringToPackedExactOp::verify() {
+  auto type = dyn_cast<IntegerType>(getResult().getType());
+  if (!type || type.getWidth() == 0 || (type.getWidth() % 8) != 0)
+    return emitOpError("packed result width must be a nonzero multiple of eight");
+  return success();
+}
+
 LogicalResult SimStringConcatOp::verify() {
   if (getInputs().size() > std::numeric_limits<uint32_t>::max())
     return emitOpError("input count exceeds the managed string ABI");

@@ -475,6 +475,9 @@ private:
   convertFixedAggregateBitstream(::mlir::Value value, ::mlir::Type targetType,
                                  ::mlir::Type targetScalar,
                                  ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  convertStringBitstream(::mlir::Value value, ::mlir::Type targetType,
+                         ::mlir::Type targetScalar, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`

@@ -1114,6 +1114,14 @@ def SimStringToPackedOp : SimOp<"string.to_packed", [Pure]> {
   let results = (outs AnyInteger:$result);
 }
 
+def SimStringToPackedExactOp : SimOp<"string.to_packed_exact", [Pure]> {
+  let summary = "pack a managed byte string and report an exact width match";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs AnyInteger:$result, I1:$matched);
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimStringConcatOp
     : SimStringAllocatingOp<"string.concat",
                             (ins Variadic<SimStringType>:$inputs)> {
