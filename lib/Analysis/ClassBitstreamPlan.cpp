@@ -412,12 +412,9 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
     appendSite(site);
   for (const Group &group : groups) {
     append64(blob, group.id);
-    // Class handles are flattened to the exact declaration resolved by the
-    // analysis; every root has the same static ancestry source.
-    FailureOr<const ClassBitstreamAnalysis::CastClosure *> closure =
-        analyzed->getCastClosure(group.source, group.allowHiddenRoot);
-    if (failed(closure) || (*closure)->roots.empty())
-      return failure();
+    // Recover the declared static class directly.  An abstract or interface
+    // handle may intentionally have no compatible concrete roots in the
+    // closed-world design, in which case its dispatch group is empty.
     sim::SimClassDeclOp staticClass;
     // The compatible root list is sorted base-compatible, but its first exact
     // class need not be the static abstract class. Recover the declared ID via
