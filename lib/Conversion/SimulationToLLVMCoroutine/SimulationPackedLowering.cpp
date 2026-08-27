@@ -531,6 +531,7 @@ LogicalResult lowerPackedSimulationOperations(
   if (globalInventory.wasInterrupted())
     return failure();
   if (needsClassBitstreamABI &&
+      !module->hasAttr(sim::metadata::classBitstreamBlob) &&
       (!classBitstreamDesign || failed(analysis::materializeClassBitstreamPlan(
                                     classBitstreamDesign, dataLayout))))
     return failure();

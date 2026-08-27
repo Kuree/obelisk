@@ -6,6 +6,10 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --encode-obelisk-sim-to-bytecode \
 // RUN:   | FileCheck %s --check-prefix=AUTO
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--encode-obelisk-sim-to-bytecode=require-bytecode' \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:   | FileCheck %s --check-prefix=HYBRID
 
 !bits = !obelisk.ranged_packed_array<7 : 0 x
     !obelisk.integral<1, false, true, 0 : 0, logic>>
@@ -163,3 +167,15 @@ module attributes {
 // AUTO-SAME: class_site_id = 1 : i64
 // AUTO-NOT: obelisk_sim.class_bitstream_bytecode_function
 // AUTO-NOT: obelisk_sim.class_bitstream_bytecode_site
+
+// The native lowering must preserve the bytecode bindings already patched into
+// the class plan by the preceding encoder.  The first site is bound to bytecode
+// function/site 3; rematerializing the plan here would replace both with -1.
+// HYBRID: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
+// HYBRID-SAME: {{.*}}1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0
+// HYBRID: obelisk.feature.class_bitstream_bytecode
+// HYBRID: obelisk.feature.container_bitstream
+// HYBRID-NOT: obelisk.feature.recursive_bitstream
+// HYBRID: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
+// HYBRID: llvm.call @obelisk_rt_v1_class_bitstream_link_anchor
+// HYBRID: llvm.call @obelisk_rt_v1_class_bitstream_bytecode_link_anchor
