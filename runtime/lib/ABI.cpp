@@ -1650,6 +1650,10 @@ ABI_FUNCTION(obelisk_rt_v1_container_export_bitstream,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *, void *, void *,
                                    uint64_t, uint64_t, uint32_t, uint64_t,
                                    uint64_t, uint64_t, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_aggregate_export_bitstream,
+             obelisk_rt_status (*)(const void *, const void *, uint64_t,
+                                   uint64_t, uint32_t, void *, void *, uint64_t,
+                                   uint64_t, uint32_t, const void *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_container_delete,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_queue_push,

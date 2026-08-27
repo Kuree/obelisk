@@ -124,7 +124,20 @@ bitstream_layout = member_layout("ContainerBitstream.cpp.o")
 require_feature_symbol(
     bitstream_layout, "obelisk_rt_v1_container_export_bitstream"
 )
-for symbol in ("copyBits", "packContainer", "packBuffer"):
+require_feature_symbol(
+    bitstream_layout, "obelisk_rt_v1_aggregate_export_bitstream"
+)
+for symbol in (
+    "copyBits",
+    "packContainer",
+    "packBuffer",
+    "readPlan64",
+    "readRecord",
+    "checkedRange",
+    "overlaps",
+    "validatePlan",
+    "executePlan",
+):
     require_feature_or_inlined(bitstream_layout, symbol)
 
 bitstream_bytecode_layout = member_layout("ContainerBitstreamBytecode.cpp.o")
@@ -133,7 +146,7 @@ for symbol in (
     "obelisk_rt_v1_container_bitstream_link_anchor",
 ):
     require_feature_symbol(bitstream_bytecode_layout, symbol)
-for symbol in ("readScalar", "readManaged"):
+for symbol in ("readScalar", "readManaged", "readBytes"):
     require_feature_or_inlined(bitstream_bytecode_layout, symbol)
 
 dpi_export_layout = member_layout("DPIExport.cpp.o")
@@ -239,8 +252,8 @@ if not re.search(
 ):
     raise SystemExit("wasm dynamic scan services lack noinline+cold placement")
 
-# Keep the unavoidable common bytecode-dispatch change to three tail labels
-# and one call into the separate cold object.  In particular, this rejects a
+# Keep the unavoidable common bytecode-dispatch change to adjacent tail labels
+# and one call into each separate cold object. In particular, this rejects a
 # range check or feature implementation added to the ordinary dispatch path.
 dispatcher = (source / "runtime/lib/DesignBytecodeIntrinsics.cpp").read_text()
 if dispatcher.count("invokeDynamicScanIntrinsic") != 2:
@@ -256,6 +269,7 @@ tail = re.search(
     r"return invokeDynamicScanIntrinsic\(image, frame, context, site,\s*"
     r"signature\.id\);\s*"
     r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
+    r"case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:\s*"
     r"if \(!invokeContainerBitstreamIntrinsic\)\s*"
     r"return OBELISK_RT_INVALID_BYTECODE;\s*"
     r"return invokeContainerBitstreamIntrinsic\(image, frame, context, site,\s*"
@@ -284,6 +298,7 @@ bitstream_symbols = (
     "obelisk_rt_v1_container_bitstream_link_anchor",
     "invokeContainerBitstreamIntrinsic",
     "obelisk_rt_v1_container_export_bitstream",
+    "obelisk_rt_v1_aggregate_export_bitstream",
 )
 dpi_export_symbols = (
     "obelisk_rt_validate_dpi_exports",

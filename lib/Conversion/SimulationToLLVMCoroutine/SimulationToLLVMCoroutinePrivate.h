@@ -52,6 +52,8 @@ inline constexpr llvm::StringLiteral nativeScanPrefixGlobalAttr =
     "obelisk.native.scan_prefix_global";
 inline constexpr llvm::StringLiteral nativeFileScanPrefixGlobalAttr =
     "obelisk.native.file_scan_prefix_global";
+inline constexpr llvm::StringLiteral nativeAggregateBitstreamPlanGlobalAttr =
+    "obelisk.native.aggregate_bitstream_plan_global";
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";

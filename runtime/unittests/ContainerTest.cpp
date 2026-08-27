@@ -894,6 +894,55 @@ TEST_F(ManagedValueTest, CheckedContainerAccessRejectsMismatchedPlanes) {
             OBELISK_RT_OK);
 }
 
+TEST(AggregateBitstreamTest, ValidatesPlansBeforeWriting) {
+  constexpr std::array<uint64_t, 16> words{
+      uint64_t(OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC) |
+          (uint64_t(OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION) << 32),
+      2,
+      16,
+      16,
+      uint64_t(OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT) | (uint64_t(1) << 32),
+      0,
+      2,
+      8,
+      8,
+      8,
+      OBELISK_RT_AGGREGATE_BITSTREAM_COPY,
+      0,
+      8,
+      0,
+      0,
+      8};
+  std::array<uint8_t, words.size() * sizeof(uint64_t)> plan{};
+  for (size_t index = 0; index != words.size(); ++index)
+    for (unsigned byte = 0; byte != sizeof(uint64_t); ++byte)
+      plan[index * sizeof(uint64_t) + byte] =
+          static_cast<uint8_t>(words[index] >> (byte * 8));
+  std::array<uint8_t, 2> input{0x12, 0x34};
+  std::array<uint8_t, 2> output{0xa5, 0x5a};
+  ASSERT_EQ(obelisk_rt_v1_aggregate_export_bitstream(
+                input.data(), nullptr, input.size(), 16, 0, output.data(),
+                nullptr, output.size(), 16, 0, plan.data(), plan.size()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(output, (std::array<uint8_t, 2>{0x34, 0x12}));
+
+  auto corrupt = plan;
+  corrupt[7 * sizeof(uint64_t)] = 7; // REPEAT stride must be eight bits.
+  output = {0xa5, 0x5a};
+  EXPECT_EQ(obelisk_rt_v1_aggregate_export_bitstream(
+                input.data(), nullptr, input.size(), 16, 0, output.data(),
+                nullptr, output.size(), 16, 0, corrupt.data(), corrupt.size()),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(output, (std::array<uint8_t, 2>{0xa5, 0x5a}));
+
+  input = {0x12, 0x34};
+  EXPECT_EQ(obelisk_rt_v1_aggregate_export_bitstream(
+                input.data(), nullptr, input.size(), 16, 0, input.data(),
+                nullptr, input.size(), 16, 0, plan.data(), plan.size()),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(input, (std::array<uint8_t, 2>{0x12, 0x34}));
+}
+
 TEST_F(ManagedValueTest, CreateLikePreservesSequentialContainerMetadata) {
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 1, &array),

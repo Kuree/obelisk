@@ -2872,6 +2872,15 @@ def SimAggregateSplatOp : SimOp<"aggregate.splat", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
+def SimAggregateExportBitstreamOp : SimOp<"aggregate.export_bitstream", [Pure]> {
+  let summary = "pack one fixed unpacked aggregate into a packed bit stream";
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `plan` $plan attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimAggregateExtractOp : SimOp<"aggregate.extract", [Pure]> {
   let summary = "extract one static struct or array subelement";
   let arguments = (ins AnyType:$input, I64Attr:$index);

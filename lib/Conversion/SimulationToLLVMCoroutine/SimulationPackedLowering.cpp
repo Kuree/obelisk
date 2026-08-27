@@ -91,6 +91,18 @@ uint64_t appendStableHash(uint64_t hash, uint64_t value, unsigned bytes) {
   return hash;
 }
 
+std::string
+encodeAggregateBitstreamPlan(sim::SimAggregateExportBitstreamOp operation) {
+  std::string bytes;
+  bytes.reserve(operation.getPlan().size() * sizeof(int64_t));
+  for (int64_t signedWord : operation.getPlan()) {
+    uint64_t word = static_cast<uint64_t>(signedWord);
+    for (unsigned index = 0; index != sizeof(word); ++index)
+      bytes.push_back(static_cast<char>(word >> (index * 8)));
+  }
+  return bytes;
+}
+
 void fuseWideManagedBitStores(ModuleOp module) {
   SmallVector<sim::SimManagedStoreOp> stores;
   module.walk([&](sim::SimManagedStoreOp store) { stores.push_back(store); });
@@ -351,6 +363,8 @@ LogicalResult lowerPackedSimulationOperations(
   };
   SmallVector<ByteGlobal> byteGlobals;
   llvm::StringMap<unsigned> byteGlobalIndices;
+  bool needsContainerBitstreamABI = false;
+  bool needsAggregateBitstreamABI = false;
   auto reserveByteGlobal = [&](Location location, StringRef name,
                                StringRef bytes) -> LogicalResult {
     auto [entry, inserted] =
@@ -430,6 +444,20 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::interrupt();
       return WalkResult::advance();
     }
+    if (isa<sim::SimContainerExportBitstreamOp>(operation)) {
+      needsContainerBitstreamABI = true;
+      return WalkResult::advance();
+    }
+    if (auto bitstream =
+            dyn_cast<sim::SimAggregateExportBitstreamOp>(operation)) {
+      std::string bytes = encodeAggregateBitstreamPlan(bitstream);
+      std::string name = "__obelisk_aggregate_bitstream_plan_" +
+                         llvm::utohexstr(llvm::hash_value(bytes));
+      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
+                         StringAttr::get(context, name));
+      needsAggregateBitstreamABI = true;
+      return reserve(name, bytes);
+    }
     if (auto path =
             dyn_cast<sim::SimReferencePathAggregateElementOp>(operation)) {
       if (failed(reserveTrace(path.getLoc(), "__obelisk_element_trace_",
@@ -504,6 +532,39 @@ LogicalResult lowerPackedSimulationOperations(
       existingSymbols.try_emplace(global.name, created.getOperation());
     }
   }
+  auto declareRuntimeABI = [&](Location location, StringRef name, Type result,
+                               ArrayRef<Type> arguments) -> LogicalResult {
+    auto expected = LLVM::LLVMFunctionType::get(result, arguments, false);
+    auto existingIt = existingSymbols.find(name);
+    if (existingIt != existingSymbols.end()) {
+      auto function = dyn_cast<LLVM::LLVMFuncOp>(existingIt->second);
+      if (!function || function.getFunctionType() != expected ||
+          !function.isExternal() ||
+          function.getLinkage() != LLVM::Linkage::External ||
+          function.getCConv() != LLVM::cconv::CConv::C)
+        return emitError(location) << "native runtime ABI symbol @" << name
+                                   << " conflicts with a pre-existing symbol";
+      return success();
+    }
+    LLVM::LLVMFuncOp function =
+        getOrDeclareLLVMFunction(module, name, result, arguments);
+    existingSymbols.try_emplace(name, function.getOperation());
+    return success();
+  };
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  if (needsContainerBitstreamABI &&
+      failed(declareRuntimeABI(
+          module.getLoc(), "obelisk_rt_v1_container_export_bitstream", i32,
+          {pointer, pointer, pointer, i64, i64, i32, i64, i64, i64, i32})))
+    return failure();
+  if (needsAggregateBitstreamABI &&
+      failed(declareRuntimeABI(module.getLoc(),
+                               "obelisk_rt_v1_aggregate_export_bitstream", i32,
+                               {pointer, pointer, i64, i64, i32, pointer,
+                                pointer, i64, i64, i32, pointer, i64})))
+    return failure();
   markTiming("byte-global inventory and materialization");
 
   auto configurePackedConverter = [&](SimulationToStandardTypeConverter &c) {
@@ -682,15 +743,15 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimNetCountDriversOp, sim::SimPassSwitchControlOp,
         sim::SimPassSwitchControlDelayedOp, sim::SimMosDriveDelayedOp,
         sim::SimDriverDriveInertialOp, sim::SimDriverDriveInertialPathOp,
-        sim::SimRefStoreInertialPathOp,
-        sim::SimDriverDriveOp, sim::SimDriverDriveInertialStrengthPairOp,
+        sim::SimRefStoreInertialPathOp, sim::SimDriverDriveOp,
+        sim::SimDriverDriveInertialStrengthPairOp,
         sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
         sim::SimDriverExtractOp, sim::SimDriverDynExtractOp,
         sim::SimDriverSubelementOp, sim::SimDriverArrayElementOp,
         sim::SimNBAEnqueueOp, sim::SimEventCreateOp, sim::SimEventTriggerOp,
         sim::SimEventTriggeredOp, sim::SimWaitOrderFailedOp,
-        sim::SimClockOccurrenceConsumeOp,
-        sim::SimEventEqualOp, sim::SimDisableChildrenOp, sim::SimControlEnterOp,
+        sim::SimClockOccurrenceConsumeOp, sim::SimEventEqualOp,
+        sim::SimDisableChildrenOp, sim::SimControlEnterOp,
         sim::SimControlLeaveOp, sim::SimControlDisableOp,
         sim::SimControlEscapePendingOp, sim::SimControlNonlocalExitOp,
         sim::SimStaticOnceOp, sim::SimDeferredOnceOp, sim::SimDeferredEnqueueOp,
@@ -709,7 +770,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
         sim::SimContainerCreateOp, sim::SimContainerCloneOp,
         sim::SimContainerImportFixedOp, sim::SimContainerExportFixedOp,
-        sim::SimContainerExportBitstreamOp,
+        sim::SimContainerExportBitstreamOp, sim::SimAggregateExportBitstreamOp,
         sim::SimContainerSwapOp, sim::SimContainerDeleteOp,
         sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
         sim::SimContainerWriteOp, sim::SimAssocCreateOp, sim::SimAssocReadOp,
@@ -727,12 +788,10 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimStringParseIntegerOp, sim::SimStringParseLogicOp,
         sim::SimStringParseRealOp, sim::SimPlusargParseLogicOp,
         sim::SimPlusargParseRealOp, sim::SimStringScanFieldOp,
-        sim::SimScanDynamicValidateOp,
-        sim::SimStringScanDynamicOp, sim::SimStringScanRawOp,
-        sim::SimStringSkipRawOp,
+        sim::SimScanDynamicValidateOp, sim::SimStringScanDynamicOp,
+        sim::SimStringScanRawOp, sim::SimStringSkipRawOp,
         sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-        sim::SimFileScanDynamicOp,
-        sim::SimFileScanRawOp, sim::SimFileSkipRawOp,
+        sim::SimFileScanDynamicOp, sim::SimFileScanRawOp, sim::SimFileSkipRawOp,
         sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,
         sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
         sim::SimTimeFormatOp, sim::SimTimeScanScaleOp, sim::SimPlusargTestOp,

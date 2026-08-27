@@ -63,6 +63,7 @@ for symbol in (*feature_body_symbols, "invokeDynamicScanIntrinsic"):
         raise SystemExit(f"dynamic-scan wasm did not retain {symbol}")
 bitstream_symbols = (
     "obelisk_rt_v1_container_export_bitstream",
+    "obelisk_rt_v1_aggregate_export_bitstream",
     "obelisk_rt_v1_container_bitstream_link_anchor",
     "invokeContainerBitstreamIntrinsic",
 )

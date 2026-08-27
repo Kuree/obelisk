@@ -1118,6 +1118,38 @@ UnitLowering::convertSequentialContainerBitstream(Value value, Type targetType,
       .getResult();
 }
 
+LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
+UnitLowering::convertFixedAggregateBitstream(Value value, Type targetType,
+                                             Type targetScalar,
+                                             Location location) {
+  std::optional<SmallVector<uint64_t>> plan =
+      sim::getFixedBitStreamPlan(value.getType());
+  std::optional<unsigned> targetWidth = sim::getPackedWidth(targetScalar);
+  if (!plan || !targetWidth)
+    return emitError(location) << "unsupported fixed aggregate bit-stream "
+                                  "cast from "
+                               << value.getType() << " to " << targetType,
+           failure();
+  uint64_t sourceWidth = (*plan)[3];
+  if (sourceWidth != *targetWidth)
+    return emitError(location)
+               << "bit-stream cast source and destination widths differ ("
+               << sourceWidth << " vs " << *targetWidth << ")",
+           failure();
+  SmallVector<int64_t> encoded;
+  encoded.reserve(plan->size());
+  llvm::transform(*plan, std::back_inserter(encoded),
+                  [](uint64_t word) { return static_cast<int64_t>(word); });
+  Value packed = sim::SimAggregateExportBitstreamOp::create(
+      builder, location, targetScalar, value,
+      builder.getDenseI64ArrayAttr(encoded));
+  if (targetScalar == targetType)
+    return packed;
+  return sim::SimPackedUnflattenOp::create(builder, location, targetType,
+                                           packed)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                        bool sourceSigned, Location location,
                                        bool targetSigned) {
@@ -2181,6 +2213,12 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     FailureOr<Value> input = lowerExpression(children.front());
     if (failed(input))
       return failure();
+    BoolAttr isImplicit = op->getAttrOfType<BoolAttr>("is_implicit");
+    if (isImplicit && !isImplicit.getValue() &&
+        isa<sim::UnpackedArrayType, sim::UnpackedStructType>(input->getType()))
+      if (Type targetScalar = sim::getPackedScalarType(*target))
+        return convertFixedAggregateBitstream(*input, *target, targetScalar,
+                                              getSemanticLocation(op));
     bool sourceSigned = isSignedNode(children.front()) ||
                         fillsWidenedUnknown(children.front(), *target);
     return convert(*input, *target, sourceSigned, getSemanticLocation(op),

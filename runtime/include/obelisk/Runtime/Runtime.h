@@ -1041,6 +1041,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED = UINT32_C(0x0001045f),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED = UINT32_C(0x00010460),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM = UINT32_C(0x00010464),
+  OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM = UINT32_C(0x00010465),
   OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE = UINT32_C(0x00010417),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
@@ -1115,6 +1116,23 @@ enum {
   OBELISK_RT_INTRINSIC_V1_VPI_NAME = UINT32_C(0x00011008),
   OBELISK_RT_INTRINSIC_V1_VPI_TYPE_INFO = UINT32_C(0x00011009),
   OBELISK_RT_INTRINSIC_V1_VPI_TYPE_CHILD = UINT32_C(0x0001100a)
+};
+
+// Versioned, target-independent plan consumed by fixed aggregate bit-stream
+// exports. All words are little-endian uint64 values. The four-word header is
+// followed by fixed six-word records in preorder. A COPY record contributes
+// one source bit window. A REPEAT record owns the following body_records and
+// repeats that compact child program without making compiler IR proportional
+// to the array extent.
+enum {
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC = UINT32_C(0x42535450),
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION = UINT32_C(1),
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS = UINT32_C(4),
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS = UINT32_C(6),
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH = UINT32_C(1024),
+  OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS = UINT32_C(1048576),
+  OBELISK_RT_AGGREGATE_BITSTREAM_COPY = UINT32_C(1),
+  OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT = UINT32_C(2)
 };
 
 // Imported zero-time calls are resolved through mutable context bindings. The
@@ -2282,6 +2300,12 @@ obelisk_rt_status obelisk_rt_v1_container_export_bitstream(
     uint64_t plane_size, uint64_t bit_width, uint32_t four_state,
     uint64_t element_width, uint64_t count, uint64_t element_plane_size,
     uint32_t element_four_state);
+obelisk_rt_status obelisk_rt_v1_aggregate_export_bitstream(
+    const void *input_value, const void *input_unknown,
+    uint64_t input_plane_size, uint64_t input_bit_width,
+    uint32_t input_four_state, void *out_value, void *out_unknown,
+    uint64_t output_plane_size, uint64_t output_bit_width,
+    uint32_t output_four_state, const void *plan, uint64_t plan_size);
 obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,

@@ -115,6 +115,28 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
          emitU64Constant(plan, elementStorage->fourState)},
         {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimAggregateExportBitstreamOp>(operation)) {
+    FailureOr<ManagedValueStorage> inputStorage =
+        getManagedValueStorage(op.getInput().getType(), dataLayout);
+    FailureOr<ManagedValueStorage> outputStorage =
+        getManagedValueStorage(op.getResult().getType(), dataLayout);
+    std::optional<uint32_t> inputWidth =
+        simulationWidth(op.getInput().getType());
+    std::optional<uint32_t> outputWidth =
+        simulationWidth(op.getResult().getType());
+    if (failed(inputStorage) || failed(outputStorage) || !inputWidth ||
+        !outputWidth)
+      return op.emitOpError("fixed bit-stream export has no bytecode layout");
+    SmallVector<uint8_t> bytes;
+    bytes.reserve(op.getPlan().size() * 8);
+    for (int64_t word : op.getPlan())
+      append64(bytes, static_cast<uint64_t>(word));
+    requiresContainerBitstreamFeature = true;
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAggregateExportBitstream,
+        {reg(plan, op.getInput()), emitBytesConstant(plan, bytes)},
+        {reg(plan, op.getResult())});
+  }
   if (auto op = dyn_cast<sim::SimContainerSwapOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerSwap,
                          {op.getContainer(), op.getLeft(), op.getRight()}, {});

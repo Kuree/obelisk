@@ -15,6 +15,25 @@ obelisk_rt_v1_container_bitstream_link_anchor() {}
 
 namespace {
 
+struct ByteSpan {
+  const uint8_t *data;
+  uint64_t size;
+};
+
+OBELISK_RT_FEATURE_HELPER std::optional<ByteSpan>
+readBytes(const Image &image, const Frame &frame, uint32_t reg) {
+  if (!validRegister(frame.function, reg))
+    return std::nullopt;
+  Layout layout = layoutAt(image, frame.function, reg);
+  if (layout.kind != OBELISK_RT_DBREG_BYTES || layout.size != 16)
+    return std::nullopt;
+  uint64_t offset = read64(frame.data + layout.offset);
+  uint64_t size = read64(frame.data + layout.offset + 8);
+  if (offset > image.constantSize || size > image.constantSize - offset)
+    return std::nullopt;
+  return ByteSpan{image.data + image.constants + offset, size};
+}
+
 OBELISK_RT_FEATURE_HELPER std::optional<uint64_t>
 readScalar(const Image &image, const Frame &frame, uint32_t reg) {
   if (!validRegister(frame.function, reg))
@@ -53,8 +72,12 @@ readManaged(const Image &image, const Frame &frame, uint32_t reg) {
 OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     const Image &image, Frame &frame, obelisk_rt_context *, IntrinsicSite site,
     uint32_t intrinsicId) {
-  if (intrinsicId != OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM ||
-      site.inputCount != 8 || site.outputCount != 1)
+  bool container =
+      intrinsicId == OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
+  bool aggregate =
+      intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
+  if ((!container && !aggregate) || site.outputCount != 1 ||
+      site.inputCount != (container ? 8u : 2u))
     return OBELISK_RT_INVALID_BYTECODE;
   auto inputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + index).second;
@@ -62,11 +85,37 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
   auto outputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + site.inputCount + index).first;
   };
-  obelisk_rt_object_v1 *container = readManaged(image, frame, inputRegister(0));
+  if (aggregate) {
+    if (inputRegister(0) == outputRegister(0) ||
+        !validRegister(frame.function, inputRegister(0)) ||
+        !validRegister(frame.function, outputRegister(0)))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::optional<ByteSpan> plan = readBytes(image, frame, inputRegister(1));
+    Layout input = layoutAt(image, frame.function, inputRegister(0));
+    Layout output = layoutAt(image, frame.function, outputRegister(0));
+    bool inputFourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    bool outputFourState = output.kind == OBELISK_RT_DBREG_LOGIC;
+    if (!plan || (input.kind != OBELISK_RT_DBREG_BITS && !inputFourState) ||
+        (output.kind != OBELISK_RT_DBREG_BITS && !outputFourState) ||
+        (inputFourState && (input.size & 1)) ||
+        (outputFourState && (output.size & 1)))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t inputPlaneSize = inputFourState ? input.size / 2 : input.size;
+    uint64_t outputPlaneSize = outputFourState ? output.size / 2 : output.size;
+    uint8_t *inputValue = frame.data + input.offset;
+    uint8_t *outputValue = frame.data + output.offset;
+    return obelisk_rt_v1_aggregate_export_bitstream(
+        inputValue, inputFourState ? inputValue + inputPlaneSize : nullptr,
+        inputPlaneSize, input.width, inputFourState, outputValue,
+        outputFourState ? outputValue + outputPlaneSize : nullptr,
+        outputPlaneSize, output.width, outputFourState, plan->data, plan->size);
+  }
+  obelisk_rt_object_v1 *containerValue =
+      readManaged(image, frame, inputRegister(0));
   std::array<std::optional<uint64_t>, 7> inputs;
   for (uint32_t index = 1; index != 8; ++index)
     inputs[index - 1] = readScalar(image, frame, inputRegister(index));
-  if (!container ||
+  if (!containerValue ||
       std::any_of(inputs.begin(), inputs.end(),
                   [](const auto &value) { return !value; }) ||
       !validRegister(frame.function, outputRegister(0)))
@@ -82,7 +131,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
   uint8_t *value = frame.data + output.offset;
   void *unknown = fourState ? value + outputPlaneSize : nullptr;
   return obelisk_rt_v1_container_export_bitstream(
-      container, value, unknown, *inputs[0], *inputs[1],
+      containerValue, value, unknown, *inputs[0], *inputs[1],
       static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
       static_cast<uint32_t>(*inputs[6]));
 }

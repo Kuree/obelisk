@@ -886,6 +886,10 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && numeric(input(0)) && bytes(input(1)) &&
+           numeric(output(0));
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&

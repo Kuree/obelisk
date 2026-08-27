@@ -9,6 +9,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -329,6 +330,87 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
     return std::nullopt;
   }
   return std::pair<uint64_t, uint64_t>{offset, *span};
+}
+
+std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
+  if (!isa<UnpackedArrayType, UnpackedStructType>(type))
+    return std::nullopt;
+
+  constexpr unsigned maximumDepth =
+      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH;
+  constexpr uint64_t maximumRecords =
+      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS;
+  SmallVector<uint64_t> records;
+  std::function<std::optional<uint64_t>(Type, uint64_t, unsigned)> append =
+      [&](Type current, uint64_t offset,
+          unsigned depth) -> std::optional<uint64_t> {
+    if (depth > maximumDepth ||
+        records.size() / OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS >=
+            maximumRecords)
+      return std::nullopt;
+    if (Type scalar = getPackedScalarType(current)) {
+      std::optional<unsigned> width = getPackedWidth(scalar);
+      if (!width || *width == 0)
+        return std::nullopt;
+      records.append(
+          {OBELISK_RT_AGGREGATE_BITSTREAM_COPY, offset, *width, 0, 0, *width});
+      return *width;
+    }
+    if (auto array = dyn_cast<UnpackedArrayType>(current)) {
+      uint64_t count = getAggregateNumElements(array);
+      Type element = count ? getAggregateElementType(array, 0) : Type{};
+      if (!count || !element)
+        return std::nullopt;
+      size_t record = records.size();
+      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT}, offset,
+                      count, 0, 0, 0});
+      size_t bodyStart = records.size();
+      std::optional<uint64_t> childWidth = append(element, 0, depth + 1);
+      if (!childWidth)
+        return std::nullopt;
+      uint64_t bodyRecords = (records.size() - bodyStart) /
+                             OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
+      if (bodyRecords == 0 || bodyRecords > UINT32_MAX ||
+          *childWidth > std::numeric_limits<uint64_t>::max() / count)
+        return std::nullopt;
+      records[record] |= bodyRecords << 32;
+      records[record + 3] = *childWidth;
+      records[record + 4] = *childWidth;
+      records[record + 5] = *childWidth;
+      return *childWidth * count;
+    }
+    auto structure = dyn_cast<UnpackedStructType>(current);
+    if (!structure || getAggregateNumElements(structure) == 0)
+      return std::nullopt;
+    uint64_t total = 0;
+    for (unsigned ordinal = 0, end = getAggregateNumElements(structure);
+         ordinal != end; ++ordinal) {
+      if (total > std::numeric_limits<uint64_t>::max() - offset)
+        return std::nullopt;
+      std::optional<uint64_t> child =
+          append(getAggregateElementType(structure, ordinal), offset + total,
+                 depth + 1);
+      if (!child || *child > std::numeric_limits<uint64_t>::max() - total)
+        return std::nullopt;
+      total += *child;
+    }
+    return total;
+  };
+  std::optional<uint64_t> outputWidth = append(type, 0, 0);
+  if (!outputWidth)
+    return std::nullopt;
+  std::optional<uint64_t> sourceSpan = getProvenanceSpan(type);
+  if (!sourceSpan || *outputWidth != *sourceSpan || records.empty() ||
+      records.size() % OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS != 0)
+    return std::nullopt;
+  uint64_t recordCount =
+      records.size() / OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
+  SmallVector<uint64_t> plan{
+      uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC} |
+          (uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION} << 32),
+      recordCount, *sourceSpan, *outputWidth};
+  llvm::append_range(plan, records);
+  return plan;
 }
 
 bool getManagedHandleSlots(Type type,

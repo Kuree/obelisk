@@ -234,6 +234,8 @@ constexpr uint32_t kIntrinsicContainerExportFixed =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED;
 constexpr uint32_t kIntrinsicContainerExportBitstream =
     OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
+constexpr uint32_t kIntrinsicAggregateExportBitstream =
+    OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
 constexpr uint32_t kIntrinsicBoxIsType = OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE;
 constexpr uint32_t kIntrinsicArgumentRefFromPath =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH;

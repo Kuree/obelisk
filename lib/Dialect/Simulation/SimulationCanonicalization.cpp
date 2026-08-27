@@ -1604,6 +1604,105 @@ struct SimplifyAggregateSplat final : OpRewritePattern<SimAggregateSplatOp> {
   }
 };
 
+struct FoldSmallAggregateExportBitstream final
+    : OpRewritePattern<SimAggregateExportBitstreamOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimAggregateExportBitstreamOp op,
+                                PatternRewriter &rewriter) const override {
+    constexpr unsigned maximumLeaves = 16;
+    constexpr unsigned maximumWidth = 1024;
+    std::optional<unsigned> resultWidth =
+        getPackedWidth(op.getResult().getType());
+    if (!resultWidth || *resultWidth > maximumWidth)
+      return failure();
+    SmallVector<Value> leaves;
+    std::function<bool(Value)> collect = [&](Value value) {
+      Type type = value.getType();
+      if (Type scalar = getPackedScalarType(type)) {
+        if (leaves.size() == maximumLeaves)
+          return false;
+        leaves.push_back(value);
+        return true;
+      }
+      auto construct = value.getDefiningOp<SimAggregateConstructOp>();
+      if (!construct ||
+          leaves.size() + construct.getElements().size() > maximumLeaves)
+        return false;
+      for (Value element : construct.getElements())
+        if (!collect(element))
+          return false;
+      return true;
+    };
+    if (!collect(op.getInput()) || leaves.empty())
+      return failure();
+    SmallVector<Type> scalarTypes;
+    uint64_t totalWidth = 0;
+    for (Value leaf : leaves) {
+      Type scalar = getPackedScalarType(leaf.getType());
+      std::optional<unsigned> width = getPackedWidth(scalar);
+      if (!scalar || !width || !isa<IntegerType, LogicType>(scalar) ||
+          *width > std::numeric_limits<uint64_t>::max() - totalWidth)
+        return failure();
+      scalarTypes.push_back(scalar);
+      totalWidth += *width;
+    }
+    if (totalWidth != *resultWidth)
+      return failure();
+    for (auto [index, scalar] : llvm::enumerate(scalarTypes))
+      if (scalar != leaves[index].getType())
+        leaves[index] = SimPackedFlattenOp::create(rewriter, op.getLoc(),
+                                                   scalar, leaves[index]);
+
+    if (isa<LogicType>(op.getResult().getType())) {
+      SmallVector<Value> logicLeaves;
+      for (Value leaf : leaves) {
+        if (isa<LogicType>(leaf.getType())) {
+          logicLeaves.push_back(leaf);
+          continue;
+        }
+        auto integer = cast<IntegerType>(leaf.getType());
+        logicLeaves.push_back(SimLogicFromBitsOp::create(
+            rewriter, op.getLoc(),
+            LogicType::get(op.getContext(), integer.getWidth()), leaf));
+      }
+      rewriter.replaceOpWithNewOp<SimLogicConcatOp>(
+          op, op.getResult().getType(), logicLeaves);
+      return success();
+    }
+
+    auto resultType = cast<IntegerType>(op.getResult().getType());
+    Value assembled =
+        arith::ConstantOp::create(rewriter, op.getLoc(), resultType,
+                                  rewriter.getIntegerAttr(resultType, 0));
+    unsigned trailing = *resultWidth;
+    for (Value leaf : leaves) {
+      if (auto logic = dyn_cast<LogicType>(leaf.getType()))
+        leaf = SimLogicToBitsOp::create(
+            rewriter, op.getLoc(),
+            IntegerType::get(op.getContext(), logic.getWidth()), leaf);
+      auto integer = cast<IntegerType>(leaf.getType());
+      trailing -= integer.getWidth();
+      Value extended = integer == resultType
+                           ? leaf
+                           : Value(arith::ExtUIOp::create(rewriter, op.getLoc(),
+                                                          resultType, leaf));
+      if (trailing) {
+        Value amount = arith::ConstantOp::create(
+            rewriter, op.getLoc(), resultType,
+            rewriter.getIntegerAttr(resultType, trailing));
+        extended =
+            arith::ShLIOp::create(rewriter, op.getLoc(), extended, amount);
+      }
+      assembled =
+          arith::OrIOp::create(rewriter, op.getLoc(), assembled, extended);
+    }
+    assert(trailing == 0 && "prevalidated fixed bit-stream width changed");
+    rewriter.replaceOp(op, assembled);
+    return success();
+  }
+};
+
 struct SimplifyAggregateInsert final : OpRewritePattern<SimAggregateInsertOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -1848,6 +1947,11 @@ void SimAggregateConstructOp::getCanonicalizationPatterns(
 void SimAggregateSplatOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<SimplifyAggregateSplat>(context);
+}
+
+void SimAggregateExportBitstreamOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldSmallAggregateExportBitstream>(context);
 }
 
 void SimAggregateExtractOp::getCanonicalizationPatterns(

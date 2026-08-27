@@ -53,6 +53,11 @@ std::optional<uint64_t> getProvenanceAlignment(::mlir::Type type);
 std::optional<std::pair<uint64_t, uint64_t>>
 getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 
+/// Build the compact, versioned runtime plan for one legal fixed aggregate
+/// bit-stream source. Array extents are represented by REPEAT records.
+std::optional<::llvm::SmallVector<uint64_t>>
+getFixedBitStreamPlan(::mlir::Type type);
+
 /// Runtime-managed categories that can occupy a source value word. These are
 /// bit flags because an overlapping union slot may legally represent more
 /// than one category.
