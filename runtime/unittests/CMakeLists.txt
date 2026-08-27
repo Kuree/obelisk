@@ -20,6 +20,7 @@ set_target_properties(ObeliskRuntimeCAPISmoke PROPERTIES
 )
 
 add_executable(ObeliskRuntimeTests
+  ClassBitstreamTest.cpp
   ContainerTest.cpp
   CoverageTest.cpp
   DesignBytecodeTest.cpp

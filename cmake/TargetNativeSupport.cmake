@@ -176,7 +176,8 @@ set(_obelisk_target_runtime_common_sources
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
-    ContainerBitstreamBytecode DPIExport DPIExportBytecode)
+    ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport
+    DPIExportBytecode)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")

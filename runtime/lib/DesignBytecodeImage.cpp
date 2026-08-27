@@ -886,6 +886,11 @@ bool validIntrinsic(const Image &image, const Function &function,
              (numeric(input(0)) || managed(input(0)) || string(input(0))) &&
              bytes(input(1)) && numeric(output(0)) &&
              twoStateBits(output(1), 1) && twoStateBits(output(2), 64);
+    if (signature.flags == 3 || signature.flags == 4)
+      return site.inputCount == 1 && site.outputCount == 3 &&
+             (numeric(input(0)) || managed(input(0)) || string(input(0))) &&
+             numeric(output(0)) && twoStateBits(output(1), 1) &&
+             twoStateBits(output(2), 64);
     if (signature.flags != 0 || site.inputCount != 8 || site.outputCount != 1 ||
         !managed(input(0)) || !numeric(output(0)))
       return false;

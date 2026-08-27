@@ -47,6 +47,8 @@ set(_obelisk_runtime_cold_tail_sources
   lib/ContainerBitstream.cpp
   lib/RecursiveBitstream.cpp
   lib/ContainerBitstreamBytecode.cpp
+  lib/ClassBitstream.cpp
+  lib/ClassBitstreamBytecode.cpp
   lib/DPIExport.cpp
   lib/DPIExportBytecode.cpp
 )

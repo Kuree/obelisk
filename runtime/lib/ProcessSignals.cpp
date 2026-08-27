@@ -21,6 +21,13 @@ __attribute__((weak))
 bool obelisk_rt_expand_recursive_watch_group(
     obelisk_rt_context *context, uint64_t token,
     RecursiveWatchGroupVisit visit, void *environment);
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool obelisk_rt_expand_class_watch_group(obelisk_rt_context *context,
+                                         uint64_t token,
+                                         RecursiveWatchGroupVisit visit,
+                                         void *environment);
 
 namespace {
 
@@ -215,8 +222,11 @@ bool appendManagedSubscriptionUnlocked(
   // this token after the object becomes non-null.
   if (token == 0)
     return true;
-  if ((token & kRecursiveWatchGroupBit) != 0) {
-    if (!obelisk_rt_expand_recursive_watch_group) {
+  if ((token & (kRecursiveWatchGroupBit | kClassWatchGroupBit)) != 0) {
+    auto expand = (token & kRecursiveWatchGroupBit) != 0
+                      ? obelisk_rt_expand_recursive_watch_group
+                      : obelisk_rt_expand_class_watch_group;
+    if (!expand) {
       context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
       return false;
     }
@@ -236,8 +246,7 @@ bool appendManagedSubscriptionUnlocked(
           environment.waiterToken, environment.suppressActiveSelf,
           environment.latch, *environment.subscriptions);
     };
-    if (!obelisk_rt_expand_recursive_watch_group(context, token, append,
-                                                 &environment)) {
+    if (!expand(context, token, append, &environment)) {
       if (context->schedulerStatus == OBELISK_RT_OK)
         context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
       return false;

@@ -954,6 +954,7 @@ struct ClockOccurrenceFeatureState {
 };
 
 constexpr uint64_t kRecursiveWatchGroupBit = UINT64_C(1) << 63;
+constexpr uint64_t kClassWatchGroupBit = UINT64_C(1) << 62;
 using RecursiveWatchGroupVisit = bool (*)(void *, uint64_t);
 
 // Feature-owned state for compact recursive managed-watch groups. The cold
@@ -961,6 +962,15 @@ using RecursiveWatchGroupVisit = bool (*)(void *, uint64_t);
 // designs retain only this null tail pointer.
 struct RecursiveWatchGroupState {
   void (*destroy)(RecursiveWatchGroupState *) noexcept = nullptr;
+};
+
+// Opaque cold state owned by the class bit-stream feature object. Keeping only
+// a destroy callback in the common runtime avoids a dependency on its parser
+// or execution engine when the feature anchor is absent.
+struct ClassBitstreamState {
+  void (*destroy)(ClassBitstreamState *) noexcept = nullptr;
+  void (*notifyRange)(ClassBitstreamState *, obelisk_rt_context *, uint64_t,
+                      uint64_t, uint64_t) noexcept = nullptr;
 };
 
 struct SignalSubscriptionDiagnostics {
@@ -1631,6 +1641,7 @@ struct obelisk_rt_context {
   std::unique_ptr<DesignReadyCohortState> designReadyCohort;
 
   RecursiveWatchGroupState *recursiveWatchGroups = nullptr;
+  ClassBitstreamState *classBitstreamState = nullptr;
 
   obelisk_rt_context();
   ~obelisk_rt_context();
@@ -1934,6 +1945,12 @@ uint64_t
 obelisk_rt_managed_object_extent(const obelisk_rt_object_v1 *object) noexcept;
 obelisk_rt_context *
 obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept;
+const obelisk_rt_class_descriptor_v1 *
+obelisk_rt_managed_object_class_descriptor(
+    const obelisk_rt_object_v1 *object) noexcept;
+uint64_t obelisk_rt_managed_watch_range(obelisk_rt_object_v1 *object,
+                                        uint64_t offset,
+                                        uint64_t size) noexcept;
 void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
                                              uint8_t *object, uint64_t extent,
                                              ManagedTraceVisit visit,
@@ -1956,6 +1973,14 @@ void obelisk_rt_enumerate_design_managed_roots(
 obelisk_rt_status
 obelisk_rt_validate_string(obelisk_rt_context *context,
                            obelisk_rt_string_v1 string) noexcept;
+obelisk_rt_status obelisk_rt_class_bitstream_export_bytecode(
+    obelisk_rt_context *context, uint32_t function, uint32_t site,
+    const void *input_value, const void *input_unknown,
+    uint64_t input_plane_size, uint64_t input_bit_width,
+    uint32_t input_four_state, void *out_value, void *out_unknown,
+    uint64_t output_plane_size, uint64_t output_bit_width,
+    uint32_t output_four_state, uint32_t observe, uint32_t *out_matched,
+    uint64_t *out_watch);
 
 class ManagedExecutionScope {
 public:
@@ -2257,7 +2282,7 @@ bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
                                                  uint64_t token);
 void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
                                      obelisk_rt_managed_watch_kind kind,
-                                     uint64_t selector);
+                                     uint64_t selector, uint64_t size = 0);
 bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint32_t dependencyKind,
                                                    uint64_t publishedHandle,

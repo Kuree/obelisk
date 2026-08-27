@@ -118,10 +118,11 @@ exportExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
     return nullptr;
   auto *extension =
       reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(address);
-  return extension->version == OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION &&
-                 extension->size == sizeof(*extension)
-             ? extension
-             : nullptr;
+  bool v2 = extension->version == OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION &&
+            extension->size == sizeof(*extension);
+  bool v3 = extension->version == OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION &&
+            extension->size == sizeof(obelisk_rt_execution_extension_v3);
+  return (v2 || v3) ? extension : nullptr;
 }
 
 const obelisk_rt_export_descriptor_v1 *

@@ -1,0 +1,17 @@
+# RUN: %obj_root/runtime/unittests/ObeliskGeneratedClassBitstreamNative --execution-tier=native
+# RUN: %obj_root/runtime/unittests/ObeliskGeneratedClassBitstreamBytecode --execution-tier=bytecode
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %obj_root/runtime/unittests/ObeliskGeneratedClassBitstreamNative | FileCheck %s --check-prefix=NATIVE --implicit-check-not=obelisk_rt_v1_recursive_bitstream_link_anchor --implicit-check-not=obelisk_rt_v1_container_bitstream_link_anchor --implicit-check-not=obelisk_rt_v1_class_bitstream_bytecode_link_anchor
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %obj_root/runtime/unittests/ObeliskGeneratedClassBitstreamBytecode | FileCheck %s --check-prefix=BYTECODE --implicit-check-not=obelisk_rt_v1_recursive_bitstream_link_anchor
+
+# The same hand-authored MLIR fixture is compiled once for normal native
+# execution and once with require-bytecode.  Its i8 class bit-stream cast makes
+# the bytecode path use a one-byte logical plane inside a padded register.
+
+# NATIVE-DAG: obelisk_rt_v1_class_bitstream_link_anchor
+# NATIVE-DAG: obelisk_rt_v1_class_bitstream_finalize
+# NATIVE-DAG: obelisk_rt_v2_recursive_export_bitstream
+
+# BYTECODE-DAG: obelisk_rt_v1_container_bitstream_link_anchor
+# BYTECODE-DAG: obelisk_rt_v1_class_bitstream_link_anchor
+# BYTECODE-DAG: obelisk_rt_v1_class_bitstream_bytecode_link_anchor
+# BYTECODE-DAG: obelisk_rt_v2_recursive_export_bitstream

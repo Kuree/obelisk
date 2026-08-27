@@ -38,6 +38,7 @@ config.substitutions.append(
     ("%target_provision_script", config.obelisk_target_provision_script)
 )
 config.substitutions.append(("%source_root", config.obelisk_source_root))
+config.substitutions.append(("%obj_root", config.obelisk_obj_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
 config.substitutions.append(
     ("%runtime_archive", config.obelisk_runtime_archive)

@@ -138,14 +138,27 @@ bool validExecutionExtension(
   bool sampled =
       (execution.flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) != 0;
   bool exported = (execution.flags & OBELISK_RT_EXECUTION_DPI_EXPORTS) != 0;
-  if (!sampled && !exported)
+  bool classBitstream =
+      (execution.flags & OBELISK_RT_EXECUTION_CLASS_BITSTREAM) != 0;
+  if (!sampled && !exported && !classBitstream)
     return execution.reserved == 0;
   const obelisk_rt_execution_extension_v1 *extension =
       executionExtension(execution);
   if (!extension)
     return false;
   const obelisk_rt_execution_extension_v2 *exportExtension = nullptr;
-  if (exported) {
+  if (classBitstream) {
+    auto *v3 =
+        reinterpret_cast<const obelisk_rt_execution_extension_v3 *>(extension);
+    if (v3->version != OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION ||
+        v3->size != sizeof(*v3) || !v3->class_bitstream ||
+        v3->class_bitstream_size == 0 || exported != (v3->exports != nullptr) ||
+        exported != (v3->export_count != 0))
+      return false;
+    if (exported)
+      exportExtension =
+          reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(v3);
+  } else if (exported) {
     auto *v2 =
         reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(extension);
     if (v2->version != OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION ||
@@ -261,6 +274,8 @@ obelisk_rt_context::~obelisk_rt_context() {
   obelisk_rt_release_native_schedule_plan(this);
   if (dynamicScanState && dynamicScanState->destroy)
     dynamicScanState->destroy(dynamicScanState);
+  if (classBitstreamState && classBitstreamState->destroy)
+    classBitstreamState->destroy(classBitstreamState);
   if (recursiveWatchGroups && recursiveWatchGroups->destroy)
     recursiveWatchGroups->destroy(recursiveWatchGroups);
   threadErrors.erase(this);
@@ -985,7 +1000,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_REQUIRE_BYTECODE |
                                       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT |
                                       OBELISK_RT_EXECUTION_WAVEFORM_METADATA |
-                                      OBELISK_RT_EXECUTION_DPI_EXPORTS;
+                                      OBELISK_RT_EXECUTION_DPI_EXPORTS |
+                                      OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||

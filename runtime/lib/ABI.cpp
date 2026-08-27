@@ -208,6 +208,62 @@ ABI_OFFSET(obelisk_rt_execution_extension_v2, sampled_ranges, 8);
 ABI_OFFSET(obelisk_rt_execution_extension_v2, sampled_range_count, 16);
 ABI_OFFSET(obelisk_rt_execution_extension_v2, exports, 24);
 ABI_OFFSET(obelisk_rt_execution_extension_v2, export_count, 32);
+ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v3, 56, 8);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, version, 0);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, size, 4);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, sampled_ranges, 8);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, sampled_range_count, 16);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, exports, 24);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, export_count, 32);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, class_bitstream, 40);
+ABI_OFFSET(obelisk_rt_execution_extension_v3, class_bitstream_size, 48);
+ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_header_v1, 128, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, identity, 0);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, size, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, site_offset, 16);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, site_count, 24);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, group_offset, 32);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, group_count, 40);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, member_offset, 48);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, member_count, 56);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, schema_offset, 64);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, schema_count, 72);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, field_offset, 80);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, field_count, 88);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, plan_offset, 96);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, plan_size, 104);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, reserved0, 112);
+ABI_OFFSET(obelisk_rt_class_bitstream_header_v1, reserved1, 120);
+ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_site_v1, 40, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, site_id, 0);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, bytecode_function, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, bytecode_site, 12);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, plan_offset, 16);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, plan_size, 24);
+ABI_OFFSET(obelisk_rt_class_bitstream_site_v1, reserved, 32);
+ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_group_v1, 40, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, group_id, 0);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, static_class_id, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, first_member, 16);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, member_count, 24);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, allow_hidden_root, 32);
+ABI_OFFSET(obelisk_rt_class_bitstream_group_v1, reserved, 36);
+ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_schema_v1, 48, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, class_id, 0);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, instance_size, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, first_field, 16);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, field_count, 24);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, instance_alignment, 32);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, reserved, 36);
+ABI_OFFSET(obelisk_rt_class_bitstream_schema_v1, reserved_tail, 40);
+ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_field_v1, 48, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, offset, 0);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, plane_size, 8);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, root_span, 16);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, plan_offset, 24);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, plan_size, 32);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, flags, 40);
+ABI_OFFSET(obelisk_rt_class_bitstream_field_v1, value_alignment, 44);
 ABI_SIZE_ALIGN(obelisk_rt_execution_descriptor_v1, 120, 8);
 ABI_OFFSET(obelisk_rt_execution_descriptor_v1, version, 0);
 ABI_OFFSET(obelisk_rt_execution_descriptor_v1, flags, 4);
@@ -1659,6 +1715,14 @@ ABI_FUNCTION(obelisk_rt_v1_recursive_export_bitstream,
                                    const void *, uint64_t, uint64_t, uint32_t,
                                    void *, void *, uint64_t, uint64_t, uint32_t,
                                    const void *, uint64_t, uint32_t, uint32_t *,
+                                   uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_class_bitstream_finalize,
+             obelisk_rt_status (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v2_recursive_export_bitstream,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const void *, const void *, uint64_t,
+                                   uint64_t, uint32_t, void *, void *, uint64_t,
+                                   uint64_t, uint32_t, uint32_t, uint32_t *,
                                    uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_container_delete,
              obelisk_rt_status (*)(obelisk_rt_object_v1 *));

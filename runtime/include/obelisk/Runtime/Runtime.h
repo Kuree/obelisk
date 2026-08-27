@@ -405,6 +405,10 @@ typedef struct obelisk_rt_handle_v1 {
 // The optional execution extension is version two and contains scope-specific
 // zero-time DPI export descriptors.
 #define OBELISK_RT_EXECUTION_DPI_EXPORTS (UINT32_C(1) << 7)
+// The version-three execution extension carries the canonical, pointer-free
+// class bit-stream schema image. The image is validated and bound to the
+// context's registered class descriptors before the first cast executes.
+#define OBELISK_RT_EXECUTION_CLASS_BITSTREAM (UINT32_C(1) << 8)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced
@@ -587,6 +591,21 @@ typedef struct obelisk_rt_execution_extension_v2 {
   const obelisk_rt_export_descriptor_v1 *exports;
   uint64_t export_count;
 } obelisk_rt_execution_extension_v2;
+
+// Class bit-stream designs use version three. Its first six fields are the
+// complete version-two extension, so DPI-export readers can consume the
+// prefix without learning about the optional class service.
+#define OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION UINT32_C(3)
+typedef struct obelisk_rt_execution_extension_v3 {
+  uint32_t version;
+  uint32_t size;
+  const obelisk_rt_sampled_range_v1 *sampled_ranges;
+  uint64_t sampled_range_count;
+  const obelisk_rt_export_descriptor_v1 *exports;
+  uint64_t export_count;
+  const uint8_t *class_bitstream;
+  uint64_t class_bitstream_size;
+} obelisk_rt_execution_extension_v3;
 
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
@@ -1154,6 +1173,73 @@ enum {
   OBELISK_RT_RECURSIVE_BITSTREAM_STRING = UINT32_C(4),
   OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT = UINT32_C(5)
 };
+
+// Pointer-free class bit-stream image. Every record is naturally aligned and
+// has the same byte layout on native64 and wasm32. Offsets are image-relative;
+// counts and ranges are validated before any record is trusted.
+enum {
+  OBELISK_RT_CLASS_BITSTREAM_BLOB_MAGIC = UINT32_C(0x43425342),
+  OBELISK_RT_CLASS_BITSTREAM_BLOB_VERSION = UINT32_C(1),
+  OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE = UINT32_MAX,
+  OBELISK_RT_CLASS_BITSTREAM_FIELD_FOUR_STATE = UINT32_C(1) << 0
+};
+
+typedef struct obelisk_rt_class_bitstream_header_v1 {
+  uint64_t identity;
+  uint64_t size;
+  uint64_t site_offset;
+  uint64_t site_count;
+  uint64_t group_offset;
+  uint64_t group_count;
+  uint64_t member_offset;
+  uint64_t member_count;
+  uint64_t schema_offset;
+  uint64_t schema_count;
+  uint64_t field_offset;
+  uint64_t field_count;
+  uint64_t plan_offset;
+  uint64_t plan_size;
+  uint64_t reserved0;
+  uint64_t reserved1;
+} obelisk_rt_class_bitstream_header_v1;
+
+typedef struct obelisk_rt_class_bitstream_site_v1 {
+  uint64_t site_id;
+  uint32_t bytecode_function;
+  uint32_t bytecode_site;
+  uint64_t plan_offset;
+  uint64_t plan_size;
+  uint64_t reserved;
+} obelisk_rt_class_bitstream_site_v1;
+
+typedef struct obelisk_rt_class_bitstream_group_v1 {
+  uint64_t group_id;
+  uint64_t static_class_id;
+  uint64_t first_member;
+  uint64_t member_count;
+  uint32_t allow_hidden_root;
+  uint32_t reserved;
+} obelisk_rt_class_bitstream_group_v1;
+
+typedef struct obelisk_rt_class_bitstream_schema_v1 {
+  uint64_t class_id;
+  uint64_t instance_size;
+  uint64_t first_field;
+  uint64_t field_count;
+  uint32_t instance_alignment;
+  uint32_t reserved;
+  uint64_t reserved_tail;
+} obelisk_rt_class_bitstream_schema_v1;
+
+typedef struct obelisk_rt_class_bitstream_field_v1 {
+  uint64_t offset;
+  uint64_t plane_size;
+  uint64_t root_span;
+  uint64_t plan_offset;
+  uint64_t plan_size;
+  uint32_t flags;
+  uint32_t value_alignment;
+} obelisk_rt_class_bitstream_field_v1;
 
 // Imported zero-time calls are resolved through mutable context bindings. The
 // bytecode image contains only a deterministic 32-bit symbol ID and typed
@@ -2332,6 +2418,15 @@ obelisk_rt_status obelisk_rt_v1_recursive_export_bitstream(
     void *out_unknown, uint64_t output_plane_size, uint64_t output_bit_width,
     uint32_t output_four_state, const void *plan, uint64_t plan_size,
     uint32_t observe, uint32_t *out_matched, uint64_t *out_watch);
+obelisk_rt_status
+obelisk_rt_v1_class_bitstream_finalize(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v2_recursive_export_bitstream(
+    obelisk_rt_context *context, uint64_t site_id, const void *input_value,
+    const void *input_unknown, uint64_t input_plane_size,
+    uint64_t input_bit_width, uint32_t input_four_state, void *out_value,
+    void *out_unknown, uint64_t output_plane_size, uint64_t output_bit_width,
+    uint32_t output_four_state, uint32_t observe, uint32_t *out_matched,
+    uint64_t *out_watch);
 obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,

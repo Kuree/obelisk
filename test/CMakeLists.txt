@@ -48,6 +48,10 @@ function(obelisk_add_generated_process_object output_var directory input_file)
   set(generated_llvm "${generated_dir}/process.ll")
   set(generated_object "${generated_dir}/process.o")
   set(generated_opt_options)
+  set(generated_bytecode_options "vpi=off")
+  if(ARGC GREATER 3)
+    string(APPEND generated_bytecode_options " require-bytecode")
+  endif()
   if(LLVM_USE_SANITIZER MATCHES "(^|;)Thread($|;)")
     # The official prebuilt LLVM/MLIR SDK is not TSAN-instrumented. Keep its
     # internal verifier thread pool from crossing the instrumentation boundary
@@ -61,7 +65,7 @@ function(obelisk_add_generated_process_object output_var directory input_file)
     COMMAND $<TARGET_FILE:obelisk-opt>
             ${generated_opt_options}
             "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
-            "--pass-pipeline=builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)"
+            "--pass-pipeline=builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{${generated_bytecode_options}},convert-obelisk-sim-processes-to-llvm-coroutines)"
             -o "${generated_mlir}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
             "${generated_mlir}" -o "${generated_raw_llvm}"
@@ -93,6 +97,17 @@ obelisk_add_generated_process_object(
   GeneratedArithmetic
   Inputs/generated-bytecode-arithmetic.mlir
 )
+obelisk_add_generated_process_object(
+  _generated_class_bitstream_native_object
+  GeneratedClassBitstreamNative
+  Inputs/generated-class-bitstream.mlir
+)
+obelisk_add_generated_process_object(
+  _generated_class_bitstream_bytecode_object
+  GeneratedClassBitstreamBytecode
+  Inputs/generated-class-bitstream.mlir
+  require-bytecode
+)
 add_executable(ObeliskGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
   "${_generated_process_object}"
@@ -109,6 +124,24 @@ add_executable(ObeliskGeneratedArithmeticRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedArithmeticTest.cpp"
   "${_generated_arithmetic_object}"
 )
+add_executable(ObeliskGeneratedClassBitstreamNative
+  "${_generated_class_bitstream_native_object}"
+)
+target_link_libraries(ObeliskGeneratedClassBitstreamNative PRIVATE
+  obelisk_rt
+)
+set_target_properties(ObeliskGeneratedClassBitstreamNative PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
+add_executable(ObeliskGeneratedClassBitstreamBytecode
+  "${_generated_class_bitstream_bytecode_object}"
+)
+target_link_libraries(ObeliskGeneratedClassBitstreamBytecode PRIVATE
+  obelisk_rt
+)
+set_target_properties(ObeliskGeneratedClassBitstreamBytecode PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
 target_link_libraries(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
   obelisk_rt
   GTest::gtest_main
@@ -121,6 +154,8 @@ set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
 )
 set(OBELISK_RUNTIME_UNIT_TARGETS
   ObeliskGeneratedArithmeticRuntimeTests
+  ObeliskGeneratedClassBitstreamBytecode
+  ObeliskGeneratedClassBitstreamNative
   ObeliskGeneratedProcessRuntimeTests
   ObeliskProcessRuntimeTests
   ObeliskRuntimeTests

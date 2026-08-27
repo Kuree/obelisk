@@ -2011,6 +2011,15 @@ obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept {
   return metadata && metadata->heap ? metadata->heap->ownerContext() : nullptr;
 }
 
+const obelisk_rt_class_descriptor_v1 *
+obelisk_rt_managed_object_class_descriptor(
+    const obelisk_rt_object_v1 *object) noexcept {
+  ObjectMetadata *metadata = metadataFor(object);
+  return metadata && metadata->kind == OBELISK_RT_MANAGED_CLASS
+             ? metadata->descriptor
+             : nullptr;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
   constexpr uint32_t validFlags =
@@ -3008,7 +3017,7 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
   }
   if (changed)
     obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
-                                    offset);
+                                    offset, size);
   return OBELISK_RT_OK;
 }
 
@@ -3052,7 +3061,7 @@ obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
   }
   if (changed)
     obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
-                                    offset);
+                                    offset, (fieldBitWidth + 7) / 8);
   return OBELISK_RT_OK;
 }
 
@@ -3102,7 +3111,7 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
   }
   if (changed)
     obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
-                                    offset);
+                                    offset, planeSize * 2);
   return OBELISK_RT_OK;
 }
 
@@ -3158,7 +3167,8 @@ obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
   }
   if (changed)
     obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
-                                    offset);
+                                    offset,
+                                    sizeof(obelisk_rt_managed_word_v1));
   return OBELISK_RT_OK;
 }
 
@@ -3497,7 +3507,8 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
     }
     if (changed)
       obelisk_rt_notify_managed_watch(
-          update.destination, OBELISK_RT_MANAGED_WATCH_FIELD, update.offset);
+          update.destination, OBELISK_RT_MANAGED_WATCH_FIELD, update.offset,
+          update.planeSize * (update.unknown.empty() ? 1 : 2));
   }
 
   for (obelisk_rt_object_v1 *managedValue : update.managedValues) {
@@ -3585,7 +3596,7 @@ obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
   if (token != 0)
     return token;
   if (context->nextManagedWatchToken == 0 ||
-      context->nextManagedWatchToken >= kRecursiveWatchGroupBit)
+      context->nextManagedWatchToken >= kClassWatchGroupBit)
     return 0;
   token = context->nextManagedWatchToken++;
   return token;
@@ -3593,7 +3604,7 @@ obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
 
 void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
                                      obelisk_rt_managed_watch_kind kind,
-                                     uint64_t selector) {
+                                     uint64_t selector, uint64_t size) {
   ObjectMetadata *metadata = metadataFor(object);
   std::optional<uint64_t> key = managedWatchSelector(kind, selector);
   if (!metadata || !metadata->heap || !key || metadata->identity == 0)
@@ -3603,6 +3614,12 @@ void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
     return;
   std::lock_guard<std::recursive_mutex> transaction(context->transactionMutex);
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  if (kind == OBELISK_RT_MANAGED_WATCH_FIELD && size != 0 &&
+      context->classBitstreamState &&
+      context->classBitstreamState->notifyRange)
+    context->classBitstreamState->notifyRange(
+        context->classBitstreamState, context, metadata->identity, selector,
+        size);
   auto objectWatch = context->managedWatchTokens.find(metadata->identity);
   if (objectWatch == context->managedWatchTokens.end())
     return;

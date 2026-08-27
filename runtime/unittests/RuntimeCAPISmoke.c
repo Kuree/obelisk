@@ -147,6 +147,40 @@ _Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 24,
                "execution extension size changed");
 _Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) == 8,
                "execution extension sampled ranges offset changed");
+_Static_assert(sizeof(obelisk_rt_execution_extension_v3) == 56,
+               "execution extension v3 size changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, version) == 0,
+               "execution extension v3 version offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, size) == 4,
+               "execution extension v3 size offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, sampled_ranges) == 8,
+               "execution extension v3 sampled offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3,
+                        sampled_range_count) == 16,
+               "execution extension v3 sampled count offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, exports) == 24,
+               "execution extension v3 exports offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, export_count) == 32,
+               "execution extension v3 export count offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3, class_bitstream) ==
+                   40,
+               "execution extension v3 class image offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v3,
+                        class_bitstream_size) == 48,
+               "execution extension v3 class image size offset changed");
+_Static_assert(sizeof(obelisk_rt_class_bitstream_header_v1) == 128,
+               "class bit-stream header size changed");
+_Static_assert(sizeof(obelisk_rt_class_bitstream_site_v1) == 40,
+               "class bit-stream site size changed");
+_Static_assert(sizeof(obelisk_rt_class_bitstream_group_v1) == 40,
+               "class bit-stream group size changed");
+_Static_assert(sizeof(obelisk_rt_class_bitstream_schema_v1) == 48,
+               "class bit-stream schema size changed");
+_Static_assert(sizeof(obelisk_rt_class_bitstream_field_v1) == 48,
+               "class bit-stream field size changed");
+_Static_assert(offsetof(obelisk_rt_class_bitstream_field_v1, value_alignment) ==
+                   44,
+               "class bit-stream field alignment offset changed");
 _Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, version) == 0,

@@ -21,6 +21,14 @@ obelisk_rt_v1_recursive_export_bitstream(
 
 namespace obelisk::designbytecode {
 
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+obelisk_rt_status
+invokeClassBitstreamIntrinsic(const Image &image, Frame &frame,
+                              obelisk_rt_context *context, IntrinsicSite site,
+                              uint32_t siteIndex, uint32_t intrinsicId);
+
 extern "C" OBELISK_RT_FEATURE_TEXT void
 obelisk_rt_v1_container_bitstream_link_anchor() {}
 
@@ -82,13 +90,18 @@ readManaged(const Image &image, const Frame &frame, uint32_t reg) {
 
 OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     const Image &image, Frame &frame, obelisk_rt_context *context,
-    IntrinsicSite site,
-    uint32_t intrinsicId) {
+    IntrinsicSite site, uint32_t siteIndex, uint32_t intrinsicId) {
   bool container =
       intrinsicId == OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
   bool aggregate =
       intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
   IntrinsicSignature signature = intrinsicAt(image, site.intrinsic);
+  if (container && (signature.flags == 3 || signature.flags == 4)) {
+    if (!invokeClassBitstreamIntrinsic)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return invokeClassBitstreamIntrinsic(image, frame, context, site,
+                                         siteIndex, intrinsicId);
+  }
   bool recursive =
       container && (signature.flags == 1 || signature.flags == 2);
   bool observeRecursive = recursive && signature.flags == 2;
