@@ -2,6 +2,7 @@
 
 #include "AnalysisTestPasses.h"
 
+#include "obelisk/Analysis/ClassBitstreamAnalysis.h"
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -110,6 +111,42 @@ public:
           llvm::errs() << "]";
         llvm::errs() << "\n";
       }
+    }
+    if (auto source = module->getAttrOfType<FlatSymbolRefAttr>(
+            "test.class_bitstream_source")) {
+      FailureOr<obelisk::analysis::ClassBitstreamAnalysis> bitstream =
+          obelisk::analysis::ClassBitstreamAnalysis::compute(designs.front(),
+                                                             *dataLayout);
+      if (failed(bitstream))
+        return signalPassFailure();
+      auto sourceType =
+          obelisk::sim::ClassHandleType::get(module.getContext(), source);
+      FailureOr<const obelisk::analysis::ClassBitstreamAnalysis::CastClosure *>
+          closure = bitstream->getCastClosure(
+              sourceType, module->hasAttr("test.class_bitstream_allow_hidden"));
+      if (failed(closure))
+        return signalPassFailure();
+      auto repeated = bitstream->getCastClosure(
+          sourceType, module->hasAttr("test.class_bitstream_allow_hidden"));
+      if (failed(repeated) || *repeated != *closure) {
+        module.emitError("class bit-stream closure cache was not reused");
+        return signalPassFailure();
+      }
+      llvm::errs() << "class-bitstream roots=[";
+      llvm::interleaveComma((*closure)->roots, llvm::errs(),
+                            [](const auto *item) {
+                              obelisk::sim::SimClassDeclOp declaration =
+                                  item->layout->declaration;
+                              llvm::errs() << declaration.getSymName();
+                            });
+      llvm::errs() << "] schemas=[";
+      llvm::interleaveComma((*closure)->schemas, llvm::errs(),
+                            [](const auto *item) {
+                              obelisk::sim::SimClassDeclOp declaration =
+                                  item->layout->declaration;
+                              llvm::errs() << declaration.getSymName();
+                            });
+      llvm::errs() << "]\n";
     }
     markAllAnalysesPreserved();
   }

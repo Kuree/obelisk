@@ -13,7 +13,9 @@
 ], isTagged = false>
 
 module attributes {
-  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  test.class_bitstream_source = @Base,
+  test.class_bitstream_allow_hidden
 } {
   obelisk_sim.design @classes {
     obelisk_sim.scope.decl 0
@@ -58,6 +60,12 @@ module attributes {
       obelisk_sim.class_bitstream_member,
       obelisk_sim.class_bitstream_visibility = 2 : i32
     }
+    obelisk_sim.class.field @Derived_backup_owner of @Derived at 1 :
+        !obelisk_sim.class_handle<@Referent> {
+      is_static = false, is_weak = false,
+      obelisk_sim.class_bitstream_member,
+      obelisk_sim.class_bitstream_visibility = 0 : i32
+    }
     obelisk_sim.class.field @TaggedHolder_value of @TaggedHolder at 0 :
         !tagged {
       is_static = false, is_weak = false
@@ -74,9 +82,11 @@ module attributes {
 // CHECK-NEXT:   field Base_value offset=8 size=1 alignment=1 planes=2 roots=[]
 // CHECK-NEXT: managed-class Weak id=3 size=32 alignment=8 weak-referent-offset=16 bitstream-fields=[Base_value, Weak_count]
 // CHECK-NEXT:   field Weak_count offset=24 size=4 alignment=4 planes=1 roots=[]
-// CHECK-NEXT: managed-class Derived id=4 size=40 alignment=8 bitstream-fields=[Base_value, Weak_count, Derived_owner]
+// CHECK-NEXT: managed-class Derived id=4 size=48 alignment=8 bitstream-fields=[Base_value, Weak_count, Derived_owner, Derived_backup_owner]
 // CHECK-NEXT:   field Derived_owner offset=32 size=8 alignment=8 planes=1 roots=[0]
+// CHECK-NEXT:   field Derived_backup_owner offset=40 size=8 alignment=8 planes=1 roots=[0]
 // CHECK-NEXT: managed-class TaggedHolder id=5 size=40 alignment=8
 // CHECK-NEXT:   field TaggedHolder_value offset=8 size=25 alignment=8 planes=1 roots=[0, 16]
 // CHECK-NEXT: managed-class UntaggedHolder id=6 size=16 alignment=8
 // CHECK-NEXT:   field UntaggedHolder_value offset=8 size=8 alignment=8 planes=1 roots=[0] candidate-roots=[0:3]
+// CHECK-NEXT: class-bitstream roots=[Base, Weak, Derived] schemas=[Referent, Base, Weak, Derived]
