@@ -890,3 +890,53 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @static_bitstream_member {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{static properties cannot be object bit-stream members}}
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = true, is_weak = false,
+      obelisk_sim.class_bitstream_member,
+      obelisk_sim.class_bitstream_visibility = 0 : i32
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_bitstream_visibility {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{class bit-stream visibility must be an i32 public/protected/local value}}
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.class_bitstream_member,
+      obelisk_sim.class_bitstream_visibility = 3 : i32
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unpaired_bitstream_metadata {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{class bit-stream member and visibility metadata must be paired}}
+    obelisk_sim.class.field @C_value of @C at 0 : i8 {
+      is_static = false, is_weak = false,
+      obelisk_sim.class_bitstream_member
+    }
+  }
+}

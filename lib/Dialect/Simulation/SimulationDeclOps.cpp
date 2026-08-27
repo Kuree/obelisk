@@ -587,6 +587,25 @@ LogicalResult SimClassFieldDeclOp::verify() {
     return emitOpError("static properties cannot have an instance offset");
   if (getIsWeak() && !isa<ClassHandleType>(getType()))
     return emitOpError("weak properties must have class-handle type");
+  Attribute bitstreamMember = (*this)->getAttr(metadata::classBitstreamMember);
+  Attribute bitstreamVisibility =
+      (*this)->getAttr(metadata::classBitstreamVisibility);
+  if (bitstreamMember && !isa<UnitAttr>(bitstreamMember))
+    return emitOpError(
+        "class bit-stream member marker must be a unit attribute");
+  if (bitstreamMember && getIsStatic())
+    return emitOpError("static properties cannot be object bit-stream members");
+  auto visibility = dyn_cast_or_null<IntegerAttr>(bitstreamVisibility);
+  if (bitstreamVisibility &&
+      (!visibility || !visibility.getType().isInteger(32) ||
+       visibility.getValue().isNegative() ||
+       visibility.getValue().getZExtValue() > 2))
+    return emitOpError("class bit-stream visibility must be an i32 "
+                       "public/protected/local value");
+  if (static_cast<bool>(bitstreamMember) !=
+      static_cast<bool>(bitstreamVisibility))
+    return emitOpError(
+        "class bit-stream member and visibility metadata must be paired");
   Attribute modeAttribute = (*this)->getAttr(metadata::randomModeIndex);
   auto modeIndex = dyn_cast_or_null<IntegerAttr>(modeAttribute);
   if (modeAttribute && !modeIndex)

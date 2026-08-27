@@ -66,6 +66,14 @@ inline constexpr llvm::StringLiteral randomCyclePositionField =
 /// Root-class field containing the 64-bit disabled-property mask.
 inline constexpr llvm::StringLiteral randomModeField =
     "obelisk_sim.random_mode_field";
+/// Marks an executable class field that corresponds to a source-declared
+/// instance property. Compiler-owned fields and static properties are absent
+/// from the object bit-stream inventory.
+inline constexpr llvm::StringLiteral classBitstreamMember =
+    "obelisk_sim.class_bitstream_member";
+/// Source member visibility retained for recursive class bit-stream legality.
+inline constexpr llvm::StringLiteral classBitstreamVisibility =
+    "obelisk_sim.class_bitstream_visibility";
 inline constexpr llvm::StringLiteral thisArgument =
     "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
@@ -170,7 +178,8 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == randomModeIndex || name == randomObjectEdge ||
          name == randomVariableKind || name == randomVariableSigned ||
          name == randomCycleKeyField || name == randomCyclePositionField ||
-         name == randomModeField ||
+         name == randomModeField || name == classBitstreamMember ||
+         name == classBitstreamVisibility ||
          name == staticBodyFusion || name == staticFusion ||
          name == computeKernels || name == threeTierSchedule ||
          name == staticSpecialization || name == staticSuperstep ||

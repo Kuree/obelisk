@@ -59,11 +59,32 @@ public:
       return signalPassFailure();
     for (const auto &layout : analysis->classes) {
       obelisk::sim::SimClassDeclOp declaration = layout.declaration;
+      if (analysis->lookup(declaration.getId()) != &layout) {
+        declaration.emitOpError("class ID lookup disagrees with layout");
+        return signalPassFailure();
+      }
+      FailureOr<SmallVector<
+          const obelisk::analysis::ManagedClassLayoutAnalysis::Field *>>
+          bitstreamFields = analysis->getBitstreamFields(layout);
+      if (failed(bitstreamFields)) {
+        declaration.emitOpError("cannot determine object bit-stream fields");
+        return signalPassFailure();
+      }
       llvm::errs() << "managed-class " << declaration.getSymName()
                    << " id=" << declaration.getId() << " size=" << layout.size
                    << " alignment=" << layout.alignment;
       if (layout.weakReferentOffset)
         llvm::errs() << " weak-referent-offset=" << *layout.weakReferentOffset;
+      if (!bitstreamFields->empty()) {
+        llvm::errs() << " bitstream-fields=[";
+        llvm::interleaveComma(*bitstreamFields, llvm::errs(),
+                              [&](const auto *field) {
+                                obelisk::sim::SimClassFieldDeclOp declaration =
+                                    field->declaration;
+                                llvm::errs() << declaration.getSymName();
+                              });
+        llvm::errs() << "]";
+      }
       llvm::errs() << "\n";
       for (const auto &field : layout.fields) {
         obelisk::sim::SimClassFieldDeclOp fieldDeclaration = field.declaration;

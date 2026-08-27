@@ -2,6 +2,8 @@
 
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
 
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
@@ -143,6 +145,7 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
     layout.size = alignedSize;
     active.erase(declaration.getSymName());
     result.indices[declaration.getSymName()] = result.classes.size();
+    result.idIndices[declaration.getId()] = result.classes.size();
     result.classes.push_back(std::move(layout));
     return success();
   };
@@ -165,6 +168,35 @@ const ManagedClassLayoutAnalysis::Class *
 ManagedClassLayoutAnalysis::lookup(StringRef name) const {
   auto found = indices.find(name);
   return found == indices.end() ? nullptr : &classes[found->second];
+}
+
+const ManagedClassLayoutAnalysis::Class *
+ManagedClassLayoutAnalysis::lookup(uint64_t id) const {
+  auto found = idIndices.find(id);
+  return found == idIndices.end() ? nullptr : &classes[found->second];
+}
+
+FailureOr<SmallVector<const ManagedClassLayoutAnalysis::Field *>>
+ManagedClassLayoutAnalysis::getBitstreamFields(const Class &layout) const {
+  SmallVector<const Class *, 8> hierarchy;
+  const Class *current = &layout;
+  while (current) {
+    if (hierarchy.size() >= classes.size())
+      return failure();
+    hierarchy.push_back(current);
+    sim::SimClassDeclOp declaration = current->declaration;
+    std::optional<StringRef> base = declaration.getBase();
+    current = base ? lookup(*base) : nullptr;
+    if (base && !current)
+      return failure();
+  }
+
+  SmallVector<const Field *> result;
+  for (const Class *owner : llvm::reverse(hierarchy))
+    for (const Field &field : owner->fields)
+      if (field.declaration->hasAttr(sim::metadata::classBitstreamMember))
+        result.push_back(&field);
+  return result;
 }
 
 LogicalResult materializeManagedClassFieldOffsets(

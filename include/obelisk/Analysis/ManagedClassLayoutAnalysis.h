@@ -10,6 +10,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <cstdint>
@@ -43,11 +44,20 @@ struct ManagedClassLayoutAnalysis {
   compute(sim::SimDesignOp design, const llvm::DataLayout &dataLayout);
 
   const Class *lookup(llvm::StringRef name) const;
+  const Class *lookup(uint64_t id) const;
+
+  /// Source-declared instance fields of `layout` in the exact base-to-derived
+  /// order used by object bit-stream serialization. Static and compiler-owned
+  /// fields are absent because only marked physical instance fields enter the
+  /// result.
+  mlir::FailureOr<mlir::SmallVector<const Field *>>
+  getBitstreamFields(const Class &layout) const;
 
   mlir::SmallVector<Class> classes;
 
 private:
   llvm::StringMap<unsigned> indices;
+  llvm::DenseMap<uint64_t, unsigned> idIndices;
 };
 
 mlir::LogicalResult

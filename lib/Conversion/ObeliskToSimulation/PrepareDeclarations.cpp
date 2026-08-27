@@ -29,6 +29,44 @@ bool isWeakReferenceClass(semantic::SVClassTypeOp classType) {
   return getHierarchyName(classType).starts_with("std::weak_reference#(");
 }
 
+/// Whether a normalized source can reach an object handle while recursively
+/// forming its bit stream. This is intentionally structural and stops at the
+/// class handle: the class declaration graph is symbol-based rather than a
+/// recursively embedded MLIR type.
+bool containsClassBitstreamSource(Type type) {
+  SmallVector<Type, 16> pending{type};
+  llvm::SmallPtrSet<const void *, 16> visited;
+  while (!pending.empty()) {
+    Type current = pending.pop_back_val();
+    if (!visited.insert(current.getAsOpaquePointer()).second)
+      continue;
+    if (isa<sim::ClassHandleType>(current))
+      return true;
+    if (auto array = dyn_cast<sim::DynamicArrayType>(current)) {
+      pending.push_back(array.getElementType());
+      continue;
+    }
+    if (auto queue = dyn_cast<sim::QueueType>(current)) {
+      pending.push_back(queue.getElementType());
+      continue;
+    }
+    if (auto associative = dyn_cast<sim::AssocArrayType>(current)) {
+      pending.push_back(associative.getElementType());
+      continue;
+    }
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(current)) {
+      pending.push_back(array.getElementType());
+      continue;
+    }
+    if (!isa<sim::UnpackedStructType>(current))
+      continue;
+    for (unsigned ordinal = 0, count = sim::getAggregateNumElements(current);
+         ordinal != count; ++ordinal)
+      pending.push_back(sim::getAggregateElementType(current, ordinal));
+  }
+  return false;
+}
+
 uint64_t getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
   std::string key;
   llvm::raw_string_ostream stream(key);
@@ -387,9 +425,33 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     const llvm::StringMap<Operation *> &semanticSymbols) {
   MLIRContext *context = module.getContext();
   PreparedClassDeclarations result;
-  semanticRoot->walk([&](semantic::SVClassTypeOp classType) {
-    if (!classType.getIsUninstantiated())
+  // Inventory classes and detect the feature in one traversal. Designs that
+  // do not use class bit-stream casts retain their previous declaration walk
+  // and receive no extra field metadata.
+  bool needsClassBitstreamMetadata = false;
+  semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *operation) {
+    if (auto classType = dyn_cast<semantic::SVClassTypeOp>(operation)) {
+      if (classType.getIsUninstantiated())
+        return WalkResult::skip();
       result.sources.push_back(classType);
+      return WalkResult::advance();
+    }
+    auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(operation);
+    if (!conversion || needsClassBitstreamMetadata)
+      return WalkResult::advance();
+    BoolAttr implicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
+    if (!implicit || implicit.getValue())
+      return WalkResult::advance();
+    SmallVector<Operation *> children = getChildren(conversion);
+    if (children.size() != 1)
+      return WalkResult::advance();
+    FailureOr<Type> target = getNormalizedSemanticType(conversion);
+    if (failed(target) || !sim::getPackedScalarType(*target))
+      return WalkResult::advance();
+    FailureOr<Type> source = getNormalizedSemanticType(children.front());
+    needsClassBitstreamMetadata =
+        succeeded(source) && containsClassBitstreamSource(*source);
+    return WalkResult::advance();
   });
   // The IEEE weak_reference specializations live in the standard package,
   // outside the elaborated source root, but their handles can occur in source
@@ -558,6 +620,18 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           builder, getSemanticLocation(property), fieldName, classSymbol, *type,
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
+      // IEEE 1800-2023 6.24.3 and 11.4.14.1 stream the data members of the
+      // referenced object. Static properties have one class-wide copy (8.9),
+      // so they are not object members. Keep the exact source-property marker
+      // separate from the physical class layout: synthetic RNG/rand_mode
+      // fields must never leak into a language bit stream either.
+      if (needsClassBitstreamMetadata && !isStatic) {
+        field->setAttr(sim::metadata::classBitstreamMember,
+                       builder.getUnitAttr());
+        field->setAttr(sim::metadata::classBitstreamVisibility,
+                       builder.getI32IntegerAttr(static_cast<int32_t>(
+                           property.getMemberVisibility())));
+      }
       fieldDeclarations[property] = field;
       if (property.getRandMode() != semantic::SVRandMode::None) {
         field->setAttr(sim::metadata::randomModeIndex,
