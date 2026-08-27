@@ -178,8 +178,8 @@ static APInt dynamicInsertPlane(const APInt &input, const APInt &replacement,
   if (index.uge(input.getBitWidth()) || !index.isIntN(64))
     return result;
   uint64_t low = index.getZExtValue();
-  for (uint64_t replacementBit = 0;
-       replacementBit < replacement.getBitWidth(); ++replacementBit) {
+  for (uint64_t replacementBit = 0; replacementBit < replacement.getBitWidth();
+       ++replacementBit) {
     uint64_t inputBit = low + replacementBit;
     if (inputBit >= input.getBitWidth())
       break;
@@ -540,8 +540,8 @@ OpFoldResult SimLogicPowerOp::fold(FoldAdaptor adaptor) {
     if (!remaining.isZero())
       factor *= factor;
   }
-  return getLogicAttribute(
-      getContext(), {std::move(value), APInt::getZero(width)});
+  return getLogicAttribute(getContext(),
+                           {std::move(value), APInt::getZero(width)});
 }
 
 OpFoldResult SimLogicLogicalOp::fold(FoldAdaptor adaptor) {
@@ -897,8 +897,7 @@ OpFoldResult SimBitsDynInsertOp::fold(FoldAdaptor adaptor) {
   if (!index->value)
     return getInput();
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
-  auto replacement =
-      dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
+  auto replacement = dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
   if (!input || !replacement)
     return {};
   APInt result = dynamicInsertPlane(input.getValue(), replacement.getValue(),
@@ -1395,8 +1394,7 @@ struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
     if (!index || !index->value)
       return failure();
     uint64_t low;
-    if (!isKnownInRangeIndex(*index->value,
-                             op.getInput().getType().getWidth(),
+    if (!isKnownInRangeIndex(*index->value, op.getInput().getType().getWidth(),
                              op.getReplacement().getType().getWidth(), low) ||
         low > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
       return failure();
@@ -1610,7 +1608,16 @@ struct FoldNullRecursiveExportBitstream final
 
   LogicalResult matchAndRewrite(SimRecursiveExportBitstreamOp op,
                                 PatternRewriter &rewriter) const override {
-    if (!op.getInput().getDefiningOp<SimManagedNullOp>())
+    bool managedNull =
+        static_cast<bool>(op.getInput().getDefiningOp<SimManagedNullOp>());
+    bool classNull =
+        static_cast<bool>(op.getInput().getDefiningOp<SimClassNullOp>());
+    if (!managedNull && !classNull)
+      return failure();
+    // Object legality is a static type property even when this particular
+    // value is null.  Only fold after class planning has validated the full
+    // schema closure and assigned a trusted site.
+    if (classNull && !op.getClassSiteIdAttr())
       return failure();
     Value result;
     if (auto integer = dyn_cast<IntegerType>(op.getResult().getType())) {
@@ -1619,15 +1626,15 @@ struct FoldNullRecursiveExportBitstream final
           rewriter.getIntegerAttr(integer, APInt::getZero(integer.getWidth())));
     } else if (auto logic = dyn_cast<LogicType>(op.getResult().getType())) {
       auto plane = IntegerType::get(rewriter.getContext(), logic.getWidth());
-      result = SimLogicConstantOp::create(
-          rewriter, op.getLoc(), logic, rewriter.getIntegerAttr(plane, 0),
-          rewriter.getIntegerAttr(plane, 0));
+      result = SimLogicConstantOp::create(rewriter, op.getLoc(), logic,
+                                          rewriter.getIntegerAttr(plane, 0),
+                                          rewriter.getIntegerAttr(plane, 0));
     } else {
       return failure();
     }
-    Value matched = arith::ConstantOp::create(
-        rewriter, op.getLoc(), rewriter.getI1Type(),
-        rewriter.getBoolAttr(false));
+    Value matched =
+        arith::ConstantOp::create(rewriter, op.getLoc(), rewriter.getI1Type(),
+                                  rewriter.getBoolAttr(false));
     Value watch = SimManagedWatchNullOp::create(
         rewriter, op.getLoc(), ManagedWatchType::get(rewriter.getContext()));
     rewriter.replaceOp(op, ValueRange{result, matched, watch});
@@ -1976,12 +1983,12 @@ struct FoldExactStringToPacked final
       unsigned shift = resultType.getWidth() - (index + 1) * 8;
       result |= APInt(resultType.getWidth(), byte).shl(shift);
     }
-    Value packed = arith::ConstantOp::create(
-        rewriter, op.getLoc(), resultType,
-        rewriter.getIntegerAttr(resultType, result));
-    Value matched = arith::ConstantOp::create(
-        rewriter, op.getLoc(), rewriter.getI1Type(),
-        rewriter.getBoolAttr(true));
+    Value packed =
+        arith::ConstantOp::create(rewriter, op.getLoc(), resultType,
+                                  rewriter.getIntegerAttr(resultType, result));
+    Value matched =
+        arith::ConstantOp::create(rewriter, op.getLoc(), rewriter.getI1Type(),
+                                  rewriter.getBoolAttr(true));
     rewriter.replaceOp(op, ValueRange{packed, matched});
     return success();
   }
@@ -2035,8 +2042,8 @@ void SimArrayDynExtractOp::getCanonicalizationPatterns(
       context);
 }
 
-void SimArrayDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                     MLIRContext *context) {
+void SimArrayDynInsertOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
   results.add<ConstantArrayInsert>(context);
 }
 
@@ -2076,13 +2083,13 @@ void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<NormalizeBinaryConstant>(context);
 }
 
-void SimStringCompareOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+void SimStringCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
   results.add<FoldStringCompare>(context);
 }
 
-void SimStringLengthOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+void SimStringLengthOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                    MLIRContext *context) {
   results.add<FoldStringLength>(context);
 }
 

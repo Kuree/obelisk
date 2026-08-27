@@ -742,7 +742,9 @@ def SimRecursiveExportBitstreamOp : SimOp<"recursive.export_bitstream", [
   ]> {
   let summary = "pack one recursively dynamic source into a fixed bit-stream";
   let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan,
-                        OptionalAttr<UnitAttr>:$observe);
+                        OptionalAttr<UnitAttr>:$observe,
+                        OptionalAttr<UnitAttr>:$class_allow_hidden_root,
+                        OptionalAttr<I64Attr>:$class_site_id);
   let results = (outs AnyType:$result, I1:$matched,
                        SimManagedWatchType:$watch);
   let hasVerifier = 1;

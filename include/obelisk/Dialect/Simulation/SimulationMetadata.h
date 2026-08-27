@@ -74,8 +74,27 @@ inline constexpr llvm::StringLiteral classBitstreamMember =
 /// Source member visibility retained for recursive class bit-stream legality.
 inline constexpr llvm::StringLiteral classBitstreamVisibility =
     "obelisk_sim.class_bitstream_visibility";
-inline constexpr llvm::StringLiteral thisArgument =
-    "obelisk_sim.this_argument";
+/// Marks an explicit class-containing bit-stream conversion whose source is
+/// exactly the enclosing method's current-instance `this`.  This exception is
+/// semantic: aliases and handles reached through another expression never
+/// inherit it.
+inline constexpr llvm::StringLiteral classBitstreamAllowHiddenRoot =
+    "obelisk_sim.class_bitstream_allow_hidden_root";
+/// Dense nonzero identifier of a materialized class bit-stream cast site.
+inline constexpr llvm::StringLiteral classBitstreamSiteID =
+    "obelisk_sim.class_bitstream_site_id";
+inline constexpr llvm::StringLiteral classBitstreamBytecodeFunction =
+    "obelisk_sim.class_bitstream_bytecode_function";
+inline constexpr llvm::StringLiteral classBitstreamBytecodeSite =
+    "obelisk_sim.class_bitstream_bytecode_site";
+/// Module-level canonical pointer-free class schema/group/site blob.
+inline constexpr llvm::StringLiteral classBitstreamBlob =
+    "obelisk.execution.class_bitstream_blob";
+/// Preparation-time feature marker used to keep whole-design class planning
+/// off ordinary compilation paths.
+inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
+    "obelisk.feature.class_bitstream_source";
+inline constexpr llvm::StringLiteral thisArgument = "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
 inline constexpr llvm::StringLiteral staticBodyFusion =
     "obelisk_sim.static_body_fusion";
@@ -179,11 +198,10 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == randomVariableKind || name == randomVariableSigned ||
          name == randomCycleKeyField || name == randomCyclePositionField ||
          name == randomModeField || name == classBitstreamMember ||
-         name == classBitstreamVisibility ||
-         name == staticBodyFusion || name == staticFusion ||
-         name == computeKernels || name == threeTierSchedule ||
-         name == staticSpecialization || name == staticSuperstep ||
-         name == topLevelWildcardWait;
+         name == classBitstreamVisibility || name == staticBodyFusion ||
+         name == staticFusion || name == computeKernels ||
+         name == threeTierSchedule || name == staticSpecialization ||
+         name == staticSuperstep || name == topLevelWildcardWait;
 }
 
 } // namespace obelisk::sim::metadata

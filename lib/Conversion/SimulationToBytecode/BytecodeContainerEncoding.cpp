@@ -2,6 +2,7 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 using namespace mlir;
 
@@ -113,6 +114,28 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
+    if (op.getClassSiteId()) {
+      if (intrinsicSites.size() > UINT32_MAX)
+        return op.emitOpError("class bit-stream intrinsic table is too large");
+      uint32_t site = intrinsicSites.size();
+      LogicalResult emitted = emitIntrinsicRegisters(
+          plan, kIntrinsicContainerExportBitstream, {reg(plan, op.getInput())},
+          {reg(plan, op.getResult()), reg(plan, op.getMatched()),
+           reg(plan, op.getWatch())},
+          op.getObserve() ? 4 : 3);
+      if (failed(emitted))
+        return emitted;
+      if (options.requireBytecode) {
+        requiresContainerBitstreamFeature = true;
+        op->setAttr(sim::metadata::classBitstreamBytecodeFunction,
+                    IntegerAttr::get(IntegerType::get(op.getContext(), 32),
+                                     plan.index));
+        op->setAttr(
+            sim::metadata::classBitstreamBytecodeSite,
+            IntegerAttr::get(IntegerType::get(op.getContext(), 32), site));
+      }
+      return success();
+    }
     SmallVector<uint8_t> bytes;
     bytes.reserve(op.getPlan().size() * 8);
     for (int64_t word : op.getPlan())
@@ -212,26 +235,25 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     return emitIntrinsic(plan, kIntrinsicSampledRead, {op.getSource()},
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimSampledHistoryOp>(operation))
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicSampledHistory,
-        {emitU64Constant(plan, op.getId()),
-         emitU64Constant(plan, op.getDepth()), reg(plan, op.getGate()),
-         reg(plan, op.getCurrent())},
-        {reg(plan, op.getResult())});
+    return emitIntrinsicRegisters(plan, kIntrinsicSampledHistory,
+                                  {emitU64Constant(plan, op.getId()),
+                                   emitU64Constant(plan, op.getDepth()),
+                                   reg(plan, op.getGate()),
+                                   reg(plan, op.getCurrent())},
+                                  {reg(plan, op.getResult())});
   if (auto op = dyn_cast<sim::SimClockedSampleUpdateOp>(operation))
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicClockedSampleUpdate,
-        {emitU64Constant(plan, op.getId()),
-         emitU64Constant(plan, op.getDepth()), reg(plan, op.getGate()),
-         reg(plan, op.getCurrent())},
-        {});
+    return emitIntrinsicRegisters(plan, kIntrinsicClockedSampleUpdate,
+                                  {emitU64Constant(plan, op.getId()),
+                                   emitU64Constant(plan, op.getDepth()),
+                                   reg(plan, op.getGate()),
+                                   reg(plan, op.getCurrent())},
+                                  {});
   if (auto op = dyn_cast<sim::SimClockedSampleReadOp>(operation))
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicClockedSampleRead,
-        {emitU64Constant(plan, op.getId()),
-         emitU64Constant(plan, op.getDepth()),
-         emitU64Constant(plan, op.getAge())},
-        {reg(plan, op.getResult())});
+    return emitIntrinsicRegisters(plan, kIntrinsicClockedSampleRead,
+                                  {emitU64Constant(plan, op.getId()),
+                                   emitU64Constant(plan, op.getDepth()),
+                                   emitU64Constant(plan, op.getAge())},
+                                  {reg(plan, op.getResult())});
   if (auto op = dyn_cast<sim::SimRandomSeedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomSeed, {op.getSeed()}, {});
   if (auto op = dyn_cast<sim::SimRandomBoundedOp>(operation))

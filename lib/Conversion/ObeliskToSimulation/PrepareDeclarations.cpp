@@ -67,6 +67,35 @@ bool containsClassBitstreamSource(Type type) {
   return false;
 }
 
+/// The local/protected-property exception in 6.24.3 applies only to the exact
+/// current-instance expression.  Resolve that identity while the semantic
+/// symbol reference is still available; lowered SSA equality would also bless
+/// aliases of `this` and is therefore too permissive.
+bool isExactCurrentInstanceThis(Operation *expression) {
+  while (auto conversion =
+             dyn_cast<semantic::SVConversionExpressionOp>(expression)) {
+    BoolAttr implicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
+    if (implicit && !implicit.getValue())
+      return false;
+    SmallVector<Operation *> children = getChildren(conversion);
+    if (children.size() != 1)
+      return false;
+    expression = children.front();
+  }
+  auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression);
+  if (!named)
+    return false;
+  SymbolRefAttr referenced = named.getReferencedSymbolAttr();
+  if (!referenced)
+    return false;
+  for (Operation *parent = expression->getParentOp(); parent;
+       parent = parent->getParentOp())
+    if (auto current =
+            parent->getAttrOfType<SymbolRefAttr>("this_variable_symbol"))
+      return current == referenced;
+  return false;
+}
+
 uint64_t getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
   std::string key;
   llvm::raw_string_ostream stream(key);
@@ -93,8 +122,7 @@ Operation *getCoverageSourceExpression(Operation *expression) {
     // Older hand-authored semantic IR lacks this attribute and only used
     // conversion nodes for contextual casts. Frontend-imported IR records the
     // distinction so an explicit cast remains part of the bins expression.
-    BoolAttr isImplicit =
-        conversion->getAttrOfType<BoolAttr>("is_implicit");
+    BoolAttr isImplicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
     if (isImplicit && !isImplicit.getValue())
       break;
     SmallVector<Operation *> children = getChildren(expression);
@@ -105,9 +133,9 @@ Operation *getCoverageSourceExpression(Operation *expression) {
   return expression;
 }
 
-FailureOr<std::optional<APSInt>>
-getCoverageConstant(Operation *expression, unsigned effectiveWidth,
-                    bool effectiveSigned) {
+FailureOr<std::optional<APSInt>> getCoverageConstant(Operation *expression,
+                                                     unsigned effectiveWidth,
+                                                     bool effectiveSigned) {
   Operation *source = getCoverageSourceExpression(expression);
   std::optional<StringRef> spelling = getConstantSpelling(source);
   if (!spelling) {
@@ -120,8 +148,8 @@ getCoverageConstant(Operation *expression, unsigned effectiveWidth,
   // mathematical singleton integers. Parse them directly in the effective
   // type; X/Z is still excluded below by 19.5.7(b)(3).
   if (isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source)) {
-    FailureOr<ParsedConstant> parsed = parseSVInteger(
-        *spelling, effectiveWidth, getSemanticLocation(source));
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*spelling, effectiveWidth, getSemanticLocation(source));
     if (failed(parsed))
       return failure();
     if (!parsed->unknown.isZero())
@@ -198,19 +226,18 @@ getCoverageIntervals(semantic::SVCoverageBinSymbolOp bin, unsigned width,
       // An X/Z endpoint makes the entire range nonparticipating.
       if (!*lower || !*upper || APSInt::compareValues(**lower, **upper) > 0)
         continue;
-      APSInt clippedLower = outsideDomain(**lower) &&
-                                    APSInt::compareValues(**lower,
-                                                         domainLower) < 0
-                                ? domainLower
-                                : **lower;
-      APSInt clippedUpper = outsideDomain(**upper) &&
-                                    APSInt::compareValues(**upper,
-                                                         domainUpper) > 0
-                                ? domainUpper
-                                : **upper;
+      APSInt clippedLower =
+          outsideDomain(**lower) &&
+                  APSInt::compareValues(**lower, domainLower) < 0
+              ? domainLower
+              : **lower;
+      APSInt clippedUpper =
+          outsideDomain(**upper) &&
+                  APSInt::compareValues(**upper, domainUpper) > 0
+              ? domainUpper
+              : **upper;
       if (APSInt::compareValues(clippedLower, clippedUpper) <= 0)
-        intervals.push_back(
-            {orderKey(clippedLower), orderKey(clippedUpper)});
+        intervals.push_back({orderKey(clippedLower), orderKey(clippedUpper)});
       continue;
     }
     FailureOr<std::optional<APSInt>> value =
@@ -437,7 +464,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       return WalkResult::advance();
     }
     auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(operation);
-    if (!conversion || needsClassBitstreamMetadata)
+    if (!conversion)
       return WalkResult::advance();
     BoolAttr implicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
     if (!implicit || implicit.getValue())
@@ -449,10 +476,17 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     if (failed(target) || !sim::getPackedScalarType(*target))
       return WalkResult::advance();
     FailureOr<Type> source = getNormalizedSemanticType(children.front());
-    needsClassBitstreamMetadata =
+    bool containsClass =
         succeeded(source) && containsClassBitstreamSource(*source);
+    needsClassBitstreamMetadata |= containsClass;
+    if (containsClass && isExactCurrentInstanceThis(children.front()))
+      conversion->setAttr(sim::metadata::classBitstreamAllowHiddenRoot,
+                          UnitAttr::get(context));
     return WalkResult::advance();
   });
+  if (needsClassBitstreamMetadata)
+    module->setAttr(sim::metadata::classBitstreamSourceFeature,
+                    UnitAttr::get(context));
   // The IEEE weak_reference specializations live in the standard package,
   // outside the elaborated source root, but their handles can occur in source
   // storage and function signatures.

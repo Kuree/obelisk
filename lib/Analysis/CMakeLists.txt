@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskSimulationAnalysis
   ClassBitstreamAnalysis.cpp
+  ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp

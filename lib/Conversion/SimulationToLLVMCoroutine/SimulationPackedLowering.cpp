@@ -3,6 +3,7 @@
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/ClassBitstreamPlan.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -365,6 +366,8 @@ LogicalResult lowerPackedSimulationOperations(
   bool needsContainerBitstreamABI = false;
   bool needsAggregateBitstreamABI = false;
   bool needsRecursiveBitstreamABI = false;
+  bool needsClassBitstreamABI = false;
+  sim::SimDesignOp classBitstreamDesign;
   auto reserveByteGlobal = [&](Location location, StringRef name,
                                StringRef bytes) -> LogicalResult {
     auto [entry, inserted] =
@@ -460,6 +463,15 @@ LogicalResult lowerPackedSimulationOperations(
     }
     if (auto bitstream =
             dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
+      uint64_t identity = static_cast<uint64_t>(bitstream.getPlan()[0]);
+      if (static_cast<uint32_t>(identity) ==
+              OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC &&
+          static_cast<uint32_t>(identity >> 32) ==
+              OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION) {
+        needsClassBitstreamABI = true;
+        classBitstreamDesign = bitstream->getParentOfType<sim::SimDesignOp>();
+        return WalkResult::advance();
+      }
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
       std::string name = "__obelisk_recursive_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
@@ -518,6 +530,13 @@ LogicalResult lowerPackedSimulationOperations(
   });
   if (globalInventory.wasInterrupted())
     return failure();
+  if (needsClassBitstreamABI &&
+      (!classBitstreamDesign || failed(analysis::materializeClassBitstreamPlan(
+                                    classBitstreamDesign, dataLayout))))
+    return failure();
+  if (needsClassBitstreamABI)
+    needsClassBitstreamABI =
+        module->hasAttr(sim::metadata::classBitstreamBlob);
   for (const ByteGlobal &global : byteGlobals) {
     auto existingIt = existingSymbols.find(global.name);
     if (existingIt != existingSymbols.end()) {
@@ -578,9 +597,18 @@ LogicalResult lowerPackedSimulationOperations(
   if (needsRecursiveBitstreamABI &&
       failed(declareRuntimeABI(
           module.getLoc(), "obelisk_rt_v1_recursive_export_bitstream", i32,
-          {pointer, pointer, pointer, i64, i64, i32, pointer, pointer, i64,
-           i64, i32, pointer, i64, i32, pointer, pointer})))
+          {pointer, pointer, pointer, i64, i64, i32, pointer, pointer, i64, i64,
+           i32, pointer, i64, i32, pointer, pointer})))
     return failure();
+  if (needsClassBitstreamABI &&
+      failed(declareRuntimeABI(
+          module.getLoc(), "obelisk_rt_v2_recursive_export_bitstream", i32,
+          {pointer, i64, pointer, pointer, i64, i64, i32, pointer, pointer, i64,
+           i64, i32, i32, pointer, pointer})))
+    return failure();
+  if (needsClassBitstreamABI) {
+    module->setAttr("obelisk.feature.class_bitstream", UnitAttr::get(context));
+  }
   markTiming("byte-global inventory and materialization");
 
   auto configurePackedConverter = [&](SimulationToStandardTypeConverter &c) {
@@ -783,12 +811,11 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
         sim::SimCovergroupInstanceQueryOp, sim::SimCovergroupTypeQueryOp,
         sim::SimManagedNullOp, sim::SimManagedWatchNullOp,
-        sim::SimManagedIsNullOp, sim::SimEventNullOp,
-        sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
-        sim::SimContainerCreateOp, sim::SimContainerCloneOp,
-        sim::SimContainerImportFixedOp, sim::SimContainerExportFixedOp,
-        sim::SimContainerExportBitstreamOp, sim::SimRecursiveExportBitstreamOp,
-        sim::SimAggregateExportBitstreamOp,
+        sim::SimManagedIsNullOp, sim::SimEventNullOp, sim::SimContainerSizeOp,
+        sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
+        sim::SimContainerCloneOp, sim::SimContainerImportFixedOp,
+        sim::SimContainerExportFixedOp, sim::SimContainerExportBitstreamOp,
+        sim::SimRecursiveExportBitstreamOp, sim::SimAggregateExportBitstreamOp,
         sim::SimContainerSwapOp, sim::SimContainerDeleteOp,
         sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
         sim::SimContainerWriteOp, sim::SimAssocCreateOp, sim::SimAssocReadOp,
@@ -800,17 +827,17 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimRandomCycleNextOp, sim::SimRandomSolveOp,
         sim::SimRandomSolveWideOp, sim::SimStringLiteralOp,
         sim::SimStringFromPackedOp, sim::SimStringToPackedOp,
-        sim::SimStringToPackedExactOp,
-        sim::SimStringConcatOp, sim::SimStringRepeatOp, sim::SimStringLengthOp,
-        sim::SimStringGetcOp, sim::SimStringPutcOp, sim::SimStringSubstrOp,
-        sim::SimStringCompareOp, sim::SimStringCaseConvertOp,
-        sim::SimStringParseIntegerOp, sim::SimStringParseLogicOp,
-        sim::SimStringParseRealOp, sim::SimPlusargParseLogicOp,
-        sim::SimPlusargParseRealOp, sim::SimStringScanFieldOp,
-        sim::SimScanDynamicValidateOp, sim::SimStringScanDynamicOp,
-        sim::SimStringScanRawOp, sim::SimStringSkipRawOp,
-        sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-        sim::SimFileScanDynamicOp, sim::SimFileScanRawOp, sim::SimFileSkipRawOp,
+        sim::SimStringToPackedExactOp, sim::SimStringConcatOp,
+        sim::SimStringRepeatOp, sim::SimStringLengthOp, sim::SimStringGetcOp,
+        sim::SimStringPutcOp, sim::SimStringSubstrOp, sim::SimStringCompareOp,
+        sim::SimStringCaseConvertOp, sim::SimStringParseIntegerOp,
+        sim::SimStringParseLogicOp, sim::SimStringParseRealOp,
+        sim::SimPlusargParseLogicOp, sim::SimPlusargParseRealOp,
+        sim::SimStringScanFieldOp, sim::SimScanDynamicValidateOp,
+        sim::SimStringScanDynamicOp, sim::SimStringScanRawOp,
+        sim::SimStringSkipRawOp, sim::SimStringFormatIntegerOp,
+        sim::SimStringFormatRealOp, sim::SimFileScanDynamicOp,
+        sim::SimFileScanRawOp, sim::SimFileSkipRawOp,
         sim::SimFileOpenStringMCDOp, sim::SimFileOpenStringOp,
         sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
         sim::SimTimeFormatOp, sim::SimTimeScanScaleOp, sim::SimPlusargTestOp,
@@ -848,10 +875,10 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimPackedUnflattenOp, sim::SimSuspendDelayOp,
         sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
         sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
-        sim::SimSuspendClockSetOp,
-        sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
-        sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp,
-        sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+        sim::SimSuspendClockSetOp, sim::SimSuspendEventOp,
+        sim::SimSuspendEventOrderOp, sim::SimSuspendMailboxOp,
+        sim::SimSuspendSemaphoreOp, sim::SimSuspendForeverOp,
+        sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
         sim::SimSuspendChildrenOp, sim::SimSuspendObserveOp,
         sim::SimProcessControlOp, sim::SimControlBoundaryOp>(
         [&](Operation *operation) { return c.isLegal(operation); });

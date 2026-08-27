@@ -42,6 +42,10 @@ constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
 constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
 constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
 constexpr StringLiteral kExportsName = "__obelisk_dpi_exports_v1";
+constexpr StringLiteral kClassBitstreamName =
+    "__obelisk_class_bitstream_blob_v1";
+constexpr uint32_t kExecutionClassBitstream = UINT32_C(1) << 8;
+constexpr uint32_t kExecutionExtensionV3Version = 3;
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -460,6 +464,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
 
   auto bytecode = module->getAttrOfType<DenseI8ArrayAttr>(kBytecodeAttr);
   auto database = module->getAttrOfType<DenseI8ArrayAttr>(kDatabaseAttr);
+  auto classBitstream = module->getAttrOfType<DenseI8ArrayAttr>(
+      sim::metadata::classBitstreamBlob);
   if (bytecode && failed(checkMagic(module, bytecode, StringRef("OBBCDS1\0", 8),
                                     "embedded bytecode")))
     return failure();
@@ -475,11 +481,18 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     return module.emitError()
            << "symbol collision for reserved design database '" << kDatabaseName
            << "'";
+  if (classBitstream && module.lookupSymbol(kClassBitstreamName))
+    return module.emitError()
+           << "symbol collision for reserved class bit-stream blob '"
+           << kClassBitstreamName << "'";
 
   if (bytecode)
     makeByteGlobal(module, kBytecodeName, bytecode, ".obelisk.bytecode");
   if (database)
     makeByteGlobal(module, kDatabaseName, database, ".obelisk.design");
+  if (classBitstream)
+    makeByteGlobal(module, kClassBitstreamName, classBitstream,
+                   ".obelisk.class_bitstream");
 
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -884,6 +897,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     flags = static_cast<uint32_t>(attr.getValue().getZExtValue());
   if (!exports.empty())
     flags |= OBELISK_RT_EXECUTION_DPI_EXPORTS;
+  if (classBitstream)
+    flags |= kExecutionClassBitstream;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {
@@ -952,10 +967,13 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
   Type executionExtensionV2Type = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, pointer, i64, pointer, i64});
+  Type executionExtensionV3Type = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, pointer, i64, pointer, i64, pointer, i64});
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
                 i64, i32, i32, pointer, i64, pointer, i64});
-  Type extensionType = !exports.empty()         ? executionExtensionV2Type
+  Type extensionType = classBitstream           ? executionExtensionV3Type
+                       : !exports.empty()       ? executionExtensionV2Type
                        : !sampledRanges.empty() ? executionExtensionV1Type
                                                 : Type{};
   Type executionStorageType =
@@ -983,8 +1001,13 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   auto *layoutExtensionV2 = llvm::StructType::get(
       layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64,
                       layoutPointer, layoutI64});
+  auto *layoutExtensionV3 = llvm::StructType::get(
+      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64,
+                      layoutPointer, layoutI64, layoutPointer, layoutI64});
   llvm::StructType *layoutExtension =
-      !exports.empty() ? layoutExtensionV2 : layoutExtensionV1;
+      classBitstream
+          ? layoutExtensionV3
+          : (!exports.empty() ? layoutExtensionV2 : layoutExtensionV1);
   auto *layoutStorage =
       llvm::StructType::get(layoutContext, {layoutExecution, layoutExtension});
   uint64_t extensionOffset =
@@ -1082,7 +1105,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         extension = insertValue(
             builder, module.getLoc(), extension,
             integerConstant(builder, module.getLoc(), i32,
-                            !exports.empty()
+                            classBitstream ? kExecutionExtensionV3Version
+                            : !exports.empty()
                                 ? OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION
                                 : OBELISK_RT_EXECUTION_EXTENSION_VERSION),
             0);
@@ -1109,6 +1133,17 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
               builder, module.getLoc(), extension,
               integerConstant(builder, module.getLoc(), i64, exports.size()),
               5);
+        }
+        if (classBitstream) {
+          extension = insertValue(
+              builder, module.getLoc(), extension,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kClassBitstreamName),
+              6);
+          extension = insertValue(builder, module.getLoc(), extension,
+                                  integerConstant(builder, module.getLoc(), i64,
+                                                  classBitstream.size()),
+                                  7);
         }
         Value storage = LLVM::ZeroOp::create(builder, module.getLoc(),
                                              executionStorageType);

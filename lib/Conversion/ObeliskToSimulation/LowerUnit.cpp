@@ -14,6 +14,7 @@
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -1153,10 +1154,13 @@ UnitLowering::convertFixedAggregateBitstream(Value value, Type targetType,
 
 LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
 UnitLowering::convertRecursiveBitstream(Value value, Type targetType,
-                                        Type targetScalar,
-                                        Location location) {
-  std::optional<SmallVector<uint64_t>> plan =
-      sim::getRecursiveBitStreamPlan(value.getType());
+                                        Type targetScalar, Location location,
+                                        bool allowHiddenRoot) {
+  std::optional<SmallVector<uint64_t>> plan = sim::getRecursiveBitStreamPlan(
+      value.getType(), [&](sim::ClassHandleType handle, bool directRoot) {
+        return std::optional<uint64_t>(sim::getClassBitStreamGroupID(
+            handle, allowHiddenRoot && directRoot));
+      });
   if (!plan)
     return emitError(location) << "unsupported recursively dynamic bit-stream "
                                   "cast from "
@@ -1172,7 +1176,8 @@ UnitLowering::convertRecursiveBitstream(Value value, Type targetType,
       TypeRange{targetScalar, builder.getI1Type(),
                 sim::ManagedWatchType::get(function.getContext())},
       value, builder.getDenseI64ArrayAttr(encoded),
-      observe ? builder.getUnitAttr() : UnitAttr{});
+      observe ? builder.getUnitAttr() : UnitAttr{},
+      allowHiddenRoot ? builder.getUnitAttr() : UnitAttr{}, IntegerAttr{});
   if (observe)
     recordSensitivity(packed.getWatch());
   Block *accepted = addBlock();
@@ -1368,8 +1373,8 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return result;
     }
     if (Type targetScalar = sim::getPackedScalarType(targetType)) {
-      return convertContainerBitstream(
-          value, targetType, targetScalar, sourceElement, location);
+      return convertContainerBitstream(value, targetType, targetScalar,
+                                       sourceElement, location);
     }
   }
   if (isa<FloatType>(value.getType()) && isa<FloatType>(targetType)) {
@@ -2304,17 +2309,21 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
           containerElement = associative.getElementType();
         if (containerElement) {
           if (sim::getPackedScalarType(containerElement))
-            return convertContainerBitstream(
-                *input, *target, targetScalar, containerElement,
-                getSemanticLocation(op));
+            return convertContainerBitstream(*input, *target, targetScalar,
+                                             containerElement,
+                                             getSemanticLocation(op));
           return convertRecursiveBitstream(*input, *target, targetScalar,
                                            getSemanticLocation(op));
         }
+        if (isa<sim::ClassHandleType>(input->getType()))
+          return convertRecursiveBitstream(
+              *input, *target, targetScalar, getSemanticLocation(op),
+              op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
         if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(
                 input->getType())) {
           if (sim::getFixedBitStreamPlan(input->getType()))
-            return convertFixedAggregateBitstream(
-                *input, *target, targetScalar, getSemanticLocation(op));
+            return convertFixedAggregateBitstream(*input, *target, targetScalar,
+                                                  getSemanticLocation(op));
           return convertRecursiveBitstream(*input, *target, targetScalar,
                                            getSemanticLocation(op));
         }
@@ -2432,16 +2441,16 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       FailureOr<Value> pControl = lowerControl(operations[3]);
       if (failed(pControl))
         return failure();
-      Value invertedP = sim::SimLogicUnaryOp::create(
-          builder, location, pControl->getType(), sim::UnaryKind::BitNot,
-          *pControl);
+      Value invertedP =
+          sim::SimLogicUnaryOp::create(builder, location, pControl->getType(),
+                                       sim::UnaryKind::BitNot, *pControl);
       activeHigh = sim::SimLogicBinaryOp::create(
           builder, location, activeHigh.getType(), sim::BinaryKind::Or,
           activeHigh, invertedP);
     } else if (name == "pmos" || name == "rpmos") {
-      activeHigh = sim::SimLogicUnaryOp::create(
-          builder, location, activeHigh.getType(), sim::UnaryKind::BitNot,
-          activeHigh);
+      activeHigh =
+          sim::SimLogicUnaryOp::create(builder, location, activeHigh.getType(),
+                                       sim::UnaryKind::BitNot, activeHigh);
     }
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
         "obelisk_sim.propagation_delays");
@@ -4307,8 +4316,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       }
       if (state.proceduralStorage != proceduralActor ||
           (state.proceduralStorage &&
-           (!rule.get("path_site_id") ||
-            !rule.get("procedural_wake_kind"))) ||
+           (!rule.get("path_site_id") || !rule.get("procedural_wake_kind"))) ||
           (state.proceduralStorage && state.proceduralWakeKind == 0) ||
           state.proceduralWakeKind < 0 || state.proceduralWakeKind > 3)
         return function.emitError("timing path actor kind does not match rule");
@@ -4342,8 +4350,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (auto driverNodeID = rule.getAs<IntegerAttr>("driver_node_id")) {
           if (driverNodeID.getInt() < 0)
             return function.emitError("invalid timing path driver identity");
-          state.driverNodeID =
-              static_cast<uint64_t>(driverNodeID.getInt());
+          state.driverNodeID = static_cast<uint64_t>(driverNodeID.getInt());
         }
       }
       for (size_t index = 0; index != inputPaths.size(); ++index) {
@@ -4374,7 +4381,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
               return function.emitError("invalid timing path source LSB");
             lsb = static_cast<uint64_t>(inputLsbs[index]);
             if (lsb < low || lsb >= low + width)
-              return function.emitError("timing path source LSB is out of bounds");
+              return function.emitError(
+                  "timing path source LSB is out of bounds");
           }
         }
         state.sources.push_back(
@@ -4419,22 +4427,48 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       if (delayValues.size() == 1) {
         state.delays.fill(delayValues[0]);
       } else if (delayValues.size() == 2) {
-        state.delays = {rise, fall, rise, rise, fall, fall,
-                        rise, rise, fall, fall,
-                        std::max(rise, fall), std::min(rise, fall)};
+        state.delays = {rise,
+                        fall,
+                        rise,
+                        rise,
+                        fall,
+                        fall,
+                        rise,
+                        rise,
+                        fall,
+                        fall,
+                        std::max(rise, fall),
+                        std::min(rise, fall)};
       } else if (delayValues.size() == 3) {
         int64_t z = delayValues[2];
-        state.delays = {rise, fall, z, rise, z, fall,
-                        std::min(rise, z), rise, std::min(fall, z), fall,
-                        z, std::min(rise, fall)};
+        state.delays = {rise,
+                        fall,
+                        z,
+                        rise,
+                        z,
+                        fall,
+                        std::min(rise, z),
+                        rise,
+                        std::min(fall, z),
+                        fall,
+                        z,
+                        std::min(rise, fall)};
       } else if (delayValues.size() == 6) {
         int64_t t01 = delayValues[0], t10 = delayValues[1];
         int64_t t0z = delayValues[2], tz1 = delayValues[3];
         int64_t t1z = delayValues[4], tz0 = delayValues[5];
-        state.delays = {t01, t10, t0z, tz1, t1z, tz0,
-                        std::min(t01, t0z), std::max(t01, tz1),
-                        std::min(t10, t1z), std::max(t10, tz0),
-                        std::max(t1z, t0z), std::min(tz1, tz0)};
+        state.delays = {t01,
+                        t10,
+                        t0z,
+                        tz1,
+                        t1z,
+                        tz0,
+                        std::min(t01, t0z),
+                        std::max(t01, tz1),
+                        std::min(t10, t1z),
+                        std::max(t10, tz0),
+                        std::max(t1z, t0z),
+                        std::min(tz1, tz0)};
       } else {
         llvm::copy(delayValues, state.delays.begin());
       }
@@ -4598,8 +4632,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                 sim::CompareKind::CaseNe, current, previous);
           } else {
             if (maskedRules)
-              differenceMask = arith::XOrIOp::create(
-                  builder, function.getLoc(), current, previous);
+              differenceMask = arith::XOrIOp::create(builder, function.getLoc(),
+                                                     current, previous);
             differs = arith::CmpIOp::create(builder, function.getLoc(),
                                             arith::CmpIPredicate::ne, current,
                                             previous);
@@ -4666,14 +4700,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                     builder, function.getLoc(), oldZero, notNewZero);
                 Value unknownToOne = arith::AndIOp::create(
                     builder, function.getLoc(), oldUnknown, newOne);
-                posedge = arith::OrIOp::create(
-                    builder, function.getLoc(), zeroToNonzero, unknownToOne);
+                posedge = arith::OrIOp::create(builder, function.getLoc(),
+                                               zeroToNonzero, unknownToOne);
                 Value oneToNonone = arith::AndIOp::create(
                     builder, function.getLoc(), oldOne, notNewOne);
                 Value unknownToZero = arith::AndIOp::create(
                     builder, function.getLoc(), oldUnknown, newZero);
-                negedge = arith::OrIOp::create(
-                    builder, function.getLoc(), oneToNonone, unknownToZero);
+                negedge = arith::OrIOp::create(builder, function.getLoc(),
+                                               oneToNonone, unknownToZero);
               } else {
                 Value previousBit =
                     selectBits(transition.previous, source.lsb, 1);
@@ -4686,23 +4720,24 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                     builder, function.getLoc(), previousBit, one);
                 Value invertedCurrent = arith::XOrIOp::create(
                     builder, function.getLoc(), currentBit, one);
-                posedge = arith::AndIOp::create(
-                    builder, function.getLoc(), invertedPrevious, currentBit);
-                negedge = arith::AndIOp::create(
-                    builder, function.getLoc(), previousBit, invertedCurrent);
+                posedge = arith::AndIOp::create(builder, function.getLoc(),
+                                                invertedPrevious, currentBit);
+                negedge = arith::AndIOp::create(builder, function.getLoc(),
+                                                previousBit, invertedCurrent);
               }
-              edge = edgeTransitions.try_emplace(edgeKey, posedge, negedge).first;
+              edge =
+                  edgeTransitions.try_emplace(edgeKey, posedge, negedge).first;
             }
             selected = edge->second.first;
             if (rule.edgeIdentifier == 2)
               selected = edge->second.second;
             else if (rule.edgeIdentifier == 3)
-              selected = arith::OrIOp::create(builder, function.getLoc(),
-                                              edge->second.first,
-                                              edge->second.second);
+              selected =
+                  arith::OrIOp::create(builder, function.getLoc(),
+                                       edge->second.first, edge->second.second);
           } else {
-            selected = selectBits(transition.differenceMask, source.low,
-                                  source.width);
+            selected =
+                selectBits(transition.differenceMask, source.low, source.width);
           }
           terminalChanged = arith::CmpIOp::create(
               builder, function.getLoc(), arith::CmpIPredicate::ne, selected,
@@ -4779,22 +4814,21 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             builder, function.getLoc(), condition, changedMasks[index],
             integerZero(destinationMaskType));
         if (rule.edgeSensitive) {
-          Value pending = sim::SimRefLoadOp::create(
-              builder, function.getLoc(), destinationMaskType,
-              rule.edgePending);
+          Value pending =
+              sim::SimRefLoadOp::create(builder, function.getLoc(),
+                                        destinationMaskType, rule.edgePending);
           Value epoch = sim::SimRefLoadOp::create(
-              builder, function.getLoc(), builder.getI64Type(),
-              rule.edgeEpoch);
-          Value sameEpoch = arith::CmpIOp::create(
-              builder, function.getLoc(), arith::CmpIPredicate::eq, epoch,
-              schedulerNow);
-          pending = arith::SelectOp::create(
-              builder, function.getLoc(), sameEpoch, pending,
-              integerZero(destinationMaskType));
-          applicableMask = arith::OrIOp::create(
-              builder, function.getLoc(), pending, applicableMask);
-          sim::SimRefStoreOp::create(builder, function.getLoc(),
-                                     applicableMask, rule.edgePending);
+              builder, function.getLoc(), builder.getI64Type(), rule.edgeEpoch);
+          Value sameEpoch = arith::CmpIOp::create(builder, function.getLoc(),
+                                                  arith::CmpIPredicate::eq,
+                                                  epoch, schedulerNow);
+          pending = arith::SelectOp::create(builder, function.getLoc(),
+                                            sameEpoch, pending,
+                                            integerZero(destinationMaskType));
+          applicableMask = arith::OrIOp::create(builder, function.getLoc(),
+                                                pending, applicableMask);
+          sim::SimRefStoreOp::create(builder, function.getLoc(), applicableMask,
+                                     rule.edgePending);
           sim::SimRefStoreOp::create(builder, function.getLoc(), schedulerNow,
                                      rule.edgeEpoch);
         }
@@ -4805,8 +4839,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             builder, function.getLoc(), arith::CmpIPredicate::ne,
             applicableMask, integerZero(destinationMaskType)));
       } else {
-        applicable.push_back(arith::AndIOp::create(
-            builder, function.getLoc(), changed[index], condition));
+        applicable.push_back(arith::AndIOp::create(builder, function.getLoc(),
+                                                   changed[index], condition));
       }
     }
     if (maskedRules) {
@@ -4932,10 +4966,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     if (allTimingPathRules.empty())
       return success();
     bool keyed = allTimingPathRules.front().driverNodeID.has_value();
-    if (llvm::any_of(allTimingPathRules,
-                     [&](const TimingPathRuleState &rule) {
-                       return rule.driverNodeID.has_value() != keyed;
-                     }))
+    if (llvm::any_of(allTimingPathRules, [&](const TimingPathRuleState &rule) {
+          return rule.driverNodeID.has_value() != keyed;
+        }))
       return function.emitError("mixed timing path driver identities");
     if (!keyed) {
       if (failed(buildTimingPathPlan(allTimingPathRules, std::nullopt)))

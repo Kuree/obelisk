@@ -120,8 +120,8 @@ public:
     if (!traceOffsets.empty()) {
       std::string name =
           "__obelisk_element_trace_" + std::to_string(op.getTypeId());
-      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                             name);
+      traceSlots =
+          LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
     Value status =
         LLVM::CallOp::create(
@@ -460,13 +460,6 @@ public:
     Value matched = entryAlloca(rewriter, location, i32, 1, 4);
     Value watch = entryAlloca(rewriter, location, i64, 1, 8);
     Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
-    StringAttr globalName =
-        op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
-    if (!globalName)
-      return op.emitOpError(
-          "recursive bit-stream plan was not prepared before conversion");
-    Value plan = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                           globalName.getValue());
     auto c32 = [&](uint32_t value) {
       return llvmConstant(rewriter, location, i32, value);
     };
@@ -475,32 +468,55 @@ public:
     };
     auto [context, lane] = managedContextAndLane(rewriter, location);
     (void)lane;
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, location, TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_recursive_export_bitstream"),
-            ValueRange{context, inputs[0],
-                       inputs.size() == 2 ? inputs[1] : null,
-                       c64(inputStorage->size), c64(inputWidth),
-                       c32(inputStorage->fourState), outputs[0],
-                       outputs.size() == 2 ? outputs[1] : null,
-                       c64(outputStorage->size), c64(*outputWidth),
-                       c32(outputStorage->fourState), plan,
-                       c64(op.getPlan().size() * sizeof(int64_t)),
-                       c32(op.getObserve() ? 1 : 0), matched, watch})
-            .getResult();
+    Value status;
+    if (auto site = op.getClassSiteIdAttr()) {
+      status =
+          LLVM::CallOp::create(
+              rewriter, location, TypeRange{i32},
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v2_recursive_export_bitstream"),
+              ValueRange{context, c64(site.getValue().getZExtValue()),
+                         inputs[0], inputs.size() == 2 ? inputs[1] : null,
+                         c64(inputStorage->size), c64(inputWidth),
+                         c32(inputStorage->fourState), outputs[0],
+                         outputs.size() == 2 ? outputs[1] : null,
+                         c64(outputStorage->size), c64(*outputWidth),
+                         c32(outputStorage->fourState),
+                         c32(op.getObserve() ? 1 : 0), matched, watch})
+              .getResult();
+    } else {
+      StringAttr globalName =
+          op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
+      if (!globalName)
+        return op.emitOpError(
+            "recursive bit-stream plan was not prepared before conversion");
+      Value plan = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                             globalName.getValue());
+      status =
+          LLVM::CallOp::create(
+              rewriter, location, TypeRange{i32},
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v1_recursive_export_bitstream"),
+              ValueRange{context, inputs[0],
+                         inputs.size() == 2 ? inputs[1] : null,
+                         c64(inputStorage->size), c64(inputWidth),
+                         c32(inputStorage->fourState), outputs[0],
+                         outputs.size() == 2 ? outputs[1] : null,
+                         c64(outputStorage->size), c64(*outputWidth),
+                         c32(outputStorage->fourState), plan,
+                         c64(op.getPlan().size() * sizeof(int64_t)),
+                         c32(op.getObserve() ? 1 : 0), matched, watch})
+              .getResult();
+    }
     reportManagedStatus(rewriter, location, context, status);
     SmallVector<Value> results;
     for (auto [type, storage] : llvm::zip_equal(resultTypes, outputs))
       results.push_back(LLVM::LoadOp::create(rewriter, location, type, storage,
                                              outputStorage->alignment));
-    Value matched32 =
-        LLVM::LoadOp::create(rewriter, location, i32, matched, 4);
+    Value matched32 = LLVM::LoadOp::create(rewriter, location, i32, matched, 4);
     Value matched1 = LLVM::TruncOp::create(rewriter, location,
                                            rewriter.getI1Type(), matched32);
-    Value watchValue =
-        LLVM::LoadOp::create(rewriter, location, i64, watch, 8);
+    Value watchValue = LLVM::LoadOp::create(rewriter, location, i64, watch, 8);
     rewriter.replaceOpWithMultiple(
         op, SmallVector<ValueRange>{ValueRange(results), ValueRange{matched1},
                                     ValueRange{watchValue}});
@@ -753,8 +769,8 @@ public:
     if (!traceOffsets.empty()) {
       std::string name =
           "__obelisk_mailbox_element_trace_" + std::to_string(op.getTypeId());
-      traceSlots = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                             name);
+      traceSlots =
+          LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
     Value status =
         LLVM::CallOp::create(
@@ -915,10 +931,10 @@ public:
       storage.push_back(slot);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     Type i32 = rewriter.getI32Type();
     Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
     LLVM::StoreOp::create(rewriter, op.getLoc(),
@@ -938,9 +954,8 @@ public:
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value loaded =
         LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4);
-    rewriter.replaceOp(op, LLVM::TruncOp::create(
-                               rewriter, op.getLoc(), rewriter.getI1Type(),
-                               loaded));
+    rewriter.replaceOp(op, LLVM::TruncOp::create(rewriter, op.getLoc(),
+                                                 rewriter.getI1Type(), loaded));
     return success();
   }
 };
@@ -970,10 +985,10 @@ public:
       storage.push_back(slot);
     }
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value unknown = storage.size() == 2
-                        ? storage[1]
-                        : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(),
-                                                    pointer));
+    Value unknown =
+        storage.size() == 2
+            ? storage[1]
+            : Value(LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer));
     Type i32 = rewriter.getI32Type();
     Value present = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
     LLVM::StoreOp::create(rewriter, op.getLoc(),
@@ -984,9 +999,9 @@ public:
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(
-                rewriter.getContext(), Remove ? "obelisk_rt_v1_mailbox_try_get"
-                                              : "obelisk_rt_v1_mailbox_try_peek"),
+            SymbolRefAttr::get(rewriter.getContext(),
+                               Remove ? "obelisk_rt_v1_mailbox_try_get"
+                                      : "obelisk_rt_v1_mailbox_try_peek"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getMailbox().front()),
                        storage.front(), unknown, present})
@@ -1046,17 +1061,15 @@ public:
     Value snapshot = entryAlloca(rewriter, op.getLoc(), i64, 2, 8);
     Value incrementAddress = byteGEP(rewriter, op.getLoc(), snapshot, 8);
     Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
                                           "obelisk_rt_v1_random_get_state"),
                        ValueRange{context, snapshot})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
-    Value state =
-        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, snapshot, 8);
-    Value increment = LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
-                                           incrementAddress, 8);
+    Value state = LLVM::LoadOp::create(rewriter, op.getLoc(), i64, snapshot, 8);
+    Value increment =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), i64, incrementAddress, 8);
     rewriter.replaceOp(op, ValueRange{state, increment});
     return success();
   }
@@ -1078,11 +1091,10 @@ public:
     LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getState().front(),
                           snapshot, 8);
     Value incrementAddress = byteGEP(rewriter, op.getLoc(), snapshot, 8);
-    LLVM::StoreOp::create(rewriter, op.getLoc(),
-                          adaptor.getIncrement().front(), incrementAddress, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getIncrement().front(),
+                          incrementAddress, 8);
     Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(),
-                       TypeRange{rewriter.getI32Type()},
+                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
                                           "obelisk_rt_v1_random_set_state"),
                        ValueRange{context, snapshot})
@@ -1103,8 +1115,8 @@ public:
     if (adaptor.getContext().size() != 1 || adaptor.getSource().size() != 1)
       return failure();
     SmallVector<Type> types;
-    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
-                                               types)) ||
+    if (failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.empty() || types.size() > 2)
       return failure();
     auto plane = dyn_cast<IntegerType>(types.front());
@@ -1112,17 +1124,17 @@ public:
       return failure();
     Value value = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
     Value unknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_sampled_read"),
-                       ValueRange{adaptor.getContext().front(),
-                                  adaptor.getSource().front(),
-                                  llvmConstant(rewriter, op.getLoc(),
-                                               rewriter.getI64Type(),
-                                               plane.getWidth()),
-                                  value, unknown})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_sampled_read"),
+            ValueRange{adaptor.getContext().front(),
+                       adaptor.getSource().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), plane.getWidth()),
+                       value, unknown})
+            .getResult();
     reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
                         status);
     SmallVector<Value> results{
@@ -1159,8 +1171,8 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value null = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     Value currentValue = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
-    LLVM::StoreOp::create(rewriter, op.getLoc(),
-                          adaptor.getCurrent().front(), currentValue, 1);
+    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getCurrent().front(),
+                          currentValue, 1);
     Value currentUnknown = null;
     if (resultTypes.size() == 2) {
       currentUnknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
@@ -1177,26 +1189,26 @@ public:
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), value);
     };
-    Value gate = LLVM::ZExtOp::create(rewriter, op.getLoc(),
-                                      rewriter.getI32Type(),
-                                      adaptor.getGate().front());
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_sampled_history"),
-                       ValueRange{adaptor.getContext().front(), c64(op.getId()),
-                                  c64(plane.getWidth()), c64(op.getDepth()),
-                                  c32(resultTypes.size() == 2), gate,
-                                  currentValue, currentUnknown, outputValue,
-                                  outputUnknown})
-                       .getResult();
+    Value gate =
+        LLVM::ZExtOp::create(rewriter, op.getLoc(), rewriter.getI32Type(),
+                             adaptor.getGate().front());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_sampled_history"),
+            ValueRange{adaptor.getContext().front(), c64(op.getId()),
+                       c64(plane.getWidth()), c64(op.getDepth()),
+                       c32(resultTypes.size() == 2), gate, currentValue,
+                       currentUnknown, outputValue, outputUnknown})
+            .getResult();
     reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
                         status);
     SmallVector<Value> results{
         LLVM::LoadOp::create(rewriter, op.getLoc(), plane, outputValue, 1)};
     if (resultTypes.size() == 2)
-      results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), plane,
-                                             outputUnknown, 1));
+      results.push_back(
+          LLVM::LoadOp::create(rewriter, op.getLoc(), plane, outputUnknown, 1));
     rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{results});
     return success();
   }
@@ -1219,8 +1231,8 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value null = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     Value currentValue = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
-    LLVM::StoreOp::create(rewriter, op.getLoc(),
-                          adaptor.getCurrent().front(), currentValue, 1);
+    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getCurrent().front(),
+                          currentValue, 1);
     Value currentUnknown = null;
     if (adaptor.getCurrent().size() == 2) {
       currentUnknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
@@ -1233,19 +1245,19 @@ public:
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), value);
     };
-    Value gate = LLVM::ZExtOp::create(rewriter, op.getLoc(),
-                                      rewriter.getI32Type(),
-                                      adaptor.getGate().front());
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(
-                           rewriter.getContext(),
-                           "obelisk_rt_v1_clocked_sample_update"),
-                       ValueRange{adaptor.getContext().front(), c64(op.getId()),
-                                  c64(plane.getWidth()), c64(op.getDepth()),
-                                  c32(adaptor.getCurrent().size() == 2), gate,
-                                  currentValue, currentUnknown})
-                       .getResult();
+    Value gate =
+        LLVM::ZExtOp::create(rewriter, op.getLoc(), rewriter.getI32Type(),
+                             adaptor.getGate().front());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_clocked_sample_update"),
+            ValueRange{adaptor.getContext().front(), c64(op.getId()),
+                       c64(plane.getWidth()), c64(op.getDepth()),
+                       c32(adaptor.getCurrent().size() == 2), gate,
+                       currentValue, currentUnknown})
+            .getResult();
     reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
                         status);
     rewriter.eraseOp(op);
@@ -1278,23 +1290,23 @@ public:
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), value);
     };
-    Value status = LLVM::CallOp::create(
-                       rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_clocked_sample_read"),
-                       ValueRange{adaptor.getContext().front(), c64(op.getId()),
-                                  c64(plane.getWidth()), c64(op.getDepth()),
-                                  c64(op.getAge()),
-                                  c32(resultTypes.size() == 2), outputValue,
-                                  outputUnknown})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_clocked_sample_read"),
+            ValueRange{adaptor.getContext().front(), c64(op.getId()),
+                       c64(plane.getWidth()), c64(op.getDepth()),
+                       c64(op.getAge()), c32(resultTypes.size() == 2),
+                       outputValue, outputUnknown})
+            .getResult();
     reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
                         status);
     SmallVector<Value> results{
         LLVM::LoadOp::create(rewriter, op.getLoc(), plane, outputValue, 1)};
     if (resultTypes.size() == 2)
-      results.push_back(LLVM::LoadOp::create(rewriter, op.getLoc(), plane,
-                                             outputUnknown, 1));
+      results.push_back(
+          LLVM::LoadOp::create(rewriter, op.getLoc(), plane, outputUnknown, 1));
     rewriter.replaceOpWithMultiple(op, ArrayRef<SmallVector<Value>>{results});
     return success();
   }
@@ -1459,10 +1471,10 @@ public:
         rewriter, op.getLoc(), statusType, status);
     sim::SimStatusCheckOp::create(rewriter, op.getLoc(), runtimeStatus);
     rewriter.replaceOp(
-        op, ValueRange{LLVM::LoadOp::create(rewriter, op.getLoc(), i64,
-                                            nextPosition, 8),
-                       LLVM::LoadOp::create(rewriter, op.getLoc(), i64, value,
-                                            8)});
+        op,
+        ValueRange{
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i64, nextPosition, 8),
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i64, value, 8)});
     return success();
   }
 };
@@ -1488,8 +1500,8 @@ public:
     StringRef program = op.getProgram();
     std::string name = "__obelisk_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
-    Value programAddress = LLVM::AddressOfOp::create(
-        rewriter, op.getLoc(), pointer, name);
+    Value programAddress =
+        LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
 
     Value captureAddress = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!captures.empty()) {
@@ -1565,8 +1577,8 @@ public:
     StringRef program = op.getProgram();
     std::string name = "__obelisk_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
-    Value programAddress = LLVM::AddressOfOp::create(
-        rewriter, op.getLoc(), pointer, name);
+    Value programAddress =
+        LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), i64, value);
     };
@@ -1661,9 +1673,11 @@ public:
                                        index * sizeof(uint64_t)),
                                8);
       if (assignmentType.getWidth() > 64)
-        word = LLVM::ZExtOp::create(rewriter, op.getLoc(), assignmentType, word);
+        word =
+            LLVM::ZExtOp::create(rewriter, op.getLoc(), assignmentType, word);
       else if (assignmentType.getWidth() < 64)
-        word = LLVM::TruncOp::create(rewriter, op.getLoc(), assignmentType, word);
+        word =
+            LLVM::TruncOp::create(rewriter, op.getLoc(), assignmentType, word);
       if (index != 0)
         word = arith::ShLIOp::create(
             rewriter, op.getLoc(), word,
@@ -1704,8 +1718,8 @@ public:
         if (index == 1 || isa<sim::EventType>(op.getResult().getType()))
           initial = arith::ConstantOp::create(
               rewriter, op.getLoc(), type,
-              rewriter.getIntegerAttr(
-                  integer, APInt::getAllOnes(integer.getWidth())));
+              rewriter.getIntegerAttr(integer,
+                                      APInt::getAllOnes(integer.getWidth())));
       } else if (auto floating = dyn_cast<FloatType>(type)) {
         byteSize = floating.getWidth() / 8;
       }

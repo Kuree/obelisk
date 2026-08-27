@@ -10,6 +10,7 @@
 #include "mlir/IR/Types.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "obelisk/Dialect/Simulation/SimulationEnums.h.inc"
@@ -66,6 +67,23 @@ getFixedBitStreamPlan(::mlir::Type type);
 /// ABI.
 std::optional<::llvm::SmallVector<uint64_t>>
 getRecursiveBitStreamPlan(::mlir::Type type);
+
+/// Build the version-two recursive plan for a source that may contain class
+/// handles.  The resolver supplies the trusted nonzero dispatch-group ID for
+/// each OBJECT record; `directRoot` is true only for a direct class-handle
+/// source, never for a handle reached through an aggregate or container.
+using ClassBitStreamGroupResolver =
+    ::llvm::function_ref<std::optional<uint64_t>(ClassHandleType,
+                                                 bool directRoot)>;
+std::optional<::llvm::SmallVector<uint64_t>>
+getRecursiveBitStreamPlan(::mlir::Type type,
+                          ClassBitStreamGroupResolver resolver,
+                          bool requireDynamic = true);
+
+/// Target-independent identifier for one static class source and root
+/// visibility mode.  Materialization rejects the vanishingly unlikely hash
+/// collision before this ID becomes runtime authority.
+uint64_t getClassBitStreamGroupID(ClassHandleType type, bool allowHiddenRoot);
 
 /// Runtime-managed categories that can occupy a source value word. These are
 /// bit flags because an overlapping union slot may legally represent more

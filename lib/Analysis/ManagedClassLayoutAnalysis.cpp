@@ -5,13 +5,11 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 
 #include <algorithm>
-#include <functional>
 #include <limits>
 
 using namespace mlir;
@@ -84,14 +82,7 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
   uint32_t managedWordAlignment =
       static_cast<uint32_t>(managedWordABIAlignment);
 
-  llvm::StringSet<> active;
-  std::function<LogicalResult(sim::SimClassDeclOp)> computeClass =
-      [&](sim::SimClassDeclOp declaration) -> LogicalResult {
-    if (result.indices.count(declaration.getSymName()))
-      return success();
-    if (!active.insert(declaration.getSymName()).second)
-      return declaration.emitOpError("managed class layout contains a cycle");
-
+  auto computeClass = [&](sim::SimClassDeclOp declaration) -> LogicalResult {
     Class layout{
         declaration, objectHeaderSize, objectAlignment, std::nullopt, {}};
     if (auto baseName = declaration.getBase()) {
@@ -99,11 +90,10 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
       if (base == declarations.end())
         return declaration.emitOpError(
             "managed class layout references an unknown base");
-      if (failed(computeClass(base->second)))
-        return failure();
       const Class *baseLayout = result.lookup(base->getKey());
       if (!baseLayout)
-        return failure();
+        return declaration.emitOpError(
+            "managed class base layout was not materialized");
       layout.size = baseLayout->size;
       layout.alignment = baseLayout->alignment;
     }
@@ -143,7 +133,6 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
     if (!checkedAlignTo(layout.size, layout.alignment, alignedSize))
       return declaration.emitOpError("class instance size overflows");
     layout.size = alignedSize;
-    active.erase(declaration.getSymName());
     result.indices[declaration.getSymName()] = result.classes.size();
     result.idIndices[declaration.getId()] = result.classes.size();
     result.classes.push_back(std::move(layout));
@@ -158,9 +147,60 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
     return std::make_pair(lhs.getId(), lhs.getSymName()) <
            std::make_pair(rhs.getId(), rhs.getSymName());
   });
-  for (sim::SimClassDeclOp declaration : ordered)
-    if (failed(computeClass(declaration)))
-      return failure();
+  llvm::StringMap<uint8_t> state;
+  struct Frame {
+    sim::SimClassDeclOp declaration;
+    bool exit;
+  };
+  SmallVector<Frame, 32> stack;
+  for (sim::SimClassDeclOp root : ordered) {
+    if (state.lookup(root.getSymName()) == 2)
+      continue;
+    stack.push_back({root, false});
+    while (!stack.empty()) {
+      Frame frame = stack.pop_back_val();
+      sim::SimClassDeclOp declaration = frame.declaration;
+      uint8_t &current = state[declaration.getSymName()];
+      if (frame.exit) {
+        if (auto baseName = declaration.getBase()) {
+          auto base = declarations.find(*baseName);
+          if (base == declarations.end())
+            return declaration.emitOpError(
+                       "managed class layout references an unknown base"),
+                   failure();
+          if (state.lookup(base->getKey()) != 2)
+            return declaration.emitOpError(
+                       "managed class layout contains a cycle"),
+                   failure();
+        }
+        if (failed(computeClass(declaration)))
+          return failure();
+        current = 2;
+        continue;
+      }
+      if (current == 2)
+        continue;
+      if (current == 1)
+        return declaration.emitOpError("managed class layout contains a cycle"),
+               failure();
+      current = 1;
+      stack.push_back({declaration, true});
+      if (auto baseName = declaration.getBase()) {
+        auto base = declarations.find(*baseName);
+        if (base == declarations.end())
+          return declaration.emitOpError(
+                     "managed class layout references an unknown base"),
+                 failure();
+        uint8_t baseState = state.lookup(base->getKey());
+        if (baseState == 1)
+          return declaration.emitOpError(
+                     "managed class layout contains a cycle"),
+                 failure();
+        if (baseState == 0)
+          stack.push_back({base->second, false});
+      }
+    }
+  }
   return result;
 }
 

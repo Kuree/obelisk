@@ -118,9 +118,9 @@ private:
   /// Surround `scalar` with `padding` out-of-range bits on either side. Reads
   /// of the padding see x, matching what IEEE 1800-2017 11.5.1 requires of a
   /// select position outside the value.
-  ::mlir::FailureOr<::mlir::Value> padSelectionWindow(::mlir::Value scalar,
-                                                      uint64_t padding,
-                                                      ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  padSelectionWindow(::mlir::Value scalar, uint64_t padding,
+                     ::mlir::Location location);
   /// Recover the original value from a window produced by padSelectionWindow,
   /// dropping whatever a write placed in the padding.
   ::mlir::FailureOr<::mlir::Value>
@@ -165,15 +165,13 @@ private:
                                                      ::mlir::Value outputIndex,
                                                      bool fourState,
                                                      ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  reorderBitStream(::mlir::Value stream, uint64_t slice,
-                   ::mlir::Location location, ::mlir::Value limit = {});
-  ::mlir::FailureOr<::mlir::Value>
-  materializeDynamicBitStreamTarget(::mlir::Value stream,
-                                    ::mlir::Value totalWidth,
-                                    ::mlir::Type targetType,
-                                    ::mlir::Location location,
-                                    ::mlir::Value packedSource = {});
+  ::mlir::FailureOr<::mlir::Value> reorderBitStream(::mlir::Value stream,
+                                                    uint64_t slice,
+                                                    ::mlir::Location location,
+                                                    ::mlir::Value limit = {});
+  ::mlir::FailureOr<::mlir::Value> materializeDynamicBitStreamTarget(
+      ::mlir::Value stream, ::mlir::Value totalWidth, ::mlir::Type targetType,
+      ::mlir::Location location, ::mlir::Value packedSource = {});
   ::mlir::FailureOr<::mlir::Value>
   sliceStreamingContainer(::mlir::Value container, ::mlir::Operation *withRange,
                           ::mlir::Location location);
@@ -307,12 +305,12 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
-  lowerSampledValue(::mlir::Operation *expression,
-                    ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value> lowerAlternateClockSample(
-      ::mlir::Operation *expression, ::mlir::Operation *gateExpression,
-      ::mlir::Operation *clock, uint64_t depth, uint64_t age,
-      ::mlir::Location location);
+  lowerSampledValue(::mlir::Operation *expression, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerAlternateClockSample(::mlir::Operation *expression,
+                            ::mlir::Operation *gateExpression,
+                            ::mlir::Operation *clock, uint64_t depth,
+                            uint64_t age, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
       ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
       uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
@@ -475,10 +473,9 @@ private:
   convertFixedAggregateBitstream(::mlir::Value value, ::mlir::Type targetType,
                                  ::mlir::Type targetScalar,
                                  ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value>
-  convertRecursiveBitstream(::mlir::Value value, ::mlir::Type targetType,
-                            ::mlir::Type targetScalar,
-                            ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> convertRecursiveBitstream(
+      ::mlir::Value value, ::mlir::Type targetType, ::mlir::Type targetScalar,
+      ::mlir::Location location, bool allowHiddenRoot = false);
   ::mlir::FailureOr<::mlir::Value>
   convertStringBitstream(::mlir::Value value, ::mlir::Type targetType,
                          ::mlir::Type targetScalar, ::mlir::Location location);
@@ -497,17 +494,17 @@ private:
   /// representation without conflating an X/Z-containing four-state index
   /// with integer zero.  The container runtime already defines every negative
   /// index as invalid, so -1 is the common sentinel for an unknown index.
-  ::mlir::FailureOr<::mlir::Value>
-  toContainerIndex(::mlir::Value value, bool sourceSigned,
-                   ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> toContainerIndex(::mlir::Value value,
+                                                    bool sourceSigned,
+                                                    ::mlir::Location location);
   /// Widen a fixed-array index to the form the dynamic array operations take:
   /// one bit wider than both the source index and the i64 the declared bounds
   /// are compared in, so a source-range index can neither wrap nor lose its
   /// sign. Four-state indices keep their unknown plane, which IEEE 1800-2017
   /// 7.4.6 makes an invalid index.
-  ::mlir::FailureOr<::mlir::Value>
-  toArrayIndex(::mlir::Value value, bool sourceSigned,
-               ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> toArrayIndex(::mlir::Value value,
+                                                bool sourceSigned,
+                                                ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   formatTaggedUnionPattern(::mlir::Value value, ::mlir::Type semanticType,
                            ::mlir::Location location);
@@ -537,9 +534,9 @@ private:
   currentTimeInUnits(::mlir::Location location);
   // Emit the IEEE 1800-2017 20.2 Table 20-1 diagnostic for a $finish or $stop
   // whose verbosity is not the constant 0.
-  ::mlir::LogicalResult
-  emitTerminationDiagnostic(::mlir::StringRef name, ::mlir::Value verbosity,
-                            ::mlir::Location location);
+  ::mlir::LogicalResult emitTerminationDiagnostic(::mlir::StringRef name,
+                                                  ::mlir::Value verbosity,
+                                                  ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> truthValue(::mlir::Value value,
                                               ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toLogic(::mlir::Value value,
@@ -577,10 +574,10 @@ private:
   // 14.16, unless `clockingBlockOnly` demands the clocking block itself --
   // which an event qualified by an iff does, because the plain control proves
   // nothing about the condition.
-  std::optional<::mlir::Value> getCurrentClockingOccurrence(
-      ::mlir::Block *block, ::mlir::Value clock = {},
-      std::optional<sim::EdgeKind> edge = std::nullopt,
-      bool clockingBlockOnly = false) const;
+  std::optional<::mlir::Value>
+  getCurrentClockingOccurrence(::mlir::Block *block, ::mlir::Value clock = {},
+                               std::optional<sim::EdgeKind> edge = std::nullopt,
+                               bool clockingBlockOnly = false) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);

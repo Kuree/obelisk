@@ -413,13 +413,25 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
   return plan;
 }
 
-std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
+uint64_t getClassBitStreamGroupID(ClassHandleType type, bool allowHiddenRoot) {
+  std::string spelling;
+  llvm::raw_string_ostream stream(spelling);
+  type.getClassName().print(stream);
+  stream << (allowHiddenRoot ? "#this" : "#public");
+  uint64_t id = obelisk_stable_hash(spelling.data(), spelling.size());
+  return id == 0 ? 1 : id;
+}
+
+std::optional<SmallVector<uint64_t>>
+getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
+                          bool requireDynamic) {
   constexpr uint64_t maximumRecords =
       OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS;
   constexpr uint64_t recordWords =
       OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS;
   SmallVector<uint64_t> records;
   bool hasDynamic = false;
+  bool hasObject = false;
 
   struct Layout {
     uint64_t span = 0;
@@ -452,24 +464,23 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
       if (auto integer = dyn_cast<IntegerType>(frame.type)) {
         if (!integer.isSignless() || integer.getWidth() == 0)
           return std::nullopt;
-        layouts[frame.type] =
-            {integer.getWidth(), 1, 0, integer.getWidth(), {}};
+        layouts[frame.type] = {
+            integer.getWidth(), 1, 0, integer.getWidth(), {}};
         continue;
       }
       if (auto logic = dyn_cast<LogicType>(frame.type)) {
         if (logic.getWidth() == 0)
           return std::nullopt;
-        layouts[frame.type] =
-            {logic.getWidth(), 1, 0, logic.getWidth(), {}};
+        layouts[frame.type] = {logic.getWidth(), 1, 0, logic.getWidth(), {}};
         continue;
       }
-      if (isa<StringType, DynamicArrayType, QueueType, AssocArrayType>(
-              frame.type)) {
+      if (isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
+              ClassHandleType>(frame.type)) {
         if (auto associative = dyn_cast<AssocArrayType>(frame.type);
             associative && associative.getWildcardIndex())
           return std::nullopt;
-        layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth,
-                               0, std::nullopt, {}};
+        layouts[frame.type] = {
+            managedHandleBitWidth, managedHandleBitWidth, 0, std::nullopt, {}};
         Type element;
         if (auto array = dyn_cast<DynamicArrayType>(frame.type))
           element = array.getElementType();
@@ -485,9 +496,8 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
         continue;
       }
       unsigned count = getAggregateNumElements(frame.type);
-      if (count == 0 ||
-          !isa<PackedArrayType, PackedStructType, PackedUnionType,
-               UnpackedArrayType, UnpackedStructType>(frame.type))
+      if (count == 0 || !isa<PackedArrayType, PackedStructType, PackedUnionType,
+                             UnpackedArrayType, UnpackedStructType>(frame.type))
         return std::nullopt;
       layoutStack.push_back({frame.type, true});
       if (auto array = dyn_cast<PackedArrayType>(frame.type)) {
@@ -505,22 +515,22 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
     if (auto array = dyn_cast<DynamicArrayType>(frame.type)) {
       if (!layouts.count(array.getElementType()))
         return std::nullopt;
-      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
-                             std::nullopt, {}};
+      layouts[frame.type] = {
+          managedHandleBitWidth, managedHandleBitWidth, 0, std::nullopt, {}};
       continue;
     }
     if (auto queue = dyn_cast<QueueType>(frame.type)) {
       if (!layouts.count(queue.getElementType()))
         return std::nullopt;
-      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
-                             std::nullopt, {}};
+      layouts[frame.type] = {
+          managedHandleBitWidth, managedHandleBitWidth, 0, std::nullopt, {}};
       continue;
     }
     if (auto associative = dyn_cast<AssocArrayType>(frame.type)) {
       if (!layouts.count(associative.getElementType()))
         return std::nullopt;
-      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
-                             std::nullopt, {}};
+      layouts[frame.type] = {
+          managedHandleBitWidth, managedHandleBitWidth, 0, std::nullopt, {}};
       continue;
     }
     if (auto array = dyn_cast<PackedArrayType>(frame.type)) {
@@ -541,12 +551,11 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
         auto field = dyn_cast<FieldAttr>(attribute);
         auto found = field ? layouts.find(field.getType()) : layouts.end();
         if (!field || found == layouts.end() || !found->second.packedWidth ||
-            field.getPackedOffset() >
-                std::numeric_limits<unsigned>::max() -
-                    *found->second.packedWidth)
+            field.getPackedOffset() > std::numeric_limits<unsigned>::max() -
+                                          *found->second.packedWidth)
           return std::nullopt;
-        width = std::max<uint64_t>(
-            width, field.getPackedOffset() + *found->second.packedWidth);
+        width = std::max<uint64_t>(width, field.getPackedOffset() +
+                                              *found->second.packedWidth);
       }
       if (auto unionType = dyn_cast<PackedUnionType>(frame.type)) {
         if (unionType.getTagBits() >
@@ -568,8 +577,8 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
           checkedAlign(found->second.span, found->second.alignment);
       if (!stride || *stride == 0 || *stride > UINT64_MAX / count)
         return std::nullopt;
-      layouts[frame.type] = {*stride * count, found->second.alignment, *stride,
-                             std::nullopt, {0}};
+      layouts[frame.type] = {
+          *stride * count, found->second.alignment, *stride, std::nullopt, {0}};
       continue;
     }
     auto structure = cast<UnpackedStructType>(frame.type);
@@ -597,8 +606,8 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
   }
 
   auto appendRecord = [&](ArrayRef<uint64_t> words) -> std::optional<size_t> {
-    if (words.size() != recordWords || records.size() / recordWords >=
-                                           maximumRecords)
+    if (words.size() != recordWords ||
+        records.size() / recordWords >= maximumRecords)
       return std::nullopt;
     size_t index = records.size();
     llvm::append_range(records, words);
@@ -613,8 +622,10 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
     size_t record = 0;
     size_t bodyStart = 0;
     unsigned ordinal = 0;
+    bool directRoot = false;
   };
-  SmallVector<EmitFrame, 16> emitStack{{EmitKind::Value, type}};
+  SmallVector<EmitFrame, 16> emitStack{
+      {EmitKind::Value, type, 0, 0, 0, 0, true}};
   bool valid = true;
   while (valid && !emitStack.empty()) {
     EmitFrame frame = emitStack.pop_back_val();
@@ -634,14 +645,13 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
       if (frame.ordinal == count)
         continue;
       emitStack.push_back({EmitKind::Structure, frame.type, frame.offset, 0, 0,
-                           frame.ordinal + 1});
+                           frame.ordinal + 1, false});
       uint64_t childOffset = layout.childOffsets[frame.ordinal];
       if (childOffset > UINT64_MAX - frame.offset)
         return std::nullopt;
-      emitStack.push_back(
-          {EmitKind::Value,
-           getAggregateElementType(frame.type, frame.ordinal),
-           frame.offset + childOffset});
+      emitStack.push_back({EmitKind::Value,
+                           getAggregateElementType(frame.type, frame.ordinal),
+                           frame.offset + childOffset, 0, 0, 0, false});
       continue;
     }
     if (layout.packedWidth) {
@@ -652,9 +662,20 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
     }
     if (isa<StringType>(frame.type)) {
       hasDynamic = true;
-      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_STRING,
-                            frame.offset, 0, 0, managedHandleBitWidth, 0})
+      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_STRING, frame.offset,
+                            0, 0, managedHandleBitWidth, 0})
                   .has_value();
+      continue;
+    }
+    if (auto handle = dyn_cast<ClassHandleType>(frame.type)) {
+      std::optional<uint64_t> group = objectGroup(handle, frame.directRoot);
+      if (!group || *group == 0)
+        return std::nullopt;
+      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT, frame.offset,
+                            *group, 0, managedHandleBitWidth, 0})
+                  .has_value();
+      hasDynamic = true;
+      hasObject = true;
       continue;
     }
     Type element;
@@ -684,9 +705,8 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
       if (!record)
         return std::nullopt;
       size_t bodyStart = records.size();
-      emitStack.push_back(
-          {EmitKind::Patch, frame.type, 0, *record, bodyStart});
-      emitStack.push_back({EmitKind::Value, element});
+      emitStack.push_back({EmitKind::Patch, frame.type, 0, *record, bodyStart});
+      emitStack.push_back({EmitKind::Value, element, 0, 0, 0, 0, false});
       hasDynamic = true;
       continue;
     }
@@ -699,27 +719,38 @@ std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
       if (!record)
         return std::nullopt;
       size_t bodyStart = records.size();
-      emitStack.push_back(
-          {EmitKind::Patch, frame.type, 0, *record, bodyStart});
-      emitStack.push_back({EmitKind::Value, child});
+      emitStack.push_back({EmitKind::Patch, frame.type, 0, *record, bodyStart});
+      emitStack.push_back({EmitKind::Value, child, 0, 0, 0, 0, false});
       continue;
     }
     if (!isa<UnpackedStructType>(frame.type))
       return std::nullopt;
-    emitStack.push_back({EmitKind::Structure, frame.type, frame.offset});
+    emitStack.push_back(
+        {EmitKind::Structure, frame.type, frame.offset, 0, 0, 0, false});
   }
 
   auto root = layouts.find(type);
-  if (!valid || root == layouts.end() || root->second.span == 0 || !hasDynamic ||
-      records.empty() || records.size() % recordWords != 0)
+  if (!valid || root == layouts.end() || root->second.span == 0 ||
+      (requireDynamic && !hasDynamic) || records.empty() ||
+      records.size() % recordWords != 0)
     return std::nullopt;
   uint64_t recordCount = records.size() / recordWords;
   SmallVector<uint64_t> plan{
       uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC} |
-          (uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION} << 32),
+          (uint64_t{hasObject
+                        ? OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION
+                        : OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION}
+           << 32),
       recordCount, root->second.span, 0};
   llvm::append_range(plan, records);
   return plan;
+}
+
+std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
+  return getRecursiveBitStreamPlan(
+      type, [](ClassHandleType, bool) -> std::optional<uint64_t> {
+        return std::nullopt;
+      });
 }
 
 bool getManagedHandleSlots(Type type,
@@ -1111,8 +1142,7 @@ LogicalResult SimContainerExportBitstreamOp::verify() {
         "result must be a nonempty fixed bit-stream containing a whole "
         "number of input elements");
   std::optional<unsigned> resultWidth = getPackedWidth(resultScalar);
-  if (!resultWidth || *resultWidth == 0 ||
-      *resultWidth % *elementWidth != 0)
+  if (!resultWidth || *resultWidth == 0 || *resultWidth % *elementWidth != 0)
     return emitOpError(
         "result must be a nonempty fixed bit-stream containing a whole "
         "number of input elements");
@@ -1123,8 +1153,11 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
   if (!isa<IntegerType, LogicType>(getResult().getType()) ||
       getPackedWidth(getResult().getType()).value_or(0) == 0)
     return emitOpError("result must be a nonempty fixed packed scalar");
-  std::optional<SmallVector<uint64_t>> expected =
-      getRecursiveBitStreamPlan(getInput().getType());
+  std::optional<SmallVector<uint64_t>> expected = getRecursiveBitStreamPlan(
+      getInput().getType(), [&](ClassHandleType handle, bool directRoot) {
+        return std::optional<uint64_t>(getClassBitStreamGroupID(
+            handle, directRoot && getClassAllowHiddenRoot()));
+      });
   if (!expected || expected->size() != getPlan().size())
     return emitOpError(
         "input must be a recursively dynamically sized bit-stream source");
@@ -1132,6 +1165,18 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
     if (static_cast<uint64_t>(actual) != wanted)
       return emitOpError("recursive bit-stream plan does not match the input ")
              << "type";
+  uint64_t identity = (*expected)[0];
+  bool objectPlan = static_cast<uint32_t>(identity >> 32) ==
+                    OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
+  if (auto site = getClassSiteIdAttr()) {
+    if (!objectPlan || site.getValue().isZero() || site.getValue().isNegative())
+      return emitOpError(
+          "class site ID must be nonzero and occur only on an object plan");
+  }
+  if (getClassAllowHiddenRoot() &&
+      (!objectPlan || !isa<ClassHandleType>(getInput().getType())))
+    return emitOpError(
+        "hidden class root access requires a direct object-plan source");
   return success();
 }
 
@@ -1139,8 +1184,7 @@ void SimRecursiveExportBitstreamOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), HeapResource::get());
   if (getObserve())
-    effects.emplace_back(MemoryEffects::Write::get(),
-                         SchedulerResource::get());
+    effects.emplace_back(MemoryEffects::Write::get(), SchedulerResource::get());
 }
 
 LogicalResult SimContainerSwapOp::verify() {
@@ -1457,7 +1501,8 @@ LogicalResult SimStringFromPackedOp::verify() {
 LogicalResult SimStringToPackedExactOp::verify() {
   auto type = dyn_cast<IntegerType>(getResult().getType());
   if (!type || type.getWidth() == 0 || (type.getWidth() % 8) != 0)
-    return emitOpError("packed result width must be a nonzero multiple of eight");
+    return emitOpError(
+        "packed result width must be a nonzero multiple of eight");
   return success();
 }
 

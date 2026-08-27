@@ -117,6 +117,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       module->hasAttr("obelisk.feature.container_bitstream");
   bool requiresRecursiveBitstreamFeature =
       module->hasAttr("obelisk.feature.recursive_bitstream");
+  bool requiresClassBitstreamFeature =
+      module->hasAttr("obelisk.feature.class_bitstream");
+  bool requiresClassBitstreamBytecodeFeature =
+      module->hasAttr("obelisk.feature.class_bitstream_bytecode");
   bool requiresDPIExportBytecodeFeature =
       module->hasAttr("obelisk.feature.dpi_export_bytecode");
   if (requiresDynamicScanFeature)
@@ -135,6 +139,18 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
                            "obelisk_rt_v1_recursive_bitstream_link_anchor"),
+        ValueRange{});
+  if (requiresClassBitstreamFeature)
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context,
+                           "obelisk_rt_v1_class_bitstream_link_anchor"),
+        ValueRange{});
+  if (requiresClassBitstreamBytecodeFeature)
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(
+            context, "obelisk_rt_v1_class_bitstream_bytecode_link_anchor"),
         ValueRange{});
   if (requiresDPIExportBytecodeFeature)
     LLVM::CallOp::create(
@@ -173,6 +189,18 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             SymbolRefAttr::get(context, "obelisk_rt_v1_class_register"),
             ValueRange{runtimeContext, descriptor})
             .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, status});
+  }
+  if (requiresClassBitstreamFeature) {
+    Value status = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       SymbolRefAttr::get(
+                           context, "obelisk_rt_v1_class_bitstream_finalize"),
+                       ValueRange{runtimeContext})
+                       .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
@@ -383,6 +411,16 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresRecursiveBitstreamFeature)
     getOrDeclareLLVMFunction(
         module, "obelisk_rt_v1_recursive_bitstream_link_anchor", voidType, {});
+  if (requiresClassBitstreamFeature)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_class_bitstream_link_anchor", voidType, {});
+  if (requiresClassBitstreamFeature)
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_bitstream_finalize",
+                             i32, {pointer});
+  if (requiresClassBitstreamBytecodeFeature)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_class_bitstream_bytecode_link_anchor", voidType,
+        {});
   if (requiresDPIExportBytecodeFeature)
     getOrDeclareLLVMFunction(
         module, "obelisk_rt_v1_dpi_export_bytecode_link_anchor", voidType, {});

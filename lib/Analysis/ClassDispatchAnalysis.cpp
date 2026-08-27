@@ -7,7 +7,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
-#include <functional>
 #include <limits>
 #include <tuple>
 #include <utility>
@@ -47,42 +46,69 @@ ClassDispatchAnalysis::ClassDispatchAnalysis(sim::SimDesignOp design) {
   compatibleConcrete.resize(classes.size());
   effectiveMethods.resize(classes.size());
   SmallVector<uint8_t> hierarchyState(classes.size());
-  std::function<void(size_t)> buildClass = [&](size_t index) {
-    if (hierarchyState[index] == 2)
-      return;
-    // Invalid cyclic IR is diagnosed by SimDesignOp verification. Keep this
-    // guard defensive for analysis-only clients that disable verification.
-    if (hierarchyState[index] == 1)
-      return;
-    hierarchyState[index] = 1;
-    sim::SimClassDeclOp declaration = classes[index];
-    ancestors[index].set(index);
-    auto inherit = [&](StringRef name) {
-      auto found = classIndices.find(name);
-      if (found == classIndices.end())
-        return;
-      buildClass(found->second);
-      ancestors[index] |= ancestors[found->second];
-    };
-    if (auto base = declaration.getBase()) {
-      inherit(*base);
-      auto found = classIndices.find(*base);
-      if (found != classIndices.end())
-        effectiveMethods[index] = effectiveMethods[found->second];
-    }
-    if (ArrayAttr interfaces = declaration.getInterfacesAttr())
-      for (Attribute attribute : interfaces)
-        if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute))
-          inherit(reference.getValue());
-    if (auto found = methods.find(declaration.getSymName());
-        found != methods.end())
-      for (sim::SimClassMethodDeclOp method : found->second)
-        if (auto slot = method.getSlot())
-          effectiveMethods[index][*slot] = method;
-    hierarchyState[index] = 2;
+  struct HierarchyFrame {
+    size_t index;
+    bool exit;
   };
-  for (size_t index = 0; index != classes.size(); ++index)
-    buildClass(index);
+  SmallVector<HierarchyFrame, 32> hierarchyStack;
+  for (size_t root = 0; root != classes.size(); ++root) {
+    if (hierarchyState[root] == 2)
+      continue;
+    hierarchyStack.push_back({root, false});
+    while (!hierarchyStack.empty()) {
+      HierarchyFrame frame = hierarchyStack.pop_back_val();
+      size_t index = frame.index;
+      if (frame.exit) {
+        sim::SimClassDeclOp declaration = classes[index];
+        ancestors[index].set(index);
+        auto inherit = [&](StringRef name) {
+          auto found = classIndices.find(name);
+          if (found != classIndices.end() && hierarchyState[found->second] == 2)
+            ancestors[index] |= ancestors[found->second];
+        };
+        if (auto base = declaration.getBase()) {
+          inherit(*base);
+          auto found = classIndices.find(*base);
+          if (found != classIndices.end() && hierarchyState[found->second] == 2)
+            effectiveMethods[index] = effectiveMethods[found->second];
+        }
+        if (ArrayAttr interfaces = declaration.getInterfacesAttr())
+          for (Attribute attribute : interfaces)
+            if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute))
+              inherit(reference.getValue());
+        if (auto found = methods.find(declaration.getSymName());
+            found != methods.end())
+          for (sim::SimClassMethodDeclOp method : found->second)
+            if (auto slot = method.getSlot())
+              effectiveMethods[index][*slot] = method;
+        hierarchyState[index] = 2;
+        continue;
+      }
+      if (hierarchyState[index] == 2)
+        continue;
+      // Invalid cyclic IR is diagnosed by SimDesignOp verification. Keep this
+      // guard defensive for analysis-only clients that disable verification.
+      if (hierarchyState[index] == 1)
+        continue;
+      hierarchyState[index] = 1;
+      hierarchyStack.push_back({index, true});
+      SmallVector<size_t, 4> dependencies;
+      sim::SimClassDeclOp declaration = classes[index];
+      if (auto base = declaration.getBase())
+        if (auto found = classIndices.find(*base);
+            found != classIndices.end() && hierarchyState[found->second] == 0)
+          dependencies.push_back(found->second);
+      if (ArrayAttr interfaces = declaration.getInterfacesAttr())
+        for (Attribute attribute : interfaces)
+          if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute))
+            if (auto found = classIndices.find(reference.getValue());
+                found != classIndices.end() &&
+                hierarchyState[found->second] == 0)
+              dependencies.push_back(found->second);
+      for (size_t dependency : llvm::reverse(dependencies))
+        hierarchyStack.push_back({dependency, false});
+    }
+  }
   for (auto [candidateIndex, candidate] : llvm::enumerate(classes)) {
     if (candidate.getIsAbstract() || candidate.getIsInterface())
       continue;

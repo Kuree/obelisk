@@ -1144,6 +1144,7 @@ enum {
 enum {
   OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC = UINT32_C(0x42535250),
   OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION = UINT32_C(1),
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION = UINT32_C(2),
   OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS = UINT32_C(4),
   OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS = UINT32_C(6),
   OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS = UINT32_C(1048576),
@@ -2163,13 +2164,12 @@ obelisk_rt_status obelisk_rt_v1_scan_dynamic_validate(
     uint64_t allowed_specifiers, uint32_t *out_plan_cursor);
 obelisk_rt_status obelisk_rt_v1_string_scan_dynamic(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 input, uint32_t cursor,
-    obelisk_rt_string_v1 format, uint32_t plan_cursor, uint32_t enabled,
-    uint32_t finalize, uint64_t allowed_specifiers,
-    uint64_t raw_two_state_bytes, uint64_t raw_four_state_bytes,
-    obelisk_rt_string_v1 *out_field, uint32_t *out_cursor,
-    uint32_t *out_plan_cursor, uint32_t *out_conversion_kind,
-    uint32_t *out_ok);
+    obelisk_rt_string_v1 input, uint32_t cursor, obelisk_rt_string_v1 format,
+    uint32_t plan_cursor, uint32_t enabled, uint32_t finalize,
+    uint64_t allowed_specifiers, uint64_t raw_two_state_bytes,
+    uint64_t raw_four_state_bytes, obelisk_rt_string_v1 *out_field,
+    uint32_t *out_cursor, uint32_t *out_plan_cursor,
+    uint32_t *out_conversion_kind, uint32_t *out_ok);
 obelisk_rt_status obelisk_rt_v1_string_scan_raw(
     obelisk_rt_string_v1 input, uint32_t cursor, const char *prefix,
     uint64_t prefix_size, uint64_t raw_size, uint64_t bit_width,
@@ -2327,10 +2327,9 @@ obelisk_rt_status obelisk_rt_v1_aggregate_export_bitstream(
     uint32_t output_four_state, const void *plan, uint64_t plan_size);
 obelisk_rt_status obelisk_rt_v1_recursive_export_bitstream(
     obelisk_rt_context *context, const void *input_value,
-    const void *input_unknown,
-    uint64_t input_plane_size, uint64_t input_bit_width,
-    uint32_t input_four_state, void *out_value, void *out_unknown,
-    uint64_t output_plane_size, uint64_t output_bit_width,
+    const void *input_unknown, uint64_t input_plane_size,
+    uint64_t input_bit_width, uint32_t input_four_state, void *out_value,
+    void *out_unknown, uint64_t output_plane_size, uint64_t output_bit_width,
     uint32_t output_four_state, const void *plan, uint64_t plan_size,
     uint32_t observe, uint32_t *out_matched, uint64_t *out_watch);
 obelisk_rt_status
@@ -3918,8 +3917,7 @@ const char *obelisk_rt_v1_export_string(uint32_t output_index);
 void obelisk_rt_v1_dpi_export_unpack_vector(const void *source, void *value,
                                             void *unknown, uint32_t width,
                                             uint32_t four_state);
-void obelisk_rt_v1_dpi_export_pack_vector(void *destination,
-                                          const void *value,
+void obelisk_rt_v1_dpi_export_pack_vector(void *destination, const void *value,
                                           const void *unknown, uint32_t width,
                                           uint32_t four_state);
 // Copy one null-terminated DPI C string into simulator-owned managed storage.

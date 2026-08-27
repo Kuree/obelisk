@@ -2,6 +2,8 @@
 
 #include "obelisk/Conversion/SimulationToBytecode.h"
 
+#include "obelisk/Analysis/ClassBitstreamPlan.h"
+
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
@@ -137,6 +139,14 @@ Encoder::Encoder(sim::SimDesignOp design,
     : design(design), options(options), dataLayout(dataLayout) {}
 
 FailureOr<EncodedSimulationDesign> Encoder::encode() {
+  ModuleOp module = design->getParentOfType<ModuleOp>();
+  bool hasClassBitstreamSource =
+      module && module->hasAttr(sim::metadata::classBitstreamSourceFeature);
+  if (hasClassBitstreamSource &&
+      failed(analysis::materializeClassBitstreamPlan(design, dataLayout)))
+    return failure();
+  bool hasClassBitstream =
+      module && module->hasAttr(sim::metadata::classBitstreamBlob);
   if (failed(prepareClassLayouts()))
     return failure();
   if (failed(prepareStaticSpecializationSites()))
@@ -156,6 +166,9 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   if (failed(planScheduleRanks()))
     return failure();
   if (failed(encodeFunctions()))
+    return failure();
+  if (hasClassBitstream && options.requireBytecode &&
+      failed(analysis::bindClassBitstreamBytecodeSites(design)))
     return failure();
   EncodedSimulationDesign result;
   result.bytecode = serializeBytecode();
@@ -639,9 +652,8 @@ bool Encoder::mayCollect(Operation *operation) {
       sim::SimStringScanFieldOp, sim::SimFileGetlineStringOp,
       sim::SimFileScanFieldOp, sim::SimFileErrorStringOp,
       sim::SimPlusargValueOp, sim::SimPlusargScanOp, sim::SimCallOp,
-      sim::SimClassDirectCallOp,
-      sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
-      sim::SimDPICallOp>(operation);
+      sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
+      sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation);
 }
 
 void Encoder::emitDeadManagedClears(FunctionPlan &plan,
@@ -822,8 +834,7 @@ public:
       return signalPassFailure();
     }
     unsigned pointerBits = parsed->getPointerSizeInBits();
-    if (!parsed->isLittleEndian() ||
-        (pointerBits != 32 && pointerBits != 64)) {
+    if (!parsed->isLittleEndian() || (pointerBits != 32 && pointerBits != 64)) {
       module.emitError("bytecode encoding requires a little-endian target "
                        "with 32-bit or 64-bit pointers");
       return signalPassFailure();
@@ -867,6 +878,15 @@ public:
                       builder.getUnitAttr());
     else
       module->removeAttr("obelisk.feature.recursive_bitstream");
+    if (module->hasAttr(sim::metadata::classBitstreamBlob))
+      module->setAttr("obelisk.feature.class_bitstream", builder.getUnitAttr());
+    else
+      module->removeAttr("obelisk.feature.class_bitstream");
+    if (requireBytecode && module->hasAttr(sim::metadata::classBitstreamBlob))
+      module->setAttr("obelisk.feature.class_bitstream_bytecode",
+                      builder.getUnitAttr());
+    else
+      module->removeAttr("obelisk.feature.class_bitstream_bytecode");
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(encoded->sampledRanges.size() * 2);
     for (const SimulationSampledRange &range : encoded->sampledRanges) {
@@ -936,8 +956,7 @@ encodeSimulationDesign(sim::SimDesignOp design,
     return failure();
   }
   unsigned pointerBits = parsed->getPointerSizeInBits();
-  if (!parsed->isLittleEndian() ||
-      (pointerBits != 32 && pointerBits != 64))
+  if (!parsed->isLittleEndian() || (pointerBits != 32 && pointerBits != 64))
     return design.emitOpError("bytecode encoding requires a little-endian "
                               "target with 32-bit or 64-bit pointers");
   bytecode::Encoder encoder(design, options, *parsed);

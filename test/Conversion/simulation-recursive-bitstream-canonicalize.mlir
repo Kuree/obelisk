@@ -14,6 +14,19 @@ module {
             (i24, i1, !obelisk_sim.managed_watch)
     return %result, %matched, %watch : i24, i1, !obelisk_sim.managed_watch
   }
+
+  func.func @null_class() -> (i8, i1, !obelisk_sim.managed_watch) {
+    %null = obelisk_sim.class.null :
+        !obelisk_sim.class_handle<@__obelisk_class_s3_C>
+    %result, %matched, %watch =
+        obelisk_sim.recursive.export_bitstream %null {
+          class_site_id = 1 : i64,
+          plan = array<i64: 9702691408, 1, 64, 0,
+              5, 0, 3235077357463657086, 0, 64, 0>
+        } : (!obelisk_sim.class_handle<@__obelisk_class_s3_C>) ->
+            (i8, i1, !obelisk_sim.managed_watch)
+    return %result, %matched, %watch : i8, i1, !obelisk_sim.managed_watch
+  }
 }
 
 // CHECK-LABEL: func.func @null_source
@@ -22,3 +35,10 @@ module {
 // CHECK: %[[WATCH:.*]] = obelisk_sim.managed.watch.null
 // CHECK-NOT: recursive.export_bitstream
 // CHECK: return %[[ZERO]], %[[FALSE]], %[[WATCH]]
+
+// CHECK-LABEL: func.func @null_class
+// CHECK: %[[CLASS_ZERO:.*]] = arith.constant 0 : i8
+// CHECK: %[[CLASS_FALSE:.*]] = arith.constant false
+// CHECK: %[[CLASS_WATCH:.*]] = obelisk_sim.managed.watch.null
+// CHECK-NOT: recursive.export_bitstream
+// CHECK: return %[[CLASS_ZERO]], %[[CLASS_FALSE]], %[[CLASS_WATCH]]
