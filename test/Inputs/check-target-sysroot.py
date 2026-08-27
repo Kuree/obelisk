@@ -251,6 +251,8 @@ native_members = [
     "ContainerBitstream.o",
     "RecursiveBitstream.o",
     "ContainerBitstreamBytecode.o",
+    "ClassBitstream.o",
+    "ClassBitstreamBytecode.o",
     "DPIExport.o",
     "DPIExportBytecode.o",
 ]

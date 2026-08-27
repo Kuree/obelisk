@@ -26,15 +26,15 @@ using namespace mlir;
 namespace obelisk::analysis {
 namespace {
 
-constexpr uint32_t kBlobMagic = UINT32_C(0x43425342);
-constexpr uint32_t kBlobVersion = 1;
-constexpr uint64_t kHeaderSize = 128;
-constexpr uint64_t kSiteSize = 40;
-constexpr uint64_t kGroupSize = 40;
+constexpr uint32_t kBlobMagic = OBELISK_RT_CLASS_BITSTREAM_BLOB_MAGIC;
+constexpr uint32_t kBlobVersion = OBELISK_RT_CLASS_BITSTREAM_BLOB_VERSION;
+constexpr uint64_t kHeaderSize = sizeof(obelisk_rt_class_bitstream_header_v1);
+constexpr uint64_t kSiteSize = sizeof(obelisk_rt_class_bitstream_site_v1);
+constexpr uint64_t kGroupSize = sizeof(obelisk_rt_class_bitstream_group_v1);
 constexpr uint64_t kMemberSize = 8;
-constexpr uint64_t kSchemaSize = 48;
-constexpr uint64_t kFieldSize = 48;
-constexpr uint32_t kNoBytecode = UINT32_MAX;
+constexpr uint64_t kSchemaSize = sizeof(obelisk_rt_class_bitstream_schema_v1);
+constexpr uint64_t kFieldSize = sizeof(obelisk_rt_class_bitstream_field_v1);
+constexpr uint32_t kNoBytecode = OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE;
 
 void append32(SmallVectorImpl<uint8_t> &bytes, uint32_t value) {
   for (unsigned index = 0; index != 4; ++index)
@@ -244,7 +244,9 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
         Field field;
         field.offset = sourceField->offset;
         field.planeSize = sourceField->storage.size;
-        field.flags = sourceField->storage.fourState ? 1u : 0u;
+        field.flags = sourceField->storage.fourState
+                          ? OBELISK_RT_CLASS_BITSTREAM_FIELD_FOUR_STATE
+                          : 0u;
         field.alignment = sourceField->storage.alignment;
         bool failedNestedGroup = false;
         std::optional<SmallVector<uint64_t>> fieldPlan =

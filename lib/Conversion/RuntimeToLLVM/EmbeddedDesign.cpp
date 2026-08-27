@@ -44,8 +44,6 @@ constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
 constexpr StringLiteral kExportsName = "__obelisk_dpi_exports_v1";
 constexpr StringLiteral kClassBitstreamName =
     "__obelisk_class_bitstream_blob_v1";
-constexpr uint32_t kExecutionClassBitstream = UINT32_C(1) << 8;
-constexpr uint32_t kExecutionExtensionV3Version = 3;
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -898,7 +896,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   if (!exports.empty())
     flags |= OBELISK_RT_EXECUTION_DPI_EXPORTS;
   if (classBitstream)
-    flags |= kExecutionClassBitstream;
+    flags |= OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {
@@ -1104,11 +1102,11 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
             LLVM::ZeroOp::create(builder, module.getLoc(), extensionType);
         extension = insertValue(
             builder, module.getLoc(), extension,
-            integerConstant(builder, module.getLoc(), i32,
-                            classBitstream ? kExecutionExtensionV3Version
-                            : !exports.empty()
-                                ? OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION
-                                : OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+            integerConstant(
+                builder, module.getLoc(), i32,
+                classBitstream     ? OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION
+                : !exports.empty() ? OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION
+                                   : OBELISK_RT_EXECUTION_EXTENSION_VERSION),
             0);
         extension = insertValue(
             builder, module.getLoc(), extension,
