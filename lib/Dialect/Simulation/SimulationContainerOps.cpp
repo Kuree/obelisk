@@ -1168,6 +1168,13 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
   uint64_t identity = (*expected)[0];
   bool objectPlan = static_cast<uint32_t>(identity >> 32) ==
                     OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
+  if (objectPlan) {
+    ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+    if (!module ||
+        !module->hasAttr(sim::metadata::classBitstreamSourceFeature))
+      return emitOpError(
+          "object plan requires the class bit-stream source feature marker");
+  }
   if (auto site = getClassSiteIdAttr()) {
     if (!objectPlan || site.getValue().isZero() || site.getValue().isNegative())
       return emitOpError(

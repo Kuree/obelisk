@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --canonicalize | FileCheck %s
 
-module {
+module attributes {obelisk.feature.class_bitstream_source} {
   func.func @null_source() -> (i24, i1, !obelisk_sim.managed_watch) {
     %null = obelisk_sim.managed.null :
         !obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>

@@ -132,6 +132,11 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
       return;
     uint64_t id = sites.size() + 1;
     operation.setClassSiteIdAttr(builder.getI64IntegerAttr(id));
+    // Bytecode bindings are compiler-produced authority, never input IR.
+    // Clear stale or hand-authored values before building the trusted image;
+    // the encoder patches exact function/site pairs only after emission.
+    operation->removeAttr(sim::metadata::classBitstreamBytecodeFunction);
+    operation->removeAttr(sim::metadata::classBitstreamBytecodeSite);
     SmallVector<uint64_t> words;
     words.reserve(operation.getPlan().size());
     for (int64_t word : operation.getPlan())
@@ -513,8 +518,12 @@ LogicalResult bindClassBitstreamBytecodeSites(sim::SimDesignOp design) {
     auto bytecodeSite = operation->getAttrOfType<IntegerAttr>(
         sim::metadata::classBitstreamBytecodeSite);
     if (id == 0 || id > siteCount || seen[id - 1] || !function ||
-        !bytecodeSite || function.getValue().getActiveBits() > 32 ||
-        bytecodeSite.getValue().getActiveBits() > 32) {
+        !bytecodeSite || function.getValue().isNegative() ||
+        bytecodeSite.getValue().isNegative() ||
+        function.getValue().getActiveBits() > 32 ||
+        bytecodeSite.getValue().getActiveBits() > 32 ||
+        function.getValue().getZExtValue() == kNoBytecode ||
+        bytecodeSite.getValue().getZExtValue() == kNoBytecode) {
       operation.emitOpError("has an invalid bytecode class-site binding");
       invalid = true;
       return;

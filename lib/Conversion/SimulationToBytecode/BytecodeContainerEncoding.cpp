@@ -115,7 +115,7 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
     if (op.getClassSiteId()) {
-      if (intrinsicSites.size() > UINT32_MAX)
+      if (intrinsicSites.size() >= UINT32_MAX || plan.index == UINT32_MAX)
         return op.emitOpError("class bit-stream intrinsic table is too large");
       uint32_t site = intrinsicSites.size();
       LogicalResult emitted = emitIntrinsicRegisters(

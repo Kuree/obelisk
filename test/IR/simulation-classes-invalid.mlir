@@ -940,3 +940,29 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @unmarked_object_plan {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "cast"
+    obelisk_sim.class.decl @__obelisk_class_s3_C id 1 {
+      is_abstract = false, is_final = true, is_interface = false
+    }
+    obelisk_sim.func private @cast(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %source: !obelisk_sim.class_handle<@__obelisk_class_s3_C>
+            {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      // expected-error @+2 {{object plan requires the class bit-stream source feature marker}}
+      %result, %matched, %watch =
+          obelisk_sim.recursive.export_bitstream %source {
+            plan = array<i64: 9702691408, 1, 64, 0,
+                5, 0, 3235077357463657086, 0, 64, 0>
+          } : (!obelisk_sim.class_handle<@__obelisk_class_s3_C>) ->
+              (i8, i1, !obelisk_sim.managed_watch)
+      obelisk_sim.return
+    }
+  }
+}
