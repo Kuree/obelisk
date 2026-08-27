@@ -11,7 +11,7 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
-// CHECK: 1 1 1 1
+// CHECK: 1 1 1 1 1 1 1 1 1
 // LOWER: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
 
 module attributes {
@@ -142,12 +142,129 @@ module attributes {
       %queue_ok = obelisk_sim.logic.compare case_eq
           %queue_packed, %queue_expected :
           (!obelisk_sim.logic<24>, !obelisk_sim.logic<24>) -> i1
-      %format = obelisk_sim.bytes.constant "%0d %0d %0d %0d"
+
+      // Associative values use index order, independently of insertion order.
+      %assoc = obelisk_sim.assoc.create {
+        type_id = 9910004 : i64, element_kind = 2 : i32,
+        element_flags = 1 : i32, value_size = 1 : i64,
+        alignment = 1 : i64, bit_width = 8 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        key_kind = 2 : i32, key_width = 32 : i64
+      } : () -> !obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>
+      %negative = arith.constant -1 : i32
+      %key_two = arith.constant 2 : i32
+      %key_zero = arith.constant 0 : i32
+      %aa = obelisk_sim.logic.constant 170 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      %bb = obelisk_sim.logic.constant 187 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      %cc = obelisk_sim.logic.constant 204 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.assoc.write %assoc, %key_two, %cc :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>,
+           i32, !obelisk_sim.logic<8>) -> ()
+      obelisk_sim.assoc.write %assoc, %negative, %aa :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>,
+           i32, !obelisk_sim.logic<8>) -> ()
+      obelisk_sim.assoc.write %assoc, %key_zero, %bb :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>,
+           i32, !obelisk_sim.logic<8>) -> ()
+      %assoc_packed = obelisk_sim.container.export_bitstream %assoc :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>) ->
+          !obelisk_sim.logic<24>
+      %assoc_expected = obelisk_sim.logic.constant 11189196 : i24, 0 : i24 :
+          !obelisk_sim.logic<24>
+      %assoc_ok = obelisk_sim.logic.compare case_eq
+          %assoc_packed, %assoc_expected :
+          (!obelisk_sim.logic<24>, !obelisk_sim.logic<24>) -> i1
+
+      // A two-state target maps an associative element's X/Z bits to zero.
+      obelisk_sim.assoc.write %assoc, %negative, %xz :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>,
+           i32, !obelisk_sim.logic<8>) -> ()
+      %assoc_bits = obelisk_sim.container.export_bitstream %assoc :
+          (!obelisk_sim.assoc_array<i32, !obelisk_sim.logic<8>, true, false>) ->
+          i24
+      %assoc_bits_expected = arith.constant 15776716 : i24
+      %assoc_xz_ok = arith.cmpi eq, %assoc_bits, %assoc_bits_expected : i24
+
+      // String indices are ordered lexicographically, not by insertion order.
+      %string_assoc = obelisk_sim.assoc.create {
+        type_id = 9910005 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 1 : i64,
+        alignment = 1 : i64, bit_width = 8 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        key_kind = 3 : i32, key_width = 0 : i64
+      } : () -> !obelisk_sim.assoc_array<!obelisk_sim.string, i8, false, false>
+      %z_key = obelisk_sim.string.literal "z"
+      %aa_key = obelisk_sim.string.literal "aa"
+      %z_value = arith.constant 34 : i8
+      %aa_value = arith.constant 17 : i8
+      obelisk_sim.assoc.write %string_assoc, %z_key, %z_value :
+          (!obelisk_sim.assoc_array<!obelisk_sim.string, i8, false, false>,
+           !obelisk_sim.string, i8) -> ()
+      obelisk_sim.assoc.write %string_assoc, %aa_key, %aa_value :
+          (!obelisk_sim.assoc_array<!obelisk_sim.string, i8, false, false>,
+           !obelisk_sim.string, i8) -> ()
+      %string_packed = obelisk_sim.container.export_bitstream %string_assoc :
+          (!obelisk_sim.assoc_array<!obelisk_sim.string, i8, false, false>) ->
+          i16
+      %string_expected = arith.constant 4386 : i16
+      %string_ok = arith.cmpi eq, %string_packed, %string_expected : i16
+
+      // At the 3/4 load threshold, overwriting a value preserves the sorted
+      // key cache and must not be mistaken for an insertion that needs growth.
+      %threshold = obelisk_sim.assoc.create {
+        type_id = 9910006 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 1 : i64,
+        alignment = 1 : i64, bit_width = 8 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        key_kind = 1 : i32, key_width = 32 : i64
+      } : () -> !obelisk_sim.assoc_array<i32, i8, false, false>
+      %key_one = arith.constant 1 : i32
+      %key_three = arith.constant 3 : i32
+      %key_four = arith.constant 4 : i32
+      %key_five = arith.constant 5 : i32
+      %value_one = arith.constant 1 : i8
+      %value_two = arith.constant 2 : i8
+      %value_three = arith.constant 3 : i8
+      %value_four = arith.constant 4 : i8
+      %value_five = arith.constant 5 : i8
+      %value_six = arith.constant 6 : i8
+      obelisk_sim.assoc.write %threshold, %key_five, %value_six :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      obelisk_sim.assoc.write %threshold, %key_zero, %value_one :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      obelisk_sim.assoc.write %threshold, %key_three, %value_four :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      obelisk_sim.assoc.write %threshold, %key_one, %value_two :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      obelisk_sim.assoc.write %threshold, %key_four, %value_five :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      obelisk_sim.assoc.write %threshold, %key_two, %value_three :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      %threshold_before = obelisk_sim.container.export_bitstream %threshold :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>) -> i48
+      %threshold_expected = arith.constant 1108152157446 : i48
+      %threshold_ok = arith.cmpi eq, %threshold_before, %threshold_expected : i48
+      %replacement = arith.constant 170 : i8
+      obelisk_sim.assoc.write %threshold, %key_zero, %replacement :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>, i32, i8) -> ()
+      %threshold_after = obelisk_sim.container.export_bitstream %threshold :
+          (!obelisk_sim.assoc_array<i32, i8, false, false>) -> i48
+      %replacement_expected = arith.constant 186925617251590 : i48
+      %replacement_ok = arith.cmpi eq, %threshold_after,
+          %replacement_expected : i48
+
+      %format = obelisk_sim.bytes.constant
+          "%0d %0d %0d %0d %0d %0d %0d %0d %0d"
       %stdout = arith.constant 1 : i32
       obelisk_sim.display %ctx to %stdout(
-          %format, %order_ok, %xz_ok, %state_ok, %queue_ok)
-          newline = true radix = 10 flags = [0, 0, 0, 0, 0] :
-          !obelisk_sim.bytes, i1, i1, i1, i1
+          %format, %order_ok, %xz_ok, %state_ok, %queue_ok, %assoc_ok,
+          %assoc_xz_ok, %string_ok, %threshold_ok, %replacement_ok)
+          newline = true radix = 10
+          flags = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] :
+          !obelisk_sim.bytes, i1, i1, i1, i1, i1, i1, i1, i1, i1
       obelisk_sim.return
     }
   }

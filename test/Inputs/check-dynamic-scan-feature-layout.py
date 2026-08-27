@@ -129,6 +129,8 @@ require_feature_symbol(
 )
 for symbol in (
     "copyBits",
+    "packAssocBuffer",
+    "packAssocOrder",
     "packContainer",
     "packBuffer",
     "readPlan64",

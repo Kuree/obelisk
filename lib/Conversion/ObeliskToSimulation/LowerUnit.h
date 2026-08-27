@@ -468,7 +468,7 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   convert(::mlir::Value value, ::mlir::Type targetType, bool sourceSigned,
           ::mlir::Location location, bool targetSigned = false);
-  ::mlir::FailureOr<::mlir::Value> convertSequentialContainerBitstream(
+  ::mlir::FailureOr<::mlir::Value> convertContainerBitstream(
       ::mlir::Value value, ::mlir::Type targetType, ::mlir::Type targetScalar,
       ::mlir::Type sourceElement, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>

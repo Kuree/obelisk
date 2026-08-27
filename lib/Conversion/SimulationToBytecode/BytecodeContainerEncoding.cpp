@@ -91,10 +91,7 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     FailureOr<ManagedValueStorage> storage =
         getManagedValueStorage(op.getResult().getType(), dataLayout);
     Type containerType = op.getContainer().getType();
-    Type element =
-        isa<sim::DynamicArrayType>(containerType)
-            ? cast<sim::DynamicArrayType>(containerType).getElementType()
-            : cast<sim::QueueType>(containerType).getElementType();
+    Type element = sim::getContainerElement(containerType);
     FailureOr<ManagedValueStorage> elementStorage =
         getManagedValueStorage(element, dataLayout);
     std::optional<uint32_t> width = simulationWidth(op.getResult().getType());

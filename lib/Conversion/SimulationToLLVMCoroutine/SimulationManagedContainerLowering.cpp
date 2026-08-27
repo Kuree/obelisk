@@ -344,10 +344,7 @@ public:
         analysis::getSimulationStorageProperties(op.getResult().getType(),
                                                  local, llvmContext);
     Type containerType = op.getContainer().getType();
-    Type element =
-        isa<sim::DynamicArrayType>(containerType)
-            ? cast<sim::DynamicArrayType>(containerType).getElementType()
-            : cast<sim::QueueType>(containerType).getElementType();
+    Type element = sim::getContainerElement(containerType);
     FailureOr<analysis::SimulationStorageProperties> elementStorage =
         analysis::getSimulationStorageProperties(element, local, llvmContext);
     std::optional<unsigned> elementWidth =

@@ -787,14 +787,23 @@ LogicalResult SimContainerExportBitstreamOp::verify() {
   Type element = getContainerElement(getContainer().getType());
   Type elementScalar = getPackedScalarType(element);
   Type resultScalar = getResult().getType();
-  std::optional<unsigned> elementWidth = getPackedWidth(elementScalar);
-  std::optional<unsigned> resultWidth = getPackedWidth(resultScalar);
-  if (!isa<DynamicArrayType, QueueType>(getContainer().getType()) ||
-      !elementScalar || !elementWidth || *elementWidth == 0)
+  auto associative = dyn_cast<AssocArrayType>(getContainer().getType());
+  std::optional<unsigned> elementWidth =
+      elementScalar ? getPackedWidth(elementScalar) : std::nullopt;
+  if ((!isa<DynamicArrayType, QueueType>(getContainer().getType()) &&
+       !associative) ||
+      (associative && associative.getWildcardIndex()) || !elementScalar ||
+      !elementWidth || *elementWidth == 0)
     return emitOpError(
-        "input must be a dynamic array or queue of fixed packed elements");
-  if (!isa<IntegerType, LogicType>(resultScalar) || !resultWidth ||
-      *resultWidth == 0 || *resultWidth % *elementWidth != 0)
+        "input must be a sequential container or typed associative array of "
+        "fixed packed elements");
+  if (!isa<IntegerType, LogicType>(resultScalar))
+    return emitOpError(
+        "result must be a nonempty fixed bit-stream containing a whole "
+        "number of input elements");
+  std::optional<unsigned> resultWidth = getPackedWidth(resultScalar);
+  if (!resultWidth || *resultWidth == 0 ||
+      *resultWidth % *elementWidth != 0)
     return emitOpError(
         "result must be a nonempty fixed bit-stream containing a whole "
         "number of input elements");

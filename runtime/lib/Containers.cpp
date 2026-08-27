@@ -33,6 +33,11 @@ static_assert(sizeof(StringHeader) == 16);
 
 using obelisk::runtime_detail::BufferHeader;
 using obelisk::runtime_detail::ContainerHeader;
+using obelisk::runtime_detail::AssocSlot;
+using obelisk::runtime_detail::assocSlotStride;
+using obelisk::runtime_detail::assocValueOffset;
+using obelisk::runtime_detail::elementStride;
+using obelisk::runtime_detail::ensureAssocOrdered;
 
 struct SemaphoreHeader {
   const void *descriptor;
@@ -41,16 +46,6 @@ struct SemaphoreHeader {
 
 // Guard the private semaphore storage against an unnoticed field being added.
 static_assert(sizeof(SemaphoreHeader) == 16);
-
-struct AssocSlot {
-  uint64_t hash;
-  uint64_t distance;
-  uint64_t integral;
-  union {
-    obelisk_rt_string_v1 string;
-    obelisk_rt_object_v1 *object;
-  };
-};
 
 enum class ReferenceSelector : uint32_t {
   Index = 1,
@@ -130,27 +125,6 @@ constexpr uint64_t stringInlineTag = 1;
 
 obelisk_rt_object_v1 *heapStringObject(obelisk_rt_string_v1 string);
 bool stringBelongsTo(obelisk_rt_context *context, obelisk_rt_string_v1 string);
-
-uint64_t elementStride(const obelisk_rt_element_type_v1 *element);
-
-uint64_t assocSlotStride(const obelisk_rt_element_type_v1 *element) {
-  uint64_t valueOffset =
-      (sizeof(AssocSlot) + element->alignment - 1) & ~(element->alignment - 1);
-  uint64_t alignment =
-      std::max<uint64_t>(alignof(AssocSlot), element->alignment);
-  uint64_t size = valueOffset + elementStride(element);
-  return (size + alignment - 1) & ~(alignment - 1);
-}
-
-uint64_t assocValueOffset(const obelisk_rt_element_type_v1 *element) {
-  return (sizeof(AssocSlot) + element->alignment - 1) &
-         ~(element->alignment - 1);
-}
-
-uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
-  return element->value_size *
-         ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1);
-}
 
 void initializeElementDefault(const obelisk_rt_element_type_v1 *element,
                               void *value, void *unknown = nullptr) {
@@ -2697,6 +2671,53 @@ obelisk_rt_status ensureAssocCapacity(obelisk_rt_gc_lane_v1 *lane,
   }
 }
 
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((noinline, cold))
+#endif
+obelisk_rt_status prepareAssocWriteCapacity(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    obelisk_rt_string_v1 &keyRootValue, NormalizedAssocKey &normalized,
+    ContainerHeader &snapshot) {
+  while (true) {
+    normalized.string = keyRootValue;
+    obelisk_rt_status status = snapshotHeader(array, snapshot);
+    if (status != OBELISK_RT_OK ||
+        snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+    bool needsCapacity = false;
+    if (!snapshot.buffer) {
+      if (snapshot.capacity != 0 || snapshot.size != 0)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      needsCapacity = true;
+    } else {
+      if (snapshot.capacity == 0 ||
+          (snapshot.capacity & (snapshot.capacity - 1)) != 0 ||
+          snapshot.size > snapshot.capacity)
+        return OBELISK_RT_INVALID_HANDLE;
+      if (snapshot.size < snapshot.capacity * 3 / 4)
+        return OBELISK_RT_OK;
+      bool found = false;
+      uint64_t stride = assocSlotStride(snapshot.element);
+      status = accessBuffer(snapshot.buffer, [&](uint8_t *data, uint64_t size) {
+        if (stride == 0 || snapshot.capacity > size / stride)
+          return OBELISK_RT_INVALID_HANDLE;
+        found = findAssocSlot(snapshot, data, size, normalized).has_value();
+        return OBELISK_RT_OK;
+      });
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (found)
+        return OBELISK_RT_OK;
+      needsCapacity = true;
+    }
+    if (!needsCapacity)
+      return OBELISK_RT_OK;
+    status = ensureAssocCapacity(lane, array, snapshot.size + 1);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+}
+
 obelisk_rt_status snapshotValues(obelisk_rt_object_v1 *container,
                                  ContainerHeader &snapshot,
                                  std::vector<uint8_t> &values) {
@@ -4748,14 +4769,12 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
   if (keyRoot.getStatus() != OBELISK_RT_OK)
     return keyRoot.getStatus();
   normalized.string = keyRootValue;
-  status = ensureAssocCapacity(lane, array, snapshot.size + 1);
-  if (status != OBELISK_RT_OK)
-    return status;
-  std::vector<uint8_t> prepared;
-  status = prepareElementValue(lane, obelisk_rt_managed_object_context(array),
-                               snapshot.element, value, unknown, prepared);
-  if (status != OBELISK_RT_OK)
-    return status;
+  if (!snapshot.buffer || snapshot.size >= snapshot.capacity * 3 / 4) {
+    status = prepareAssocWriteCapacity(lane, array, keyRootValue, normalized,
+                                       snapshot);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
   obelisk_rt_string_v1 storedKey = normalized.string;
   if (snapshot.keyKind != OBELISK_RT_ASSOC_KEY_STRING &&
       snapshot.keyWidth > 64) {
@@ -4768,6 +4787,11 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
   ScopedManagedWordRoot storedKeyRoot(lane, &storedKey);
   if (storedKeyRoot.getStatus() != OBELISK_RT_OK)
     return storedKeyRoot.getStatus();
+  std::vector<uint8_t> prepared;
+  status = prepareElementValue(lane, obelisk_rt_managed_object_context(array),
+                               snapshot.element, value, unknown, prepared);
+  if (status != OBELISK_RT_OK)
+    return status;
   uint64_t slotStride = assocSlotStride(snapshot.element);
   std::vector<uint8_t> candidate;
   OBELISK_RT_TRY { candidate.assign(static_cast<size_t>(slotStride), 0); }
@@ -4784,6 +4808,7 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
   struct Write {
     NormalizedAssocKey key;
     std::vector<uint8_t> *candidate;
+    bool inserted = false;
   } write{normalized, &candidate};
   status = obelisk_rt_managed_object_access(
       array, OBELISK_RT_MANAGED_CONTAINER,
@@ -4816,12 +4841,15 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
                 return OBELISK_RT_INVALID_LIFECYCLE;
               obelisk_rt_status inserted =
                   insertAssocCandidate(*header, data, size, *write->candidate);
-              if (inserted == OBELISK_RT_OK)
+              if (inserted == OBELISK_RT_OK) {
                 ++header->size;
+                write->inserted = true;
+              }
               return inserted;
             });
         if (status == OBELISK_RT_OK) {
-          header->ordered = nullptr;
+          if (write->inserted)
+            header->ordered = nullptr;
           ++header->epoch;
         }
         return status;
@@ -5187,8 +5215,8 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
   return OBELISK_RT_OK;
 }
 
-static obelisk_rt_status ensureAssocOrdered(obelisk_rt_gc_lane_v1 *lane,
-                                            obelisk_rt_object_v1 *array) {
+obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array) {
   if (!lane || !array)
     return OBELISK_RT_INVALID_ARGUMENT;
   ScopedManagedRoot ownerRoot(lane, &array);

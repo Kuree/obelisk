@@ -1495,6 +1495,28 @@ literals up to 1,024 bits fold under canonicalization, while ordinary implicit
 string conversions retain their previous lowering. This tranche adds no
 runtime ABI, bytecode intrinsic ID, handler object, or feature linkage.
 
+L12's fourteenth closure tranche implements IEEE 1800-2023 6.24.3 explicit
+bit-stream casts from typed associative arrays of fixed packed bit/logic
+elements into exact-width fixed packed values. Values follow the array's
+cached sorted-key order, with the first value at the destination MSB;
+four-state data is preserved until final two-state coercion. Short, long, and
+empty sources take the same exact fatal path in generic, native, and bytecode
+execution, and the source expression is evaluated once. The first cast after
+a structural mutation rebuilds the existing order cache, while casts after a
+same-key overwrite reuse it and pack in linear time. This reuses the existing
+container bit-stream ABI, bytecode intrinsic, and feature object. Designs that
+do not use the feature retain byte-identical Simulation and native/bytecode
+LLVM IR.
+
+At 512/1,024/2,048 elements, 10,000 overwrite-and-cast iterations take
+1.05/2.13/4.22 seconds natively and 1.41/2.78/5.57 seconds in bytecode. A
+separate 8,192-element runtime benchmark measures cached export at 3.42 ms and
+same-key overwrite plus export at 3.49 ms for 80 iterations, while deliberate
+delete/reinsert invalidation costs 46.54 ms. Two million sparse same-key writes
+remain performance-neutral or improve slightly against the pre-feature
+runtime, and the hot associative-write symbol shrinks from 2,667 to 1,740
+bytes after its uncommon capacity preflight is outlined.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1507,7 +1529,7 @@ runtime ABI, bytecode intrinsic ID, handler object, or feature linkage.
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Implicit event controls derive complete read dependencies, wait before their first execution, and permanently suspend when the controlled statement has no readable dependency. Edge controls and `iff` guards execute over static signals, computed expressions, and class properties without allowing a guard-only change to trigger the statement. Named-block disable exits the exact live target activation across process and task boundaries, cancels only its descendants, preserves outer task copy-out, suppresses abandoned inner copy-out, and supports concurrent and repeated activations in native and bytecode tiers. Nonrecursive function-call exits also execute; recursive zero-time function-call corner cases remain in the core long tail. |
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays including `specparam` expressions, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
-| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts; exact-width dynamic-array/queue/string-to-packed explicit bit-stream casts; fixed unpacked-array/struct-to-packed explicit bit-stream casts recursively composed of fixed packed leaves; ordinal-zero/field-zero/character-zero-at-MSB ordering; final X/Z coercion; handle wildcard identity equality; two-state XNOR; compact integral power; constant ordinary part-selects; dynamic indexed part-selects with partial out-of-range behavior; dynamic string replication; and fixed/dynamic unpacked concatenation with per-element conversion. Associative-array, acyclic all-bit-stream class/object, and nested dynamically sized bit-stream sources remain differential residuals; unpacked unions are excluded by 6.24.3 rather than a missing cast case. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
+| 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts; exact-width dynamic-array/queue/string/typed-associative-array-to-packed explicit bit-stream casts; fixed unpacked-array/struct-to-packed explicit bit-stream casts recursively composed of fixed packed leaves; ordinal-zero/field-zero/character-zero/sorted-key-zero-at-MSB ordering; final X/Z coercion; handle wildcard identity equality; two-state XNOR; compact integral power; constant ordinary part-selects; dynamic indexed part-selects with partial out-of-range behavior; dynamic string replication; and fixed/dynamic unpacked concatenation with per-element conversion. Acyclic all-bit-stream class/object and nested dynamically sized bit-stream sources remain differential residuals; unpacked unions are excluded by 6.24.3 rather than a missing cast case. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
 | 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Sole non-fork/join modport-exported implementations of interface extern methods use the same direct function/task ABI, including suspending copy-out and cancellation. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. Concurrent lowering accepts dynamically selected virtual-interface direct and clocking-block events, distinguishes handles that select the same static interface member, and carries event clocks through expanded property and sequence formals. Common Boolean maximal clocked subsequences compose through exact `##0` same-occurrence fusion and `##1` nearest-strictly-later handoffs, including leading `##1`, direct `iff`, and repeated same-time occurrences. One feature-local coordinator retains at most 64 frozen clocks and aggregate per-stage counts; ordinary single-clock assertions allocate no cohort state. The current Slang frontend rejects virtual-interface members in concurrent assertions and produces an invalid expanded AST for untyped formals carrying clock events; both source cases are recorded xfails without a Slang patch. General property algebra across maximal subsequences, computed/declared clocking-block `iff` descriptors, and remaining inferred-clock contexts remain. |
@@ -1635,10 +1657,10 @@ one commit.
     remaining non-extension ivtest/Verilator core failure to a minimal clause
     test, then close declaration, conversion, lvalue, call, and pattern cases
     not already named above. Dynamic-array/queue-to-fixed-packed explicit
-    bit-stream casts now execute through exact-width, linear bulk paths for
-    dynamic arrays, queues, strings, and recursively fixed unpacked
-    arrays/structs; associative-array, acyclic all-bit-stream
-    class/object, and nested dynamic sources remain in this long tail.
+    bit-stream casts now execute through exact-width bulk paths for dynamic
+    arrays, queues, strings, typed associative arrays, and recursively fixed
+    unpacked arrays/structs; acyclic all-bit-stream class/object and nested
+    dynamic sources remain in this long tail.
 13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27).** Fix the
     remaining legal port conversions/connections, hierarchical paths, upward
     lookup, generated scope naming, and parameter binding. Sole non-fork/join

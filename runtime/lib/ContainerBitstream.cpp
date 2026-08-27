@@ -11,6 +11,12 @@ namespace {
 
 using obelisk::runtime_detail::BufferHeader;
 using obelisk::runtime_detail::ContainerHeader;
+using obelisk::runtime_detail::AssocSlot;
+using obelisk::runtime_detail::assocSlotStride;
+using obelisk::runtime_detail::assocValueOffset;
+using obelisk::runtime_detail::ensureAssocOrdered;
+
+constexpr obelisk_rt_status assocOrderRequired = -1;
 
 OBELISK_RT_FEATURE_HELPER void
 copyBits(uint8_t *destination, uint64_t destinationOffset,
@@ -97,6 +103,71 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packBuffer(void *opaque,
   return OBELISK_RT_OK;
 }
 
+struct AssocBufferRequest {
+  ContainerHeader *header;
+  ExportRequest *request;
+  const uint64_t *indices;
+};
+
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+packAssocBuffer(void *opaque, uint8_t *buffer, uint64_t extent) {
+  auto *environment = static_cast<AssocBufferRequest *>(opaque);
+  ContainerHeader &header = *environment->header;
+  ExportRequest &request = *environment->request;
+  if (extent < sizeof(BufferHeader) ||
+      reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
+      (request.elementFourState &&
+       request.elementPlaneSize > UINT64_MAX / 2))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t stride = assocSlotStride(header.element);
+  uint64_t valueOffset = assocValueOffset(header.element);
+  if (stride == 0 || header.capacity >
+                         (extent - sizeof(BufferHeader)) / stride)
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint8_t *data = buffer + sizeof(BufferHeader);
+  for (uint64_t ordinal = 0; ordinal != request.count; ++ordinal) {
+    uint64_t physical = environment->indices[ordinal];
+    if (physical >= header.capacity)
+      return OBELISK_RT_INVALID_HANDLE;
+    const uint8_t *slotBytes = data + physical * stride;
+    auto *slot = reinterpret_cast<const AssocSlot *>(slotBytes);
+    if (slot->hash == 0)
+      return OBELISK_RT_INVALID_HANDLE;
+    const uint8_t *source = slotBytes + valueOffset;
+    const uint8_t *sourceUnknown = request.elementFourState
+                                       ? source + request.elementPlaneSize
+                                       : nullptr;
+    uint64_t destination =
+        (request.count - ordinal - 1) * request.elementWidth;
+    copyBits(static_cast<uint8_t *>(request.value), destination, source,
+             sourceUnknown, 0, request.elementWidth, request.fourState != 0,
+             static_cast<uint8_t *>(request.unknown));
+  }
+  return OBELISK_RT_OK;
+}
+
+struct AssocOrderRequest {
+  ContainerHeader *header;
+  ExportRequest *request;
+};
+
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+packAssocOrder(void *opaque, uint8_t *buffer, uint64_t extent) {
+  auto *environment = static_cast<AssocOrderRequest *>(opaque);
+  if (extent < sizeof(BufferHeader) ||
+      reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
+      environment->request->count >
+          (extent - sizeof(BufferHeader)) / sizeof(uint64_t))
+    return OBELISK_RT_INVALID_HANDLE;
+  auto *indices = reinterpret_cast<const uint64_t *>(buffer +
+                                                      sizeof(BufferHeader));
+  AssocBufferRequest request{environment->header, environment->request,
+                             indices};
+  return obelisk_rt_managed_object_access(
+      environment->header->buffer, OBELISK_RT_MANAGED_BUFFER,
+      packAssocBuffer, &request);
+}
+
 OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
                                                           uint8_t *object,
                                                           uint64_t extent) {
@@ -106,9 +177,11 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
   auto *request = static_cast<ExportRequest *>(opaque);
   bool sequential = header->kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
                     header->kind == OBELISK_RT_CONTAINER_QUEUE;
+  bool associative =
+      header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
   bool fourState = header->element && (header->element->flags &
                                        OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
-  if (!sequential || !header->element ||
+  if ((!sequential && !associative) || !header->element ||
       (header->element->kind != OBELISK_RT_ELEMENT_BITS &&
        header->element->kind != OBELISK_RT_ELEMENT_LOGIC) ||
       (header->element->kind == OBELISK_RT_ELEMENT_LOGIC) != fourState ||
@@ -122,8 +195,19 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
       (header->kind == OBELISK_RT_CONTAINER_QUEUE &&
        (header->capacity == 0 ||
         (header->capacity & (header->capacity - 1)) != 0 ||
-        header->head >= header->capacity)))
+        header->head >= header->capacity)) ||
+      (associative &&
+       (header->capacity == 0 ||
+        (header->capacity & (header->capacity - 1)) != 0)))
     return OBELISK_RT_ARGUMENT_MISMATCH;
+  if (associative) {
+    if (!header->ordered)
+      return assocOrderRequired;
+    AssocOrderRequest orderRequest{header, request};
+    return obelisk_rt_managed_object_access(
+        header->ordered, OBELISK_RT_MANAGED_BUFFER, packAssocOrder,
+        &orderRequest);
+  }
   BufferRequest bufferRequest{header, request};
   return obelisk_rt_managed_object_access(
       header->buffer, OBELISK_RT_MANAGED_BUFFER, packBuffer, &bufferRequest);
@@ -152,8 +236,20 @@ obelisk_rt_v1_container_export_bitstream(obelisk_rt_object_v1 *container,
   ExportRequest request{outValue, outUnknown,       planeSize,
                         bitWidth, fourState,        elementWidth,
                         count,    elementPlaneSize, elementFourState};
-  return obelisk_rt_managed_object_access(
+  obelisk_rt_status status = obelisk_rt_managed_object_access(
       container, OBELISK_RT_MANAGED_CONTAINER, packContainer, &request);
+  if (status != assocOrderRequired)
+    return status;
+  obelisk_rt_context *context = obelisk_rt_managed_object_context(container);
+  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  if (!lane)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  status = ensureAssocOrdered(lane, container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER, packContainer, &request);
+  return status == assocOrderRequired ? OBELISK_RT_INVALID_HANDLE : status;
 }
 
 namespace {

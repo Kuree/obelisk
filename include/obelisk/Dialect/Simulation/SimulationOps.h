@@ -46,6 +46,10 @@ OBELISK_SIM_RESOURCE(InventoryResource, "obelisk_sim.inventory");
 
 namespace obelisk::sim {
 
+/// Return the element type of a dynamic array, queue, or associative array.
+/// Returns a null type for every other input.
+::mlir::Type getContainerElement(::mlir::Type type);
+
 /// Unconditional semantic legality for inlining a simulation call.  These
 /// rules are shared by every MLIR inlining client; profitability and growth
 /// policy remain properties of the Obelisk-owned pass.

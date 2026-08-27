@@ -25,9 +25,6 @@ bool containsFourStateLeaf(mlir::Type type);
 /// simulation op may produce.
 bool isNormalizedValueType(mlir::Type type);
 
-/// Returns the element type of a dynamic array, queue, or associative array.
-mlir::Type getContainerElement(mlir::Type type);
-
 /// Returns the capture kind recorded on an argument's attribute dictionary.
 std::optional<CaptureKind> getCaptureKind(mlir::DictionaryAttr attrs);
 

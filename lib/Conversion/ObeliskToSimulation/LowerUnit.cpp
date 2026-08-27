@@ -1068,22 +1068,23 @@ FailureOr<Value> UnitLowering::bindObserver(
 //===----------------------------------------------------------------------===//
 
 LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
-UnitLowering::convertSequentialContainerBitstream(Value value, Type targetType,
-                                                  Type targetScalar,
-                                                  Type sourceElement,
-                                                  Location location) {
+UnitLowering::convertContainerBitstream(Value value, Type targetType,
+                                        Type targetScalar, Type sourceElement,
+                                        Location location) {
   Type elementScalar = sim::getPackedScalarType(sourceElement);
-  std::optional<unsigned> targetWidth = sim::getPackedWidth(targetScalar);
-  std::optional<unsigned> elementWidth = sim::getPackedWidth(elementScalar);
+  std::optional<unsigned> targetWidth =
+      targetScalar ? sim::getPackedWidth(targetScalar) : std::nullopt;
+  std::optional<unsigned> elementWidth =
+      elementScalar ? sim::getPackedWidth(elementScalar) : std::nullopt;
   if (!targetWidth || *targetWidth == 0 || !elementScalar || !elementWidth ||
       *elementWidth == 0)
     return emitError(location) << "unsupported bit-stream cast from "
                                << value.getType() << " to " << targetType,
            failure();
-  // IEEE 1800-2023 6.24.3: a sequential container is packed left to right,
-  // with its first element occupying the most-significant bits. Unlike an
-  // ordinary integral conversion or streaming assignment, a bit-stream cast
-  // requires the source and destination widths to match exactly.
+  // IEEE 1800-2023 6.24.3: sequential-container ordinal zero or the first
+  // index-sorted associative value occupies the most-significant bits. Unlike
+  // an ordinary integral conversion or streaming assignment, a bit-stream
+  // cast requires the source and destination widths to match exactly.
   if (*targetWidth % *elementWidth != 0)
     return emitError(location)
                << "bit-stream cast source element width does not divide "
@@ -1327,7 +1328,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return result;
     }
     if (Type targetScalar = sim::getPackedScalarType(targetType)) {
-      return convertSequentialContainerBitstream(
+      return convertContainerBitstream(
           value, targetType, targetScalar, sourceElement, location);
     }
   }
@@ -2253,6 +2254,10 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         if (isa<sim::StringType>(input->getType()))
           return convertStringBitstream(*input, *target, targetScalar,
                                         getSemanticLocation(op));
+        if (auto associative = dyn_cast<sim::AssocArrayType>(input->getType()))
+          return convertContainerBitstream(
+              *input, *target, targetScalar, associative.getElementType(),
+              getSemanticLocation(op));
         if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(
                 input->getType()))
           return convertFixedAggregateBitstream(*input, *target, targetScalar,
