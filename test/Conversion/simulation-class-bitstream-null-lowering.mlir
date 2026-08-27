@@ -9,7 +9,7 @@ module attributes {
   obelisk_sim.design @null_class_bitstream {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.class.decl @__obelisk_class_s3_C id 1 {
-      is_abstract = false, is_final = true, is_interface = false
+      is_abstract = true, is_final = false, is_interface = false
     }
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.cast"
     obelisk_sim.func @cast(

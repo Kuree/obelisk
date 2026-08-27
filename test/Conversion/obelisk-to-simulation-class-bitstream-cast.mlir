@@ -3,6 +3,9 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=require-bytecode' \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   --encode-obelisk-sim-to-bytecode \
+// RUN:   | FileCheck %s --check-prefix=AUTO
 
 !bits = !obelisk.ranged_packed_array<7 : 0 x
     !obelisk.integral<1, false, true, 0 : 0, logic>>
@@ -151,3 +154,12 @@ module attributes {
 // BYTECODE-SAME: class_site_id = 1 : i64
 // BYTECODE-SAME: obelisk_sim.class_bitstream_bytecode_function
 // BYTECODE-SAME: obelisk_sim.class_bitstream_bytecode_site
+
+// AUTO: obelisk.execution.class_bitstream_blob
+// AUTO-NOT: obelisk.feature.class_bitstream_bytecode
+// AUTO-NOT: obelisk.feature.container_bitstream
+// AUTO-NOT: obelisk.feature.recursive_bitstream
+// AUTO: obelisk_sim.recursive.export_bitstream
+// AUTO-SAME: class_site_id = 1 : i64
+// AUTO-NOT: obelisk_sim.class_bitstream_bytecode_function
+// AUTO-NOT: obelisk_sim.class_bitstream_bytecode_site

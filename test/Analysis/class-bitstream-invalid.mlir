@@ -23,6 +23,36 @@ module attributes {
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  test.class_bitstream_source = @Root
+} {
+  obelisk_sim.design @abstract_static_cycle {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.class.decl @Root id 1 {
+      is_abstract = false, is_final = true, is_interface = false
+    }
+    // expected-error @below {{class bit-stream type graph contains a cycle}}
+    obelisk_sim.class.decl @Abstract id 2 {
+      is_abstract = true, is_final = false, is_interface = false
+    }
+    obelisk_sim.class.field @Root_child of @Root at 0 :
+        !obelisk_sim.class_handle<@Abstract> {
+      is_static = false, is_weak = false,
+      obelisk_sim.class_bitstream_member,
+      obelisk_sim.class_bitstream_visibility = 0 : i32
+    }
+    obelisk_sim.class.field @Abstract_self of @Abstract at 0 :
+        !obelisk_sim.class_handle<@Abstract> {
+      is_static = false, is_weak = false,
+      obelisk_sim.class_bitstream_member,
+      obelisk_sim.class_bitstream_visibility = 0 : i32
+    }
+  }
+}
+
+// -----
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   test.class_bitstream_source = @Root,
   test.class_bitstream_allow_hidden
 } {

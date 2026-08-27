@@ -103,8 +103,6 @@ ClassBitstreamAnalysis::compute(sim::SimDesignOp design,
       return declaration.emitOpError("duplicate class ID in bit-stream schema"),
              failure();
     }
-    if (declaration.getIsAbstract() || declaration.getIsInterface())
-      continue;
     FailureOr<SmallVector<const ManagedClassLayoutAnalysis::Field *>> fields =
         result.layouts->getBitstreamFields(layout);
     if (failed(fields))
@@ -173,6 +171,69 @@ ClassBitstreamAnalysis::getCastClosure(sim::ClassHandleType source,
   sim::SimClassDeclOp staticClass = dispatch.lookup(source);
   if (!staticClass)
     return failure();
+
+  auto validateStaticGraph = [&](const Schema *root,
+                                 bool allowHiddenAtRoot) -> LogicalResult {
+    SmallVector<uint8_t> state(schemas.size());
+    struct Frame {
+      const Schema *schema;
+      bool exit;
+      bool root;
+    };
+    SmallVector<Frame, 16> pending{{root, false, true}};
+    while (!pending.empty()) {
+      Frame frame = pending.pop_back_val();
+      const Schema &schema = *frame.schema;
+      sim::SimClassDeclOp declaration = schema.layout->declaration;
+      auto found = schemaIndices.find(declaration.getId());
+      if (found == schemaIndices.end())
+        return failure();
+      unsigned index = found->second;
+      if (frame.exit) {
+        state[index] = 2;
+        continue;
+      }
+      if (state[index] == 2)
+        continue;
+      if (state[index] == 1)
+        return declaration.emitOpError(
+            "class bit-stream type graph contains a cycle");
+      if (schema.invalidField) {
+        sim::SimClassFieldDeclOp invalidField = schema.invalidField;
+        return invalidField.emitOpError(
+            "is not a legal member of a class bit-stream type");
+      }
+      if (schema.hasHiddenField && !(frame.root && allowHiddenAtRoot)) {
+        if (frame.root)
+          return declaration.emitOpError(
+              "has a local or protected member but the class bit-stream "
+              "source is not the current-instance 'this'");
+        return declaration.emitOpError(
+            "has a local or protected member reached through a nested class "
+            "bit-stream handle");
+      }
+      state[index] = 1;
+      pending.push_back({&schema, true, frame.root});
+      for (sim::ClassHandleType nested : llvm::reverse(
+               schema.nestedStaticTypes)) {
+        sim::SimClassDeclOp nestedStatic = dispatch.lookup(nested);
+        if (!nestedStatic)
+          return declaration.emitOpError(
+              "class bit-stream member references an unknown class");
+        const Schema *child = lookup(nestedStatic.getId());
+        if (!child)
+          return nestedStatic.emitOpError(
+              "has no static class bit-stream schema");
+        pending.push_back({child, false, false});
+      }
+    }
+    return success();
+  };
+
+  const Schema *staticSchema = lookup(staticClass.getId());
+  if (!staticSchema ||
+      failed(validateStaticGraph(staticSchema, allowHiddenRoot)))
+    return failure();
   CastClosure result;
   for (sim::SimClassDeclOp candidate :
        dispatch.compatibleConcreteClasses(staticClass)) {
@@ -180,6 +241,8 @@ ClassBitstreamAnalysis::getCastClosure(sim::ClassHandleType source,
     if (!schema)
       return candidate.emitOpError("has no concrete bit-stream schema"),
              failure();
+    if (failed(validateStaticGraph(schema, allowHiddenRoot)))
+      return failure();
     if (schema->invalidField) {
       sim::SimClassFieldDeclOp invalidField = schema->invalidField;
       return invalidField.emitOpError(
@@ -245,6 +308,8 @@ ClassBitstreamAnalysis::getCastClosure(sim::ClassHandleType source,
         const Schema *child = lookup(candidate.getId());
         if (!child)
           return candidate.emitOpError("has no concrete bit-stream schema");
+        if (failed(validateStaticGraph(child, false)))
+          return failure();
         if (child->hasHiddenField)
           return candidate.emitOpError(
                      "has a local or protected member reached through a "

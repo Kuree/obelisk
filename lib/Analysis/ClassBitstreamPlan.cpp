@@ -218,11 +218,10 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
       group.members.push_back(declaration.getId());
     }
     llvm::sort(group.members);
-    if (group.members.empty() ||
-        std::adjacent_find(group.members.begin(), group.members.end()) !=
+    if (std::adjacent_find(group.members.begin(), group.members.end()) !=
             group.members.end())
       return design.emitOpError(
-          "class bit-stream dispatch group is empty or duplicated");
+          "class bit-stream dispatch group contains duplicate members");
 
     for (const ClassBitstreamAnalysis::Schema *source : (*closure)->schemas) {
       sim::SimClassDeclOp declaration = source->layout->declaration;
