@@ -737,6 +737,18 @@ def SimContainerExportBitstreamOp : SimOp<"container.export_bitstream", [
   let hasVerifier = 1;
 }
 
+def SimRecursiveExportBitstreamOp : SimOp<"recursive.export_bitstream", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "pack one recursively dynamic source into a fixed bit-stream";
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan,
+                        OptionalAttr<UnitAttr>:$observe);
+  let results = (outs AnyType:$result, I1:$matched,
+                       SimManagedWatchType:$watch);
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
 def SimContainerSwapOp : SimOp<"container.swap", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
@@ -1456,6 +1468,13 @@ def SimManagedWatchOp : SimOp<"managed.watch", [
   let results = (outs SimManagedWatchType:$result);
   let assemblyFormat = [{$kind $input attr-dict `:` type($input)}];
   let hasVerifier = 1;
+}
+
+def SimManagedWatchNullOp
+    : SimOp<"managed.watch.null", [Pure, ConstantLike]> {
+  let summary = "null managed mutation dependency";
+  let results = (outs SimManagedWatchType:$result);
+  let assemblyFormat = "attr-dict";
 }
 
 def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [

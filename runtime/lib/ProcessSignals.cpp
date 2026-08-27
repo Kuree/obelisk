@@ -15,6 +15,13 @@
 using namespace obelisk::process;
 using namespace obelisk::runtime;
 
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool obelisk_rt_expand_recursive_watch_group(
+    obelisk_rt_context *context, uint64_t token,
+    RecursiveWatchGroupVisit visit, void *environment);
+
 namespace {
 
 bool appendSignalSubscriptionUnlocked(
@@ -208,6 +215,35 @@ bool appendManagedSubscriptionUnlocked(
   // this token after the object becomes non-null.
   if (token == 0)
     return true;
+  if ((token & kRecursiveWatchGroupBit) != 0) {
+    if (!obelisk_rt_expand_recursive_watch_group) {
+      context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+      return false;
+    }
+    struct Environment {
+      obelisk_rt_context *context;
+      SignalSubscription::Target target;
+      uint64_t waiterToken;
+      bool suppressActiveSelf;
+      SignalWaitLatch *latch;
+      std::vector<std::unique_ptr<SignalSubscription>> *subscriptions;
+    } environment{context, target, waiterToken, suppressActiveSelf, latch,
+                  &subscriptions};
+    auto append = [](void *opaque, uint64_t member) {
+      auto &environment = *static_cast<Environment *>(opaque);
+      return appendManagedSubscriptionUnlocked(
+          environment.context, member, environment.target,
+          environment.waiterToken, environment.suppressActiveSelf,
+          environment.latch, *environment.subscriptions);
+    };
+    if (!obelisk_rt_expand_recursive_watch_group(context, token, append,
+                                                 &environment)) {
+      if (context->schedulerStatus == OBELISK_RT_OK)
+        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+      return false;
+    }
+    return true;
+  }
   auto subscription = std::make_unique<SignalSubscription>();
   subscription->stableID = token;
   subscription->bitWidth = OBELISK_RT_WAIT_WIDTH_MANAGED;

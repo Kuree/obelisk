@@ -10,7 +10,7 @@ namespace obelisk::bytecode {
 std::optional<LogicalResult>
 Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
                                          Operation *operation) {
-  if (isa<sim::SimManagedNullOp>(operation)) {
+  if (isa<sim::SimManagedNullOp, sim::SimManagedWatchNullOp>(operation)) {
     uint32_t destination = reg(plan, operation->getResult(0));
     emit({Constant, 0, destination, 0, 0, 0, 0,
           addZeroConstant(plan.layouts[destination])});

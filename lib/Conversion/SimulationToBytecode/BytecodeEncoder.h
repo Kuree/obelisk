@@ -224,6 +224,7 @@ private:
   llvm::SmallVector<CaptureRecord> captureRecords;
   bool requiresDynamicScanFeature = false;
   bool requiresContainerBitstreamFeature = false;
+  bool requiresRecursiveBitstreamFeature = false;
 };
 
 } // namespace obelisk::bytecode

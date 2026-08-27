@@ -97,6 +97,20 @@ public:
   }
 };
 
+class ManagedWatchNullConversion final
+    : public OpConversionPattern<sim::SimManagedWatchNullOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimManagedWatchNullOp op, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOp(op, arith::ConstantOp::create(
+                               rewriter, op.getLoc(), rewriter.getI64Type(),
+                               rewriter.getI64IntegerAttr(0)));
+    return success();
+  }
+};
+
 class ManagedIsNullConversion final
     : public OpConversionPattern<sim::SimManagedIsNullOp> {
 public:
@@ -887,7 +901,8 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
                                              uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
   patterns.add<
-      ClassNullConversion, ManagedNullConversion, ManagedIsNullConversion,
+      ClassNullConversion, ManagedNullConversion, ManagedWatchNullConversion,
+      ManagedIsNullConversion,
       EventNullConversion,
       ClassAllocConversion, ClassCopyConversion,
       ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,

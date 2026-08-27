@@ -39,7 +39,11 @@ for member in feature_members:
         raise SystemExit(f"no-feature wasm extracted {member}")
     if member not in yes_map:
         raise SystemExit(f"dynamic-scan wasm did not extract {member}")
-bitstream_members = ("ContainerBitstream.o", "ContainerBitstreamBytecode.o")
+bitstream_members = (
+    "ContainerBitstream.o",
+    "RecursiveBitstream.o",
+    "ContainerBitstreamBytecode.o",
+)
 for member in bitstream_members:
     if member in no_map:
         raise SystemExit(f"no-feature wasm extracted {member}")
@@ -64,6 +68,12 @@ for symbol in (*feature_body_symbols, "invokeDynamicScanIntrinsic"):
 bitstream_symbols = (
     "obelisk_rt_v1_container_export_bitstream",
     "obelisk_rt_v1_aggregate_export_bitstream",
+    "obelisk_rt_v1_recursive_export_bitstream",
+    "obelisk_rt_v1_recursive_bitstream_link_anchor",
+    "obelisk_rt_expand_recursive_watch_group",
+    "obelisk_rt_managed_allocate_without_safepoint",
+    "obelisk_rt_managed_object_acquire",
+    "obelisk_rt_managed_object_release",
     "obelisk_rt_v1_container_bitstream_link_anchor",
     "invokeContainerBitstreamIntrinsic",
 )

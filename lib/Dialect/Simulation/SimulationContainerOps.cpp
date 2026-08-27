@@ -413,6 +413,315 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
   return plan;
 }
 
+std::optional<SmallVector<uint64_t>> getRecursiveBitStreamPlan(Type type) {
+  constexpr uint64_t maximumRecords =
+      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS;
+  constexpr uint64_t recordWords =
+      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS;
+  SmallVector<uint64_t> records;
+  bool hasDynamic = false;
+
+  struct Layout {
+    uint64_t span = 0;
+    uint64_t alignment = 0;
+    uint64_t stride = 0;
+    std::optional<unsigned> packedWidth;
+    SmallVector<uint64_t, 4> childOffsets;
+  };
+  DenseMap<Type, Layout> layouts;
+  struct LayoutFrame {
+    Type type;
+    bool exit;
+  };
+  SmallVector<LayoutFrame, 16> layoutStack{{type, false}};
+  uint64_t visitedTypes = 0;
+  auto checkedAlign = [](uint64_t value,
+                         uint64_t alignment) -> std::optional<uint64_t> {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
+      return std::nullopt;
+    return (value + alignment - 1) & ~(alignment - 1);
+  };
+  while (!layoutStack.empty()) {
+    LayoutFrame frame = layoutStack.pop_back_val();
+    if (layouts.count(frame.type))
+      continue;
+    if (!frame.exit) {
+      if (++visitedTypes > maximumRecords)
+        return std::nullopt;
+      if (auto integer = dyn_cast<IntegerType>(frame.type)) {
+        if (!integer.isSignless() || integer.getWidth() == 0)
+          return std::nullopt;
+        layouts[frame.type] =
+            {integer.getWidth(), 1, 0, integer.getWidth(), {}};
+        continue;
+      }
+      if (auto logic = dyn_cast<LogicType>(frame.type)) {
+        if (logic.getWidth() == 0)
+          return std::nullopt;
+        layouts[frame.type] =
+            {logic.getWidth(), 1, 0, logic.getWidth(), {}};
+        continue;
+      }
+      if (isa<StringType, DynamicArrayType, QueueType, AssocArrayType>(
+              frame.type)) {
+        if (auto associative = dyn_cast<AssocArrayType>(frame.type);
+            associative && associative.getWildcardIndex())
+          return std::nullopt;
+        layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth,
+                               0, std::nullopt, {}};
+        Type element;
+        if (auto array = dyn_cast<DynamicArrayType>(frame.type))
+          element = array.getElementType();
+        else if (auto queue = dyn_cast<QueueType>(frame.type))
+          element = queue.getElementType();
+        else if (auto associative = dyn_cast<AssocArrayType>(frame.type))
+          element = associative.getElementType();
+        if (element) {
+          layouts.erase(frame.type);
+          layoutStack.push_back({frame.type, true});
+          layoutStack.push_back({element, false});
+        }
+        continue;
+      }
+      unsigned count = getAggregateNumElements(frame.type);
+      if (count == 0 ||
+          !isa<PackedArrayType, PackedStructType, PackedUnionType,
+               UnpackedArrayType, UnpackedStructType>(frame.type))
+        return std::nullopt;
+      layoutStack.push_back({frame.type, true});
+      if (auto array = dyn_cast<PackedArrayType>(frame.type)) {
+        layoutStack.push_back({array.getElementType(), false});
+      } else if (auto array = dyn_cast<UnpackedArrayType>(frame.type)) {
+        layoutStack.push_back({array.getElementType(), false});
+      } else {
+        for (unsigned ordinal = count; ordinal != 0; --ordinal)
+          layoutStack.push_back(
+              {getAggregateElementType(frame.type, ordinal - 1), false});
+      }
+      continue;
+    }
+
+    if (auto array = dyn_cast<DynamicArrayType>(frame.type)) {
+      if (!layouts.count(array.getElementType()))
+        return std::nullopt;
+      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
+                             std::nullopt, {}};
+      continue;
+    }
+    if (auto queue = dyn_cast<QueueType>(frame.type)) {
+      if (!layouts.count(queue.getElementType()))
+        return std::nullopt;
+      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
+                             std::nullopt, {}};
+      continue;
+    }
+    if (auto associative = dyn_cast<AssocArrayType>(frame.type)) {
+      if (!layouts.count(associative.getElementType()))
+        return std::nullopt;
+      layouts[frame.type] = {managedHandleBitWidth, managedHandleBitWidth, 0,
+                             std::nullopt, {}};
+      continue;
+    }
+    if (auto array = dyn_cast<PackedArrayType>(frame.type)) {
+      auto found = layouts.find(array.getElementType());
+      uint64_t count = getAggregateNumElements(array);
+      if (found == layouts.end() || !found->second.packedWidth ||
+          *found->second.packedWidth >
+              std::numeric_limits<unsigned>::max() / count)
+        return std::nullopt;
+      unsigned width = *found->second.packedWidth * count;
+      layouts[frame.type] = {width, 1, 0, width, {}};
+      continue;
+    }
+    if (isa<PackedStructType, PackedUnionType>(frame.type)) {
+      uint64_t width = 0;
+      ArrayAttr fields = getAggregateFields(frame.type);
+      for (Attribute attribute : fields) {
+        auto field = dyn_cast<FieldAttr>(attribute);
+        auto found = field ? layouts.find(field.getType()) : layouts.end();
+        if (!field || found == layouts.end() || !found->second.packedWidth ||
+            field.getPackedOffset() >
+                std::numeric_limits<unsigned>::max() -
+                    *found->second.packedWidth)
+          return std::nullopt;
+        width = std::max<uint64_t>(
+            width, field.getPackedOffset() + *found->second.packedWidth);
+      }
+      if (auto unionType = dyn_cast<PackedUnionType>(frame.type)) {
+        if (unionType.getTagBits() >
+            std::numeric_limits<unsigned>::max() - width)
+          return std::nullopt;
+        width += unionType.getTagBits();
+      }
+      if (width == 0 || width > std::numeric_limits<unsigned>::max())
+        return std::nullopt;
+      layouts[frame.type] = {width, 1, 0, static_cast<unsigned>(width), {}};
+      continue;
+    }
+    if (auto array = dyn_cast<UnpackedArrayType>(frame.type)) {
+      auto found = layouts.find(array.getElementType());
+      uint64_t count = getAggregateNumElements(array);
+      if (found == layouts.end())
+        return std::nullopt;
+      std::optional<uint64_t> stride =
+          checkedAlign(found->second.span, found->second.alignment);
+      if (!stride || *stride == 0 || *stride > UINT64_MAX / count)
+        return std::nullopt;
+      layouts[frame.type] = {*stride * count, found->second.alignment, *stride,
+                             std::nullopt, {0}};
+      continue;
+    }
+    auto structure = cast<UnpackedStructType>(frame.type);
+    Layout layout;
+    layout.alignment = 1;
+    unsigned count = getAggregateNumElements(structure);
+    layout.childOffsets.reserve(count);
+    for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+      auto found = layouts.find(getAggregateElementType(structure, ordinal));
+      if (found == layouts.end())
+        return std::nullopt;
+      std::optional<uint64_t> offset =
+          checkedAlign(layout.span, found->second.alignment);
+      if (!offset || found->second.span > UINT64_MAX - *offset)
+        return std::nullopt;
+      layout.childOffsets.push_back(*offset);
+      layout.span = *offset + found->second.span;
+      layout.alignment = std::max(layout.alignment, found->second.alignment);
+    }
+    std::optional<uint64_t> span = checkedAlign(layout.span, layout.alignment);
+    if (!span)
+      return std::nullopt;
+    layout.span = *span;
+    layouts[frame.type] = std::move(layout);
+  }
+
+  auto appendRecord = [&](ArrayRef<uint64_t> words) -> std::optional<size_t> {
+    if (words.size() != recordWords || records.size() / recordWords >=
+                                           maximumRecords)
+      return std::nullopt;
+    size_t index = records.size();
+    llvm::append_range(records, words);
+    return index;
+  };
+
+  enum class EmitKind : uint8_t { Value, Patch, Structure };
+  struct EmitFrame {
+    EmitKind kind;
+    Type type;
+    uint64_t offset = 0;
+    size_t record = 0;
+    size_t bodyStart = 0;
+    unsigned ordinal = 0;
+  };
+  SmallVector<EmitFrame, 16> emitStack{{EmitKind::Value, type}};
+  bool valid = true;
+  while (valid && !emitStack.empty()) {
+    EmitFrame frame = emitStack.pop_back_val();
+    auto foundLayout = layouts.find(frame.type);
+    if (foundLayout == layouts.end())
+      return std::nullopt;
+    const Layout &layout = foundLayout->second;
+    if (frame.kind == EmitKind::Patch) {
+      uint64_t bodyRecords = (records.size() - frame.bodyStart) / recordWords;
+      if (bodyRecords == 0 || bodyRecords > UINT32_MAX)
+        return std::nullopt;
+      records[frame.record] |= bodyRecords << 32;
+      continue;
+    }
+    if (frame.kind == EmitKind::Structure) {
+      unsigned count = getAggregateNumElements(frame.type);
+      if (frame.ordinal == count)
+        continue;
+      emitStack.push_back({EmitKind::Structure, frame.type, frame.offset, 0, 0,
+                           frame.ordinal + 1});
+      uint64_t childOffset = layout.childOffsets[frame.ordinal];
+      if (childOffset > UINT64_MAX - frame.offset)
+        return std::nullopt;
+      emitStack.push_back(
+          {EmitKind::Value,
+           getAggregateElementType(frame.type, frame.ordinal),
+           frame.offset + childOffset});
+      continue;
+    }
+    if (layout.packedWidth) {
+      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_COPY, frame.offset,
+                            *layout.packedWidth, 0, 0, *layout.packedWidth})
+                  .has_value();
+      continue;
+    }
+    if (isa<StringType>(frame.type)) {
+      hasDynamic = true;
+      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_STRING,
+                            frame.offset, 0, 0, managedHandleBitWidth, 0})
+                  .has_value();
+      continue;
+    }
+    Type element;
+    uint64_t containerKind = 0;
+    if (auto array = dyn_cast<DynamicArrayType>(frame.type)) {
+      element = array.getElementType();
+      containerKind = OBELISK_RT_CONTAINER_DYNAMIC_ARRAY;
+    } else if (auto queue = dyn_cast<QueueType>(frame.type)) {
+      element = queue.getElementType();
+      containerKind = OBELISK_RT_CONTAINER_QUEUE;
+    } else if (auto associative = dyn_cast<AssocArrayType>(frame.type)) {
+      element = associative.getElementType();
+      containerKind = OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+    }
+    if (element) {
+      uint64_t childSpan = layouts.find(element)->second.span;
+      if (isAggregateType(element)) {
+        if (childSpan > UINT64_MAX - 7)
+          return std::nullopt;
+        childSpan = (childSpan + 7) & ~uint64_t{7};
+      }
+      std::optional<size_t> record =
+          childSpan
+              ? appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_CONTAINER,
+                              frame.offset, containerKind, 0, childSpan, 0})
+              : std::nullopt;
+      if (!record)
+        return std::nullopt;
+      size_t bodyStart = records.size();
+      emitStack.push_back(
+          {EmitKind::Patch, frame.type, 0, *record, bodyStart});
+      emitStack.push_back({EmitKind::Value, element});
+      hasDynamic = true;
+      continue;
+    }
+    if (auto array = dyn_cast<UnpackedArrayType>(frame.type)) {
+      Type child = array.getElementType();
+      const Layout &childLayout = layouts.find(child)->second;
+      std::optional<size_t> record = appendRecord(
+          {OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT, frame.offset,
+           getAggregateNumElements(array), layout.stride, childLayout.span, 0});
+      if (!record)
+        return std::nullopt;
+      size_t bodyStart = records.size();
+      emitStack.push_back(
+          {EmitKind::Patch, frame.type, 0, *record, bodyStart});
+      emitStack.push_back({EmitKind::Value, child});
+      continue;
+    }
+    if (!isa<UnpackedStructType>(frame.type))
+      return std::nullopt;
+    emitStack.push_back({EmitKind::Structure, frame.type, frame.offset});
+  }
+
+  auto root = layouts.find(type);
+  if (!valid || root == layouts.end() || root->second.span == 0 || !hasDynamic ||
+      records.empty() || records.size() % recordWords != 0)
+    return std::nullopt;
+  uint64_t recordCount = records.size() / recordWords;
+  SmallVector<uint64_t> plan{
+      uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC} |
+          (uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION} << 32),
+      recordCount, root->second.span, 0};
+  llvm::append_range(plan, records);
+  return plan;
+}
+
 bool getManagedHandleSlots(Type type,
                            llvm::SmallVectorImpl<ManagedHandleSlot> &slots) {
   auto leafKind = [](Type leaf) -> std::optional<uint32_t> {
@@ -808,6 +1117,30 @@ LogicalResult SimContainerExportBitstreamOp::verify() {
         "result must be a nonempty fixed bit-stream containing a whole "
         "number of input elements");
   return success();
+}
+
+LogicalResult SimRecursiveExportBitstreamOp::verify() {
+  if (!isa<IntegerType, LogicType>(getResult().getType()) ||
+      getPackedWidth(getResult().getType()).value_or(0) == 0)
+    return emitOpError("result must be a nonempty fixed packed scalar");
+  std::optional<SmallVector<uint64_t>> expected =
+      getRecursiveBitStreamPlan(getInput().getType());
+  if (!expected || expected->size() != getPlan().size())
+    return emitOpError(
+        "input must be a recursively dynamically sized bit-stream source");
+  for (auto [actual, wanted] : llvm::zip_equal(getPlan(), *expected))
+    if (static_cast<uint64_t>(actual) != wanted)
+      return emitOpError("recursive bit-stream plan does not match the input ")
+             << "type";
+  return success();
+}
+
+void SimRecursiveExportBitstreamOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), HeapResource::get());
+  if (getObserve())
+    effects.emplace_back(MemoryEffects::Write::get(),
+                         SchedulerResource::get());
 }
 
 LogicalResult SimContainerSwapOp::verify() {

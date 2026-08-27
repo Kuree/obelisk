@@ -72,6 +72,9 @@ inline uint64_t assocSlotStride(const obelisk_rt_element_type_v1 *element) {
 /// associative array. The first ordering pass may allocate the cache.
 obelisk_rt_status ensureAssocOrdered(obelisk_rt_gc_lane_v1 *lane,
                                      obelisk_rt_object_v1 *array);
+obelisk_rt_status
+ensureAssocOrderedWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane,
+                                   obelisk_rt_object_v1 *array);
 
 } // namespace obelisk::runtime_detail
 

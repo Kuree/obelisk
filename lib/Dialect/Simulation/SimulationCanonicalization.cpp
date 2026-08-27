@@ -1604,6 +1604,37 @@ struct SimplifyAggregateSplat final : OpRewritePattern<SimAggregateSplatOp> {
   }
 };
 
+struct FoldNullRecursiveExportBitstream final
+    : OpRewritePattern<SimRecursiveExportBitstreamOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimRecursiveExportBitstreamOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getInput().getDefiningOp<SimManagedNullOp>())
+      return failure();
+    Value result;
+    if (auto integer = dyn_cast<IntegerType>(op.getResult().getType())) {
+      result = arith::ConstantOp::create(
+          rewriter, op.getLoc(), integer,
+          rewriter.getIntegerAttr(integer, APInt::getZero(integer.getWidth())));
+    } else if (auto logic = dyn_cast<LogicType>(op.getResult().getType())) {
+      auto plane = IntegerType::get(rewriter.getContext(), logic.getWidth());
+      result = SimLogicConstantOp::create(
+          rewriter, op.getLoc(), logic, rewriter.getIntegerAttr(plane, 0),
+          rewriter.getIntegerAttr(plane, 0));
+    } else {
+      return failure();
+    }
+    Value matched = arith::ConstantOp::create(
+        rewriter, op.getLoc(), rewriter.getI1Type(),
+        rewriter.getBoolAttr(false));
+    Value watch = SimManagedWatchNullOp::create(
+        rewriter, op.getLoc(), ManagedWatchType::get(rewriter.getContext()));
+    rewriter.replaceOp(op, ValueRange{result, matched, watch});
+    return success();
+  }
+};
+
 struct FoldSmallAggregateExportBitstream final
     : OpRewritePattern<SimAggregateExportBitstreamOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -1981,6 +2012,11 @@ void SimAggregateSplatOp::getCanonicalizationPatterns(
 void SimAggregateExportBitstreamOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldSmallAggregateExportBitstream>(context);
+}
+
+void SimRecursiveExportBitstreamOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldNullRecursiveExportBitstream>(context);
 }
 
 void SimAggregateExtractOp::getCanonicalizationPatterns(

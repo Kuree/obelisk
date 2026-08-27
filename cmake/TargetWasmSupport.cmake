@@ -98,12 +98,18 @@ set(_obelisk_target_runtime_common_sources
     ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
-    ScanFormat DynamicScanBytecode ContainerBitstream ContainerBitstreamBytecode
-    DPIExport DPIExportBytecode)
+    ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
+    ContainerBitstreamBytecode DPIExport DPIExportBytecode)
 set(_obelisk_target_runtime_objects)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
+  set(source_dependencies
+      "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
+  if(source STREQUAL "RecursiveBitstream")
+    list(APPEND source_dependencies
+      "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
+  endif()
   list(APPEND _obelisk_target_runtime_objects "${object}")
   add_custom_command(
     OUTPUT "${object}"
@@ -112,7 +118,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     COMMAND "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags}
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     DEPENDS
-      "${_obelisk_runtime_source_dir}/lib/${source}.cpp"
+      ${source_dependencies}
       ${_obelisk_target_runtime_headers}
     COMMENT "Building wasm32 target runtime ${source}.cpp"
     VERBATIM)

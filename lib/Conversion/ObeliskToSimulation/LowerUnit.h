@@ -476,6 +476,10 @@ private:
                                  ::mlir::Type targetScalar,
                                  ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
+  convertRecursiveBitstream(::mlir::Value value, ::mlir::Type targetType,
+                            ::mlir::Type targetScalar,
+                            ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
   convertStringBitstream(::mlir::Value value, ::mlir::Type targetType,
                          ::mlir::Type targetScalar, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,

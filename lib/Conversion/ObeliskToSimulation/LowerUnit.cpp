@@ -1152,6 +1152,46 @@ UnitLowering::convertFixedAggregateBitstream(Value value, Type targetType,
 }
 
 LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
+UnitLowering::convertRecursiveBitstream(Value value, Type targetType,
+                                        Type targetScalar,
+                                        Location location) {
+  std::optional<SmallVector<uint64_t>> plan =
+      sim::getRecursiveBitStreamPlan(value.getType());
+  if (!plan)
+    return emitError(location) << "unsupported recursively dynamic bit-stream "
+                                  "cast from "
+                               << value.getType() << " to " << targetType,
+           failure();
+  bool observe = observedDependencies != nullptr;
+  SmallVector<int64_t> encoded;
+  encoded.reserve(plan->size());
+  llvm::transform(*plan, std::back_inserter(encoded),
+                  [](uint64_t word) { return static_cast<int64_t>(word); });
+  auto packed = sim::SimRecursiveExportBitstreamOp::create(
+      builder, location,
+      TypeRange{targetScalar, builder.getI1Type(),
+                sim::ManagedWatchType::get(function.getContext())},
+      value, builder.getDenseI64ArrayAttr(encoded),
+      observe ? builder.getUnitAttr() : UnitAttr{});
+  if (observe)
+    recordSensitivity(packed.getWatch());
+  Block *accepted = addBlock();
+  Block *rejected = addBlock();
+  cf::CondBranchOp::create(builder, location, packed.getMatched(), accepted,
+                           ValueRange{}, rejected, ValueRange{});
+  setCurrent(rejected);
+  if (failed(emitRuntimeFatal(
+          location, "bit-stream cast source and destination widths differ")))
+    return failure();
+  setCurrent(accepted);
+  if (targetScalar == targetType)
+    return packed.getResult();
+  return sim::SimPackedUnflattenOp::create(builder, location, targetType,
+                                           packed.getResult())
+      .getResult();
+}
+
+LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
 UnitLowering::convertStringBitstream(Value value, Type targetType,
                                      Type targetScalar, Location location) {
   std::optional<unsigned> targetWidth = sim::getPackedWidth(targetScalar);
@@ -2254,14 +2294,30 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         if (isa<sim::StringType>(input->getType()))
           return convertStringBitstream(*input, *target, targetScalar,
                                         getSemanticLocation(op));
-        if (auto associative = dyn_cast<sim::AssocArrayType>(input->getType()))
-          return convertContainerBitstream(
-              *input, *target, targetScalar, associative.getElementType(),
-              getSemanticLocation(op));
+        Type containerElement;
+        if (auto array = dyn_cast<sim::DynamicArrayType>(input->getType()))
+          containerElement = array.getElementType();
+        else if (auto queue = dyn_cast<sim::QueueType>(input->getType()))
+          containerElement = queue.getElementType();
+        else if (auto associative =
+                     dyn_cast<sim::AssocArrayType>(input->getType()))
+          containerElement = associative.getElementType();
+        if (containerElement) {
+          if (sim::getPackedScalarType(containerElement))
+            return convertContainerBitstream(
+                *input, *target, targetScalar, containerElement,
+                getSemanticLocation(op));
+          return convertRecursiveBitstream(*input, *target, targetScalar,
+                                           getSemanticLocation(op));
+        }
         if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(
-                input->getType()))
-          return convertFixedAggregateBitstream(*input, *target, targetScalar,
-                                                getSemanticLocation(op));
+                input->getType())) {
+          if (sim::getFixedBitStreamPlan(input->getType()))
+            return convertFixedAggregateBitstream(
+                *input, *target, targetScalar, getSemanticLocation(op));
+          return convertRecursiveBitstream(*input, *target, targetScalar,
+                                           getSemanticLocation(op));
+        }
       }
     bool sourceSigned = isSignedNode(children.front()) ||
                         fillsWidenedUnknown(children.front(), *target);

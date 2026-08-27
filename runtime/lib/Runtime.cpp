@@ -261,6 +261,8 @@ obelisk_rt_context::~obelisk_rt_context() {
   obelisk_rt_release_native_schedule_plan(this);
   if (dynamicScanState && dynamicScanState->destroy)
     dynamicScanState->destroy(dynamicScanState);
+  if (recursiveWatchGroups && recursiveWatchGroups->destroy)
+    recursiveWatchGroups->destroy(recursiveWatchGroups);
   threadErrors.erase(this);
   obelisk_rt_managed_heap_destroy(managedHeap);
 }

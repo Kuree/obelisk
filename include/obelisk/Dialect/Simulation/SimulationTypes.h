@@ -58,6 +58,15 @@ getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 std::optional<::llvm::SmallVector<uint64_t>>
 getFixedBitStreamPlan(::mlir::Type type);
 
+/// Build the compact preorder plan for a bit-stream source containing at
+/// least one dynamically sized member. Fixed arrays and structures are
+/// represented structurally, while dynamic arrays, queues, typed associative
+/// arrays, and strings become runtime traversal nodes. Class roots can extend
+/// this grammar with the reserved OBJECT node without changing the packing
+/// ABI.
+std::optional<::llvm::SmallVector<uint64_t>>
+getRecursiveBitStreamPlan(::mlir::Type type);
+
 /// Runtime-managed categories that can occupy a source value word. These are
 /// bit flags because an overlapping union slot may legally represent more
 /// than one category.

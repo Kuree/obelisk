@@ -383,6 +383,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
       signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
@@ -880,6 +881,11 @@ bool validIntrinsic(const Image &image, const Function &function,
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
+    if (signature.flags == 1 || signature.flags == 2)
+      return site.inputCount == 2 && site.outputCount == 3 &&
+             (numeric(input(0)) || managed(input(0)) || string(input(0))) &&
+             bytes(input(1)) && numeric(output(0)) &&
+             twoStateBits(output(1), 1) && twoStateBits(output(2), 64);
     if (signature.flags != 0 || site.inputCount != 8 || site.outputCount != 1 ||
         !managed(input(0)) || !numeric(output(0)))
       return false;

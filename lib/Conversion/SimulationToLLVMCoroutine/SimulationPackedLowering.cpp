@@ -91,11 +91,10 @@ uint64_t appendStableHash(uint64_t hash, uint64_t value, unsigned bytes) {
   return hash;
 }
 
-std::string
-encodeAggregateBitstreamPlan(sim::SimAggregateExportBitstreamOp operation) {
+std::string encodeBitstreamPlan(ArrayRef<int64_t> plan) {
   std::string bytes;
-  bytes.reserve(operation.getPlan().size() * sizeof(int64_t));
-  for (int64_t signedWord : operation.getPlan()) {
+  bytes.reserve(plan.size() * sizeof(int64_t));
+  for (int64_t signedWord : plan) {
     uint64_t word = static_cast<uint64_t>(signedWord);
     for (unsigned index = 0; index != sizeof(word); ++index)
       bytes.push_back(static_cast<char>(word >> (index * 8)));
@@ -365,6 +364,7 @@ LogicalResult lowerPackedSimulationOperations(
   llvm::StringMap<unsigned> byteGlobalIndices;
   bool needsContainerBitstreamABI = false;
   bool needsAggregateBitstreamABI = false;
+  bool needsRecursiveBitstreamABI = false;
   auto reserveByteGlobal = [&](Location location, StringRef name,
                                StringRef bytes) -> LogicalResult {
     auto [entry, inserted] =
@@ -450,12 +450,22 @@ LogicalResult lowerPackedSimulationOperations(
     }
     if (auto bitstream =
             dyn_cast<sim::SimAggregateExportBitstreamOp>(operation)) {
-      std::string bytes = encodeAggregateBitstreamPlan(bitstream);
+      std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
       std::string name = "__obelisk_aggregate_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
       operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
                          StringAttr::get(context, name));
       needsAggregateBitstreamABI = true;
+      return reserve(name, bytes);
+    }
+    if (auto bitstream =
+            dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
+      std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
+      std::string name = "__obelisk_recursive_bitstream_plan_" +
+                         llvm::utohexstr(llvm::hash_value(bytes));
+      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
+                         StringAttr::get(context, name));
+      needsRecursiveBitstreamABI = true;
       return reserve(name, bytes);
     }
     if (auto path =
@@ -564,6 +574,12 @@ LogicalResult lowerPackedSimulationOperations(
                                "obelisk_rt_v1_aggregate_export_bitstream", i32,
                                {pointer, pointer, i64, i64, i32, pointer,
                                 pointer, i64, i64, i32, pointer, i64})))
+    return failure();
+  if (needsRecursiveBitstreamABI &&
+      failed(declareRuntimeABI(
+          module.getLoc(), "obelisk_rt_v1_recursive_export_bitstream", i32,
+          {pointer, pointer, pointer, i64, i64, i32, pointer, pointer, i64,
+           i64, i32, pointer, i64, i32, pointer, pointer})))
     return failure();
   markTiming("byte-global inventory and materialization");
 
@@ -766,11 +782,13 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimCovergroupSampleEnabledOp, sim::SimCovergroupBinHitOp,
         sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
         sim::SimCovergroupInstanceQueryOp, sim::SimCovergroupTypeQueryOp,
-        sim::SimManagedNullOp, sim::SimManagedIsNullOp, sim::SimEventNullOp,
+        sim::SimManagedNullOp, sim::SimManagedWatchNullOp,
+        sim::SimManagedIsNullOp, sim::SimEventNullOp,
         sim::SimContainerSizeOp, sim::SimContainerCreateLikeOp,
         sim::SimContainerCreateOp, sim::SimContainerCloneOp,
         sim::SimContainerImportFixedOp, sim::SimContainerExportFixedOp,
-        sim::SimContainerExportBitstreamOp, sim::SimAggregateExportBitstreamOp,
+        sim::SimContainerExportBitstreamOp, sim::SimRecursiveExportBitstreamOp,
+        sim::SimAggregateExportBitstreamOp,
         sim::SimContainerSwapOp, sim::SimContainerDeleteOp,
         sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
         sim::SimContainerWriteOp, sim::SimAssocCreateOp, sim::SimAssocReadOp,

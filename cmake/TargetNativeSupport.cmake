@@ -175,12 +175,18 @@ set(_obelisk_target_runtime_common_sources
     ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
-    ScanFormat DynamicScanBytecode ContainerBitstream ContainerBitstreamBytecode
-    DPIExport DPIExportBytecode)
+    ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
+    ContainerBitstreamBytecode DPIExport DPIExportBytecode)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
+  set(source_dependencies
+      "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
+  if(source STREQUAL "RecursiveBitstream")
+    list(APPEND source_dependencies
+      "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
+  endif()
   list(APPEND _obelisk_target_runtime_objects "${object}")
   list(APPEND _obelisk_target_runtime_lto_objects "${lto_object}")
   add_custom_command(
@@ -219,7 +225,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
     DEPENDS
       "${OBELISK_TARGET_SYSROOT_STAMP}"
-      "${_obelisk_runtime_source_dir}/lib/${source}.cpp"
+      ${source_dependencies}
       ${_obelisk_target_runtime_headers}
     COMMENT "Building native and Full-LTO target runtime ${source}.cpp"
     VERBATIM)

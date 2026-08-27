@@ -403,6 +403,114 @@ private:
   const llvm::DataLayout &dataLayout;
 };
 
+class RecursiveExportBitstreamConversion final
+    : public OpConversionPattern<sim::SimRecursiveExportBitstreamOp> {
+public:
+  RecursiveExportBitstreamConversion(const TypeConverter &converter,
+                                     MLIRContext *context,
+                                     const llvm::DataLayout &dataLayout)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimRecursiveExportBitstreamOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                               resultTypes)) ||
+        adaptor.getInput().empty() || adaptor.getInput().size() > 2 ||
+        resultTypes.empty() || resultTypes.size() > 2)
+      return failure();
+    llvm::DataLayout local(dataLayout.getStringRepresentation());
+    llvm::LLVMContext llvmContext;
+    FailureOr<analysis::SimulationStorageProperties> inputStorage =
+        analysis::getSimulationStorageProperties(op.getInput().getType(), local,
+                                                 llvmContext);
+    FailureOr<analysis::SimulationStorageProperties> outputStorage =
+        analysis::getSimulationStorageProperties(op.getResult().getType(),
+                                                 local, llvmContext);
+    std::optional<unsigned> outputWidth =
+        sim::getPackedWidth(op.getResult().getType());
+    if (failed(inputStorage) || failed(outputStorage) || !outputWidth ||
+        op.getPlan().size() <
+            OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS ||
+        adaptor.getInput().size() !=
+            analysis::getSimulationPhysicalStorageCount(*inputStorage) ||
+        resultTypes.size() !=
+            analysis::getSimulationPhysicalStorageCount(*outputStorage))
+      return failure();
+    uint64_t inputWidth = static_cast<uint64_t>(op.getPlan()[2]);
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    SmallVector<Value> inputs;
+    for (Value input : adaptor.getInput()) {
+      Value storage = entryAlloca(rewriter, location, input.getType(), 1,
+                                  inputStorage->alignment);
+      LLVM::StoreOp::create(rewriter, location, input, storage,
+                            inputStorage->alignment);
+      inputs.push_back(storage);
+    }
+    SmallVector<Value> outputs;
+    for (Type type : resultTypes)
+      outputs.push_back(
+          entryAlloca(rewriter, location, type, 1, outputStorage->alignment));
+    Value matched = entryAlloca(rewriter, location, i32, 1, 4);
+    Value watch = entryAlloca(rewriter, location, i64, 1, 8);
+    Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
+    StringAttr globalName =
+        op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
+    if (!globalName)
+      return op.emitOpError(
+          "recursive bit-stream plan was not prepared before conversion");
+    Value plan = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                           globalName.getValue());
+    auto c32 = [&](uint32_t value) {
+      return llvmConstant(rewriter, location, i32, value);
+    };
+    auto c64 = [&](uint64_t value) {
+      return llvmConstant(rewriter, location, i64, value);
+    };
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_recursive_export_bitstream"),
+            ValueRange{context, inputs[0],
+                       inputs.size() == 2 ? inputs[1] : null,
+                       c64(inputStorage->size), c64(inputWidth),
+                       c32(inputStorage->fourState), outputs[0],
+                       outputs.size() == 2 ? outputs[1] : null,
+                       c64(outputStorage->size), c64(*outputWidth),
+                       c32(outputStorage->fourState), plan,
+                       c64(op.getPlan().size() * sizeof(int64_t)),
+                       c32(op.getObserve() ? 1 : 0), matched, watch})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    SmallVector<Value> results;
+    for (auto [type, storage] : llvm::zip_equal(resultTypes, outputs))
+      results.push_back(LLVM::LoadOp::create(rewriter, location, type, storage,
+                                             outputStorage->alignment));
+    Value matched32 =
+        LLVM::LoadOp::create(rewriter, location, i32, matched, 4);
+    Value matched1 = LLVM::TruncOp::create(rewriter, location,
+                                           rewriter.getI1Type(), matched32);
+    Value watchValue =
+        LLVM::LoadOp::create(rewriter, location, i64, watch, 8);
+    rewriter.replaceOpWithMultiple(
+        op, SmallVector<ValueRange>{ValueRange(results), ValueRange{matched1},
+                                    ValueRange{watchValue}});
+    return success();
+  }
+
+private:
+  const llvm::DataLayout &dataLayout;
+};
+
 class AggregateExportBitstreamConversion final
     : public OpConversionPattern<sim::SimAggregateExportBitstreamOp> {
 public:
@@ -1743,6 +1851,7 @@ void populateManagedContainerToLLVMConversionPatterns(
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
       converter, context, dataLayout);
   patterns.add<ContainerExportBitstreamConversion,
+               RecursiveExportBitstreamConversion,
                AggregateExportBitstreamConversion>(converter, context,
                                                    dataLayout);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,

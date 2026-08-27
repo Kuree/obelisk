@@ -69,10 +69,11 @@ expected_members = [pathlib.Path(item).name + ".o"
 if members != expected_members:
     raise SystemExit("built runtime archive does not preserve its declared "
                      "common/cold-tail grouping")
-if host_cold[:6] != [
+if host_cold[:7] != [
     "lib/ScanFormat.cpp",
     "lib/DynamicScanBytecode.cpp",
     "lib/ContainerBitstream.cpp",
+    "lib/RecursiveBitstream.cpp",
     "lib/ContainerBitstreamBytecode.cpp",
     "lib/DPIExport.cpp",
     "lib/DPIExportBytecode.cpp",
@@ -99,6 +100,24 @@ def require_feature_symbol(layout, symbol):
 def require_feature_or_inlined(layout, symbol):
     if symbol in layout:
         require_feature_symbol(layout, symbol)
+
+
+def require_recursive_feature_symbol(layout, symbol):
+    expression = (
+        r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
+        + re.escape(symbol)
+        + r"[^\n]*\n(?:(?!Symbol \{).)*Section: "
+        r"\.obelisk\.feature\.recursive_bitstream\.text"
+    )
+    if not re.search(expression, layout, re.DOTALL):
+        raise SystemExit(
+            f"{symbol} is not in recursive bit-stream feature text"
+        )
+
+
+def require_recursive_feature_or_inlined(layout, symbol):
+    if symbol in layout:
+        require_recursive_feature_symbol(layout, symbol)
 
 
 scan_layout = member_layout("ScanFormat.cpp.o")
@@ -142,6 +161,39 @@ for symbol in (
 ):
     require_feature_or_inlined(bitstream_layout, symbol)
 
+recursive_bitstream_layout = member_layout("RecursiveBitstream.cpp.o")
+require_recursive_feature_symbol(
+    recursive_bitstream_layout, "obelisk_rt_v1_recursive_export_bitstream"
+)
+require_recursive_feature_symbol(
+    recursive_bitstream_layout, "obelisk_rt_v1_recursive_bitstream_link_anchor"
+)
+require_recursive_feature_symbol(
+    recursive_bitstream_layout, "obelisk_rt_expand_recursive_watch_group"
+)
+for symbol in (
+    "readRecursive64",
+    "validateRecursiveBody",
+    "walkRecursiveBody",
+    "acquireRecursiveContainer",
+    "createRecursiveWatchGroup",
+):
+    require_recursive_feature_or_inlined(recursive_bitstream_layout, symbol)
+
+managed_heap_layout = member_layout("ManagedHeap.cpp.o")
+for symbol in (
+    "obelisk_rt_managed_allocate_without_safepoint",
+    "obelisk_rt_managed_object_acquire",
+    "obelisk_rt_managed_object_release",
+):
+    require_feature_symbol(managed_heap_layout, symbol)
+require_feature_or_inlined(
+    managed_heap_layout, "allocateManagedWithoutSafepoint"
+)
+
+containers_layout = member_layout("Containers.cpp.o")
+require_feature_or_inlined(containers_layout, "allocateBufferWithoutSafepoint")
+
 bitstream_bytecode_layout = member_layout("ContainerBitstreamBytecode.cpp.o")
 for symbol in (
     "invokeContainerBitstreamIntrinsic",
@@ -150,6 +202,16 @@ for symbol in (
     require_feature_symbol(bitstream_bytecode_layout, symbol)
 for symbol in ("readScalar", "readManaged", "readBytes"):
     require_feature_or_inlined(bitstream_bytecode_layout, symbol)
+weak_recursive_bitstream = re.search(
+    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
+    r"obelisk_rt_v1_recursive_export_bitstream[^\n]*\n"
+    r"(?:(?!Symbol \{).)*Binding: Weak\s*"
+    r"(?:(?!Symbol \{).)*Section: Undefined",
+    bitstream_bytecode_layout,
+    re.DOTALL,
+)
+if not weak_recursive_bitstream:
+    raise SystemExit("legacy bit-stream bytecode has a strong recursive edge")
 
 dpi_export_layout = member_layout("DPIExport.cpp.o")
 for symbol in (
@@ -224,10 +286,11 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
              source / "cmake/TargetWasmSupport.cmake"):
     common = cmake_list(path, "_obelisk_target_runtime_common_sources")
     cold = cmake_list(path, "_obelisk_target_runtime_cold_tail_sources")
-    if cold[:6] != [
+    if cold[:7] != [
         "ScanFormat",
         "DynamicScanBytecode",
         "ContainerBitstream",
+        "RecursiveBitstream",
         "ContainerBitstreamBytecode",
         "DPIExport",
         "DPIExportBytecode",
@@ -281,6 +344,21 @@ tail = re.search(
 if not tail:
     raise SystemExit("dynamic scan bytecode forwarding is not the switch tail")
 
+image_validator = (source / "runtime/lib/DesignBytecodeImage.cpp").read_text()
+recursive_image_contract = re.search(
+    r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
+    r"if \(signature\.flags == 1 \|\| signature\.flags == 2\)\s*"
+    r"return site\.inputCount == 2 && site\.outputCount == 3 &&\s*"
+    r"\(numeric\(input\(0\)\) \|\| managed\(input\(0\)\) \|\|\s*"
+    r"string\(input\(0\)\)\) &&\s*"
+    r"bytes\(input\(1\)\) &&\s*numeric\(output\(0\)\) &&\s*"
+    r"twoStateBits\(output\(1\), 1\) &&\s*"
+    r"twoStateBits\(output\(2\), 64\);",
+    image_validator,
+)
+if not recursive_image_contract:
+    raise SystemExit("recursive bit-stream bytecode layout is not rejected early")
+
 
 def linked_layout(path):
     sections = run([llvm / "llvm-readobj", "--sections", path]).decode()
@@ -301,6 +379,12 @@ bitstream_symbols = (
     "invokeContainerBitstreamIntrinsic",
     "obelisk_rt_v1_container_export_bitstream",
     "obelisk_rt_v1_aggregate_export_bitstream",
+    "obelisk_rt_v1_recursive_export_bitstream",
+    "obelisk_rt_v1_recursive_bitstream_link_anchor",
+    "obelisk_rt_expand_recursive_watch_group",
+    "obelisk_rt_managed_allocate_without_safepoint",
+    "obelisk_rt_managed_object_acquire",
+    "obelisk_rt_managed_object_release",
 )
 dpi_export_symbols = (
     "obelisk_rt_validate_dpi_exports",

@@ -45,6 +45,7 @@ set(_obelisk_runtime_cold_tail_sources
   lib/ScanFormat.cpp
   lib/DynamicScanBytecode.cpp
   lib/ContainerBitstream.cpp
+  lib/RecursiveBitstream.cpp
   lib/ContainerBitstreamBytecode.cpp
   lib/DPIExport.cpp
   lib/DPIExportBytecode.cpp

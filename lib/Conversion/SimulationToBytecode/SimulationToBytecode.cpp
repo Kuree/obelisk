@@ -177,6 +177,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   result.sampledRanges = std::move(*sampledRanges);
   result.requiresDynamicScanFeature = requiresDynamicScanFeature;
   result.requiresContainerBitstreamFeature = requiresContainerBitstreamFeature;
+  result.requiresRecursiveBitstreamFeature = requiresRecursiveBitstreamFeature;
   result.executionFlags = kExecutionHasBytecode;
   if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
@@ -861,6 +862,11 @@ public:
                       builder.getUnitAttr());
     else
       module->removeAttr("obelisk.feature.container_bitstream");
+    if (encoded->requiresRecursiveBitstreamFeature)
+      module->setAttr("obelisk.feature.recursive_bitstream",
+                      builder.getUnitAttr());
+    else
+      module->removeAttr("obelisk.feature.recursive_bitstream");
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(encoded->sampledRanges.size() * 2);
     for (const SimulationSampledRange &range : encoded->sampledRanges) {

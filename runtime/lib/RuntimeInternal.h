@@ -34,15 +34,24 @@
   __attribute__((noinline, cold, section(".obelisk.feature.text")))
 #define OBELISK_RT_FEATURE_HELPER                                              \
   __attribute__((section(".obelisk.feature.text")))
+#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT                                    \
+  __attribute__((noinline, cold,                                               \
+                 section(".obelisk.feature.recursive_bitstream.text")))
+#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER                                  \
+  __attribute__((section(".obelisk.feature.recursive_bitstream.text")))
 #elif defined(__clang__) || defined(__GNUC__)
 // WebAssembly has a single code section, so it cannot provide the ELF-style
 // feature text section above.  Keep feature services out of their callers and
 // give the backend its portable cold-placement hint instead.
 #define OBELISK_RT_FEATURE_TEXT __attribute__((noinline, cold))
 #define OBELISK_RT_FEATURE_HELPER
+#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT __attribute__((noinline, cold))
+#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
 #else
 #define OBELISK_RT_FEATURE_TEXT
 #define OBELISK_RT_FEATURE_HELPER
+#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT
+#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
 #endif
 
 constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
@@ -944,6 +953,16 @@ struct ClockOccurrenceFeatureState {
   uint64_t conditionalWaitCount = 0;
 };
 
+constexpr uint64_t kRecursiveWatchGroupBit = UINT64_C(1) << 63;
+using RecursiveWatchGroupVisit = bool (*)(void *, uint64_t);
+
+// Feature-owned state for compact recursive managed-watch groups. The cold
+// bit-stream service supplies the concrete storage and destructor; ordinary
+// designs retain only this null tail pointer.
+struct RecursiveWatchGroupState {
+  void (*destroy)(RecursiveWatchGroupState *) noexcept = nullptr;
+};
+
 struct SignalSubscriptionDiagnostics {
   uint64_t publications = 0;
   uint64_t subscriptionsCurrent = 0;
@@ -1611,6 +1630,8 @@ struct obelisk_rt_context {
   // tail placement preserves every preexisting context field offset.
   std::unique_ptr<DesignReadyCohortState> designReadyCohort;
 
+  RecursiveWatchGroupState *recursiveWatchGroups = nullptr;
+
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
@@ -1853,16 +1874,60 @@ obelisk_rt_managed_element_type_lookup(obelisk_rt_context *context,
 
 using ManagedObjectAccess = obelisk_rt_status (*)(void *, uint8_t *, uint64_t);
 using ManagedTraceVisit = void (*)(void *, obelisk_rt_object_v1 *);
+struct ManagedObjectLease;
+OBELISK_RT_FEATURE_HELPER void
+obelisk_rt_managed_object_release(ManagedObjectLease *lease) noexcept;
+struct ManagedObjectLease {
+  void *metadata = nullptr;
+  uint8_t *object = nullptr;
+  uint64_t extent = 0;
+  uint32_t ticket = 0;
+
+  ManagedObjectLease() = default;
+  ManagedObjectLease(const ManagedObjectLease &) = delete;
+  ManagedObjectLease &operator=(const ManagedObjectLease &) = delete;
+  ManagedObjectLease(ManagedObjectLease &&other) noexcept {
+    *this = std::move(other);
+  }
+  ManagedObjectLease &operator=(ManagedObjectLease &&other) noexcept {
+    if (this != &other) {
+      obelisk_rt_managed_object_release(this);
+      metadata = std::exchange(other.metadata, nullptr);
+      object = std::exchange(other.object, nullptr);
+      extent = std::exchange(other.extent, 0);
+      ticket = std::exchange(other.ticket, 0);
+    }
+    return *this;
+  }
+  ~ManagedObjectLease() { obelisk_rt_managed_object_release(this); }
+};
 obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
                                               obelisk_rt_managed_kind_v1 kind,
                                               uint64_t extent,
                                               uint64_t alignment,
                                               const void *runtimeDescriptor,
                                               obelisk_rt_object_v1 **outObject);
+// Allocate while the calling lane remains active without entering a
+// safepoint. This is reserved for publishing allocation-backed caches from
+// operations whose inputs are not compiler-visible GC roots. The allocation
+// still uses the ordinary allocator and updates all accounting; a subsequent
+// ordinary allocation observes the collection threshold.
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+obelisk_rt_managed_allocate_without_safepoint(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
+    uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
+    obelisk_rt_object_v1 **outObject);
 obelisk_rt_status
 obelisk_rt_managed_object_access(obelisk_rt_object_v1 *object,
                                  obelisk_rt_managed_kind_v1 expectedKind,
                                  ManagedObjectAccess access, void *environment);
+// Feature-local zero-copy traversal can retain a managed object's ticket lock
+// across an explicit continuation frame. Every successful acquire must be
+// paired with exactly one release; acquiring a second lease for the same
+// object before releasing the first is invalid.
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_managed_object_acquire(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
+    obelisk_rt_managed_kind_v1 expectedKind, ManagedObjectLease *outLease);
 obelisk_rt_managed_kind_v1
 obelisk_rt_managed_object_kind(const obelisk_rt_object_v1 *object) noexcept;
 uint64_t

@@ -7,7 +7,10 @@
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.exe \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE-LINK
+// RUN:   | FileCheck %s --check-prefix=BYTECODE-LINK \
+// RUN:     --implicit-check-not=recursive_bitstream \
+// RUN:     --implicit-check-not=recursive_export \
+// RUN:     --implicit-check-not=expand_recursive
 // RUN: not %t.exe --execution-tier=native 2>&1 | FileCheck %s --check-prefix=FATAL
 // RUN: not %t.exe --execution-tier=bytecode 2>&1 | FileCheck %s --check-prefix=FATAL
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
@@ -21,7 +24,10 @@
 // RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.native.exe \
 // RUN:   | FileCheck %s --check-prefix=NATIVE-LINK \
 // RUN:     --implicit-check-not=container_bitstream_link_anchor \
-// RUN:     --implicit-check-not=invokeContainerBitstreamIntrinsic
+// RUN:     --implicit-check-not=invokeContainerBitstreamIntrinsic \
+// RUN:     --implicit-check-not=recursive_bitstream \
+// RUN:     --implicit-check-not=recursive_export \
+// RUN:     --implicit-check-not=expand_recursive
 
 // BYTECODE-LINK-DAG: obelisk_rt_v1_container_export_bitstream
 // BYTECODE-LINK-DAG: obelisk_rt_v1_container_bitstream_link_anchor

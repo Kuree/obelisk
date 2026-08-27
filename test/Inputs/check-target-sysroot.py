@@ -249,6 +249,7 @@ native_members = [
     "ScanFormat.o",
     "DynamicScanBytecode.o",
     "ContainerBitstream.o",
+    "RecursiveBitstream.o",
     "ContainerBitstreamBytecode.o",
     "DPIExport.o",
     "DPIExportBytecode.o",

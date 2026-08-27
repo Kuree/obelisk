@@ -462,6 +462,24 @@ obelisk_rt_status allocateBuffer(obelisk_rt_gc_lane_v1 *lane, uint64_t capacity,
                                      &bufferDescriptorToken, outBuffer);
 }
 
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+allocateBufferWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane, uint64_t capacity,
+                               uint64_t stride,
+                               obelisk_rt_object_v1 **outBuffer) {
+  if (!outBuffer)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBuffer = nullptr;
+  if (capacity == 0)
+    return OBELISK_RT_OK;
+  uint64_t bytes = 0;
+  if (!multiplyFits(capacity, stride, bytes) ||
+      bytes > UINT64_MAX - sizeof(BufferHeader))
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  return obelisk_rt_managed_allocate_without_safepoint(
+      lane, OBELISK_RT_MANAGED_BUFFER, sizeof(BufferHeader) + bytes, 16,
+      &bufferDescriptorToken, outBuffer);
+}
+
 uint64_t physicalIndex(const ContainerHeader &header, uint64_t logical);
 
 obelisk_rt_status registerContainerReference(obelisk_rt_gc_lane_v1 *lane,
@@ -5215,8 +5233,26 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array) {
+using AllocateOrderBuffer = obelisk_rt_status (*)(
+    obelisk_rt_gc_lane_v1 *, uint64_t, obelisk_rt_object_v1 **);
+
+static obelisk_rt_status allocateOrderBuffer(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t count,
+    obelisk_rt_object_v1 **outBuffer) {
+  return allocateBuffer(lane, count, sizeof(uint64_t), outBuffer);
+}
+
+static OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+allocateOrderBufferWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane,
+                                    uint64_t count,
+                                    obelisk_rt_object_v1 **outBuffer) {
+  return allocateBufferWithoutSafepoint(lane, count, sizeof(uint64_t),
+                                        outBuffer);
+}
+
+static obelisk_rt_status ensureAssocOrderedImpl(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+    AllocateOrderBuffer allocateOrder) {
   if (!lane || !array)
     return OBELISK_RT_INVALID_ARGUMENT;
   ScopedManagedRoot ownerRoot(lane, &array);
@@ -5314,7 +5350,7 @@ obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
     if (order.retry)
       continue;
     obelisk_rt_object_v1 *ordered = nullptr;
-    status = allocateBuffer(lane, snapshot.size, sizeof(uint64_t), &ordered);
+    status = allocateOrder(lane, snapshot.size, &ordered);
     if (status != OBELISK_RT_OK)
       return status;
     ScopedManagedRoot orderedRoot(lane, &ordered);
@@ -5358,6 +5394,18 @@ obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
     if (!publish.retry)
       return OBELISK_RT_OK;
   }
+}
+
+obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array) {
+  return ensureAssocOrderedImpl(lane, array, allocateOrderBuffer);
+}
+
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status
+obelisk::runtime_detail::ensureAssocOrderedWithoutSafepoint(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array) {
+  return ensureAssocOrderedImpl(lane, array,
+                                allocateOrderBufferWithoutSafepoint);
 }
 
 static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,

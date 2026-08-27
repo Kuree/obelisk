@@ -112,6 +112,20 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
          emitU64Constant(plan, elementStorage->fourState)},
         {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
+    SmallVector<uint8_t> bytes;
+    bytes.reserve(op.getPlan().size() * 8);
+    for (int64_t word : op.getPlan())
+      append64(bytes, static_cast<uint64_t>(word));
+    requiresContainerBitstreamFeature = true;
+    requiresRecursiveBitstreamFeature = true;
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicContainerExportBitstream,
+        {reg(plan, op.getInput()), emitBytesConstant(plan, bytes)},
+        {reg(plan, op.getResult()), reg(plan, op.getMatched()),
+         reg(plan, op.getWatch())},
+        op.getObserve() ? 2 : 1);
+  }
   if (auto op = dyn_cast<sim::SimAggregateExportBitstreamOp>(operation)) {
     FailureOr<ManagedValueStorage> inputStorage =
         getManagedValueStorage(op.getInput().getType(), dataLayout);

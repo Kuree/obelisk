@@ -1135,6 +1135,25 @@ enum {
   OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT = UINT32_C(2)
 };
 
+// Versioned preorder plan for recursively dynamically sized bit-stream
+// sources. The four-word header is followed by six-word records. COPY reads a
+// fixed packed window, REPEAT walks one fixed unpacked-array dimension,
+// CONTAINER walks one dynamic-array, queue, or associative-array value, and
+// STRING appends one managed string as bytes. OBJECT is reserved for the
+// class-source extension and is rejected by this version's interpreter.
+enum {
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC = UINT32_C(0x42535250),
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION = UINT32_C(1),
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS = UINT32_C(4),
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS = UINT32_C(6),
+  OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS = UINT32_C(1048576),
+  OBELISK_RT_RECURSIVE_BITSTREAM_COPY = UINT32_C(1),
+  OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT = UINT32_C(2),
+  OBELISK_RT_RECURSIVE_BITSTREAM_CONTAINER = UINT32_C(3),
+  OBELISK_RT_RECURSIVE_BITSTREAM_STRING = UINT32_C(4),
+  OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT = UINT32_C(5)
+};
+
 // Imported zero-time calls are resolved through mutable context bindings. The
 // bytecode image contains only a deterministic 32-bit symbol ID and typed
 // register metadata; it never contains a host function or data pointer.
@@ -2306,6 +2325,14 @@ obelisk_rt_status obelisk_rt_v1_aggregate_export_bitstream(
     uint32_t input_four_state, void *out_value, void *out_unknown,
     uint64_t output_plane_size, uint64_t output_bit_width,
     uint32_t output_four_state, const void *plan, uint64_t plan_size);
+obelisk_rt_status obelisk_rt_v1_recursive_export_bitstream(
+    obelisk_rt_context *context, const void *input_value,
+    const void *input_unknown,
+    uint64_t input_plane_size, uint64_t input_bit_width,
+    uint32_t input_four_state, void *out_value, void *out_unknown,
+    uint64_t output_plane_size, uint64_t output_bit_width,
+    uint32_t output_four_state, const void *plan, uint64_t plan_size,
+    uint32_t observe, uint32_t *out_matched, uint64_t *out_watch);
 obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,
