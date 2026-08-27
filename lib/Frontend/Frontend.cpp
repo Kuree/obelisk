@@ -23,6 +23,8 @@
 #include "slang/ast/EvalContext.h"
 #include "slang/ast/Lookup.h"
 #include "slang/ast/expressions/Operator.h"
+#include "slang/ast/symbols/PortSymbols.h"
+#include "slang/ast/symbols/SubroutineSymbols.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/TypePrinter.h"
 #include "slang/driver/Driver.h"
@@ -2872,14 +2874,50 @@ private:
                            Op::getBlockSymbolAttrName(operationName),
                            Op::getBlockPathAttrName(operationName));
     } else if constexpr (std::same_as<T, slang::ast::DisableStatement>) {
-      if (const slang::ast::Symbol *target = node.target.getSymbolReference())
-        setSymbolReference(attrs, *target,
+      const slang::ast::Symbol *targetSymbol = node.target.getSymbolReference();
+      if (targetSymbol)
+        setSymbolReference(attrs, *targetSymbol,
                            Op::getTargetSymbolAttrName(operationName),
                            Op::getTargetPathAttrName(operationName));
-      const auto &target =
+      const auto &targetExpression =
           node.target.template as<slang::ast::ArbitrarySymbolExpression>();
-      SET_OP_ATTR(IsHierarchical,
-                  builder.getBoolAttr(target.hierRef.target != nullptr));
+      SET_OP_ATTR(
+          IsHierarchical,
+          builder.getBoolAttr(targetExpression.hierRef.target != nullptr));
+      // Slang resolves `module_instance.interface_port.extern_task` to the
+      // interface stub symbol. For a fork/join extern, however, IEEE 25.7.4
+      // defines that spelling as the one provider activation owned by the
+      // module instance. Preserve the resolved symbol dependency but freeze
+      // the provider task's elaborated path for control-target assignment.
+      const auto *targetSubroutine =
+          targetSymbol &&
+                  targetSymbol->kind == slang::ast::SymbolKind::Subroutine
+              ? &targetSymbol->as<slang::ast::SubroutineSymbol>()
+              : nullptr;
+      const auto *targetPrototype =
+          targetSubroutine && targetSubroutine->flags.has(
+                                  slang::ast::MethodFlags::InterfaceExtern)
+              ? targetSubroutine->getPrototype()
+              : nullptr;
+      const slang::ast::InterfacePortSymbol *interfacePort = nullptr;
+      if (targetPrototype &&
+          targetPrototype->flags.has(slang::ast::MethodFlags::ForkJoin))
+        for (const auto &element : targetExpression.hierRef.path) {
+          if (element.symbol->kind != slang::ast::SymbolKind::InterfacePort)
+            continue;
+          interfacePort =
+              &element.symbol->template as<slang::ast::InterfacePortSymbol>();
+        }
+      if (interfacePort) {
+        if (const slang::ast::Scope *scope = interfacePort->getParentScope()) {
+          std::string providerPath = getSymbolPath(scope->asSymbol());
+          if (!providerPath.empty())
+            providerPath += '.';
+          providerPath += targetSymbol->name;
+          attrs.set(Op::getTargetPathAttrName(operationName),
+                    builder.getStringAttr(providerPath));
+        }
+      }
     } else if constexpr (std::same_as<T, slang::ast::WaitOrderStatement>) {
       SET_OP_ATTR(EventCount, builder.getI64IntegerAttr(node.events.size()));
       SET_OP_ATTR(HasSuccessAction,

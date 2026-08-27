@@ -8882,6 +8882,318 @@ void ObeliskSimPreparePass::runOnOperation() {
                                ValueRange{});
     }
   }
+
+  // IEEE 1800-2017 25.7.4 defines an extern fork/join interface task as one
+  // concurrent call to every elaborated provider. Materialize that contract
+  // only for designs that contain such a task: the ordinary direct-call and
+  // virtual-interface machinery continues to call the interface stub, while
+  // its prepared body becomes a static spawn/join aggregate with no runtime
+  // dispatch inventory.
+  if (!preparedUnits->externForkJoinTargets.empty()) {
+    [&]() LLVM_ATTRIBUTE_NOINLINE {
+      llvm::DenseMap<Operation *, PreparedUnit *> unitsBySource;
+      unitsBySource.reserve(units.size());
+      for (PreparedUnit &unit : units)
+        unitsBySource.try_emplace(unit.source, &unit);
+
+      llvm::DenseSet<uint64_t> codeUnitIDs;
+      codeUnitIDs.insert(rootCodeUnitID);
+      for (const PreparedUnit &unit : units)
+        codeUnitIDs.insert(unit.id);
+
+      SmallVector<Operation *> orderedStubs;
+      orderedStubs.reserve(preparedUnits->externForkJoinTargets.size());
+      for (const auto &aggregation : preparedUnits->externForkJoinTargets)
+        orderedStubs.push_back(aggregation.first);
+      llvm::sort(orderedStubs, [](Operation *lhs, Operation *rhs) {
+        return getHierarchyName(lhs) < getHierarchyName(rhs);
+      });
+
+      OpBuilder aggregateBuilder =
+          OpBuilder::atBlockEnd(&design.getBody().front());
+      for (Operation *stubSource : orderedStubs) {
+        PreparedUnit *stubUnit = unitsBySource.lookup(stubSource);
+        auto stub =
+            dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(stubSource);
+        if (!stubUnit || !stubUnit->function ||
+            stubUnit->entryKind != sim::EntryKind::Task || !stub) {
+          emitError(getSemanticLocation(stubSource))
+              << "interface extern fork/join task has no prepared task unit";
+          invalid = true;
+          continue;
+        }
+        sim::SimFuncOp aggregate = stubUnit->function;
+        Location location = getSemanticLocation(stubSource);
+
+        // Context and formal arguments form the shared public prefix. Direct
+        // task output/inout formals additionally carry one copy-out reference.
+        unsigned publicArguments = 1;
+        for (Operation *child : getChildren(stubSource)) {
+          auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
+          if (!formal)
+            continue;
+          ++publicArguments;
+          if (formal.getDirection() == semantic::SVArgumentDirection::Out ||
+              formal.getDirection() == semantic::SVArgumentDirection::InOut)
+            ++publicArguments;
+        }
+        if (aggregate.getNumArguments() < publicArguments) {
+          emitError(location)
+              << "interface extern fork/join task has an incomplete formal ABI";
+          invalid = true;
+          continue;
+        }
+
+        llvm::StringMap<unsigned> aggregateCaptures;
+        if (ArrayAttr bindings =
+                aggregate->getAttrOfType<ArrayAttr>(bindingsAttrName)) {
+          for (Attribute attribute : bindings) {
+            auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+            if (!binding || binding.getArgument() < publicArguments)
+              continue;
+            auto inserted = aggregateCaptures.try_emplace(
+                binding.getPath().getValue(), binding.getArgument());
+            if (!inserted.second &&
+                inserted.first->second != binding.getArgument()) {
+              emitError(location)
+                  << "interface extern fork/join task has an ambiguous capture "
+                     "binding for '"
+                  << binding.getPath().getValue() << "'";
+              invalid = true;
+            }
+          }
+        }
+        if (invalid)
+          continue;
+
+        SmallVector<sim::SimFuncOp> branches;
+        SmallVector<SmallVector<unsigned>> branchArguments;
+        auto aggregation =
+            preparedUnits->externForkJoinTargets.find(stubSource);
+        assert(aggregation != preparedUnits->externForkJoinTargets.end());
+        ArrayRef<Operation *> providers = aggregation->second;
+        branches.reserve(providers.size());
+        for (auto [providerIndex, providerSource] :
+             llvm::enumerate(providers)) {
+          PreparedUnit *providerUnit = unitsBySource.lookup(providerSource);
+          if (!providerUnit || !providerUnit->function ||
+              providerUnit->entryKind != sim::EntryKind::Task) {
+            emitError(getSemanticLocation(providerSource))
+                << "interface extern fork/join provider has no prepared task "
+                   "unit";
+            invalid = true;
+            break;
+          }
+          sim::SimFuncOp provider = providerUnit->function;
+          if (provider.getNumArguments() < publicArguments) {
+            emitError(getSemanticLocation(providerSource))
+                << "interface extern fork/join provider has an incomplete "
+                   "formal ABI";
+            invalid = true;
+            break;
+          }
+          bool incompatible = false;
+          for (unsigned argument = 0; argument != publicArguments; ++argument)
+            incompatible |= aggregate.getArgumentTypes()[argument] !=
+                            provider.getArgumentTypes()[argument];
+          if (incompatible) {
+            emitError(getSemanticLocation(providerSource))
+                << "interface extern fork/join provider prepared formal ABI "
+                   "does not match its interface task";
+            invalid = true;
+            break;
+          }
+
+          llvm::DenseMap<unsigned, StringRef> providerCapturePaths;
+          if (ArrayAttr bindings =
+                  provider->getAttrOfType<ArrayAttr>(bindingsAttrName))
+            for (Attribute attribute : bindings)
+              if (auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+                  binding && binding.getArgument() >= publicArguments)
+                providerCapturePaths.try_emplace(binding.getArgument(),
+                                                 binding.getPath().getValue());
+
+          SmallVector<unsigned> providerOperandArguments;
+          providerOperandArguments.reserve(provider.getNumArguments());
+          for (unsigned argument = 0; argument != publicArguments; ++argument)
+            providerOperandArguments.push_back(argument);
+          for (unsigned argument = publicArguments;
+               argument != provider.getNumArguments(); ++argument) {
+            auto path = providerCapturePaths.find(argument);
+            auto aggregateArgument = path == providerCapturePaths.end()
+                                         ? aggregateCaptures.end()
+                                         : aggregateCaptures.find(path->second);
+            if (aggregateArgument == aggregateCaptures.end() ||
+                aggregate.getArgumentTypes()[aggregateArgument->second] !=
+                    provider.getArgumentTypes()[argument]) {
+              emitError(getSemanticLocation(providerSource))
+                  << "interface extern fork/join provider capture has no "
+                     "matching aggregate argument";
+              invalid = true;
+              break;
+            }
+            providerOperandArguments.push_back(aggregateArgument->second);
+          }
+          if (invalid)
+            break;
+
+          std::string hierarchy = (Twine(getHierarchyName(stubSource)) +
+                                   ".$extern_forkjoin." + Twine(providerIndex))
+                                      .str();
+          uint64_t codeUnitID = stableCodeUnitID(hierarchy);
+          if (!codeUnitIDs.insert(codeUnitID).second) {
+            emitError(location)
+                << "stable code-unit ID collision for '" << hierarchy << "'";
+            invalid = true;
+            break;
+          }
+          std::string symbol = (Twine(aggregate.getSymName()) +
+                                ".extern_forkjoin." + Twine(providerIndex))
+                                   .str();
+          uint64_t scopeID =
+              codeUnitDeclarations.lookup(stubSource).getScopeId();
+          sim::SimCodeUnitDeclOp::create(
+              aggregateBuilder, location, codeUnitID, scopeID,
+              sim::EntryKind::Fork, aggregateBuilder.getStringAttr(hierarchy),
+              aggregateBuilder.getStringAttr(
+                  "interface extern fork/join branch"),
+              aggregateBuilder.getUnitAttr());
+
+          SmallVector<Type> branchInputs;
+          SmallVector<DictionaryAttr> argumentAttrs;
+          branchInputs.reserve(providerOperandArguments.size());
+          argumentAttrs.reserve(providerOperandArguments.size());
+          for (unsigned argument : providerOperandArguments) {
+            branchInputs.push_back(aggregate.getArgumentTypes()[argument]);
+            argumentAttrs.push_back(aggregate.getArgAttrDict(argument));
+          }
+          SmallVector<NamedAttribute> attributes{
+              aggregateBuilder.getNamedAttr(
+                  "code_unit_id",
+                  aggregateBuilder.getI64IntegerAttr(codeUnitID)),
+              aggregateBuilder.getNamedAttr("internal",
+                                            aggregateBuilder.getUnitAttr()),
+              aggregateBuilder.getNamedAttr(
+                  sim::metadata::hierarchicalName,
+                  aggregateBuilder.getStringAttr(hierarchy))};
+          const StringRef inheritedAttributes[] = {delayScaleAttrName,
+                                                   delayQuantumAttrName,
+                                                   "home_region", "domain"};
+          for (StringRef name : inheritedAttributes)
+            if (Attribute attribute = aggregate->getAttr(name))
+              attributes.push_back(
+                  aggregateBuilder.getNamedAttr(name, attribute));
+          sim::SimFuncOp branch = sim::SimFuncOp::create(
+              aggregateBuilder, location, symbol,
+              FunctionType::get(context, branchInputs, {}),
+              sim::EntryKind::Fork, attributes, argumentAttrs);
+          SymbolTable::setSymbolVisibility(branch,
+                                           SymbolTable::Visibility::Private);
+          Block &entry = branch.getBody().front();
+          auto aggregateControlID = aggregate->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.control_target_id");
+          Block *controlExit = nullptr;
+          Block *callBlock = &entry;
+          Value controlActivation;
+          if (aggregateControlID) {
+            controlExit = new Block();
+            branch.getBody().push_back(controlExit);
+            callBlock = new Block();
+            branch.getBody().push_back(callBlock);
+            OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+            controlActivation = sim::SimControlEnterOp::create(
+                entryBuilder, location, aggregateControlID);
+            sim::SimControlBoundaryOp::create(
+                entryBuilder, location, controlActivation, ValueRange{},
+                sim::ContinuationSiteAttr{}, controlExit, callBlock);
+            OpBuilder exitBuilder = OpBuilder::atBlockEnd(controlExit);
+            sim::SimReturnOp::create(exitBuilder, location, ValueRange{});
+          }
+          Block *continuation = new Block();
+          branch.getBody().push_back(continuation);
+          SmallVector<Value> providerOperands;
+          providerOperands.append(entry.getArguments().begin(),
+                                  entry.getArguments().end());
+          OpBuilder branchBuilder = OpBuilder::atBlockEnd(callBlock);
+          sim::SimTaskCallOp::create(
+              branchBuilder, location,
+              FlatSymbolRefAttr::get(context, provider.getSymName()),
+              providerOperands,
+              branchBuilder.getI64IntegerAttr(providerOperands.size()),
+              sim::ContinuationSiteAttr{}, continuation);
+          OpBuilder continuationBuilder = OpBuilder::atBlockEnd(continuation);
+          if (controlActivation) {
+            sim::SimControlLeaveOp::create(continuationBuilder, location,
+                                           controlActivation);
+            cf::BranchOp::create(continuationBuilder, location, controlExit);
+          } else {
+            sim::SimReturnOp::create(continuationBuilder, location,
+                                     ValueRange{});
+          }
+          branch->setAttr(sim::metadata::lowered,
+                          aggregateBuilder.getUnitAttr());
+          branches.push_back(branch);
+          branchArguments.push_back(std::move(providerOperandArguments));
+        }
+        if (invalid)
+          continue;
+
+        Region &body = aggregate.getBody();
+        body.getBlocks().clear();
+        Block *entry = new Block();
+        body.push_back(entry);
+        for (Type input : aggregate.getArgumentTypes())
+          entry->addArgument(input, location);
+        OpBuilder bodyBuilder = OpBuilder::atBlockEnd(entry);
+        if (branches.empty()) {
+          Value contextValue = entry->getArgument(0);
+          Value descriptor = arith::ConstantOp::create(
+              bodyBuilder, location, bodyBuilder.getI32Type(),
+              bodyBuilder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+          Value message = sim::SimBytesConstantOp::create(
+                              bodyBuilder, location,
+                              "ERROR: interface extern fork/join task has no "
+                              "implementation")
+                              .getResult();
+          sim::SimDisplayOp::create(
+              bodyBuilder, location, contextValue, descriptor,
+              ValueRange{message}, true, 10,
+              bodyBuilder.getDenseI32ArrayAttr({0}),
+              aggregate->getAttrOfType<StringAttr>(
+                  sim::metadata::hierarchicalName),
+              StringAttr{},
+              aggregate->getAttrOfType<IntegerAttr>(delayScaleAttrName),
+              IntegerAttr{});
+          sim::SimErrorOp::create(bodyBuilder, location, contextValue);
+          sim::SimReturnOp::create(bodyBuilder, location, ValueRange{});
+        } else {
+          SmallVector<Value> processes;
+          for (auto [branch, arguments] :
+               llvm::zip_equal(branches, branchArguments)) {
+            SmallVector<Value> operands;
+            operands.reserve(arguments.size());
+            for (unsigned argument : arguments)
+              operands.push_back(entry->getArgument(argument));
+            processes.push_back(sim::SimSpawnOp::create(bodyBuilder, location,
+                                                        branch.getSymNameAttr(),
+                                                        operands, ArrayAttr{},
+                                                        ArrayAttr{})
+                                    .getProcess());
+          }
+          Block *continuation = new Block();
+          body.push_back(continuation);
+          sim::SimSuspendJoinOp::create(
+              bodyBuilder, location, sim::JoinKind::All, processes,
+              processes.size(), sim::ContinuationSiteAttr{},
+              sim::EventRegionAttr{}, continuation);
+          OpBuilder continuationBuilder = OpBuilder::atBlockEnd(continuation);
+          sim::SimReturnOp::create(continuationBuilder, location, ValueRange{});
+        }
+        aggregate->setAttr(sim::metadata::lowered,
+                           aggregateBuilder.getUnitAttr());
+      }
+    }();
+  }
   if (invalid)
     return abort();
 

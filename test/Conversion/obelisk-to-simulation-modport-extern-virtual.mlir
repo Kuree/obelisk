@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: sed -e 's/is_interface_extern, name/is_fork_join, is_interface_extern, name/g' -e 's/() -> !obelisk.void, false/() -> (), true/g' -e 's/subroutine_kind = 0/subroutine_kind = 1/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=FORKJOIN
 
 // Virtual dispatch compares the receiver against the real interface-instance
 // scopes, while invoking the provider implementations in different modules.
@@ -106,3 +107,21 @@ module {
 // CHECK: %[[YCONST:.*]] = arith.constant {{.*}}[[Y]] : i64
 // CHECK: arith.cmpi eq, %[[SCOPE]], %[[YCONST]]
 // CHECK: obelisk_sim.call @[[Q]]
+
+// A fork/join task still dispatches by the real interface-instance scope; the
+// selected stub then invokes its statically frozen provider aggregate.
+// FORKJOIN: obelisk_sim.func private @[[XAGG:unit_[0-9]+]]
+// FORKJOIN-SAME: obelisk_sim.hierarchical_name = "top.x.ping"
+// FORKJOIN: obelisk_sim.spawn @[[XB:[^ (]+]]
+// FORKJOIN-NEXT: obelisk_sim.suspend.join all
+// FORKJOIN: obelisk_sim.func private @[[YAGG:unit_[0-9]+]]
+// FORKJOIN-SAME: obelisk_sim.hierarchical_name = "top.y.ping"
+// FORKJOIN: obelisk_sim.spawn @[[YB:[^ (]+]]
+// FORKJOIN-NEXT: obelisk_sim.suspend.join all
+// FORKJOIN: obelisk_sim.virtual_interface.scope
+// FORKJOIN: obelisk_sim.task.call @[[XAGG]]
+// FORKJOIN: obelisk_sim.task.call @[[YAGG]]
+// FORKJOIN: obelisk_sim.func private @[[XB]]
+// FORKJOIN: obelisk_sim.task.call @{{unit_[0-9]+}}
+// FORKJOIN: obelisk_sim.func private @[[YB]]
+// FORKJOIN: obelisk_sim.task.call @{{unit_[0-9]+}}

@@ -78,5 +78,5 @@ module {
 // MULTI: error: modport-exported interface extern has 2 implementations; exactly one is executable
 // METADATA: error: modport-exported interface extern has inconsistent implementation metadata
 // RESOLUTION: error: modport-exported interface extern implementation does not resolve by matching symbol and path
-// FORKJOIN: error: modport-exported interface extern fork/join methods are not yet executable
+// FORKJOIN: error: only an interface extern task may use fork/join aggregation
 // ABI: error: modport-exported interface extern implementation has an incompatible subroutine ABI

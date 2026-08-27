@@ -1,7 +1,11 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: sed -e 's/extern_implementation_count = 2/extern_implementation_count = 0/' -e 's/extern_implementation_paths = \["top.q.work", "top.p.work"\]/extern_implementation_paths = []/' -e 's/extern_implementation_symbols = \[@s3.\$root::@s6.top::@s25.q::@s26.provider::@s27.work, @s3.\$root::@s6.top::@s15.p::@s16.provider::@s17.work\]/extern_implementation_symbols = []/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
+// RUN: sed 's/extern_implementation_count = 2/extern_implementation_count = 3/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=METADATA
 
-// A suspending exported task reuses the ordinary task-call ABI: output and
-// inout arguments retain completion-only copy-out, while ref stays live.
+// A fork/join extern task statically spawns every provider through the
+// ordinary task-call ABI. Output and inout retain completion-only copy-out,
+// while ref stays live. A legal zero-provider instance reports a runtime error
+// and returns without effect.
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "I", name = "I", node_id = 0 : i64, sym_name = "s0.I"} {
@@ -17,7 +21,7 @@ module {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 6 : i64, sym_name = "s6.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.x", is_uninstantiated = false, name = "x", node_id = 7 : i64, referenced_path = "I", referenced_symbol = @s0.I, sym_name = "s7.x"} {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.x", name = "I", node_id = 8 : i64, sym_name = "s8.I", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s3.$root::@s6.top::@s7.x} {
-            obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 1 : i64, extern_implementation_paths = ["top.p.work"], extern_implementation_symbols = [@s3.$root::@s6.top::@s15.p::@s16.provider::@s17.work], hierarchical_name = "top.x.work", is_interface_extern, name = "work", node_id = 9 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.x.work", subroutine_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work::@s13.work, sym_name = "s9.work"} {
+            obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 2 : i64, extern_implementation_paths = ["top.q.work", "top.p.work"], extern_implementation_symbols = [@s3.$root::@s6.top::@s25.q::@s26.provider::@s27.work, @s3.$root::@s6.top::@s15.p::@s16.provider::@s17.work], hierarchical_name = "top.x.work", is_fork_join, is_interface_extern, name = "work", node_id = 9 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.x.work", subroutine_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work::@s13.work, sym_name = "s9.work"} {
               obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.x.work.o", name = "o", node_id = 10 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.o"} {
               }
               obelisk.sv.symbol.formal_argument attributes {direction = 2 : i32, hierarchical_name = "top.x.work.io", name = "io", node_id = 11 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s11.io"} {
@@ -40,6 +44,8 @@ module {
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.p", is_uninstantiated = false, name = "p", node_id = 18 : i64, referenced_path = "provider", referenced_symbol = @s1.provider, sym_name = "s15.p"} {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.p", name = "provider", node_id = 19 : i64, sym_name = "s16.provider", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
             obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.p.work", name = "work", node_id = 20 : i64, prototype_path = "top.x.work", prototype_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s17.work", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 53 : i64, referenced_path = "top.p.bias", referenced_symbol = @s3.$root::@s6.top::@s15.p::@s16.provider::@s31.pbias, semantic_type = !obelisk.integral<32, false, true, 31 : 0, logic>} {
+              }
               obelisk.sv.statement.timed attributes {node_id = 21 : i64} {
                 obelisk.sv.timing.delay attributes {node_id = 22 : i64} {
                   obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 23 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -54,6 +60,32 @@ module {
               }
               obelisk.sv.symbol.formal_argument attributes {direction = 3 : i32, hierarchical_name = "top.p.work.r", name = "r", node_id = 27 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s20.r"} {
               }
+            }
+            obelisk.sv.symbol.net attributes {hierarchical_name = "top.p.bias", is_implicit = false, name = "bias", net_kind = 1 : i32, node_id = 54 : i64, semantic_type = !obelisk.integral<32, false, true, 31 : 0, logic>, sym_name = "s31.pbias"} {
+            }
+          }
+        }
+        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.q", is_uninstantiated = false, name = "q", node_id = 41 : i64, referenced_path = "provider", referenced_symbol = @s1.provider, sym_name = "s25.q"} {
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.q", name = "provider", node_id = 42 : i64, sym_name = "s26.provider", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.q.work", name = "work", node_id = 43 : i64, prototype_path = "top.x.work", prototype_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s27.work", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+              obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 55 : i64, referenced_path = "top.q.bias", referenced_symbol = @s3.$root::@s6.top::@s25.q::@s26.provider::@s32.qbias, semantic_type = !obelisk.integral<32, false, true, 31 : 0, logic>} {
+              }
+              obelisk.sv.statement.timed attributes {node_id = 44 : i64} {
+                obelisk.sv.timing.delay attributes {node_id = 45 : i64} {
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 46 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+                obelisk.sv.statement.empty attributes {node_id = 47 : i64} {
+                }
+              }
+              obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.q.work.o", name = "o", node_id = 48 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s28.o"} {
+              }
+              obelisk.sv.symbol.formal_argument attributes {direction = 2 : i32, hierarchical_name = "top.q.work.io", name = "io", node_id = 49 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s29.io"} {
+              }
+              obelisk.sv.symbol.formal_argument attributes {direction = 3 : i32, hierarchical_name = "top.q.work.r", name = "r", node_id = 50 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s30.r"} {
+              }
+            }
+            obelisk.sv.symbol.net attributes {hierarchical_name = "top.q.bias", is_implicit = false, name = "bias", net_kind = 1 : i32, node_id = 56 : i64, semantic_type = !obelisk.integral<32, false, true, 31 : 0, logic>, sym_name = "s32.qbias"} {
             }
           }
         }
@@ -82,14 +114,48 @@ module {
               }
             }
           }
+          obelisk.sv.statement.disable attributes {is_hierarchical = true, node_id = 51 : i64, target_path = "top.p.work", target_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work::@s13.work} {
+          }
+          obelisk.sv.statement.disable attributes {is_hierarchical = true, node_id = 52 : i64, target_path = "top.x.work", target_symbol = @s3.$root::@s5.top::@s6.top::@s7.x::@s8.I::@s9.work::@s13.work} {
+          }
         }
       }
     }
   }
 }
 
-// CHECK: obelisk_sim.func private @[[IMPL:unit_[0-9]+]]({{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}!obelisk_sim.ref<i32>
+// CHECK: obelisk_sim.func private @[[AGG:unit_[0-9]+]]({{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}!obelisk_sim.ref<i32>
+// CHECK-SAME: %[[PCAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>
+// CHECK-SAME: %[[QCAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>
+// CHECK-SAME: obelisk_sim.control_target_id = [[ACTRL:[0-9]+]]
+// CHECK-SAME: obelisk_sim.hierarchical_name = "top.x.work"
+// CHECK: obelisk_sim.spawn @[[B0:[^ (]+]]({{.*}}%[[PCAP]]) :
+// CHECK-NEXT: obelisk_sim.spawn @[[B1:[^ (]+]]({{.*}}%[[QCAP]]) :
+// CHECK-NEXT: obelisk_sim.suspend.join all
+// CHECK-SAME: processes 2 to
+// CHECK: obelisk_sim.func private @[[P:unit_[0-9]+]]
+// CHECK-SAME: obelisk_sim.control_target_id = [[PCTRL:[0-9]+]]
 // CHECK-SAME: obelisk_sim.hierarchical_name = "top.p.work"
-// CHECK: obelisk_sim.task.call @[[IMPL]]
-// CHECK-SAME: arguments 6 to
-// CHECK-SAME: site = #obelisk_sim.continuation
+// CHECK: obelisk_sim.func private @[[Q:unit_[0-9]+]]
+// CHECK-SAME: obelisk_sim.hierarchical_name = "top.q.work"
+// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}
+// CHECK: obelisk_sim.task.call @[[AGG]]
+// CHECK: obelisk_sim.control.disable [[PCTRL]]
+// CHECK: obelisk_sim.control.disable [[ACTRL]]
+// CHECK: obelisk_sim.func private @[[B0]]({{.*}}%[[B0CAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>{{[^)]*}}) attributes
+// CHECK: %[[B0CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
+// CHECK: obelisk_sim.control.boundary %[[B0CTRL]]
+// CHECK: obelisk_sim.task.call @[[P]]({{.*}}%[[B0CAP]], %{{[^,)]+}}) arguments 7 to
+// CHECK: obelisk_sim.func private @[[B1]]({{.*}}%[[B1CAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>{{[^)]*}}) attributes
+// CHECK: %[[B1CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
+// CHECK: obelisk_sim.control.boundary %[[B1CTRL]]
+// CHECK: obelisk_sim.task.call @[[Q]]({{.*}}%[[B1CAP]], %{{[^,)]+}}) arguments 7 to
+
+// ZERO: obelisk_sim.func private @{{unit_[0-9]+}}
+// ZERO-SAME: obelisk_sim.hierarchical_name = "top.x.work"
+// ZERO: obelisk_sim.bytes.constant "ERROR: interface extern fork/join task has no implementation"
+// ZERO-NEXT: obelisk_sim.display
+// ZERO: obelisk_sim.error
+// ZERO-NOT: $extern_forkjoin
+
+// METADATA: error: modport-exported interface extern fork/join task has inconsistent implementation metadata

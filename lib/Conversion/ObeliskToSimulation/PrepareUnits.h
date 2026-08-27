@@ -43,6 +43,8 @@ struct PreparedUnits {
   llvm::StringMap<mlir::Operation *> directCalleeSources;
   llvm::DenseMap<mlir::Operation *, std::string> directCalleeNames;
   llvm::DenseMap<mlir::Operation *, mlir::Operation *> externCalleeTargets;
+  llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Operation *>>
+      externForkJoinTargets;
   llvm::DenseMap<mlir::Operation *, sim::SimCodeUnitDeclOp> declarations;
   mlir::SmallVector<PreparedVirtualInterfaceCallee> virtualInterfaceCallees;
   uint64_t rootID;

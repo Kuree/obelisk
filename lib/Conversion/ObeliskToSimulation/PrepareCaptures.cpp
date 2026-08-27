@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <functional>
@@ -705,6 +706,19 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
             }
     });
   }
+  // An extern fork/join stub is a compile-time-generated task whose body calls
+  // every provider concurrently. Model those synthetic edges before capture
+  // closure so callers retain the exact aggregate read/write contract without
+  // adding semantic call nodes or a runtime dispatch inventory.
+  for (const auto &aggregation : analysisUnits.externForkJoinTargets) {
+    auto &targets = callEdges[aggregation.first];
+    llvm::SmallPtrSet<Operation *, 8> seenTargets;
+    for (Operation *target : targets)
+      seenTargets.insert(target);
+    for (Operation *provider : aggregation.second)
+      if (seenTargets.insert(provider).second)
+        targets.push_back(provider);
+  }
 
   for (const PreparedUnit &unit : analysisUnits.units)
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
@@ -746,6 +760,14 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         }
       }
     });
+
+  // An indirect ref actual reaches each provider through the aggregator. Give
+  // every provider the same general argument-reference ABI as the stub so a
+  // branch can forward the captured element reference without narrowing it.
+  for (const auto &aggregation : analysisUnits.externForkJoinTargets)
+    if (result.indirectRefTasks.contains(aggregation.first))
+      for (Operation *provider : aggregation.second)
+        result.indirectRefTasks.insert(provider);
 
   auto resolveClass = [&](semantic::SVNewClassExpressionOp construct)
       -> semantic::SVClassTypeOp {

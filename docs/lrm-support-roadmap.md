@@ -1397,18 +1397,25 @@ with calls or other unbounded effects retain targeted diagnostics. Folded
 dependency-free conditionals use one-shot initialization, and an X/Z selector
 produces the default null event after evaluating both arms exactly once.
 
-Clause 25 modport exports now supply the sole non-fork/join implementation of
-an interface extern method. Static calls are frozen directly to the provider's
-ordinary function or task code unit, including function results and suspending
-task output/inout/ref behavior; virtual calls retain interface-instance scope
-selection while invoking that provider code and captures. Missing, multiple,
-inconsistent, unresolved, or ABI-incompatible inventories are diagnosed, and
-extern fork/join aggregation remains a targeted residual. The redirect table
-is built only when an executable interface-extern stub exists, so ordinary
-direct/import calls retain their existing IR and runtime path. Slang currently
-rejects the otherwise legal compile-time virtual-interface type inventory as
-missing an extern implementation; that source-only boundary is recorded as an
-xfail while semantic-MLIR tests cover executable virtual dispatch.
+Clause 25 modport exports supply interface extern implementations. A sole
+non-fork/join implementation is frozen directly to the provider's ordinary
+function or task code unit, including function results and suspending task
+output/inout/ref behavior. An `extern forkjoin task` instead retains its
+interface stub as a static aggregate: preparation sorts every elaborated
+provider, spawns one ordinary task-call branch per provider, and joins all
+branches. Zero-provider calls report a nonterminating runtime error and return
+without effect. Static and virtual calls share that aggregate, virtual calls
+retain interface-instance scope selection, and interface- versus
+module-qualified disable targets the complete aggregate versus one provider
+activation. Inconsistent, unresolved, repeated, or ABI-incompatible
+inventories are diagnosed, as is fork/join aggregation on a function. The
+redirect and aggregation maps are built only when an executable
+interface-extern stub exists, and aggregation adds no runtime dispatch table,
+so ordinary direct/import calls retain their existing IR and runtime path.
+Slang currently rejects the otherwise legal compile-time virtual-interface
+type inventory for a non-fork/join extern as missing an implementation; that
+source-only boundary is recorded as an xfail while semantic-MLIR tests cover
+executable virtual dispatch.
 
 L13's second performance tranche replaces per-bit native resolution for a
 verifier-proven wide port topology with direct vector publication. The proof
@@ -1531,7 +1538,7 @@ bytes after its uncommon capacity preflight is outlined.
 | 10 Assignment statements | Partial | Blocking/NBA assignment, intra-assignment timing, assignment patterns, queue/unpacked slice lvalues, net aliasing, static continuous-assignment delays including `specparam` expressions, strengths, and procedural force/assign execute for every legal target category: whole variables including fixed unpacked aggregates, dynamic arrays, queues, associative arrays, strings, class handles, and class properties; whole built-in nets and constant built-in-net selects; and legal concatenations. Signal-dependent RHS expressions reevaluate from exact scalar and managed-container dependencies; overlapping packed statements retain per-bit ownership through alias roots, managed values remain precisely rooted, and release/deassign retires detached evaluators. Clause 10.6 excludes automatic variables, variable selects, nonconstant net selects, and user-defined nettypes from these targets; those are tested diagnostics rather than implementation gaps. Continue differential closure for residual assignment corner cases. |
 | 11 Operators and expressions | Partial | Legal equality, ordering, logical operations, concatenation, replication, streaming and bit-stream casts, and packed selection execute for strings, containers, unpacked aggregates, handles, and arbitrary-width packed values. This includes packed-to-queue/dynamic-array casts; exact-width dynamic-array/queue/string/typed-associative-array-to-packed explicit bit-stream casts; fixed unpacked-array/struct-to-packed explicit bit-stream casts recursively composed of fixed packed leaves; ordinal-zero/field-zero/character-zero/sorted-key-zero-at-MSB ordering; final X/Z coercion; handle wildcard identity equality; two-state XNOR; compact integral power; constant ordinary part-selects; dynamic indexed part-selects with partial out-of-range behavior; dynamic string replication; and fixed/dynamic unpacked concatenation with per-element conversion. Acyclic all-bit-stream class/object and nested dynamically sized bit-stream sources remain differential residuals; unpacked unions are excluded by 6.24.3 rather than a missing cast case. Ordinary part-select bounds must be constant and strings are not sliceable, so those former diagnostic branches are not missing language features. Public `--timing=min|typ|max` selects constant and dynamic expressions. Remaining expression work is tracked by references, randomization, assertions, and the differential long tail. |
 | 12 Procedural statements | Partial | Conditional, ordinary/pattern case, loops, jumps, `randcase`, and most `randsequence` forms execute. Recursive randsequence productions and value-returning productions still require activation frames and expression-valued production calls. |
-| 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Sole non-fork/join modport-exported implementations of interface extern methods use the same direct function/task ABI, including suspending copy-out and cancellation. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
+| 13 Tasks and functions | Executable for the audited non-DPI surface | Static/automatic, recursive, virtual, class/interface, timed task, value/output/inout/ref, default argument, and cancellation behavior execute. Sole non-fork/join modport-exported implementations use the direct function/task ABI; fork/join extern tasks statically spawn every provider through that ABI and join them, including suspending copy-out and scoped cancellation. Continue differential closure for unusual aggregate and hierarchical formal cases; DPI is tracked separately in Clause 35. |
 | 14 Clocking blocks | Partial | Input/output skews, `#1step`, synchronous drives, event lists and `iff`, cycle delays, defaults, virtual-interface clocking handles, and hierarchically resolved global clocking through `$global_clock` execute. Concurrent lowering accepts dynamically selected virtual-interface direct and clocking-block events, distinguishes handles that select the same static interface member, and carries event clocks through expanded property and sequence formals. Common Boolean maximal clocked subsequences compose through exact `##0` same-occurrence fusion and `##1` nearest-strictly-later handoffs, including leading `##1`, direct `iff`, and repeated same-time occurrences. One feature-local coordinator retains at most 64 frozen clocks and aggregate per-stage counts; ordinary single-clock assertions allocate no cohort state. The current Slang frontend rejects virtual-interface members in concurrent assertions and produces an invalid expanded AST for untyped formals carrying clock events; both source cases are recorded xfails without a Slang patch. General property algebra across maximal subsequences, computed/declared clocking-block `iff` descriptors, and remaining inferred-clock contexts remain. |
 | 15 Interprocess synchronization | Executable for the audited surface | Semaphores; typed and default untyped mailboxes; heterogeneous untyped payloads with exact per-message type checks; named-event creation/alias/null, blocking and nonblocking trigger, `.triggered`, and `wait_order` execute in both tiers. Typed-mismatch `get`/`try_get`/`peek` behavior follows 15.4.3-15.4.9. Continue differential testing of scheduling corner cases. |
 | 16 Assertions | Partial | Immediate/deferred assertions and a substantial compiled concurrent subset execute. The authoritative fine-grained boundary is `docs/sva-lrm-support.md`; the implementation plan below covers accounting, full temporal composition, clocks, locals/match items, sampled values, controls, and `expect`. |
@@ -1543,7 +1550,7 @@ bytes after its uncommon capacity preflight is outlined.
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Direct named-event input actuals execute in every tier: read-only formals alias scheduler descriptors or live cells, while child-written formals receive dependency-ordered cell initialization or propagation before event waits. Side-effect-free computed event actuals, including conditional and selected forms, also execute after exact transitive ordinary-port startup settling; downstream event cells and affected waits retain handle-capture order, while feature-reachable cycles and effectful computed actuals are diagnosed. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Verifier-proven full-range wide hierarchical port forwarding uses bounded vector-shaped native lowering; irregular, delayed, resolved, or competing-driver topology retains scalar lowering. |
 | 24 Programs | Executable for the audited surface | Program instances execute in their Reactive/Re-Inactive/Re-NBA home. IEEE 24.7 `$exit` terminates every initial procedure and descendant owned by the calling program instance, multiple programs complete independently, and the scheduler enters finalization only after all program instances complete naturally or explicitly. Design-owned `$exit` is diagnosed. Ownership accounting is event-driven and shared by native, bytecode, and tier-transition paths. |
-| 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. A sole non-fork/join modport export implements an interface extern method for static direct calls and scope-selected virtual calls; malformed, multiple, and fork/join inventories are diagnosed. Real interface arrays convert by position to fixed virtual-interface arrays across ascending, descending, and nested ranges while preserving exact scope identity, nulls, and aliases. Dynamic virtual-interface clock events and expanded event-formal flow are executable from semantic IR; source import remains xfailed where Slang rejects dynamic members in concurrent assertions or a compile-time virtual-interface extern inventory. Inherit specify support from Clause 30 and continue the residual frontend and differential interface audit. |
+| 25 Interfaces | Partial | Interfaces, modports, parameterization, interface tasks/functions, interface arrays, virtual-interface handles, calls, containers, and clocking-block access execute. Sole non-fork/join modport exports implement interface extern methods for static and scope-selected virtual calls. Fork/join extern tasks statically aggregate zero or more providers, with zero-provider runtime error, all-provider join, and interface- or module-scoped cancellation; malformed inventories and fork/join functions are diagnosed. Real interface arrays convert by position to fixed virtual-interface arrays across ascending, descending, and nested ranges while preserving exact scope identity, nulls, and aliases. Dynamic virtual-interface clock events and expanded event-formal flow are executable from semantic IR; source import remains xfailed where Slang rejects dynamic members in concurrent assertions or a compile-time non-fork/join virtual-interface extern inventory. Inherit specify support from Clause 30 and continue the residual frontend and differential interface audit. |
 | 26 Packages | Partial | Packages, imports/exports, scope lookup, and the implemented `std` package surface, including R1 `std::randomize`, execute. Complete the remaining normative Annex G behavior through the randomization and system-task chunks. |
 | 27 Generate constructs | Executable for the audited surface | Loop/conditional generation, canonical named scopes, parameterized arrays, `$root` paths, and common upward references elaborate. Continue differential testing; the bounded L13 refresh found no legal backend generate-scope failure. |
 | 28 Gate/switch modeling | Executable for the audited surface | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, and statically addressed driver publication lowers only the exact affected connectivity components. |
@@ -1661,11 +1668,17 @@ one commit.
     arrays, queues, strings, typed associative arrays, and recursively fixed
     unpacked arrays/structs; acyclic all-bit-stream class/object and nested
     dynamic sources remain in this long tail.
-13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27).** Fix the
-    remaining legal port conversions/connections, hierarchical paths, upward
-    lookup, generated scope naming, and parameter binding. Sole non-fork/join
-    modport-exported extern interface methods now execute through direct or
-    scope-selected provider calls; fork/join aggregation remains.
+13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27), completed.**
+    The bounded hierarchy/port/generate audit closes the identified legal
+    backend failures in port conversion and connection, hierarchical and
+    upward lookup, generated-scope naming, and parameter binding.
+    Modport-exported extern interface methods execute through direct or
+    scope-selected calls; fork/join tasks statically spawn and join every
+    elaborated provider with exact scoped cancellation. Automatic-root
+    inference with an unset required parameter and the compile-time
+    virtual-interface extern inventory remain recorded Slang xfails rather
+    than backend approximations; further Clause 23/25/27 differential cases
+    remain audit caveats, not identified L13 implementation residuals.
 14. **L14 — Libraries, bind, and configurations (23.11, 33), completed.**
     Module-library discovery and library-map syntax use deterministic option,
     directory, extension, map, and declaration ordering. Effective config
