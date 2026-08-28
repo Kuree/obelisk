@@ -39,6 +39,9 @@ static bool isAddressableTimingExpression(Operation *op) {
 }
 
 static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
+  if (isa<semantic::SVSystemTimingCheckSymbolOp>(op) &&
+      op->hasAttr("obelisk.basic_timing_check"))
+    return sim::EntryKind::Always;
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return sim::EntryKind::Always;
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
@@ -95,6 +98,12 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
 }
 
 static std::string getCodeUnitHierarchy(Operation *op) {
+  if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {
+    auto nodeID = op->getAttrOfType<IntegerAttr>("node_id");
+    return (getHierarchyName(op) + ".$timing_check_" +
+            Twine(nodeID.getValue().getZExtValue()))
+        .str();
+  }
   if (op->hasAttr(sequenceEndpointEventAttrName))
     return (getHierarchyName(op) + ".$sequence_endpoint").str();
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&

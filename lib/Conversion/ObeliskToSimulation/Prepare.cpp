@@ -581,7 +581,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                              !getChildren(variable).empty();
     auto net = dyn_cast<semantic::SVNetSymbolOp>(op);
     bool netInitializer = net && !getNetInitializerExpressions(net).empty();
-    if (isCodeUnit(op) || staticInitializer || initializedStaticLocal ||
+    if (isCodeUnit(op) ||
+        (isa<semantic::SVSystemTimingCheckSymbolOp>(op) &&
+         op->hasAttr("obelisk.basic_timing_check")) ||
+        staticInitializer || initializedStaticLocal ||
         designInitializer || netInitializer ||
         op->hasAttr(sequenceEndpointEventAttrName) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
@@ -8500,6 +8503,56 @@ void ObeliskSimPreparePass::runOnOperation() {
         bindingAttr, delayScaleAttr, delayQuantumAttr,
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(unit.id))};
+    if (isa<semantic::SVSystemTimingCheckSymbolOp>(unit.source)) {
+      auto times = unit.source->getAttrOfType<DenseI64ArrayAttr>(
+          "timing_check_arg_time_fs");
+      auto isTime = unit.source->getAttrOfType<DenseI64ArrayAttr>(
+          "timing_check_arg_is_time");
+      if (!times || !isTime || times.size() != isTime.size()) {
+        emitError(getSemanticLocation(unit.source))
+            << "basic timing check has no frozen time ABI";
+        invalid = true;
+        continue;
+      }
+      SmallVector<int64_t> ticks;
+      ticks.reserve(times.size());
+      for (auto [value, time] :
+           llvm::zip_equal(times.asArrayRef(), isTime.asArrayRef())) {
+        if (time &&
+            (value < 0 || static_cast<uint64_t>(value) % designPrecisionFs)) {
+          emitError(getSemanticLocation(unit.source))
+              << "basic timing-check limit is incompatible with design "
+                 "precision";
+          invalid = true;
+          break;
+        }
+        ticks.push_back(time ? static_cast<int64_t>(
+                                       static_cast<uint64_t>(value) /
+                                       designPrecisionFs)
+                                  : 0);
+      }
+      if (invalid)
+        continue;
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.timing_check_arg_ticks",
+          builder.getDenseI64ArrayAttr(ticks)));
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.timing_check_coordinator", builder.getUnitAttr()));
+      for (StringRef name : {"timing_check_kind",
+                             "timing_check_arg_expression_children",
+                             "timing_check_arg_edges"}) {
+        Attribute value = unit.source->getAttr(name);
+        if (!value) {
+          emitError(getSemanticLocation(unit.source))
+              << "basic timing check is missing '" << name << "'";
+          invalid = true;
+          break;
+        }
+        functionAttrs.push_back(builder.getNamedAttr(name, value));
+      }
+      if (invalid)
+        continue;
+    }
     if (auto delays =
             unit.source->getAttrOfType<DenseI64ArrayAttr>("delay_fs")) {
       if (delays.empty() || delays.size() > 3) {

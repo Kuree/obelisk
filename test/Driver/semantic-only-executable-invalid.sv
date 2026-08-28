@@ -16,7 +16,8 @@ module semantic_only_executable_invalid(
   specify
     pulsestyle_onevent observed;
     if (activity) (activity *> observed) = 1;
-    $setup(activity, posedge clock, 1);
+    // Conditioned events remain outside the first executable G5 tranche.
+    $setup(activity, posedge clock &&& activity, 1);
   endspecify
 endmodule
 

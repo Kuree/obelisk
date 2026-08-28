@@ -207,6 +207,8 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
       return;
     }
     if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {
+      if (op->hasAttr("obelisk.basic_timing_check"))
+        return;
       emitError(getSemanticLocation(op))
           << "IEEE 1800-2017 Clause 31 system timing checks are retained in "
              "semantic IR but are not executable yet";

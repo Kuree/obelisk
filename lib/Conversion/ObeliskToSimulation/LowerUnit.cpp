@@ -4827,6 +4827,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             targetID.getValue().getZExtValue();
     });
   setCurrent(&function.getBody().front());
+  if (function->hasAttr("obelisk_sim.timing_check_coordinator"))
+    return lowerSystemTimingCheck(roots);
   if (function->hasAttr(sequenceEndpointMonitorAttrName))
     return lowerSequenceEndpointMonitor(roots);
   if (function->hasAttr(clockingEventMonitorAttrName))

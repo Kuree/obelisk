@@ -30,6 +30,7 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitScanSystemCalls.cpp
   LowerUnitSystemCalls.cpp
   LowerUnitTiming.cpp
+  LowerUnitTimingChecks.cpp
   MaterializeClockedSamples.cpp
   MaterializeComputeFusion.cpp
   MaterializeGraphRegions.cpp

@@ -2041,15 +2041,93 @@ private:
                 builder.getI64IntegerAttr(arguments.size()));
       SmallVector<int64_t> hasExpression;
       SmallVector<int64_t> hasCondition;
+      SmallVector<int64_t> expressionChildren;
+      SmallVector<int64_t> conditionChildren;
       SmallVector<Attribute> edges;
       SmallVector<Attribute> descriptors;
+      SmallVector<int64_t> isTime;
+      SmallVector<int64_t> timeFs;
       hasExpression.reserve(arguments.size());
       hasCondition.reserve(arguments.size());
+      expressionChildren.reserve(arguments.size());
+      conditionChildren.reserve(arguments.size());
       edges.reserve(arguments.size());
       descriptors.reserve(arguments.size());
-      for (const auto &argument : arguments) {
+      isTime.reserve(arguments.size());
+      timeFs.reserve(arguments.size());
+      slang::TimeScale scale;
+      if (const slang::ast::Scope *scope = node.getParentScope())
+        scale = scope->getTimeScale().value_or(slang::TimeScale{});
+      uint64_t unitFs = getFemtoseconds(scale.base);
+      uint64_t precisionFs = getFemtoseconds(scale.precision);
+      slang::ast::EvalContext evalContext(node);
+      int64_t nextChild = 0;
+      bool staticTimes = unitFs != 0 && precisionFs != 0 &&
+                         unitFs >= precisionFs && unitFs % precisionFs == 0;
+      auto isTimeSlot = [&](size_t index) {
+        using Kind = slang::ast::SystemTimingCheckKind;
+        switch (node.timingCheckKind) {
+        case Kind::Setup:
+        case Kind::Hold:
+        case Kind::Recovery:
+        case Kind::Removal:
+        case Kind::Skew:
+        case Kind::TimeSkew:
+          return index == 2;
+        case Kind::SetupHold:
+        case Kind::RecRem:
+        case Kind::FullSkew:
+          return index == 2 || index == 3;
+        case Kind::Period:
+          return index == 1;
+        case Kind::Width:
+          return index == 1 || index == 2;
+        case Kind::NoChange:
+          return index == 2 || index == 3;
+        default:
+          return false;
+        }
+      };
+      auto freezeTime = [&](const slang::ast::Expression *expression)
+          -> std::optional<int64_t> {
+        if (!expression || !staticTimes)
+          return std::nullopt;
+        slang::ConstantValue value = expression->eval(evalContext);
+        long double amount = 0;
+        if (value.isInteger()) {
+          const slang::SVInt &integer = value.integer();
+          if (integer.hasUnknown())
+            return std::nullopt;
+          std::optional<int64_t> converted = integer.as<int64_t>();
+          if (!converted)
+            return std::nullopt;
+          amount = static_cast<long double>(*converted);
+        } else if (value.isReal()) {
+          amount = static_cast<long double>(value.real());
+        } else if (value.isShortReal()) {
+          amount = static_cast<long double>(value.shortReal());
+        } else {
+          return std::nullopt;
+        }
+        // IEEE 1800-2017 3.14.1 rounds delay/time values to the declaring
+        // design element's time precision before simulation; freeze this
+        // Clause 31 limit in that precision here.
+        long double steps =
+            amount * static_cast<long double>(unitFs / precisionFs);
+        long double femtoseconds = std::round(steps) * precisionFs;
+        if (!std::isfinite(femtoseconds) ||
+            femtoseconds <
+                static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
+            femtoseconds >
+                static_cast<long double>(std::numeric_limits<int64_t>::max()))
+          return std::nullopt;
+        return static_cast<int64_t>(femtoseconds);
+      };
+      for (auto [index, argument] : llvm::enumerate(arguments)) {
         hasExpression.push_back(argument.expr != nullptr);
         hasCondition.push_back(argument.condition != nullptr);
+        expressionChildren.push_back(argument.expr ? nextChild++ : -1);
+        conditionChildren.push_back(argument.condition ? nextChild++ : -1);
         edges.push_back(slangir::EdgeKindAttr::get(
             builder.getContext(), convertEnum(argument.edge)));
         SmallVector<Attribute> encoded;
@@ -2058,6 +2136,13 @@ private:
           encoded.push_back(builder.getStringAttr(
               StringRef(descriptor.data(), descriptor.size())));
         descriptors.push_back(builder.getArrayAttr(encoded));
+        bool time = isTimeSlot(index);
+        isTime.push_back(time);
+        std::optional<int64_t> frozen =
+            time ? freezeTime(argument.expr) : std::optional<int64_t>{0};
+        if (!frozen)
+          staticTimes = false;
+        timeFs.push_back(frozen.value_or(0));
       }
       // IEEE 1800-2017 31.2 gives every check an ordered formal argument
       // ABI, including explicit optional holes, event-local conditions, and
@@ -2067,16 +2152,34 @@ private:
                 builder.getDenseI64ArrayAttr(hasExpression));
       attrs.set("timing_check_arg_has_condition",
                 builder.getDenseI64ArrayAttr(hasCondition));
+      attrs.set("timing_check_arg_expression_children",
+                builder.getDenseI64ArrayAttr(expressionChildren));
+      attrs.set("timing_check_arg_condition_children",
+                builder.getDenseI64ArrayAttr(conditionChildren));
       attrs.set("timing_check_arg_edges", builder.getArrayAttr(edges));
       attrs.set("timing_check_arg_edge_descriptors",
                 builder.getArrayAttr(descriptors));
-      slang::TimeScale scale;
-      if (const slang::ast::Scope *scope = node.getParentScope())
-        scale = scope->getTimeScale().value_or(slang::TimeScale{});
+      attrs.set("timing_check_arg_is_time",
+                builder.getDenseI64ArrayAttr(isTime));
+      if (staticTimes)
+        attrs.set("timing_check_arg_time_fs",
+                  builder.getDenseI64ArrayAttr(timeFs));
       attrs.set("time_unit_fs",
-                builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+                builder.getI64IntegerAttr(unitFs));
       attrs.set("time_precision_fs",
-                builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+                builder.getI64IntegerAttr(precisionFs));
+
+      using Kind = slang::ast::SystemTimingCheckKind;
+      bool basic = node.timingCheckKind == Kind::Setup ||
+                   node.timingCheckKind == Kind::Hold ||
+                   node.timingCheckKind == Kind::Recovery ||
+                   node.timingCheckKind == Kind::Removal;
+      if (basic && staticTimes && arguments.size() >= 3 &&
+          arguments[0].expr && arguments[1].expr &&
+          !arguments[0].condition && !arguments[1].condition &&
+          arguments[0].edgeDescriptors.empty() &&
+          arguments[1].edgeDescriptors.empty())
+        attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
     }
 
     if constexpr (std::same_as<T, slang::ast::PulseStyleSymbol>) {

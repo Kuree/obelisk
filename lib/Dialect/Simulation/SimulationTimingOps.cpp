@@ -343,15 +343,22 @@ LogicalResult SimSuspendClockSetOp::verify() {
   if (llvm::is_contained(usedConditions, false))
     return emitOpError("contains an unreferenced condition handle");
   auto function = (*this)->getParentOfType<SimFuncOp>();
+  bool assertionCoordinator =
+      function &&
+      function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") &&
+      function.getHomeRegion() == EventRegion::Observed;
+  bool timingCheckCoordinator =
+      function && function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+      function.getHomeRegion() == EventRegion::Active;
   if (!function ||
-      !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
+      (!assertionCoordinator && !timingCheckCoordinator) ||
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
       function.getEntryKind() != EntryKind::Always ||
-      function.getHomeRegion() != EventRegion::Observed ||
       function.getDomain() != ExecutionDomain::Design)
     return emitOpError(
-        "requires a private Observed design-domain multi-clock coordinator");
+        "requires a private design-domain assertion or timing-check "
+        "coordinator");
   unsigned clockWaits = 0;
   function.walk([&](SimSuspendClockSetOp) { ++clockWaits; });
   if (clockWaits != 1)

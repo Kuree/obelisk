@@ -674,6 +674,8 @@ private:
   /// immediately before the assignment body that consumes it.
   std::function<::mlir::LogicalResult()> prepareProceduralTimingPaths;
   std::function<::mlir::LogicalResult()> initializeProceduralTimingPaths;
+  ::mlir::LogicalResult
+  lowerSystemTimingCheck(::mlir::ArrayRef<::mlir::Operation *> roots);
   std::optional<::mlir::Value> proceduralTimingWriteMask;
   /// Per-activation rise, fall, and turnoff delays selected from statically
   /// frozen overlapping specify paths.

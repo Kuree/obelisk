@@ -103,7 +103,28 @@ module {
       attributes {entry_kind = 3 : i32, domain = 0 : i32,
                   home_region = 8 : i32,
                   obelisk_sim.multiclock_sequence_coordinator} {
-    // expected-error @+1 {{requires a private Observed design-domain multi-clock coordinator}}
+    // expected-error @+1 {{requires a private design-domain assertion or timing-check coordinator}}
+    obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
+        indices [-1] site 1 to ^done :
+        !obelisk_sim.ref<!obelisk_sim.logic<1>>
+  ^done:
+    obelisk_sim.return
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.func private @timing_check_in_observed(
+      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+      %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 1 : i32})
+      attributes {entry_kind = 3 : i32, domain = 0 : i32,
+                  home_region = 8 : i32,
+                  obelisk_sim.timing_check_coordinator} {
+    // Keep IEEE 1800-2017 31.3 timestamp/timecheck handling in the design
+    // Active region; Observed remains reserved here for assertion coordinators.
+    // expected-error @+1 {{requires a private design-domain assertion or timing-check coordinator}}
     obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
         indices [-1] site 1 to ^done :
         !obelisk_sim.ref<!obelisk_sim.logic<1>>
