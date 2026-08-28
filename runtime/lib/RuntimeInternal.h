@@ -647,17 +647,25 @@ struct InertialStrengthPathPending {
   uint64_t width = 0;
   uint32_t nextGroup = 0;
   uint32_t groupCount = 0;
+  bool pulseControlled = false;
   std::vector<uint8_t> lowValue;
   std::vector<uint8_t> lowUnknown;
   std::vector<uint8_t> highValue;
   std::vector<uint8_t> highUnknown;
+  std::vector<uint8_t> transitionValue;
+  std::vector<uint8_t> transitionUnknown;
   std::vector<uint8_t> valid;
   std::vector<uint8_t> needsSchedule;
   std::vector<uint64_t> candidateDelay;
+  std::vector<uint64_t> candidatePulseReject;
+  std::vector<uint64_t> candidatePulseError;
+  std::vector<uint8_t> candidatePulseFlags;
+  std::vector<uint8_t> candidateFromSymbol;
   std::vector<uint64_t> generation;
   std::vector<uint64_t> scheduledDueTime;
   std::vector<uint64_t> lowSequence;
   std::vector<uint64_t> highSequence;
+  std::vector<std::vector<uint64_t>> liveSequences;
 };
 
 struct InertialNetPending {

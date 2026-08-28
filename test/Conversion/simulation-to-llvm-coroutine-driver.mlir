@@ -23,6 +23,7 @@ module attributes {
     obelisk_sim.code_unit.decl 14 in 0 function hierarchy "driver_lowering.drive_inertial_path"
     obelisk_sim.code_unit.decl 15 in 0 function hierarchy "driver_lowering.case_difference"
     obelisk_sim.code_unit.decl 16 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair"
+    obelisk_sim.code_unit.decl 17 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair_pulse"
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
     obelisk_sim.driver.decl 0 in 0 drives 0 :
         !obelisk_sim.logic<2> design
@@ -258,6 +259,41 @@ module attributes {
       obelisk_sim.return
     }
 
+    // IEEE 1800-2017 30.7 and 30.7.4.1 require PATHPULSE rejection and
+    // error limits to compose with the same atomic strength-pair update.
+    obelisk_sim.func @drive_inertial_path_strength_pair_pulse(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 17 : i64} {
+      %low = obelisk_sim.context.driver %ctx[2] :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>
+      %high = obelisk_sim.context.driver %ctx[3] :
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>
+      %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
+      %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+      %active = arith.constant true
+      %rise_mask = arith.constant true
+      %fall_mask = arith.constant false
+      %turnoff_mask = arith.constant false
+      %pulse_masks = arith.constant 4095 : i12
+      %rise = obelisk_sim.time.constant 7
+      %fall = obelisk_sim.time.constant 11
+      %turnoff = obelisk_sim.time.constant 13
+      obelisk_sim.driver.drive_inertial_path_strength_pair
+          %low = %z, %high = %one transition %one active %active
+          masks [%rise_mask, %fall_mask, %turnoff_mask]
+          after [%rise, %fall, %turnoff] site 17 : 0 group 0 of 1
+          pulse_transitions %pulse_masks : i12 {
+            pulse_error = 5 : i64,
+            pulse_on_detect = true,
+            pulse_reject = 3 : i64,
+            pulse_show_cancelled = true
+          } : !obelisk_sim.driver<!obelisk_sim.logic<1>>,
+          !obelisk_sim.logic<1>,
+          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
+          !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1
+      obelisk_sim.return
+    }
+
     obelisk_sim.func @drive_delayed_net(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
@@ -409,6 +445,13 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: obelisk_sim.driver.drive_inertial_path_strength_pair
 
+// The pulse-free operation above retains the compact ABI. Only a path with
+// pulse metadata pays for the extended scheduler call and packed 12-class mask.
+// CHECK-LABEL: llvm.func @drive_inertial_path_strength_pair_pulse
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: obelisk_sim.driver.drive_inertial_path_strength_pair
+
 // The driver contribution is stored immediately, then resolution schedules
 // the delayed visible-net update through the runtime.
 // CHECK-LABEL: llvm.func @drive_delayed_net
@@ -463,8 +506,10 @@ module attributes {
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010241 inputs=14 outputs=0 flags=0
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010240 inputs=2 outputs=1 flags=0
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x0001024a inputs=16 outputs=0 flags=0
+// BYTECODE: intrinsic {{[0-9]+}}: id=0x0001024a inputs=20 outputs=0 flags=0
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010236 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010237 inputs={{\[[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\]}} outputs=[]
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010241 inputs={{\[[0-9, ]+\]}} outputs=[]
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x00010240 inputs={{\[[0-9]+, [0-9]+\]}} outputs={{\[[0-9]+\]}}
+// BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x0001024a inputs={{\[[0-9, ]+\]}} outputs=[]
 // BYTECODE: site {{[0-9]+}}: signature={{[0-9]+}} id=0x0001024a inputs={{\[[0-9, ]+\]}} outputs=[]

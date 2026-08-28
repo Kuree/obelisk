@@ -1962,6 +1962,25 @@ LogicalResult SimDriverDriveInertialPathStrengthPairOp::verify() {
   if (!sameWidth(getActiveMask()) || !sameWidth(getRiseMask()) ||
       !sameWidth(getFallMask()) || !sameWidth(getTurnoffMask()))
     return emitOpError("all masks must match the paired driver width");
+  if (Value pulseTransitions = getPulseTransitionMasks()) {
+    auto pulseType = dyn_cast<IntegerType>(pulseTransitions.getType());
+    if (*width > std::numeric_limits<unsigned>::max() / 12 || !pulseType ||
+        pulseType.getWidth() != *width * 12)
+      return emitOpError(
+          "packed pulse transition masks must have twelve times the paired "
+          "driver width");
+  }
+  bool defaultReject = getPulseReject() == UINT64_MAX;
+  bool defaultError = getPulseError() == UINT64_MAX;
+  if (!getPulseTransitionMasks() &&
+      (!defaultReject || !defaultError || getPulseOnDetect() ||
+       getPulseShowCancelled()))
+    return emitOpError(
+        "explicit pulse policy requires packed pulse transition masks");
+  if (defaultReject != defaultError ||
+      (!defaultReject && getPulseError() < getPulseReject()))
+    return emitOpError("pulse limits must be defaulted or nonnegative with "
+                       "error not less than reject");
   if (getGroupCount() == 0 || getGroup() >= getGroupCount())
     return emitOpError("group index must be within a nonempty batch");
   return success();

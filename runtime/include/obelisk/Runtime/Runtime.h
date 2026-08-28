@@ -3445,6 +3445,20 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
 // complementary strength banks of a conditional primitive. The banks mature
 // atomically and resolve only after the high-bank event is committed.
 obelisk_rt_status
+obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t low_bit_offset,
+    uint64_t high_bit_offset, uint64_t bit_width, uint64_t code_unit,
+    uint32_t component, uint32_t group, uint32_t group_count,
+    uint32_t pulse_flags, uint64_t rise_delay, uint64_t fall_delay,
+    uint64_t turnoff_delay, uint64_t pulse_reject, uint64_t pulse_error,
+    const uint8_t *low_value, const uint8_t *low_unknown,
+    const uint8_t *high_value, const uint8_t *high_unknown,
+    const uint8_t *transition_value, const uint8_t *transition_unknown,
+    const uint8_t *active_mask, const uint8_t *rise_mask,
+    const uint8_t *fall_mask, const uint8_t *turnoff_mask,
+    const uint8_t *pulse_transition_masks);
+obelisk_rt_status
 obelisk_rt_v1_scheduler_inertial_path_strength_pair(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t low_bit_offset,

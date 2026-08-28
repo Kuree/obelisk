@@ -8,7 +8,7 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
-// IEEE 1800-2017 30.2.3 gives X->0 index 9 and Z->0 index 5 in the
+// IEEE 1800-2017 30.5.1 gives X->0 index 9 and Z->0 index 5 in the
 // twelve-transition delay tuple. Distinct static policies make a row swap
 // visible in both the native and bytecode storage schedulers.
 // CHECK: at3 0 z

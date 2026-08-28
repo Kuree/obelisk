@@ -2769,6 +2769,47 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::array<std::vector<uint8_t>, 4> masks;
     for (unsigned index = 0; index != masks.size(); ++index)
       masks[index] = extractMask(index + 5);
+    if (site.inputCount == 20) {
+      auto pulseFlags = scalar(16);
+      auto pulseReject = scalar(17);
+      auto pulseError = scalar(18);
+      if (!pulseFlags || !pulseReject || !pulseError ||
+          *pulseFlags > UINT32_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      Logic sourceTransitions = readLogic(
+          frame.data, layoutAt(image, frame.function, inputRegister(19)));
+      uint64_t packedWidth = width * 12;
+      std::vector<uint8_t> pulseTransitions(
+          static_cast<size_t>((packedWidth + 7) / 8), 0);
+      // Each 30.5.1 transition class is an independent packed mask. A clipped
+      // driver view must select the same bit window from every class rather
+      // than one contiguous window from the first class.
+      for (uint64_t transitionIndex = 0; transitionIndex != 12;
+           ++transitionIndex)
+        for (uint64_t bitIndex = 0; bitIndex != width; ++bitIndex) {
+          uint64_t sourceBit = transitionIndex * low.width +
+                               static_cast<uint64_t>(lowSelection->first) +
+                               bitIndex;
+          if (bit(sourceTransitions.value, sourceBit))
+            pulseTransitions[(transitionIndex * width + bitIndex) / 8] |=
+                static_cast<uint8_t>(1u
+                                     << ((transitionIndex * width + bitIndex) %
+                                         8));
+        }
+      return obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+          context->execution->state_bit_count, lowSelection->stable,
+          highSelection->stable, width, *codeUnit,
+          static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
+          static_cast<uint32_t>(*groupCount),
+          static_cast<uint32_t>(*pulseFlags), *rise, *fall, *turnoff,
+          *pulseReject, *pulseError, lowPlanes.value.data(),
+          lowPlanes.unknown.data(), highPlanes.value.data(),
+          highPlanes.unknown.data(), transitionPlanes.value.data(),
+          transitionPlanes.unknown.data(), masks[0].data(), masks[1].data(),
+          masks[2].data(), masks[3].data(), pulseTransitions.data());
+    }
     return obelisk_rt_v1_scheduler_inertial_path_strength_pair(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),

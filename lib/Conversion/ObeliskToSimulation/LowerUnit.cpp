@@ -3691,12 +3691,6 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         if (!plan)
           return emitError(getSemanticLocation(output))
                  << "conditional primitive output has no masked path plan";
-        if (llvm::any_of(plan->groups, [](const TimingPathDelayGroup &group) {
-              return group.pulseControlled;
-            }))
-          return emitError(getSemanticLocation(output))
-                 << "pulse-controlled conditional primitive strength paths "
-                    "are not executable yet";
         if (plan->groups.empty() || plan->groups.size() > UINT32_MAX ||
             nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("invalid strength-pair path group batch");
@@ -3770,6 +3764,40 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         Value zeroMask = arith::ConstantOp::create(
             builder, location, maskType,
             builder.getIntegerAttr(maskType, zeroBits));
+        auto packPulseTransitions =
+            [&](const std::array<Value, 12> &masks) {
+              IntegerType packedType = builder.getIntegerType(*width * 12);
+              if (llvm::all_equal(masks)) {
+                APInt replicate = APInt::getZero(packedType.getWidth());
+                for (unsigned transition = 0; transition != 12; ++transition)
+                  replicate.setBit(transition * *width);
+                Value extended = arith::ExtUIOp::create(
+                    builder, location, packedType, masks.front());
+                Value factor = arith::ConstantOp::create(
+                    builder, location, packedType,
+                    builder.getIntegerAttr(packedType, replicate));
+                return Value(arith::MulIOp::create(builder, location,
+                                                   extended, factor));
+              }
+              Value packed = arith::ConstantOp::create(
+                  builder, location, packedType,
+                  builder.getIntegerAttr(packedType, 0));
+              for (auto [transition, mask] : llvm::enumerate(masks)) {
+                Value extended = arith::ExtUIOp::create(
+                    builder, location, packedType, mask);
+                if (transition != 0) {
+                  Value shift = arith::ConstantOp::create(
+                      builder, location, packedType,
+                      builder.getIntegerAttr(packedType,
+                                             transition * *width));
+                  extended = arith::ShLIOp::create(builder, location,
+                                                   extended, shift);
+                }
+                packed = arith::OrIOp::create(builder, location, packed,
+                                              extended);
+              }
+              return packed;
+            };
         auto equalMask = [&](Value value, Value constant) {
           Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
               builder, location, maskType, value, constant);
@@ -3882,13 +3910,27 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             add(2, transition);
           for (unsigned transition : {6u, 8u, 11u})
             add(0, transition);
+          Value pulseTransitions =
+              group.pulseControlled ? packPulseTransitions(group.masks)
+                                    : Value{};
           sim::SimDriverDriveInertialPathStrengthPairOp::create(
               builder, location, low->reference, *lowValue, high->reference,
               *highValue, *nextLogical, plan->coverageMask, runtimeMasks[0],
-              runtimeMasks[1], runtimeMasks[2], group.delay, group.delay,
-              group.delay, codeUnitID, builder.getI32IntegerAttr(component),
+              runtimeMasks[1], runtimeMasks[2], pulseTransitions, group.delay,
+              group.delay, group.delay, codeUnitID,
+              builder.getI32IntegerAttr(component),
               builder.getI32IntegerAttr(static_cast<uint32_t>(groupIndex)),
-              builder.getI32IntegerAttr(groupCount));
+              builder.getI32IntegerAttr(groupCount),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseReject
+                                            : -1),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseError
+                                            : -1),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseOnDetect),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseShowCancelled));
         }
       }
       return success();

@@ -3389,16 +3389,23 @@ def SimDriverDriveInertialPathStrengthPairOp : SimOp<
                        AnySignlessInteger:$rise_mask,
                        AnySignlessInteger:$fall_mask,
                        AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
                        SimTimeType:$rise_delay, SimTimeType:$fall_delay,
                        SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
                        I32Attr:$component, I32Attr:$group,
-                       I32Attr:$group_count);
+                       I32Attr:$group_count,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
   let assemblyFormat = [{
     $low_driver `=` $low_value `,` $high_driver `=` $high_value
     `transition` $transition_value `active` $active_mask `masks` `[`
     $rise_mask `,` $fall_mask `,` $turnoff_mask `]` `after` `[`
     $rise_delay `,` $fall_delay `,` $turnoff_delay `]` `site`
-    $code_unit_id `:` $component `group` $group `of` $group_count attr-dict
+    $code_unit_id `:` $component `group` $group `of` $group_count
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict
     `:` qualified(type($low_driver)) `,` type($low_value) `,`
     qualified(type($high_driver)) `,` type($high_value) `,`
     type($transition_value) `,` type($active_mask)

@@ -515,7 +515,8 @@ bool validIntrinsic(const Image &image, const Function &function,
     auto low = input(0);
     auto high = input(2);
     auto transition = input(4);
-    if (signature.flags != 0 || site.inputCount != 16 ||
+    if (signature.flags != 0 ||
+        (site.inputCount != 16 && site.inputCount != 20) ||
         site.outputCount != 0 || !numeric(low) || !handle(input(1)) ||
         !numeric(high) || !handle(input(3)) || !numeric(transition) ||
         !compatible(*low, *high) || !compatible(*low, *transition))
@@ -526,10 +527,16 @@ bool validIntrinsic(const Image &image, const Function &function,
           mask->width != low->width)
         return false;
     }
-    for (unsigned index = 9; index != 16; ++index)
+    unsigned scalarEnd = site.inputCount == 16 ? 16 : 19;
+    for (unsigned index = 9; index != scalarEnd; ++index)
       if (!bits(input(index), 64))
         return false;
-    return true;
+    if (site.inputCount == 16)
+      return true;
+    auto pulseTransitions = input(19);
+    return low->width <= UINT32_MAX / 12 && pulseTransitions &&
+           pulseTransitions->kind == OBELISK_RT_DBREG_BITS &&
+           pulseTransitions->width == low->width * 12;
   }
   case OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
     auto lhs = input(0);

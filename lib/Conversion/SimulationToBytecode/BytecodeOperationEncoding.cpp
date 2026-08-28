@@ -491,19 +491,45 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t component = emitU64Constant(plan, op.getComponent());
     uint32_t group = emitU64Constant(plan, op.getGroup());
     uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
+    bool pulseControlled = static_cast<bool>(op.getPulseTransitionMasks());
+    uint32_t pulseFlags = pulseControlled
+                              ? emitU64Constant(
+                                    plan,
+                                    OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
+                                        (op.getPulseOnDetect()
+                                             ? OBELISK_RT_INERTIAL_PATH_ON_DETECT
+                                             : 0) |
+                                        (op.getPulseShowCancelled()
+                                             ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                                             : 0))
+                              : 0;
+    uint32_t pulseReject =
+        pulseControlled ? emitU64Constant(plan, op.getPulseReject()) : 0;
+    uint32_t pulseError =
+        pulseControlled ? emitU64Constant(plan, op.getPulseError()) : 0;
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
-        group == kInvalidRegister || groupCount == kInvalidRegister)
+        group == kInvalidRegister || groupCount == kInvalidRegister ||
+        (pulseControlled &&
+         (pulseFlags == kInvalidRegister || pulseReject == kInvalidRegister ||
+          pulseError == kInvalidRegister)))
       return op.emitOpError("cannot encode inertial strength-path identity");
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicInertialPathStrengthPair,
-        {reg(plan, op.getLowValue()), reg(plan, op.getLowDriver()),
-         reg(plan, op.getHighValue()), reg(plan, op.getHighDriver()),
-         reg(plan, op.getTransitionValue()), reg(plan, op.getActiveMask()),
-         reg(plan, op.getRiseMask()), reg(plan, op.getFallMask()),
-         reg(plan, op.getTurnoffMask()), reg(plan, op.getRiseDelay()),
-         reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()),
-         codeUnit, component, group, groupCount},
-        {});
+    SmallVector<uint32_t> inputs{
+        reg(plan, op.getLowValue()),       reg(plan, op.getLowDriver()),
+        reg(plan, op.getHighValue()),      reg(plan, op.getHighDriver()),
+        reg(plan, op.getTransitionValue()), reg(plan, op.getActiveMask()),
+        reg(plan, op.getRiseMask()),       reg(plan, op.getFallMask()),
+        reg(plan, op.getTurnoffMask()),    reg(plan, op.getRiseDelay()),
+        reg(plan, op.getFallDelay()),      reg(plan, op.getTurnoffDelay()),
+        codeUnit,                          component,
+        group,                             groupCount};
+    if (pulseControlled) {
+      inputs.push_back(pulseFlags);
+      inputs.push_back(pulseReject);
+      inputs.push_back(pulseError);
+      inputs.push_back(reg(plan, op.getPulseTransitionMasks()));
+    }
+    return emitIntrinsicRegisters(plan, kIntrinsicInertialPathStrengthPair,
+                                  inputs, {});
   }
   if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
     SmallVector<Value> inputs{op.getEvent()};

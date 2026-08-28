@@ -3708,6 +3708,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                         update.inertialPathBit)])
               return false;
             size_t index = static_cast<size_t>(update.inertialPathBit);
+            if (pending->second.pulseControlled) {
+              const auto &live = pending->second.liveSequences[index];
+              return std::find(live.begin(), live.end(), update.sequence) !=
+                     live.end();
+            }
             return (update.inertialPathStrengthFinal
                         ? pending->second.highSequence[index]
                         : pending->second.lowSequence[index]) ==
@@ -3744,10 +3749,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               auto pending = context->inertialStrengthPathPending.find(
                   update.inertialSite);
               if (pending != context->inertialStrengthPathPending.end() &&
-                  update.inertialPathBit < pending->second.width &&
-                  update.inertialPathStrengthFinal) {
+                  update.inertialPathBit < pending->second.width) {
                 size_t index = static_cast<size_t>(update.inertialPathBit);
-                if (pending->second.highSequence[index] == update.sequence) {
+                if (pending->second.pulseControlled) {
+                  auto &live = pending->second.liveSequences[index];
+                  live.erase(std::remove(live.begin(), live.end(),
+                                         update.sequence),
+                             live.end());
+                }
+                if (update.inertialPathStrengthFinal &&
+                    pending->second.highSequence[index] == update.sequence) {
                   pending->second.valid[index] = 0;
                   pending->second.scheduledDueTime[index] = 0;
                   pending->second.lowSequence[index] = 0;
