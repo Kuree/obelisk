@@ -156,6 +156,9 @@ require_feature_symbol(
 require_feature_symbol(
     bitstream_layout, "obelisk_rt_v1_aggregate_export_bitstream"
 )
+require_feature_symbol(
+    bitstream_layout, "obelisk_rt_v1_aggregate_import_bitstream"
+)
 for symbol in (
     "copyBits",
     "packAssocBuffer",
@@ -387,6 +390,7 @@ tail = re.search(
     r"signature\.id\);\s*"
     r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
     r"case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:\s*"
+    r"case OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:\s*"
     r"if \(!invokeContainerBitstreamIntrinsic\)\s*"
     r"return OBELISK_RT_INVALID_BYTECODE;\s*"
     r"return invokeContainerBitstreamIntrinsic\(image, frame, context, site,\s*"

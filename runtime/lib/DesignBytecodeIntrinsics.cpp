@@ -249,7 +249,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return true;
     }
     if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
+      if ((key.kind != OBELISK_RT_ASSOC_KEY_CLASS &&
+           key.kind != OBELISK_RT_ASSOC_KEY_WILDCARD) ||
+          layout.size != 8)
         return false;
       obelisk_rt_managed_word_v1 word = 0;
       std::memcpy(&word, frame.data + layout.offset, sizeof(word));
@@ -306,7 +308,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return true;
     }
     if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (key.kind != OBELISK_RT_ASSOC_KEY_CLASS || layout.size != 8)
+      if ((key.kind != OBELISK_RT_ASSOC_KEY_CLASS &&
+           key.kind != OBELISK_RT_ASSOC_KEY_WILDCARD) ||
+          layout.size != 8)
         return false;
       obelisk_rt_managed_word_v1 word =
           obelisk_rt_managed_word_from_object(key.object);
@@ -4501,6 +4505,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                       signature.id);
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
   case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
+  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:
     if (!invokeContainerBitstreamIntrinsic)
       return OBELISK_RT_INVALID_BYTECODE;
     return invokeContainerBitstreamIntrinsic(image, frame, context, site,

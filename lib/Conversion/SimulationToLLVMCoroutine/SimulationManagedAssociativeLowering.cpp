@@ -68,13 +68,15 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
   bool stringKey = isa<sim::StringType>(array.getKeyType());
   bool classKey = isa<sim::ClassHandleType>(array.getKeyType());
   bool processKey = isa<sim::ProcessType>(array.getKeyType());
+  bool wildcardKey = array.getWildcardIndex();
   uint32_t keyKind =
-      stringKey ? OBELISK_RT_ASSOC_KEY_STRING
+      wildcardKey ? OBELISK_RT_ASSOC_KEY_WILDCARD
+      : stringKey ? OBELISK_RT_ASSOC_KEY_STRING
       : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
       : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
                 : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
                                         : OBELISK_RT_ASSOC_KEY_UNSIGNED);
-  uint64_t keyWidth = stringKey || classKey || processKey
+  uint64_t keyWidth = stringKey || classKey || processKey || wildcardKey
                           ? 0
                           : *sim::getPackedWidth(array.getKeyType());
   store32(AssocKeyField::Kind, keyKind);
@@ -90,7 +92,7 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
     storePointer(AssocKeyField::Value, null);
     storePointer(AssocKeyField::Unknown, null);
     store64(AssocKeyField::String, values.front());
-  } else if (classKey || processKey) {
+  } else if (classKey || processKey || wildcardKey) {
     store64(AssocKeyField::Value, values.front());
     storePointer(AssocKeyField::Unknown, null);
     LLVM::StoreOp::create(builder, location,

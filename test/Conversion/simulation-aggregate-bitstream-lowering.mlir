@@ -18,6 +18,7 @@ module attributes {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "top.cast"
     obelisk_sim.code_unit.decl 2 in 0 function hierarchy "top.cast_again"
+    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "top.uncast"
     obelisk_sim.func @cast(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %source: !record {obelisk_sim.capture_kind = 2 : i32})
@@ -47,11 +48,27 @@ module attributes {
            1, 0, 4, 0, 0, 4] : (!record) -> i16
       obelisk_sim.return %bits : i16
     }
+
+    obelisk_sim.func @uncast(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %source: !obelisk_sim.logic<16> {obelisk_sim.capture_kind = 2 : i32})
+        -> !record
+        attributes {code_unit_id = 3 : i64, entry_kind = 8 : i32} {
+      %result = obelisk_sim.aggregate.import_bitstream %source plan
+          [5407724624, 3, 16, 16,
+           1, 0, 4, 0, 0, 4,
+           4294967298, 4, 3, 4, 4, 4,
+           3, 0, 4, 0, 0, 4] : (!obelisk_sim.logic<16>) -> !record
+      obelisk_sim.return %result : !record
+    }
   }
 }
 
 // NATIVE-COUNT-1: llvm.mlir.global internal constant @__obelisk_aggregate_bitstream_plan_
 // NATIVE-COUNT-3: llvm.call @obelisk_rt_v1_aggregate_export_bitstream
+// NATIVE-COUNT-1: llvm.call @obelisk_rt_v1_aggregate_import_bitstream
 // FEATURE: obelisk.feature.container_bitstream
 // BYTECODE: intrinsic 0: id=0x00010465 inputs=2 outputs=1 flags=0
+// BYTECODE: intrinsic 1: id=0x00010466 inputs=2 outputs=1 flags=0
 // BYTECODE-COUNT-3: site {{[0-9]+}}: signature=0 id=0x00010465 inputs=
+// BYTECODE-COUNT-1: site {{[0-9]+}}: signature=1 id=0x00010466 inputs=

@@ -717,16 +717,20 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
   bool stringKey = isa<sim::StringType>(type.getKeyType());
   bool classKey = isa<sim::ClassHandleType>(type.getKeyType());
   bool processKey = isa<sim::ProcessType>(type.getKeyType());
-  std::optional<unsigned> width = stringKey || classKey || processKey
-                                      ? std::optional<unsigned>(0)
-                                      : sim::getPackedWidth(type.getKeyType());
-  if (!width || (!stringKey && !classKey && !processKey && *width == 0)) {
+  bool wildcardKey = type.getWildcardIndex();
+  std::optional<unsigned> width =
+      stringKey || classKey || processKey || wildcardKey
+          ? std::optional<unsigned>(0)
+          : sim::getPackedWidth(type.getKeyType());
+  if (!width ||
+      (!stringKey && !classKey && !processKey && !wildcardKey && *width == 0)) {
     emitError(location)
         << "associative array key must be string, class, process, or integral";
     return failure();
   }
   uint32_t keyKind =
-      stringKey    ? OBELISK_RT_ASSOC_KEY_STRING
+      wildcardKey  ? OBELISK_RT_ASSOC_KEY_WILDCARD
+      : stringKey  ? OBELISK_RT_ASSOC_KEY_STRING
       : classKey   ? OBELISK_RT_ASSOC_KEY_CLASS
       : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
                    : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
@@ -1230,11 +1234,368 @@ UnitLowering::convertStringBitstream(Value value, Type targetType,
       .getResult();
 }
 
+LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
+UnitLowering::convertExplicitBitstreamToPacked(Value value, Type targetScalar,
+                                               Location location,
+                                               bool allowHiddenRoot) {
+  std::optional<unsigned> targetWidth = sim::getPackedWidth(targetScalar);
+  if (!targetWidth || *targetWidth == 0)
+    return emitError(location)
+               << "bit-stream target width is not representable",
+           failure();
+  if (Type sourceScalar = sim::getPackedScalarType(value.getType())) {
+    std::optional<unsigned> sourceWidth = sim::getPackedWidth(sourceScalar);
+    if (!sourceWidth || *sourceWidth != *targetWidth)
+      return emitError(location)
+                 << "bit-stream cast source and destination widths differ",
+             failure();
+    FailureOr<Value> packed = toPackedScalar(value, location);
+    if (failed(packed))
+      return failure();
+    return convert(*packed, targetScalar, false, location);
+  }
+  if (isa<sim::StringType>(value.getType()))
+    return convertStringBitstream(value, targetScalar, targetScalar, location);
+  Type containerElement;
+  if (auto array = dyn_cast<sim::DynamicArrayType>(value.getType()))
+    containerElement = array.getElementType();
+  else if (auto queue = dyn_cast<sim::QueueType>(value.getType()))
+    containerElement = queue.getElementType();
+  else if (auto associative = dyn_cast<sim::AssocArrayType>(value.getType()))
+    containerElement = associative.getElementType();
+  if (containerElement) {
+    if (sim::getPackedScalarType(containerElement))
+      return convertContainerBitstream(value, targetScalar, targetScalar,
+                                       containerElement, location);
+    return convertRecursiveBitstream(value, targetScalar, targetScalar,
+                                     location);
+  }
+  if (isa<sim::ClassHandleType>(value.getType()))
+    return convertRecursiveBitstream(value, targetScalar, targetScalar,
+                                     location, allowHiddenRoot);
+  if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(value.getType())) {
+    if (sim::getFixedBitStreamPlan(value.getType()))
+      return convertFixedAggregateBitstream(value, targetScalar, targetScalar,
+                                            location);
+    return convertRecursiveBitstream(value, targetScalar, targetScalar,
+                                     location, allowHiddenRoot);
+  }
+  return emitError(location) << "unsupported bit-stream cast from "
+                             << value.getType() << " to " << targetScalar,
+         failure();
+}
+
+LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
+UnitLowering::convertFixedBitstreamTarget(Value value, Type targetType,
+                                          Location location,
+                                          bool allowHiddenRoot) {
+  std::optional<SmallVector<uint64_t>> plan =
+      sim::getFixedBitStreamImportPlan(targetType);
+  if (!plan)
+    return failure();
+  uint64_t width = (*plan)[3];
+  if (width == 0 || width > std::numeric_limits<unsigned>::max())
+    return emitError(location)
+               << "fixed bit-stream target width is not representable",
+           failure();
+  Type scalar = streamContainsFourState(value.getType())
+                    ? Type(sim::LogicType::get(function.getContext(), width))
+                    : Type(IntegerType::get(function.getContext(), width));
+  FailureOr<Value> packed = convertExplicitBitstreamToPacked(
+      value, scalar, location, allowHiddenRoot);
+  if (failed(packed))
+    return failure();
+  SmallVector<int64_t> encoded;
+  encoded.reserve(plan->size());
+  llvm::transform(*plan, std::back_inserter(encoded),
+                  [](uint64_t word) { return static_cast<int64_t>(word); });
+  return sim::SimAggregateImportBitstreamOp::create(
+             builder, location, targetType, *packed,
+             builder.getDenseI64ArrayAttr(encoded))
+      .getResult();
+}
+
+namespace {
+
+struct BitStreamTargetShape {
+  uint64_t fixedWidth = 0;
+  uint64_t unboundedLeaves = 0;
+};
+
+static std::optional<BitStreamTargetShape> getBitStreamTargetShape(Type type) {
+  if (Type scalar = sim::getPackedScalarType(type)) {
+    std::optional<unsigned> width = sim::getPackedWidth(scalar);
+    if (!width || *width == 0)
+      return std::nullopt;
+    return BitStreamTargetShape{*width, 0};
+  }
+  if (isa<sim::StringType>(type))
+    return BitStreamTargetShape{0, 1};
+  if (auto array = dyn_cast<sim::DynamicArrayType>(type)) {
+    std::optional<uint64_t> element =
+        fixedBitStreamWidth(array.getElementType());
+    if (!element || *element == 0)
+      return std::nullopt;
+    return BitStreamTargetShape{0, 1};
+  }
+  if (auto queue = dyn_cast<sim::QueueType>(type)) {
+    std::optional<uint64_t> element =
+        fixedBitStreamWidth(queue.getElementType());
+    if (!element || *element == 0)
+      return std::nullopt;
+    return BitStreamTargetShape{0, 1};
+  }
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return std::nullopt;
+  BitStreamTargetShape result;
+  unsigned count = sim::getAggregateNumElements(type);
+  if (count == 0)
+    return std::nullopt;
+  for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+    std::optional<BitStreamTargetShape> element =
+        getBitStreamTargetShape(sim::getAggregateElementType(type, ordinal));
+    if (!element ||
+        element->fixedWidth >
+            std::numeric_limits<uint64_t>::max() - result.fixedWidth ||
+        element->unboundedLeaves >
+            std::numeric_limits<uint64_t>::max() - result.unboundedLeaves)
+      return std::nullopt;
+    result.fixedWidth += element->fixedWidth;
+    result.unboundedLeaves += element->unboundedLeaves;
+  }
+  return result;
+}
+
+} // namespace
+
+LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
+UnitLowering::materializeCompositeBitStreamTarget(Value stream,
+                                                  Value totalWidth,
+                                                  Type targetType,
+                                                  Location location,
+                                                  Value packedSource) {
+  std::optional<BitStreamTargetShape> shape =
+      getBitStreamTargetShape(targetType);
+  if (!shape || shape->unboundedLeaves == 0)
+    return failure();
+  if (shape->fixedWidth > std::numeric_limits<unsigned>::max())
+    return emitError(location)
+               << "bit-stream target fixed width is not representable",
+           failure();
+  std::optional<unsigned> packedWidth =
+      packedSource ? sim::getPackedWidth(packedSource.getType()) : std::nullopt;
+  if (packedSource && (!packedWidth || *packedWidth == 0))
+    return emitError(location) << "internal packed bit stream is invalid",
+           failure();
+
+  auto i64Constant = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                     builder.getI64IntegerAttr(value));
+  };
+  Value zero = i64Constant(0);
+  Value enough =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                            totalWidth, i64Constant(shape->fixedWidth));
+  Block *accepted = addBlock();
+  Block *rejected = addBlock();
+  cf::CondBranchOp::create(builder, location, enough, accepted, ValueRange{},
+                           rejected, ValueRange{});
+  setCurrent(rejected);
+  if (failed(emitRuntimeFatal(
+          location, "bit-stream cast source and destination widths differ")))
+    return failure();
+  setCurrent(accepted);
+
+  Value cursor = zero;
+  uint64_t remainingFixed = shape->fixedWidth;
+  bool usedGreedy = false;
+  std::function<FailureOr<Value>(Type)> materialize;
+  materialize = [&](Type type) -> FailureOr<Value> {
+    std::optional<BitStreamTargetShape> local = getBitStreamTargetShape(type);
+    if (!local)
+      return failure();
+
+    // A wholly fixed aggregate is one window and one compact import, even if
+    // it contains millions of repeated leaves.
+    if (local->unboundedLeaves == 0 &&
+        isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
+      std::optional<SmallVector<uint64_t>> plan =
+          sim::getFixedBitStreamImportPlan(type);
+      if (!plan || local->fixedWidth > remainingFixed ||
+          local->fixedWidth > std::numeric_limits<unsigned>::max())
+        return failure();
+      remainingFixed -= local->fixedWidth;
+      Type windowType =
+          streamContainsFourState(packedSource ? packedSource.getType()
+                                               : stream.getType())
+              ? Type(sim::LogicType::get(function.getContext(),
+                                         local->fixedWidth))
+              : Type(
+                    IntegerType::get(function.getContext(), local->fixedWidth));
+      Value window;
+      if (packedSource) {
+        Value low = arith::SubIOp::create(
+            builder, location,
+            arith::SubIOp::create(builder, location, i64Constant(*packedWidth),
+                                  cursor),
+            i64Constant(local->fixedWidth));
+        window = isa<sim::LogicType>(packedSource.getType())
+                     ? Value(sim::SimLogicDynExtractOp::create(
+                           builder, location, windowType, packedSource, low))
+                     : Value(sim::SimBitsDynExtractOp::create(
+                           builder, location, windowType, packedSource, low));
+      } else {
+        FailureOr<Value> read =
+            readBitStreamValue(stream, cursor, windowType, location);
+        if (failed(read))
+          return failure();
+        window = *read;
+      }
+      cursor = arith::AddIOp::create(builder, location, cursor,
+                                     i64Constant(local->fixedWidth));
+      SmallVector<int64_t> encoded;
+      encoded.reserve(plan->size());
+      llvm::transform(*plan, std::back_inserter(encoded),
+                      [](uint64_t word) { return static_cast<int64_t>(word); });
+      return sim::SimAggregateImportBitstreamOp::create(
+                 builder, location, type, window,
+                 builder.getDenseI64ArrayAttr(encoded))
+          .getResult();
+    }
+
+    if (Type scalar = sim::getPackedScalarType(type)) {
+      unsigned width = *sim::getPackedWidth(scalar);
+      if (width > remainingFixed)
+        return failure();
+      remainingFixed -= width;
+      Value value;
+      if (packedSource) {
+        Value low = arith::SubIOp::create(
+            builder, location,
+            arith::SubIOp::create(builder, location, i64Constant(*packedWidth),
+                                  cursor),
+            i64Constant(width));
+        Type windowType =
+            isa<sim::LogicType>(packedSource.getType())
+                ? Type(sim::LogicType::get(function.getContext(), width))
+                : Type(IntegerType::get(function.getContext(), width));
+        value = isa<sim::LogicType>(packedSource.getType())
+                    ? Value(sim::SimLogicDynExtractOp::create(
+                          builder, location, windowType, packedSource, low))
+                    : Value(sim::SimBitsDynExtractOp::create(
+                          builder, location, windowType, packedSource, low));
+        FailureOr<Value> converted = convert(value, scalar, false, location);
+        if (failed(converted))
+          return failure();
+        value = *converted;
+        if (scalar != type)
+          value =
+              sim::SimPackedUnflattenOp::create(builder, location, type, value);
+      } else {
+        FailureOr<Value> read =
+            readBitStreamValue(stream, cursor, type, location);
+        if (failed(read))
+          return failure();
+        value = *read;
+      }
+      cursor =
+          arith::AddIOp::create(builder, location, cursor, i64Constant(width));
+      return value;
+    }
+
+    if (isa<sim::StringType, sim::DynamicArrayType, sim::QueueType>(type)) {
+      Value width = zero;
+      if (!usedGreedy) {
+        width = arith::SubIOp::create(
+            builder, location,
+            arith::SubIOp::create(builder, location, totalWidth, cursor),
+            i64Constant(remainingFixed));
+        Type elementType =
+            isa<sim::StringType>(type) ? Type(builder.getI8Type())
+            : isa<sim::DynamicArrayType>(type)
+                ? cast<sim::DynamicArrayType>(type).getElementType()
+                : cast<sim::QueueType>(type).getElementType();
+        uint64_t elementWidth = *fixedBitStreamWidth(elementType);
+        Value residue = arith::RemUIOp::create(builder, location, width,
+                                               i64Constant(elementWidth));
+        Value divisible = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, residue, zero);
+        Block *divisibleBlock = addBlock();
+        Block *invalidBlock = addBlock();
+        cf::CondBranchOp::create(builder, location, divisible, divisibleBlock,
+                                 ValueRange{}, invalidBlock, ValueRange{});
+        setCurrent(invalidBlock);
+        if (failed(emitRuntimeFatal(
+                location,
+                "bit-stream cast source has a partial target element")))
+          return failure();
+        setCurrent(divisibleBlock);
+        usedGreedy = true;
+      }
+      FailureOr<Value> result = materializeDynamicBitStreamTarget(
+          stream, width, type, location, packedSource, cursor);
+      if (failed(result))
+        return failure();
+      cursor = arith::AddIOp::create(builder, location, cursor, width);
+      return *result;
+    }
+
+    SmallVector<Value> elements;
+    unsigned count = sim::getAggregateNumElements(type);
+    elements.reserve(count);
+    for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
+      FailureOr<Value> element =
+          materialize(sim::getAggregateElementType(type, ordinal));
+      if (failed(element))
+        return failure();
+      elements.push_back(*element);
+    }
+    return sim::SimAggregateConstructOp::create(builder, location, type,
+                                                elements)
+        .getResult();
+  };
+
+  FailureOr<Value> result = materialize(targetType);
+  if (failed(result))
+    return emitError(location)
+               << "unsupported bit-stream cast target " << targetType,
+           failure();
+  return *result;
+}
+
 FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                        bool sourceSigned, Location location,
                                        bool targetSigned) {
   if (value.getType() == targetType)
     return value;
+  if (isa<sim::BoxType>(targetType)) {
+    Type scalar = sim::getPackedScalarType(value.getType());
+    if (!scalar || !sim::getPackedWidth(scalar).value_or(0))
+      return emitError(location)
+                 << "wildcard associative-array keys must be integral",
+             failure();
+    FailureOr<ContainerElementDescriptor> descriptor =
+        describeContainerElement(value.getType(), location);
+    if (failed(descriptor))
+      return failure();
+    if (sourceSigned)
+      descriptor->flags |= OBELISK_RT_ELEMENT_SIGNED;
+    Type arrayType =
+        sim::DynamicArrayType::get(function.getContext(), value.getType());
+    Value one = arith::ConstantIntOp::create(builder, location, 1, 64);
+    Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+    Value array = sim::SimContainerCreateOp::create(
+        builder, location, arrayType, one, descriptor->typeID, descriptor->kind,
+        descriptor->flags, descriptor->valueSize, descriptor->alignment,
+        descriptor->bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+    sim::SimContainerWriteOp::create(builder, location, array, zero,
+                                     cloneSequentialValue(value, location));
+    return sim::SimBoxPackOp::create(builder, location, targetType, array)
+        .getResult();
+  }
   if (isa<sim::StringType>(targetType)) {
     FailureOr<Value> packed = toPackedScalar(value, location);
     if (failed(packed))
@@ -2294,7 +2655,64 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     if (failed(input))
       return failure();
     BoolAttr isImplicit = op->getAttrOfType<BoolAttr>("is_implicit");
-    if (isImplicit && !isImplicit.getValue())
+    if (isImplicit && !isImplicit.getValue()) {
+      if (sim::getFixedBitStreamPlan(*target))
+        return convertFixedBitstreamTarget(
+            *input, *target, getSemanticLocation(op),
+            op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+      std::optional<BitStreamTargetShape> targetShape =
+          getBitStreamTargetShape(*target);
+      if (targetShape && targetShape->unboundedLeaves != 0) {
+        std::optional<uint64_t> sourceWidth =
+            fixedBitStreamWidth(input->getType());
+        // A fixed-schema class is opaque in Simulation IR, so its width comes
+        // from declaration inventory rather than its handle type. Keeping this
+        // path packed lets class-to-container and class-to-greedy casts use one
+        // recursive bulk export instead of the generic per-bit queue.
+        if (!sourceWidth && isa<sim::ClassHandleType>(input->getType())) {
+          IntegerAttr width = children.front()->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.class_bitstream_width");
+          if (width && !width.getValue().isNegative() &&
+              !width.getValue().isZero() &&
+              width.getValue().getActiveBits() <= 64)
+            sourceWidth = width.getValue().getZExtValue();
+        }
+        if (sourceWidth && *sourceWidth != 0 &&
+            *sourceWidth <= std::numeric_limits<unsigned>::max()) {
+          Location location = getSemanticLocation(op);
+          Type scalar =
+              streamContainsFourState(input->getType())
+                  ? Type(sim::LogicType::get(function.getContext(),
+                                             *sourceWidth))
+                  : Type(IntegerType::get(function.getContext(), *sourceWidth));
+          FailureOr<Value> packed = convertExplicitBitstreamToPacked(
+              *input, scalar, location,
+              op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+          if (failed(packed))
+            return failure();
+          Value width = arith::ConstantOp::create(
+              builder, location, builder.getI64Type(),
+              builder.getI64IntegerAttr(*sourceWidth));
+          return materializeCompositeBitStreamTarget(Value{}, width, *target,
+                                                     location, *packed);
+        }
+        Location location = getSemanticLocation(op);
+        bool fourState = streamContainsFourState(input->getType());
+        FailureOr<Value> stream = createBitStream(fourState, location);
+        if (failed(stream))
+          return failure();
+        Value zero =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      builder.getI64IntegerAttr(0));
+        FailureOr<Value> end =
+            appendToBitStream(*input, *stream, zero, fourState, location);
+        if (failed(end))
+          return failure();
+        Value width = sim::SimContainerSizeOp::create(
+            builder, location, builder.getI64Type(), *stream);
+        return materializeCompositeBitStreamTarget(*stream, width, *target,
+                                                   location);
+      }
       if (Type targetScalar = sim::getPackedScalarType(*target)) {
         if (isa<sim::StringType>(input->getType()))
           return convertStringBitstream(*input, *target, targetScalar,
@@ -2328,6 +2746,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
                                            getSemanticLocation(op));
         }
       }
+    }
     bool sourceSigned = isSignedNode(children.front()) ||
                         fillsWidenedUnknown(children.front(), *target);
     return convert(*input, *target, sourceSigned, getSemanticLocation(op),

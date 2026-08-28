@@ -3122,6 +3122,47 @@ FailureOr<Value> UnitLowering::unflattenBitStreamValue(Value packed,
                                                        uint64_t &highBit,
                                                        Type type,
                                                        Location location) {
+  if (std::optional<SmallVector<uint64_t>> plan =
+          sim::getFixedBitStreamImportPlan(type)) {
+    uint64_t width = (*plan)[3];
+    if (width == 0 || width > highBit ||
+        width > std::numeric_limits<unsigned>::max())
+      return emitError(location)
+                 << "streaming assignment target has no bit-stream window",
+             failure();
+    highBit -= width;
+    Type windowType =
+        isa<sim::LogicType>(packed.getType())
+            ? Type(sim::LogicType::get(function.getContext(), width))
+            : Type(IntegerType::get(function.getContext(), width));
+    Value window;
+    if (isa<sim::LogicType>(packed.getType())) {
+      window = sim::SimLogicExtractOp::create(builder, location, windowType,
+                                              packed, highBit);
+    } else {
+      auto full = cast<IntegerType>(packed.getType());
+      Value shifted = packed;
+      if (highBit) {
+        Value amount = arith::ConstantOp::create(
+            builder, location, full,
+            builder.getIntegerAttr(full, highBit));
+        shifted = arith::ShRUIOp::create(builder, location, packed, amount);
+      }
+      window = width == full.getWidth()
+                   ? shifted
+                   : arith::TruncIOp::create(builder, location, windowType,
+                                             shifted)
+                         .getResult();
+    }
+    SmallVector<int64_t> encoded;
+    encoded.reserve(plan->size());
+    llvm::transform(*plan, std::back_inserter(encoded),
+                    [](uint64_t word) { return static_cast<int64_t>(word); });
+    return sim::SimAggregateImportBitstreamOp::create(
+               builder, location, type, window,
+               builder.getDenseI64ArrayAttr(encoded))
+        .getResult();
+  }
   if (Type scalarType = sim::getPackedScalarType(type)) {
     std::optional<unsigned> width = sim::getPackedWidth(type);
     if (!width || *width == 0 || *width > highBit)
@@ -3295,19 +3336,39 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   // greedy resize), so there is nothing to leave behind there.
   bool everyTargetFixed = llvm::none_of(
       infos, [](const TargetInfo &info) { return info.dynamic; });
+  if (everyTargetFixed &&
+      fixedWidth > std::numeric_limits<unsigned>::max())
+    return emitError(location)
+               << "fixed streaming assignment width is not representable",
+           failure();
   FailureOr<Value> reordered = reorderBitStream(
       *generic, destination.getSliceSize(), location,
       everyTargetFixed ? i64Constant(fixedWidth) : Value{});
   if (failed(reordered))
     return failure();
 
+  Value fixedPacked;
+  uint64_t fixedHighBit = fixedWidth;
+  if (everyTargetFixed) {
+    Type packedType =
+        fourState
+            ? Type(sim::LogicType::get(function.getContext(), fixedWidth))
+            : Type(IntegerType::get(function.getContext(), fixedWidth));
+    fixedPacked = sim::SimContainerExportBitstreamOp::create(
+        builder, location, packedType, *reordered);
+  }
+
   bool usedGreedy = false;
   Value cursor = zero;
   for (size_t targetIndex = 0; targetIndex < infos.size(); ++targetIndex) {
     TargetInfo &info = infos[targetIndex];
     if (!info.dynamic) {
-      FailureOr<Value> value = readBitStreamTarget(
-          *reordered, cursor, info.type, getSemanticLocation(info.node));
+      FailureOr<Value> value =
+          fixedPacked
+              ? unflattenBitStreamValue(fixedPacked, fixedHighBit, info.type,
+                                        getSemanticLocation(info.node))
+              : readBitStreamTarget(*reordered, cursor, info.type,
+                                    getSemanticLocation(info.node));
       if (failed(value) || failed(writeLValue(info.node, *value, false, false,
                                               getSemanticLocation(info.node))))
         return failure();

@@ -31,11 +31,11 @@ struct StringHeader {
 
 static_assert(sizeof(StringHeader) == 16);
 
-using obelisk::runtime_detail::BufferHeader;
-using obelisk::runtime_detail::ContainerHeader;
 using obelisk::runtime_detail::AssocSlot;
 using obelisk::runtime_detail::assocSlotStride;
 using obelisk::runtime_detail::assocValueOffset;
+using obelisk::runtime_detail::BufferHeader;
+using obelisk::runtime_detail::ContainerHeader;
 using obelisk::runtime_detail::elementStride;
 using obelisk::runtime_detail::ensureAssocOrdered;
 
@@ -376,7 +376,8 @@ obelisk_rt_status snapshotHeader(obelisk_rt_object_v1 *container,
         bool handleKey =
             snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_STRING ||
             snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
-            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_PROCESS;
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_PROCESS ||
+            snapshot->header.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD;
         bool validAssocKey =
             handleKey
                 ? snapshot->header.keyWidth == 0
@@ -462,10 +463,9 @@ obelisk_rt_status allocateBuffer(obelisk_rt_gc_lane_v1 *lane, uint64_t capacity,
                                      &bufferDescriptorToken, outBuffer);
 }
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-allocateBufferWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane, uint64_t capacity,
-                               uint64_t stride,
-                               obelisk_rt_object_v1 **outBuffer) {
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status allocateBufferWithoutSafepoint(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t capacity, uint64_t stride,
+    obelisk_rt_object_v1 **outBuffer) {
   if (!outBuffer)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outBuffer = nullptr;
@@ -828,7 +828,8 @@ obelisk_rt_status initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
     return OBELISK_RT_INVALID_ARGUMENT;
   if (keyKind == OBELISK_RT_ASSOC_KEY_STRING ||
       keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
-      keyKind == OBELISK_RT_ASSOC_KEY_PROCESS) {
+      keyKind == OBELISK_RT_ASSOC_KEY_PROCESS ||
+      keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
     if (keyWidth != 0)
       return OBELISK_RT_INVALID_ARGUMENT;
   } else if ((keyKind != OBELISK_RT_ASSOC_KEY_UNSIGNED &&
@@ -1255,7 +1256,8 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
         auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
         if (slot->hash == emptyAssocHash)
           continue;
-        if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+        if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+            header->keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
           visit(environment, slot->object);
         } else if (slot->string != 0 && (slot->string & stringTagMask) == 0) {
           visit(environment, heapStringObject(slot->string));
@@ -1310,7 +1312,8 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
         path->keyUnknown != 0 && (path->keyUnknown & stringTagMask) == 0)
       visit(environment, heapStringObject(path->keyUnknown));
     if (path->selector == ReferenceSelector::Associative &&
-        path->key.kind == OBELISK_RT_ASSOC_KEY_CLASS)
+        (path->key.kind == OBELISK_RT_ASSOC_KEY_CLASS ||
+         path->key.kind == OBELISK_RT_ASSOC_KEY_WILDCARD))
       visit(environment, path->key.object);
     if (path->detachedValue &&
         obelisk_rt_managed_object_kind(path->detachedValue) ==
@@ -1865,12 +1868,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_scan_field(
 extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
 obelisk_rt_v1_string_scan_dynamic(
     obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 input, uint32_t cursor,
-    obelisk_rt_string_v1 format, uint32_t planCursor, uint32_t enabled,
-    uint32_t finalize, uint64_t allowedSpecifiers,
-    uint64_t rawTwoStateBytes, uint64_t rawFourStateBytes,
-    obelisk_rt_string_v1 *outField, uint32_t *outCursor,
-    uint32_t *outPlanCursor, uint32_t *outSpecifier, uint32_t *outOk) {
+    obelisk_rt_string_v1 input, uint32_t cursor, obelisk_rt_string_v1 format,
+    uint32_t planCursor, uint32_t enabled, uint32_t finalize,
+    uint64_t allowedSpecifiers, uint64_t rawTwoStateBytes,
+    uint64_t rawFourStateBytes, obelisk_rt_string_v1 *outField,
+    uint32_t *outCursor, uint32_t *outPlanCursor, uint32_t *outSpecifier,
+    uint32_t *outOk) {
   if (!context || !lane || !outField || !outCursor || !outPlanCursor ||
       !outSpecifier || !outOk || enabled > 1 || finalize > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -1927,14 +1930,14 @@ obelisk_rt_v1_string_scan_dynamic(
     return true;
   };
   auto letter = [](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
-    return static_cast<char>(std::tolower(
-        static_cast<unsigned char>(static_cast<char>(specifier))));
+    return static_cast<char>(
+        std::tolower(static_cast<unsigned char>(static_cast<char>(specifier))));
   };
   auto allowed = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
     char normalized = letter(specifier);
     return normalized >= 'a' && normalized <= 'z' &&
            (allowedSpecifiers &
-           (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
+            (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
   };
   auto conversionKind = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
     switch (letter(specifier)) {
@@ -1989,8 +1992,8 @@ obelisk_rt_v1_string_scan_dynamic(
     if (!matchPrefix(conversion.prefix, next))
       return OBELISK_RT_OK;
     if (normalized == 'u' || normalized == 'z') {
-      uint64_t rawSize = normalized == 'u' ? rawTwoStateBytes
-                                           : rawFourStateBytes;
+      uint64_t rawSize =
+          normalized == 'u' ? rawTwoStateBytes : rawFourStateBytes;
       if (conversion.suppressed)
         rawSize = conversion.width;
       if (rawSize == 0) {
@@ -2024,7 +2027,8 @@ obelisk_rt_v1_string_scan_dynamic(
             return OBELISK_RT_OK;
           status = createString(lane, &logic, 1, outField);
         } else {
-          status = createString(lane, view.bytes + fieldBegin, extent, outField);
+          status =
+              createString(lane, view.bytes + fieldBegin, extent, outField);
         }
         if (status != OBELISK_RT_OK)
           return status;
@@ -2364,6 +2368,65 @@ uint64_t mixAssocHash(uint64_t value) {
   return value == emptyAssocHash ? UINT64_C(1) : value;
 }
 
+obelisk_rt_status normalizeWildcardAssocObject(obelisk_rt_context *context,
+                                               obelisk_rt_object_v1 *object,
+                                               NormalizedAssocKey &normalized) {
+  if (!object || !obelisk_rt_managed_object_belongs_to(context, object) ||
+      obelisk_rt_managed_object_kind(object) != OBELISK_RT_MANAGED_CONTAINER)
+    return OBELISK_RT_INVALID_HANDLE;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(object, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const obelisk_rt_element_type_v1 *element = snapshot.element;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+      snapshot.size != 1 || !element || element->bit_width == 0 ||
+      (element->kind != OBELISK_RT_ELEMENT_BITS &&
+       element->kind != OBELISK_RT_ELEMENT_LOGIC) ||
+      element->value_size == 0 || element->value_size > SIZE_MAX)
+    return OBELISK_RT_INVALID_HANDLE;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+  OBELISK_RT_TRY {
+    value.resize(static_cast<size_t>(element->value_size));
+    if (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+      unknown.resize(static_cast<size_t>(element->value_size));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  status = obelisk_rt_v1_container_read(
+      object, 0, value.data(), unknown.empty() ? nullptr : unknown.data());
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (!unknown.empty()) {
+    uint8_t finalMask =
+        element->bit_width % 8 == 0
+            ? UINT8_MAX
+            : static_cast<uint8_t>((1u << (element->bit_width % 8)) - 1);
+    for (size_t index = 0; index != unknown.size(); ++index) {
+      uint8_t bits = unknown[index];
+      if (index + 1 == unknown.size())
+        bits &= finalMask;
+      if (bits != 0) {
+        normalized.ignored = true;
+        return OBELISK_RT_OK;
+      }
+    }
+  }
+  OBELISK_RT_TRY { normalized.wideIntegral.resize(24 + value.size()); }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  uint64_t descriptor[3]{element->type_id, element->bit_width,
+                         uint64_t{element->kind} << 32 | element->flags};
+  std::memcpy(normalized.wideIntegral.data(), descriptor, sizeof(descriptor));
+  std::memcpy(normalized.wideIntegral.data() + sizeof(descriptor), value.data(),
+              value.size());
+  normalized.object = object;
+  normalized.hash = mixAssocHash(
+      hashBytes(reinterpret_cast<const char *>(normalized.wideIntegral.data()),
+                normalized.wideIntegral.size()) ^
+      (uint64_t{OBELISK_RT_ASSOC_KEY_WILDCARD} << 56));
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
                                     const ContainerHeader &header,
                                     const obelisk_rt_assoc_key_v1 *key,
@@ -2396,6 +2459,11 @@ obelisk_rt_status normalizeAssocKey(obelisk_rt_context *context,
     normalized.hash =
         mixAssocHash(normalized.integral ^ (uint64_t(header.keyKind) << 56));
     return OBELISK_RT_OK;
+  }
+  if (key->kind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    if (key->width != 0 || key->unknown != 0 || key->string != 0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return normalizeWildcardAssocObject(context, key->object, normalized);
   }
   if (key->kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
     if (key->width != 0 || key->unknown != 0 || key->string != 0)
@@ -2476,6 +2544,37 @@ int compareIntegralBytes(const uint8_t *left, const uint8_t *right, size_t size,
   return 0;
 }
 
+// A wildcard associative index is stored as a canonical descriptor followed
+// by a little-endian packed value. std::vector's lexicographic order is wrong
+// for both descriptor words and values wider than one byte (for example, 256
+// would sort before 1). Compare the descriptor tuple first and then apply the
+// ordinary integral ordering used by typed associative arrays.
+int compareWildcardAssocKeys(const std::vector<uint8_t> &left,
+                             const std::vector<uint8_t> &right) {
+  constexpr size_t descriptorSize = 3 * sizeof(uint64_t);
+  if (left.size() < descriptorSize || right.size() < descriptorSize)
+    return left < right ? -1 : left > right ? 1 : 0;
+  uint64_t leftDescriptor[3];
+  uint64_t rightDescriptor[3];
+  std::memcpy(leftDescriptor, left.data(), descriptorSize);
+  std::memcpy(rightDescriptor, right.data(), descriptorSize);
+  for (unsigned field : {0u, 1u, 2u}) {
+    if (leftDescriptor[field] != rightDescriptor[field])
+      return leftDescriptor[field] < rightDescriptor[field] ? -1 : 1;
+  }
+  size_t leftSize = left.size() - descriptorSize;
+  size_t rightSize = right.size() - descriptorSize;
+  if (leftSize != rightSize)
+    return leftSize < rightSize ? -1 : 1;
+  uint64_t width = leftDescriptor[1];
+  if (width == 0 || leftSize == 0 || width > leftSize * 8)
+    return left < right ? -1 : left > right ? 1 : 0;
+  bool isSigned = (leftDescriptor[2] & OBELISK_RT_ELEMENT_SIGNED) != 0;
+  return compareIntegralBytes(left.data() + descriptorSize,
+                              right.data() + descriptorSize, leftSize, width,
+                              isSigned);
+}
+
 std::string integralBytesToDecimal(const uint8_t *bytes, size_t size,
                                    uint64_t width, bool isSigned) {
   std::vector<uint8_t> magnitude(bytes, bytes + size);
@@ -2526,6 +2625,14 @@ bool assocKeysEqual(const ContainerHeader &header, const AssocSlot &slot,
                     const NormalizedAssocKey &key) {
   if (header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
     return slot.object == key.object;
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    NormalizedAssocKey stored;
+    obelisk_rt_context *context =
+        obelisk_rt_managed_object_context(slot.object);
+    return normalizeWildcardAssocObject(context, slot.object, stored) ==
+               OBELISK_RT_OK &&
+           !stored.ignored && stored.wideIntegral == key.wideIntegral;
+  }
   if (header.keyKind != OBELISK_RT_ASSOC_KEY_STRING && header.keyWidth <= 64)
     return slot.integral == key.integral;
   if (header.keyKind != OBELISK_RT_ASSOC_KEY_STRING) {
@@ -2692,10 +2799,12 @@ obelisk_rt_status ensureAssocCapacity(obelisk_rt_gc_lane_v1 *lane,
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((noinline, cold))
 #endif
-obelisk_rt_status prepareAssocWriteCapacity(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
-    obelisk_rt_string_v1 &keyRootValue, NormalizedAssocKey &normalized,
-    ContainerHeader &snapshot) {
+obelisk_rt_status
+prepareAssocWriteCapacity(obelisk_rt_gc_lane_v1 *lane,
+                          obelisk_rt_object_v1 *array,
+                          obelisk_rt_string_v1 &keyRootValue,
+                          NormalizedAssocKey &normalized,
+                          ContainerHeader &snapshot) {
   while (true) {
     normalized.string = keyRootValue;
     obelisk_rt_status status = snapshotHeader(array, snapshot);
@@ -2808,7 +2917,8 @@ void enumerateAssocCloneRoots(void *opaque, ManagedRootVisit visit,
   for (uint64_t index = 0; index != roots->count; ++index) {
     auto *slot =
         reinterpret_cast<AssocSlot *>(roots->entries + index * roots->stride);
-    if (roots->keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+    if (roots->keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+        roots->keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD)
       visit(environment, &slot->object);
     else if (slot->string != 0 && (slot->string & stringTagMask) == 0) {
       if (obelisk_rt_object_v1 *object = heapStringObject(slot->string))
@@ -2939,7 +3049,8 @@ obelisk_rt_status cloneAssocContainer(obelisk_rt_gc_lane_v1 *lane,
     StringView integralKey;
     if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
       key.string = slot->string;
-    } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+    } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+               snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
       key.object = slot->object;
     } else if (snapshot.keyWidth <= 64) {
       key.value = slot->integral;
@@ -3182,6 +3293,19 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
             }
             if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
               return left->integral < right->integral;
+            if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+              NormalizedAssocKey leftKey;
+              NormalizedAssocKey rightKey;
+              obelisk_rt_context *context =
+                  obelisk_rt_managed_object_context(left->object);
+              if (normalizeWildcardAssocObject(context, left->object,
+                                               leftKey) != OBELISK_RT_OK ||
+                  normalizeWildcardAssocObject(context, right->object,
+                                               rightKey) != OBELISK_RT_OK)
+                return leftIndex < rightIndex;
+              return compareWildcardAssocKeys(leftKey.wideIntegral,
+                                              rightKey.wideIntegral) < 0;
+            }
             if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                 snapshot.keyWidth <= 64)
               return signedAssocValue(left->integral, snapshot.keyWidth) <
@@ -3224,6 +3348,19 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
             return keyStatus;
         } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
           output += std::to_string(slot->integral);
+        } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+          NormalizedAssocKey key;
+          obelisk_rt_status keyStatus = normalizeWildcardAssocObject(
+              obelisk_rt_managed_object_context(slot->object), slot->object,
+              key);
+          if (keyStatus != OBELISK_RT_OK || key.wideIntegral.size() < 24)
+            return keyStatus == OBELISK_RT_OK ? OBELISK_RT_INVALID_HANDLE
+                                              : keyStatus;
+          uint64_t bitWidth = 0;
+          std::memcpy(&bitWidth, key.wideIntegral.data() + 8, sizeof(bitWidth));
+          output += integralBytesToDecimal(key.wideIntegral.data() + 24,
+                                           key.wideIntegral.size() - 24,
+                                           bitWidth, false);
         } else if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                    snapshot.keyWidth <= 64) {
           output += std::to_string(
@@ -4817,7 +4954,8 @@ obelisk_rt_v1_assoc_write(obelisk_rt_gc_lane_v1 *lane,
   auto *candidateSlot = reinterpret_cast<AssocSlot *>(candidate.data());
   candidateSlot->hash = normalized.hash;
   candidateSlot->integral = normalized.integral;
-  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
+  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+      snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD)
     candidateSlot->object = normalized.object;
   else
     candidateSlot->string = storedKey;
@@ -5004,6 +5142,8 @@ normalizedAssocKeysEqual(const ContainerHeader &header,
                         static_cast<size_t>(leftView.size)) == 0;
   } else if (header.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
     equal = left.object == right.object;
+  } else if (header.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    equal = left.wideIntegral == right.wideIntegral;
   } else if (header.keyWidth <= 64 ||
              header.keyKind == OBELISK_RT_ASSOC_KEY_PROCESS) {
     equal = left.integral == right.integral;
@@ -5208,6 +5348,16 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
                                                 : 0;
     return OBELISK_RT_OK;
   }
+  if (header.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    NormalizedAssocKey stored;
+    obelisk_rt_status status = normalizeWildcardAssocObject(
+        obelisk_rt_managed_object_context(slot.object), slot.object, stored);
+    if (status != OBELISK_RT_OK)
+      return status;
+    comparison =
+        compareWildcardAssocKeys(stored.wideIntegral, key.wideIntegral);
+    return OBELISK_RT_OK;
+  }
   if (header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED) {
     if (header.keyWidth <= 64) {
       int64_t left = signedAssocValue(slot.integral, header.keyWidth);
@@ -5233,26 +5383,26 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
   return OBELISK_RT_OK;
 }
 
-using AllocateOrderBuffer = obelisk_rt_status (*)(
-    obelisk_rt_gc_lane_v1 *, uint64_t, obelisk_rt_object_v1 **);
+using AllocateOrderBuffer = obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                                  uint64_t,
+                                                  obelisk_rt_object_v1 **);
 
-static obelisk_rt_status allocateOrderBuffer(
-    obelisk_rt_gc_lane_v1 *lane, uint64_t count,
-    obelisk_rt_object_v1 **outBuffer) {
+static obelisk_rt_status allocateOrderBuffer(obelisk_rt_gc_lane_v1 *lane,
+                                             uint64_t count,
+                                             obelisk_rt_object_v1 **outBuffer) {
   return allocateBuffer(lane, count, sizeof(uint64_t), outBuffer);
 }
 
 static OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-allocateOrderBufferWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane,
-                                    uint64_t count,
+allocateOrderBufferWithoutSafepoint(obelisk_rt_gc_lane_v1 *lane, uint64_t count,
                                     obelisk_rt_object_v1 **outBuffer) {
   return allocateBufferWithoutSafepoint(lane, count, sizeof(uint64_t),
                                         outBuffer);
 }
 
-static obelisk_rt_status ensureAssocOrderedImpl(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
-    AllocateOrderBuffer allocateOrder) {
+static obelisk_rt_status
+ensureAssocOrderedImpl(obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array,
+                       AllocateOrderBuffer allocateOrder) {
   if (!lane || !array)
     return OBELISK_RT_INVALID_ARGUMENT;
   ScopedManagedRoot ownerRoot(lane, &array);
@@ -5295,11 +5445,28 @@ static obelisk_rt_status ensureAssocOrderedImpl(
                                                   uint64_t size) {
             if (size < header->capacity * stride)
               return OBELISK_RT_INVALID_HANDLE;
+            std::vector<NormalizedAssocKey> wildcardKeys;
+            if (header->keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+              OBELISK_RT_TRY {
+                wildcardKeys.resize(static_cast<size_t>(header->capacity));
+              }
+              OBELISK_RT_CATCH(const std::bad_alloc &) {
+                return OBELISK_RT_OUT_OF_MEMORY;
+              }
+            }
             uint64_t count = 0;
             for (uint64_t index = 0; index != header->capacity; ++index) {
               auto *slot = reinterpret_cast<AssocSlot *>(data + index * stride);
-              if (slot->hash != emptyAssocHash)
-                (*order->indices)[count++] = index;
+              if (slot->hash == emptyAssocHash)
+                continue;
+              (*order->indices)[count++] = index;
+              if (!wildcardKeys.empty()) {
+                obelisk_rt_status keyStatus = normalizeWildcardAssocObject(
+                    obelisk_rt_managed_object_context(slot->object),
+                    slot->object, wildcardKeys[static_cast<size_t>(index)]);
+                if (keyStatus != OBELISK_RT_OK)
+                  return keyStatus;
+              }
             }
             if (count != header->size)
               return OBELISK_RT_INVALID_HANDLE;
@@ -5320,6 +5487,12 @@ static obelisk_rt_status ensureAssocOrderedImpl(
                   }
                   if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS)
                     return left->integral < right->integral;
+                  if (header->keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD)
+                    return compareWildcardAssocKeys(
+                               wildcardKeys[static_cast<size_t>(leftIndex)]
+                                   .wideIntegral,
+                               wildcardKeys[static_cast<size_t>(rightIndex)]
+                                   .wideIntegral) < 0;
                   if (header->keyKind == OBELISK_RT_ASSOC_KEY_SIGNED &&
                       header->keyWidth <= 64)
                     return signedAssocValue(left->integral, header->keyWidth) <
@@ -5396,8 +5569,9 @@ static obelisk_rt_status ensureAssocOrderedImpl(
   }
 }
 
-obelisk_rt_status obelisk::runtime_detail::ensureAssocOrdered(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *array) {
+obelisk_rt_status
+obelisk::runtime_detail::ensureAssocOrdered(obelisk_rt_gc_lane_v1 *lane,
+                                            obelisk_rt_object_v1 *array) {
   return ensureAssocOrderedImpl(lane, array, allocateOrderBuffer);
 }
 
@@ -5532,7 +5706,8 @@ static obelisk_rt_status assocTraverse(obelisk_rt_gc_lane_v1 *lane,
               traverse->key->width = header->keyWidth;
               if (header->keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
                 traverse->key->string = slot->string;
-              } else if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+              } else if (header->keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+                         header->keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
                 traverse->key->value = 0;
                 traverse->key->object = slot->object;
                 traverse->key->unknown = 0;
@@ -5912,7 +6087,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
       initialize.key.value = 0;
       initialize.key.unknown = 0;
       initialize.key.string = keyRootValue;
-    } else if (owner.keyKind == OBELISK_RT_ASSOC_KEY_CLASS) {
+    } else if (owner.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+               owner.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
       initialize.key.object = normalized.object;
       initialize.key.unknown = 0;
       initialize.key.string = 0;

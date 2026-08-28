@@ -2,6 +2,7 @@
 
 !bytes = !obelisk.ranged_unpacked_array<0 : 8191 x !obelisk.integral<8, false, true, 7 : 0, logic>>
 !packed = !obelisk.integral<65536, false, true, 65535 : 0, logic>
+!nibbles = !obelisk.dynarray<!obelisk.integral<4, false, true, 3 : 0, logic>>
 
 module {
   obelisk.sv.symbol.definition attributes {
@@ -43,6 +44,45 @@ module {
             } {}
           }
         }
+        obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.repartitioned", lifetime = 1 : i32,
+          name = "repartitioned", node_id = 12 : i64,
+          semantic_type = !nibbles, sym_name = "repartitioned"
+        } {
+          obelisk.sv.expression.conversion attributes {
+            is_implicit = false, is_signed = false, node_id = 13 : i64,
+            semantic_type = !nibbles
+          } {
+            obelisk.sv.expression.named_value attributes {
+              is_signed = false, node_id = 14 : i64,
+              referenced_path = "top.source",
+              referenced_symbol = @root::@top::@body::@source,
+              semantic_type = !bytes
+            } {}
+          }
+        }
+        obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.packed_source", lifetime = 1 : i32,
+          name = "packed_source", node_id = 8 : i64, semantic_type = !packed,
+          sym_name = "packed_source"
+        } {}
+        obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.unpacked_result", lifetime = 1 : i32,
+          name = "unpacked_result", node_id = 9 : i64, semantic_type = !bytes,
+          sym_name = "unpacked_result"
+        } {
+          obelisk.sv.expression.conversion attributes {
+            is_implicit = false, is_signed = false, node_id = 10 : i64,
+            semantic_type = !bytes
+          } {
+            obelisk.sv.expression.named_value attributes {
+              is_signed = false, node_id = 11 : i64,
+              referenced_path = "top.packed_source",
+              referenced_symbol = @root::@top::@body::@packed_source,
+              semantic_type = !packed
+            } {}
+          }
+        }
       }
     }
   }
@@ -52,3 +92,9 @@ module {
 // CHECK: obelisk_sim.aggregate.export_bitstream %[[SOURCE]] plan
 // CHECK-SAME: [5407724624, 2, 65536, 65536, 4294967298, 0, 8192, 8, 8, 8,
 // CHECK-SAME: 1, 0, 8, 0, 0, 8]
+// CHECK: obelisk_sim.container.create {{.*}} -> !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
+// CHECK-COUNT-1: obelisk_sim.logic.dyn_extract
+// CHECK: %[[PACKED:.*]] = obelisk_sim.ref.load
+// CHECK: obelisk_sim.aggregate.import_bitstream %[[PACKED]] plan
+// CHECK-SAME: [5407724624, 2, 65536, 65536, 4294967298, 0, 8192, 8, 8, 8,
+// CHECK-SAME: 3, 0, 8, 0, 0, 8]

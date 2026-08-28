@@ -59,6 +59,11 @@ getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 std::optional<::llvm::SmallVector<uint64_t>>
 getFixedBitStreamPlan(::mlir::Type type);
 
+/// Build the inverse fixed-target plan. Copy records retain whether each
+/// destination leaf is two- or four-state so final X/Z coercion is exact.
+std::optional<::llvm::SmallVector<uint64_t>>
+getFixedBitStreamImportPlan(::mlir::Type type);
+
 /// Build the compact preorder plan for a bit-stream source containing at
 /// least one dynamically sized member. Fixed arrays and structures are
 /// represented structurally, while dynamic arrays, queues, typed associative

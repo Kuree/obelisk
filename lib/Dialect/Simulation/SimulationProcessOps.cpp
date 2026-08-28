@@ -1105,6 +1105,30 @@ LogicalResult SimAggregateExportBitstreamOp::verify() {
   return success();
 }
 
+LogicalResult SimAggregateImportBitstreamOp::verify() {
+  Type input = getInput().getType();
+  Type result = getResult().getType();
+  std::optional<SmallVector<uint64_t>> expected =
+      getFixedBitStreamImportPlan(result);
+  std::optional<unsigned> inputWidth = getPackedWidth(input);
+  if (!expected)
+    return emitOpError(
+        "result must be a nonempty fixed unpacked array or struct of fixed "
+        "packed leaves");
+  if (!isa<IntegerType, LogicType>(input) || !inputWidth ||
+      *inputWidth != (*expected)[3])
+    return emitOpError(
+        "input must be a packed bit or logic value exactly matching the "
+        "result bit-stream width");
+  ArrayRef<int64_t> actual = getPlan();
+  if (actual.size() != expected->size())
+    return emitOpError("plan does not match the fixed aggregate layout");
+  for (auto [lhs, rhs] : llvm::zip_equal(actual, *expected))
+    if (static_cast<uint64_t>(lhs) != rhs)
+      return emitOpError("plan does not match the fixed aggregate layout");
+  return success();
+}
+
 LogicalResult SimAggregateExtractOp::verify() {
   return verifyAggregateIndex(*this, getInput().getType(), getIndexAttr(),
                               getResult().getType(), false);

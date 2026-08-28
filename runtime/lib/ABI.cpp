@@ -1710,6 +1710,10 @@ ABI_FUNCTION(obelisk_rt_v1_aggregate_export_bitstream,
              obelisk_rt_status (*)(const void *, const void *, uint64_t,
                                    uint64_t, uint32_t, void *, void *, uint64_t,
                                    uint64_t, uint32_t, const void *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_aggregate_import_bitstream,
+             obelisk_rt_status (*)(const void *, const void *, uint64_t,
+                                   uint64_t, uint32_t, void *, void *, uint64_t,
+                                   uint64_t, uint32_t, const void *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_recursive_export_bitstream,
              obelisk_rt_status (*)(obelisk_rt_context *, const void *,
                                    const void *, uint64_t, uint64_t, uint32_t,

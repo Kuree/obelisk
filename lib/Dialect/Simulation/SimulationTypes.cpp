@@ -78,9 +78,13 @@ AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                        bool wildcardIndex) {
   if (!isNormalizedValueType(elementType))
     return emitError() << "element must be a normalized simulation value";
-  if (wildcardIndex)
-    return emitError()
-           << "wildcard associative-array indices are not executable";
+  if (wildcardIndex) {
+    if (!isa<BoxType>(keyType) || signedKey)
+      return emitError()
+             << "wildcard associative-array index must use an unsigned box "
+                "key";
+    return success();
+  }
   bool supportedKey = isa<StringType, ClassHandleType, ProcessType>(keyType);
   if (auto integer = dyn_cast<IntegerType>(keyType))
     supportedKey = integer.isSignless() && integer.getWidth() != 0;

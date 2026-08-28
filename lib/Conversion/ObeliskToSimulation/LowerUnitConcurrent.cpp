@@ -892,6 +892,32 @@ static bool areEquivalentDirectClockAddresses(Operation *left,
   return false;
 }
 
+static bool areEquivalentClockConditions(Operation *left, Operation *right) {
+  if (areEquivalentDirectClockAddresses(left, right))
+    return true;
+  if (!left || !right || left->getName() != right->getName())
+    return false;
+  if (std::optional<StringRef> lhs = getConstantSpelling(left)) {
+    std::optional<StringRef> rhs = getConstantSpelling(right);
+    return rhs && *lhs == *rhs;
+  }
+  if (!isa<semantic::SVBinaryExpressionOp, semantic::SVUnaryExpressionOp,
+           semantic::SVConversionExpressionOp>(left))
+    return false;
+  if (left->getAttr("operator_kind") != right->getAttr("operator_kind"))
+    return false;
+  if (left->getAttr("semantic_type") != right->getAttr("semantic_type"))
+    return false;
+  SmallVector<Operation *> lhsChildren = getChildren(left);
+  SmallVector<Operation *> rhsChildren = getChildren(right);
+  if (lhsChildren.size() != rhsChildren.size() || lhsChildren.empty())
+    return false;
+  for (auto [lhs, rhs] : llvm::zip_equal(lhsChildren, rhsChildren))
+    if (!areEquivalentClockConditions(lhs, rhs))
+      return false;
+  return true;
+}
+
 static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   auto lhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(left);
   auto rhs = dyn_cast_or_null<semantic::SVSignalEventControlOp>(right);
@@ -916,8 +942,8 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   if (effectiveEdge(lhs, lhsChildren.front()) !=
           effectiveEdge(rhs, rhsChildren.front()) ||
       (lhs.getHasIff() &&
-       !areEquivalentDirectClockAddresses(lhsChildren.back(),
-                                          rhsChildren.back())))
+       !areEquivalentClockConditions(lhsChildren.back(),
+                                     rhsChildren.back())))
     return false;
   auto qualifiedClockingDescriptor = [](Operation *expression) {
     return expression->hasAttr(clockingEventHasIffAttrName) ||
@@ -980,11 +1006,27 @@ static bool isDirectClock(Operation *operation) {
     return false;
   SmallVector<Operation *> children = getChildren(event);
   size_t expectedChildren = event.getHasIff() ? 2 : 1;
-  if (children.size() != expectedChildren ||
-      !isAddressableExpression(children.front()) ||
-      (event.getHasIff() && !isAddressableExpression(children.back())))
+  if (children.size() != expectedChildren)
     return false;
-  return children.front()->hasAttr("referenced_symbol") ||
+  Operation *primary = children.front();
+  bool declaredIff = primary->hasAttr(clockingEventHasIffAttrName) ||
+                     primary->hasAttr(
+                         "virtual_interface_clock_event_has_iff");
+  if (declaredIff) {
+    SmallVector<Operation *> clockingChildren = getChildren(primary);
+    bool virtualClock = primary->hasAttr(
+        "virtual_interface_clocking_block_event");
+    size_t expectedClockingChildren = virtualClock ? 3 : 2;
+    if (clockingChildren.size() != expectedClockingChildren)
+      return false;
+    if (!virtualClock)
+      primary = clockingChildren.front();
+  }
+  if (!isAddressableExpression(primary))
+    return false;
+  return primary->hasAttr("referenced_symbol") ||
+         primary->hasAttr(clockingEventSymbolAttrName) ||
+         children.front()->hasAttr("referenced_symbol") ||
          children.front()->hasAttr(clockingEventSymbolAttrName);
 }
 
@@ -1406,6 +1448,33 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     MultiClockSequence result;
     result.stages.push_back({inheritedClock, {children.front()}, 0});
     return result;
+  }
+
+  if (auto binary =
+          dyn_cast<semantic::SVBinaryAssertionExprOp>(operation)) {
+    if (binary.getOperatorKind() !=
+            semantic::SVAssertionBinaryOperator::And &&
+        binary.getOperatorKind() !=
+            semantic::SVAssertionBinaryOperator::Intersect)
+      return failure();
+    SmallVector<Operation *> children = getChildren(binary);
+    if (children.size() != 2)
+      return failure();
+    FailureOr<MultiClockSequence> lhs =
+        compileMultiClockSequence(children.front(), inheritedClock);
+    FailureOr<MultiClockSequence> rhs =
+        compileMultiClockSequence(children.back(), inheritedClock);
+    if (failed(lhs) || failed(rhs) || lhs->stages.size() != rhs->stages.size())
+      return failure();
+    for (auto &&[left, right] : llvm::zip_equal(lhs->stages, rhs->stages)) {
+      if (left.delay != right.delay ||
+          !areEquivalentDirectClocks(left.clock, right.clock))
+        return failure();
+      llvm::append_range(left.predicates, right.predicates);
+    }
+    lhs->changesClock |= rhs->changesClock;
+    lhs->hasLeadingDelay |= rhs->hasLeadingDelay;
+    return lhs;
   }
 
   auto concat = dyn_cast<semantic::SVSequenceConcatExprOp>(operation);
@@ -8468,6 +8537,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value, 8> conditionHandles;
     SmallVector<int32_t, 8> edges;
     SmallVector<int32_t, 8> conditionIndices;
+    SmallVector<Operation *, 8> postConditions;
     for (Operation *clockOperation : clocks) {
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(clockOperation);
       SmallVector<Operation *> children = getChildren(event);
@@ -8489,34 +8559,51 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           primaryExpression->hasAttr(
               "virtual_interface_clock_event_monitor") ||
           primaryExpression->hasAttr("virtual_interface_clock_event_list");
-      if (declaredClockingIff || monitoredClockingEvent)
+      if (monitoredClockingEvent)
         return emitError(getSemanticLocation(clockOperation))
                    << "multi-clock occurrence coordination requires direct "
-                      "clock handles; computed clocking-block iff or event "
-                      "list descriptors remain unsupported",
+                      "clock handles; event-list descriptors remain "
+                      "unsupported",
                failure();
 
       FailureOr<Value> handle = failure();
+      Operation *handleExpression = primaryExpression;
+      Operation *postCondition = nullptr;
       if (virtualClockingBlockEvent) {
         auto access =
             dyn_cast<semantic::SVMemberAccessExpressionOp>(primaryExpression);
         SmallVector<Operation *> accessChildren =
             access ? getChildren(access) : SmallVector<Operation *>{};
-        if (!access || accessChildren.size() != 1)
+        size_t expectedAccessChildren = declaredClockingIff ? 3 : 1;
+        if (!access || accessChildren.size() != expectedAccessChildren)
           return emitError(getSemanticLocation(primaryExpression))
-                     << "virtual multi-clock event has no frozen receiver",
+                     << "virtual multi-clock event has no frozen receiver, "
+                        "clock, and iff inventory",
                  failure();
         FailureOr<Value> receiver = lowerExpression(accessChildren.front());
         if (failed(receiver))
           return failure();
         handle = lowerVirtualInterfaceClock(access, *receiver);
+        if (declaredClockingIff)
+          postCondition = accessChildren[2];
+      } else if (declaredClockingIff) {
+        SmallVector<Operation *> clockingChildren =
+            getChildren(primaryExpression);
+        if (clockingChildren.size() != 2)
+          return emitError(getSemanticLocation(primaryExpression))
+                     << "clocking-block event with iff has no frozen clock "
+                        "and condition expressions",
+                 failure();
+        handleExpression = clockingChildren.front();
+        postCondition = clockingChildren.back();
+        handle = lowerExpression(handleExpression, true);
       } else {
         handle = lowerExpression(primaryExpression, true);
       }
       if (failed(handle))
         return failure();
       if (isa<sim::DriverType>((*handle).getType()))
-        if (auto path = primaryExpression->getAttrOfType<StringAttr>(
+        if (auto path = handleExpression->getAttrOfType<StringAttr>(
                 "referenced_path"))
           if (Value net = values.lookup(path.getValue());
               net && isa<sim::NetType>(net.getType()))
@@ -8538,21 +8625,29 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
       edges.push_back(static_cast<int32_t>(edge));
 
-      if (!event.getHasIff()) {
+      if (!event.getHasIff() || postCondition) {
         conditionIndices.push_back(-1);
+        postConditions.push_back(postCondition);
+        continue;
+      }
+      if (!isAddressableExpression(children.back()) ||
+          !hasWatchableSignalHandle(children.back())) {
+        conditionIndices.push_back(-1);
+        postConditions.push_back(children.back());
         continue;
       }
       FailureOr<Value> condition = lowerExpression(children.back(), true);
       if (failed(condition))
         return failure();
-      if (!isa<sim::RefType, sim::NetType, sim::DriverType>(
-              (*condition).getType()))
-        return emitError(getSemanticLocation(children.back()))
-                   << "multi-clock explicit iff is not a direct signal "
-                      "handle",
-               failure();
-      conditionIndices.push_back(conditionHandles.size());
-      conditionHandles.push_back(*condition);
+      if (isa<sim::RefType, sim::NetType, sim::DriverType>(
+              (*condition).getType())) {
+        conditionIndices.push_back(conditionHandles.size());
+        conditionHandles.push_back(*condition);
+        postConditions.push_back(nullptr);
+      } else {
+        conditionIndices.push_back(-1);
+        postConditions.push_back(children.back());
+      }
     }
 
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
@@ -8621,6 +8716,41 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              ValueRange{}, wait, ValueRange{});
 
     setCurrent(process);
+    // Direct iff handles stay on the scheduler hot path. Arbitrary explicit
+    // and declared clocking-block iff expressions are sampled once for the
+    // finalized occurrence cohort and mask only their corresponding clock.
+    // This keeps compiler work O(clocks) and avoids a runtime expression
+    // interpreter or per-stage observers.
+    Value cohortMask = arith::ConstantOp::create(
+        builder, location, stateType, builder.getI64IntegerAttr(-1));
+    for (auto [index, condition] : llvm::enumerate(postConditions)) {
+      if (!condition)
+        continue;
+      bool savedSampleAssertionValues = sampleAssertionValues;
+      Operation *savedSampledClock = activeSampledClock;
+      sampleAssertionValues = true;
+      activeSampledClock = clocks[index];
+      FailureOr<Value> value = lowerExpression(condition);
+      if (failed(value)) {
+        sampleAssertionValues = savedSampleAssertionValues;
+        activeSampledClock = savedSampledClock;
+        return failure();
+      }
+      FailureOr<Value> truth =
+          truthValue(*value, getSemanticLocation(condition));
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+      if (failed(truth))
+        return failure();
+      Value bit = arith::ConstantOp::create(
+          builder, location, stateType,
+          builder.getI64IntegerAttr(uint64_t{1} << index));
+      Value cleared =
+          arith::XOrIOp::create(builder, location, bit, cohortMask);
+      Value qualified = arith::SelectOp::create(builder, location, *truth,
+                                                cohortMask, cleared);
+      cohort = arith::AndIOp::create(builder, location, cohort, qualified);
+    }
     SmallVector<Value, 8> stageMatches;
     for (const MultiClockSequenceStage &stage : multiClockSequence.stages) {
       bool savedSampleAssertionValues = sampleAssertionValues;

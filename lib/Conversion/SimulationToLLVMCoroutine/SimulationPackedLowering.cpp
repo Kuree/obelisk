@@ -365,6 +365,7 @@ LogicalResult lowerPackedSimulationOperations(
   llvm::StringMap<unsigned> byteGlobalIndices;
   bool needsContainerBitstreamABI = false;
   bool needsAggregateBitstreamABI = false;
+  bool needsAggregateBitstreamImportABI = false;
   bool needsRecursiveBitstreamABI = false;
   bool needsClassBitstreamABI = false;
   sim::SimDesignOp classBitstreamDesign;
@@ -459,6 +460,16 @@ LogicalResult lowerPackedSimulationOperations(
       operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
                          StringAttr::get(context, name));
       needsAggregateBitstreamABI = true;
+      return reserve(name, bytes);
+    }
+    if (auto bitstream =
+            dyn_cast<sim::SimAggregateImportBitstreamOp>(operation)) {
+      std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
+      std::string name = "__obelisk_aggregate_bitstream_plan_" +
+                         llvm::utohexstr(llvm::hash_value(bytes));
+      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
+                         StringAttr::get(context, name));
+      needsAggregateBitstreamImportABI = true;
       return reserve(name, bytes);
     }
     if (auto bitstream =
@@ -592,6 +603,12 @@ LogicalResult lowerPackedSimulationOperations(
   if (needsAggregateBitstreamABI &&
       failed(declareRuntimeABI(module.getLoc(),
                                "obelisk_rt_v1_aggregate_export_bitstream", i32,
+                               {pointer, pointer, i64, i64, i32, pointer,
+                                pointer, i64, i64, i32, pointer, i64})))
+    return failure();
+  if (needsAggregateBitstreamImportABI &&
+      failed(declareRuntimeABI(module.getLoc(),
+                               "obelisk_rt_v1_aggregate_import_bitstream", i32,
                                {pointer, pointer, i64, i64, i32, pointer,
                                 pointer, i64, i64, i32, pointer, i64})))
     return failure();
@@ -817,6 +834,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimContainerCloneOp, sim::SimContainerImportFixedOp,
         sim::SimContainerExportFixedOp, sim::SimContainerExportBitstreamOp,
         sim::SimRecursiveExportBitstreamOp, sim::SimAggregateExportBitstreamOp,
+        sim::SimAggregateImportBitstreamOp,
         sim::SimContainerSwapOp, sim::SimContainerDeleteOp,
         sim::SimQueueDeleteOp, sim::SimQueueInsertOp, sim::SimContainerReadOp,
         sim::SimContainerWriteOp, sim::SimAssocCreateOp, sim::SimAssocReadOp,

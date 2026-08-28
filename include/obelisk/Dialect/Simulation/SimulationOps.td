@@ -2910,6 +2910,20 @@ def SimAggregateExportBitstreamOp : SimOp<"aggregate.export_bitstream", [Pure]> 
   let hasCanonicalizer = 1;
 }
 
+def SimAggregateImportBitstreamOp : SimOp<"aggregate.import_bitstream", [Pure]> {
+  let summary = "unpack one packed bit stream into a fixed unpacked aggregate";
+  let description = [{
+    Materializes the inverse of `aggregate.export_bitstream` using the same
+    compact, repeat-aware fixed-layout plan. This keeps construction of large
+    fixed aggregate bit-stream targets proportional to their type description
+    instead of their element count.
+  }];
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `plan` $plan attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def SimAggregateExtractOp : SimOp<"aggregate.extract", [Pure]> {
   let summary = "extract one static struct or array subelement";
   let arguments = (ins AnyType:$input, I64Attr:$index);

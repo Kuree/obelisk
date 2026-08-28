@@ -171,6 +171,10 @@ private:
                                                     ::mlir::Value limit = {});
   ::mlir::FailureOr<::mlir::Value> materializeDynamicBitStreamTarget(
       ::mlir::Value stream, ::mlir::Value totalWidth, ::mlir::Type targetType,
+      ::mlir::Location location, ::mlir::Value packedSource = {},
+      ::mlir::Value sourceStart = {});
+  ::mlir::FailureOr<::mlir::Value> materializeCompositeBitStreamTarget(
+      ::mlir::Value stream, ::mlir::Value totalWidth, ::mlir::Type targetType,
       ::mlir::Location location, ::mlir::Value packedSource = {});
   ::mlir::FailureOr<::mlir::Value>
   sliceStreamingContainer(::mlir::Value container, ::mlir::Operation *withRange,
@@ -479,6 +483,12 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   convertStringBitstream(::mlir::Value value, ::mlir::Type targetType,
                          ::mlir::Type targetScalar, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value> convertExplicitBitstreamToPacked(
+      ::mlir::Value value, ::mlir::Type targetScalar,
+      ::mlir::Location location, bool allowHiddenRoot = false);
+  ::mlir::FailureOr<::mlir::Value> convertFixedBitstreamTarget(
+      ::mlir::Value value, ::mlir::Type targetType,
+      ::mlir::Location location, bool allowHiddenRoot = false);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`

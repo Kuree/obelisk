@@ -24,12 +24,6 @@ func.func private @nested_ref(%arg: !obelisk_sim.ref<!obelisk_sim.ref<i8>>)
 
 // -----
 
-// expected-error @+2 {{wildcard associative-array indices are not executable}}
-func.func private @wildcard_assoc(
-    %arg: !obelisk_sim.assoc_array<i32, i32, true, true>)
-
-// -----
-
 // expected-error @+2 {{string, class, or process key cannot be signed}}
 func.func private @signed_string_assoc(
     %arg: !obelisk_sim.assoc_array<!obelisk_sim.string, i32, true, false>)

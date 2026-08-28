@@ -332,7 +332,8 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
   return std::pair<uint64_t, uint64_t>{offset, *span};
 }
 
-std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
+static std::optional<SmallVector<uint64_t>>
+getFixedBitStreamPlanImpl(Type type, bool importing) {
   if (!isa<UnpackedArrayType, UnpackedStructType>(type))
     return std::nullopt;
 
@@ -352,8 +353,10 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
       std::optional<unsigned> width = getPackedWidth(scalar);
       if (!width || *width == 0)
         return std::nullopt;
-      records.append(
-          {OBELISK_RT_AGGREGATE_BITSTREAM_COPY, offset, *width, 0, 0, *width});
+      uint64_t opcode = importing && isa<LogicType>(scalar)
+                            ? OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC
+                            : OBELISK_RT_AGGREGATE_BITSTREAM_COPY;
+      records.append({opcode, offset, *width, 0, 0, *width});
       return *width;
     }
     if (auto array = dyn_cast<UnpackedArrayType>(current)) {
@@ -411,6 +414,14 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
       recordCount, *sourceSpan, *outputWidth};
   llvm::append_range(plan, records);
   return plan;
+}
+
+std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
+  return getFixedBitStreamPlanImpl(type, false);
+}
+
+std::optional<SmallVector<uint64_t>> getFixedBitStreamImportPlan(Type type) {
+  return getFixedBitStreamPlanImpl(type, true);
 }
 
 uint64_t getClassBitStreamGroupID(ClassHandleType type, bool allowHiddenRoot) {
@@ -476,9 +487,6 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
       }
       if (isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
               ClassHandleType>(frame.type)) {
-        if (auto associative = dyn_cast<AssocArrayType>(frame.type);
-            associative && associative.getWildcardIndex())
-          return std::nullopt;
         layouts[frame.type] = {
             managedHandleBitWidth, managedHandleBitWidth, 0, std::nullopt, {}};
         Type element;
@@ -1132,8 +1140,7 @@ LogicalResult SimContainerExportBitstreamOp::verify() {
       elementScalar ? getPackedWidth(elementScalar) : std::nullopt;
   if ((!isa<DynamicArrayType, QueueType>(getContainer().getType()) &&
        !associative) ||
-      (associative && associative.getWildcardIndex()) || !elementScalar ||
-      !elementWidth || *elementWidth == 0)
+      !elementScalar || !elementWidth || *elementWidth == 0)
     return emitOpError(
         "input must be a sequential container or typed associative array of "
         "fixed packed elements");
@@ -1349,8 +1356,6 @@ LogicalResult SimContainerWriteOp::verify() {
 }
 
 LogicalResult verifyAssocKey(Operation *op, AssocArrayType array, Type key) {
-  if (array.getWildcardIndex())
-    return op->emitOpError("wildcard associative arrays are not executable");
   if (array.getKeyType() != key)
     return op->emitOpError("key type must match the associative array key");
   return success();
@@ -1358,8 +1363,6 @@ LogicalResult verifyAssocKey(Operation *op, AssocArrayType array, Type key) {
 
 LogicalResult SimAssocCreateOp::verify() {
   AssocArrayType array = getResult().getType();
-  if (array.getWildcardIndex())
-    return emitOpError("wildcard associative arrays are not executable");
   if (getTypeId() == 0 || getElementKind() < 1 || getElementKind() > 8)
     return emitOpError("element descriptor is outside the runtime ABI");
   if ((getElementFlags() & ~3u) != 0 || getValueSize() == 0 ||
@@ -1434,7 +1437,10 @@ LogicalResult SimAssocCreateOp::verify() {
     return emitOpError(
         "trace inventory does not match the associative element type");
   Type key = array.getKeyType();
-  if (isa<StringType>(key)) {
+  if (array.getWildcardIndex()) {
+    if (!isa<BoxType>(key) || getKeyKind() != 6 || getKeyWidth() != 0)
+      return emitOpError("wildcard key metadata is inconsistent");
+  } else if (isa<StringType>(key)) {
     if (getKeyKind() != 3 || getKeyWidth() != 0)
       return emitOpError("string key metadata is inconsistent");
   } else if (isa<ClassHandleType>(key)) {

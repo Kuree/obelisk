@@ -81,8 +81,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                 }
                 obelisk.sv.assertion.clocking attributes {node_id = 89 : i64} {
                   obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 90 : i64} {
-                    obelisk.sv.expression.member_access attributes {clocking_event_symbol = @s2.$root::@s4.top::@s5.top::@s6.a_if::@s7.bus_if::@s8.clk, is_signed = false, member_name = "cb", node_id = 91 : i64, referenced_path = "top.bus_if.cb", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.bus_if::@s12.body::@s13.cb, semantic_type = !obelisk.void, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_member = "clk", virtual_interface_clocking_block_event} {
+                    obelisk.sv.expression.member_access attributes {clocking_event_symbol = @s2.$root::@s4.top::@s5.top::@s6.a_if::@s7.bus_if::@s8.clk, is_signed = false, member_name = "cb", node_id = 91 : i64, referenced_path = "top.bus_if.cb", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.bus_if::@s12.body::@s13.cb, semantic_type = !obelisk.void, virtual_interface_clock_event_edge = 1 : i32, virtual_interface_clock_event_has_iff, virtual_interface_clock_member = "clk", virtual_interface_clocking_block_event} {
                       obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 92 : i64, referenced_path = "top.vb", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s14.vb, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s12.bus_if, "">} {}
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 95 : i64, referenced_path = "top.bus_if.clk", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.a_if::@s7.bus_if::@s8.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 96 : i64, referenced_path = "top.b", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
                     }
                   }
                   obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 93 : i64, repetition_is_unbounded = false} {
@@ -175,6 +177,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-COUNT-2: obelisk_sim.virtual_interface.scope
 // CHECK: obelisk_sim.suspend.clock_set
 // CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: arith.select
 // CHECK: obelisk_sim.spawn @unit_1.fork.
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-NOT: obelisk_sim.multiclock_sequence_monitor

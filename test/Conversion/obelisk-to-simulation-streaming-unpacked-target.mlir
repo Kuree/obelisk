@@ -50,6 +50,9 @@ module {
 // CHECK: %[[WIDTH:.*]] = arith.constant 6 : i64
 // CHECK: arith.cmpi ult, %{{.*}}, %[[WIDTH]]
 
-// Each element takes its own window, and the array is assembled from them.
-// CHECK: obelisk_sim.aggregate.construct
+// The fixed aggregate is imported through one compact repeat-aware plan. This
+// keeps wide target lowering independent of its element count.
+// CHECK-COUNT-1: obelisk_sim.aggregate.import_bitstream
+// CHECK-SAME: plan [5407724624, 2, 6, 6, 4294967298, 0, 3, 2, 2, 2,
+// CHECK-SAME: 3, 0, 2, 0, 0, 2]
 // CHECK-SAME: -> !obelisk_sim.unpacked_array<0 : 2 x !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>

@@ -1337,7 +1337,8 @@ enum class PlanValidation { Invalid, Valid, NeedsDepth };
 
 OBELISK_RT_FEATURE_HELPER PlanValidation
 validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
-             uint64_t outputWidth, PlanFrame *stack, uint64_t capacity) {
+             uint64_t outputWidth, bool importing, PlanFrame *stack,
+             uint64_t capacity) {
   uint64_t depth = 0;
   stack[0].index = 0;
   stack[0].end = recordCount;
@@ -1358,7 +1359,9 @@ validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
       return PlanValidation::Invalid;
     uint64_t index = frame.index++;
     PlanRecord record = readRecord(records, index);
-    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY) {
+    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY ||
+        (importing &&
+         record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC)) {
       if (record.bodyRecords != 0 || record.extent == 0 || record.stride != 0 ||
           record.sourceSpan != 0 || record.outputWidth != record.extent ||
           record.sourceOffset != validation.sourceCursor ||
@@ -1453,6 +1456,53 @@ executePlan(const uint8_t *records, uint64_t recordCount,
   }
 }
 
+OBELISK_RT_FEATURE_HELPER void
+executeImportPlan(const uint8_t *records, uint64_t recordCount,
+                  const uint8_t *inputValue, const uint8_t *inputUnknown,
+                  uint8_t *outputValue, uint8_t *outputUnknown,
+                  uint64_t inputWidth, bool outputFourState,
+                  PlanFrame *stack) {
+  uint64_t depth = 0;
+  uint64_t cursor = inputWidth;
+  stack[0].index = 0;
+  stack[0].end = recordCount;
+  stack[0].state.execution = {0, 0, 1, 0, 0};
+  while (true) {
+    PlanFrame &frame = stack[depth];
+    auto &execution = frame.state.execution;
+    if (frame.index == frame.end) {
+      ++execution.repeat;
+      if (execution.repeat < execution.repeatCount) {
+        frame.index = execution.repeatBase;
+        execution.sourceBase += execution.repeatStride;
+        continue;
+      }
+      if (depth == 0)
+        return;
+      --depth;
+      continue;
+    }
+    PlanRecord record = readRecord(records, frame.index++);
+    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY ||
+        record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC) {
+      cursor -= record.extent;
+      copyBits(outputValue, execution.sourceBase + record.sourceOffset,
+               inputValue, inputUnknown, cursor, record.extent,
+               outputFourState &&
+                   record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC,
+               outputUnknown);
+      continue;
+    }
+    uint64_t bodyStart = frame.index;
+    frame.index += record.bodyRecords;
+    ++depth;
+    stack[depth].index = bodyStart;
+    stack[depth].end = bodyStart + record.bodyRecords;
+    stack[depth].state.execution = {execution.sourceBase + record.sourceOffset,
+                                    0, record.extent, bodyStart, record.stride};
+  }
+}
+
 } // namespace
 
 extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
@@ -1525,7 +1575,8 @@ obelisk_rt_v1_aggregate_export_bitstream(
   PlanFrame *frames = inlineFrames.data();
   uint64_t frameCapacity = inlineFrames.size();
   PlanValidation validation = validatePlan(records, recordCount, sourceSpan,
-                                           streamWidth, frames, frameCapacity);
+                                           streamWidth, false, frames,
+                                           frameCapacity);
   if (validation == PlanValidation::NeedsDepth) {
     frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
     deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);
@@ -1533,7 +1584,7 @@ obelisk_rt_v1_aggregate_export_bitstream(
       return OBELISK_RT_OUT_OF_MEMORY;
     frames = deepFrames.get();
     validation = validatePlan(records, recordCount, sourceSpan, streamWidth,
-                              frames, frameCapacity);
+                              false, frames, frameCapacity);
   }
   if (validation != PlanValidation::Valid)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -1546,6 +1597,101 @@ obelisk_rt_v1_aggregate_export_bitstream(
               static_cast<uint8_t *>(outValue),
               outputFourState ? static_cast<uint8_t *>(outUnknown) : nullptr,
               outputBitWidth, outputFourState != 0, frames);
+  return OBELISK_RT_OK;
+}
+
+extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+obelisk_rt_v1_aggregate_import_bitstream(
+    const void *inputValue, const void *inputUnknown, uint64_t inputPlaneSize,
+    uint64_t inputBitWidth, uint32_t inputFourState, void *outValue,
+    void *outUnknown, uint64_t outputPlaneSize, uint64_t outputBitWidth,
+    uint32_t outputFourState, const void *plan, uint64_t planSize) {
+  constexpr uint64_t headerSize =
+      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS * 8;
+  constexpr uint64_t recordSize =
+      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS * 8;
+  if (!inputValue || !outValue || !plan || inputFourState > 1 ||
+      outputFourState > 1 || (inputFourState && !inputUnknown) ||
+      (outputFourState && !outUnknown) || inputBitWidth == 0 ||
+      outputBitWidth == 0 || inputPlaneSize > SIZE_MAX ||
+      outputPlaneSize > SIZE_MAX || planSize > SIZE_MAX ||
+      inputPlaneSize < inputBitWidth / 8 + ((inputBitWidth & 7) != 0) ||
+      outputPlaneSize < outputBitWidth / 8 + ((outputBitWidth & 7) != 0) ||
+      planSize < headerSize)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uintptr_t inputValueBegin, inputValueEnd, inputUnknownBegin = 0,
+                                            inputUnknownEnd = 0;
+  uintptr_t outputValueBegin, outputValueEnd, outputUnknownBegin = 0,
+                                              outputUnknownEnd = 0;
+  uintptr_t planBegin, planEnd;
+  if (!checkedRange(inputValue, inputPlaneSize, inputValueBegin,
+                    inputValueEnd) ||
+      (inputFourState && !checkedRange(inputUnknown, inputPlaneSize,
+                                       inputUnknownBegin, inputUnknownEnd)) ||
+      !checkedRange(outValue, outputPlaneSize, outputValueBegin,
+                    outputValueEnd) ||
+      (outputFourState &&
+       !checkedRange(outUnknown, outputPlaneSize, outputUnknownBegin,
+                     outputUnknownEnd)) ||
+      !checkedRange(plan, planSize, planBegin, planEnd))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto outputOverlapsInput = [&](uintptr_t begin, uintptr_t end) {
+    return overlaps(begin, end, inputValueBegin, inputValueEnd) ||
+           (inputFourState &&
+            overlaps(begin, end, inputUnknownBegin, inputUnknownEnd)) ||
+           overlaps(begin, end, planBegin, planEnd);
+  };
+  if (outputOverlapsInput(outputValueBegin, outputValueEnd) ||
+      (outputFourState &&
+       (outputOverlapsInput(outputUnknownBegin, outputUnknownEnd) ||
+        overlaps(outputValueBegin, outputValueEnd, outputUnknownBegin,
+                 outputUnknownEnd))))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const auto *bytes = static_cast<const uint8_t *>(plan);
+  uint64_t identity = readPlan64(bytes);
+  uint64_t recordCount = readPlan64(bytes + 8);
+  uint64_t targetSpan = readPlan64(bytes + 16);
+  uint64_t streamWidth = readPlan64(bytes + 24);
+  if (static_cast<uint32_t>(identity) !=
+          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC ||
+      static_cast<uint32_t>(identity >> 32) !=
+          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION ||
+      recordCount == 0 ||
+      recordCount > OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
+      recordCount > (UINT64_MAX - headerSize) / recordSize ||
+      planSize != headerSize + recordCount * recordSize ||
+      targetSpan != outputBitWidth || streamWidth != inputBitWidth ||
+      targetSpan != streamWidth)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const uint8_t *records = bytes + headerSize;
+  constexpr size_t inlineDepth = 16;
+  std::array<PlanFrame, inlineDepth> inlineFrames;
+  std::unique_ptr<PlanFrame[]> deepFrames;
+  PlanFrame *frames = inlineFrames.data();
+  uint64_t frameCapacity = inlineFrames.size();
+  PlanValidation validation = validatePlan(records, recordCount, targetSpan,
+                                           streamWidth, true, frames,
+                                           frameCapacity);
+  if (validation == PlanValidation::NeedsDepth) {
+    frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
+    deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);
+    if (!deepFrames)
+      return OBELISK_RT_OUT_OF_MEMORY;
+    frames = deepFrames.get();
+    validation = validatePlan(records, recordCount, targetSpan, streamWidth,
+                              true, frames, frameCapacity);
+  }
+  if (validation != PlanValidation::Valid)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::memset(outValue, 0, static_cast<size_t>(outputPlaneSize));
+  if (outputFourState)
+    std::memset(outUnknown, 0, static_cast<size_t>(outputPlaneSize));
+  executeImportPlan(
+      records, recordCount, static_cast<const uint8_t *>(inputValue),
+      inputFourState ? static_cast<const uint8_t *>(inputUnknown) : nullptr,
+      static_cast<uint8_t *>(outValue),
+      outputFourState ? static_cast<uint8_t *>(outUnknown) : nullptr,
+      inputBitWidth, outputFourState != 0, frames);
   return OBELISK_RT_OK;
 }
 

@@ -11,7 +11,7 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
-// CHECK: 1 1 1 1 1 1 1 1 1
+// CHECK: 1 1 1 1 1 1 1 1 1 1
 // LOWER: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
 
 module attributes {
@@ -212,6 +212,75 @@ module attributes {
       %string_expected = arith.constant 4386 : i16
       %string_ok = arith.cmpi eq, %string_packed, %string_expected : i16
 
+      // Wildcard indices retain their boxed integral type and use numeric
+      // ordering rather than allocation, insertion, or little-endian byte
+      // order. In particular, 1 sorts before the wider-than-a-byte value 256.
+      %wildcard = obelisk_sim.assoc.create {
+        type_id = 9910007 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 1 : i64,
+        alignment = 1 : i64, bit_width = 8 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        key_kind = 6 : i32, key_width = 0 : i64
+      } : () -> !obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>
+      %key_storage_two = obelisk_sim.container.create %one {
+        type_id = 9910008 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 2 : i64,
+        alignment = 1 : i64, bit_width = 16 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<i16>
+      %key_storage_one = obelisk_sim.container.create %one {
+        type_id = 9910008 : i64, element_kind = 1 : i32,
+        element_flags = 0 : i32, value_size = 2 : i64,
+        alignment = 1 : i64, bit_width = 16 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<i16>
+      %key_wide = arith.constant 256 : i16
+      %key_one_wide = arith.constant 1 : i16
+      %wide_value = arith.constant 2 : i8
+      obelisk_sim.container.write %key_storage_two, %zero, %key_wide :
+          (!obelisk_sim.dynamic_array<i16>, i64, i16) -> ()
+      obelisk_sim.container.write %key_storage_one, %zero, %key_one_wide :
+          (!obelisk_sim.dynamic_array<i16>, i64, i16) -> ()
+      %wildcard_key_two = obelisk_sim.box.pack %key_storage_two :
+          (!obelisk_sim.dynamic_array<i16>) -> !obelisk_sim.box
+      %wildcard_key_one = obelisk_sim.box.pack %key_storage_one :
+          (!obelisk_sim.dynamic_array<i16>) -> !obelisk_sim.box
+      obelisk_sim.assoc.write %wildcard, %wildcard_key_two, %wide_value :
+          (!obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>,
+           !obelisk_sim.box, i8) -> ()
+      obelisk_sim.assoc.write %wildcard, %wildcard_key_one, %aa_value :
+          (!obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>,
+           !obelisk_sim.box, i8) -> ()
+      %unknown_storage = obelisk_sim.container.create %one {
+        type_id = 9910009 : i64, element_kind = 2 : i32,
+        element_flags = 1 : i32, value_size = 1 : i64,
+        alignment = 1 : i64, bit_width = 4 : i64,
+        trace_offsets = array<i64>, trace_kinds = array<i32>,
+        container_kind = 1 : i32, bound = 0 : i64
+      } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
+      %unknown_value = obelisk_sim.logic.constant 3 : i4, 1 : i4 :
+          !obelisk_sim.logic<4>
+      obelisk_sim.container.write %unknown_storage, %zero, %unknown_value :
+          (!obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>, i64,
+           !obelisk_sim.logic<4>) -> ()
+      %unknown_key = obelisk_sim.box.pack %unknown_storage :
+          (!obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>) ->
+          !obelisk_sim.box
+      obelisk_sim.assoc.write %wildcard, %unknown_key, %aa_value :
+          (!obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>,
+           !obelisk_sim.box, i8) -> ()
+      %wildcard_packed = obelisk_sim.container.export_bitstream %wildcard :
+          (!obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>) -> i16
+      %wildcard_expected = arith.constant 4354 : i16
+      %wildcard_values_ok = arith.cmpi eq, %wildcard_packed,
+          %wildcard_expected : i16
+      %wildcard_size = obelisk_sim.container.size %wildcard :
+          (!obelisk_sim.assoc_array<!obelisk_sim.box, i8, false, true>) -> i64
+      %wildcard_size_ok = arith.cmpi eq, %wildcard_size, %two : i64
+      %wildcard_ok = arith.andi %wildcard_values_ok, %wildcard_size_ok : i1
+
       // At the 3/4 load threshold, overwriting a value preserves the sorted
       // key cache and must not be mistaken for an insertion that needs growth.
       %threshold = obelisk_sim.assoc.create {
@@ -257,14 +326,15 @@ module attributes {
           %replacement_expected : i48
 
       %format = obelisk_sim.bytes.constant
-          "%0d %0d %0d %0d %0d %0d %0d %0d %0d"
+          "%0d %0d %0d %0d %0d %0d %0d %0d %0d %0d"
       %stdout = arith.constant 1 : i32
       obelisk_sim.display %ctx to %stdout(
           %format, %order_ok, %xz_ok, %state_ok, %queue_ok, %assoc_ok,
-          %assoc_xz_ok, %string_ok, %threshold_ok, %replacement_ok)
+          %assoc_xz_ok, %string_ok, %wildcard_ok, %threshold_ok,
+          %replacement_ok)
           newline = true radix = 10
-          flags = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] :
-          !obelisk_sim.bytes, i1, i1, i1, i1, i1, i1, i1, i1, i1
+          flags = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] :
+          !obelisk_sim.bytes, i1, i1, i1, i1, i1, i1, i1, i1, i1, i1
       obelisk_sim.return
     }
   }

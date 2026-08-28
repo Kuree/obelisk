@@ -113,8 +113,8 @@ FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
 // Expressions
 //===----------------------------------------------------------------------===//
 
-FailureOr<Value>
-UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
+FailureOr<Value> UnitLowering::lowerStaticClockingVariable(Operation *op,
+                                                           bool lvalue) {
   Location location = getSemanticLocation(op);
   auto direction = op->getAttrOfType<semantic::SVArgumentDirectionAttr>(
       clockingAccessDirectionAttrName);
@@ -166,8 +166,7 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
     emitError(location) << "clocking input has unexpected frozen expressions";
     return failure();
   }
-  auto sourcePath =
-      op->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
+  auto sourcePath = op->getAttrOfType<StringAttr>(clockingSourcePathAttrName);
   auto clockPath = op->getAttrOfType<StringAttr>(clockingEventPathAttrName);
   auto eventEdge =
       op->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
@@ -200,14 +199,13 @@ UnitLowering::lowerStaticClockingVariable(Operation *op, bool lvalue) {
     skewTicks = *parsed;
   }
   semantic::EdgeKind selectedEdge =
-      skewEdge.getValue() != semantic::EdgeKind::Change
-          ? skewEdge.getValue()
-          : eventEdge.getValue();
+      skewEdge.getValue() != semantic::EdgeKind::Change ? skewEdge.getValue()
+                                                        : eventEdge.getValue();
   semantic::EdgeKind baseSignalEdge =
       rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
-  bool distinctEdgeSkew =
-      edgeOnly && skewEdge.getValue() != semantic::EdgeKind::Change &&
-      skewEdge.getValue() != baseSignalEdge;
+  bool distinctEdgeSkew = edgeOnly &&
+                          skewEdge.getValue() != semantic::EdgeKind::Change &&
+                          skewEdge.getValue() != baseSignalEdge;
   if (distinctEdgeSkew)
     if (auto rawPath =
             op->getAttrOfType<StringAttr>(clockingEventRawPathAttrName))
@@ -544,12 +542,10 @@ FailureOr<Value> lowerStringLiteralValue(OpBuilder &builder, Operation *op,
       StringRef text = spelling.getValue();
       auto planeType = IntegerType::get(type.getContext(), 8);
       SmallVector<Value> elements;
-      for (unsigned ordinal = 0,
-                    count = sim::getAggregateNumElements(array);
+      for (unsigned ordinal = 0, count = sim::getAggregateNumElements(array);
            ordinal != count; ++ordinal) {
-        APInt bits(8, ordinal < text.size()
-                          ? static_cast<uint8_t>(text[ordinal])
-                          : 0);
+        APInt bits(
+            8, ordinal < text.size() ? static_cast<uint8_t>(text[ordinal]) : 0);
         Value element;
         if (isa<IntegerType>(elementScalar))
           element = arith::ConstantOp::create(
@@ -906,6 +902,12 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
 }
 
 bool UnitLowering::streamContainsFourState(Type type) const {
+  // Class bit-stream plans may contain four-state properties even though the
+  // opaque handle type itself has no packed scalar. Class export is therefore
+  // conservatively four-state; selecting an integer intermediate here would
+  // irreversibly coerce X/Z before a fixed aggregate target is imported.
+  if (isa<sim::ClassHandleType>(type))
+    return true;
   Type scalar = sim::getPackedScalarType(type);
   if (scalar && isa<sim::LogicType>(scalar))
     return true;
@@ -913,6 +915,8 @@ bool UnitLowering::streamContainsFourState(Type type) const {
     return streamContainsFourState(array.getElementType());
   if (auto queue = dyn_cast<sim::QueueType>(type))
     return streamContainsFourState(queue.getElementType());
+  if (auto associative = dyn_cast<sim::AssocArrayType>(type))
+    return streamContainsFourState(associative.getElementType());
   if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
     if (unionType.getIsTagged() || sim::getAggregateNumElements(unionType) == 0)
       return false;
@@ -1002,6 +1006,48 @@ FailureOr<Value> UnitLowering::appendToBitStream(Value value, Value stream,
     Value element = sim::SimUnionExtractOp::create(builder, location,
                                                    elementType, value, 0);
     return appendToBitStream(element, stream, outputIndex, fourState, location);
+  }
+
+  if (auto associative = dyn_cast<sim::AssocArrayType>(type)) {
+    Value key = createDefaultValue(builder, location, associative.getKeyType());
+    if (!key)
+      return emitError(location)
+                 << "cannot materialize a bit-stream associative key",
+             failure();
+    FailureOr<std::pair<Value, Value>> first =
+        traverseAssoc(value, key, 1, true, location);
+    if (failed(first))
+      return failure();
+    Block *header = addBlock();
+    header->addArgument(associative.getKeyType(), location);
+    header->addArgument(builder.getI1Type(), location);
+    header->addArgument(builder.getI64Type(), location);
+    Block *body = addBlock();
+    Block *exit = addBlock();
+    exit->addArgument(builder.getI64Type(), location);
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{first->first, first->second, outputIndex});
+    setCurrent(header);
+    Value currentKey = header->getArgument(0);
+    Value present = header->getArgument(1);
+    Value currentOutput = header->getArgument(2);
+    cf::CondBranchOp::create(builder, location, present, body, ValueRange{},
+                             exit, ValueRange{currentOutput});
+    setCurrent(body);
+    Value element = sim::SimAssocReadOp::create(
+        builder, location, associative.getElementType(), value, currentKey);
+    FailureOr<Value> nextOutput =
+        appendToBitStream(element, stream, currentOutput, fourState, location);
+    if (failed(nextOutput))
+      return failure();
+    FailureOr<std::pair<Value, Value>> next =
+        traverseAssoc(value, currentKey, 1, false, location);
+    if (failed(next))
+      return failure();
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{next->first, next->second, *nextOutput});
+    setCurrent(exit);
+    return exit->getArgument(0);
   }
 
   Type elementType;
@@ -1124,10 +1170,10 @@ FailureOr<Value> UnitLowering::reorderBitStream(Value stream, uint64_t slice,
   Value one = i64Constant(1);
   // `limit` names how many of the stream's leading bits the reordering covers;
   // without one it covers the whole stream.
-  Value totalWidth = limit ? limit
-                           : Value(sim::SimContainerSizeOp::create(
-                                 builder, location, builder.getI64Type(),
-                                 stream));
+  Value totalWidth =
+      limit ? limit
+            : Value(sim::SimContainerSizeOp::create(
+                  builder, location, builder.getI64Type(), stream));
   Value sliceValue = i64Constant(slice);
   Value fullBlocks =
       arith::DivUIOp::create(builder, location, totalWidth, sliceValue);
@@ -1385,17 +1431,17 @@ FailureOr<Value> UnitLowering::sliceStreamingContainer(Value container,
   return result;
 }
 
-FailureOr<Value>
-UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
-                                                Type targetType,
-                                                Location location,
-                                                Value packedSource) {
+FailureOr<Value> UnitLowering::materializeDynamicBitStreamTarget(
+    Value stream, Value totalWidth, Type targetType, Location location,
+    Value packedSource, Value sourceStart) {
   auto i64Constant = [&](uint64_t value) -> Value {
     return arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                      builder.getI64IntegerAttr(value));
   };
   Value zero = i64Constant(0);
   Value one = i64Constant(1);
+  if (!sourceStart)
+    sourceStart = zero;
   Type bitType;
   std::optional<unsigned> packedSourceWidth;
   if (packedSource) {
@@ -1422,6 +1468,18 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
           : Type(builder.getI8Type());
   Type targetScalar = sim::getPackedScalarType(targetElement);
   std::optional<unsigned> targetWidth = sim::getPackedWidth(targetElement);
+  std::optional<SmallVector<uint64_t>> targetPlan;
+  if (!targetScalar || !targetWidth) {
+    targetPlan = sim::getFixedBitStreamImportPlan(targetElement);
+    if (targetPlan && (*targetPlan)[3] != 0 &&
+        (*targetPlan)[3] <= std::numeric_limits<unsigned>::max()) {
+      targetWidth = static_cast<unsigned>((*targetPlan)[3]);
+      targetScalar =
+          isa<sim::LogicType>(bitType)
+              ? Type(sim::LogicType::get(function.getContext(), *targetWidth))
+              : Type(IntegerType::get(function.getContext(), *targetWidth));
+    }
+  }
   if (!targetScalar || !targetWidth || *targetWidth == 0)
     return emitError(location)
                << "a dynamic stream target must have fixed-size bit-stream "
@@ -1452,14 +1510,13 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(targetType))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-    Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                               ? targetSize
-                               : zero;
+    Value allocationSize =
+        containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ? targetSize : zero;
     result = sim::SimContainerCreateOp::create(
-        builder, location, targetType, allocationSize,
-        targetDescriptor->typeID, targetDescriptor->kind,
-        targetDescriptor->flags, targetDescriptor->valueSize,
-        targetDescriptor->alignment, targetDescriptor->bitWidth,
+        builder, location, targetType, allocationSize, targetDescriptor->typeID,
+        targetDescriptor->kind, targetDescriptor->flags,
+        targetDescriptor->valueSize, targetDescriptor->alignment,
+        targetDescriptor->bitWidth,
         builder.getDenseI64ArrayAttr(targetDescriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(targetDescriptor->traceKinds),
         containerKind, bound);
@@ -1478,8 +1535,7 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
                                     : ValueRange{zero});
   setCurrent(elementHeader);
   Value elementIndex = elementHeader->getArgument(0);
-  Value currentString =
-      stringTarget ? elementHeader->getArgument(1) : Value{};
+  Value currentString = stringTarget ? elementHeader->getArgument(1) : Value{};
   Value moreElements = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::ult, elementIndex, targetSize);
   cf::CondBranchOp::create(
@@ -1487,22 +1543,48 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
       stringTarget ? ValueRange{currentString} : ValueRange{});
   setCurrent(elementBody);
   Value assembled;
-  if (isa<sim::LogicType>(targetScalar)) {
+  if (packedSource) {
+    Value nextElement =
+        arith::AddIOp::create(builder, location, elementIndex, one);
+    Value consumed =
+        arith::MulIOp::create(builder, location, nextElement, elementWidth);
+    Value low = arith::SubIOp::create(
+        builder, location,
+        arith::SubIOp::create(builder, location,
+                              i64Constant(*packedSourceWidth), sourceStart),
+        consumed);
+    Type windowType =
+        isa<sim::LogicType>(packedSource.getType())
+            ? Type(sim::LogicType::get(function.getContext(), *targetWidth))
+            : Type(IntegerType::get(function.getContext(), *targetWidth));
+    Value window = isa<sim::LogicType>(packedSource.getType())
+                       ? Value(sim::SimLogicDynExtractOp::create(
+                             builder, location, windowType, packedSource, low))
+                       : Value(sim::SimBitsDynExtractOp::create(
+                             builder, location, windowType, packedSource, low));
+    FailureOr<Value> converted = convert(window, targetScalar, false, location);
+    if (failed(converted))
+      return failure();
+    assembled = *converted;
+  } else if (isa<sim::LogicType>(targetScalar)) {
     auto logicType = cast<sim::LogicType>(targetScalar);
     auto planeType = IntegerType::get(function.getContext(), *targetWidth);
     assembled = sim::SimLogicConstantOp::create(
         builder, location, logicType, builder.getIntegerAttr(planeType, 0),
         builder.getIntegerAttr(planeType, 0));
   } else {
-    assembled = arith::ConstantOp::create(
-        builder, location, targetScalar,
-        builder.getIntegerAttr(targetScalar, 0));
+    assembled =
+        arith::ConstantOp::create(builder, location, targetScalar,
+                                  builder.getIntegerAttr(targetScalar, 0));
   }
-  for (unsigned ordinal = 0; ordinal < *targetWidth; ++ordinal) {
+  for (unsigned ordinal = 0; !packedSource && ordinal < *targetWidth;
+       ++ordinal) {
     Value sourceIndex = arith::AddIOp::create(
-        builder, location,
-        arith::MulIOp::create(builder, location, elementIndex, elementWidth),
-        i64Constant(ordinal));
+        builder, location, sourceStart,
+        arith::AddIOp::create(builder, location,
+                              arith::MulIOp::create(builder, location,
+                                                    elementIndex, elementWidth),
+                              i64Constant(ordinal)));
     Block *present = addBlock();
     Block *resume = addBlock();
     resume->addArgument(targetScalar, location);
@@ -1512,27 +1594,16 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
                              resume, ValueRange{assembled});
     setCurrent(present);
     Value bit;
-    if (packedSource) {
-      Value low = arith::SubIOp::create(
-          builder, location, i64Constant(*packedSourceWidth - 1), sourceIndex);
-      if (isa<sim::LogicType>(packedSource.getType()))
-        bit = sim::SimLogicDynExtractOp::create(builder, location, bitType,
-                                                packedSource, low);
-      else
-        bit = sim::SimBitsDynExtractOp::create(builder, location, bitType,
-                                               packedSource, low);
-    } else {
-      bit = sim::SimContainerReadOp::create(builder, location, bitType, stream,
-                                            sourceIndex);
-    }
+    bit = sim::SimContainerReadOp::create(builder, location, bitType, stream,
+                                          sourceIndex);
     Value inserted;
     unsigned low = *targetWidth - ordinal - 1;
     if (isa<sim::LogicType>(targetScalar)) {
       FailureOr<Value> logicBit = toLogic(bit, location);
       if (failed(logicBit))
         return failure();
-      inserted = sim::SimLogicInsertOp::create(
-          builder, location, targetScalar, assembled, *logicBit, low);
+      inserted = sim::SimLogicInsertOp::create(builder, location, targetScalar,
+                                               assembled, *logicBit, low);
     } else {
       FailureOr<Value> bits =
           convert(bit, builder.getI1Type(), false, location);
@@ -1555,9 +1626,18 @@ UnitLowering::materializeDynamicBitStreamTarget(Value stream, Value totalWidth,
     assembled = resume->getArgument(0);
   }
   Value element = assembled;
-  if (targetScalar != targetElement)
+  if (targetPlan) {
+    SmallVector<int64_t> encoded;
+    encoded.reserve(targetPlan->size());
+    llvm::transform(*targetPlan, std::back_inserter(encoded),
+                    [](uint64_t word) { return static_cast<int64_t>(word); });
+    element = sim::SimAggregateImportBitstreamOp::create(
+        builder, location, targetElement, assembled,
+        builder.getDenseI64ArrayAttr(encoded));
+  } else if (targetScalar != targetElement) {
     element = sim::SimPackedUnflattenOp::create(builder, location,
                                                 targetElement, assembled);
+  }
   Value nextElement =
       arith::AddIOp::create(builder, location, elementIndex, one);
   if (stringTarget) {
@@ -1631,6 +1711,22 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       if (failed(value))
         return failure();
       Value streamedValue = *value;
+      // A sole dynamically sized class operand can still target a fixed
+      // stream exactly: the target supplies the required runtime width to the
+      // recursive exporter. Export once, then let the ordinary slice reorder
+      // consume the packed value. Multiple dynamic operands have no local
+      // width boundary and retain the generic diagnostic.
+      if (!hasDynamicTarget && fixedTargetWidth != 0 && children.size() == 1 &&
+          !withRange && isa<sim::ClassHandleType>(streamedValue.getType())) {
+        Type packedType =
+            sim::LogicType::get(function.getContext(), fixedTargetWidth);
+        FailureOr<Value> packed = convertRecursiveBitstream(
+            streamedValue, packedType, packedType, getSemanticLocation(child),
+            op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+        if (failed(packed))
+          return failure();
+        streamedValue = *packed;
+      }
       if (withRange) {
         FailureOr<Value> selected = sliceStreamingContainer(
             streamedValue, withRange, getSemanticLocation(child));
@@ -1734,6 +1830,32 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
     FailureOr<Value> value = lowerExpression(child);
     if (failed(value))
       return failure();
+    if (isa<sim::ClassHandleType>((*value).getType())) {
+      auto width = child->getAttrOfType<IntegerAttr>(
+          "obelisk_sim.class_bitstream_width");
+      if (!width || width.getValue().isZero() ||
+          width.getValue().isNegative() ||
+          width.getValue().getActiveBits() > 32)
+        return emitError(getSemanticLocation(child))
+                   << "fixed class streaming operand has no representable "
+                      "bit-stream width",
+               failure();
+      uint64_t classWidth = width.getValue().getZExtValue();
+      if (totalWidth > std::numeric_limits<unsigned>::max() - classWidth)
+        return emitError(location) << "fixed stream width is not representable",
+               failure();
+      Type scalar = sim::LogicType::get(function.getContext(), classWidth);
+      FailureOr<Value> packed = convertRecursiveBitstream(
+          *value, scalar, scalar, getSemanticLocation(child),
+          op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+      if (failed(packed))
+        return failure();
+      totalWidth += classWidth;
+      fourState = true;
+      inputs.push_back(*packed);
+      widths.push_back(classWidth);
+      continue;
+    }
     if (failed(appendFixedValue(*value, getSemanticLocation(child))))
       return failure();
   }
@@ -1893,9 +2015,20 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
     reordered = *converted;
   }
   if (aggregateWidth) {
-    uint64_t highBit = *aggregateWidth;
-    return unflattenBitStreamValue(reordered, highBit, assignmentType,
-                                   location);
+    std::optional<SmallVector<uint64_t>> plan =
+        sim::getFixedBitStreamImportPlan(assignmentType);
+    if (!plan)
+      return emitError(location)
+                 << "cannot construct a fixed bit-stream target plan",
+             failure();
+    SmallVector<int64_t> encoded;
+    encoded.reserve(plan->size());
+    llvm::transform(*plan, std::back_inserter(encoded),
+                    [](uint64_t word) { return static_cast<int64_t>(word); });
+    return sim::SimAggregateImportBitstreamOp::create(
+               builder, location, assignmentType, reordered,
+               builder.getDenseI64ArrayAttr(encoded))
+        .getResult();
   }
   return convert(reordered, assignmentType, false, location);
 }
@@ -2012,10 +2145,9 @@ UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
                                << "' has no elaborated descriptor",
            failure();
   llvm::sort(*targets);
-  DenseMap<uint64_t, Value> *cache =
-      isEvent ? &virtualInterfaceEventHandles
-              : isNet ? &virtualInterfaceNetHandles
-                      : &virtualInterfaceStorageHandles;
+  DenseMap<uint64_t, Value> *cache = isEvent ? &virtualInterfaceEventHandles
+                                     : isNet ? &virtualInterfaceNetHandles
+                                             : &virtualInterfaceStorageHandles;
   DenseMap<uint64_t, Type> *types =
       isNet ? &virtualInterfaceNetTypes : &virtualInterfaceStorageTypes;
   auto materialize = [&](uint64_t descriptorID) -> FailureOr<Value> {
@@ -2027,13 +2159,10 @@ UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
       return emitError(location)
                  << "virtual interface signal descriptor has no type",
              failure();
-    Type handleType = isEvent
-                          ? Type(sim::EventType::get(function.getContext()))
-                      : isNet
-                          ? Type(sim::NetType::get(function.getContext(),
-                                                  elementType))
-                          : Type(sim::RefType::get(function.getContext(),
-                                                  elementType));
+    Type handleType =
+        isEvent ? Type(sim::EventType::get(function.getContext()))
+        : isNet ? Type(sim::NetType::get(function.getContext(), elementType))
+                : Type(sim::RefType::get(function.getContext(), elementType));
     OpBuilder entryBuilder(function.getContext());
     entryBuilder.setInsertionPointToStart(&function.getBody().front());
     Value context = function.getBody().front().getArgument(0);
@@ -2226,11 +2355,10 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                << "clocking input requires both primary and iff observers",
            failure();
 
-  auto clockKind = isa<sim::EventType>(clock.getType())
-                       ? sim::CaptureKind::Event
-                   : isa<sim::NetType>(clock.getType())
-                       ? sim::CaptureKind::Net
-                       : sim::CaptureKind::Storage;
+  auto clockKind =
+      isa<sim::EventType>(clock.getType()) ? sim::CaptureKind::Event
+      : isa<sim::NetType>(clock.getType()) ? sim::CaptureKind::Net
+                                           : sim::CaptureKind::Storage;
   DictionaryAttr sourceAttrs;
   if (source) {
     auto sourceKind = isa<sim::NetType>(source.getType())
@@ -2246,9 +2374,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     if (value == clock)
       return clockAttrs;
     if (auto storage = value.getDefiningOp<sim::SimContextStorageOp>())
-      return captureMetadata(
-          builder, sim::CaptureKind::Storage,
-          storage.getIdAttr().getValue().getZExtValue());
+      return captureMetadata(builder, sim::CaptureKind::Storage,
+                             storage.getIdAttr().getValue().getZExtValue());
     if (auto net = value.getDefiningOp<sim::SimContextNetOp>())
       return captureMetadata(builder, sim::CaptureKind::Net,
                              net.getIdAttr().getValue().getZExtValue());
@@ -2536,10 +2663,10 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       monitor->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
     }
   }
-  std::string samplingKey =
-      oneStep ? "1step"
-              : skewTicks ? (Twine("skew:") + Twine(skewTicks)).str()
-                          : "zero";
+  std::string samplingKey = oneStep ? "1step"
+                            : skewTicks
+                                ? (Twine("skew:") + Twine(skewTicks)).str()
+                                : "zero";
   std::string key = (Twine("clocking-input|") + sourceIdentity + "|" +
                      Twine(clockDescriptor) + "|" +
                      Twine(static_cast<uint32_t>(edge)) + "|" + samplingKey)
@@ -2858,10 +2985,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
              "expressions";
       return failure();
     }
-    bool oneStep =
-        op->hasAttr("virtual_interface_clock_input_skew_one_step");
-    bool edgeOnly =
-        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
+    bool oneStep = op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    bool edgeOnly = op->hasAttr("virtual_interface_clock_input_skew_edge_only");
     if (!oneStep && !edgeOnly) {
       auto delay = op->getAttrOfType<StringAttr>(
           "virtual_interface_clock_input_skew_delay");
@@ -2913,10 +3038,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   if (clockedRead) {
     auto clockMember =
         op->getAttrOfType<StringAttr>("virtual_interface_clock_member");
-    bool oneStep =
-        op->hasAttr("virtual_interface_clock_input_skew_one_step");
-    bool edgeOnly =
-        op->hasAttr("virtual_interface_clock_input_skew_edge_only");
+    bool oneStep = op->hasAttr("virtual_interface_clock_input_skew_one_step");
+    bool edgeOnly = op->hasAttr("virtual_interface_clock_input_skew_edge_only");
     auto eventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
         "virtual_interface_clock_event_edge");
     auto rawEventEdge = op->getAttrOfType<semantic::EdgeKindAttr>(
@@ -2929,10 +3052,9 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
             : eventEdge.getValue();
     semantic::EdgeKind baseSignalEdge =
         rawEventEdge ? rawEventEdge.getValue() : eventEdge.getValue();
-    bool distinctEdgeSkew =
-        edgeOnly && skewEdge &&
-        skewEdge.getValue() != semantic::EdgeKind::Change &&
-        skewEdge.getValue() != baseSignalEdge;
+    bool distinctEdgeSkew = edgeOnly && skewEdge &&
+                            skewEdge.getValue() != semantic::EdgeKind::Change &&
+                            skewEdge.getValue() != baseSignalEdge;
     if (distinctEdgeSkew)
       if (auto rawMember = op->getAttrOfType<StringAttr>(
               "virtual_interface_clock_raw_member"))
@@ -2989,8 +3111,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       uint64_t clockDescriptor = clockTarget->second;
       DenseMap<uint64_t, Value> *clockCache =
           clockIsEvent ? &virtualInterfaceEventHandles
-                       : clockIsNet ? &virtualInterfaceNetHandles
-                                    : &virtualInterfaceStorageHandles;
+          : clockIsNet ? &virtualInterfaceNetHandles
+                       : &virtualInterfaceStorageHandles;
       Value clockHandle = clockCache->lookup(clockDescriptor);
       if (!clockHandle) {
         DenseMap<uint64_t, Type> *clockTypes =
@@ -2999,8 +3121,7 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
         Type clockElement =
             clockIsEvent ? Type{} : clockTypes->lookup(clockDescriptor);
         Type clockType =
-            clockIsEvent
-                ? Type(sim::EventType::get(function.getContext()))
+            clockIsEvent ? Type(sim::EventType::get(function.getContext()))
             : clockIsNet
                 ? Type(sim::NetType::get(function.getContext(), clockElement))
                 : Type(sim::RefType::get(function.getContext(), clockElement));
@@ -3337,7 +3458,7 @@ bool isSimpleBitVectorType(Type type) {
 } // namespace
 
 FailureOr<int64_t> UnitLowering::declaredIndexOrdinal(Type aggregate,
-                                                     Operation *key) {
+                                                      Operation *key) {
   int64_t left = 0;
   bool descending = false;
   if (auto packed = dyn_cast<sim::PackedArrayType>(aggregate)) {
@@ -3550,9 +3671,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         }
         for (uint64_t index = 0; index != size; ++index)
           if (!elementValues[index]) {
-            emitError(location)
-                << "dynamic assignment pattern leaves element " << index
-                << " unset";
+            emitError(location) << "dynamic assignment pattern leaves element "
+                                << index << " unset";
             return failure();
           }
       }
@@ -3577,8 +3697,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       uint64_t repetitions = count->value.getZExtValue();
       ArrayRef<Operation *> items = ArrayRef(children).drop_front();
       if (repetitions != 0 &&
-          items.size() >
-              std::numeric_limits<uint64_t>::max() / repetitions) {
+          items.size() > std::numeric_limits<uint64_t>::max() / repetitions) {
         emitError(location) << "replicated assignment-pattern size overflows";
         return failure();
       }
@@ -3683,8 +3802,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
                                done, ValueRange{});
       setCurrent(body);
-      Value base =
-          arith::MulIOp::create(builder, location, repetition, stride);
+      Value base = arith::MulIOp::create(builder, location, repetition, stride);
       for (auto [index, value] : llvm::enumerate(compactItems)) {
         Value offset = arith::ConstantOp::create(
             builder, location, i64, builder.getI64IntegerAttr(index));
@@ -3761,8 +3879,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       if (!isa<FloatType>(elementType) &&
           sim::getManagedHandleSlots(elementType, managedSlots) &&
           managedSlots.empty())
-        return sim::SimAggregateSplatOp::create(
-                   builder, location, *resultType, elements.front())
+        return sim::SimAggregateSplatOp::create(builder, location, *resultType,
+                                                elements.front())
             .getResult();
     }
     return sim::SimAggregateConstructOp::create(builder, location, *resultType,
@@ -4898,13 +5016,12 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
              "index";
       return failure();
     }
-    APInt index = isSignedNode(children[1])
-                      ? parsed->value.sextOrTrunc(65)
-                      : parsed->value.zextOrTrunc(65);
+    APInt index = isSignedNode(children[1]) ? parsed->value.sextOrTrunc(65)
+                                            : parsed->value.zextOrTrunc(65);
     std::optional<unsigned> ordinal;
     if (index.isSignedIntN(64))
-      ordinal = sim::getArrayElementOrdinal(sourceValueType,
-                                            index.getSExtValue());
+      ordinal =
+          sim::getArrayElementOrdinal(sourceValueType, index.getSExtValue());
     if (!ordinal) {
       emitError(location)
           << "an addressable fixed net-array selection requires an in-range "

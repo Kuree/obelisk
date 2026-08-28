@@ -3,8 +3,9 @@
 
 // A new aggregate token begins on every clk0 edge. Its leading ##1 waits for
 // the next clk0 edge before sampling out0, then the cross-clock ##1 waits for
-// the nearest strictly subsequent clk1 edge. Overlap is represented by two
-// bounded counters rather than one detached actor per source occurrence.
+// the nearest strictly subsequent clk1 edge whose computed iff is true.
+// Overlap is represented by two bounded counters rather than one detached
+// actor per source occurrence.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
@@ -32,14 +33,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                     obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.clk0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk0, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
+                  obelisk.sv.assertion.binary attributes {node_id = 39 : i64,
+                      operator_kind = 0 : i32} {
                   obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 1 : i64, min = 1 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 17 : i64} {
                     obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 18 : i64, repetition_is_unbounded = false} {
                       obelisk.sv.expression.named_value attributes {node_id = 19 : i64, referenced_path = "top.out0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.out0, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                       }
                     }
                     obelisk.sv.assertion.clocking attributes {node_id = 20 : i64} {
-                      obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 21 : i64} {
+                      obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = true, node_id = 21 : i64} {
                         obelisk.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "top.clk1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.clk1, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                        obelisk.sv.expression.binary_op attributes {node_id = 25 : i64, operator_kind = 19 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          obelisk.sv.expression.named_value attributes {node_id = 26 : i64, referenced_path = "top.out0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.out0, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          obelisk.sv.expression.named_value attributes {node_id = 27 : i64, referenced_path = "top.out1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.out1, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
                         }
                       }
                       obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 23 : i64, repetition_is_unbounded = false} {
@@ -47,6 +56,29 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
                         }
                       }
                     }
+                  }
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 1 : i64, min = 1 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 40 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 41 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {node_id = 42 : i64, referenced_path = "top.out1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.out1, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.clocking attributes {node_id = 43 : i64} {
+                      obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = true, node_id = 44 : i64} {
+                        obelisk.sv.expression.named_value attributes {node_id = 45 : i64, referenced_path = "top.clk1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.clk1, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                        obelisk.sv.expression.binary_op attributes {node_id = 46 : i64, operator_kind = 19 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          obelisk.sv.expression.named_value attributes {node_id = 47 : i64, referenced_path = "top.out0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.out0, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          obelisk.sv.expression.named_value attributes {node_id = 48 : i64, referenced_path = "top.out1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.out1, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                      obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 49 : i64, repetition_is_unbounded = false} {
+                        obelisk.sv.expression.named_value attributes {node_id = 50 : i64, referenced_path = "top.out0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.out0, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
                   }
                 }
               }
@@ -64,6 +96,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
 // CHECK: obelisk_sim.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
 // CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: arith.select
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
 // CHECK-NOT: obelisk_sim.multiclock_sequence_attempt_actor

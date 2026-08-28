@@ -1061,6 +1061,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED = UINT32_C(0x00010460),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM = UINT32_C(0x00010464),
   OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM = UINT32_C(0x00010465),
+  OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM = UINT32_C(0x00010466),
   OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE = UINT32_C(0x00010417),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
@@ -1151,7 +1152,8 @@ enum {
   OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH = UINT32_C(1024),
   OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS = UINT32_C(1048576),
   OBELISK_RT_AGGREGATE_BITSTREAM_COPY = UINT32_C(1),
-  OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT = UINT32_C(2)
+  OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT = UINT32_C(2),
+  OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC = UINT32_C(3)
 };
 
 // Versioned preorder plan for recursively dynamically sized bit-stream
@@ -2292,7 +2294,8 @@ enum {
   OBELISK_RT_ASSOC_KEY_SIGNED = 2,
   OBELISK_RT_ASSOC_KEY_STRING = 3,
   OBELISK_RT_ASSOC_KEY_CLASS = 4,
-  OBELISK_RT_ASSOC_KEY_PROCESS = 5
+  OBELISK_RT_ASSOC_KEY_PROCESS = 5,
+  OBELISK_RT_ASSOC_KEY_WILDCARD = 6
 };
 
 // Canonical typed associative key. Integral keys up to 64 bits use the inline
@@ -2406,6 +2409,12 @@ obelisk_rt_status obelisk_rt_v1_container_export_bitstream(
     uint64_t element_width, uint64_t count, uint64_t element_plane_size,
     uint32_t element_four_state);
 obelisk_rt_status obelisk_rt_v1_aggregate_export_bitstream(
+    const void *input_value, const void *input_unknown,
+    uint64_t input_plane_size, uint64_t input_bit_width,
+    uint32_t input_four_state, void *out_value, void *out_unknown,
+    uint64_t output_plane_size, uint64_t output_bit_width,
+    uint32_t output_four_state, const void *plan, uint64_t plan_size);
+obelisk_rt_status obelisk_rt_v1_aggregate_import_bitstream(
     const void *input_value, const void *input_unknown,
     uint64_t input_plane_size, uint64_t input_bit_width,
     uint32_t input_four_state, void *out_value, void *out_unknown,

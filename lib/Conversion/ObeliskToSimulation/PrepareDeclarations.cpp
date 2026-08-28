@@ -463,6 +463,27 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       result.sources.push_back(classType);
       return WalkResult::advance();
     }
+    if (auto streaming =
+            dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
+                operation)) {
+      SmallVector<Operation *> children = getChildren(streaming);
+      size_t next = 0;
+      for (int64_t withFlag : streaming.getStreamWithFlags()) {
+        if (next >= children.size())
+          break;
+        Operation *child = children[next++];
+        FailureOr<Type> source = getNormalizedSemanticType(child);
+        bool containsClass =
+            succeeded(source) && containsClassBitstreamSource(*source);
+        needsClassBitstreamMetadata |= containsClass;
+        if (containsClass && isExactCurrentInstanceThis(child))
+          streaming->setAttr(sim::metadata::classBitstreamAllowHiddenRoot,
+                             UnitAttr::get(context));
+        if (withFlag != 0)
+          ++next;
+      }
+      return WalkResult::advance();
+    }
     auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(operation);
     if (!conversion)
       return WalkResult::advance();
@@ -473,7 +494,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     if (children.size() != 1)
       return WalkResult::advance();
     FailureOr<Type> target = getNormalizedSemanticType(conversion);
-    if (failed(target) || !sim::getPackedScalarType(*target))
+    if (failed(target) ||
+        (!sim::getPackedScalarType(*target) &&
+         !isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
+              sim::UnpackedArrayType, sim::UnpackedStructType>(*target)))
       return WalkResult::advance();
     FailureOr<Type> source = getNormalizedSemanticType(children.front());
     bool containsClass =
@@ -487,6 +511,21 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
   if (needsClassBitstreamMetadata)
     module->setAttr(sim::metadata::classBitstreamSourceFeature,
                     UnitAttr::get(context));
+  if (needsClassBitstreamMetadata) {
+    llvm::DenseMap<Type, uint64_t> fixedClassWidths;
+    for (semantic::SVClassTypeOp classType : result.sources)
+      if (classType.getBitstreamWidth() != 0)
+        fixedClassWidths.try_emplace(classType.getSemanticType(),
+                                     classType.getBitstreamWidth());
+    semanticRoot->walk([&](Operation *operation) {
+      auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
+      auto found = semanticType ? fixedClassWidths.find(semanticType.getValue())
+                                : fixedClassWidths.end();
+      if (found != fixedClassWidths.end())
+        operation->setAttr("obelisk_sim.class_bitstream_width",
+                           builder.getI64IntegerAttr(found->second));
+    });
+  }
   // The IEEE weak_reference specializations live in the standard package,
   // outside the elaborated source root, but their handles can occur in source
   // storage and function signatures.

@@ -13,6 +13,7 @@
 
 !bits = !obelisk.ranged_packed_array<7 : 0 x
     !obelisk.integral<1, false, true, 0 : 0, logic>>
+!nibbles = !obelisk.dynarray<!obelisk.integral<4, false, true, 3 : 0, logic>>
 !class = !obelisk.class_handle<@root::@unit::@C>
 
 module attributes {
@@ -57,6 +58,34 @@ module attributes {
           this_variable_symbol = @root::@unit::@C::@direct::@direct_this,
           time_precision_fs = 1 : i64, time_unit_fs = 1 : i64
         } {
+          obelisk.sv.statement.expression_statement attributes {
+            node_id = 123 : i64
+          } {
+            obelisk.sv.expression.assignment attributes {
+              assignment_kind = 0 : i32, is_signed = false,
+              node_id = 124 : i64, semantic_type = !bits
+            } {
+              obelisk.sv.expression.named_value attributes {
+                is_signed = false, node_id = 125 : i64,
+                referenced_path = "C::direct.streamed",
+                referenced_symbol = @root::@unit::@C::@direct::@streamed,
+                semantic_type = !bits
+              } {}
+              obelisk.sv.expression.streaming attributes {
+                bitstream_width = 8 : i64, is_fixed_size = true,
+                is_signed = false, node_id = 121 : i64,
+                semantic_type = !obelisk.void, slice_size = 0 : i64,
+                stream_count = 1 : i64, stream_with_flags = array<i64: 0>
+              } {
+                obelisk.sv.expression.named_value attributes {
+                  is_signed = false, node_id = 122 : i64,
+                  referenced_path = "C::direct.this",
+                  referenced_symbol = @root::@unit::@C::@direct::@direct_this,
+                  semantic_type = !class
+                } {}
+              }
+            }
+          }
           obelisk.sv.statement.return attributes {node_id = 7 : i64} {
             obelisk.sv.expression.conversion attributes {
               is_implicit = false, is_signed = false, node_id = 8 : i64,
@@ -70,6 +99,11 @@ module attributes {
               } {}
             }
           }
+          obelisk.sv.symbol.variable attributes {
+            hierarchical_name = "C::direct.streamed", lifetime = 0 : i32,
+            name = "streamed", node_id = 120 : i64, semantic_type = !bits,
+            sym_name = "streamed"
+          } {}
           obelisk.sv.symbol.variable attributes {
             hierarchical_name = "C::direct.direct", is_compiler_generated,
             name = "direct", node_id = 10 : i64, semantic_type = !bits,
@@ -137,7 +171,30 @@ module attributes {
         hierarchical_name = "top", name = "top", node_id = 21 : i64,
         sym_name = "top_body", time_precision_fs = 1 : i64,
         time_unit_fs = 1 : i64
-      } {}
+      } {
+        obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.object", lifetime = 1 : i32,
+          name = "object", node_id = 129 : i64, semantic_type = !class,
+          sym_name = "object"
+        } {}
+        obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.nibbles", lifetime = 1 : i32,
+          name = "nibbles", node_id = 130 : i64, semantic_type = !nibbles,
+          sym_name = "nibbles"
+        } {
+          obelisk.sv.expression.conversion attributes {
+            is_implicit = false, is_signed = false, node_id = 131 : i64,
+            semantic_type = !nibbles
+          } {
+            obelisk.sv.expression.named_value attributes {
+              is_signed = false, node_id = 132 : i64,
+              referenced_path = "top.object",
+              referenced_symbol = @root::@top::@top_body::@object,
+              semantic_type = !class
+            } {}
+          }
+        }
+      }
     }
   }
 }
@@ -146,11 +203,18 @@ module attributes {
 // CHECK-SAME: obelisk_sim.class_bitstream_member
 // CHECK-SAME: obelisk_sim.class_bitstream_visibility = 0 : i32
 // CHECK-LABEL: obelisk_sim.func private @{{.*direct}}
-// CHECK: obelisk_sim.recursive.export_bitstream
+// CHECK-COUNT-2: obelisk_sim.recursive.export_bitstream
 // CHECK-SAME: class_allow_hidden_root
 // CHECK-LABEL: obelisk_sim.func private @{{.*indirect}}
 // CHECK: obelisk_sim.recursive.export_bitstream
 // CHECK-NOT: class_allow_hidden_root
+// CHECK-LABEL: obelisk_sim.func private @{{[^ (]+}}
+// CHECK-SAME: obelisk_sim.hierarchical_name = "top.nibbles"
+// CHECK: obelisk_sim.recursive.export_bitstream
+// CHECK-SAME: -> (!obelisk_sim.logic<8>, i1, !obelisk_sim.managed_watch)
+// CHECK: arith.constant {{.*}} 2 : i64
+// CHECK: obelisk_sim.container.create
+// CHECK-SAME: -> !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
 
 // BYTECODE: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
 // BYTECODE: obelisk.feature.class_bitstream

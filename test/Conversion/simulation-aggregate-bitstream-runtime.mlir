@@ -9,7 +9,7 @@
 // RUN: %t.exe --execution-tier=auto | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
-// CHECK: 1 1 1
+// CHECK: 1 1 1 1
 
 !nibbles = !obelisk_sim.unpacked_array<2 : 0 x !obelisk_sim.logic<4>>
 !ascending = !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.logic<4>>
@@ -90,12 +90,31 @@ module attributes {
       %order_ok = obelisk_sim.logic.compare case_eq %known, %expected_known :
           (!obelisk_sim.logic<16>, !obelisk_sim.logic<16>) -> i1
 
-      %format = obelisk_sim.bytes.constant "%0d %0d %0d"
+      // Import is the exact inverse plan. It also performs the final
+      // four-state coercion independently for each mixed-state leaf.
+      %import_input = obelisk_sim.logic.constant 45005 : i16, 62208 : i16 :
+          !obelisk_sim.logic<16>
+      %round_trip = obelisk_sim.aggregate.import_bitstream %import_input plan
+          [5407724624, 3, 16, 16,
+           1, 0, 4, 0, 0, 4,
+           4294967298, 4, 3, 4, 4, 4,
+           3, 0, 4, 0, 0, 4] : (!obelisk_sim.logic<16>) -> !record
+      %round_bits = obelisk_sim.aggregate.export_bitstream %round_trip plan
+          [5407724624, 3, 16, 16,
+           1, 0, 4, 0, 0, 4,
+           4294967298, 4, 3, 4, 4, 4,
+           1, 0, 4, 0, 0, 4] : (!record) -> !obelisk_sim.logic<16>
+      %expected_round = obelisk_sim.logic.constant 4045 : i16, 768 : i16 :
+          !obelisk_sim.logic<16>
+      %round_ok = obelisk_sim.logic.compare case_eq %round_bits, %expected_round :
+          (!obelisk_sim.logic<16>, !obelisk_sim.logic<16>) -> i1
+
+      %format = obelisk_sim.bytes.constant "%0d %0d %0d %0d"
       %stdout = arith.constant 1 : i32
       obelisk_sim.display %ctx to %stdout(
-          %format, %logic_ok, %bits_ok, %order_ok)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, i1, i1, i1
+          %format, %logic_ok, %bits_ok, %order_ok, %round_ok)
+          newline = true radix = 10 flags = [0, 0, 0, 0, 0] :
+          !obelisk_sim.bytes, i1, i1, i1, i1
       obelisk_sim.return
     }
   }

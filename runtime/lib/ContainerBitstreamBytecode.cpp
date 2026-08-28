@@ -95,6 +95,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
       intrinsicId == OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
   bool aggregate =
       intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
+  bool aggregateImport =
+      intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM;
   IntrinsicSignature signature = intrinsicAt(image, site.intrinsic);
   if (container && (signature.flags == 3 || signature.flags == 4)) {
     if (!invokeClassBitstreamIntrinsic)
@@ -105,7 +107,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
   bool recursive =
       container && (signature.flags == 1 || signature.flags == 2);
   bool observeRecursive = recursive && signature.flags == 2;
-  if (signature.id != intrinsicId || (!container && !aggregate) ||
+  if (signature.id != intrinsicId ||
+      (!container && !aggregate && !aggregateImport) ||
       (!recursive && signature.flags != 0) ||
       (recursive && (site.inputCount != 2 || site.outputCount != 3)) ||
       (!recursive &&
@@ -175,7 +178,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     }
     return status;
   }
-  if (aggregate) {
+  if (aggregate || aggregateImport) {
     if (inputRegister(0) == outputRegister(0) ||
         !validRegister(frame.function, inputRegister(0)) ||
         !validRegister(frame.function, outputRegister(0)))
@@ -194,11 +197,15 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     uint64_t outputPlaneSize = outputFourState ? output.size / 2 : output.size;
     uint8_t *inputValue = frame.data + input.offset;
     uint8_t *outputValue = frame.data + output.offset;
-    return obelisk_rt_v1_aggregate_export_bitstream(
-        inputValue, inputFourState ? inputValue + inputPlaneSize : nullptr,
-        inputPlaneSize, input.width, inputFourState, outputValue,
-        outputFourState ? outputValue + outputPlaneSize : nullptr,
-        outputPlaneSize, output.width, outputFourState, plan->data, plan->size);
+    auto transfer = aggregateImport
+                        ? obelisk_rt_v1_aggregate_import_bitstream
+                        : obelisk_rt_v1_aggregate_export_bitstream;
+    return transfer(inputValue,
+                    inputFourState ? inputValue + inputPlaneSize : nullptr,
+                    inputPlaneSize, input.width, inputFourState, outputValue,
+                    outputFourState ? outputValue + outputPlaneSize : nullptr,
+                    outputPlaneSize, output.width, outputFourState, plan->data,
+                    plan->size);
   }
   obelisk_rt_object_v1 *containerValue =
       readManaged(image, frame, inputRegister(0));
