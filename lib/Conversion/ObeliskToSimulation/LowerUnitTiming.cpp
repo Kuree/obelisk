@@ -1128,6 +1128,12 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
                                         Operation *statement) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
+  if (initializeProceduralTimingPaths) {
+    auto initialize = std::move(initializeProceduralTimingPaths);
+    initializeProceduralTimingPaths = {};
+    if (failed(initialize()))
+      return failure();
+  }
   auto lowerControlledStatement =
       [&](Operation *sampledClock) -> LogicalResult {
     Operation *savedClock = activeSampledClock;

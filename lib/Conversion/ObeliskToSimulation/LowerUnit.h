@@ -673,6 +673,7 @@ private:
   /// Procedural path qualification must execute after the outer event wait,
   /// immediately before the assignment body that consumes it.
   std::function<::mlir::LogicalResult()> prepareProceduralTimingPaths;
+  std::function<::mlir::LogicalResult()> initializeProceduralTimingPaths;
   std::optional<::mlir::Value> proceduralTimingWriteMask;
   /// Per-activation rise, fall, and turnoff delays selected from statically
   /// frozen overlapping specify paths.

@@ -2600,6 +2600,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     struct ProceduralWakeClassification {
       int32_t kind = 0;
       bool ambiguousSourceControl = false;
+      Operation *monitorPrimary = nullptr;
     };
     auto classifyProceduralWake = [&](const TimingDriverSpan &span,
                                       const SimpleTimingPath &candidate) {
@@ -2642,6 +2643,23 @@ void ObeliskSimPreparePass::runOnOperation() {
           leading ? getChildren(leading) : SmallVector<Operation *>{};
       if (timedChildren.empty())
         return result;
+      // IEEE 1800-2017 9.4.2 and 30.4.3: a procedural control may wake
+      // more often than the declared module-path edge, but it must cover
+      // every transition that can activate that path. Keep this lattice
+      // explicit so broader controls use snapshot qualification without an
+      // observer, while narrower controls remain diagnosed.
+      auto eventCoversPathEdge = [&](int32_t eventEdge) {
+        if (candidate.edgeIdentifier == 0)
+          return eventEdge == 0;
+        if (candidate.edgeIdentifier == 1)
+          return eventEdge == 0 || eventEdge == 1 || eventEdge == 3;
+        if (candidate.edgeIdentifier == 2)
+          return eventEdge == 0 || eventEdge == 2 || eventEdge == 3;
+        return eventEdge == 0 || eventEdge == 3;
+      };
+      auto eventExactlyMatchesPathEdge = [&](int32_t eventEdge) {
+        return candidate.edgeIdentifier == eventEdge;
+      };
       if (auto list =
               dyn_cast<semantic::SVEventListControlOp>(timedChildren.front())) {
         for (Operation *member : getChildren(list)) {
@@ -2660,11 +2678,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                   primary);
           int32_t eventEdge =
               event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
-          bool edgeMatches =
-              candidate.edgeIdentifier == 0 ||
-              candidate.edgeIdentifier == eventEdge ||
-              (candidate.edgeIdentifier == 3 &&
-               (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
+          bool edgeMatches = eventCoversPathEdge(eventEdge);
           if (event && candidate.inputs.size() == 1 &&
               candidate.inputs.front().isWhole() && directNamed &&
               directPath &&
@@ -2675,6 +2689,23 @@ void ObeliskSimPreparePass::runOnOperation() {
             // because the source is itself an independently observed member;
             // wakes from other members produce an empty difference mask.
             result.kind = 2;
+            return result;
+          }
+          bool derivedSource = false;
+          if (primary && candidate.inputs.size() == 1)
+            primary->walk([&](Operation *nested) {
+              auto referenced =
+                  nested->getAttrOfType<StringAttr>("referenced_path");
+              derivedSource |=
+                  referenced && referenced.getValue() ==
+                                    candidate.inputs.front().path;
+            });
+          if (derivedSource && !isAddressableExpression(primary)) {
+            // IEEE 1800-2017 9.4.2 reevaluates a computed primary for each
+            // constituent dependency. Monitor the Clause 30.4 source there
+            // even when the derived value itself does not wake the writer.
+            result.kind = 2;
+            result.monitorPrimary = primary;
             return result;
           }
         }
@@ -2694,28 +2725,33 @@ void ObeliskSimPreparePass::runOnOperation() {
                           semantic::SVHierarchicalValueExpressionOp>(primary);
       int32_t eventEdge =
           event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
-      bool edgeMatches = candidate.edgeIdentifier == 0 ||
-                         candidate.edgeIdentifier == eventEdge ||
-                         (candidate.edgeIdentifier == 3 &&
-                          (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
-      bool exactWake =
+      bool sameDirectSource =
           event && candidate.inputs.size() == 1 &&
           candidate.inputs.front().isWhole() && directNamed && directPath &&
-          directPath.getValue() == candidate.inputs.front().path && edgeMatches;
-      result.kind = exactWake ? 1 : 0;
+          directPath.getValue() == candidate.inputs.front().path;
+      bool exactWake = sameDirectSource &&
+                       eventExactlyMatchesPathEdge(eventEdge);
+      result.kind = exactWake ? 1
+                    : sameDirectSource && eventCoversPathEdge(eventEdge) ? 2
+                                                                         : 0;
       timedChildren.front()->walk([&](Operation *nested) {
         auto referenced = nested->getAttrOfType<StringAttr>("referenced_path");
         if (referenced && candidate.inputs.size() == 1 &&
             referenced.getValue() == candidate.inputs.front().path)
           result.ambiguousSourceControl = true;
       });
-      result.ambiguousSourceControl &= !exactWake;
+      result.ambiguousSourceControl &= !sameDirectSource;
       if (result.ambiguousSourceControl) {
-        // IEEE 1800-2017 30.4 qualifies from the declared source transition.
-        // A derived event expression can hide that transition and wake later
-        // on another operand, so writer-only sampling would use stale state.
-        // Keep it diagnosed until the source has an independent monitor.
-        result.kind = 0;
+        // IEEE 1800-2017 30.4 qualifies from the declared source transition,
+        // not from a later change of the derived control. Clause 9.4.2 gives
+        // an outlined computed primary an independent reevaluation on every
+        // constituent dependency, so it can retain exact source qualification.
+        if (primary && !isAddressableExpression(primary)) {
+          result.kind = 2;
+          result.monitorPrimary = primary;
+        } else {
+          result.kind = 0;
+        }
       }
       return result;
     };
@@ -2903,9 +2939,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         groupKey += output;
         groupKey.push_back(';');
         groupKey += candidate.full ? "F;" : "P;";
-        groupKey += candidate.edgeSensitive
-                        ? ("E" + Twine(candidate.edgeIdentifier) + ";").str()
-                        : "S;";
+        // IEEE 1800-2017 30.4.4.4 permits a simple ifnone path to be the
+        // fallback for edge-sensitive conditional paths over the same
+        // connection. Edge qualification therefore cannot participate in
+        // the condition-group identity; terminal selections and connection
+        // kind below still keep unrelated fallback sets disjoint.
         for (const TimingTerminal &input : candidate.inputs) {
           groupKey += Twine(input.path.size()).str();
           groupKey.push_back(':');
@@ -3035,6 +3073,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getNamedAttr("condition_group",
                                  builder.getI32IntegerAttr(group->second)),
         };
+        Operation *monitorPrimary = nullptr;
         if (candidate.edgeSensitive) {
           attrs.push_back(
               builder.getNamedAttr("edge_pending", edgePendingPath));
@@ -3049,12 +3088,16 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getI64IntegerAttr(descriptor->second.id)));
           ProceduralWakeClassification wake =
               classifyProceduralWake(span, candidate);
+          monitorPrimary = wake.monitorPrimary;
           // Kind 3 is an explicit cancellation-only writer. It never performs
           // snapshot-based edge qualification; the path-level validation above
           // proves that another writer observes this source exactly.
           int32_t wakeKind = wake.kind == 0 ? 3 : wake.kind;
           attrs.push_back(builder.getNamedAttr(
               "procedural_wake_kind", builder.getI32IntegerAttr(wakeKind)));
+          attrs.push_back(builder.getNamedAttr(
+              "procedural_monitor",
+              builder.getBoolAttr(wake.monitorPrimary != nullptr)));
         }
         if (candidate.condition) {
           auto nodeID =
@@ -3067,8 +3110,26 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           attrs.push_back(builder.getNamedAttr("condition_node_id", nodeID));
         }
-        frozenTimingRules[span.unit].push_back(
-            builder.getDictionaryAttr(attrs));
+        DictionaryAttr frozenRule = builder.getDictionaryAttr(attrs);
+        frozenTimingRules[span.unit].push_back(frozenRule);
+        if (monitorPrimary) {
+          NamedAttrList monitor;
+          for (StringRef name :
+               {"inputs", "snapshots", "input_lows", "input_widths",
+                "input_lsbs", "output_low", "output_width",
+                "output_root_width", "edge_identifier", "edge_pending",
+                "edge_epoch", "condition_kind", "condition_group",
+                "condition_node_id"})
+            if (Attribute value = frozenRule.get(name))
+              monitor.set(name, value);
+          SmallVector<Attribute> monitorRules;
+          if (auto existing = monitorPrimary->getAttrOfType<ArrayAttr>(
+                  "obelisk.timing_path_monitor_rules"))
+            llvm::append_range(monitorRules, existing.getValue());
+          monitorRules.push_back(builder.getDictionaryAttr(monitor));
+          monitorPrimary->setAttr("obelisk.timing_path_monitor_rules",
+                                  builder.getArrayAttr(monitorRules));
+        }
       }
       if (invalid)
         break;
@@ -7407,6 +7468,79 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         continue;
       }
+      condition->second->setAttr("obelisk.timing_path_condition_truth",
+                                 builder.getUnitAttr());
+      if (!observerLocalCaptures[condition->second].empty() ||
+          !observerValueCaptures[condition->second].empty()) {
+        emitError(getSemanticLocation(condition->second))
+            << "specify path condition cannot capture an automatic local";
+        invalid = true;
+        continue;
+      }
+      for (const auto &capture : unitCaptures[condition->second])
+        if (existingCaptures.insert(capture.first).second)
+          unitCaptures[unit.source].push_back(capture);
+    }
+  }
+
+  // Computed procedural controls monitor the declared Clause 30 source in
+  // their already-outlined event-primary observer. Add monitor state as
+  // captures only; snapshot/pending/condition captures are deliberately not
+  // observer dependencies, so their writes cannot recursively activate the
+  // observer or make condition-only changes look like source events.
+  for (PreparedUnit &unit : units) {
+    if (unit.entryKind != sim::EntryKind::Observer)
+      continue;
+    auto rules = unit.source->getAttrOfType<ArrayAttr>(
+        "obelisk.timing_path_monitor_rules");
+    if (!rules)
+      continue;
+    llvm::StringSet<> existingCaptures;
+    for (const auto &capture : unitCaptures[unit.source])
+      existingCaptures.insert(capture.first);
+    auto addCapture = [&](StringAttr path, bool dependency) {
+      auto found = path ? descriptors.find(path.getValue()) : descriptors.end();
+      if (!path || found == descriptors.end()) {
+        invalid = true;
+        return;
+      }
+      if (existingCaptures.insert(path.getValue()).second)
+        unitCaptures[unit.source].push_back(
+            {path.getValue().str(), found->second});
+      if (dependency)
+        unitReadCaptures[unit.source].insert(path.getValue());
+      else
+        unitWrittenCaptures[unit.source].insert(path.getValue());
+    };
+    for (Attribute attr : rules) {
+      auto rule = dyn_cast<DictionaryAttr>(attr);
+      auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
+      auto snapshots = rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
+      if (!inputs || !snapshots || inputs.size() != snapshots.size()) {
+        emitError(getSemanticLocation(unit.source))
+            << "derived procedural path monitor has invalid terminals";
+        invalid = true;
+        continue;
+      }
+      for (auto [input, snapshot] : llvm::zip(inputs, snapshots)) {
+        addCapture(dyn_cast<StringAttr>(input), true);
+        addCapture(dyn_cast<StringAttr>(snapshot), false);
+      }
+      addCapture(rule.getAs<StringAttr>("edge_pending"), false);
+      addCapture(rule.getAs<StringAttr>("edge_epoch"), false);
+      auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id");
+      if (!conditionNode)
+        continue;
+      auto condition =
+          timingConditions.find(conditionNode.getValue().getZExtValue());
+      if (condition == timingConditions.end()) {
+        emitError(getSemanticLocation(unit.source))
+            << "derived procedural path condition no longer resolves";
+        invalid = true;
+        continue;
+      }
+      condition->second->setAttr("obelisk.timing_path_condition_truth",
+                                 builder.getUnitAttr());
       if (!observerLocalCaptures[condition->second].empty() ||
           !observerValueCaptures[condition->second].empty()) {
         emitError(getSemanticLocation(condition->second))
@@ -7513,6 +7647,48 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (!invalid)
       unit.source->setAttr("obelisk.timing_path_rules",
+                           builder.getArrayAttr(frozen));
+  }
+  for (PreparedUnit &unit : units) {
+    auto rules = unit.source->getAttrOfType<ArrayAttr>(
+        "obelisk.timing_path_monitor_rules");
+    if (!rules)
+      continue;
+    SmallVector<Attribute> frozen;
+    for (Attribute attr : rules) {
+      auto rule = dyn_cast<DictionaryAttr>(attr);
+      if (!rule) {
+        invalid = true;
+        break;
+      }
+      NamedAttrList fields(rule.getValue());
+      if (auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id")) {
+        auto condition =
+            timingConditions.find(conditionNode.getValue().getZExtValue());
+        auto evaluator =
+            condition == timingConditions.end()
+                ? FlatSymbolRefAttr{}
+                : condition->second->getAttrOfType<FlatSymbolRefAttr>(
+                      "obelisk_sim.observer");
+        auto captures =
+            condition == timingConditions.end()
+                ? ArrayAttr{}
+                : condition->second->getAttrOfType<ArrayAttr>(
+                      observerCapturesAttrName);
+        if (!evaluator || !captures) {
+          emitError(getSemanticLocation(unit.source))
+              << "derived procedural path condition has no frozen evaluator "
+                 "ABI";
+          invalid = true;
+          break;
+        }
+        fields.set("condition_evaluator", evaluator);
+        fields.set("condition_captures", captures);
+      }
+      frozen.push_back(builder.getDictionaryAttr(fields));
+    }
+    if (!invalid)
+      unit.source->setAttr("obelisk.timing_path_monitor_rules",
                            builder.getArrayAttr(frozen));
   }
   if (invalid)
@@ -8388,6 +8564,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto proceduralWakeKind =
             rule ? rule.getAs<IntegerAttr>("procedural_wake_kind")
                  : IntegerAttr{};
+        auto proceduralMonitor =
+            rule ? rule.getAs<BoolAttr>("procedural_monitor") : BoolAttr{};
         auto connectionFull =
             rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
         auto polarity =
@@ -8508,6 +8686,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (proceduralWakeKind)
             fields.push_back(builder.getNamedAttr("procedural_wake_kind",
                                                   proceduralWakeKind));
+          if (proceduralMonitor)
+            fields.push_back(builder.getNamedAttr("procedural_monitor",
+                                                  proceduralMonitor));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(
@@ -8552,6 +8733,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.timing_path_rules", builder.getArrayAttr(tickRules)));
     }
+    if (auto monitorRules = unit.source->getAttrOfType<ArrayAttr>(
+            "obelisk.timing_path_monitor_rules"))
+      functionAttrs.push_back(builder.getNamedAttr(
+          "obelisk_sim.timing_path_monitor_rules", monitorRules));
     if (instanceClassMethod)
       functionAttrs.push_back(builder.getNamedAttr(
           sim::metadata::thisArgument, builder.getI32IntegerAttr(1)));

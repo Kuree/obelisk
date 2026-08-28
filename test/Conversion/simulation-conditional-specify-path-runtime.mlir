@@ -18,9 +18,9 @@
 
 // Hand-authored Simulation IR models the straight-line conditional-path actor
 // produced by lowering. Conditions are sampled only when `source` changes.
-// X and Z are not true, so ifnone applies; simultaneous true predicates select
-// the shorter delay. One inertial site rejects a source pulse shorter than its
-// selected delay.
+// IEEE 1800-2017 30.4.4.1 treats X and Z path conditions as true;
+// simultaneous true predicates select the shorter delay. One inertial site
+// rejects a source pulse shorter than its selected delay.
 // CHECK: base 0
 // CHECK-NEXT: condition-only 0
 // CHECK-NEXT: pending-preserved 0
@@ -29,7 +29,7 @@
 // CHECK-NEXT: ifnone-done 0
 // CHECK-NEXT: overlap-early 0
 // CHECK-NEXT: overlap-min 1
-// CHECK-NEXT: xz-early 1
+// CHECK-NEXT: xz-early 0
 // CHECK-NEXT: xz-ifnone 0
 // CHECK-NEXT: inertial-reject 0
 // CHECK-NEXT: inertial-stable 0
@@ -108,8 +108,9 @@ module attributes {
           !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %c1_value = obelisk_sim.net.read %c1 :
           !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %c0_true = obelisk_sim.logic.is_true %c0_value : !obelisk_sim.logic<1>
-      %c1_true = obelisk_sim.logic.is_true %c1_value : !obelisk_sim.logic<1>
+      %condition_zero = obelisk_sim.logic.constant false, false : !obelisk_sim.logic<1>
+      %c0_true = obelisk_sim.logic.compare case_ne %c0_value, %condition_zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
+      %c1_true = obelisk_sim.logic.compare case_ne %c1_value, %condition_zero : (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>) -> i1
       %any = arith.ori %c0_true, %c1_true : i1
       %true = arith.constant true
       %ifnone = arith.xori %any, %true : i1

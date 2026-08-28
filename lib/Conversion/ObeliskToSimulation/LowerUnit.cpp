@@ -4847,6 +4847,314 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     // same sampled reads as a clocked assertion predicate; its private event
     // dependency controls when that evaluator is invoked.
     sampleAssertionValues = roots.front()->hasAttr(sampledObserverAttrName);
+    if (auto monitorRules = function->getAttrOfType<ArrayAttr>(
+            "obelisk_sim.timing_path_monitor_rules")) {
+      struct MonitorSource {
+        Value input;
+        Value snapshot;
+        std::string snapshotPath;
+        uint64_t lsb = 0;
+      };
+      struct MonitorRule {
+        SmallVector<MonitorSource, 2> sources;
+        Value pending;
+        Value epoch;
+        uint64_t outputLow = 0;
+        uint64_t outputWidth = 0;
+        uint64_t outputRootWidth = 0;
+        int32_t edge = 0;
+        int32_t conditionKind = 0;
+        int32_t conditionGroup = 0;
+        FlatSymbolRefAttr conditionEvaluator;
+        SmallVector<Value, 4> conditionCaptures;
+      };
+      SmallVector<MonitorRule, 4> monitors;
+      for (Attribute attr : monitorRules) {
+        auto rule = dyn_cast<DictionaryAttr>(attr);
+        auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
+        auto snapshots =
+            rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
+        auto lsbs = rule ? rule.getAs<DenseI64ArrayAttr>("input_lsbs")
+                         : DenseI64ArrayAttr{};
+        auto outputLow =
+            rule ? rule.getAs<IntegerAttr>("output_low") : IntegerAttr{};
+        auto outputWidth =
+            rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
+        auto outputRootWidth =
+            rule ? rule.getAs<IntegerAttr>("output_root_width")
+                 : IntegerAttr{};
+        auto edge =
+            rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
+        auto pendingPath =
+            rule ? rule.getAs<StringAttr>("edge_pending") : StringAttr{};
+        auto epochPath =
+            rule ? rule.getAs<StringAttr>("edge_epoch") : StringAttr{};
+        if (!rule || !inputs || !snapshots || inputs.empty() ||
+            inputs.size() != snapshots.size() || !lsbs ||
+            static_cast<size_t>(lsbs.size()) != inputs.size() || !outputLow ||
+            outputLow.getInt() < 0 || !outputWidth ||
+            outputWidth.getInt() <= 0 || !outputRootWidth ||
+            outputRootWidth.getInt() <= 0 || !edge || edge.getInt() < 0 ||
+            edge.getInt() > 3 || !pendingPath || !epochPath)
+          return function.emitError(
+              "invalid derived procedural timing path monitor");
+        MonitorRule monitor;
+        monitor.outputLow = static_cast<uint64_t>(outputLow.getInt());
+        monitor.outputWidth = static_cast<uint64_t>(outputWidth.getInt());
+        monitor.outputRootWidth =
+            static_cast<uint64_t>(outputRootWidth.getInt());
+        monitor.edge = static_cast<int32_t>(edge.getInt());
+        if (monitor.outputLow >= monitor.outputRootWidth ||
+            monitor.outputWidth >
+                monitor.outputRootWidth - monitor.outputLow)
+          return function.emitError(
+              "derived procedural monitor destination is out of bounds");
+        monitor.pending = values.lookup(pendingPath.getValue());
+        monitor.epoch = values.lookup(epochPath.getValue());
+        auto pendingRef = monitor.pending
+                              ? dyn_cast<sim::RefType>(monitor.pending.getType())
+                              : sim::RefType{};
+        auto epochRef = monitor.epoch
+                            ? dyn_cast<sim::RefType>(monitor.epoch.getType())
+                            : sim::RefType{};
+        if (!pendingRef ||
+            pendingRef.getElementType() !=
+                builder.getIntegerType(monitor.outputRootWidth) ||
+            !epochRef || epochRef.getElementType() != builder.getI64Type())
+          return function.emitError(
+              "derived procedural monitor state no longer resolves");
+        for (auto [index, pair] : llvm::enumerate(llvm::zip(inputs, snapshots))) {
+          auto inputPath = dyn_cast<StringAttr>(std::get<0>(pair));
+          auto snapshotPath = dyn_cast<StringAttr>(std::get<1>(pair));
+          if (!inputPath || !snapshotPath || lsbs[index] < 0)
+            return function.emitError(
+                "invalid derived procedural monitor source");
+          Value input = values.lookup(inputPath.getValue());
+          Value snapshot = values.lookup(snapshotPath.getValue());
+          if (!input || !snapshot || !isa<sim::RefType>(snapshot.getType()))
+            return function.emitError(
+                "derived procedural monitor source no longer resolves");
+          monitor.sources.push_back(
+              {input, snapshot, snapshotPath.getValue().str(),
+               static_cast<uint64_t>(lsbs[index])});
+        }
+        if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
+          monitor.conditionKind = static_cast<int32_t>(kind.getInt());
+        if (auto group = rule.getAs<IntegerAttr>("condition_group"))
+          monitor.conditionGroup = static_cast<int32_t>(group.getInt());
+        if (monitor.conditionKind < 0 || monitor.conditionKind > 2 ||
+            monitor.conditionGroup < 0)
+          return function.emitError(
+              "invalid derived procedural monitor condition");
+        if (monitor.conditionKind == 1) {
+          monitor.conditionEvaluator =
+              rule.getAs<FlatSymbolRefAttr>("condition_evaluator");
+          auto captures = rule.getAs<ArrayAttr>("condition_captures");
+          if (!monitor.conditionEvaluator || !captures)
+            return function.emitError(
+                "derived procedural monitor condition has no evaluator ABI");
+          for (Attribute captureAttr : captures) {
+            auto capturePath = dyn_cast<StringAttr>(captureAttr);
+            Value capture =
+                capturePath ? values.lookup(capturePath.getValue()) : Value{};
+            if (!capture && capturePath)
+              capture = lvalues.lookup(capturePath.getValue());
+            if (!capture)
+              return function.emitError(
+                  "derived procedural monitor condition capture is missing");
+            monitor.conditionCaptures.push_back(capture);
+          }
+        }
+        monitors.push_back(std::move(monitor));
+      }
+
+      struct Transition {
+        Value current;
+        Value previous;
+      };
+      llvm::StringMap<Transition> transitions;
+      auto readSource = [&](Value input) -> Value {
+        if (auto ref = dyn_cast<sim::RefType>(input.getType()))
+          return sim::SimRefLoadOp::create(builder, function.getLoc(),
+                                           ref.getElementType(), input);
+        if (auto net = dyn_cast<sim::NetType>(input.getType()))
+          return sim::SimNetReadOp::create(builder, function.getLoc(),
+                                           net.getElementType(), input);
+        return {};
+      };
+      auto edgeFor = [&](const Transition &transition,
+                         uint64_t lsb) -> std::array<Value, 3> {
+        Type bitType = sim::LogicType::get(function.getContext(), 1);
+        Value previousBit = sim::SimLogicExtractOp::create(
+            builder, function.getLoc(), bitType, transition.previous, lsb);
+        Value currentBit = sim::SimLogicExtractOp::create(
+            builder, function.getLoc(), bitType, transition.current, lsb);
+        auto symbol = [&](Value value, bool one) {
+          Value constant = sim::SimLogicConstantOp::create(
+              builder, function.getLoc(), bitType,
+              builder.getIntegerAttr(builder.getI1Type(), one),
+              builder.getIntegerAttr(builder.getI1Type(), 0));
+          return Value(sim::SimLogicCompareOp::create(
+              builder, function.getLoc(), builder.getI1Type(),
+              sim::CompareKind::CaseEq, value, constant));
+        };
+        Value oldZero = symbol(previousBit, false);
+        Value oldOne = symbol(previousBit, true);
+        Value newZero = symbol(currentBit, false);
+        Value newOne = symbol(currentBit, true);
+        Value changed = sim::SimLogicCompareOp::create(
+            builder, function.getLoc(), builder.getI1Type(),
+            sim::CompareKind::CaseNe, previousBit, currentBit);
+        Value one = arith::ConstantOp::create(
+            builder, function.getLoc(), builder.getI1Type(),
+            builder.getBoolAttr(true));
+        Value oldKnown = arith::OrIOp::create(builder, function.getLoc(),
+                                              oldZero, oldOne);
+        Value oldUnknown = arith::XOrIOp::create(builder, function.getLoc(),
+                                                 oldKnown, one);
+        Value posedge = arith::OrIOp::create(
+            builder, function.getLoc(),
+            arith::AndIOp::create(
+                builder, function.getLoc(), oldZero,
+                arith::XOrIOp::create(builder, function.getLoc(), newZero,
+                                      one)),
+            arith::AndIOp::create(builder, function.getLoc(), oldUnknown,
+                                  newOne));
+        Value negedge = arith::OrIOp::create(
+            builder, function.getLoc(),
+            arith::AndIOp::create(
+                builder, function.getLoc(), oldOne,
+                arith::XOrIOp::create(builder, function.getLoc(), newOne,
+                                      one)),
+            arith::AndIOp::create(builder, function.getLoc(), oldUnknown,
+                                  newZero));
+        return {changed, posedge, negedge};
+      };
+
+      SmallVector<Value> matchedEdges;
+      SmallVector<Value> conditions;
+      llvm::DenseMap<int32_t, Value> anyConditional;
+      llvm::StringMap<std::array<Value, 3>> classifiedEdges;
+      Value knownTrue = arith::ConstantOp::create(
+          builder, function.getLoc(), builder.getI1Type(),
+          builder.getBoolAttr(true));
+      for (MonitorRule &monitor : monitors) {
+        Value matched = arith::ConstantOp::create(
+            builder, function.getLoc(), builder.getI1Type(),
+            builder.getBoolAttr(false));
+        for (const MonitorSource &source : monitor.sources) {
+          auto found = transitions.find(source.snapshotPath);
+          if (found == transitions.end()) {
+            Value current = readSource(source.input);
+            auto snapshotRef = cast<sim::RefType>(source.snapshot.getType());
+            Value previous = sim::SimRefLoadOp::create(
+                builder, function.getLoc(), snapshotRef.getElementType(),
+                source.snapshot);
+            if (!current || current.getType() != previous.getType() ||
+                !isa<sim::LogicType>(current.getType()) ||
+                source.lsb >= cast<sim::LogicType>(current.getType()).getWidth())
+              return function.emitError(
+                  "derived procedural monitor requires a logic source");
+            found = transitions
+                        .try_emplace(source.snapshotPath,
+                                     Transition{current, previous})
+                        .first;
+          }
+          std::string edgeKey =
+              (source.snapshotPath + ":" + Twine(source.lsb)).str();
+          auto classified = classifiedEdges.find(edgeKey);
+          if (classified == classifiedEdges.end())
+            classified =
+                classifiedEdges.try_emplace(
+                                   edgeKey, edgeFor(found->second, source.lsb))
+                    .first;
+          auto [changed, posedge, negedge] = classified->second;
+          Value selected = monitor.edge == 0   ? changed
+                           : monitor.edge == 1 ? posedge
+                                               : negedge;
+          if (monitor.edge == 3)
+            selected = arith::OrIOp::create(builder, function.getLoc(),
+                                            posedge, negedge);
+          matched = arith::OrIOp::create(builder, function.getLoc(), matched,
+                                         selected);
+        }
+        matchedEdges.push_back(matched);
+        Value condition = knownTrue;
+        if (monitor.conditionKind == 1) {
+          SmallVector<Value, 5> operands{
+              function.getBody().front().getArgument(0)};
+          llvm::append_range(operands, monitor.conditionCaptures);
+          condition = sim::SimCallOp::create(
+                          builder, function.getLoc(),
+                          TypeRange{builder.getI1Type()},
+                          monitor.conditionEvaluator, operands, ArrayAttr{},
+                          ArrayAttr{})
+                          .getResult(0);
+          Value previous = anyConditional.lookup(monitor.conditionGroup);
+          anyConditional[monitor.conditionGroup] =
+              previous ? arith::OrIOp::create(builder, function.getLoc(),
+                                              previous, condition)
+                       : condition;
+        }
+        conditions.push_back(condition);
+      }
+      Value now = sim::SimTimeNowOp::create(
+          builder, function.getLoc(), builder.getI64Type(),
+          function.getBody().front().getArgument(0));
+      for (auto [index, monitor] : llvm::enumerate(monitors)) {
+        Value condition = conditions[index];
+        if (monitor.conditionKind == 2) {
+          Value any = anyConditional.lookup(monitor.conditionGroup);
+          condition = any ? arith::XOrIOp::create(
+                                builder, function.getLoc(), any, knownTrue)
+                          : knownTrue;
+        }
+        Value qualified = arith::AndIOp::create(
+            builder, function.getLoc(), matchedEdges[index], condition);
+        IntegerType maskType =
+            builder.getIntegerType(monitor.outputRootWidth);
+        APInt bits = APInt::getBitsSet(
+            monitor.outputRootWidth, monitor.outputLow,
+            monitor.outputLow + monitor.outputWidth);
+        Value selected = arith::SelectOp::create(
+            builder, function.getLoc(), qualified,
+            arith::ConstantOp::create(builder, function.getLoc(), maskType,
+                                      builder.getIntegerAttr(maskType, bits)),
+            arith::ConstantOp::create(builder, function.getLoc(), maskType,
+                                      builder.getIntegerAttr(maskType, 0)));
+        Value pending = sim::SimRefLoadOp::create(
+            builder, function.getLoc(), maskType, monitor.pending);
+        Value epoch = sim::SimRefLoadOp::create(
+            builder, function.getLoc(), builder.getI64Type(), monitor.epoch);
+        Value sameEpoch = arith::CmpIOp::create(
+            builder, function.getLoc(), arith::CmpIPredicate::eq, epoch, now);
+        pending = arith::SelectOp::create(
+            builder, function.getLoc(), sameEpoch, pending,
+            arith::ConstantOp::create(builder, function.getLoc(), maskType,
+                                      builder.getIntegerAttr(maskType, 0)));
+        pending = arith::OrIOp::create(builder, function.getLoc(), pending,
+                                       selected);
+        // IEEE 1800-2017 30.5.3 samples path activity at the declared source
+        // transition. Retaining the packed mask for this scheduler epoch lets
+        // a later same-time derived wake consume that exact qualification.
+        sim::SimRefStoreOp::create(builder, function.getLoc(), pending,
+                                   monitor.pending);
+        sim::SimRefStoreOp::create(builder, function.getLoc(), now,
+                                   monitor.epoch);
+      }
+      for (auto &entry : transitions) {
+        Value snapshot;
+        for (MonitorRule &monitor : monitors)
+          for (MonitorSource &source : monitor.sources)
+            if (source.snapshotPath == entry.getKey()) {
+              snapshot = source.snapshot;
+              break;
+            }
+        if (snapshot)
+          sim::SimRefStoreOp::create(builder, function.getLoc(),
+                                     entry.getValue().current, snapshot);
+      }
+    }
     FailureOr<Value> result = lowerExpression(roots.front());
     if (failed(result))
       return failure();
@@ -4872,9 +5180,50 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                                                 builder.getI1Type(), *result)
                    .getResult();
     } else if (*parsedResult == ObserverResult::Truth) {
-      result = truthValue(*result, function.getLoc());
-      if (failed(result))
-        return failure();
+      if (roots.front()->hasAttr("obelisk.timing_path_condition_truth")) {
+        FailureOr<Value> scalar = toPackedScalar(*result, function.getLoc());
+        if (failed(scalar))
+          return failure();
+        if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+          Type bitType = sim::LogicType::get(function.getContext(), 1);
+          Value bit = logic.getWidth() == 1
+                          ? *scalar
+                          : Value(sim::SimLogicExtractOp::create(
+                                builder, function.getLoc(), bitType, *scalar,
+                                0));
+          Value zero = sim::SimLogicConstantOp::create(
+              builder, function.getLoc(), bitType,
+              builder.getIntegerAttr(builder.getI1Type(), 0),
+              builder.getIntegerAttr(builder.getI1Type(), 0));
+          Value isZero = sim::SimLogicCompareOp::create(
+              builder, function.getLoc(), builder.getI1Type(),
+              sim::CompareKind::CaseEq, bit, zero);
+          // IEEE 1800-2017 30.4.4.1 represents a multi-bit module-path
+          // condition by its LSB and treats X/Z as true. Therefore only a
+          // known zero disables the path; generic SV conditional truth is
+          // intentionally not used here.
+          result = arith::XOrIOp::create(
+                       builder, function.getLoc(), isZero,
+                       arith::ConstantOp::create(
+                           builder, function.getLoc(), builder.getI1Type(),
+                           builder.getBoolAttr(true)))
+                       .getResult();
+        } else if (auto integer =
+                       dyn_cast<IntegerType>((*scalar).getType())) {
+          result = integer.getWidth() == 1
+                       ? *scalar
+                       : Value(arith::TruncIOp::create(
+                             builder, function.getLoc(), builder.getI1Type(),
+                             *scalar));
+        } else {
+          return function.emitError(
+              "timing path condition is not a packed integral value");
+        }
+      } else {
+        result = truthValue(*result, function.getLoc());
+        if (failed(result))
+          return failure();
+      }
     } else if (auto coerced = roots.front()->getAttrOfType<TypeAttr>(
                    observerCoercedTypeAttrName)) {
       if (isa<sim::ClassHandleType>((*result).getType()) &&
@@ -4937,6 +5286,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     uint64_t outputRootWidth = 0;
     std::optional<uint64_t> driverNodeID;
     bool proceduralStorage = false;
+    bool proceduralMonitor = false;
     int32_t proceduralWakeKind = 0;
     uint64_t siteID = 0;
     bool full = false;
@@ -5038,6 +5388,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         state.proceduralStorage = procedural.getValue();
       if (auto wake = rule.getAs<IntegerAttr>("procedural_wake_kind"))
         state.proceduralWakeKind = static_cast<int32_t>(wake.getInt());
+      if (auto monitor = rule.getAs<BoolAttr>("procedural_monitor"))
+        state.proceduralMonitor = monitor.getValue();
       if (auto site = rule.getAs<IntegerAttr>("path_site_id")) {
         if (site.getInt() < 0)
           return function.emitError("invalid procedural timing path site");
@@ -5752,6 +6104,36 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (!allTimingPathRules.empty() &&
       allTimingPathRules.front().proceduralStorage &&
       (entryKind == sim::EntryKind::Always ||
+       entryKind == sim::EntryKind::AlwaysFF) &&
+      llvm::any_of(allTimingPathRules, [](const TimingPathRuleState &rule) {
+        return rule.proceduralMonitor;
+      })) {
+    initializeProceduralTimingPaths = [&]() -> LogicalResult {
+      llvm::StringSet<> initializedSnapshots;
+      for (TimingPathRuleState &rule : allTimingPathRules) {
+        if (!rule.proceduralMonitor)
+          continue;
+        for (const TimingPathRuleState::Source &source : rule.sources) {
+          if (!initializedSnapshots.insert(source.snapshotPath).second)
+            continue;
+          Value current = readTimingPathInput(source.input);
+          if (!current)
+            return function.emitError(
+                "procedural timing path source cannot be initialized");
+          // IEEE 1800-2017 9.4.2 starts edge detection from the value present
+          // when the event control is encountered. Seed the shared snapshot
+          // before suspending so observer-side monitoring never invents an
+          // X-to-known edge from design-storage initialization.
+          sim::SimRefStoreOp::create(builder, function.getLoc(), current,
+                                     source.snapshot);
+        }
+      }
+      return success();
+    };
+  }
+  if (!allTimingPathRules.empty() &&
+      allTimingPathRules.front().proceduralStorage &&
+      (entryKind == sim::EntryKind::Always ||
        entryKind == sim::EntryKind::AlwaysFF)) {
     prepareProceduralTimingPaths = materializeTimingPathPlans;
   } else if (failed(materializeTimingPathPlans())) {
@@ -5786,6 +6168,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   observedWrites = savedWrites;
   observedDependencies = savedDependencies;
   prepareProceduralTimingPaths = {};
+  initializeProceduralTimingPaths = {};
   if (failed(lowered))
     return failure();
   if (usedTimingPathMaskedPlans.size() != timingPathMaskedPlans.size())
