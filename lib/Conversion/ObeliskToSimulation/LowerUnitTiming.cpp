@@ -44,16 +44,27 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
       realLiteral = unaryChildren.front();
     }
   }
-  if (isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(realLiteral)) {
-    auto spelling = realLiteral->getAttrOfType<StringAttr>("constant_value");
+  auto realConstantSpelling = [&]() -> std::optional<StringRef> {
+    if (auto spelling =
+            realLiteral->getAttrOfType<StringAttr>("constant_value");
+        isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(realLiteral))
+      return spelling ? std::optional<StringRef>(spelling.getValue())
+                      : std::nullopt;
+    auto type = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!type || !isa<semantic::RealType, semantic::ShortRealType,
+                      semantic::RealtimeType>(type.getValue()))
+      return std::nullopt;
+    return getConstantSpelling(children.front());
+  }();
+  if (realConstantSpelling) {
     auto quantumAttr =
         function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
-    if (!spelling || !quantumAttr) {
+    if (!quantumAttr) {
       function.emitError("code unit has incomplete real-delay metadata");
       return failure();
     }
     double amount = 0;
-    if (spelling.getValue().getAsDouble(amount) || !std::isfinite(amount)) {
+    if (realConstantSpelling->getAsDouble(amount) || !std::isfinite(amount)) {
       emitError(location) << "real delay literal is not finite";
       return failure();
     }

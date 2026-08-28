@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | \
+// RUN:   FileCheck %s --implicit-check-not=obelisk_sim.time.from_real
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 0 : i64, sym_name = "s0.simulation_real_delay"} {
@@ -8,6 +9,16 @@ module {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_real_delay", is_uninstantiated = false, name = "simulation_real_delay", node_id = 3 : i64, referenced_path = "simulation_real_delay", referenced_symbol = @s0.simulation_real_delay, sym_name = "s3.simulation_real_delay"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 4 : i64, sym_name = "s4.simulation_real_delay"} {
+        obelisk.sv.symbol.parameter attributes {
+          constant_value = "1.55", hierarchical_name = "simulation_real_delay.D",
+          name = "D", node_id = 25 : i64, semantic_type = !obelisk.real,
+          sym_name = "s25.D"
+        } {
+          obelisk.sv.expression.real_literal attributes {
+            constant_value = "1.55", node_id = 26 : i64,
+            semantic_type = !obelisk.real
+          } {}
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_real_delay", node_id = 5 : i64, procedure_kind = 0 : i32, sym_name = "s5", time_precision_fs = 100000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 6 : i64} {
             obelisk.sv.statement.list attributes {node_id = 7 : i64} {
@@ -45,6 +56,17 @@ module {
                 obelisk.sv.statement.empty attributes {node_id = 24 : i64} {
                 }
               }
+              obelisk.sv.statement.timed attributes {node_id = 27 : i64} {
+                obelisk.sv.timing.delay attributes {node_id = 28 : i64} {
+                  obelisk.sv.expression.named_value attributes {
+                    node_id = 29 : i64,
+                    referenced_path = "simulation_real_delay.D",
+                    referenced_symbol = @s1.$root::@s3.simulation_real_delay::@s4.simulation_real_delay::@s25.D,
+                    semantic_type = !obelisk.real
+                  } {}
+                }
+                obelisk.sv.statement.empty attributes {node_id = 30 : i64} {}
+              }
             }
           }
         }
@@ -55,11 +77,13 @@ module {
 
 // Real delays are rounded to the lexical 100 ps precision before they become
 // design ticks: 0.14 ns -> 1 tick, 0.15 ns -> 2 ticks, 1 ns -> 10 ticks,
-// and a negative delay -> 0 ticks.
+// a negative delay -> 0 ticks, and a typed real parameter of 1.55 ns -> 16
+// ticks. Constant parameters stay on the same compile-time path as literals.
 // CHECK: obelisk_sim.design @design attributes {{.*}}time_precision_fs = 100000
 // CHECK-DAG: obelisk_sim.time.constant 1{{$}}
 // CHECK-DAG: obelisk_sim.time.constant 2{{$}}
 // CHECK-DAG: obelisk_sim.time.constant 10{{$}}
 // CHECK-DAG: obelisk_sim.time.constant 0{{$}}
-// CHECK-COUNT-4: obelisk_sim.suspend.delay
+// CHECK-DAG: obelisk_sim.time.constant 16{{$}}
+// CHECK-COUNT-5: obelisk_sim.suspend.delay
 // CHECK-NOT: obelisk.sv.

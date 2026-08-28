@@ -1634,21 +1634,65 @@ code has no packed-slice scheduler call, allocation, loop, or width-dependent
 dispatch. The generic native and bytecode paths retain the compact fallback
 only for unplanned or dynamic shapes. MLIR checks lock down both paths.
 
+The follow-up differential audit closed three further legal L-family cases.
+Typed real constants reached through parameters now use the same compile-time
+delay scaling and lexical-timeprecision rounding as real literals; no runtime
+floating conversion reaches any simulation tier. Anonymous enums without a
+standalone semantic declaration reuse the exact value/name inventory already
+frozen on their enum method calls, including when the call follows the output
+site. The inventory is collected during the existing whole-design preparation
+walk, conflicting structural identities remain diagnosed, and native and
+bytecode formatting retain the compact compiler-selected mnemonic path with no
+runtime symbol lookup. Finally, empty non-ANSI ports contribute no topology,
+and a built-in-net port coerced to `inout` peels only a representation-equal
+implicit packed-width wrapper: overlapping low bits become static net edges and
+unmatched bits remain undriven. This removes propagation actors rather than
+adding them, preserving the direct wide/static top-tier path.
+
 The final 2026-08-27 refresh ran all 2,675 selected ivtest cases and reported
-1,946 ordinary passes, 370 expected-error passes, 104 compile failures, 242
-run failures, and 13 skips. The prior pre-tranche refresh was 1,940/371/114/237
-with the same 13 skips; newly compiled cases can therefore move into the run
-failure column before a different clause is closed. The remaining compile
-buckets are assigned to already documented frontend, SDF/timing-check,
-gate/delay, timescale, harness, strictness, and unclassified differential
-work, not to an identified legal L12 feature. `concat4` is likewise not a
-closure target: its continuous-assignment RHS mutates a value it also reads,
-so 10.3.2 requires reevaluation and Verilator reports a nonconvergent settle
-cycle rather than Icarus's one-shot result. The four immediate-check partial
-NBA cases retain the standard Active/NBA race instead of changing NBA into a
-blocking update to match one scheduler ordering. The final hermetic regression
-passes 1,600 tests with 7 expected failures, and all 495 runtime-unit tests
-pass.
+1,950 ordinary passes, 370 expected-error passes, 98 compile failures, 244 run
+failures, and 13 skips. The prior pre-L12-tranche refresh was
+1,940/371/114/237 with the same 13 skips; newly compiled cases can therefore
+move into the run-failure column before a different clause is closed. The six
+newly compiling cases are the anonymous-enum, real-parameter-delay, empty-port,
+and coerced-width port cases above. `br_gh127f` now prints its exact expected
+values and `PASSED`, but ivtest's gold includes compiler warning text while the
+owned harness compares only runtime output; `br_gh530` is a compile-only case
+without a runtime `PASSED` marker. Their run-failure labels are therefore
+harness-oracle artifacts, not simulation failures.
+
+The 26 diagnostics formerly named only “unclassified long tail” now all have
+clause decisions. Nine are Clause 30 residuals (`br960a-d`, `br_ml20190814`,
+`br_gh316c`, `pr1695257`, `sdf6`, and `specify1`), not L12/L13/L19 cases. Seven
+are nonstandard or invalid Clause 21 inputs: `array_word_check` and
+`dump_memword` pass selections where 21.7.1.2 permits a variable identifier;
+`format` omits the expression required by 21.2.1.2; and the four `fscanf_u/z`
+cases use an unsized suppressed raw conversion, which has no destination width
+from which “sufficient data to fill the target” can be determined, with the
+warning variants also supplying the argument that 21.3.4.3 forbids for a
+suppressed assignment. Eight more are source syntax/type boundaries:
+`br_gh553` omits the A.4.1.1 instance parentheses, `display_bug` uses the
+unpacked `[constant_expression]` shorthand in a packed dimension,
+`param_string_compare` applies integral-only wildcard equality to strings,
+`pr1701855b` passes non-module objects to 20.4.1 `$printtimescale`,
+`pr1723367` connects expressions to null ports, `pr3587570` gives one
+combinational UDP input combination contradictory outputs, `pr707` omits a
+required UDP input terminal, and `sv_ps_type_class1` makes a package refer
+hierarchically to a compilation-unit item contrary to 26.2. The last two are
+explicit frontend boundaries for legal source: `parameter_no_default_toplvl`
+violates 6.20.1 only in Slang's automatic-root selection, and `scoped_events`
+is Slang's rejection of the named-block/task `defparam` form that 23.10.2
+expressly permits. They remain frontend-owned source cases rather than silent
+backend approximations. The classifier now names every one of these groups;
+the refreshed compile log has zero unclassified diagnostics.
+
+`concat4` is likewise not a closure target: its continuous-assignment RHS
+mutates a value it also reads, so 10.3.2 requires reevaluation and Verilator
+reports a nonconvergent settle cycle rather than Icarus's one-shot result. The
+four immediate-check partial NBA cases retain the standard Active/NBA race
+instead of changing NBA into a blocking update to match one scheduler
+ordering. The final full hermetic regression passed 1,602 tests with 7
+expected failures, and all 495 runtime-unit tests passed.
 
 ## Clause ledger
 
@@ -1798,7 +1842,10 @@ one commit.
     repartition by target element width, including recursively greedy
     unbounded members. Wildcard-index associative sources, typed-associative
     streaming, fixed class streaming, and compact wide-fixed streaming
-    lowering also execute. Further differential failures remain audit caveats
+    lowering also execute. Typed real parameter delays fold through exact
+    lexical-timeprecision scaling, and anonymous enum output reuses frozen
+    method inventory without a runtime lookup. Further differential failures
+    remain audit caveats
     assigned to their owning clauses; the two documented Slang class-width
     cases remain source-only xfails rather than identified L12 residuals.
 13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27), completed.**
@@ -1807,7 +1854,10 @@ one commit.
     upward lookup, generated-scope naming, and parameter binding.
     Modport-exported extern interface methods execute through direct or
     scope-selected calls; fork/join tasks statically spawn and join every
-    elaborated provider with exact scoped cancellation. Automatic-root
+    elaborated provider with exact scoped cancellation. Empty non-ANSI ports
+    are topology no-ops, while coerced built-in-net inout connections of
+    unequal packed width statically merge their overlapping low bits and leave
+    the remainder undriven. Automatic-root
     inference with an unset required parameter and the compile-time
     virtual-interface extern inventory remain recorded Slang xfails rather
     than backend approximations; further Clause 23/25/27 differential cases

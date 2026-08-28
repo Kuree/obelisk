@@ -616,10 +616,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     bool hasImplicitInternalLeaves =
         internalDescriptor == descriptors.end() &&
         appendInterconnectLeaves(internalPath, implicitInternalLeaves);
-    if (internalDescriptor == descriptors.end() &&
-        !hasImplicitInternalLeaves) {
+    if (internalDescriptor == descriptors.end() && !hasImplicitInternalLeaves) {
       if (connection.getInterfaceInstanceSymbol() ||
-          isa<semantic::UntypedType>(connection.getFormalType()))
+          isa<semantic::UntypedType, semantic::VoidType>(
+              connection.getFormalType()))
         continue;
       emitError(getSemanticLocation(connection))
           << "port internal endpoint has no flattened descriptor";
@@ -652,7 +652,36 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         internalNet = true;
       }
     }
-    bool actualNet = flattenNetExpr(actual, rhs);
+    Operation *staticActual = actual;
+    if (connection.getDirection() == semantic::SVArgumentDirection::InOut) {
+      auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(actual);
+      auto implicit = conversion
+                          ? conversion->getAttrOfType<BoolAttr>("is_implicit")
+                          : BoolAttr{};
+      if (conversion && implicit && implicit.getValue()) {
+        SmallVector<Operation *> converted = getChildren(conversion);
+        if (converted.size() == 1) {
+          FailureOr<Type> source = getNormalizedSemanticType(converted.front());
+          FailureOr<Type> target = getNormalizedSemanticType(conversion);
+          Type sourceScalar =
+              succeeded(source) ? sim::getPackedScalarType(*source) : Type{};
+          Type targetScalar =
+              succeeded(target) ? sim::getPackedScalarType(*target) : Type{};
+          // Port coercion can leave an assignment-sized wrapper around an
+          // otherwise direct net actual. For the non-strength-reducing
+          // transistor connection required by 23.3.3, only the overlapping
+          // low bits are merged; an extension or truncation is not an
+          // executable conversion. Limit this peel to representation-equal
+          // two-state or four-state packed scalars.
+          if ((isa<IntegerType>(sourceScalar) &&
+               isa<IntegerType>(targetScalar)) ||
+              (isa<sim::LogicType>(sourceScalar) &&
+               isa<sim::LogicType>(targetScalar)))
+            staticActual = converted.front();
+        }
+      }
+    }
+    bool actualNet = flattenNetExpr(staticActual, rhs);
     bool hasUWireSide =
         (internalDescriptor != descriptors.end() &&
          internalDescriptor->second.kind == DescriptorInfo::Kind::Net &&

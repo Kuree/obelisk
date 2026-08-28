@@ -558,8 +558,38 @@ void ObeliskSimPreparePass::runOnOperation() {
   // symbols. The frontend inventory is required because anonymous and local
   // typedef enums do not necessarily have a standalone semantic declaration.
   llvm::DenseMap<Type, semantic::SVEnumTypeOp> enumDeclarations;
-  semanticRoot.walk([&](semantic::SVEnumTypeOp enumeration) {
-    enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
+  struct EnumMethodInventory {
+    ArrayAttr values;
+    ArrayAttr names;
+  };
+  llvm::DenseMap<Type, EnumMethodInventory> enumMethodInventories;
+  llvm::DenseSet<Type> ambiguousEnumMethodInventories;
+  semanticRoot.walk([&](Operation *operation) {
+    if (auto enumeration = dyn_cast<semantic::SVEnumTypeOp>(operation)) {
+      enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
+      return;
+    }
+    auto call = dyn_cast<semantic::SVCallExpressionOp>(operation);
+    if (!call)
+      return;
+    ArrayAttr values = call.getEnumMethodValuesAttr();
+    ArrayAttr names = call.getEnumMethodNamesAttr();
+    SmallVector<Operation *> arguments = getChildren(call);
+    if (!values || values.empty() || !names || names.size() != values.size() ||
+        arguments.empty())
+      return;
+    auto receiverType =
+        arguments.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!receiverType || !isa<semantic::EnumType>(receiverType.getValue()))
+      return;
+    Type type = receiverType.getValue();
+    auto [iterator, inserted] = enumMethodInventories.try_emplace(
+        type, EnumMethodInventory{values, names});
+    if (!inserted && (iterator->second.values != values ||
+                      iterator->second.names != names)) {
+      enumMethodInventories.erase(iterator);
+      ambiguousEnumMethodInventories.insert(type);
+    }
   });
   auto freezeEnumValues = [&](Operation *owner, Operation *typedValue,
                               ArrayAttr spellings,
@@ -633,29 +663,38 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto type = argument->getAttrOfType<TypeAttr>("semantic_type");
         if (!type || !isa<semantic::EnumType>(type.getValue()))
           continue;
+        SmallVector<Attribute> valueSpellings;
+        SmallVector<Attribute> names;
         auto declaration = enumDeclarations.find(type.getValue());
-        if (declaration == enumDeclarations.end()) {
+        if (declaration != enumDeclarations.end()) {
+          for (Operation *member : getChildren(declaration->second)) {
+            auto enumerator = dyn_cast<semantic::SVEnumValueSymbolOp>(member);
+            if (!enumerator)
+              continue;
+            auto value =
+                enumerator->getAttrOfType<StringAttr>("constant_value");
+            auto name = enumerator->getAttrOfType<StringAttr>("name");
+            if (!value || !name) {
+              emitError(getSemanticLocation(enumerator))
+                  << "formatted enum has malformed declaration inventory";
+              invalid = true;
+              continue;
+            }
+            valueSpellings.push_back(value);
+            names.push_back(name);
+          }
+        } else if (auto inventory = enumMethodInventories.find(type.getValue());
+                   inventory != enumMethodInventories.end() &&
+                   !ambiguousEnumMethodInventories.contains(type.getValue())) {
+          valueSpellings.append(inventory->second.values.begin(),
+                                inventory->second.values.end());
+          names.append(inventory->second.names.begin(),
+                       inventory->second.names.end());
+        } else {
           emitError(getSemanticLocation(argument))
               << "formatted enum has no declaration inventory";
           invalid = true;
           continue;
-        }
-        SmallVector<Attribute> valueSpellings;
-        SmallVector<Attribute> names;
-        for (Operation *member : getChildren(declaration->second)) {
-          auto enumerator = dyn_cast<semantic::SVEnumValueSymbolOp>(member);
-          if (!enumerator)
-            continue;
-          auto value = enumerator->getAttrOfType<StringAttr>("constant_value");
-          auto name = enumerator->getAttrOfType<StringAttr>("name");
-          if (!value || !name) {
-            emitError(getSemanticLocation(enumerator))
-                << "formatted enum has malformed declaration inventory";
-            invalid = true;
-            continue;
-          }
-          valueSpellings.push_back(value);
-          names.push_back(name);
         }
         ArrayAttr spellings = ArrayAttr::get(context, valueSpellings);
         FailureOr<ArrayAttr> values =

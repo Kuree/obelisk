@@ -76,6 +76,11 @@ RULES: list[tuple[str, str, str]] = [
      "System timing checks", "IEEE 1800 Ch. 31"),
     (r"(?:specify block|parallel path connection)",
      "Specify paths and pulse controls", "IEEE 1800 Ch. 30"),
+    (r"(?:specify paths on conditional primitive strength pairs"
+     r"|simple specify path driver must depend only"
+     r"|edge-sensitive specify path output has no executable"
+     r"|edge-sensitive procedural specify path requires)",
+     "Specify paths and pulse controls", "IEEE 1800 Ch. 30"),
     (r"timing check", "System timing checks", "IEEE 1800 Ch. 31"),
     (r"(?:does not have a time scale defined|DPI time scale must be|\$printtimescale target scope)",
      "Timescale handling", "IEEE 1800 Ch. 3"),
@@ -156,6 +161,34 @@ RULES: list[tuple[str, str, str]] = [
     (r"stable code-unit ID collision", "Code-unit ID collision", "Bug"),
     (r"invalid semantic AST node", "Frontend rejected the AST", "Frontend"),
 
+    # --- diagnosed legal boundaries / source strictness ------------------
+    (r"unexpected selection expression",
+     "Nonstandard selected object in system scope argument", "Strictness"),
+    (r"module instantiation is missing port list parentheses"
+     r"|packed dimensions require a full range specification",
+     "Frontend parse/name error", "Frontend"),
+    (r"no argument provided for '[^']+' format specifier",
+     "Invalid formatted-output arity", "Strictness"),
+    (r"assignment suppression for raw %[uz] requires an explicit byte count",
+     "Raw scan suppression without a target width", "Strictness"),
+    (r"format has \d+ conversions but \d+ destinations",
+     "Invalid formatted-input arity", "Strictness"),
+    (r"invalid operands to binary expression",
+     "Frontend type error", "Frontend"),
+    (r"failed to legalize operation 'slang\.symbol\.parameter'",
+     "Required-parameter automatic root", "Frontend"),
+    (r"primitive table row duplicates a set of inputs with a different"
+     r" specified output value",
+     "Ambiguous UDP truth table", "Strictness"),
+    (r"UDP connection count does not match its ports",
+     "Invalid UDP terminal list", "Strictness"),
+    (r"is a localparam and so cannot be the target of a defparam",
+     "Named-scope parameter override", "Frontend"),
+    (r"cannot reference compilation unit item from within a package",
+     "Illegal package hierarchical reference", "Strictness"),
+    (r"expression given for null port",
+     "Expression connected to null port", "Strictness"),
+
     # --- frontend rejections ----------------------------------------------
     # Slang refused the source outright. Not a lowering gap: the construct never
     # reached Obelisk, so these need a frontend fix (or are genuinely invalid).
@@ -164,7 +197,7 @@ RULES: list[tuple[str, str, str]] = [
      r"|port declaration '[^']*' does not match any port",
      "Port connection mismatch", "Frontend"),
     (r"\bexpected (?:a |an )?(?:declaration name|identifier|expression|enum base type"
-     r"|method name|data type|net type|statement|'\S+')"
+     r"|method name|module name|data type|net type|statement|'\S+')"
      r"|use of undeclared identifier|identifier '[^']*' used before its declaration"
      r"|unknown macro or compiler directive|missing '[^']*' in parameter list",
      "Frontend parse/name error", "Frontend"),
