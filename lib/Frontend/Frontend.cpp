@@ -2031,6 +2031,121 @@ private:
         attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
     }
 
+    if constexpr (std::same_as<T, slang::ast::PulseStyleSymbol>) {
+      attrs.set("pulse_style_kind", builder.getI32IntegerAttr(
+                                        static_cast<int32_t>(
+                                            node.pulseStyleKind)));
+      SmallVector<Attribute> terminals;
+      slang::ast::EvalContext evalContext(node);
+      for (const slang::ast::Expression *expression : node.getTerminals()) {
+        if (!expression || !expression->type)
+          continue;
+        const slang::ast::Symbol *symbol = expression->getSymbolReference();
+        const auto *value =
+            symbol ? symbol->template as_if<slang::ast::ValueSymbol>()
+                   : nullptr;
+        if (!value || !value->getType().hasFixedRange())
+          continue;
+        uint64_t rootWidth = value->getType().getBitWidth();
+        uint64_t width = expression->type->getBitWidth();
+        uint64_t low = 0;
+        if (rootWidth == 0 || width == 0 || width > rootWidth)
+          continue;
+        if (expression->kind == slang::ast::ExpressionKind::ElementSelect ||
+            expression->kind == slang::ast::ExpressionKind::RangeSelect) {
+          std::optional<slang::ConstantRange> selected =
+              expression->evalSelector(evalContext, /*enforceBounds=*/false);
+          if (!selected || selected->left < 0 || selected->right < 0 ||
+              selected->fullWidth() != width)
+            continue;
+          low = static_cast<uint64_t>(selected->lower());
+          if (low > rootWidth || width > rootWidth - low)
+            continue;
+        } else if (width != rootWidth) {
+          continue;
+        }
+        terminals.push_back(builder.getDictionaryAttr({
+            builder.getNamedAttr("path",
+                                 builder.getStringAttr(getSymbolPath(*symbol))),
+            builder.getNamedAttr("root_width",
+                                 builder.getI64IntegerAttr(rootWidth)),
+            builder.getNamedAttr("low", builder.getI64IntegerAttr(low)),
+            builder.getNamedAttr("width", builder.getI64IntegerAttr(width)),
+        }));
+      }
+      attrs.set("pulse_style_terminal_count",
+                builder.getI64IntegerAttr(node.getTerminals().size()));
+      if (terminals.size() == node.getTerminals().size())
+        attrs.set("pulse_style_terminals", builder.getArrayAttr(terminals));
+    }
+
+    if constexpr (std::same_as<T, slang::ast::SpecparamSymbol>) {
+      // IEEE 1800-2017 30.7.1 defines PATHPULSE$ limits as constant timing
+      // data, and 22.7 requires delay values to be rounded to the current time
+      // precision. Freeze the rounded femtoseconds beside the semantic
+      // declaration so path preparation never reparses source text and the
+      // runtime never performs a name or timing-scale lookup.
+      if (node.name.starts_with("PATHPULSE$")) {
+        slang::TimeScale scale;
+        if (const slang::ast::Scope *scope = node.getParentScope())
+          scale = scope->getTimeScale().value_or(slang::TimeScale{});
+        uint64_t unitFs = getFemtoseconds(scale.base);
+        uint64_t precisionFs = getFemtoseconds(scale.precision);
+        auto freezeLimit = [&](const slang::ConstantValue &value)
+            -> std::optional<int64_t> {
+          if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+              unitFs % precisionFs != 0 || !value)
+            return std::nullopt;
+          long double amount = 0;
+          if (value.isInteger()) {
+            const slang::SVInt &integer = value.integer();
+            if (integer.hasUnknown())
+              return std::nullopt;
+            if (integer.isSigned() && integer.isNegative())
+              amount = 0;
+            else {
+              std::optional<uint64_t> converted = integer.as<uint64_t>();
+              if (!converted)
+                return std::nullopt;
+              amount = static_cast<long double>(*converted);
+            }
+          } else if (value.isReal()) {
+            amount = static_cast<long double>(value.real());
+          } else if (value.isShortReal()) {
+            amount = static_cast<long double>(value.shortReal());
+          } else {
+            return std::nullopt;
+          }
+          if (!std::isfinite(amount))
+            return std::nullopt;
+          if (amount < 0)
+            amount = 0;
+          long double steps =
+              amount * static_cast<long double>(unitFs / precisionFs);
+          long double femtoseconds = std::round(steps) * precisionFs;
+          if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
+              femtoseconds > static_cast<long double>(
+                                   std::numeric_limits<int64_t>::max()))
+            return std::nullopt;
+          return static_cast<int64_t>(femtoseconds);
+        };
+        std::optional<int64_t> reject = freezeLimit(node.getValue());
+        std::optional<int64_t> error = reject;
+        if (node.isPathPulse) {
+          reject = freezeLimit(node.getPulseRejectLimit());
+          if (std::optional<int64_t> second =
+                  freezeLimit(node.getPulseErrorLimit()))
+            error = second;
+        }
+        attrs.set("path_pulse_name", builder.getStringAttr(node.name));
+        if (reject && error) {
+          attrs.set("path_pulse_reject_fs",
+                    builder.getI64IntegerAttr(*reject));
+          attrs.set("path_pulse_error_fs", builder.getI64IntegerAttr(*error));
+        }
+      }
+    }
+
     if constexpr (std::same_as<T, slang::ast::InstanceBodySymbol>) {
       slang::TimeScale scale = node.getTimeScale().value_or(slang::TimeScale{});
       attrs.set("time_unit_fs",

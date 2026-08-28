@@ -3699,11 +3699,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (!update.inertialPathDriver)
             return true;
           auto pending = context->inertialPathPending.find(update.inertialSite);
-          return pending != context->inertialPathPending.end() &&
-                 update.inertialPathBit < pending->second.width &&
-                 update.inertialPathGeneration ==
-                     pending->second.generation[static_cast<size_t>(
-                         update.inertialPathBit)];
+          if (pending == context->inertialPathPending.end() ||
+              update.inertialPathBit >= pending->second.width ||
+              update.inertialPathGeneration !=
+                  pending->second.generation[static_cast<size_t>(
+                      update.inertialPathBit)])
+            return false;
+          size_t index = static_cast<size_t>(update.inertialPathBit);
+          if (!pending->second.pulseControlled)
+            return pending->second.scheduledSequence[index] == update.sequence;
+          const auto &live = pending->second.liveSequences[index];
+          return std::find(live.begin(), live.end(), update.sequence) !=
+                 live.end();
         };
         auto completeInertial = [&](const ScheduledNBA &update) {
           if (update.inertialNetBit != UINT64_MAX) {
@@ -3721,20 +3728,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             auto pending =
                 context->inertialPathPending.find(update.inertialSite);
             if (pending != context->inertialPathPending.end() &&
-                update.inertialPathBit < pending->second.width &&
-                update.inertialPathGeneration ==
-                    pending->second.generation[static_cast<size_t>(
-                        update.inertialPathBit)])
-              pending->second
-                  .valid[static_cast<size_t>(update.inertialPathBit)] = 0;
-            if (pending != context->inertialPathPending.end() &&
                 update.inertialPathBit < pending->second.width) {
-              pending->second
-                  .delayed[static_cast<size_t>(update.inertialPathBit)] = 0;
-              pending->second.scheduledDueTime[static_cast<size_t>(
-                  update.inertialPathBit)] = 0;
-              pending->second.scheduledSequence[static_cast<size_t>(
-                  update.inertialPathBit)] = 0;
+              size_t index = static_cast<size_t>(update.inertialPathBit);
+              if (pending->second.pulseControlled) {
+                auto &live = pending->second.liveSequences[index];
+                live.erase(
+                    std::remove(live.begin(), live.end(), update.sequence),
+                    live.end());
+              }
+              if (pending->second.scheduledSequence[index] ==
+                  update.sequence) {
+                pending->second.valid[index] = 0;
+                pending->second.delayed[index] = 0;
+                pending->second.scheduledDueTime[index] = 0;
+                pending->second.scheduledSequence[index] = 0;
+              }
             }
             return;
           }

@@ -80,6 +80,19 @@ def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Group<Compilation_Group>, MetaVarName<"<auto|off|on>">,
   Values<"auto,off,on">,
   HelpText<"Select direct static-state and narrow-NBA specialization">;
+def pulse_reject_percent_EQ : Joined<["--"], "pulse-reject-percent=">,
+  Group<Compilation_Group>, MetaVarName<"<0..100>">,
+  HelpText<"Set the global Clause 30.7 path-pulse reject percentage">;
+def pulse_error_percent_EQ : Joined<["--"], "pulse-error-percent=">,
+  Group<Compilation_Group>, MetaVarName<"<0..100>">,
+  HelpText<"Set the global Clause 30.7 path-pulse error percentage">;
+def pulse_style_EQ : Joined<["--"], "pulse-style=">,
+  Group<Compilation_Group>, MetaVarName<"<onevent|ondetect>">,
+  Values<"onevent,ondetect">,
+  HelpText<"Override specify pulse style globally">;
+def cancelled_pulses_EQ : Joined<["--"], "cancelled-pulses=">,
+  Group<Compilation_Group>, MetaVarName<"<hide|show>">, Values<"hide,show">,
+  HelpText<"Override specify negative-pulse display globally">;
 def fno_lto : Flag<["-"], "fno-lto">, Group<Compilation_Group>,
   HelpText<"Disable cross-partition LTO and link the object runtime archive">;
 def flto : Flag<["-"], "flto">, Group<Compilation_Group>, Flags<[HelpHidden]>,

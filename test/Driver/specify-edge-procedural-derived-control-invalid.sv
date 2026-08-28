@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not obelisk -emit-sim %s -o - 2>&1 | FileCheck %s
 module derived_control(input wire clock, enable, data, output logic q);
   always @(posedge (clock & enable))
     q = data;
@@ -6,4 +6,4 @@ module derived_control(input wire clock, enable, data, output logic q);
     (posedge clock => (q +: data)) = 2;
   endspecify
 endmodule
-// CHECK: error: edge-sensitive procedural specify path requires a direct single-source event control
+// CHECK: edge-sensitive procedural specify path source is not observed by a direct event control or implicit sensitivity

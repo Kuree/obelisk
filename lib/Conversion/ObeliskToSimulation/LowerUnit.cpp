@@ -4640,6 +4640,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     };
     SmallVector<Source, 2> sources;
     std::array<int64_t, 12> delays;
+    std::array<int64_t, 12> pulseReject;
+    std::array<int64_t, 12> pulseError;
     std::array<int64_t, 3> legacyDelays;
     unsigned delayCount = 0;
     bool edgeSensitive = false;
@@ -4660,6 +4662,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     uint64_t siteID = 0;
     bool full = false;
     bool masked = false;
+    bool pulseOnDetect = false;
+    bool pulseShowCancelled = false;
   };
   SmallVector<TimingPathRuleState, 4> allTimingPathRules;
   auto readTimingPathInput = [&](Value input) -> Value {
@@ -4693,6 +4697,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
       auto delays =
           rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
+      auto pulseReject =
+          rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject")
+               : DenseI64ArrayAttr{};
+      auto pulseError = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error")
+                             : DenseI64ArrayAttr{};
+      auto pulseOnDetect =
+          rule ? rule.getAs<BoolAttr>("pulse_on_detect") : BoolAttr{};
+      auto pulseShowCancelled =
+          rule ? rule.getAs<BoolAttr>("pulse_show_cancelled") : BoolAttr{};
       auto edgeSensitive =
           rule ? rule.getAs<BoolAttr>("edge_sensitive") : BoolAttr{};
       auto edgeIdentifier =
@@ -4705,7 +4718,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       if (!rule || !polarity || polarity.getInt() < 0 ||
           polarity.getInt() > 2 || !delays ||
           (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-           delays.size() != 6 && delays.size() != 12) ||
+          delays.size() != 6 && delays.size() != 12) ||
+          (static_cast<bool>(pulseReject) != static_cast<bool>(pulseError)) ||
+          (pulseReject && pulseReject.size() != delays.size()) ||
+          (pulseError && pulseError.size() != delays.size()) ||
           edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
           edgePolarityValue < 0 || edgePolarityValue > 2 ||
           (!(edgeSensitive && edgeSensitive.getValue()) &&
@@ -4755,6 +4771,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           state.proceduralWakeKind < 0 || state.proceduralWakeKind > 3)
         return function.emitError("timing path actor kind does not match rule");
       state.edgeSensitive = edgeSensitive && edgeSensitive.getValue();
+      state.pulseOnDetect = pulseOnDetect && pulseOnDetect.getValue();
+      state.pulseShowCancelled =
+          pulseShowCancelled && pulseShowCancelled.getValue();
       state.edgeIdentifier = static_cast<int32_t>(edgeIdentifierValue);
       state.edgePolarity = static_cast<int32_t>(edgePolarityValue);
       state.masked = !inputLows.empty() || rule.get("output_low") ||
@@ -4858,54 +4877,35 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                         : delayValues.size() == 2 ? std::min(rise, fall)
                                                   : delayValues[2];
       state.legacyDelays = {rise, fall, turnoff};
-      if (delayValues.size() == 1) {
-        state.delays.fill(delayValues[0]);
-      } else if (delayValues.size() == 2) {
-        state.delays = {rise,
-                        fall,
-                        rise,
-                        rise,
-                        fall,
-                        fall,
-                        rise,
-                        rise,
-                        fall,
-                        fall,
-                        std::max(rise, fall),
-                        std::min(rise, fall)};
-      } else if (delayValues.size() == 3) {
-        int64_t z = delayValues[2];
-        state.delays = {rise,
-                        fall,
-                        z,
-                        rise,
-                        z,
-                        fall,
-                        std::min(rise, z),
-                        rise,
-                        std::min(fall, z),
-                        fall,
-                        z,
-                        std::min(rise, fall)};
-      } else if (delayValues.size() == 6) {
-        int64_t t01 = delayValues[0], t10 = delayValues[1];
-        int64_t t0z = delayValues[2], tz1 = delayValues[3];
-        int64_t t1z = delayValues[4], tz0 = delayValues[5];
-        state.delays = {t01,
-                        t10,
-                        t0z,
-                        tz1,
-                        t1z,
-                        tz0,
-                        std::min(t01, t0z),
-                        std::max(t01, tz1),
-                        std::min(t10, t1z),
-                        std::max(t10, tz0),
-                        std::max(t1z, t0z),
-                        std::min(tz1, tz0)};
-      } else {
-        llvm::copy(delayValues, state.delays.begin());
-      }
+      auto normalizeTransitionValues = [](ArrayRef<int64_t> values,
+                                          std::array<int64_t, 12> &result) {
+        int64_t v1 = values[0];
+        int64_t v2 = values.size() == 1 ? v1 : values[1];
+        if (values.size() == 1)
+          result.fill(v1);
+        else if (values.size() == 2)
+          result = {v1, v2, v1, v1, v2, v2, v1, v1, v2, v2,
+                    std::max(v1, v2), std::min(v1, v2)};
+        else if (values.size() == 3) {
+          int64_t v3 = values[2];
+          result = {v1, v2, v3, v1, v3, v2, std::min(v1, v3), v1,
+                    std::min(v2, v3), v2, v3, std::min(v1, v2)};
+        } else if (values.size() == 6) {
+          int64_t v3 = values[2], v4 = values[3];
+          int64_t v5 = values[4], v6 = values[5];
+          result = {v1, v2, v3, v4, v5, v6, std::min(v1, v3),
+                    std::max(v1, v4), std::min(v2, v5), std::max(v2, v6),
+                    std::max(v5, v3), std::min(v4, v6)};
+        } else
+          llvm::copy(values, result.begin());
+      };
+      normalizeTransitionValues(delayValues, state.delays);
+      normalizeTransitionValues(
+          pulseReject ? pulseReject.asArrayRef() : delayValues,
+          state.pulseReject);
+      normalizeTransitionValues(
+          pulseError ? pulseError.asArrayRef() : delayValues,
+          state.pulseError);
       if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
         state.conditionKind = static_cast<int32_t>(kind.getInt());
       if (auto group = rule.getAs<IntegerAttr>("condition_group"))
@@ -5281,6 +5281,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       TimingPathMaskedPlan plan;
       plan.proceduralStorage = timingPathRules.front().proceduralStorage;
       plan.siteID = timingPathRules.front().siteID;
+      if (plan.proceduralStorage)
+        plan.qualificationTime = schedulerNow;
       if (llvm::any_of(timingPathRules, [&](const TimingPathRuleState &rule) {
             return rule.proceduralStorage != plan.proceduralStorage ||
                    rule.siteID != plan.siteID;
@@ -5288,7 +5290,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         return function.emitError("mixed procedural timing path sites");
       plan.transitionIndependent =
           llvm::all_of(timingPathRules, [](const TimingPathRuleState &rule) {
-            return llvm::all_equal(rule.delays);
+            return llvm::all_equal(rule.delays) &&
+                   llvm::all_equal(rule.pulseReject) &&
+                   llvm::all_equal(rule.pulseError);
+          }) &&
+          llvm::all_of(timingPathRules, [&](const TimingPathRuleState &rule) {
+            const TimingPathRuleState &first = timingPathRules.front();
+            return rule.delays.front() == first.delays.front() &&
+                   rule.pulseReject.front() == first.pulseReject.front() &&
+                   rule.pulseError.front() == first.pulseError.front() &&
+                   rule.pulseOnDetect == first.pulseOnDetect &&
+                   rule.pulseShowCancelled == first.pulseShowCancelled;
           });
       plan.coverageMask = integerZero(destinationMaskType);
       for (auto [rule, mask] : llvm::zip(timingPathRules, applicableMasks)) {
@@ -5297,23 +5309,59 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (rule.edgeSensitive)
           plan.edgePending.push_back(rule.edgePending);
       }
-      SmallVector<int64_t, 12> distinctDelays;
+      using PulsePolicy =
+          std::tuple<int64_t, int64_t, int64_t, bool, bool>;
+      // IEEE 1800-2017 30.7 associates reject/error limits with the delay
+      // forming the trailing edge, and 30.7.4 makes on-detect/showcancelled
+      // part of that output event policy. Coalesce only identical complete
+      // policies; grouping merely by propagation delay would lose semantics.
+      SmallVector<PulsePolicy, 12> distinctPolicies;
+      unsigned policyTransitionCount = plan.transitionIndependent ? 1 : 12;
       for (const TimingPathRuleState &rule : timingPathRules)
-        llvm::append_range(distinctDelays, rule.delays);
-      llvm::sort(distinctDelays);
-      distinctDelays.erase(
-          std::unique(distinctDelays.begin(), distinctDelays.end()),
-          distinctDelays.end());
-      plan.groups.resize(distinctDelays.size());
-      for (auto [index, delay] : llvm::enumerate(distinctDelays)) {
+        for (unsigned transition = 0; transition != policyTransitionCount;
+             ++transition)
+          distinctPolicies.emplace_back(
+              rule.delays[transition], rule.pulseReject[transition],
+              rule.pulseError[transition], rule.pulseOnDetect,
+              rule.pulseShowCancelled);
+      llvm::sort(distinctPolicies);
+      distinctPolicies.erase(
+          std::unique(distinctPolicies.begin(), distinctPolicies.end()),
+          distinctPolicies.end());
+      plan.groups.resize(distinctPolicies.size());
+      for (auto [index, policy] : llvm::enumerate(distinctPolicies)) {
         plan.groups[index].masks.fill(integerZero(destinationMaskType));
-        Value ticks = arith::ConstantOp::create(
-            builder, function.getLoc(), builder.getI64Type(),
-            builder.getI64IntegerAttr(delay));
-        plan.groups[index].delay = sim::SimTimeScaleOp::create(
-            builder, function.getLoc(),
-            sim::TimeType::get(function.getContext()), ticks,
-            builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+        auto timeValue = [&](int64_t ticks) {
+          Value value = arith::ConstantOp::create(
+              builder, function.getLoc(), builder.getI64Type(),
+              builder.getI64IntegerAttr(ticks));
+          return Value(sim::SimTimeScaleOp::create(
+              builder, function.getLoc(),
+              sim::TimeType::get(function.getContext()), value,
+              builder.getI64IntegerAttr(1), builder.getBoolAttr(false)));
+        };
+        plan.groups[index].delay = timeValue(std::get<0>(policy));
+        plan.groups[index].delayTicks = std::get<0>(policy);
+        plan.groups[index].pulseReject = std::get<1>(policy);
+        plan.groups[index].pulseError = std::get<2>(policy);
+        plan.groups[index].pulseOnDetect = std::get<3>(policy);
+        plan.groups[index].pulseShowCancelled = std::get<4>(policy);
+        plan.groups[index].pulseControlled =
+            std::get<1>(policy) != std::get<0>(policy) ||
+            std::get<2>(policy) != std::get<0>(policy) ||
+            std::get<3>(policy) || std::get<4>(policy);
+      }
+      bool batchPulseControlled = llvm::any_of(
+          plan.groups, [](const TimingPathDelayGroup &group) {
+            return group.pulseControlled;
+          });
+      if (batchPulseControlled) {
+        // IEEE 1800-2017 30.7 classifies a pulse across its leading and
+        // trailing transitions, which can select different static groups.
+        // Make the mode batch-wide so mixed styled/unstyled packed paths keep
+        // one coherent pending calendar. Ordinary batches retain minimal IR.
+        for (TimingPathDelayGroup &group : plan.groups)
+          group.pulseControlled = true;
       }
       unsigned transitionCount = plan.transitionIndependent ? 1 : 12;
       for (unsigned transition = 0; transition != transitionCount;
@@ -5336,10 +5384,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       builder.getIntegerAttr(
                           destinationMaskType,
                           APInt::getAllOnes(destinationMaskType.getWidth())))));
+          PulsePolicy policy{
+              timingPathRules[index].delays[transition],
+              timingPathRules[index].pulseReject[transition],
+              timingPathRules[index].pulseError[transition],
+              timingPathRules[index].pulseOnDetect,
+              timingPathRules[index].pulseShowCancelled};
           unsigned group = static_cast<unsigned>(
-              llvm::lower_bound(distinctDelays,
-                                timingPathRules[index].delays[transition]) -
-              distinctDelays.begin());
+              llvm::lower_bound(distinctPolicies, policy) -
+              distinctPolicies.begin());
           plan.groups[group].masks[transition] = arith::OrIOp::create(
               builder, function.getLoc(), plan.groups[group].masks[transition],
               available);

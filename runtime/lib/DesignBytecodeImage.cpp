@@ -522,7 +522,8 @@ bool validIntrinsic(const Image &image, const Function &function,
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
     auto value = input(0);
-    if (signature.flags != 0 || site.inputCount != 14 ||
+    if (signature.flags != 0 ||
+        (site.inputCount != 14 && site.inputCount != 17) ||
         site.outputCount != 0 || !numeric(value) || !handle(input(1)))
       return false;
     for (unsigned index = 2; index != 6; ++index) {
@@ -531,14 +532,20 @@ bool validIntrinsic(const Image &image, const Function &function,
           mask->width != value->width)
         return false;
     }
-    for (unsigned index = 6; index != 14; ++index)
+    unsigned scalarEnd = site.inputCount == 14 ? 14 : 16;
+    for (unsigned index = 6; index != scalarEnd; ++index)
       if (!bits(input(index), 64))
         return false;
-    return true;
+    if (site.inputCount == 14)
+      return true;
+    auto transitions = input(16);
+    return transitions && transitions->kind == OBELISK_RT_DBREG_BITS &&
+           transitions->width == value->width * 12;
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
     auto value = input(0);
-    if (signature.flags != 0 || site.inputCount != 15 ||
+    if (signature.flags != 0 ||
+        (site.inputCount != 15 && site.inputCount != 19) ||
         site.outputCount != 0 || !numeric(value) || !handle(input(1)))
       return false;
     for (unsigned index = 2; index != 7; ++index) {
@@ -547,10 +554,15 @@ bool validIntrinsic(const Image &image, const Function &function,
           mask->width != value->width)
         return false;
     }
-    for (unsigned index = 7; index != 15; ++index)
+    unsigned scalarEnd = site.inputCount == 15 ? 15 : 18;
+    for (unsigned index = 7; index != scalarEnd; ++index)
       if (!bits(input(index), 64))
         return false;
-    return true;
+    if (site.inputCount == 15)
+      return true;
+    auto transitions = input(18);
+    return transitions && transitions->kind == OBELISK_RT_DBREG_BITS &&
+           transitions->width == value->width * 12;
   }
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&

@@ -622,6 +622,7 @@ struct InertialDriverPending {
 struct InertialPathPending {
   uint64_t destination = UINT64_MAX;
   uint64_t width = 0;
+  bool pulseControlled = false;
   uint32_t nextGroup = 0;
   uint32_t groupCount = 0;
   std::vector<uint64_t> generation;
@@ -631,8 +632,13 @@ struct InertialPathPending {
   std::vector<uint8_t> delayed;
   std::vector<uint8_t> needsSchedule;
   std::vector<uint64_t> candidateDelay;
+  std::vector<uint64_t> candidatePulseReject;
+  std::vector<uint64_t> candidatePulseError;
+  std::vector<uint8_t> candidatePulseFlags;
+  std::vector<uint8_t> candidateFromSymbol;
   std::vector<uint64_t> scheduledDueTime;
   std::vector<uint64_t> scheduledSequence;
+  std::vector<std::vector<uint64_t>> liveSequences;
 };
 
 struct InertialNetPending {

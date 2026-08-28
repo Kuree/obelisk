@@ -749,8 +749,26 @@ LogicalResult SimDriverDriveInertialPathOp::verify() {
   if (!sameWidth(getActiveMask()) || !sameWidth(getRiseMask()) ||
       !sameWidth(getFallMask()) || !sameWidth(getTurnoffMask()))
     return emitOpError("all masks must match the packed driven width");
+  if (Value transitions = getPulseTransitionMasks()) {
+    auto type = dyn_cast<IntegerType>(transitions.getType());
+    if (!width || !type || type.getWidth() != *width * 12)
+      return emitOpError(
+          "packed pulse transition masks must have twelve times the driven "
+          "width");
+  }
   if (getGroupCount() == 0 || getGroup() >= getGroupCount())
     return emitOpError("group index must be within a nonempty batch");
+  bool defaultReject = getPulseReject() == UINT64_MAX;
+  bool defaultError = getPulseError() == UINT64_MAX;
+  if (!getPulseTransitionMasks() &&
+      (!defaultReject || !defaultError || getPulseOnDetect() ||
+       getPulseShowCancelled()))
+    return emitOpError(
+        "explicit pulse policy requires packed pulse transition masks");
+  if (defaultReject != defaultError ||
+      (!defaultReject && getPulseError() < getPulseReject()))
+    return emitOpError("pulse limits must be defaulted or nonnegative with "
+                       "error not less than reject");
   return success();
 }
 
@@ -764,8 +782,26 @@ LogicalResult SimRefStoreInertialPathOp::verify() {
       !sameWidth(getRiseMask()) || !sameWidth(getFallMask()) ||
       !sameWidth(getTurnoffMask()))
     return emitOpError("all masks must match the packed stored width");
+  if (Value transitions = getPulseTransitionMasks()) {
+    auto type = dyn_cast<IntegerType>(transitions.getType());
+    if (!width || !type || type.getWidth() != *width * 12)
+      return emitOpError(
+          "packed pulse transition masks must have twelve times the stored "
+          "width");
+  }
   if (getGroupCount() == 0 || getGroup() >= getGroupCount())
     return emitOpError("group index must be within a nonempty batch");
+  bool defaultReject = getPulseReject() == UINT64_MAX;
+  bool defaultError = getPulseError() == UINT64_MAX;
+  if (!getPulseTransitionMasks() &&
+      (!defaultReject || !defaultError || getPulseOnDetect() ||
+       getPulseShowCancelled()))
+    return emitOpError(
+        "explicit pulse policy requires packed pulse transition masks");
+  if (defaultReject != defaultError ||
+      (!defaultReject && getPulseError() < getPulseReject()))
+    return emitOpError("pulse limits must be defaulted or nonnegative with "
+                       "error not less than reject");
   return success();
 }
 LogicalResult SimLogicShiftOp::verify() {

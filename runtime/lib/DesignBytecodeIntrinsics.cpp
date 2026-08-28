@@ -2431,14 +2431,45 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       masks[index] =
           pack(readLogic(frame.data, layoutAt(image, frame.function,
                                               inputRegister(index + 2))));
-    return obelisk_rt_v1_scheduler_inertial_path_driver(
+    if (site.inputCount == 14)
+      return obelisk_rt_v1_scheduler_inertial_path_driver(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+          context->execution->state_bit_count, stable, value.width, *codeUnit,
+          static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
+          static_cast<uint32_t>(*groupCount), static_cast<uint32_t>(*flags),
+          *rise, *fall, *turnoff, packedValue.data(), packedUnknown.data(),
+          masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data());
+    auto pulseReject = scalar(14);
+    auto pulseError = scalar(15);
+    if (!pulseReject || !pulseError)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Logic pulseTransitions = readLogic(
+        frame.data, layoutAt(image, frame.function, inputRegister(16)));
+    bool exactTransitions =
+        (*flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
+    if (!exactTransitions || pulseTransitions.width != value.width * 12)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint8_t> packedPulseTransitions;
+    if (exactTransitions) {
+      packedPulseTransitions.assign(
+          static_cast<size_t>((pulseTransitions.width + 7) / 8), 0);
+      for (uint64_t bitIndex = 0; bitIndex != pulseTransitions.width;
+           ++bitIndex)
+        if (bit(pulseTransitions.value, bitIndex))
+          packedPulseTransitions[static_cast<size_t>(bitIndex / 8)] |=
+              static_cast<uint8_t>(1u << (bitIndex % 8));
+    }
+    return obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, value.width, *codeUnit,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
         static_cast<uint32_t>(*groupCount), static_cast<uint32_t>(*flags),
-        *rise, *fall, *turnoff, packedValue.data(), packedUnknown.data(),
-        masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data());
+        *rise, *fall, *turnoff, *pulseReject, *pulseError, packedValue.data(),
+        packedUnknown.data(), masks[0].data(), masks[1].data(),
+        masks[2].data(), masks[3].data(),
+        exactTransitions ? packedPulseTransitions.data() : nullptr);
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
     if (!context || !context->execution)
@@ -2496,15 +2527,49 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       masks[index] =
           pack(readLogic(frame.data, layoutAt(image, frame.function,
                                               inputRegister(index + 2))));
-    return obelisk_rt_v1_scheduler_inertial_path_storage(
+    if (site.inputCount == 15)
+      return obelisk_rt_v1_scheduler_inertial_path_storage(
+          context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
+          reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+          context->execution->state_bit_count, stable, value.width, *siteID,
+          static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
+          static_cast<uint32_t>(*groupCount),
+          static_cast<uint32_t>(*nonblocking), *rise, *fall, *turnoff,
+          packedValue.data(), packedUnknown.data(), masks[0].data(),
+          masks[1].data(), masks[2].data(), masks[3].data(), masks[4].data());
+    auto pulseFlags = scalar(15);
+    auto pulseReject = scalar(16);
+    auto pulseError = scalar(17);
+    if (!pulseFlags || !pulseReject || !pulseError ||
+        *pulseFlags > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Logic pulseTransitions = readLogic(
+        frame.data, layoutAt(image, frame.function, inputRegister(18)));
+    bool exactTransitions =
+        (*pulseFlags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
+    if (!exactTransitions || pulseTransitions.width != value.width * 12)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<uint8_t> packedPulseTransitions;
+    if (exactTransitions) {
+      packedPulseTransitions.assign(
+          static_cast<size_t>((pulseTransitions.width + 7) / 8), 0);
+      for (uint64_t bitIndex = 0; bitIndex != pulseTransitions.width;
+           ++bitIndex)
+        if (bit(pulseTransitions.value, bitIndex))
+          packedPulseTransitions[static_cast<size_t>(bitIndex / 8)] |=
+              static_cast<uint8_t>(1u << (bitIndex % 8));
+    }
+    return obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, value.width, *siteID,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
         static_cast<uint32_t>(*groupCount), static_cast<uint32_t>(*nonblocking),
-        *rise, *fall, *turnoff, packedValue.data(), packedUnknown.data(),
+        static_cast<uint32_t>(*pulseFlags), *rise, *fall, *turnoff,
+        *pulseReject, *pulseError, packedValue.data(), packedUnknown.data(),
         masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data(),
-        masks[4].data());
+        masks[4].data(),
+        exactTransitions ? packedPulseTransitions.data() : nullptr);
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     if (!context || !context->execution)

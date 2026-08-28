@@ -362,21 +362,49 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (auto op =
           dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
+    bool pulseControlled = static_cast<bool>(op.getPulseTransitionMasks());
     uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
     uint32_t component = emitU64Constant(plan, op.getComponent());
     uint32_t group = emitU64Constant(plan, op.getGroup());
     uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
+    uint32_t pulseReject = pulseControlled
+                               ? emitU64Constant(plan, op.getPulseReject())
+                               : 0;
+    uint32_t pulseError = pulseControlled
+                              ? emitU64Constant(plan, op.getPulseError())
+                              : 0;
     uint32_t flags =
         emitU64Constant(plan, (op.getDeferResolution()
                                    ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                                    : 0) |
                                   (op->hasAttr("obelisk_sim.user_net_raw_drive")
                                        ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
+                                       : 0) |
+                                  (op.getPulseOnDetect()
+                                       ? OBELISK_RT_INERTIAL_PATH_ON_DETECT
+                                       : 0) |
+                                  (op.getPulseShowCancelled()
+                                       ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                                       : 0) |
+                                  (op.getPulseTransitionMasks()
+                                       ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
                                        : 0));
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
         group == kInvalidRegister || groupCount == kInvalidRegister ||
+        (pulseControlled && (pulseReject == kInvalidRegister ||
+                             pulseError == kInvalidRegister)) ||
         flags == kInvalidRegister)
       return op.emitOpError("cannot encode inertial path identity");
+    if (!pulseControlled)
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicInertialPathDriver,
+          {reg(plan, op.getValue()), reg(plan, op.getDriver()),
+           reg(plan, op.getActiveMask()), reg(plan, op.getRiseMask()),
+           reg(plan, op.getFallMask()), reg(plan, op.getTurnoffMask()),
+           reg(plan, op.getRiseDelay()), reg(plan, op.getFallDelay()),
+           reg(plan, op.getTurnoffDelay()), codeUnit, component, group,
+           groupCount, flags},
+          {});
     return emitIntrinsicRegisters(
         plan, kIntrinsicInertialPathDriver,
         {reg(plan, op.getValue()), reg(plan, op.getDriver()),
@@ -384,19 +412,50 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          reg(plan, op.getFallMask()), reg(plan, op.getTurnoffMask()),
          reg(plan, op.getRiseDelay()), reg(plan, op.getFallDelay()),
          reg(plan, op.getTurnoffDelay()), codeUnit, component, group,
-         groupCount, flags},
+         groupCount, flags, pulseReject, pulseError,
+         reg(plan, op.getPulseTransitionMasks()
+                       ? op.getPulseTransitionMasks()
+                       : op.getActiveMask())},
         {});
   }
   if (auto op = dyn_cast<sim::SimRefStoreInertialPathOp>(operation)) {
+    bool pulseControlled = static_cast<bool>(op.getPulseTransitionMasks());
     uint32_t siteID = emitU64Constant(plan, op.getSiteId());
     uint32_t component = emitU64Constant(plan, op.getComponent());
     uint32_t group = emitU64Constant(plan, op.getGroup());
     uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
     uint32_t nonblocking = emitU64Constant(plan, op.getNonblocking());
+    uint32_t pulseReject = pulseControlled
+                               ? emitU64Constant(plan, op.getPulseReject())
+                               : 0;
+    uint32_t pulseError = pulseControlled
+                              ? emitU64Constant(plan, op.getPulseError())
+                              : 0;
+    uint32_t pulseFlags = emitU64Constant(
+        plan, (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+                  (op.getPulseShowCancelled()
+                       ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                       : 0) |
+                  (op.getPulseTransitionMasks()
+                       ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
+                       : 0));
     if (siteID == kInvalidRegister || component == kInvalidRegister ||
         group == kInvalidRegister || groupCount == kInvalidRegister ||
-        nonblocking == kInvalidRegister)
+        nonblocking == kInvalidRegister ||
+        (pulseControlled && (pulseReject == kInvalidRegister ||
+                             pulseError == kInvalidRegister)) ||
+        pulseFlags == kInvalidRegister)
       return op.emitOpError("cannot encode inertial path storage identity");
+    if (!pulseControlled)
+      return emitIntrinsicRegisters(
+          plan, kIntrinsicInertialPathStorage,
+          {reg(plan, op.getValue()), reg(plan, op.getReference()),
+           reg(plan, op.getWriteMask()), reg(plan, op.getActiveMask()),
+           reg(plan, op.getRiseMask()), reg(plan, op.getFallMask()),
+           reg(plan, op.getTurnoffMask()), reg(plan, op.getRiseDelay()),
+           reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()),
+           siteID, component, group, groupCount, nonblocking},
+          {});
     return emitIntrinsicRegisters(
         plan, kIntrinsicInertialPathStorage,
         {reg(plan, op.getValue()), reg(plan, op.getReference()),
@@ -404,7 +463,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          reg(plan, op.getRiseMask()), reg(plan, op.getFallMask()),
          reg(plan, op.getTurnoffMask()), reg(plan, op.getRiseDelay()),
          reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()), siteID,
-         component, group, groupCount, nonblocking},
+         component, group, groupCount, nonblocking, pulseFlags, pulseReject,
+         pulseError,
+         reg(plan, op.getPulseTransitionMasks()
+                       ? op.getPulseTransitionMasks()
+                       : op.getActiveMask())},
         {});
   }
   if (auto op =

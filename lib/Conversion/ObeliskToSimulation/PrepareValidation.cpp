@@ -201,10 +201,9 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
       return;
     }
     if (isa<semantic::SVPulseStyleSymbolOp>(op)) {
-      emitError(getSemanticLocation(op))
-          << "IEEE 1800-2017 Clause 30 specify pulse controls are retained "
-             "in semantic IR but are not executable yet";
-      invalid = true;
+      // IEEE 1800-2017 30.7.4 pulse-style declarations are consumed while
+      // preparing the owning path rules. They deliberately produce no
+      // standalone runtime actor or lookup table.
       return;
     }
     if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {

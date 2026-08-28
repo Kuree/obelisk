@@ -636,6 +636,12 @@ private:
   struct TimingPathDelayGroup {
     std::array<::mlir::Value, 12> masks;
     ::mlir::Value delay;
+    int64_t delayTicks = 0;
+    int64_t pulseReject = -1;
+    int64_t pulseError = -1;
+    bool pulseOnDetect = false;
+    bool pulseShowCancelled = false;
+    bool pulseControlled = false;
   };
   struct TimingPathMaskedPlan {
     ::mlir::Value coverageMask;
@@ -645,6 +651,9 @@ private:
     /// without materializing twelve wide symbol-transition masks.
     bool transitionIndependent = false;
     bool proceduralStorage = false;
+    /// Scheduler time at which an edge-sensitive procedural source qualified.
+    /// Delayed destination writers subtract elapsed time from the path delay.
+    ::mlir::Value qualificationTime;
     uint64_t siteID = 0;
     /// Qualification state for edge rules in this driver-local plan. The
     /// lvalue write consumes only bits that actually make a destination

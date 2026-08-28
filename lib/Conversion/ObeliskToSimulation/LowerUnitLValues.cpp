@@ -982,6 +982,67 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         Value onesMask =
             arith::ConstantOp::create(builder, location, maskType,
                                       builder.getIntegerAttr(maskType, ones));
+        auto packPulseTransitions = [&](const std::array<Value, 12> &masks) {
+          IntegerType packedType = builder.getIntegerType(*width * 12);
+          if (llvm::all_equal(masks)) {
+            APInt replicate = APInt::getZero(packedType.getWidth());
+            for (unsigned transition = 0; transition != 12; ++transition)
+              replicate.setBit(transition * *width);
+            Value extended = arith::ExtUIOp::create(
+                builder, location, packedType, masks.front());
+            Value factor = arith::ConstantOp::create(
+                builder, location, packedType,
+                builder.getIntegerAttr(packedType, replicate));
+            return Value(arith::MulIOp::create(builder, location, extended,
+                                               factor));
+          }
+          Value packed = arith::ConstantOp::create(
+              builder, location, packedType,
+              builder.getIntegerAttr(packedType, 0));
+          for (auto [transition, mask] : llvm::enumerate(masks)) {
+            Value extended = arith::ExtUIOp::create(builder, location,
+                                                    packedType, mask);
+            if (transition != 0) {
+              Value shift = arith::ConstantOp::create(
+                  builder, location, packedType,
+                  builder.getIntegerAttr(packedType, transition * *width));
+              extended = arith::ShLIOp::create(builder, location, extended,
+                                               shift);
+            }
+            packed = arith::OrIOp::create(builder, location, packed, extended);
+          }
+          return packed;
+        };
+        auto remainingPathDelay = [&](const TimingPathDelayGroup &group) {
+          if (!storagePlan->qualificationTime)
+            return group.delay;
+          Value now = sim::SimTimeNowOp::create(
+              builder, location, builder.getI64Type(),
+              function.getBody().front().getArgument(0));
+          Value elapsed = arith::SubIOp::create(
+              builder, location, now, storagePlan->qualificationTime);
+          Value declared = arith::ConstantOp::create(
+              builder, location, builder.getI64Type(),
+              builder.getI64IntegerAttr(group.delayTicks));
+          Value expired = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::uge, elapsed, declared);
+          Value remaining = arith::SubIOp::create(builder, location, declared,
+                                                  elapsed);
+          remaining = arith::SelectOp::create(
+              builder, location, expired,
+              arith::ConstantOp::create(builder, location,
+                                        builder.getI64Type(),
+                                        builder.getI64IntegerAttr(0)),
+              remaining);
+          // IEEE 1800-2017 30.4 and 30.5 measure a module-path delay from
+          // the qualifying source transition. A procedural destination may
+          // execute after an explicit delay, so schedule only the unelapsed
+          // remainder instead of incorrectly adding both delays.
+          return Value(sim::SimTimeScaleOp::create(
+              builder, location, sim::TimeType::get(function.getContext()),
+              remaining, builder.getI64IntegerAttr(1),
+              builder.getBoolAttr(false)));
+        };
         Value writeMask = proceduralTimingWriteMask.value_or(onesMask);
         auto consume = [&](Value changed) {
           Value consumed =
@@ -1003,15 +1064,29 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           consume(changed);
           for (auto [index, group] : llvm::enumerate(storagePlan->groups)) {
             Value active = group.masks.front();
+            Value pulseTransitions = group.pulseControlled
+                                         ? packPulseTransitions(group.masks)
+                                         : Value{};
+            Value delay = remainingPathDelay(group);
             sim::SimRefStoreInertialPathOp::create(
                 builder, location, destination.reference, published, writeMask,
-                storagePlan->coverageMask, active, active, active, group.delay,
-                group.delay, group.delay,
+                storagePlan->coverageMask, active, active, active,
+                pulseTransitions, delay, delay, delay,
                 builder.getI64IntegerAttr(storagePlan->siteID),
                 builder.getI32IntegerAttr(0),
                 builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
                 builder.getI32IntegerAttr(groupCount),
-                builder.getBoolAttr(nonblocking));
+                builder.getBoolAttr(nonblocking),
+                builder.getI64IntegerAttr(group.pulseControlled
+                                              ? group.pulseReject
+                                              : -1),
+                builder.getI64IntegerAttr(group.pulseControlled
+                                              ? group.pulseError
+                                              : -1),
+                builder.getBoolAttr(group.pulseControlled &&
+                                    group.pulseOnDetect),
+                builder.getBoolAttr(group.pulseControlled &&
+                                    group.pulseShowCancelled));
           }
           return success();
         }
@@ -1073,15 +1148,29 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             add(2, transition);
           for (unsigned transition : {6u, 8u, 11u})
             add(0, transition);
+          Value pulseTransitions = group.pulseControlled
+                                       ? packPulseTransitions(group.masks)
+                                       : Value{};
+          Value delay = remainingPathDelay(group);
           sim::SimRefStoreInertialPathOp::create(
               builder, location, destination.reference, published, writeMask,
               storagePlan->coverageMask, masks[0], masks[1], masks[2],
-              group.delay, group.delay, group.delay,
+              pulseTransitions, delay, delay, delay,
               builder.getI64IntegerAttr(storagePlan->siteID),
               builder.getI32IntegerAttr(0),
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
               builder.getI32IntegerAttr(groupCount),
-              builder.getBoolAttr(nonblocking));
+              builder.getBoolAttr(nonblocking),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseReject
+                                            : -1),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseError
+                                            : -1),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseOnDetect),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseShowCancelled));
         }
         return success();
       }
@@ -1184,6 +1273,41 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         Value onesMask =
             arith::ConstantOp::create(builder, location, maskType,
                                       builder.getIntegerAttr(maskType, ones));
+        auto packDriverPulseTransitions =
+            [&](const std::array<Value, 12> &masks) {
+              IntegerType packedType =
+                  builder.getIntegerType(*drivenWidth * 12);
+              if (llvm::all_equal(masks)) {
+                APInt replicate = APInt::getZero(packedType.getWidth());
+                for (unsigned transition = 0; transition != 12; ++transition)
+                  replicate.setBit(transition * *drivenWidth);
+                Value extended = arith::ExtUIOp::create(
+                    builder, location, packedType, masks.front());
+                Value factor = arith::ConstantOp::create(
+                    builder, location, packedType,
+                    builder.getIntegerAttr(packedType, replicate));
+                return Value(arith::MulIOp::create(builder, location,
+                                                   extended, factor));
+              }
+              Value packed = arith::ConstantOp::create(
+                  builder, location, packedType,
+                  builder.getIntegerAttr(packedType, 0));
+              for (auto [transition, mask] : llvm::enumerate(masks)) {
+                Value extended = arith::ExtUIOp::create(builder, location,
+                                                        packedType, mask);
+                if (transition != 0) {
+                  Value shift = arith::ConstantOp::create(
+                      builder, location, packedType,
+                      builder.getIntegerAttr(packedType,
+                                             transition * *drivenWidth));
+                  extended = arith::ShLIOp::create(builder, location, extended,
+                                                   shift);
+                }
+                packed = arith::OrIOp::create(builder, location, packed,
+                                              extended);
+              }
+              return packed;
+            };
         auto consumeEdgePending = [&](Value consumed) {
           if (maskedPlan->edgePending.empty())
             return;
@@ -1203,68 +1327,89 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           consumeEdgePending(consumed);
           for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
             Value mask = group.masks.front();
+            Value pulseTransitions =
+                group.pulseControlled
+                    ? packDriverPulseTransitions(group.masks)
+                    : Value{};
             auto drive = sim::SimDriverDriveInertialPathOp::create(
                 builder, location, destination.reference, published,
-                maskedPlan->coverageMask, mask, mask, mask, group.delay,
-                group.delay, group.delay, codeUnitID,
+                maskedPlan->coverageMask, mask, mask, mask, pulseTransitions,
+                group.delay, group.delay, group.delay, codeUnitID,
                 builder.getI32IntegerAttr(component),
                 builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
                 builder.getI32IntegerAttr(groupCount),
-                builder.getBoolAttr(deferDriverResolution || userRaw));
+                builder.getBoolAttr(deferDriverResolution || userRaw),
+                builder.getI64IntegerAttr(group.pulseControlled
+                                              ? group.pulseReject
+                                              : -1),
+                builder.getI64IntegerAttr(group.pulseControlled
+                                              ? group.pulseError
+                                              : -1),
+                builder.getBoolAttr(group.pulseControlled &&
+                                    group.pulseOnDetect),
+                builder.getBoolAttr(group.pulseControlled &&
+                                    group.pulseShowCancelled));
             if (userRaw)
               drive->setAttr("obelisk_sim.user_net_raw_drive",
                              builder.getUnitAttr());
           }
           return success();
         }
-        std::array<Value, 4> previousSymbols;
-        std::array<Value, 4> publishedSymbols;
-        for (unsigned symbol = 0; symbol != 3; ++symbol) {
-          bool one = symbol == 1;
-          bool unknown = symbol == 2;
-          Value constant = sim::SimLogicConstantOp::create(
-              builder, location, logicType,
-              builder.getIntegerAttr(maskType, one ? ones : zero),
-              builder.getIntegerAttr(maskType, unknown ? ones : zero));
-          auto symbolMask = [&](Value value) -> Value {
-            Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
-                builder, location, maskType, value, constant);
-            return arith::XOrIOp::create(builder, location, difference,
-                                         onesMask);
-          };
-          previousSymbols[symbol] = symbolMask(*previousLogic);
-          publishedSymbols[symbol] = symbolMask(*publishedLogic);
-        }
-        auto remainingSymbol = [&](const std::array<Value, 4> &symbols) {
-          Value used =
-              arith::OrIOp::create(builder, location, symbols[0], symbols[1]);
-          used = arith::OrIOp::create(builder, location, used, symbols[2]);
-          return arith::XOrIOp::create(builder, location, used, onesMask);
-        };
-        previousSymbols[3] = remainingSymbol(previousSymbols);
-        publishedSymbols[3] = remainingSymbol(publishedSymbols);
-        constexpr std::array<unsigned, 12> fromSymbols = {0, 1, 0, 3, 1, 3,
-                                                          0, 2, 1, 2, 2, 3};
-        constexpr std::array<unsigned, 12> toSymbols = {1, 0, 3, 1, 3, 0,
-                                                        2, 1, 2, 0, 3, 2};
         std::array<Value, 12> transitionMasks;
-        for (unsigned transition = 0; transition != 12; ++transition)
-          transitionMasks[transition] = arith::AndIOp::create(
-              builder, location, previousSymbols[fromSymbols[transition]],
-              publishedSymbols[toSymbols[transition]]);
-        if (!maskedPlan->edgePending.empty()) {
+        {
+          // Edge-sensitive path qualification needs to consume only bits
+          // which actually publish.  Ordinary paths deliberately avoid this
+          // four-state transition expansion: the runtime already owns the
+          // pending target and IEEE 1800-2017 30.7 requires that target when
+          // classifying the trailing edge of a pulse.
+          std::array<Value, 4> previousSymbols;
+          std::array<Value, 4> publishedSymbols;
+          for (unsigned symbol = 0; symbol != 3; ++symbol) {
+            bool one = symbol == 1;
+            bool unknown = symbol == 2;
+            Value constant = sim::SimLogicConstantOp::create(
+                builder, location, logicType,
+                builder.getIntegerAttr(maskType, one ? ones : zero),
+                builder.getIntegerAttr(maskType, unknown ? ones : zero));
+            auto symbolMask = [&](Value value) -> Value {
+              Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+                  builder, location, maskType, value, constant);
+              return arith::XOrIOp::create(builder, location, difference,
+                                           onesMask);
+            };
+            previousSymbols[symbol] = symbolMask(*previousLogic);
+            publishedSymbols[symbol] = symbolMask(*publishedLogic);
+          }
+          auto remainingSymbol = [&](const std::array<Value, 4> &symbols) {
+            Value used = arith::OrIOp::create(builder, location, symbols[0],
+                                              symbols[1]);
+            used = arith::OrIOp::create(builder, location, used, symbols[2]);
+            return Value(
+                arith::XOrIOp::create(builder, location, used, onesMask));
+          };
+          previousSymbols[3] = remainingSymbol(previousSymbols);
+          publishedSymbols[3] = remainingSymbol(publishedSymbols);
+          constexpr std::array<unsigned, 12> fromSymbols = {
+              0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
+          constexpr std::array<unsigned, 12> toSymbols = {
+              1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
           Value consumed = zeroMask;
-          for (Value transition : transitionMasks)
-            consumed =
-                arith::OrIOp::create(builder, location, consumed, transition);
+          for (unsigned transition = 0; transition != 12; ++transition) {
+            transitionMasks[transition] = arith::AndIOp::create(
+                builder, location,
+                previousSymbols[fromSymbols[transition]],
+                publishedSymbols[toSymbols[transition]]);
+            consumed = arith::OrIOp::create(
+                builder, location, consumed, transitionMasks[transition]);
+          }
           consumeEdgePending(consumed);
         }
         for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
           auto addTransition = [&](unsigned bank, unsigned transition) {
-            Value selected = arith::AndIOp::create(builder, location,
-                                                   group.masks[transition],
-                                                   transitionMasks[transition]);
+            Value selected = arith::AndIOp::create(
+                builder, location, group.masks[transition],
+                transitionMasks[transition]);
             runtimeMasks[bank] = arith::OrIOp::create(
                 builder, location, runtimeMasks[bank], selected);
           };
@@ -1279,14 +1424,28 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           // bank because this group already represents one distinct delay.
           for (unsigned transition : {6u, 8u, 11u})
             addTransition(0, transition);
+          Value pulseTransitions =
+              group.pulseControlled
+                  ? packDriverPulseTransitions(group.masks)
+                  : Value{};
           auto drive = sim::SimDriverDriveInertialPathOp::create(
               builder, location, destination.reference, published,
               maskedPlan->coverageMask, runtimeMasks[0], runtimeMasks[1],
-              runtimeMasks[2], group.delay, group.delay, group.delay,
-              codeUnitID, builder.getI32IntegerAttr(component),
+              runtimeMasks[2], pulseTransitions, group.delay, group.delay,
+              group.delay, codeUnitID, builder.getI32IntegerAttr(component),
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
               builder.getI32IntegerAttr(groupCount),
-              builder.getBoolAttr(deferDriverResolution || userRaw));
+              builder.getBoolAttr(deferDriverResolution || userRaw),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseReject
+                                            : -1),
+              builder.getI64IntegerAttr(group.pulseControlled
+                                            ? group.pulseError
+                                            : -1),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseOnDetect),
+              builder.getBoolAttr(group.pulseControlled &&
+                                  group.pulseShowCancelled));
           if (userRaw)
             drive->setAttr("obelisk_sim.user_net_raw_drive",
                            builder.getUnitAttr());

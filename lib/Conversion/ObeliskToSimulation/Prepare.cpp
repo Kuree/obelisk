@@ -1909,9 +1909,93 @@ void ObeliskSimPreparePass::runOnOperation() {
     int32_t edgeIdentifier = 0;
     int32_t edgePolarity = 0;
     SmallVector<int64_t, 12> delays;
+    SmallVector<int64_t, 12> pulseRejectLimits;
+    SmallVector<int64_t, 12> pulseErrorLimits;
+    bool pulseOnDetect = false;
+    bool pulseShowCancelled = false;
     Operation *condition = nullptr;
     bool ifnone = false;
   };
+
+  struct PulseStyleRange {
+    uint64_t low;
+    uint64_t width;
+    int32_t kind;
+  };
+  llvm::DenseMap<Operation *, llvm::StringMap<SmallVector<PulseStyleRange, 2>>>
+      pulseStyles;
+  semanticRoot->walk([&](semantic::SVPulseStyleSymbolOp style) {
+    auto kind = style->getAttrOfType<IntegerAttr>("pulse_style_kind");
+    auto terminals = style->getAttrOfType<ArrayAttr>("pulse_style_terminals");
+    if (!kind || kind.getInt() < 0 || kind.getInt() > 3 || !terminals) {
+      emitError(getSemanticLocation(style))
+          << "specify pulse control has malformed frozen terminal data";
+      invalid = true;
+      return;
+    }
+    for (Attribute attr : terminals) {
+      auto terminal = dyn_cast<DictionaryAttr>(attr);
+      auto path = terminal ? terminal.getAs<StringAttr>("path") : StringAttr{};
+      auto low = terminal ? terminal.getAs<IntegerAttr>("low") : IntegerAttr{};
+      auto width =
+          terminal ? terminal.getAs<IntegerAttr>("width") : IntegerAttr{};
+      if (!path || !low || low.getInt() < 0 || !width || width.getInt() <= 0) {
+        emitError(getSemanticLocation(style))
+            << "specify pulse control has malformed frozen terminal data";
+        invalid = true;
+        return;
+      }
+      pulseStyles[style->getParentOp()][path.getValue()].push_back(
+          {static_cast<uint64_t>(low.getInt()),
+           static_cast<uint64_t>(width.getInt()),
+           static_cast<int32_t>(kind.getInt())});
+    }
+  });
+
+  // IEEE 1800-2017 30.7.1: a path-specific PATHPULSE$ overrides the
+  // module-wide value; either overrides the default limits inherited from the
+  // path delay. SDF gets the final precedence later under 30.7.3 and 32.5.
+  struct PathPulseLimit {
+    std::string source;
+    std::string destination;
+    int64_t reject;
+    int64_t error;
+  };
+  llvm::DenseMap<Operation *, SmallVector<PathPulseLimit, 2>> pathPulseLimits;
+  semanticRoot->walk([&](semantic::SVSpecparamSymbolOp specparam) {
+    auto name = specparam->getAttrOfType<StringAttr>("path_pulse_name");
+    auto reject =
+        specparam->getAttrOfType<IntegerAttr>("path_pulse_reject_fs");
+    auto error = specparam->getAttrOfType<IntegerAttr>("path_pulse_error_fs");
+    if (!name)
+      return;
+    if (!reject || reject.getInt() < 0 || !error || error.getInt() < 0 ||
+        error.getInt() < reject.getInt()) {
+      emitError(getSemanticLocation(specparam))
+          << "PATHPULSE$ reject and error limits must be static, nonnegative, "
+             "and ordered";
+      invalid = true;
+      return;
+    }
+    StringRef suffix = name.getValue().drop_front(StringRef("PATHPULSE$").size());
+    StringRef source;
+    StringRef destination;
+    if (!suffix.empty()) {
+      auto split = suffix.split('$');
+      if (split.first.empty() || split.second.empty() ||
+          split.second.contains('$')) {
+        emitError(getSemanticLocation(specparam))
+            << "PATHPULSE$ path name is malformed";
+        invalid = true;
+        return;
+      }
+      source = split.first;
+      destination = split.second;
+    }
+    pathPulseLimits[specparam->getParentOp()].push_back(
+        {source.str(), destination.str(), reject.getInt(), error.getInt()});
+  });
+
   llvm::StringMap<SmallVector<SimpleTimingPath, 2>> simpleTimingPaths;
   semanticRoot->walk([&](semantic::SVTimingPathSymbolOp path) {
     if (!path->hasAttr("obelisk.simple_timing_path"))
@@ -2010,13 +2094,118 @@ void ObeliskSimPreparePass::runOnOperation() {
       return;
     }
     bool full = connectionFull.getValue();
-    simpleTimingPaths[outputTerminal->path].push_back(
-        {path, inputPaths, *outputTerminal, full,
-         static_cast<int32_t>(polarity.getInt()), edgeSensitive,
-         static_cast<int32_t>(edgeIdentifierValue),
-         static_cast<int32_t>(edgePolarityValue),
-         SmallVector<int64_t, 12>(delays.asArrayRef()),
-         conditional ? children.front() : nullptr, ifnone});
+    SmallVector<int64_t, 12> normalizedDelays(delays.asArrayRef());
+    auto globalReject =
+        module->getAttrOfType<IntegerAttr>("obelisk.pulse_reject_percent");
+    auto globalError =
+        module->getAttrOfType<IntegerAttr>("obelisk.pulse_error_percent");
+    auto percentLimits = [&](IntegerAttr percent) {
+      SmallVector<int64_t, 12> result;
+      result.reserve(normalizedDelays.size());
+      uint64_t value = percent ? percent.getUInt() : 100;
+      for (int64_t delay : normalizedDelays) {
+        uint64_t unsignedDelay = static_cast<uint64_t>(delay);
+        result.push_back(static_cast<int64_t>(
+            (unsignedDelay / 100) * value +
+            ((unsignedDelay % 100) * value) / 100));
+      }
+      return result;
+    };
+    // IEEE 1800-2017 30.7 and 30.7.2 default both limits to 100% of
+    // each transition delay and apply the two global percentages per
+    // transition. Compute in quotient/remainder form to avoid overflowing
+    // large but otherwise valid static femtosecond delays.
+    SmallVector<int64_t, 12> rejectLimits = percentLimits(globalReject);
+    SmallVector<int64_t, 12> errorLimits = percentLimits(globalError);
+    auto leafName = [](StringRef value) { return value.rsplit('.').second; };
+    const PathPulseLimit *selectedPulse = nullptr;
+    for (const PathPulseLimit &pulse : pathPulseLimits[path->getParentOp()]) {
+      bool matches = pulse.source.empty() ||
+                     (leafName(inputPaths.front().path) == pulse.source &&
+                      leafName(outputTerminal->path) == pulse.destination);
+      if (matches && (!selectedPulse || !pulse.source.empty()))
+        selectedPulse = &pulse;
+    }
+    if (selectedPulse) {
+      rejectLimits.assign(normalizedDelays.size(), selectedPulse->reject);
+      errorLimits.assign(normalizedDelays.size(), selectedPulse->error);
+    }
+    SmallVector<uint64_t, 6> pulseBoundaries{outputTerminal->low,
+                                             outputTerminal->low +
+                                                 outputTerminal->width};
+    ArrayRef<PulseStyleRange> outputStyles;
+    if (auto styles = pulseStyles.find(path->getParentOp());
+        styles != pulseStyles.end()) {
+      auto found = styles->second.find(outputTerminal->path);
+      if (found != styles->second.end()) {
+        outputStyles = found->second;
+        for (const PulseStyleRange &style : outputStyles) {
+          uint64_t pathEnd = outputTerminal->low + outputTerminal->width;
+          uint64_t styleEnd = style.low + style.width;
+          if (style.low >= pathEnd || outputTerminal->low >= styleEnd)
+            continue;
+          pulseBoundaries.push_back(std::max(style.low, outputTerminal->low));
+          pulseBoundaries.push_back(std::min(styleEnd, pathEnd));
+        }
+      }
+    }
+    llvm::sort(pulseBoundaries);
+    pulseBoundaries.erase(
+        std::unique(pulseBoundaries.begin(), pulseBoundaries.end()),
+        pulseBoundaries.end());
+    for (auto [segmentLow, segmentEnd] :
+         llvm::zip(ArrayRef<uint64_t>(pulseBoundaries).drop_back(),
+                   ArrayRef<uint64_t>(pulseBoundaries).drop_front())) {
+      if (segmentLow == segmentEnd)
+        continue;
+      bool pulseOnDetect = false;
+      bool pulseShowCancelled = false;
+      for (const PulseStyleRange &style : outputStyles) {
+        if (style.low > segmentLow || style.low + style.width < segmentEnd)
+          continue;
+        if (style.kind == 0)
+          pulseOnDetect = false;
+        else if (style.kind == 1)
+          pulseOnDetect = true;
+        else if (style.kind == 2)
+          pulseShowCancelled = true;
+        else
+          pulseShowCancelled = false;
+      }
+      // IEEE 1800-2017 30.7.4.1-.2 gives invocation controls precedence over
+      // specify-block declarations. Preserve that precedence after range
+      // splitting so it cannot vary accidentally across packed output bits.
+      if (auto global =
+              module->getAttrOfType<BoolAttr>("obelisk.pulse_on_detect"))
+        pulseOnDetect = global.getValue();
+      if (auto global = module->getAttrOfType<BoolAttr>(
+              "obelisk.pulse_show_cancelled"))
+        pulseShowCancelled = global.getValue();
+      TimingTerminal segment = *outputTerminal;
+      segment.low = segmentLow;
+      segment.width = segmentEnd - segmentLow;
+      SmallVector<TimingTerminal, 2> segmentInputs = inputPaths;
+      // IEEE 1800-2017 30.7.4 attaches style to each declared path output.
+      // Split only at static style boundaries so packed execution remains a
+      // few ordinary rules.  For a parallel path, Clause 30.3 maps source and
+      // destination bits positionally; a full or edge-sensitive path retains
+      // its complete source terminal for every destination segment.
+      if (!full && !edgeSensitive) {
+        uint64_t delta = segmentLow - outputTerminal->low;
+        for (TimingTerminal &input : segmentInputs) {
+          input.low += delta;
+          input.width = segment.width;
+          input.lsb = input.low;
+        }
+      }
+      simpleTimingPaths[outputTerminal->path].push_back(
+          {path, segmentInputs, segment, full,
+           static_cast<int32_t>(polarity.getInt()), edgeSensitive,
+           static_cast<int32_t>(edgeIdentifierValue),
+           static_cast<int32_t>(edgePolarityValue), normalizedDelays,
+           rejectLimits, errorLimits, pulseOnDetect, pulseShowCancelled,
+           conditional ? children.front() : nullptr, ifnone});
+    }
   });
 
   auto getDriverDependencyRoots = [&](Operation *unit) {
@@ -2391,6 +2580,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         llvm::any_of(spans, [](const TimingDriverSpan &span) {
           return !span.procedural && span.unit->hasAttr("delay_fs");
         });
+    bool defaultPulsePolicy = llvm::all_of(paths, [](const SimpleTimingPath &p) {
+      return p.pulseRejectLimits == p.delays &&
+             p.pulseErrorLimits == p.delays && !p.pulseOnDetect &&
+             !p.pulseShowCancelled;
+    });
     if (hasExplicitDriverDelay) {
       emitError(getSemanticLocation(path.declaration))
           << "combining a specify path with an explicitly delayed driver is "
@@ -2401,6 +2595,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (spans.size() == 1 && spans.front().low == 0 &&
         spans.front().width == path.output.rootWidth && allWholeTerminals &&
         !hasStateDependent && !hasEdgeSensitive && path.delays.size() <= 3 &&
+        defaultPulsePolicy &&
         (paths.size() == 1 || identicalDelays) &&
         hasExactInputs(spans.front().unit,
                        identicalDelays && !hasStateDependent)) {
@@ -2454,6 +2649,44 @@ void ObeliskSimPreparePass::runOnOperation() {
           leading ? getChildren(leading) : SmallVector<Operation *>{};
       if (timedChildren.empty())
         return result;
+      if (auto list =
+              dyn_cast<semantic::SVEventListControlOp>(timedChildren.front())) {
+        for (Operation *member : getChildren(list)) {
+          auto event = dyn_cast<semantic::SVSignalEventControlOp>(member);
+          SmallVector<Operation *> eventChildren =
+              event ? getChildren(event) : SmallVector<Operation *>{};
+          Operation *primary =
+              eventChildren.empty() ? nullptr : eventChildren.front();
+          auto directPath =
+              primary
+                  ? primary->getAttrOfType<StringAttr>("referenced_path")
+                  : StringAttr{};
+          bool directNamed =
+              isa_and_nonnull<semantic::SVNamedValueExpressionOp,
+                              semantic::SVHierarchicalValueExpressionOp>(
+                  primary);
+          int32_t eventEdge =
+              event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
+          bool edgeMatches =
+              candidate.edgeIdentifier == 0 ||
+              candidate.edgeIdentifier == eventEdge ||
+              (candidate.edgeIdentifier == 3 &&
+               (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
+          if (event && candidate.inputs.size() == 1 &&
+              candidate.inputs.front().isWhole() && directNamed &&
+              directPath &&
+              directPath.getValue() == candidate.inputs.front().path &&
+              edgeMatches) {
+            // IEEE 1800-2017 30.4 qualifies a module path from the declared
+            // source transition. Snapshot-on-wake is exact for an event list
+            // because the source is itself an independently observed member;
+            // wakes from other members produce an empty difference mask.
+            result.kind = 2;
+            return result;
+          }
+        }
+        return result;
+      }
       auto event =
           dyn_cast<semantic::SVSignalEventControlOp>(timedChildren.front());
       SmallVector<Operation *> eventChildren =
@@ -2484,6 +2717,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           result.ambiguousSourceControl = true;
       });
       result.ambiguousSourceControl &= !exactWake;
+      if (result.ambiguousSourceControl) {
+        // IEEE 1800-2017 30.4 qualifies from the declared source transition.
+        // A derived event expression can hide that transition and wake later
+        // on another operand, so writer-only sampling would use stale state.
+        // Keep it diagnosed until the source has an independent monitor.
+        result.kind = 0;
+      }
       return result;
     };
 
@@ -2510,14 +2750,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         hasProceduralSpan = true;
         ProceduralWakeClassification wake =
             classifyProceduralWake(span, candidate);
-        if (wake.ambiguousSourceControl) {
-          emitError(getSemanticLocation(candidate.declaration))
-              << "edge-sensitive procedural specify path requires a direct "
-                 "single-source event control; derived and event-list "
-                 "controls are not executable yet";
-          invalid = true;
-          break;
-        }
         hasQualifyingWake |= wake.kind == 1 || wake.kind == 2;
       }
       if (invalid)
@@ -2550,7 +2782,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         break;
       }
       if (span.procedural) {
-        bool delayed = false;
         bool invalidWakeShape = false;
         std::function<Operation *(Operation *)> leadingStatement =
             [&](Operation *statement) -> Operation * {
@@ -2583,29 +2814,6 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (!implicit &&
             !isa_and_nonnull<semantic::SVTimedStatementOp>(leading))
           invalidWakeShape = true;
-        span.unit->walk([&](Operation *nested) {
-          if (isa<semantic::SVDelay3ControlOp,
-                  semantic::SVOneStepDelayControlOp,
-                  semantic::SVCycleDelayControlOp>(nested)) {
-            delayed = true;
-            return;
-          }
-          auto delay = dyn_cast<semantic::SVDelayControlOp>(nested);
-          if (!delay)
-            return;
-          SmallVector<Operation *> children = getChildren(delay);
-          auto spelling = children.size() == 1
-                              ? getConstantSpelling(children.front())
-                              : std::nullopt;
-          if (!spelling) {
-            delayed = true;
-            return;
-          }
-          FailureOr<ParsedConstant> value =
-              parseSVInteger(*spelling, 64, getSemanticLocation(delay));
-          delayed |= failed(value) || !value->unknown.isZero() ||
-                     !value->value.isZero();
-        });
         span.unit->walk([&](semantic::SVTimedStatementOp timed) {
           if (timed == leading)
             return;
@@ -2621,13 +2829,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           break;
         }
-        if (delayed) {
-          emitError(getSemanticLocation(path.declaration))
-              << "edge-sensitive specify path has a delayed procedural "
-                 "destination dependency";
-          invalid = true;
-          break;
-        }
+        // A delayed direct writer retains its qualification time in the
+        // coroutine frame. Lowering subtracts the elapsed procedural delay
+        // from the module-path delay (IEEE 1800-2017 30.4-30.5).
       }
       if (!span.procedural && hasEdgeSensitive &&
           hasDelayedEdgeDependency(span.unit)) {
@@ -2819,6 +3023,18 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                       candidate.edgePolarity)),
             builder.getNamedAttr(
                 "delay_fs", builder.getDenseI64ArrayAttr(candidate.delays)),
+            builder.getNamedAttr(
+                "pulse_reject_fs",
+                builder.getDenseI64ArrayAttr(candidate.pulseRejectLimits)),
+            builder.getNamedAttr(
+                "pulse_error_fs",
+                builder.getDenseI64ArrayAttr(candidate.pulseErrorLimits)),
+            builder.getNamedAttr(
+                "pulse_on_detect",
+                builder.getBoolAttr(candidate.pulseOnDetect)),
+            builder.getNamedAttr(
+                "pulse_show_cancelled",
+                builder.getBoolAttr(candidate.pulseShowCancelled)),
             builder.getNamedAttr("condition_kind", builder.getI32IntegerAttr(
                                                        candidate.condition ? 1
                                                        : candidate.ifnone  ? 2
@@ -8195,6 +8411,16 @@ void ObeliskSimPreparePass::runOnOperation() {
             rule ? rule.getAs<StringAttr>("edge_epoch") : StringAttr{};
         auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
                            : DenseI64ArrayAttr{};
+        auto pulseReject =
+            rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject_fs")
+                 : DenseI64ArrayAttr{};
+        auto pulseError =
+            rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error_fs")
+                 : DenseI64ArrayAttr{};
+        auto pulseOnDetect =
+            rule ? rule.getAs<BoolAttr>("pulse_on_detect") : BoolAttr{};
+        auto pulseShowCancelled =
+            rule ? rule.getAs<BoolAttr>("pulse_show_cancelled") : BoolAttr{};
         bool edgeSensitiveValue = edgeSensitive && edgeSensitive.getValue();
         int64_t edgeIdentifierValue =
             edgeIdentifier ? edgeIdentifier.getInt() : 0;
@@ -8210,7 +8436,10 @@ void ObeliskSimPreparePass::runOnOperation() {
              (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
             (edgeSensitiveValue && (!edgePending || !edgeEpoch)) || !delays ||
             (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-             delays.size() != 6 && delays.size() != 12) ||
+             delays.size() != 6 && delays.size() != 12) || !pulseReject ||
+            pulseReject.size() != delays.size() || !pulseError ||
+            pulseError.size() != delays.size() || !pulseOnDetect ||
+            !pulseShowCancelled ||
             (arrayTerminals &&
              (!inputLows || !inputWidths ||
               static_cast<size_t>(inputLows.size()) != inputs.size() ||
@@ -8235,6 +8464,29 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (rulesInvalid)
           break;
+        auto scalePulseLimits = [&](DenseI64ArrayAttr values,
+                                    SmallVectorImpl<int64_t> &result) {
+          for (int64_t femtoseconds : values.asArrayRef()) {
+            if (femtoseconds < 0 ||
+                static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
+              rulesInvalid = true;
+              return;
+            }
+            result.push_back(static_cast<int64_t>(
+                static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
+          }
+        };
+        SmallVector<int64_t, 12> rejectTicks;
+        SmallVector<int64_t, 12> errorTicks;
+        scalePulseLimits(pulseReject, rejectTicks);
+        scalePulseLimits(pulseError, errorTicks);
+        if (rulesInvalid ||
+            llvm::any_of(llvm::zip(rejectTicks, errorTicks), [](auto pair) {
+              return std::get<1>(pair) < std::get<0>(pair);
+            })) {
+          rulesInvalid = true;
+          break;
+        }
         SmallVector<NamedAttribute> fields;
         if (legacyTerminals) {
           fields.push_back(builder.getNamedAttr("input", input));
@@ -8277,6 +8529,14 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         fields.push_back(builder.getNamedAttr(
             "delays", builder.getDenseI64ArrayAttr(ticks)));
+        fields.push_back(builder.getNamedAttr(
+            "pulse_reject", builder.getDenseI64ArrayAttr(rejectTicks)));
+        fields.push_back(builder.getNamedAttr(
+            "pulse_error", builder.getDenseI64ArrayAttr(errorTicks)));
+        fields.push_back(
+            builder.getNamedAttr("pulse_on_detect", pulseOnDetect));
+        fields.push_back(builder.getNamedAttr("pulse_show_cancelled",
+                                              pulseShowCancelled));
         for (StringRef name :
              {"condition_kind", "condition_group", "condition_node_id"})
           if (auto value = rule.getAs<IntegerAttr>(name))

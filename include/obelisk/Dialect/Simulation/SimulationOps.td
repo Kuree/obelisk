@@ -3273,16 +3273,24 @@ def SimDriverDriveInertialPathOp : SimOp<"driver.drive_inertial_path", [
                        AnySignlessInteger:$rise_mask,
                        AnySignlessInteger:$fall_mask,
                        AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
                        SimTimeType:$rise_delay, SimTimeType:$fall_delay,
-                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       SimTimeType:$turnoff_delay,
+                       I64Attr:$code_unit_id,
                        I32Attr:$component, I32Attr:$group,
                        I32Attr:$group_count,
-                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
   let assemblyFormat = [{
     $driver `=` $value `active` $active_mask `masks` `[` $rise_mask `,`
     $fall_mask `,` $turnoff_mask `]` `after` `[` $rise_delay `,`
     $fall_delay `,` $turnoff_delay `]` `site` $code_unit_id `:` $component
-    `group` $group `of` $group_count attr-dict `:` qualified(type($driver)) `,`
+    `group` $group `of` $group_count
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict `:` qualified(type($driver)) `,`
     type($value) `,` type($active_mask)
   }];
   let hasVerifier = 1;
@@ -3308,16 +3316,24 @@ def SimRefStoreInertialPathOp : SimOp<"ref.store_inertial_path", [
                        AnySignlessInteger:$rise_mask,
                        AnySignlessInteger:$fall_mask,
                        AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
                        SimTimeType:$rise_delay, SimTimeType:$fall_delay,
-                       SimTimeType:$turnoff_delay, I64Attr:$site_id,
+                       SimTimeType:$turnoff_delay,
+                       I64Attr:$site_id,
                        I32Attr:$component, I32Attr:$group,
-                       I32Attr:$group_count, BoolAttr:$nonblocking);
+                       I32Attr:$group_count, BoolAttr:$nonblocking,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
   let assemblyFormat = [{
     $value `to` $reference `write` $write_mask `active` $active_mask
     `masks` `[` $rise_mask `,` $fall_mask `,` $turnoff_mask `]`
     `after` `[` $rise_delay `,` $fall_delay `,` $turnoff_delay `]`
     `site` $site_id `:` $component `group` $group `of` $group_count
-    `nonblocking` `=` $nonblocking attr-dict `:` qualified(type($reference))
+    `nonblocking` `=` $nonblocking
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict `:` qualified(type($reference))
     `,` type($value) `,` type($write_mask)
   }];
   let hasVerifier = 1;

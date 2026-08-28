@@ -908,6 +908,33 @@ static int executeCompilation(const InputArgList &args) {
                     staticSpecialization + "'; expected auto, off, or on");
     valid = false;
   }
+  std::optional<uint32_t> pulseRejectPercent;
+  std::optional<uint32_t> pulseErrorPercent;
+  valid &= parseUnsignedOption(args, OPT_pulse_reject_percent_EQ,
+                               "--pulse-reject-percent",
+                               pulseRejectPercent);
+  valid &= parseUnsignedOption(args, OPT_pulse_error_percent_EQ,
+                               "--pulse-error-percent", pulseErrorPercent);
+  if ((pulseRejectPercent && *pulseRejectPercent > 100) ||
+      (pulseErrorPercent && *pulseErrorPercent > 100)) {
+    emitDriverError("global pulse percentages must be between 0 and 100");
+    valid = false;
+  }
+  uint32_t effectivePulseReject = pulseRejectPercent.value_or(100);
+  uint32_t effectivePulseError = pulseErrorPercent.value_or(100);
+  if (effectivePulseError < effectivePulseReject) {
+    // IEEE 1800-2017 30.7.2 requires a diagnostic and defines recovery by
+    // raising the error percentage to the reject percentage. Command-line
+    // compilation treats that required error as fatal, consistently with
+    // source semantic errors, rather than silently changing pulse behavior.
+    emitDriverError(
+        "--pulse-error-percent cannot be less than --pulse-reject-percent");
+    valid = false;
+  }
+  StringRef globalPulseStyle =
+      args.getLastArgValue(OPT_pulse_style_EQ, "");
+  StringRef globalCancelledPulses =
+      args.getLastArgValue(OPT_cancelled_pulses_EQ, "");
   uint32_t optLevel = 3;
   if (const Arg *optimization =
           args.getLastArg(OPT_O0, OPT_O1, OPT_O2, OPT_O3)) {
@@ -1055,6 +1082,23 @@ static int executeCompilation(const InputArgList &args) {
   if (failed(importedModule))
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
+
+  if (pulseRejectPercent || pulseErrorPercent) {
+    (*module)->setAttr("obelisk.pulse_reject_percent",
+                       IntegerAttr::get(IntegerType::get(&context, 32),
+                                        effectivePulseReject));
+    (*module)->setAttr("obelisk.pulse_error_percent",
+                       IntegerAttr::get(IntegerType::get(&context, 32),
+                                        effectivePulseError));
+  }
+  if (!globalPulseStyle.empty())
+    (*module)->setAttr("obelisk.pulse_on_detect",
+                       BoolAttr::get(&context,
+                                     globalPulseStyle == "ondetect"));
+  if (!globalCancelledPulses.empty())
+    (*module)->setAttr("obelisk.pulse_show_cancelled",
+                       BoolAttr::get(&context,
+                                     globalCancelledPulses == "show"));
 
   if (native) {
     obelisk::sim::NativeSchedulerMode pipelineScheduler =

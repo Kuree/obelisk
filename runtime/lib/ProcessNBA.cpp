@@ -786,16 +786,28 @@ static obelisk_rt_status schedulerInertialPath(
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
-    uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
+    uint64_t turnoffDelay, uint64_t pulseReject, uint64_t pulseError,
+    const uint8_t *value, const uint8_t *unknown,
     const uint8_t *writeMask, const uint8_t *activeMask,
     const uint8_t *riseMask, const uint8_t *fallMask,
-    const uint8_t *turnoffMask, bool nonblocking) {
+    const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks,
+    bool nonblocking) {
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
       codeUnit == UINT64_MAX || groupCount == 0 || group >= groupCount ||
       (flags & ~(OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
-                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW)) != 0 ||
+                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW |
+                 OBELISK_RT_INERTIAL_PATH_ON_DETECT |
+                 OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED |
+                 OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0 ||
       !value || (unknownPlane && !unknown) || !activeMask || !riseMask ||
-      !fallMask || !turnoffMask || (Storage && !writeMask))
+      !fallMask || !turnoffMask ||
+      (((flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) !=
+       (pulseTransitionMasks != nullptr)) ||
+      (((pulseReject != UINT64_MAX || pulseError != UINT64_MAX ||
+         (flags & (OBELISK_RT_INERTIAL_PATH_ON_DETECT |
+                   OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED)) != 0)) &&
+       pulseTransitionMasks == nullptr) ||
+      (Storage && !writeMask))
     return OBELISK_RT_INVALID_ARGUMENT;
   OBELISK_RT_TRY {
     ContextTransaction transaction(context);
@@ -828,14 +840,20 @@ static obelisk_rt_status schedulerInertialPath(
 
     InertialDriverSite site{codeUnit, component, Storage};
     InertialPathPending &pending = context->inertialPathPending[site];
+    bool pulseControlled = pulseTransitionMasks != nullptr;
     size_t bytes = static_cast<size_t>((bitWidth - 1) / 8 + 1);
     auto cancelScheduled = [&](uint64_t bit) {
       size_t index = static_cast<size_t>(bit);
       if (index >= pending.scheduledSequence.size() ||
           pending.scheduledSequence[index] == 0)
         return;
+      uint64_t sequence = pending.scheduledSequence[index];
       context->scheduledInertialPathNBAs.erase(
-          {pending.scheduledDueTime[index], pending.scheduledSequence[index]});
+          {pending.scheduledDueTime[index], sequence});
+      if (pending.pulseControlled) {
+        auto &live = pending.liveSequences[index];
+        live.erase(std::remove(live.begin(), live.end(), sequence), live.end());
+      }
       pending.scheduledDueTime[index] = 0;
       pending.scheduledSequence[index] = 0;
     };
@@ -845,6 +863,7 @@ static obelisk_rt_status schedulerInertialPath(
       pending = InertialPathPending{};
       pending.destination = selectedHandle;
       pending.width = bitWidth;
+      pending.pulseControlled = pulseControlled;
       pending.generation.assign(static_cast<size_t>(bitWidth), 1);
       pending.targetValue.assign(bytes, 0);
       pending.targetUnknown.assign(bytes, 0);
@@ -852,17 +871,29 @@ static obelisk_rt_status schedulerInertialPath(
       pending.delayed.assign(static_cast<size_t>(bitWidth), 0);
       pending.needsSchedule.assign(static_cast<size_t>(bitWidth), 0);
       pending.candidateDelay.assign(static_cast<size_t>(bitWidth), UINT64_MAX);
+      if (pulseControlled) {
+        pending.candidatePulseReject.assign(static_cast<size_t>(bitWidth),
+                                            UINT64_MAX);
+        pending.candidatePulseError.assign(static_cast<size_t>(bitWidth),
+                                           UINT64_MAX);
+        pending.candidatePulseFlags.assign(static_cast<size_t>(bitWidth), 0);
+        pending.candidateFromSymbol.assign(static_cast<size_t>(bitWidth), 0);
+      }
       pending.scheduledDueTime.assign(static_cast<size_t>(bitWidth), 0);
       pending.scheduledSequence.assign(static_cast<size_t>(bitWidth), 0);
+      if (pulseControlled)
+        pending.liveSequences.resize(static_cast<size_t>(bitWidth));
     };
     if (group == 0) {
-      if (pending.destination != selectedHandle || pending.width != bitWidth)
+      if (pending.destination != selectedHandle || pending.width != bitWidth ||
+          pending.pulseControlled != pulseControlled)
         resetState();
       pending.nextGroup = 0;
       pending.groupCount = groupCount;
     } else if (pending.destination != selectedHandle ||
                pending.width != bitWidth || pending.groupCount != groupCount ||
-               pending.nextGroup != group)
+               pending.nextGroup != group ||
+               pending.pulseControlled != pulseControlled)
       return OBELISK_RT_INVALID_ARGUMENT;
 
     auto currentBit = [&](bool unknownBit, uint64_t bit) {
@@ -907,15 +938,10 @@ static obelisk_rt_status schedulerInertialPath(
                                                   &finalUnknown);
       return context->schedulerStatus;
     };
-    auto incrementGeneration = [&](uint64_t bit) {
-      if (++pending.generation[static_cast<size_t>(bit)] == 0)
-        pending.generation[static_cast<size_t>(bit)] = 1;
-    };
-    auto enqueue = [&](uint64_t bit, uint64_t delay) {
-      bool targetValue = byteBit(value, bit);
-      bool targetUnknown = unknownPlane && byteBit(unknown, bit);
+    auto enqueueAt = [&](uint64_t bit, uint64_t dueTime, bool targetValue,
+                         bool targetUnknown) {
       if constexpr (Storage)
-        if (!nonblocking && delay == 0)
+        if (!nonblocking && dueTime == context->schedulerTime)
           return commitImmediateStorage(bit, targetValue, targetUnknown) ==
                  OBELISK_RT_OK;
       if (context->nextSchedulerSequence == 0 ||
@@ -938,9 +964,7 @@ static obelisk_rt_status schedulerInertialPath(
       update.execRegion = Storage && nonblocking ? OBELISK_RT_REGION_NBA
                                                  : OBELISK_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
-      update.dueTime = delay > UINT64_MAX - context->schedulerTime
-                           ? UINT64_MAX
-                           : context->schedulerTime + delay;
+      update.dueTime = dueTime;
       update.inertialSite = site;
       update.inertialPathDriver = true;
       update.inertialPathBit = bit;
@@ -955,7 +979,16 @@ static obelisk_rt_status schedulerInertialPath(
         return false;
       pending.scheduledDueTime[static_cast<size_t>(bit)] = key.first;
       pending.scheduledSequence[static_cast<size_t>(bit)] = key.second;
+      if (pending.pulseControlled)
+        pending.liveSequences[static_cast<size_t>(bit)].push_back(key.second);
       return true;
+    };
+    auto enqueue = [&](uint64_t bit, uint64_t delay) {
+      uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
+                             ? UINT64_MAX
+                             : context->schedulerTime + delay;
+      return enqueueAt(bit, dueTime, byteBit(value, bit),
+                       unknownPlane && byteBit(unknown, bit));
     };
 
     if (group == 0) {
@@ -980,24 +1013,38 @@ static obelisk_rt_status schedulerInertialPath(
                      : pending.delayed[static_cast<size_t>(bit)] || !active);
         pending.needsSchedule[static_cast<size_t>(bit)] = 0;
         pending.candidateDelay[static_cast<size_t>(bit)] = UINT64_MAX;
+        if (pending.pulseControlled) {
+          pending.candidatePulseReject[static_cast<size_t>(bit)] = UINT64_MAX;
+          pending.candidatePulseError[static_cast<size_t>(bit)] = UINT64_MAX;
+          pending.candidatePulseFlags[static_cast<size_t>(bit)] = 0;
+        }
         if (pendingSame)
           continue;
-        cancelScheduled(bit);
-        incrementGeneration(bit);
-        pending.valid[static_cast<size_t>(bit)] = 0;
-        pending.delayed[static_cast<size_t>(bit)] = 0;
+        if (pending.pulseControlled) {
+          bool previousValue =
+              pending.scheduledSequence[static_cast<size_t>(bit)] != 0
+                  ? byteBit(pending.targetValue.data(), bit)
+                  : currentBit(false, bit);
+          bool previousUnknown =
+              pending.scheduledSequence[static_cast<size_t>(bit)] != 0
+                  ? byteBit(pending.targetUnknown.data(), bit)
+                  : currentBit(true, bit);
+          pending.candidateFromSymbol[static_cast<size_t>(bit)] =
+              previousUnknown ? (previousValue ? 3 : 2)
+                              : (previousValue ? 1 : 0);
+        }
         setByteBit(pending.targetValue.data(), bit, targetValue);
         setByteBit(pending.targetUnknown.data(), bit, targetUnknown);
         bool changed = currentBit(false, bit) != targetValue ||
-                       currentBit(true, bit) != targetUnknown;
-        if (!changed)
-          continue;
+                       currentBit(true, bit) != targetUnknown ||
+                       pending.scheduledSequence[static_cast<size_t>(bit)] != 0;
         pending.valid[static_cast<size_t>(bit)] = 1;
         pending.delayed[static_cast<size_t>(bit)] = active ? 1 : 0;
         if (active) {
-          pending.needsSchedule[static_cast<size_t>(bit)] = 1;
+          pending.needsSchedule[static_cast<size_t>(bit)] = changed ? 1 : 0;
         } else {
-          if (!enqueue(bit, 0))
+          cancelScheduled(bit);
+          if (changed && !enqueue(bit, 0))
             return OBELISK_RT_OUT_OF_RESOURCES;
           if (Storage && !nonblocking) {
             pending.valid[static_cast<size_t>(bit)] = 0;
@@ -1013,7 +1060,27 @@ static obelisk_rt_status schedulerInertialPath(
       bool targetValue = byteBit(value, bit);
       bool targetUnknown = unknownPlane && byteBit(unknown, bit);
       uint64_t candidate = UINT64_MAX;
-      if (!targetUnknown && targetValue && byteBit(riseMask, bit))
+      if ((flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) {
+        // IEEE 1800-2017 30.2.3 assigns distinct delays (and therefore 30.7
+        // pulse limits) to all twelve four-state transitions.  While a
+        // leading edge is pending, its target is the old symbol; consulting
+        // the published destination here would collapse a real trailing edge
+        // into a non-transition and select the wrong pulse policy.
+        uint8_t from = pending.candidateFromSymbol[static_cast<size_t>(bit)];
+        uint8_t to = targetUnknown ? (targetValue ? 3 : 2)
+                                   : (targetValue ? 1 : 0);
+        constexpr uint8_t noTransition = UINT8_MAX;
+        constexpr uint8_t transition[4][4] = {
+            {noTransition, 0, 6, 2},
+            {1, noTransition, 8, 4},
+            {9, 7, noTransition, 10},
+            {5, 3, 11, noTransition}};
+        uint8_t index = transition[from][to];
+        if (index != noTransition &&
+            byteBit(pulseTransitionMasks,
+                    static_cast<uint64_t>(index) * bitWidth + bit))
+          candidate = riseDelay;
+      } else if (!targetUnknown && targetValue && byteBit(riseMask, bit))
         candidate = riseDelay;
       else if (!targetUnknown && !targetValue && byteBit(fallMask, bit))
         candidate = fallDelay;
@@ -1027,24 +1094,102 @@ static obelisk_rt_status schedulerInertialPath(
         if (byteBit(turnoffMask, bit))
           candidate = std::min(candidate, turnoffDelay);
       }
-      pending.candidateDelay[static_cast<size_t>(bit)] =
-          std::min(pending.candidateDelay[static_cast<size_t>(bit)], candidate);
+      size_t index = static_cast<size_t>(bit);
+      if (candidate < pending.candidateDelay[index]) {
+        pending.candidateDelay[index] = candidate;
+        if (pending.pulseControlled) {
+          pending.candidatePulseReject[index] =
+              pulseReject == UINT64_MAX ? candidate : pulseReject;
+          pending.candidatePulseError[index] =
+              pulseError == UINT64_MAX ? candidate : pulseError;
+          pending.candidatePulseFlags[index] = static_cast<uint8_t>(
+              flags & (OBELISK_RT_INERTIAL_PATH_ON_DETECT |
+                       OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED));
+        }
+      }
     }
     pending.nextGroup = group + 1;
     if (group + 1 == groupCount) {
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-        if (!pending.needsSchedule[static_cast<size_t>(bit)])
+        size_t index = static_cast<size_t>(bit);
+        if (!pending.needsSchedule[index])
           continue;
-        uint64_t delay = pending.candidateDelay[static_cast<size_t>(bit)];
-        if (delay == UINT64_MAX)
-          return OBELISK_RT_INVALID_ARGUMENT;
-        if (!enqueue(bit, delay))
-          return OBELISK_RT_OUT_OF_RESOURCES;
-        if (Storage && !nonblocking && delay == 0) {
-          pending.valid[static_cast<size_t>(bit)] = 0;
-          pending.delayed[static_cast<size_t>(bit)] = 0;
+        uint64_t delay = pending.candidateDelay[index];
+        if (!pending.pulseControlled) {
+          if (delay == UINT64_MAX)
+            return OBELISK_RT_INVALID_ARGUMENT;
+          cancelScheduled(bit);
+          if (!enqueue(bit, delay))
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          if (Storage && !nonblocking && delay == 0) {
+            pending.valid[index] = 0;
+            pending.delayed[index] = 0;
+          }
+          pending.needsSchedule[index] = 0;
+          continue;
         }
-        pending.needsSchedule[static_cast<size_t>(bit)] = 0;
+        uint64_t reject = pending.candidatePulseReject[index];
+        uint64_t error = pending.candidatePulseError[index];
+        uint8_t pulseFlags = pending.candidatePulseFlags[index];
+        if (delay == UINT64_MAX || reject == UINT64_MAX ||
+            error == UINT64_MAX || error < reject)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
+                               ? UINT64_MAX
+                               : context->schedulerTime + delay;
+        bool targetValue = byteBit(value, bit);
+        bool targetUnknown = unknownPlane && byteBit(unknown, bit);
+        uint64_t leadingSequence = pending.scheduledSequence[index];
+        uint64_t leadingDue = pending.scheduledDueTime[index];
+        auto scheduleFinalIfNeeded = [&](uint64_t finalDue) {
+          bool differs = currentBit(false, bit) != targetValue ||
+                         currentBit(true, bit) != targetUnknown;
+          return !differs ||
+                 enqueueAt(bit, finalDue, targetValue, targetUnknown);
+        };
+        if (leadingSequence == 0) {
+          if (!enqueueAt(bit, dueTime, targetValue, targetUnknown))
+            return OBELISK_RT_OUT_OF_RESOURCES;
+        } else {
+          bool negative = dueTime < leadingDue;
+          uint64_t width = negative ? leadingDue - dueTime
+                                    : dueTime - leadingDue;
+          bool showCancelled =
+              (pulseFlags & OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
+          bool onDetect =
+              (pulseFlags & OBELISK_RT_INERTIAL_PATH_ON_DETECT) != 0;
+
+          // IEEE 1800-2017 30.7: the trailing edge's limits classify the
+          // pulse. Width >= error passes; reject <= width < error produces X;
+          // width < reject disappears. 30.7.4.1 moves only the X-leading
+          // event to detection time, while 30.7.4.2 applies the same X policy
+          // to a negative pulse only when showcancelled is enabled.
+          bool passPulse = !negative && width >= error;
+          bool xPulse = (!negative && width >= reject && width < error) ||
+                        (negative && showCancelled);
+          if (passPulse) {
+            if (!enqueueAt(bit, dueTime, targetValue, targetUnknown))
+              return OBELISK_RT_OUT_OF_RESOURCES;
+          } else if (xPulse) {
+            cancelScheduled(bit);
+            uint64_t xDue = onDetect ? context->schedulerTime
+                                     : std::min(leadingDue, dueTime);
+            uint64_t finalDue = negative ? std::max(leadingDue, dueTime)
+                                         : dueTime;
+            if (!enqueueAt(bit, xDue, false, true) ||
+                !enqueueAt(bit, finalDue, targetValue, targetUnknown))
+              return OBELISK_RT_OUT_OF_RESOURCES;
+          } else {
+            cancelScheduled(bit);
+            if (!scheduleFinalIfNeeded(dueTime))
+              return OBELISK_RT_OUT_OF_RESOURCES;
+          }
+        }
+        if (Storage && !nonblocking && delay == 0) {
+          pending.valid[index] = 0;
+          pending.delayed[index] = 0;
+        }
+        pending.needsSchedule[index] = 0;
       }
       pending.nextGroup = 0;
     }
@@ -1060,6 +1205,23 @@ static obelisk_rt_status schedulerInertialPath(
   }
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
+    uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
+    uint64_t turnoffDelay, uint64_t pulseReject, uint64_t pulseError,
+    const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
+  return schedulerInertialPath<false>(
+      context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
+      codeUnit, component, group, groupCount, flags, riseDelay, fallDelay,
+      turnoffDelay, pulseReject, pulseError, value, unknown, nullptr,
+      activeMask, riseMask, fallMask, turnoffMask, pulseTransitionMasks, false);
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
@@ -1068,11 +1230,35 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
     uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
     const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask) {
-  return schedulerInertialPath<false>(
+  return obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
       codeUnit, component, group, groupCount, flags, riseDelay, fallDelay,
-      turnoffDelay, value, unknown, nullptr, activeMask, riseMask, fallMask,
-      turnoffMask, false);
+      turnoffDelay, UINT64_MAX, UINT64_MAX, value, unknown, activeMask,
+      riseMask, fallMask, turnoffMask, nullptr);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t siteID, uint32_t component, uint32_t group, uint32_t groupCount,
+    uint32_t nonblocking, uint32_t pulseFlags, uint64_t riseDelay,
+    uint64_t fallDelay, uint64_t turnoffDelay, uint64_t pulseReject,
+    uint64_t pulseError, const uint8_t *value, const uint8_t *unknown,
+    const uint8_t *writeMask, const uint8_t *activeMask,
+    const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
+  if (nonblocking > 1 ||
+      (pulseFlags & ~(OBELISK_RT_INERTIAL_PATH_ON_DETECT |
+                      OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED |
+                      OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return schedulerInertialPath<true>(
+      context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
+      siteID, component, group, groupCount, pulseFlags, riseDelay, fallDelay,
+      turnoffDelay, pulseReject, pulseError, value, unknown, writeMask,
+      activeMask, riseMask, fallMask, turnoffMask, pulseTransitionMasks,
+      nonblocking != 0);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
@@ -1084,13 +1270,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
     const uint8_t *writeMask, const uint8_t *activeMask,
     const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask) {
-  if (nonblocking > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  return schedulerInertialPath<true>(
+  return obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
-      siteID, component, group, groupCount, 0, riseDelay, fallDelay,
-      turnoffDelay, value, unknown, writeMask, activeMask, riseMask, fallMask,
-      turnoffMask, nonblocking != 0);
+      siteID, component, group, groupCount, nonblocking, 0, riseDelay,
+      fallDelay, turnoffDelay, UINT64_MAX, UINT64_MAX, value, unknown,
+      writeMask, activeMask, riseMask, fallMask, turnoffMask, nullptr);
 }
 
 extern "C" obelisk_rt_status
