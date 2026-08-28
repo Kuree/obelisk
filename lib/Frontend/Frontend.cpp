@@ -2031,6 +2031,54 @@ private:
         attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
     }
 
+    if constexpr (std::same_as<T,
+                               slang::ast::SystemTimingCheckSymbol>) {
+      auto arguments = node.getArguments();
+      attrs.set("timing_check_kind",
+                builder.getI32IntegerAttr(
+                    static_cast<int32_t>(node.timingCheckKind)));
+      attrs.set("timing_check_arg_count",
+                builder.getI64IntegerAttr(arguments.size()));
+      SmallVector<int64_t> hasExpression;
+      SmallVector<int64_t> hasCondition;
+      SmallVector<Attribute> edges;
+      SmallVector<Attribute> descriptors;
+      hasExpression.reserve(arguments.size());
+      hasCondition.reserve(arguments.size());
+      edges.reserve(arguments.size());
+      descriptors.reserve(arguments.size());
+      for (const auto &argument : arguments) {
+        hasExpression.push_back(argument.expr != nullptr);
+        hasCondition.push_back(argument.condition != nullptr);
+        edges.push_back(slangir::EdgeKindAttr::get(
+            builder.getContext(), convertEnum(argument.edge)));
+        SmallVector<Attribute> encoded;
+        encoded.reserve(argument.edgeDescriptors.size());
+        for (const auto &descriptor : argument.edgeDescriptors)
+          encoded.push_back(builder.getStringAttr(
+              StringRef(descriptor.data(), descriptor.size())));
+        descriptors.push_back(builder.getArrayAttr(encoded));
+      }
+      // IEEE 1800-2017 31.2 gives every check an ordered formal argument
+      // ABI, including explicit optional holes, event-local conditions, and
+      // transition descriptors. Preserve dense aligned metadata so later
+      // lowering never reparses source text or builds a runtime check table.
+      attrs.set("timing_check_arg_has_expression",
+                builder.getDenseI64ArrayAttr(hasExpression));
+      attrs.set("timing_check_arg_has_condition",
+                builder.getDenseI64ArrayAttr(hasCondition));
+      attrs.set("timing_check_arg_edges", builder.getArrayAttr(edges));
+      attrs.set("timing_check_arg_edge_descriptors",
+                builder.getArrayAttr(descriptors));
+      slang::TimeScale scale;
+      if (const slang::ast::Scope *scope = node.getParentScope())
+        scale = scope->getTimeScale().value_or(slang::TimeScale{});
+      attrs.set("time_unit_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+      attrs.set("time_precision_fs",
+                builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+    }
+
     if constexpr (std::same_as<T, slang::ast::PulseStyleSymbol>) {
       attrs.set("pulse_style_kind", builder.getI32IntegerAttr(
                                         static_cast<int32_t>(
@@ -4119,6 +4167,18 @@ private:
         condition->visit(*this);
       if (const slang::ast::Expression *edgeSource = node.getEdgeSourceExpr())
         edgeSource->visit(*this);
+    } else if constexpr (std::same_as<
+                             T, slang::ast::SystemTimingCheckSymbol>) {
+      // Slang stores resolved timing-check operands as ordered metadata, not
+      // owned symbol children. Visit expression then &&& condition for each
+      // formal slot; the aligned Clause 31 attributes above preserve holes
+      // and exact boundaries without wrapper operations.
+      for (const auto &argument : node.getArguments()) {
+        if (argument.expr)
+          argument.expr->visit(*this);
+        if (argument.condition)
+          argument.condition->visit(*this);
+      }
     } else if constexpr (std::same_as<T, slang::ast::ClockVarSymbol>) {
       this->visitDefault(node);
       if (node.inputSkew.delay)

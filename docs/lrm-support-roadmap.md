@@ -995,6 +995,13 @@ Simulation operation, runtime ABI, or bytecode intrinsic is added. Exact direct
 controls retain their direct wake path and pay no observer or initialization
 cost.
 
+G5's first preservation tranche retains the ordered Clause 31 ABI for all
+twelve system timing checks: explicit optional holes, event expressions,
+event-local `&&&` conditions, edge kinds, custom transition descriptors, and
+the declaring time scale. Expressions remain ordinary semantic children and
+the aligned metadata uses only builtin attributes; executable scheduling is
+still diagnosed until the following G5 lowering tranches land.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
