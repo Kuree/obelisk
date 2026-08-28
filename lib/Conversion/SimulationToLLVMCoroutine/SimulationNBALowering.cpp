@@ -408,6 +408,93 @@ private:
   uint64_t stateBitCount = 0;
 };
 
+class InertialPathStrengthPairConversion final
+    : public OpConversionPattern<
+          sim::SimDriverDriveInertialPathStrengthPairOp> {
+public:
+  InertialPathStrengthPairConversion(const TypeConverter &converter,
+                                     MLIRContext *context,
+                                     uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimDriverDriveInertialPathStrengthPairOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLowDriver().size() != 1 ||
+        adaptor.getHighDriver().size() != 1 ||
+        adaptor.getLowValue().size() != 2 ||
+        adaptor.getHighValue().size() != 2 ||
+        adaptor.getTransitionValue().size() != 2 ||
+        adaptor.getActiveMask().size() != 1 ||
+        adaptor.getRiseMask().size() != 1 ||
+        adaptor.getFallMask().size() != 1 ||
+        adaptor.getTurnoffMask().size() != 1 ||
+        adaptor.getRiseDelay().size() != 1 ||
+        adaptor.getFallDelay().size() != 1 ||
+        adaptor.getTurnoffDelay().size() != 1)
+      return failure();
+    std::optional<unsigned> width =
+        nativeStateWidth(op.getLowValue().getType());
+    if (!width)
+      return failure();
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    auto savePlane = [&](Value value) {
+      Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
+      LLVM::StoreOp::create(rewriter, location, value, address, 1);
+      return address;
+    };
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                "obelisk_rt_v1_scheduler_inertial_path_strength_pair"),
+            ValueRange{
+                runtimeContext,
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_value"),
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_unknown"),
+                llvmConstant(rewriter, location, i64, stateBitCount),
+                adaptor.getLowDriver().front(), adaptor.getHighDriver().front(),
+                llvmConstant(rewriter, location, i64, *width),
+                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
+                llvmConstant(rewriter, location, i32, op.getGroup()),
+                llvmConstant(rewriter, location, i32, op.getGroupCount()),
+                adaptor.getRiseDelay().front(), adaptor.getFallDelay().front(),
+                adaptor.getTurnoffDelay().front(),
+                savePlane(adaptor.getLowValue()[0]),
+                savePlane(adaptor.getLowValue()[1]),
+                savePlane(adaptor.getHighValue()[0]),
+                savePlane(adaptor.getHighValue()[1]),
+                savePlane(adaptor.getTransitionValue()[0]),
+                savePlane(adaptor.getTransitionValue()[1]),
+                savePlane(adaptor.getActiveMask().front()),
+                savePlane(adaptor.getRiseMask().front()),
+                savePlane(adaptor.getFallMask().front()),
+                savePlane(adaptor.getTurnoffMask().front())})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{runtimeContext, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount = 0;
+};
+
 /// Preserve the declaration boundary of a dynamic packed reference through
 /// native lowering. A stable handle records only a root-relative offset; the
 /// input reference type supplies the narrower view width needed to clip a
@@ -1271,6 +1358,8 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                               stateBitCount);
   patterns.add<InertialStrengthPairConversion>(converter, patterns.getContext(),
                                                stateBitCount);
+  patterns.add<InertialPathStrengthPairConversion>(
+      converter, patterns.getContext(), stateBitCount);
   patterns.add<PackedSliceNBAConversion>(converter, patterns.getContext(),
                                          stateBitCount, staticPlan,
                                          staticSitesEnabled, guardedClaims);

@@ -3698,6 +3698,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         auto currentPathUpdate = [&](const ScheduledNBA &update) {
           if (!update.inertialPathDriver)
             return true;
+          if (update.inertialPathStrengthPair) {
+            auto pending =
+                context->inertialStrengthPathPending.find(update.inertialSite);
+            if (pending == context->inertialStrengthPathPending.end() ||
+                update.inertialPathBit >= pending->second.width ||
+                update.inertialPathGeneration !=
+                    pending->second.generation[static_cast<size_t>(
+                        update.inertialPathBit)])
+              return false;
+            size_t index = static_cast<size_t>(update.inertialPathBit);
+            return (update.inertialPathStrengthFinal
+                        ? pending->second.highSequence[index]
+                        : pending->second.lowSequence[index]) ==
+                   update.sequence;
+          }
           auto pending = context->inertialPathPending.find(update.inertialSite);
           if (pending == context->inertialPathPending.end() ||
               update.inertialPathBit >= pending->second.width ||
@@ -3725,6 +3740,22 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (update.inertialSite.codeUnit == UINT64_MAX)
             return;
           if (update.inertialPathDriver) {
+            if (update.inertialPathStrengthPair) {
+              auto pending = context->inertialStrengthPathPending.find(
+                  update.inertialSite);
+              if (pending != context->inertialStrengthPathPending.end() &&
+                  update.inertialPathBit < pending->second.width &&
+                  update.inertialPathStrengthFinal) {
+                size_t index = static_cast<size_t>(update.inertialPathBit);
+                if (pending->second.highSequence[index] == update.sequence) {
+                  pending->second.valid[index] = 0;
+                  pending->second.scheduledDueTime[index] = 0;
+                  pending->second.lowSequence[index] = 0;
+                  pending->second.highSequence[index] = 0;
+                }
+              }
+              return;
+            }
             auto pending =
                 context->inertialPathPending.find(update.inertialSite);
             if (pending != context->inertialPathPending.end() &&

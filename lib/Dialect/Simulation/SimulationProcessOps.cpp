@@ -1944,6 +1944,29 @@ LogicalResult SimDriverDriveInertialStrengthPairOp::verify() {
   return success();
 }
 
+LogicalResult SimDriverDriveInertialPathStrengthPairOp::verify() {
+  Type lowType = getLowDriver().getType().getElementType();
+  Type highType = getHighDriver().getType().getElementType();
+  auto width = getPackedWidth(lowType);
+  if (lowType != highType || lowType != getLowValue().getType() ||
+      lowType != getHighValue().getType() ||
+      lowType != getTransitionValue().getType())
+    return emitOpError(
+        "requires matching low-bank, high-bank, and transition types");
+  if (!isa<LogicType>(lowType) || !width)
+    return emitOpError("requires a fixed-width four-state logic element");
+  auto sameWidth = [&](Value mask) {
+    auto type = dyn_cast<IntegerType>(mask.getType());
+    return type && type.getWidth() == *width;
+  };
+  if (!sameWidth(getActiveMask()) || !sameWidth(getRiseMask()) ||
+      !sameWidth(getFallMask()) || !sameWidth(getTurnoffMask()))
+    return emitOpError("all masks must match the paired driver width");
+  if (getGroupCount() == 0 || getGroup() >= getGroupCount())
+    return emitOpError("group index must be within a nonempty batch");
+  return success();
+}
+
 LogicalResult SimRefDynExtractOp::verify() {
   Type inputType = getInput().getType().getElementType();
   Type resultType = getResult().getType().getElementType();

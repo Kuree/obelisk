@@ -511,6 +511,26 @@ bool validIntrinsic(const Image &image, const Function &function,
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
            bits(input(8), 64) && bits(input(9), 64);
   }
+  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR: {
+    auto low = input(0);
+    auto high = input(2);
+    auto transition = input(4);
+    if (signature.flags != 0 || site.inputCount != 16 ||
+        site.outputCount != 0 || !numeric(low) || !handle(input(1)) ||
+        !numeric(high) || !handle(input(3)) || !numeric(transition) ||
+        !compatible(*low, *high) || !compatible(*low, *transition))
+      return false;
+    for (unsigned index = 5; index != 9; ++index) {
+      auto mask = input(index);
+      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+          mask->width != low->width)
+        return false;
+    }
+    for (unsigned index = 9; index != 16; ++index)
+      if (!bits(input(index), 64))
+        return false;
+    return true;
+  }
   case OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
     auto lhs = input(0);
     auto rhs = input(1);

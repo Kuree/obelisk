@@ -3656,6 +3656,243 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     };
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
         "obelisk_sim.propagation_delays");
+    bool hasMaskedStrengthPaths =
+        timingPathMaskedPlan || !timingPathMaskedPlans.empty();
+    if (hasMaskedStrengthPaths) {
+      auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
+      if (!codeUnitID)
+        return function.emitError(
+            "strength-pair path has no stable code unit identity");
+      for (Operation *output : outputs) {
+        Operation *driverNode = output;
+        while (isa_and_nonnull<semantic::SVElementSelectExpressionOp,
+                               semantic::SVRangeSelectExpressionOp,
+                               semantic::SVMemberAccessExpressionOp>(
+            driverNode)) {
+          SmallVector<Operation *> children = getChildren(driverNode);
+          if (children.empty())
+            break;
+          driverNode = children.front();
+        }
+        TimingPathMaskedPlan *plan = nullptr;
+        if (auto nodeID =
+                driverNode
+                    ? driverNode->getAttrOfType<IntegerAttr>("node_id")
+                    : IntegerAttr{}) {
+          uint64_t id = nodeID.getValue().getZExtValue();
+          if (auto found = timingPathMaskedPlans.find(id);
+              found != timingPathMaskedPlans.end()) {
+            plan = &found->second;
+            usedTimingPathMaskedPlans.insert(id);
+          }
+        }
+        if (!plan && timingPathMaskedPlan)
+          plan = &*timingPathMaskedPlan;
+        if (!plan)
+          return emitError(getSemanticLocation(output))
+                 << "conditional primitive output has no masked path plan";
+        if (llvm::any_of(plan->groups, [](const TimingPathDelayGroup &group) {
+              return group.pulseControlled;
+            }))
+          return emitError(getSemanticLocation(output))
+                 << "pulse-controlled conditional primitive strength paths "
+                    "are not executable yet";
+        if (plan->groups.empty() || plan->groups.size() > UINT32_MAX ||
+            nextInertialDriveComponent > UINT32_MAX)
+          return function.emitError("invalid strength-pair path group batch");
+        if (!selectStrengthBank(0))
+          return emitError(location)
+                 << "conditional primitive has an incomplete driver bank";
+        FailureOr<CapturedLValue> low = captureLValue(output, location);
+        if (!selectStrengthBank(1))
+          return emitError(location)
+                 << "conditional primitive has an incomplete driver bank";
+        FailureOr<CapturedLValue> high = captureLValue(output, location);
+        if (failed(low) || failed(high) ||
+            low->kind != CapturedLValue::Kind::Reference ||
+            high->kind != CapturedLValue::Kind::Reference ||
+            !isa<sim::DriverType>(low->reference.getType()) ||
+            !isa<sim::DriverType>(high->reference.getType()))
+          return emitError(getSemanticLocation(output))
+                 << "conditional primitive path output is not a paired "
+                    "first-class driver";
+        FailureOr<Value> lowValue =
+            convert((*strengthResults)[0], low->type, false, location,
+                    isSignedNode(low->semanticNode));
+        FailureOr<Value> highValue =
+            convert((*strengthResults)[1], high->type, false, location,
+                    isSignedNode(high->semanticNode));
+        FailureOr<Value> nextLogical =
+            convert(result, low->type, false, location,
+                    isSignedNode(low->semanticNode));
+        if (failed(lowValue) || failed(highValue) || failed(nextLogical))
+          return failure();
+        std::optional<unsigned> width = sim::getPackedWidth(low->type);
+        auto maskType = dyn_cast<IntegerType>(plan->coverageMask.getType());
+        if (!width || !maskType || maskType.getWidth() != *width)
+          return function.emitError("invalid strength-pair path mask width");
+        auto logicType = sim::LogicType::get(function.getContext(), *width);
+        auto toLogic = [&](Value value) -> FailureOr<Value> {
+          if (!isa<IntegerType, sim::LogicType>(value.getType())) {
+            FailureOr<Value> scalar = toPackedScalar(value, location);
+            if (failed(scalar))
+              return failure();
+            value = *scalar;
+          }
+          if (isa<sim::LogicType>(value.getType()))
+            return value;
+          return Value(sim::SimLogicFromBitsOp::create(builder, location,
+                                                       logicType, value));
+        };
+        FailureOr<Value> previousLow = toLogic(sim::SimDriverReadOp::create(
+            builder, location, low->type, low->reference));
+        FailureOr<Value> previousHigh = toLogic(sim::SimDriverReadOp::create(
+            builder, location, high->type, high->reference));
+        FailureOr<Value> nextLogic = toLogic(*nextLogical);
+        if (failed(previousLow) || failed(previousHigh) || failed(nextLogic))
+          return function.emitError(
+              "strength-pair path values are not packed logic");
+        APInt zeroBits = APInt::getZero(*width);
+        APInt oneBits = APInt::getAllOnes(*width);
+        auto logicConstant = [&](const APInt &value, const APInt &unknown) {
+          return Value(sim::SimLogicConstantOp::create(
+              builder, location, logicType,
+              builder.getIntegerAttr(maskType, value),
+              builder.getIntegerAttr(maskType, unknown)));
+        };
+        Value zeroLogic = logicConstant(zeroBits, zeroBits);
+        Value oneLogic = logicConstant(oneBits, zeroBits);
+        Value xLogic = logicConstant(zeroBits, oneBits);
+        Value zLogic = logicConstant(oneBits, oneBits);
+        Value onesMask = arith::ConstantOp::create(
+            builder, location, maskType,
+            builder.getIntegerAttr(maskType, oneBits));
+        Value zeroMask = arith::ConstantOp::create(
+            builder, location, maskType,
+            builder.getIntegerAttr(maskType, zeroBits));
+        auto equalMask = [&](Value value, Value constant) {
+          Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, maskType, value, constant);
+          return Value(arith::XOrIOp::create(builder, location, difference,
+                                             onesMask));
+        };
+        Value previousZero = arith::AndIOp::create(
+            builder, location, equalMask(*previousLow, zeroLogic),
+            equalMask(*previousHigh, zLogic));
+        Value previousOne = arith::AndIOp::create(
+            builder, location, equalMask(*previousLow, zLogic),
+            equalMask(*previousHigh, oneLogic));
+        Value previousZ = arith::AndIOp::create(
+            builder, location, equalMask(*previousLow, zLogic),
+            equalMask(*previousHigh, zLogic));
+        // IEEE 1800-2017 28.12.2 defines the L/H strength-pair encoding, and
+        // 30.5.1/30.5.2 select module-path delays from the complete 0/1/X/Z
+        // transition. Reconstruct Z explicitly; treating a released driver as
+        // X would select the wrong member of a 6- or 12-delay declaration.
+        Value previousLogical = sim::SimLogicMuxOp::create(
+            builder, location, logicType,
+            sim::SimLogicFromBitsOp::create(builder, location, logicType,
+                                            previousOne),
+            oneLogic, xLogic);
+        previousLogical = sim::SimLogicMuxOp::create(
+            builder, location, logicType,
+            sim::SimLogicFromBitsOp::create(builder, location, logicType,
+                                            previousZ),
+            zLogic, previousLogical);
+        previousLogical = sim::SimLogicMuxOp::create(
+            builder, location, logicType,
+            sim::SimLogicFromBitsOp::create(builder, location, logicType,
+                                            previousZero),
+            zeroLogic, previousLogical);
+
+        std::array<Value, 12> transitions;
+        Value consumed = zeroMask;
+        if (plan->transitionIndependent) {
+          Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, maskType, previousLogical, *nextLogic);
+          consumed = difference;
+          transitions.fill(difference);
+        } else {
+          std::array<Value, 4> oldSymbols;
+          std::array<Value, 4> newSymbols;
+          for (unsigned symbol = 0; symbol != 4; ++symbol) {
+            Value constant = symbol == 0   ? zeroLogic
+                             : symbol == 1 ? oneLogic
+                             : symbol == 2 ? xLogic
+                                           : zLogic;
+            oldSymbols[symbol] = equalMask(previousLogical, constant);
+            newSymbols[symbol] = equalMask(*nextLogic, constant);
+          }
+          constexpr std::array<unsigned, 12> from = {
+              0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
+          constexpr std::array<unsigned, 12> to = {
+              1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+          for (unsigned index = 0; index != transitions.size(); ++index) {
+            transitions[index] = arith::AndIOp::create(
+                builder, location, oldSymbols[from[index]],
+                newSymbols[to[index]]);
+            consumed = arith::OrIOp::create(builder, location, consumed,
+                                             transitions[index]);
+          }
+        }
+        if (!plan->edgePending.empty()) {
+          // IEEE 1800-2017 28.12.2 permits the L/H range to change while the
+          // resolved primitive value remains X. Under 30.4.3 that destination
+          // evaluation still consumes its sampled source-edge qualification;
+          // retain it only where the two-bank contribution did not change.
+          Value bankDifference = arith::OrIOp::create(
+              builder, location,
+              sim::SimLogicCaseDifferenceMaskOp::create(
+                  builder, location, maskType, *previousLow, *lowValue),
+              sim::SimLogicCaseDifferenceMaskOp::create(
+                  builder, location, maskType, *previousHigh, *highValue));
+          bankDifference = arith::AndIOp::create(
+              builder, location, bankDifference, plan->coverageMask);
+          consumed = arith::OrIOp::create(builder, location, consumed,
+                                           bankDifference);
+          Value retained = arith::XOrIOp::create(builder, location, consumed,
+                                                  onesMask);
+          for (Value pendingRef : plan->edgePending) {
+            Value pending = sim::SimRefLoadOp::create(
+                builder, location, maskType, pendingRef);
+            pending = arith::AndIOp::create(builder, location, pending,
+                                            retained);
+            sim::SimRefStoreOp::create(builder, location, pending, pendingRef);
+          }
+        }
+        uint32_t component =
+            static_cast<uint32_t>(nextInertialDriveComponent++);
+        uint32_t groupCount = static_cast<uint32_t>(plan->groups.size());
+        recordImplicitWrite(low->reference);
+        recordImplicitWrite(high->reference);
+        for (auto [groupIndex, group] : llvm::enumerate(plan->groups)) {
+          std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
+          auto add = [&](unsigned bank, unsigned transition) {
+            Value selected = arith::AndIOp::create(
+                builder, location, group.masks[transition],
+                transitions[transition]);
+            runtimeMasks[bank] = arith::OrIOp::create(
+                builder, location, runtimeMasks[bank], selected);
+          };
+          for (unsigned transition : {0u, 3u, 7u})
+            add(0, transition);
+          for (unsigned transition : {1u, 5u, 9u})
+            add(1, transition);
+          for (unsigned transition : {2u, 4u, 10u})
+            add(2, transition);
+          for (unsigned transition : {6u, 8u, 11u})
+            add(0, transition);
+          sim::SimDriverDriveInertialPathStrengthPairOp::create(
+              builder, location, low->reference, *lowValue, high->reference,
+              *highValue, *nextLogical, plan->coverageMask, runtimeMasks[0],
+              runtimeMasks[1], runtimeMasks[2], group.delay, group.delay,
+              group.delay, codeUnitID, builder.getI32IntegerAttr(component),
+              builder.getI32IntegerAttr(static_cast<uint32_t>(groupIndex)),
+              builder.getI32IntegerAttr(groupCount));
+        }
+      }
+      return success();
+    }
     if (delays || timingPathDelays) {
       if (delays && (delays.empty() || delays.size() > 3))
         return function.emitError("invalid frozen propagation delays");

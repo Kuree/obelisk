@@ -955,6 +955,33 @@ operation, snapshot, pending mask, and epoch rather than per-bit actors or
 runtime scans; native O0 compiles in 0.12 seconds at 80 MB RSS and bytecode O0
 in 0.04 seconds at 73 MB RSS.
 
+G4's eleventh closure tranche extends direct procedural destinations to exact
+source event lists and to writers separated from their path source by a static
+procedural delay. Each listed source occurrence is retained independently,
+while the delayed dependency carries its qualification to the eventual fixed
+write without a runtime path-table scan. Derived event expressions remain a
+targeted diagnostic until they can observe every constituent source change
+independently.
+
+G4's twelfth closure tranche implements Clause 30 pulse rejection and error
+limits for ordinary continuous and procedural path destinations, including
+`PATHPULSE$`, module-wide `PATHPULSE$`, `pulsestyle_onevent`/
+`pulsestyle_ondetect`, and `showcancelled`/`noshowcancelled`. Explicit pulse
+paths opt into a keyed multi-event calendar and exact twelve-class transition
+masks; paths without pulse controls retain the previous compact ABI, bytecode
+intrinsic, and single-pending-event storage.
+
+G4's thirteenth closure tranche executes module paths whose destination is the
+complementary L/H strength-bank representation of `bufif`/`notif`. Lowering
+reconstructs the complete published 0/1/X/Z value once, performs the same
+statically unrolled per-bit delay arbitration as an ordinary driver, and emits
+one masked strength-pair operation per distinct static delay rather than one
+actor per bit. The keyed runtime calendar commits both bank events at one due
+time and resolves only after the second event, preserving atomic strength
+publication and direct cancellation in native and bytecode execution. The
+ordinary no-path and single-delay paths keep their compact operation and ABI;
+pulse-controlled strength pairs remain the final pulse-composition residual.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
@@ -1796,7 +1823,7 @@ primary runtime-unit executable passed.
 | 27 Generate constructs | Executable for the audited surface | Loop/conditional generation, canonical named scopes, parameterized arrays, `$root` paths, and common upward references elaborate. Continue differential testing; the bounded L13 refresh found no legal backend generate-scope failure. |
 | 28 Gate/switch modeling | Executable for the audited surface | Logic gates, buffers/inverters, tristate gates, pullup/pulldown, strengths, built-in net resolution, strength-aware scalar-net `%v`, static one/two/three propagation delays including parameter arithmetic, the four-state truth tables of MOS/CMOS plus resistive variants, exact strength-preserving resolved-net source forwarding with immediate or inertial MOS/CMOS delays, and `tran`/`rtran`/`tranif0`/`tranif1`/`rtranif0`/`rtranif1` channels with exact four-state connectivity and resistive strength reduction execute. Controlled pass devices support their standard static turn-on/turn-off/high-impedance delays with keyed inertial cancellation. Forced-native primitive actors form bounded same-scope kernels while cycles remain under the convergence scheduler, and statically addressed driver publication lowers only the exact affected connectivity components. |
 | 29 User-defined primitives | Executable for the audited surface | Combinational and sequential UDP declarations preserve their validated port and ordered truth-table metadata and compile to exact four-state matching in both tiers. This includes Z-to-X input normalization, level and edge symbols, explicit transition pairs with wildcards, source-order dominance within each row class, level-over-edge dominance, missing-row X, sequential state hold and initialization, ANSI/non-ANSI declarations, instances and arrays, strengths, and legal static one/two-value inertial delays. Continue differential closure for residual declaration and scheduler corner cases. |
-| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, edge-sensitive `if`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary destination driver spans execute through compact inertial drivers in both tiers; overlapping paths arbitrate independently per selected destination bit and four-state transition class, and zero-time derived continuous outputs retain same-time edge qualification. Direct procedural edge destinations execute for exact single-source recurring controls and proven implicit sensitivity. Source event lists/derived controls and delayed procedural dependencies, atomic masked path delays for the complementary strength banks of `bufif`/`notif`, pulse controls and limits, and `showcancelled`/`noshowcancelled` remain. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
+| 30 Specify blocks | Partial | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, edge-sensitive `if`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary and complementary `bufif`/`notif` strength-pair destinations execute in both tiers. Overlapping paths arbitrate independently per selected destination bit and four-state transition class, and zero-time derived continuous outputs retain same-time edge qualification. Direct procedural edge destinations execute for exact single-source controls, source event lists, proven implicit sensitivity, and static delayed dependencies. Pulse rejection/error limits, pulse-style directives, and cancellation display controls execute for ordinary continuous and procedural paths without changing the compact default-path ABI. Derived procedural controls and pulse-controlled complementary strength pairs remain. Unsupported forms receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Semantic only | System timing-check nodes are imported and now receive a targeted Clause 31 diagnostic instead of being silently erased. G5 implements all stability-window and clock/control checks, edge and condition forms, notifiers, vectors, negative checks, and violation scheduling. |
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Executable for the audited surface | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. Configurations execute ordered default library lists; cell and exact-instance `use`, `liblist`, and parameter rules; multiple roots; nested configuration selection; arrays; and bind interaction. `-emit-bindings` deterministically reports the effective selected cell, config/root/liblist, bind provenance, and retained rule location. The boundary is intentionally effective elaboration: Slang does not expose the configuration declaration source AST to semantic visitors, so Obelisk does not reconstruct a source-rule tree. |
@@ -2137,11 +2164,14 @@ one commit.
     Edge-sensitive `if`, parallel/full destinations, every standard edge
     identifier, vector-LSB mapping, and zero-time derived continuous outputs
     execute. Direct procedural-output edge paths execute for recurring exact
-    single-source controls and proven implicit sensitivity, including blocking
-    and NBA fixed-select writes with shared multi-writer cancellation. Event
-    lists/derived controls and delayed procedural dependencies, atomic masked
-    path delays for complementary `bufif`/`notif` strength banks, pulse
-    filtering and limits, and cancellation display controls remain.
+    single-source controls, source event lists, proven implicit sensitivity,
+    and static delayed dependencies, including blocking and NBA fixed-select
+    writes with shared multi-writer cancellation. Complementary `bufif`/`notif`
+    strength banks execute through one atomic masked path operation. Pulse
+    filtering, error limits, style directives, and cancellation display
+    controls execute for ordinary continuous and procedural paths. Derived
+    procedural controls and pulse-controlled complementary strength pairs
+    remain.
 40. **G5 — System timing checks (31).** Implement every standard timing check,
     conditioned/edge events, notifiers, vector expansion, negative checks, and
     violation scheduling.

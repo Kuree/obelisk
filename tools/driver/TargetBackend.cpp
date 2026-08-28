@@ -565,7 +565,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
     hasInertialDriver |=
         mlir::isa<obelisk::sim::SimDriverDriveInertialOp,
                   obelisk::sim::SimDriverDriveInertialPathOp,
-                  obelisk::sim::SimDriverDriveInertialStrengthPairOp>(
+                  obelisk::sim::SimDriverDriveInertialStrengthPairOp,
+                  obelisk::sim::SimDriverDriveInertialPathStrengthPairOp>(
             operation);
     hasPassSwitch |= mlir::isa<obelisk::sim::SimPassSwitchDeclOp>(operation);
   });

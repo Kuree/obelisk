@@ -395,7 +395,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimDriverDriveInertialOp,
                    sim::SimDriverDriveInertialPathOp,
-                   sim::SimDriverDriveInertialStrengthPairOp>(operation) &&
+                   sim::SimDriverDriveInertialStrengthPairOp,
+                   sim::SimDriverDriveInertialPathStrengthPairOp>(operation) &&
                operation->getParentOfType<sim::SimFuncOp>().getEntryKind() ==
                    sim::EntryKind::Continuous) {
       // An explicit delayed continuous assignment evaluates once at time

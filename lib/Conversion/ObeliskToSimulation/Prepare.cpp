@@ -2316,13 +2316,6 @@ void ObeliskSimPreparePass::runOnOperation() {
             equivalent.size() == 2 && equivalent[0]->strengthBank &&
             equivalent[1]->strengthBank &&
             equivalent[0]->strengthBank != equivalent[1]->strengthBank;
-        if (strengthPair) {
-          emitError(getSemanticLocation(path.declaration))
-              << "specify paths on conditional primitive strength pairs are "
-                 "not executable yet";
-          invalid = true;
-          break;
-        }
         if (equivalent.size() != 1 && !strengthPair) {
           emitError(getSemanticLocation(path.declaration))
               << "specify path destination has an ambiguous continuous "

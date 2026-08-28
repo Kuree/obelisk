@@ -1182,6 +1182,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC = UINT32_C(0x00010247),
   OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE = UINT32_C(0x00010248),
   OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME = UINT32_C(0x00010249),
+  OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR = UINT32_C(0x0001024a),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3440,6 +3441,21 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
     const uint8_t *low_value, const uint8_t *low_unknown,
     const uint8_t *high_value, const uint8_t *high_unknown,
     const uint8_t *transition_value, const uint8_t *transition_unknown);
+// Schedule one statically unrolled module-path delay group for the two
+// complementary strength banks of a conditional primitive. The banks mature
+// atomically and resolve only after the high-bank event is committed.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_inertial_path_strength_pair(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t low_bit_offset,
+    uint64_t high_bit_offset, uint64_t bit_width, uint64_t code_unit,
+    uint32_t component, uint32_t group, uint32_t group_count,
+    uint64_t rise_delay, uint64_t fall_delay, uint64_t turnoff_delay,
+    const uint8_t *low_value, const uint8_t *low_unknown,
+    const uint8_t *high_value, const uint8_t *high_unknown,
+    const uint8_t *transition_value, const uint8_t *transition_unknown,
+    const uint8_t *active_mask, const uint8_t *rise_mask,
+    const uint8_t *fall_mask, const uint8_t *turnoff_mask);
 // Resolve a canonical driver-state range after an immediate native store.
 // Net declarations with propagation delays schedule their post-resolution
 // visible transitions; other nets publish immediately.

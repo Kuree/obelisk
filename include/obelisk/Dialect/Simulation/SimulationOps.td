@@ -3369,6 +3369,43 @@ def SimDriverDriveInertialStrengthPairOp : SimOp<
   let hasVerifier = 1;
 }
 
+def SimDriverDriveInertialPathStrengthPairOp : SimOp<
+    "driver.drive_inertial_path_strength_pair", [
+      MemoryEffects<[MemWrite<SimSchedulerResource>,
+                     MemWrite<SimNetResource>]>,
+      AllTypesMatch<["active_mask", "rise_mask", "fall_mask",
+                     "turnoff_mask"]>
+    ]> {
+  let summary = "schedule one masked module-path strength-pair delay group";
+  let description = [{
+    Schedules the complementary polarity banks of a conditional primitive as
+    one atomic masked module-path update. All groups for a site execute
+    consecutively; group zero starts one per-bit arbitration batch.
+  }];
+  let arguments = (ins SimDriverType:$low_driver, AnyType:$low_value,
+                       SimDriverType:$high_driver, AnyType:$high_value,
+                       AnyType:$transition_value,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count);
+  let assemblyFormat = [{
+    $low_driver `=` $low_value `,` $high_driver `=` $high_value
+    `transition` $transition_value `active` $active_mask `masks` `[`
+    $rise_mask `,` $fall_mask `,` $turnoff_mask `]` `after` `[`
+    $rise_delay `,` $fall_delay `,` $turnoff_delay `]` `site`
+    $code_unit_id `:` $component `group` $group `of` $group_count attr-dict
+    `:` qualified(type($low_driver)) `,` type($low_value) `,`
+    qualified(type($high_driver)) `,` type($high_value) `,`
+    type($transition_value) `,` type($active_mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimDriverDriveDelayedNetOp : SimOp<"driver.drive_delayed_net", [
     MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
     SimDriverElementMatches<"driver", "value">

@@ -1209,6 +1209,13 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
                 root.first == static_cast<unsigned>(resource))
               rejected.insert(root);
         };
+        if (auto pair =
+                dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+                    operation)) {
+          rejectWrite(pair.getLowDriver(), pair.getLowValue());
+          rejectWrite(pair.getHighDriver(), pair.getHighValue());
+          return;
+        }
         if (auto pair = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
                 operation)) {
           rejectWrite(pair.getLowDriver(), pair.getLowValue());

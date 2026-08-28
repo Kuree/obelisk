@@ -485,6 +485,26 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
          codeUnit, component},
         {});
   }
+  if (auto op = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+          operation)) {
+    uint32_t codeUnit = emitU64Constant(plan, op.getCodeUnitId());
+    uint32_t component = emitU64Constant(plan, op.getComponent());
+    uint32_t group = emitU64Constant(plan, op.getGroup());
+    uint32_t groupCount = emitU64Constant(plan, op.getGroupCount());
+    if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
+        group == kInvalidRegister || groupCount == kInvalidRegister)
+      return op.emitOpError("cannot encode inertial strength-path identity");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicInertialPathStrengthPair,
+        {reg(plan, op.getLowValue()), reg(plan, op.getLowDriver()),
+         reg(plan, op.getHighValue()), reg(plan, op.getHighDriver()),
+         reg(plan, op.getTransitionValue()), reg(plan, op.getActiveMask()),
+         reg(plan, op.getRiseMask()), reg(plan, op.getFallMask()),
+         reg(plan, op.getTurnoffMask()), reg(plan, op.getRiseDelay()),
+         reg(plan, op.getFallDelay()), reg(plan, op.getTurnoffDelay()),
+         codeUnit, component, group, groupCount},
+        {});
+  }
   if (auto op = dyn_cast<sim::SimEventTriggerOp>(operation)) {
     SmallVector<Value> inputs{op.getEvent()};
     if (op.getDelay())
