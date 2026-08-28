@@ -1,3 +1,5 @@
+// XFAIL: *
+// Pristine Slang v11 rejects the qualified user-defined interconnect type.
 // RUN: obelisk -fno-lto -O0 %s -o %t.o0.native
 // RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: obelisk -fno-lto -O3 %s -o %t.o3.native

@@ -23,6 +23,9 @@
 #include <tuple>
 #include <vector>
 
+decltype(&obelisk_rt_v1_dpi_aggregate_state_alloc)
+    designBytecodeDpiAggregateStateAlloc = nullptr;
+
 namespace {
 
 using namespace obelisk::designbytecode;
@@ -1266,11 +1269,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         return OBELISK_RT_INVALID_HANDLE;
       uint64_t raw = nullEvent ? UINT64_MAX : static_cast<uint64_t>(start);
       bool dynamicEvent = isDynamicEventHandle(descriptorKind, raw);
-      uint64_t stable =
-          nullEvent ? UINT64_MAX
-                    : (dynamicEvent ? raw : encodeGlobalHandle(start));
-      if (!nullEvent && !dynamicEvent &&
-          (kind & kAutomaticHandleKind) != 0) {
+      uint64_t stable = nullEvent
+                            ? UINT64_MAX
+                            : (dynamicEvent ? raw : encodeGlobalHandle(start));
+      if (!nullEvent && !dynamicEvent && (kind & kAutomaticHandleKind) != 0) {
         uint64_t base = 0;
         std::memcpy(&base, frame.data + handle.offset + 8, 8);
         uint32_t id = 0;
@@ -1390,6 +1392,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                                      : 0;
         uint64_t framePlane =
             registerPlane != 0 ? transferSize / 2 : transferSize;
+        uint64_t unknownDisplacement =
+            instruction.source1 != 0 ? instruction.source1 : framePlane;
         if (registerPlane != 0 &&
             (transferSize % 2 != 0 || framePlane > registerPlane))
           return OBELISK_RT_INVALID_FRAME;
@@ -1400,13 +1404,15 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       canonicalFrame + instruction.immediate, framePlane);
           if (registerPlane != 0)
             std::memcpy(frame.data + value.offset + registerPlane,
-                        canonicalFrame + instruction.immediate + framePlane,
+                        canonicalFrame + instruction.immediate +
+                            unknownDisplacement,
                         framePlane);
         } else {
           std::memcpy(canonicalFrame + instruction.immediate,
                       frame.data + value.offset, framePlane);
           if (registerPlane != 0)
-            std::memcpy(canonicalFrame + instruction.immediate + framePlane,
+            std::memcpy(canonicalFrame + instruction.immediate +
+                            unknownDisplacement,
                         frame.data + value.offset + registerPlane, framePlane);
         }
         break;
@@ -1812,8 +1818,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                              static_cast<uint32_t>(start)
+              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                    static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -2091,8 +2097,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                   static_cast<uint32_t>(absolute)
+                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                         static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
@@ -2115,8 +2121,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                static_cast<uint32_t>(start)
+                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                      static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
@@ -3095,6 +3101,11 @@ obelisk_rt_status obelisk_rt_execute_design_export(
       case OBELISK_RT_DBREG_LOGIC:
         return layout.kind == OBELISK_RT_DBREG_LOGIC &&
                layout.size == limbCount(width) * sizeof(uint64_t) * 2;
+      case OBELISK_RT_DBREG_AGGREGATE:
+        return (layout.kind == OBELISK_RT_DBREG_BITS &&
+                layout.size == limbCount(width) * sizeof(uint64_t)) ||
+               (layout.kind == OBELISK_RT_DBREG_LOGIC &&
+                layout.size == limbCount(width) * sizeof(uint64_t) * 2);
       case OBELISK_RT_DBREG_STRING:
         return layout.kind == OBELISK_RT_DBREG_STRING && width == 64 &&
                layout.size == 8 && flags == 0;
@@ -3112,7 +3123,8 @@ obelisk_rt_status obelisk_rt_execute_design_export(
                              const obelisk_rt_import_input_v1 &input) {
       if (!matches(layout, input.kind, input.flags, input.bit_width) ||
           input.limb_count != limbCount(input.bit_width) || !input.value ||
-          (input.kind == OBELISK_RT_DBREG_LOGIC) != (input.unknown != nullptr))
+          (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
+              (input.unknown != nullptr))
         return false;
       uint64_t bytes = input.limb_count * sizeof(uint64_t);
       if (input.kind == OBELISK_RT_DBREG_REAL32 ||
@@ -3129,7 +3141,7 @@ obelisk_rt_status obelisk_rt_execute_design_export(
                              obelisk_rt_import_output_v1 &output) {
       if (!matches(layout, output.kind, output.flags, output.bit_width) ||
           output.limb_count != limbCount(output.bit_width) || !output.value ||
-          (output.kind == OBELISK_RT_DBREG_LOGIC) !=
+          (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
               (output.unknown != nullptr))
         return false;
       uint64_t bytes = output.limb_count * sizeof(uint64_t);
@@ -3149,7 +3161,7 @@ obelisk_rt_status obelisk_rt_execute_design_export(
       Layout layout = layoutAt(image, function, function.argumentCount + index);
       if (!matches(layout, output.kind, output.flags, output.bit_width) ||
           output.limb_count != limbCount(output.bit_width) || !output.value ||
-          (output.kind == OBELISK_RT_DBREG_LOGIC) !=
+          (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
               (output.unknown != nullptr))
         return OBELISK_RT_INVALID_BYTECODE;
     }
@@ -3180,6 +3192,277 @@ obelisk_rt_status obelisk_rt_execute_design_export(
               outputs[index]))
         return OBELISK_RT_INVALID_BYTECODE;
     return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+}
+
+obelisk_rt_status obelisk_rt_execute_design_export_task(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    const obelisk_rt_export_descriptor_v1 &descriptor,
+    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
+    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+    uint32_t outputCount, const uint8_t *directions,
+    const int64_t *const *aggregatePlans,
+    const uint64_t *aggregatePlanWords) noexcept {
+  if (!context || inputCount != descriptor.input_count ||
+      outputCount != descriptor.output_count ||
+      (descriptor.flags & OBELISK_RT_EXPORT_TASK) == 0 ||
+      descriptor.bytecode_function == OBELISK_RT_EXPORT_NO_BYTECODE ||
+      (inputCount != 0 &&
+       (!inputs || !directions || !aggregatePlans || !aggregatePlanWords)) ||
+      (outputCount != 0 && !outputs))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ManagedExecutionScope managedExecution(context);
+    if (managedExecution.getStatus() != OBELISK_RT_OK)
+      return managedExecution.getStatus();
+    uint32_t functionIndex = descriptor.bytecode_function;
+    obelisk_rt_design_bytecode_entry_v1 entry{&execution, functionIndex, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image) ||
+        functionIndex >= image.functionCount)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Function function = functionAt(image, functionIndex);
+    uint32_t copiedOutputs = 0;
+    uint64_t physicalArguments = 1;
+    for (uint32_t index = 0; index != inputCount; ++index) {
+      if (directions[index] > 2)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      physicalArguments += 1 + (directions[index] != 0);
+      copiedOutputs += directions[index] != 0;
+    }
+    if (function.id != descriptor.code_unit_id ||
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        function.argumentCount != physicalArguments ||
+        function.resultCount != 0 || copiedOutputs != outputCount)
+      return OBELISK_RT_INVALID_BYTECODE;
+
+    auto matches = [](const Layout &layout, uint8_t kind, uint8_t flags,
+                      uint32_t width) {
+      if (layout.width != width ||
+          (flags & ~uint8_t{OBELISK_RT_DBREG_SIGNED}) != 0)
+        return false;
+      switch (kind) {
+      case OBELISK_RT_DBREG_BITS:
+        return layout.kind == OBELISK_RT_DBREG_BITS;
+      case OBELISK_RT_DBREG_LOGIC:
+        return layout.kind == OBELISK_RT_DBREG_LOGIC;
+      case OBELISK_RT_DBREG_AGGREGATE:
+        return layout.kind == OBELISK_RT_DBREG_BITS ||
+               layout.kind == OBELISK_RT_DBREG_LOGIC;
+      case OBELISK_RT_DBREG_STRING:
+        return layout.kind == OBELISK_RT_DBREG_STRING && width == 64 &&
+               flags == 0;
+      case OBELISK_RT_DBREG_REAL32:
+        return layout.kind == OBELISK_RT_DBREG_REAL32 && width == 32 &&
+               flags == 0;
+      case OBELISK_RT_DBREG_REAL64:
+        return layout.kind == OBELISK_RT_DBREG_REAL64 && width == 64 &&
+               flags == 0;
+      default:
+        return false;
+      }
+    };
+    std::vector<CaptureRecord> captures(function.argumentCount);
+    std::vector<uint8_t> hasCapture(function.argumentCount, 0);
+    for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+      CaptureRecord capture = captureAt(image, index);
+      if (capture.function != functionIndex)
+        continue;
+      if (capture.argument >= function.argumentCount ||
+          hasCapture[capture.argument])
+        return OBELISK_RT_INVALID_BYTECODE;
+      captures[capture.argument] = capture;
+      hasCapture[capture.argument] = 1;
+    }
+    if (std::find(hasCapture.begin(), hasCapture.end(), uint8_t{0}) !=
+        hasCapture.end())
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t canonicalSize =
+        (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
+    if (function.scratchAlignment == 0 ||
+        canonicalSize > UINT64_MAX - (function.scratchAlignment - 1))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t scratchOffset = (canonicalSize + function.scratchAlignment - 1) &
+                             ~(function.scratchAlignment - 1);
+    if (scratchOffset > UINT64_MAX - function.scratchSize ||
+        scratchOffset + function.scratchSize >
+            std::numeric_limits<size_t>::max())
+      return OBELISK_RT_OUT_OF_MEMORY;
+
+    ScheduledDesignTask task;
+    task.parent = context->activeLogicalProcessToken;
+    if (task.parent != 0)
+      context->logicalProcessParentsWithChildren.insert(task.parent);
+    task.programOwner = context->activeProgramOwner;
+    obelisk_rt_random_split_unlocked(context, task.random);
+    task.function = functionIndex;
+    task.scheduleRank = static_cast<uint32_t>(function.initialScheduleRank);
+    task.scratchOffset = scratchOffset;
+    task.scratchSize = function.scratchSize;
+    task.frame = context->designTaskFrames.acquire(
+        static_cast<size_t>(scratchOffset + function.scratchSize));
+
+    auto copyInput = [&](uint32_t argument,
+                         const obelisk_rt_import_input_v1 &input) {
+      Layout layout = layoutAt(image, function, argument);
+      CaptureRecord capture = captures[argument];
+      if (!matches(layout, input.kind, input.flags, input.bit_width) ||
+          input.limb_count != limbCount(input.bit_width) || !input.value ||
+          (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
+              (input.unknown != nullptr) ||
+          capture.valueOffset == UINT64_MAX ||
+          capture.valueOffset > scratchOffset ||
+          capture.planeSize > scratchOffset - capture.valueOffset)
+        return false;
+      std::memcpy(task.frame.data() + capture.valueOffset, input.value,
+                  static_cast<size_t>(capture.planeSize));
+      if (capture.unknownOffset != UINT64_MAX) {
+        if (!input.unknown || capture.unknownOffset > scratchOffset ||
+            capture.planeSize > scratchOffset - capture.unknownOffset)
+          return false;
+        std::memcpy(task.frame.data() + capture.unknownOffset, input.unknown,
+                    static_cast<size_t>(capture.planeSize));
+      }
+      return true;
+    };
+    auto copyHandle = [&](uint32_t argument, uint64_t handle) {
+      Layout layout = layoutAt(image, function, argument);
+      CaptureRecord capture = captures[argument];
+      if (layout.kind != OBELISK_RT_DBREG_HANDLE ||
+          capture.valueOffset == UINT64_MAX ||
+          capture.valueOffset > scratchOffset ||
+          sizeof(handle) > scratchOffset - capture.valueOffset)
+        return false;
+      std::memcpy(task.frame.data() + capture.valueOffset, &handle,
+                  sizeof(handle));
+      return true;
+    };
+
+    std::vector<uint64_t> owners;
+    std::vector<uint64_t> retained;
+    auto releaseUnscheduled = [&] {
+      for (uint64_t handle : retained)
+        (void)obelisk_rt_v1_native_state_release(context, handle, 0);
+      for (uint64_t handle : owners)
+        (void)obelisk_rt_v1_native_state_release(context, handle, 1);
+    };
+    uint32_t argument = 1, output = 0;
+    for (uint32_t index = 0; index != inputCount; ++index) {
+      if (!copyInput(argument++, inputs[index])) {
+        releaseUnscheduled();
+        return OBELISK_RT_INVALID_BYTECODE;
+      }
+      if (directions[index] == 0)
+        continue;
+      obelisk_rt_import_output_v1 &destination = outputs[output++];
+      if (destination.kind != inputs[index].kind ||
+          destination.flags != inputs[index].flags ||
+          destination.bit_width != inputs[index].bit_width ||
+          destination.limb_count != inputs[index].limb_count ||
+          !destination.value ||
+          (inputs[index].unknown != nullptr) !=
+              (destination.unknown != nullptr)) {
+        releaseUnscheduled();
+        return OBELISK_RT_ARGUMENT_MISMATCH;
+      }
+      uint64_t handle = UINT64_MAX;
+      obelisk_rt_status status;
+      if (inputs[index].kind == OBELISK_RT_DBREG_AGGREGATE &&
+          aggregatePlans[index] && aggregatePlanWords[index] != 0) {
+        if (!designBytecodeDpiAggregateStateAlloc) {
+          releaseUnscheduled();
+          return OBELISK_RT_TIER_UNAVAILABLE;
+        }
+        status = designBytecodeDpiAggregateStateAlloc(
+            context, inputs[index].bit_width,
+            reinterpret_cast<const uint8_t *>(inputs[index].value),
+            reinterpret_cast<const uint8_t *>(inputs[index].unknown),
+            aggregatePlans[index], aggregatePlanWords[index], &handle);
+      } else if (inputs[index].kind == OBELISK_RT_DBREG_STRING) {
+        obelisk_rt_managed_root_slot_v1 root{
+            0, OBELISK_RT_MANAGED_ROOT_KIND_STRING, 0};
+        status = obelisk_rt_v1_native_state_alloc_with_typed_roots(
+            context, inputs[index].bit_width,
+            reinterpret_cast<const uint8_t *>(inputs[index].value), nullptr,
+            &root, 1, &handle);
+      } else {
+        status = obelisk_rt_v1_native_state_alloc(
+            context, inputs[index].bit_width,
+            reinterpret_cast<const uint8_t *>(inputs[index].value),
+            reinterpret_cast<const uint8_t *>(inputs[index].unknown), &handle);
+      }
+      if (status != OBELISK_RT_OK) {
+        releaseUnscheduled();
+        return status;
+      }
+      owners.push_back(handle);
+      status = obelisk_rt_v1_native_state_retain(context, handle);
+      if (status == OBELISK_RT_OK)
+        retained.push_back(handle);
+      if (status != OBELISK_RT_OK || !copyHandle(argument++, handle)) {
+        releaseUnscheduled();
+        return status != OBELISK_RT_OK ? status : OBELISK_RT_INVALID_BYTECODE;
+      }
+    }
+
+    uint64_t id = 0;
+    {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (context->nextDesignTaskID == 0 ||
+          context->nextDesignTaskID > uint64_t{INT64_MAX} ||
+          context->nextProcessInsertionSequence == 0 ||
+          context->nextProcessInsertionSequence == UINT64_MAX) {
+        releaseUnscheduled();
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      }
+      id = context->nextDesignTaskID++;
+      obelisk_rt_invalidate_design_ready_cohort(context);
+      task.id = id;
+      task.phase =
+          context->activeDesignTaskID != 0 ? context->activeDesignTaskPhase : 0;
+      task.homeRegion = functionHomeRegion(function);
+      task.queuedRegion = task.homeRegion;
+      task.controls = context->activeControls;
+      task.insertionSequence = context->nextProcessInsertionSequence++;
+      task.observedEpoch = context->schedulerEpoch;
+      context->scheduledDesignTasks.push_back(std::move(task));
+      context->scheduledDesignTaskIndices[id] =
+          context->scheduledDesignTasks.size() - 1;
+      context->designPollCandidates.insert(id);
+      obelisk_rt_register_unstarted_actor(
+          context, context->scheduledDesignTasks.back().phase, id);
+      obelisk_rt_retain_controls_unlocked(
+          context, context->scheduledDesignTasks.back().controls);
+    }
+    // The scheduled task now owns every retained capture reference.
+    retained.clear();
+    obelisk_rt_status status =
+        obelisk_rt_run_dpi_export_task_logical(context, id);
+    if (status == OBELISK_RT_OK) {
+      for (uint32_t index = 0; index != outputCount; ++index) {
+        obelisk_rt_import_output_v1 &destination = outputs[index];
+        status = obelisk_rt_v1_native_state_load_plane(
+            context, reinterpret_cast<const uint8_t *>(destination.value), 0,
+            owners[index], destination.bit_width, 0, 0,
+            reinterpret_cast<uint8_t *>(destination.value));
+        if (status == OBELISK_RT_OK && destination.unknown)
+          status = obelisk_rt_v1_native_state_load_plane(
+              context, reinterpret_cast<const uint8_t *>(destination.unknown),
+              0, owners[index], destination.bit_width, 1, 0,
+              reinterpret_cast<uint8_t *>(destination.unknown));
+        if (status != OBELISK_RT_OK)
+          break;
+      }
+    }
+    for (uint64_t handle : owners) {
+      obelisk_rt_status released =
+          obelisk_rt_v1_native_state_release(context, handle, 1);
+      if (status == OBELISK_RT_OK && released != OBELISK_RT_OK)
+        status = released;
+    }
+    return status;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
@@ -3830,6 +4113,36 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
               return targetControls.find(control) != targetControls.end();
             });
       };
+      auto disablesDPIImport = [&](const std::vector<uint64_t> &controls,
+                                   uint64_t dpiLogical) {
+        return std::any_of(controls.begin(), controls.end(),
+                           [&](uint64_t control) {
+                             auto found = targetControls.find(control);
+                             return found != targetControls.end() &&
+                                    found->second.owner != dpiLogical;
+                           });
+      };
+      if (context->activeDpiExportTaskLogical != 0) {
+        uint64_t dpiLogical = context->activeDpiExportTaskLogical;
+        if ((dpiLogical & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+          uint64_t token =
+              dpiLogical & ~uint64_t{OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG};
+          for (const ScheduledProcess &process : context->scheduledProcesses)
+            if (process.instance && process.token == token &&
+                disablesDPIImport(process.controls, dpiLogical)) {
+              context->activeDpiExportTaskDisabled = true;
+              break;
+            }
+        } else {
+          auto indexed = context->scheduledDesignTaskIndices.find(dpiLogical);
+          if (indexed != context->scheduledDesignTaskIndices.end() &&
+              indexed->second < context->scheduledDesignTasks.size() &&
+              disablesDPIImport(
+                  context->scheduledDesignTasks[indexed->second].controls,
+                  dpiLogical))
+            context->activeDpiExportTaskDisabled = true;
+        }
+      }
       struct ResumeBoundary {
         size_t control;
         uint32_t continuation;
@@ -4545,8 +4858,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         readyCohortBuild->ready.reserve(context->designPollCandidates.size());
       }
       bool directExactScan = !selectedFromReadyCohort && !collectReadyCohort;
-      auto scanExactDesignCandidates = [&]() __attribute__((always_inline))
-                                           ->obelisk_rt_status {
+      auto scanExactDesignCandidates =
+          [&]() __attribute__((always_inline)) -> obelisk_rt_status {
         // Keep the ordinary and negative-admission path in the original scan
         // body. This is the dominant generic-scheduler path and must not pay
         // an outlined feature-scanner call or its altered register layout.
@@ -5044,7 +5357,16 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
     bool killRequested = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      killRequested = context->killedDesignTasks.count(task.id) != 0;
+      killRequested |= context->killedDesignTasks.count(task.id) != 0;
+    }
+    if (status != OBELISK_RT_OK) [[unlikely]] {
+      if (status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED) {
+        if (context->activeDpiExportTaskLogical == task.id)
+          context->activeDpiExportTaskDisabled = true;
+        killRequested = true;
+      } else if (!terminationRequested) {
+        return abandonTask(status);
+      }
     }
     if (terminationRequested || killRequested) {
       Image image;
@@ -5071,8 +5393,6 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
       status = OBELISK_RT_OK;
     }
-    if (status != OBELISK_RT_OK)
-      return abandonTask(status);
     std::optional<uint32_t> nextScheduleRank;
     if (action.kind != OBELISK_RT_FRAGMENT_TERMINATE) {
       Image image;

@@ -156,9 +156,10 @@ optimization level:
 
 The optimized link uses matching LTO and code-generation optimization levels,
 whole-program visibility, and parallel LTO backends. Broad dynamic
-export is disabled; only the `sv*` DPI context API is retained for foreign
-objects and shared libraries. Runtime ABI entry points that are not otherwise
-needed remain eligible for LTO internalization and elimination.
+export is disabled; the full non-deprecated Annex I `svdpi.h` `sv*` API is
+retained only when DPI is linked, for foreign objects and shared libraries.
+Runtime ABI entry points that are not otherwise needed remain eligible for LTO
+internalization and elimination.
 
 `--compile-threads=<count>` controls the shared MLIR compilation pool, LLD
 threading and LTO code generation. When it is

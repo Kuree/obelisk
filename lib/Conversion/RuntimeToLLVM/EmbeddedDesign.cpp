@@ -71,7 +71,9 @@ struct ExportInfo {
   std::string bodySymbol;
   std::string cIdentifier;
   ArrayAttr abi;
+  ArrayAttr aggregateLayouts;
   std::optional<uint32_t> bytecodeFunction;
+  bool isTask;
 };
 
 LLVM_ATTRIBUTE_NOINLINE LogicalResult
@@ -107,6 +109,8 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
         "obelisk_sim.dpi_export_body_symbol");
     auto signature =
         function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+    auto aggregateLayouts =
+        function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_aggregate_layouts");
     auto inputs =
         function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
@@ -118,6 +122,16 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
         exportID.getValue().getZExtValue() == 0 ||
         identifier.getValue().empty()) {
       function.emitOpError("has incomplete or invalid DPI export metadata");
+      invalid = true;
+      return;
+    }
+    if (!aggregateLayouts) {
+      SmallVector<Attribute> empty(signature.size(),
+                                   UnitAttr::get(module.getContext()));
+      aggregateLayouts = ArrayAttr::get(module.getContext(), empty);
+    }
+    if (aggregateLayouts.size() != signature.size()) {
+      function.emitOpError("has invalid DPI aggregate export metadata");
       invalid = true;
       return;
     }
@@ -205,10 +219,11 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
          sim::getDPISignatureHash(signature, inputCount),
          static_cast<uint32_t>(inputCount), static_cast<uint32_t>(outputCount),
          function.getSymName().str(), bodySymbol.getValue().str(),
-         identifier.getValue().str(), signature,
+         identifier.getValue().str(), signature, aggregateLayouts,
          bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
                                 bytecodeFunction.getValue().getZExtValue()))
-                          : std::nullopt});
+                          : std::nullopt,
+         function->hasAttr("obelisk_sim.dpi_task")});
   });
   if (invalid)
     return failure();
@@ -236,7 +251,9 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       if (previous.exportID != info.exportID ||
           previous.abiSignature != info.abiSignature ||
           previous.inputCount != info.inputCount ||
-          previous.outputCount != info.outputCount || previous.abi != info.abi)
+          previous.outputCount != info.outputCount ||
+          previous.abi != info.abi ||
+          previous.aggregateLayouts != info.aggregateLayouts)
         return module.emitError()
                << "DPI export C identifier '" << info.cIdentifier
                << "' has incompatible scope-specific signatures";
@@ -250,7 +267,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
                     UnitAttr::get(module.getContext()));
 
   for (const ExportInfo &info : exports) {
-    if (bytecodeOnly)
+    if (bytecodeOnly && !info.isTask)
       continue;
     std::string thunkName = info.symbol + ".__obelisk_dpi_export";
     if (directSymbols.contains(thunkName))
@@ -271,8 +288,11 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
     thunk->setAttr("obelisk_sim.dpi_export_id",
                    builder.getI32IntegerAttr(info.exportID));
     thunk->setAttr("obelisk_sim.dpi_abi_signature", info.abi);
+    thunk->setAttr("obelisk_sim.dpi_aggregate_layouts", info.aggregateLayouts);
     thunk->setAttr("obelisk_sim.dpi_logical_inputs",
                    builder.getI32IntegerAttr(info.inputCount));
+    if (info.isTask)
+      thunk->setAttr("obelisk_sim.dpi_task", builder.getUnitAttr());
     directSymbols.try_emplace(thunkName, thunk);
   }
   return success();
@@ -333,10 +353,12 @@ LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
           record = insertValue(
               builder, module.getLoc(), record,
               integerConstant(builder, module.getLoc(), i32, info.exportID), 0);
-          if (!bytecodeOnly)
+          if (!bytecodeOnly && !info.isTask)
             exportFlags |= OBELISK_RT_EXPORT_HAS_NATIVE;
           if (bytecodeOnly && info.bytecodeFunction)
             exportFlags |= OBELISK_RT_EXPORT_HAS_BYTECODE;
+          if (info.isTask)
+            exportFlags |= OBELISK_RT_EXPORT_TASK;
           record = insertValue(
               builder, module.getLoc(), record,
               integerConstant(builder, module.getLoc(), i32, exportFlags), 1);
@@ -366,7 +388,7 @@ LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
                                                  OBELISK_RT_EXPORT_NO_BYTECODE)
                                            : OBELISK_RT_EXPORT_NO_BYTECODE),
               7);
-          if (!bytecodeOnly)
+          if (!bytecodeOnly || info.isTask)
             record = insertValue(builder, module.getLoc(), record,
                                  LLVM::AddressOfOp::create(
                                      builder, module.getLoc(), pointer,

@@ -1,3 +1,5 @@
+// XFAIL: *
+// Slang v11 attempts to constant-evaluate an empty queue rvalue select.
 // RUN: obelisk -fno-lto -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode

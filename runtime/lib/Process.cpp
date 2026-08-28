@@ -2450,15 +2450,14 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
           context, computedWait(scheduled), scheduled.token, false,
           scheduled.signalSubscriptions, scheduled.signalLatch))
     return context->schedulerStatus;
-  bool sameSignalWait =
-      wait && wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
-          ? obelisk_rt_same_clock_occurrence_wait_unlocked(
-                context, wait, scheduled.token, false)
-          : hasSameDirectSignalWait(scheduled, wait);
+  bool sameSignalWait = wait && wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                            ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                                  context, wait, scheduled.token, false)
+                            : hasSameDirectSignalWait(scheduled, wait);
   if (directSignalSuspend && !sameSignalWait &&
       !obelisk_rt_register_signal_wait_unlocked(
-          context, wait, scheduled.signalSubscriptions,
-          scheduled.signalLatch, scheduled.token, false))
+          context, wait, scheduled.signalSubscriptions, scheduled.signalLatch,
+          scheduled.token, false))
     return context->schedulerStatus;
   return OBELISK_RT_OK;
 }
@@ -4318,16 +4317,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         selected, context, tier, &action);
     bool terminationRequested = false;
     bool killRequested = false;
-    {
+    auto clearActiveProcess = [&](bool dpiDisabled) {
       ContextMutexLock lock(context);
       if (selectedIndex < context->scheduledProcesses.size() &&
           context->scheduledProcesses[selectedIndex].instance == selected) {
         context->scheduledProcesses[selectedIndex].controls =
             std::move(context->activeControls);
-        killRequested =
+        killRequested |=
             context->killedNativeProcesses.count(
                 context->scheduledProcesses[selectedIndex].token) != 0;
       }
+      if (dpiDisabled && context->activeDpiExportTaskLogical ==
+                             context->activeLogicalProcessToken)
+        context->activeDpiExportTaskDisabled = true;
       context->activeControls.clear();
       context->activeNativeProcess = nullptr;
       context->activeHomeRegion = UINT32_MAX;
@@ -4338,9 +4340,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
       terminationRequested = context->schedulerFinishRequested;
+    };
+    if (status != OBELISK_RT_OK) [[unlikely]] {
+      bool dpiDisabled = status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+      clearActiveProcess(dpiDisabled);
+      if (dpiDisabled) {
+        killRequested = true;
+        status = OBELISK_RT_OK;
+        action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0,
+                  0, 0};
+      } else if (!terminationRequested) {
+        return status;
+      }
+    } else {
+      clearActiveProcess(false);
     }
-    if (!terminationRequested && status != OBELISK_RT_OK)
-      return status;
     auto destroyPendingCallee =
         [](obelisk_rt_process_instance_v1 *instance) noexcept {
           if (instance)
@@ -4750,4 +4764,153 @@ obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
     return OBELISK_RT_INVALID_ARGUMENT;
   }
+}
+
+obelisk_rt_status
+obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
+                                       uint64_t logical) noexcept {
+  if (!context || logical == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  // Re-entry originates while the importing logical process is executing C.
+  // Detach that host activation temporarily, leaving its canonical frame and
+  // C stack intact while the exported task advances in its selected tier.
+  struct ActiveStateGuard {
+    obelisk_rt_context *context;
+    obelisk_rt_process_instance_v1 *native = context->activeNativeProcess;
+    uint64_t logical = context->activeLogicalProcessToken;
+    uint64_t logicalParent = context->activeLogicalProcessParent;
+    uint64_t design = context->activeDesignTaskID;
+    ScheduledDesignTask *designTask = context->activeDesignTask;
+    uint32_t phase = context->activeDesignTaskPhase;
+    uint32_t home = context->activeHomeRegion;
+    uint32_t region = context->activeExecRegion;
+    bool waitOrderFailed = context->activeWaitOrderFailed;
+    bool designExecuting = context->designTaskExecuting;
+    bool escapePending = context->controlEscapePending;
+    obelisk_rt_random_state_v1 *random = context->activeRandom;
+    uint64_t programOwner = context->activeProgramOwner;
+    bool singleStep = context->nativeScheduleSingleStep;
+    uint64_t dpiLogical = context->activeDpiExportTaskLogical;
+    bool dpiDisabled = context->activeDpiExportTaskDisabled;
+    bool nativeWasExplicitlySuspended = false;
+    bool nativeWasScheduled = false;
+    std::vector<uint64_t> controls = std::move(context->activeControls);
+
+    ~ActiveStateGuard() noexcept {
+      context->activeControls = std::move(controls);
+      context->activeNativeProcess = native;
+      context->activeLogicalProcessToken = logical;
+      context->activeLogicalProcessParent = logicalParent;
+      context->activeDesignTaskID = design;
+      context->activeDesignTask = designTask;
+      context->activeDesignTaskPhase = phase;
+      context->activeHomeRegion = home;
+      context->activeExecRegion = region;
+      context->activeWaitOrderFailed = waitOrderFailed;
+      context->designTaskExecuting = designExecuting;
+      context->controlEscapePending = escapePending;
+      context->activeRandom = random;
+      context->activeProgramOwner = programOwner;
+      context->nativeScheduleSingleStep = singleStep;
+      context->activeDpiExportTaskLogical = dpiLogical;
+      context->activeDpiExportTaskDisabled = dpiDisabled;
+      if (nativeWasScheduled)
+        for (ScheduledProcess &process : context->scheduledProcesses)
+          if (process.instance == native) {
+            process.explicitlySuspended = nativeWasExplicitlySuspended;
+            break;
+          }
+    }
+  } active{context};
+  {
+    ContextMutexLock lock(context);
+    if (active.native)
+      for (ScheduledProcess &process : context->scheduledProcesses)
+        if (process.instance == active.native) {
+          active.nativeWasExplicitlySuspended = process.explicitlySuspended;
+          active.nativeWasScheduled = true;
+          process.explicitlySuspended = true;
+          break;
+        }
+    context->activeNativeProcess = nullptr;
+    context->activeLogicalProcessToken = 0;
+    context->activeLogicalProcessParent = 0;
+    context->activeDesignTaskID = 0;
+    context->activeDesignTask = nullptr;
+    context->activeDesignTaskPhase = 0;
+    context->activeHomeRegion = UINT32_MAX;
+    context->activeExecRegion = UINT32_MAX;
+    context->activeWaitOrderFailed = false;
+    context->designTaskExecuting = false;
+    context->controlEscapePending = false;
+    context->activeRandom = nullptr;
+    context->activeProgramOwner = 0;
+    context->activeControls.clear();
+    context->nativeScheduleSingleStep = true;
+    context->activeDpiExportTaskLogical = logical;
+    context->activeDpiExportTaskDisabled = false;
+  }
+
+  for (;;) {
+    obelisk_rt_process_state state = OBELISK_RT_PROCESS_WAITING;
+    obelisk_rt_status status =
+        obelisk_rt_v1_process_status(context, logical, &state);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (context->activeDpiExportTaskDisabled)
+      return OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+    if (state == OBELISK_RT_PROCESS_FINISHED)
+      return OBELISK_RT_OK;
+    if (state == OBELISK_RT_PROCESS_KILLED)
+      return OBELISK_RT_OK;
+    uint64_t progress = 0, time = 0, epoch = 0, selectionGeneration = 0;
+    bool runningFinals = false;
+    {
+      ContextMutexLock lock(context);
+      progress = context->schedulerSlotProgress;
+      time = context->schedulerTime;
+      epoch = context->schedulerEpoch;
+      selectionGeneration = context->schedulerSelectionGeneration;
+      runningFinals = context->schedulerRunningFinals;
+    }
+    status = runScheduler(context);
+    if (status != OBELISK_RT_OK)
+      return status;
+    {
+      ContextMutexLock lock(context);
+      if (context->schedulerSlotProgress == progress &&
+          context->schedulerTime == time && context->schedulerEpoch == epoch &&
+          context->schedulerSelectionGeneration == selectionGeneration &&
+          context->schedulerRunningFinals == runningFinals)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+    }
+  }
+}
+
+extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+obelisk_rt_v1_dpi_export_task_run(obelisk_rt_context *context,
+                                  obelisk_rt_process_instance_v1 *instance) {
+  if (!context || !instance)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  OBELISK_RT_TRY {
+    uint32_t home = OBELISK_RT_REGION_ACTIVE;
+    {
+      ContextMutexLock lock(context);
+      if (context->activeHomeRegion <= OBELISK_RT_REGION_POSTPONED)
+        home = context->activeHomeRegion;
+    }
+    obelisk_rt_status status = obelisk_rt_v1_scheduler_add(
+        context, instance, OBELISK_RT_SCHEDULE_HOME(home));
+    if (status != OBELISK_RT_OK) {
+      (void)obelisk_rt_v1_process_instance_destroy(instance);
+      return status;
+    }
+    uint64_t logical = obelisk_rt_v1_scheduler_process_token(context, instance);
+    if (logical == 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    return obelisk_rt_run_dpi_export_task_logical(context, logical);
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }

@@ -72,6 +72,9 @@ struct NativeOutputOptions {
   std::string nativeScheduler = "auto";
   std::string thinLTOCacheDir;
   bool bytecode = false;
+  // Export the standardized sv* host API only for DPI-bearing designs. This
+  // keeps the cold DPI archive members out of ordinary native executables.
+  bool dpi = false;
   // LTO preserves LLVM whole-program optimization across generated native
   // partitions. Opting out links the object runtime archive instead, trading
   // peak simulation speed for a cheaper link.
@@ -113,8 +116,7 @@ public:
   /// without partition support receive exactly one entry.
   virtual mlir::LogicalResult
   linkExecutable(llvm::ArrayRef<std::string> modulePaths,
-                 llvm::StringRef outputPath,
-                 llvm::StringRef supportRoot,
+                 llvm::StringRef outputPath, llvm::StringRef supportRoot,
                  const NativeOutputOptions &options, bool thinLTO) = 0;
 
   /// Locates the staged target-link support tree relative to the running

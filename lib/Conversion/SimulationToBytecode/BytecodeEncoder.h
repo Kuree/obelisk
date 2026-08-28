@@ -146,9 +146,10 @@ private:
   mlir::LogicalResult encodeAggregateSplat(FunctionPlan &plan,
                                            sim::SimAggregateSplatOp op);
   uint32_t aggregateInputRegister(FunctionPlan &plan, mlir::Value value);
-  mlir::LogicalResult encodeAggregateExtractTo(
-      FunctionPlan &plan, mlir::Value result, mlir::Value input,
-      uint32_t dynamicOffset, uint64_t staticOffset, mlir::Operation *anchor);
+  mlir::LogicalResult
+  encodeAggregateExtractTo(FunctionPlan &plan, mlir::Value result,
+                           mlir::Value input, uint32_t dynamicOffset,
+                           uint64_t staticOffset, mlir::Operation *anchor);
   mlir::FailureOr<uint32_t> encodeArrayOffset(FunctionPlan &plan,
                                               mlir::Type array,
                                               mlir::Value indexValue,
@@ -183,7 +184,8 @@ private:
                                       mlir::Operation *anchor);
 
   void emitFrameTransfer(FunctionPlan &plan, uint16_t opcode, mlir::Value value,
-                         uint64_t offset, uint32_t transferSize = 0);
+                         uint64_t offset, uint32_t transferSize = 0,
+                         uint64_t secondaryOffset = UINT64_MAX);
   mlir::LogicalResult encodeObserverWait(FunctionPlan &plan,
                                          sim::SimSuspendObserveOp operation);
   mlir::LogicalResult encodeWait(FunctionPlan &plan, mlir::Operation *operation,
@@ -192,8 +194,7 @@ private:
                                  obelisk_rt_wait_flags flags,
                                  llvm::ArrayRef<uint32_t> edges,
                                  llvm::ArrayRef<mlir::Value> watched,
-                                 mlir::Value delay = {},
-                                 uint64_t payload = 0,
+                                 mlir::Value delay = {}, uint64_t payload = 0,
                                  uint64_t auxiliary = 0);
 
   uint32_t getVPIProfile();

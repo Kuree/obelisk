@@ -136,8 +136,8 @@ LogicalResult Encoder::encodeReplicate(FunctionPlan &plan,
   uint64_t count = op.getCount();
   if (count == 0)
     return op.emitOpError("zero replication count");
-  emit({Replicate, 0, reg(plan, op.getResult()), reg(plan, op.getInput()), 0,
-        0, 0, count});
+  emit({Replicate, 0, reg(plan, op.getResult()), reg(plan, op.getInput()), 0, 0,
+        0, count});
   return success();
 }
 
@@ -168,16 +168,18 @@ uint32_t Encoder::aggregateInputRegister(FunctionPlan &plan, Value value) {
   Layout layout = plan.layouts[source];
   if (layout.kind != Real32 && layout.kind != Real64)
     return source;
-  uint32_t bits = temporary(
-      plan, IntegerType::get(value.getContext(), layout.width));
+  uint32_t bits =
+      temporary(plan, IntegerType::get(value.getContext(), layout.width));
   if (bits != kInvalidRegister)
     emit({Bitcast, 0, bits, source});
   return bits;
 }
 
-LogicalResult Encoder::encodeAggregateExtractTo(
-    FunctionPlan &plan, Value result, Value input, uint32_t dynamicOffset,
-    uint64_t staticOffset, Operation *anchor) {
+LogicalResult Encoder::encodeAggregateExtractTo(FunctionPlan &plan,
+                                                Value result, Value input,
+                                                uint32_t dynamicOffset,
+                                                uint64_t staticOffset,
+                                                Operation *anchor) {
   uint32_t destination = reg(plan, result);
   uint32_t source = reg(plan, input);
   if (destination == kInvalidRegister || source == kInvalidRegister)
@@ -185,14 +187,13 @@ LogicalResult Encoder::encodeAggregateExtractTo(
   Layout layout = plan.layouts[destination];
   uint32_t extracted = destination;
   if (layout.kind == Real32 || layout.kind == Real64) {
-    extracted = temporary(plan,
-                          IntegerType::get(result.getContext(), layout.width));
+    extracted =
+        temporary(plan, IntegerType::get(result.getContext(), layout.width));
     if (extracted == kInvalidRegister)
       return anchor->emitOpError("cannot allocate aggregate bitcast register");
   }
-  uint16_t flags = isManagedAggregateWord(layout.kind)
-                       ? OBELISK_RT_DB_AGGREGATE_MANAGED
-                       : 0;
+  uint16_t flags =
+      isManagedAggregateWord(layout.kind) ? OBELISK_RT_DB_AGGREGATE_MANAGED : 0;
   emit({Extract, flags, extracted, source, dynamicOffset, 0, 0, staticOffset});
   if (extracted != destination)
     emit({Bitcast, 0, destination, extracted});
@@ -356,8 +357,7 @@ LogicalResult Encoder::encodeUnionConstruct(FunctionPlan &plan,
                        : 0;
   emit({Constant, 0, destination, 0, 0, 0, 0,
         addConstant(plan.layouts[destination], APInt(*width, 0))});
-  emit({Insert, flags, destination, destination, value, 0, 0,
-        selected->first});
+  emit({Insert, flags, destination, destination, value, 0, 0, selected->first});
   uint64_t tag = 0;
   unsigned tagBits = 0;
   if (auto packed = dyn_cast<sim::PackedUnionType>(unionType);
@@ -518,7 +518,8 @@ LogicalResult Encoder::encodeArrayView(FunctionPlan &plan, Value result,
 
 void Encoder::emitFrameTransfer(FunctionPlan &plan, uint16_t opcode,
                                 Value value, uint64_t offset,
-                                uint32_t transferSize) {
+                                uint32_t transferSize,
+                                uint64_t secondaryOffset) {
   uint16_t kind = 0;
   uint32_t width = 0;
   Type type = value.getType();
@@ -534,11 +535,15 @@ void Encoder::emitFrameTransfer(FunctionPlan &plan, uint16_t opcode,
   } else if (isa<sim::EventType>(type)) {
     kind = 5;
   }
+  uint32_t secondaryDisplacement =
+      kind == 0 && secondaryOffset != UINT64_MAX
+          ? static_cast<uint32_t>(secondaryOffset - offset)
+          : 0;
   if (opcode == LoadFrame)
-    emit({LoadFrame, kind, reg(plan, value), 0, 0, 0,
+    emit({LoadFrame, kind, reg(plan, value), 0, secondaryDisplacement, 0,
           kind == 0 ? transferSize : width, offset});
   else
-    emit({StoreFrame, kind, 0, reg(plan, value), 0, 0,
+    emit({StoreFrame, kind, 0, reg(plan, value), secondaryDisplacement, 0,
           kind == 0 ? transferSize : width, offset});
 }
 

@@ -9,12 +9,31 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
+
+decltype(&obelisk_rt_v1_dpi_open_array_aggregate_pack)
+    designBytecodeDpiOpenAggregatePack = nullptr;
+decltype(&obelisk_rt_v1_dpi_open_array_aggregate_unpack)
+    designBytecodeDpiOpenAggregateUnpack = nullptr;
+decltype(&obelisk_rt_v1_dpi_aggregate_pack) designBytecodeDpiAggregatePack =
+    nullptr;
+decltype(&obelisk_rt_v1_dpi_aggregate_unpack) designBytecodeDpiAggregateUnpack =
+    nullptr;
+decltype(&obelisk_rt_v1_dpi_open_array_aggregate_roots_push)
+    designBytecodeDpiOpenAggregateRootsPush = nullptr;
+decltype(&obelisk_rt_v1_dpi_aggregate_roots_pop)
+    designBytecodeDpiAggregateRootsPop = nullptr;
+decltype(&obelisk_rt_v1_dpi_open_array_prepare_recursive)
+    designBytecodeDpiOpenPrepareRecursive = nullptr;
+decltype(&obelisk_rt_v1_dpi_open_array_finish_recursive)
+    designBytecodeDpiOpenFinishRecursive = nullptr;
 
 namespace obelisk::designbytecode {
 
@@ -392,17 +411,18 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
       return OBELISK_RT_OK;
     }
-    uint64_t planeSize =
+    uint64_t storagePlaneSize =
         output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
     if (output.kind == OBELISK_RT_DBREG_LOGIC)
-      std::memset(frame.data + output.offset + planeSize, 0xff, planeSize);
+      std::memset(frame.data + output.offset + storagePlaneSize, 0xff,
+                  storagePlaneSize);
     void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
-                        ? frame.data + output.offset + planeSize
+                        ? frame.data + output.offset + storagePlaneSize
                         : nullptr;
     return obelisk_rt_v1_container_read_checked(
         readManaged(inputRegister(0)), static_cast<int64_t>(*index),
-        frame.data + output.offset, planeSize, unknown,
-        unknown ? planeSize : 0);
+        frame.data + output.offset, storagePlaneSize, unknown,
+        unknown ? storagePlaneSize : 0);
   }
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE: {
     auto index = scalar(1);
@@ -419,14 +439,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
           &event, sizeof(event), nullptr, 0);
     }
-    uint64_t planeSize =
+    uint64_t storagePlaneSize =
         input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
     const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
-                              ? frame.data + input.offset + planeSize
+                              ? frame.data + input.offset + storagePlaneSize
                               : nullptr;
     return obelisk_rt_v1_container_write_checked(
         lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
-        frame.data + input.offset, planeSize, unknown, unknown ? planeSize : 0);
+        frame.data + input.offset, storagePlaneSize, unknown,
+        unknown ? storagePlaneSize : 0);
   }
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE: {
     std::array<std::optional<uint64_t>, 9> inputs;
@@ -3210,6 +3231,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+        (!designBytecodeDpiOpenAggregatePack ||
+         !designBytecodeDpiOpenAggregateUnpack ||
+         !designBytecodeDpiOpenPrepareRecursive ||
+         !designBytecodeDpiOpenFinishRecursive ||
+         !designBytecodeDpiAggregatePack || !designBytecodeDpiAggregateUnpack ||
+         !designBytecodeDpiOpenAggregateRootsPush ||
+         !designBytecodeDpiAggregateRootsPop))
+      return OBELISK_RT_INVALID_BYTECODE;
     uint32_t firstInput = 0;
     obelisk_rt_import_site_v1 importSite{
         OBELISK_RT_VERSION,
@@ -3226,6 +3256,57 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     uint32_t dataOutputCount = site.outputCount;
     std::vector<uint8_t> dpiInputFlags;
     std::vector<uint8_t> dpiOutputFlags;
+    struct DPIABIEntry {
+      uint32_t kind = 0;
+      uint32_t direction = 0;
+      uint32_t width = 0;
+      uint32_t flags = 0;
+    };
+    std::vector<DPIABIEntry> dpiEntries;
+    struct DPIOpenLayout {
+      uint32_t storage = 0;
+      uint32_t elementKind = 0;
+      uint32_t elementWidth = 0;
+      uint32_t fourState = 0;
+      uint32_t transportFourState = 0;
+      uint64_t transportWidth = 0;
+      uint64_t elementCSize = 0;
+      uint64_t elementStringCount = 0;
+      uint32_t elementCAlignment = 0;
+      int64_t packedLeft = 0;
+      int64_t packedRight = 0;
+      std::vector<int64_t> elementPlan;
+      std::vector<int64_t> ranges;
+      std::vector<int64_t> sourceRanges;
+      std::vector<int64_t> shapePlan;
+    };
+    struct DPIOpenStorage {
+      std::vector<uint8_t> data;
+      std::vector<uint8_t> flatValue;
+      std::vector<uint8_t> flatUnknown;
+      std::vector<obelisk_rt_dpi_dimension_v1> dimensions;
+      obelisk_rt_dpi_open_array_v1 descriptor{};
+      std::unique_ptr<void, decltype(&std::free)> recursiveAllocation{
+          nullptr, &std::free};
+      obelisk_rt_object_v1 *container = nullptr;
+      uint64_t elementCount = 0;
+      uint64_t elementSize = 0;
+      uint64_t dataSize = 0;
+      uint64_t planeSize = 0;
+      uint64_t totalWidth = 0;
+      bool dynamic = false;
+    };
+    struct DPIAggregateLayout {
+      uint64_t cSize = 0;
+      uint64_t stringCount = 0;
+      uint32_t cAlignment = 0;
+      std::vector<int64_t> plan;
+    };
+    struct DPIAggregateStorage {
+      std::vector<uint8_t> data;
+    };
+    std::vector<std::optional<DPIOpenLayout>> dpiOpenLayouts;
+    std::vector<std::optional<DPIAggregateLayout>> dpiAggregateLayouts;
     if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT) {
       auto metadata = bytes(0);
       if (!metadata || metadata->size < 56 || site.outputCount == 0)
@@ -3244,7 +3325,116 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint64_t entryCount = uint64_t{logicalInputs} + uint64_t{logicalOutputs};
       if (entryCount > (UINT64_MAX - 56) / 16)
         return OBELISK_RT_INVALID_BYTECODE;
-      uint64_t sourceOffset = 56 + entryCount * 16;
+      uint64_t layoutOffset = 56 + entryCount * 16;
+      if (layoutOffset > metadata->size)
+        return OBELISK_RT_INVALID_BYTECODE;
+      dpiOpenLayouts.resize(static_cast<size_t>(entryCount));
+      for (uint64_t index = 0; index != entryCount; ++index) {
+        if (layoutOffset > metadata->size - 4)
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint32_t recordSize = read32(metadata->data + layoutOffset);
+        if (recordSize == 0) {
+          layoutOffset += 4;
+          continue;
+        }
+        if (recordSize < 80 || recordSize > metadata->size - layoutOffset)
+          return OBELISK_RT_INVALID_BYTECODE;
+        const uint8_t *record = metadata->data + layoutOffset;
+        DPIOpenLayout layout;
+        layout.storage = read32(record + 4);
+        layout.elementKind = read32(record + 8);
+        layout.elementWidth = read32(record + 12);
+        layout.fourState = read32(record + 16);
+        layout.transportWidth = read64(record + 20);
+        layout.packedLeft = static_cast<int64_t>(read64(record + 28));
+        layout.packedRight = static_cast<int64_t>(read64(record + 36));
+        uint32_t dimensions = read32(record + 44);
+        layout.elementCAlignment = read32(record + 48);
+        layout.transportFourState = read32(record + 52);
+        layout.elementCSize = read64(record + 56);
+        layout.elementStringCount = read64(record + 64);
+        uint64_t planWords = read64(record + 72);
+        uint64_t shapeWords = layout.storage == 2
+                                  ? uint64_t{dimensions} * 8
+                                  : uint64_t{0};
+        if (planWords == 0 || planWords % 8 != 0 ||
+            planWords > (UINT32_MAX - 80) / 8 ||
+            uint64_t{dimensions} > (UINT32_MAX - 80 - planWords * 8) / 32 ||
+            shapeWords >
+                (UINT32_MAX - 80 - planWords * 8 -
+                 uint64_t{dimensions} * 32) /
+                    8 ||
+            recordSize != 80 + planWords * 8 + uint64_t{dimensions} * 32 +
+                              shapeWords * 8 ||
+            layout.storage > 2 || layout.elementWidth == 0 ||
+            layout.fourState > 1 || layout.transportFourState > 1 ||
+            (layout.storage == 1 && layout.transportFourState != 0) ||
+            layout.transportWidth == 0 ||
+            layout.elementCSize == 0 || layout.elementCAlignment == 0 ||
+            (layout.elementCAlignment & (layout.elementCAlignment - 1)) != 0 ||
+            layout.elementStringCount > (UINT64_MAX - layout.elementCSize) / 8)
+          return OBELISK_RT_INVALID_BYTECODE;
+        layout.elementPlan.reserve(static_cast<size_t>(planWords));
+        for (uint64_t word = 0; word != planWords; ++word)
+          layout.elementPlan.push_back(static_cast<int64_t>(
+              read64(record + 80 + word * sizeof(uint64_t))));
+        uint64_t rangesOffset = 80 + planWords * 8;
+        layout.ranges.reserve(uint64_t{dimensions} * 2);
+        for (uint32_t dimension = 0; dimension != dimensions; ++dimension) {
+          layout.ranges.push_back(static_cast<int64_t>(
+              read64(record + rangesOffset + uint64_t{dimension} * 16)));
+          layout.ranges.push_back(static_cast<int64_t>(
+              read64(record + rangesOffset + 8 + uint64_t{dimension} * 16)));
+        }
+        uint64_t sourceRangesOffset =
+            rangesOffset + uint64_t{dimensions} * 16;
+        layout.sourceRanges.reserve(uint64_t{dimensions} * 2);
+        for (uint32_t dimension = 0; dimension != dimensions; ++dimension) {
+          layout.sourceRanges.push_back(static_cast<int64_t>(read64(
+              record + sourceRangesOffset + uint64_t{dimension} * 16)));
+          layout.sourceRanges.push_back(static_cast<int64_t>(read64(
+              record + sourceRangesOffset + 8 + uint64_t{dimension} * 16)));
+        }
+        uint64_t shapeOffset = sourceRangesOffset + uint64_t{dimensions} * 16;
+        layout.shapePlan.reserve(static_cast<size_t>(shapeWords));
+        for (uint64_t word = 0; word != shapeWords; ++word)
+          layout.shapePlan.push_back(static_cast<int64_t>(
+              read64(record + shapeOffset + word * sizeof(uint64_t))));
+        dpiOpenLayouts[index] = std::move(layout);
+        layoutOffset += recordSize;
+      }
+      dpiAggregateLayouts.resize(static_cast<size_t>(entryCount));
+      for (uint64_t index = 0; index != entryCount; ++index) {
+        if (layoutOffset > metadata->size - 4)
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint32_t recordSize = read32(metadata->data + layoutOffset);
+        if (recordSize == 0) {
+          layoutOffset += 4;
+          continue;
+        }
+        if (recordSize < 32 || recordSize > metadata->size - layoutOffset)
+          return OBELISK_RT_INVALID_BYTECODE;
+        const uint8_t *record = metadata->data + layoutOffset;
+        DPIAggregateLayout layout;
+        layout.cAlignment = read32(record + 4);
+        layout.cSize = read64(record + 8);
+        layout.stringCount = read64(record + 16);
+        uint64_t planWords = read64(record + 24);
+        if (layout.cAlignment == 0 ||
+            (layout.cAlignment & (layout.cAlignment - 1)) != 0 ||
+            layout.cSize == 0 || planWords == 0 || planWords % 8 != 0 ||
+            planWords > (UINT32_MAX - 32) / 8 ||
+            recordSize != 32 + planWords * 8 ||
+            layout.stringCount > (UINT64_MAX - layout.cSize) / 8)
+          return OBELISK_RT_INVALID_BYTECODE;
+        layout.plan.reserve(static_cast<size_t>(planWords));
+        for (uint64_t word = 0; word != planWords; ++word)
+          layout.plan.push_back(static_cast<int64_t>(
+              read64(record + 32 + word * sizeof(uint64_t))));
+        dpiAggregateLayouts[index] = std::move(layout);
+        layoutOffset += recordSize;
+      }
+      uint64_t sourceOffset = layoutOffset;
       if (sourceOffset > metadata->size ||
           importSite.source_file_size != metadata->size - sourceOffset ||
           uint64_t{site.inputCount} != uint64_t{logicalInputs} + 1 ||
@@ -3255,19 +3445,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
               ? reinterpret_cast<const char *>(metadata->data + sourceOffset)
               : nullptr;
 
-      struct ABIEntry {
-        uint32_t kind;
-        uint32_t direction;
-        uint32_t width;
-        uint32_t flags;
-      };
       auto entry = [&](uint64_t index) {
         const uint8_t *data = metadata->data + 56 + index * 16;
-        return ABIEntry{read32(data), read32(data + 4), read32(data + 8),
-                        read32(data + 12)};
+        return DPIABIEntry{read32(data), read32(data + 4), read32(data + 8),
+                           read32(data + 12)};
       };
-      auto validEntry = [](ABIEntry abi) {
-        if (abi.kind > 11 || abi.direction > 3 || abi.width == 0 ||
+      auto validEntry = [](DPIABIEntry abi) {
+        if (abi.kind > 13 || abi.direction > 3 || abi.width == 0 ||
             (abi.flags & ~uint32_t{3}) != 0)
           return false;
         bool fourState = (abi.flags & 1) != 0;
@@ -3295,14 +3479,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return abi.width == 32 && !fourState && (abi.flags & 2) == 0;
         case 11:
           return abi.width == 64 && !fourState && (abi.flags & 2) == 0;
+        case 12:
+          return (abi.flags & 2) == 0;
+        case 13:
+          return true;
         }
         return false;
       };
-      auto sameValue = [](ABIEntry left, ABIEntry right) {
+      auto sameValue = [](DPIABIEntry left, DPIABIEntry right) {
         return left.kind == right.kind && left.width == right.width &&
                left.flags == right.flags;
       };
-      auto matchesLayout = [](ABIEntry abi, Layout layout) {
+      auto matchesLayout = [&](DPIABIEntry abi, Layout layout, uint64_t index) {
+        if (abi.kind == 12) {
+          if (!dpiOpenLayouts[index])
+            return false;
+          const DPIOpenLayout &open = *dpiOpenLayouts[index];
+          if (layout.width != open.transportWidth)
+            return false;
+          if (open.storage == 1)
+            return layout.kind == OBELISK_RT_DBREG_MANAGED;
+          if (open.transportFourState != 0)
+            return layout.kind == OBELISK_RT_DBREG_LOGIC;
+          // Recursive provenance can be rooted in a managed dynamic/queue
+          // handle or in a fixed two-state aggregate of managed handles.
+          return layout.kind == OBELISK_RT_DBREG_BITS ||
+                 (open.storage == 2 &&
+                  layout.kind == OBELISK_RT_DBREG_MANAGED);
+        }
         if (abi.kind == 8)
           return layout.kind == OBELISK_RT_DBREG_STRING && layout.width == 64;
         if (abi.kind == 9)
@@ -3321,10 +3525,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       };
       appendHash(logicalInputs, 8);
       appendHash(logicalOutputs, 8);
+      dpiEntries.reserve(static_cast<size_t>(entryCount));
       for (uint64_t index = 0; index != entryCount; ++index) {
-        ABIEntry abi = entry(index);
-        if (!validEntry(abi))
+        DPIABIEntry abi = entry(index);
+        if (!validEntry(abi) ||
+            ((abi.kind == 12) != dpiOpenLayouts[index].has_value()) ||
+            ((abi.kind == 13) != dpiAggregateLayouts[index].has_value()))
           return OBELISK_RT_INVALID_BYTECODE;
+        dpiEntries.push_back(abi);
         appendHash(abi.kind, 4);
         appendHash(abi.direction, 4);
         appendHash(abi.width, 4);
@@ -3333,21 +3541,23 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       if (hash == 0)
         hash = 1;
-      if (hash != importSite.abi_signature)
+      if (importSite.abi_signature != 0 && hash != importSite.abi_signature)
         return OBELISK_RT_INVALID_BYTECODE;
       for (uint32_t index = 0; index != logicalInputs; ++index) {
-        ABIEntry abi = entry(index);
+        DPIABIEntry abi = entry(index);
         if (abi.direction == 3 ||
             !matchesLayout(
-                abi, layoutAt(image, frame.function, inputRegister(index + 1))))
+                abi, layoutAt(image, frame.function, inputRegister(index + 1)),
+                index))
           return OBELISK_RT_INVALID_BYTECODE;
         dpiInputFlags.push_back((abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED
                                                      : 0);
       }
       for (uint32_t index = 0; index != logicalOutputs; ++index) {
-        ABIEntry abi = entry(uint64_t{logicalInputs} + index);
+        DPIABIEntry abi = entry(uint64_t{logicalInputs} + index);
         if (!matchesLayout(
-                abi, layoutAt(image, frame.function, outputRegister(index))))
+                abi, layoutAt(image, frame.function, outputRegister(index)),
+                uint64_t{logicalInputs} + index))
           return OBELISK_RT_INVALID_BYTECODE;
         dpiOutputFlags.push_back((abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED
                                                       : 0);
@@ -3363,12 +3573,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           entry(outputCursor).direction == 3)
         ++outputCursor;
       for (uint32_t index = 0; index != logicalInputs; ++index) {
-        ABIEntry input = entry(index);
+        DPIABIEntry input = entry(index);
         if (input.direction == 0)
           continue;
         if (outputCursor >= entryCount)
           return OBELISK_RT_INVALID_BYTECODE;
-        ABIEntry output = entry(outputCursor++);
+        DPIABIEntry output = entry(outputCursor++);
         if (output.direction != 1 || !sameValue(input, output))
           return OBELISK_RT_INVALID_BYTECODE;
       }
@@ -3381,6 +3591,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     uint32_t inputCount = site.inputCount - firstInput;
     std::vector<obelisk_rt_import_input_v1> inputs;
     std::vector<obelisk_rt_import_output_v1> outputs;
+    std::vector<std::optional<DPIOpenStorage>> dpiOpenInputs(inputCount);
+    std::vector<int64_t> dpiOpenOutputSources(dataOutputCount, -1);
+    std::vector<std::optional<DPIAggregateStorage>> dpiAggregateInputs(
+        inputCount);
+    std::vector<int64_t> dpiAggregateOutputSources(dataOutputCount, -1);
     inputs.reserve(inputCount);
     outputs.reserve(dataOutputCount);
     auto describe = [&](Layout layout, uint8_t *address) {
@@ -3396,9 +3611,232 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
               ? reinterpret_cast<uint64_t *>(address + limbs * 8)
               : nullptr};
     };
+    auto prepareOpenInput = [&](uint32_t index,
+                                Layout registerLayout) -> obelisk_rt_status {
+      const DPIOpenLayout &layout = *dpiOpenLayouts[index];
+      dpiOpenInputs[index].emplace();
+      DPIOpenStorage &storage = *dpiOpenInputs[index];
+      if (layout.storage == 2) {
+        if (dpiEntries[index].direction == 1 || layout.shapePlan.empty())
+          return OBELISK_RT_INVALID_BYTECODE;
+        uint64_t rootPlaneSize = limbCount(registerLayout.width) * uint64_t{8};
+        uint8_t *address = frame.data + registerLayout.offset;
+        obelisk_rt_dpi_open_array_storage_v1 prepared{};
+        obelisk_rt_status recursiveStatus =
+            designBytecodeDpiOpenPrepareRecursive(
+                address,
+                layout.transportFourState ? address + rootPlaneSize : nullptr,
+                rootPlaneSize, layout.transportWidth,
+                layout.transportFourState,
+                dpiEntries[index].direction != 0 ? 1 : 0,
+                layout.elementKind, layout.elementWidth, layout.fourState,
+                static_cast<int32_t>(layout.packedLeft),
+                static_cast<int32_t>(layout.packedRight), layout.elementCSize,
+                layout.elementCAlignment, layout.elementStringCount,
+                layout.elementPlan.data(), layout.elementPlan.size(),
+                layout.shapePlan.data(),
+                static_cast<uint32_t>(layout.ranges.size() / 2), &prepared);
+        if (recursiveStatus != OBELISK_RT_OK)
+          return recursiveStatus;
+        storage.descriptor = prepared.descriptor;
+        storage.recursiveAllocation.reset(prepared.allocation);
+        storage.elementSize = layout.elementCSize;
+        storage.dataSize = storage.descriptor.data_size;
+        return OBELISK_RT_OK;
+      }
+      storage.dynamic = layout.storage == 1;
+      storage.elementSize = layout.elementCSize;
+      if (storage.elementSize == 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+
+      if (storage.dynamic) {
+        storage.container = readManaged(inputRegister(index + firstInput));
+        storage.elementCount = obelisk_rt_v1_container_size(storage.container);
+        storage.totalWidth = storage.elementCount * layout.elementWidth;
+        if (layout.elementWidth != 0 &&
+            storage.totalWidth / layout.elementWidth != storage.elementCount)
+          return OBELISK_RT_INVALID_BYTECODE;
+        storage.planeSize = (storage.totalWidth + 7) / 8;
+      } else {
+        storage.elementCount = 1;
+        for (size_t range = 0; range != layout.ranges.size(); range += 2) {
+          int64_t left = layout.ranges[range];
+          int64_t right = layout.ranges[range + 1];
+          uint64_t extent = static_cast<uint64_t>(std::max(left, right) -
+                                                  std::min(left, right)) +
+                            1;
+          if (extent == 0 || storage.elementCount > UINT64_MAX / extent)
+            return OBELISK_RT_INVALID_BYTECODE;
+          storage.elementCount *= extent;
+        }
+        storage.totalWidth = layout.transportWidth;
+        storage.planeSize = uint64_t{limbCount(registerLayout.width)} * 8;
+        if (storage.elementCount > UINT64_MAX / layout.elementWidth ||
+            storage.elementCount * layout.elementWidth != storage.totalWidth)
+          return OBELISK_RT_INVALID_BYTECODE;
+      }
+      if (storage.elementCount > UINT64_MAX / storage.elementSize ||
+          storage.elementCount * storage.elementSize > SIZE_MAX ||
+          storage.planeSize > SIZE_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      storage.dataSize = storage.elementCount * storage.elementSize;
+      if (layout.elementStringCount != 0 &&
+          storage.elementCount > UINT64_MAX / layout.elementStringCount)
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint64_t strings = storage.elementCount * layout.elementStringCount;
+      if (strings > (UINT64_MAX - storage.dataSize) / 8 ||
+          storage.dataSize + strings * 8 > SIZE_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      uint64_t capacity = storage.dataSize + strings * 8;
+      storage.data.resize(static_cast<size_t>(capacity));
+
+      if (storage.dynamic) {
+        if (storage.elementCount != 0) {
+          storage.flatValue.resize(static_cast<size_t>(storage.planeSize));
+          if (layout.fourState)
+            storage.flatUnknown.resize(static_cast<size_t>(storage.planeSize));
+          if (dpiEntries[index].direction != 1) {
+            obelisk_rt_status status = obelisk_rt_v1_container_export_fixed(
+                storage.container, storage.flatValue.data(),
+                layout.fourState ? storage.flatUnknown.data() : nullptr,
+                storage.planeSize, storage.totalWidth, layout.fourState,
+                layout.elementWidth, storage.elementCount);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
+          obelisk_rt_status status = designBytecodeDpiOpenAggregatePack(
+              storage.flatValue.data(),
+              layout.fourState ? storage.flatUnknown.data() : nullptr,
+              storage.planeSize, storage.totalWidth, layout.fourState,
+              layout.elementWidth, storage.elementCount, 0, nullptr, 0,
+              storage.data.data(), storage.dataSize, capacity,
+              layout.elementCSize, layout.elementStringCount,
+              layout.elementPlan.data(), layout.elementPlan.size());
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
+      } else if (dpiEntries[index].direction != 1) {
+        uint8_t *address = frame.data + registerLayout.offset;
+        uint64_t *unknown =
+            layout.fourState
+                ? reinterpret_cast<uint64_t *>(address + storage.planeSize)
+                : nullptr;
+        obelisk_rt_status status = designBytecodeDpiOpenAggregatePack(
+            address, unknown, storage.planeSize, storage.totalWidth,
+            layout.fourState, layout.elementWidth, storage.elementCount, 0,
+            layout.sourceRanges.data(),
+            static_cast<uint32_t>(layout.sourceRanges.size() / 2),
+            storage.data.data(), storage.dataSize, capacity,
+            layout.elementCSize, layout.elementStringCount,
+            layout.elementPlan.data(), layout.elementPlan.size());
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+
+      uint64_t dimensionCount = layout.ranges.size() / 2;
+      if (storage.dynamic)
+        dimensionCount = 1;
+      storage.dimensions.resize(static_cast<size_t>(dimensionCount));
+      uint64_t stride = storage.elementSize;
+      for (uint64_t dimension = dimensionCount; dimension-- != 0;) {
+        int64_t left = storage.dynamic ? 0 : layout.ranges[dimension * 2];
+        int64_t right =
+            storage.dynamic
+                ? (storage.elementCount == 0
+                       ? -1
+                       : static_cast<int64_t>(storage.elementCount - 1))
+                : layout.ranges[dimension * 2 + 1];
+        if (left < INT32_MIN || left > INT32_MAX || right < INT32_MIN ||
+            right > INT32_MAX)
+          return OBELISK_RT_INVALID_BYTECODE;
+        storage.dimensions[dimension] = {
+            static_cast<int32_t>(left), static_cast<int32_t>(right), stride,
+            storage.dynamic
+                ? OBELISK_RT_DPI_DIMENSION_RUNTIME |
+                      (storage.elementCount == 0
+                           ? OBELISK_RT_DPI_DIMENSION_EMPTY
+                           : 0)
+                : 0,
+            0};
+        uint64_t extent = storage.dynamic
+                              ? storage.elementCount
+                              : static_cast<uint64_t>(std::max(left, right) -
+                                                      std::min(left, right)) +
+                                    1;
+        if (dimension != 0 && extent != 0 && stride > UINT64_MAX / extent)
+          return OBELISK_RT_INVALID_BYTECODE;
+        stride *= extent;
+      }
+      bool packed = layout.elementKind <= 7;
+      bool cLayout = true;
+      uint32_t flags =
+          (dpiEntries[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE
+                                            : 0) |
+          (cLayout ? OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
+          (packed ? OBELISK_RT_DPI_OPEN_ARRAY_PACKED : 0) |
+          (layout.fourState ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE : 0) |
+          (storage.dynamic && storage.elementCount == 0
+               ? OBELISK_RT_DPI_OPEN_ARRAY_EMPTY
+               : 0);
+      storage.descriptor = {
+          OBELISK_RT_DPI_OPEN_ARRAY_MAGIC,
+          flags,
+          static_cast<uint32_t>(dimensionCount),
+          layout.elementWidth,
+          static_cast<int32_t>(layout.packedLeft),
+          static_cast<int32_t>(layout.packedRight),
+          storage.elementSize,
+          storage.data.empty() ? nullptr : storage.data.data(),
+          storage.dataSize,
+          storage.dimensions.empty() ? nullptr : storage.dimensions.data(),
+          0};
+      return OBELISK_RT_OK;
+    };
+    auto prepareAggregateInput =
+        [&](uint32_t index, Layout registerLayout) -> obelisk_rt_status {
+      const DPIAggregateLayout &layout = *dpiAggregateLayouts[index];
+      uint64_t capacity = layout.cSize + layout.stringCount * uint64_t{8};
+      if (capacity > SIZE_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      dpiAggregateInputs[index].emplace();
+      DPIAggregateStorage &storage = *dpiAggregateInputs[index];
+      storage.data.resize(static_cast<size_t>(capacity));
+      if (dpiEntries[index].direction == 1)
+        return OBELISK_RT_OK;
+      uint64_t planeSize = limbCount(registerLayout.width) * uint64_t{8};
+      uint8_t *address = frame.data + registerLayout.offset;
+      const void *unknown =
+          (dpiEntries[index].flags & 1) != 0 ? address + planeSize : nullptr;
+      return designBytecodeDpiAggregatePack(
+          address, unknown, planeSize, dpiEntries[index].width,
+          dpiEntries[index].flags & 1, storage.data.data(), layout.cSize,
+          capacity, layout.plan.data(), layout.plan.size());
+    };
     for (uint32_t index = 0; index != inputCount; ++index) {
       Layout layout =
           layoutAt(image, frame.function, inputRegister(index + firstInput));
+      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+          dpiEntries[index].kind == 12) {
+        obelisk_rt_status status = prepareOpenInput(index, layout);
+        if (status != OBELISK_RT_OK)
+          return status;
+        auto *descriptor = &dpiOpenInputs[index]->descriptor;
+        inputs.push_back({OBELISK_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
+                          reinterpret_cast<uint64_t *>(descriptor), nullptr,
+                          1});
+        continue;
+      }
+      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+          dpiEntries[index].kind == 13) {
+        obelisk_rt_status status = prepareAggregateInput(index, layout);
+        if (status != OBELISK_RT_OK)
+          return status;
+        inputs.push_back({OBELISK_RT_DBREG_AGGREGATE, 0, 0, 64,
+                          reinterpret_cast<uint64_t *>(
+                              dpiAggregateInputs[index]->data.data()),
+                          nullptr, 1});
+        continue;
+      }
       auto [width, limbs, value, unknown] =
           describe(layout, frame.data + layout.offset);
       uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
@@ -3406,8 +3844,50 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                           : layout.flags;
       inputs.push_back({layout.kind, flags, 0, width, value, unknown, limbs});
     }
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT) {
+      uint64_t outputCursor = 0;
+      bool task = (importSite.flags & OBELISK_RT_IMPORT_TASK) != 0;
+      if (!task && dataOutputCount != 0 &&
+          dpiEntries[inputCount].direction == 3)
+        outputCursor = 1;
+      for (uint32_t input = 0; input != inputCount; ++input) {
+        if (dpiEntries[input].direction == 0)
+          continue;
+        if (outputCursor >= dataOutputCount)
+          return OBELISK_RT_INVALID_BYTECODE;
+        if (dpiEntries[input].kind == 12)
+          dpiOpenOutputSources[outputCursor] = input;
+        if (dpiEntries[input].kind == 13)
+          dpiAggregateOutputSources[outputCursor] = input;
+        ++outputCursor;
+      }
+    }
     for (uint32_t index = 0; index != dataOutputCount; ++index) {
       Layout layout = layoutAt(image, frame.function, outputRegister(index));
+      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+          dpiEntries[inputCount + index].kind == 12) {
+        int64_t source = dpiOpenOutputSources[index];
+        if (source < 0 || !dpiOpenInputs[static_cast<size_t>(source)])
+          return OBELISK_RT_INVALID_BYTECODE;
+        auto *descriptor =
+            &dpiOpenInputs[static_cast<size_t>(source)]->descriptor;
+        outputs.push_back({OBELISK_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
+                           reinterpret_cast<uint64_t *>(descriptor), nullptr,
+                           1});
+        continue;
+      }
+      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+          dpiEntries[inputCount + index].kind == 13) {
+        int64_t source = dpiAggregateOutputSources[index];
+        if (source < 0 || !dpiAggregateInputs[static_cast<size_t>(source)])
+          return OBELISK_RT_INVALID_BYTECODE;
+        outputs.push_back(
+            {OBELISK_RT_DBREG_AGGREGATE, 0, 0, 64,
+             reinterpret_cast<uint64_t *>(
+                 dpiAggregateInputs[static_cast<size_t>(source)]->data.data()),
+             nullptr, 1});
+        continue;
+      }
       uint8_t *address = frame.data + layout.offset;
       auto [width, limbs, value, unknown] = describe(layout, address);
       uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
@@ -3416,10 +3896,125 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       outputs.push_back({layout.kind, flags, 0, width, value, unknown, limbs});
     }
     obelisk_rt_status importStatus =
-        obelisk_rt_v1_import_call(context, &importSite, inputs.data(),
-                                  inputCount, outputs.data(), dataOutputCount);
+        (importSite.flags & OBELISK_RT_IMPORT_CONTEXT) != 0
+            ? obelisk_rt_v1_import_call(context, &importSite, inputs.data(),
+                                        inputCount, outputs.data(),
+                                        dataOutputCount)
+            : obelisk_rt_v1_import_call_noncontext(
+                  context, &importSite, inputs.data(), inputCount,
+                  outputs.data(), dataOutputCount);
     if (signature.id != OBELISK_RT_INTRINSIC_V1_DPI_IMPORT)
       return importStatus;
+    if (importStatus == OBELISK_RT_OK) {
+      for (uint32_t index = 0; index != dataOutputCount; ++index) {
+        int64_t aggregateSource = dpiAggregateOutputSources[index];
+        if (aggregateSource >= 0) {
+          size_t sourceIndex = static_cast<size_t>(aggregateSource);
+          DPIAggregateStorage &storage = *dpiAggregateInputs[sourceIndex];
+          const DPIAggregateLayout &aggregate =
+              *dpiAggregateLayouts[sourceIndex];
+          Layout output =
+              layoutAt(image, frame.function, outputRegister(index));
+          uint64_t planeSize = limbCount(output.width) * uint64_t{8};
+          uint8_t *address = frame.data + output.offset;
+          void *unknown = (dpiEntries[inputCount + index].flags & 1) != 0
+                              ? address + planeSize
+                              : nullptr;
+          obelisk_rt_status status = designBytecodeDpiAggregateUnpack(
+              context, storage.data.data(), aggregate.cSize,
+              aggregate.plan.data(), aggregate.plan.size(), address, unknown,
+              planeSize, dpiEntries[inputCount + index].width,
+              dpiEntries[inputCount + index].flags & 1);
+          if (status != OBELISK_RT_OK)
+            return status;
+          continue;
+        }
+        int64_t source = dpiOpenOutputSources[index];
+        if (source < 0)
+          continue;
+        DPIOpenStorage &storage = *dpiOpenInputs[static_cast<size_t>(source)];
+        const DPIOpenLayout &open =
+            *dpiOpenLayouts[static_cast<size_t>(source)];
+        Layout output = layoutAt(image, frame.function, outputRegister(index));
+        if (open.storage == 2) {
+          Layout input = layoutAt(
+              image, frame.function,
+              inputRegister(static_cast<uint32_t>(source) + firstInput));
+          uint64_t rootPlaneSize = limbCount(input.width) * uint64_t{8};
+          uint8_t *inputAddress = frame.data + input.offset;
+          obelisk_rt_dpi_open_array_storage_v1 recursive{
+              storage.descriptor, storage.recursiveAllocation.get()};
+          obelisk_rt_status status = designBytecodeDpiOpenFinishRecursive(
+              OBELISK_RT_OK, context, &recursive, inputAddress,
+              open.transportFourState ? inputAddress + rootPlaneSize : nullptr,
+              rootPlaneSize, open.transportWidth, open.transportFourState,
+              open.elementWidth, open.fourState, open.elementCSize,
+              open.elementPlan.data(), open.elementPlan.size(),
+              open.shapePlan.data(),
+              static_cast<uint32_t>(open.ranges.size() / 2));
+          if (status != OBELISK_RT_OK || input.size != output.size)
+            return status != OBELISK_RT_OK ? status
+                                           : OBELISK_RT_INVALID_BYTECODE;
+          std::memcpy(frame.data + output.offset, inputAddress, input.size);
+          continue;
+        }
+        if (storage.dynamic) {
+          if (!writeManaged(outputRegister(index), storage.container))
+            return OBELISK_RT_INVALID_BYTECODE;
+          if (storage.elementCount == 0)
+            continue;
+          obelisk_rt_status status = designBytecodeDpiOpenAggregateUnpack(
+              context, storage.data.data(), storage.dataSize, open.elementCSize,
+              open.elementPlan.data(), open.elementPlan.size(),
+              storage.elementCount, 0, nullptr, 0, storage.flatValue.data(),
+              open.fourState ? storage.flatUnknown.data() : nullptr,
+              storage.planeSize, storage.totalWidth, open.fourState,
+              open.elementWidth);
+          if (status != OBELISK_RT_OK)
+            return status;
+          void *aggregateRoots = nullptr;
+          if (open.elementStringCount != 0) {
+            status = designBytecodeDpiOpenAggregateRootsPush(
+                context, storage.flatValue.data(), storage.planeSize,
+                storage.totalWidth, open.elementWidth, storage.elementCount,
+                0, nullptr, 0, open.elementCSize, open.elementPlan.data(),
+                open.elementPlan.size(), &aggregateRoots);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
+          obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+          if (!lane) {
+            if (aggregateRoots)
+              (void)designBytecodeDpiAggregateRootsPop(context,
+                                                       aggregateRoots);
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          }
+          status = obelisk_rt_v1_container_import_fixed(
+              lane, storage.container, storage.flatValue.data(),
+              open.fourState ? storage.flatUnknown.data() : nullptr,
+              storage.planeSize, storage.totalWidth, open.fourState,
+              open.elementWidth, storage.elementCount);
+          obelisk_rt_status popStatus =
+              designBytecodeDpiAggregateRootsPop(context, aggregateRoots);
+          if (status != OBELISK_RT_OK)
+            return status;
+          if (popStatus != OBELISK_RT_OK)
+            return popStatus;
+          continue;
+        }
+        uint8_t *address = frame.data + output.offset;
+        obelisk_rt_status status = designBytecodeDpiOpenAggregateUnpack(
+            context, storage.data.data(), storage.dataSize, open.elementCSize,
+            open.elementPlan.data(), open.elementPlan.size(),
+              storage.elementCount, 0, open.sourceRanges.data(),
+              static_cast<uint32_t>(open.sourceRanges.size() / 2), address,
+            open.fourState ? address + storage.planeSize : nullptr,
+            storage.planeSize, storage.totalWidth, open.fourState,
+            open.elementWidth);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+    }
     Layout statusLayout =
         layoutAt(image, frame.function, outputRegister(dataOutputCount));
     uint8_t *statusAddress = frame.data + statusLayout.offset;

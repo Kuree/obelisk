@@ -29,29 +29,21 @@ def SimFrozenConstantAttr
     unpacked arrays use an ArrayAttr of recursively typed frozen constants.
     The declared normalized type is retained so aggregate shape is not lost.
   }];
-  let parameters = (ins
-    AttributeSelfTypeParameter<"">:$type,
-    "::mlir::Attribute":$value,
-    "bool":$isSigned
-  );
+  let parameters = (ins AttributeSelfTypeParameter<"">:$type,
+      "::mlir::Attribute":$value, "bool":$isSigned);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
-def SimArgumentBindingAttr
-    : SimAttr<"ArgumentBinding", "argument_binding"> {
+def SimArgumentBindingAttr : SimAttr<"ArgumentBinding", "argument_binding"> {
   let summary = "source name bound to one prepared unit argument";
-  let parameters = (ins
-    "::mlir::StringAttr":$path,
-    "uint64_t":$argument,
-    EnumParameter<SimUnitArgumentKind>:$kind,
-    "bool":$copyOut,
-    OptionalParameter<"::mlir::IntegerAttr">:$lvalueNode,
-    // IEEE 1800-2017 13.5.1: an input or inout formal takes the caller's value
-    // at the call. An output formal does not, which a static subroutine can
-    // tell apart: its formal keeps what the previous call left in it.
-    DefaultValuedParameter<"bool", "true">:$copyIn
-  );
+  let parameters = (ins "::mlir::StringAttr":$path, "uint64_t":$argument,
+      EnumParameter<SimUnitArgumentKind>:$kind, "bool":$copyOut,
+      OptionalParameter<"::mlir::IntegerAttr">:$lvalueNode,
+      // IEEE 1800-2017 13.5.1: an input or inout formal takes the caller's
+      // value at the call. An output formal does not, which a static subroutine
+      // can tell apart: its formal keeps what the previous call left in it.
+      DefaultValuedParameter<"bool", "true">:$copyIn);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -59,34 +51,24 @@ def SimArgumentBindingAttr
 def SimDescriptorBindingAttr
     : SimAttr<"DescriptorBinding", "descriptor_binding"> {
   let summary = "source name bound directly through the simulation context";
-  let parameters = (ins
-    "::mlir::StringAttr":$path,
-    "uint64_t":$descriptor,
-    "::mlir::Type":$type
-  );
+  let parameters = (ins "::mlir::StringAttr":$path, "uint64_t":$descriptor,
+      "::mlir::Type":$type);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimLocalBindingAttr : SimAttr<"LocalBinding", "local_binding"> {
   let summary = "source name bound to activation-local storage";
-  let parameters = (ins
-    "::mlir::StringAttr":$path,
-    "::mlir::Type":$type,
-    "bool":$automatic,
-    "bool":$patternVariable,
-    "bool":$isReturn
-  );
+  let parameters = (ins "::mlir::StringAttr":$path, "::mlir::Type":$type,
+      "bool":$automatic, "bool":$patternVariable, "bool":$isReturn);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
   let summary = "source name bound to a typed elaborated constant";
-  let parameters = (ins
-    "::mlir::StringAttr":$path,
-    SimFrozenConstantAttr:$value
-  );
+  let parameters = (ins "::mlir::StringAttr":$path,
+      SimFrozenConstantAttr:$value);
   // `qualified` is required for this nested typed attribute so its mnemonic
   // and trailing type survive textual IR round-trips.
   let assemblyFormat =
@@ -96,12 +78,8 @@ def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
 
 def SimFieldAttr : SimAttr<"Field", "field"> {
   let summary = "ordered aggregate field metadata";
-  let parameters = (ins
-    "::mlir::StringAttr":$name,
-    "::mlir::Type":$type,
-    "uint32_t":$ordinal,
-    "uint64_t":$packedOffset
-  );
+  let parameters = (ins "::mlir::StringAttr":$name, "::mlir::Type":$type,
+      "uint32_t":$ordinal, "uint64_t":$packedOffset);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -120,10 +98,9 @@ def SimRandomVariableReferenceAttr
     fields in source order; `target` names the terminal packed random field.
     The owning class operation verifies the complete static type chain.
   }];
-  let parameters = (ins
-    OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
-    "::mlir::FlatSymbolRefAttr":$target
-  );
+  let parameters =
+      (ins OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
+          "::mlir::FlatSymbolRefAttr":$target);
   let assemblyFormat =
       "`<` (`path` `=` `[` $path^ `]` `,`)? `target` `=` $target `>`";
   let genVerifyDecl = 1;
@@ -152,14 +129,11 @@ def SimRandomValueReferenceAttr
     current state according to the invocation's active-object set and
     rand_mode state.
   }];
-  let parameters = (ins
-    EnumParameter<SimRandomValueReferenceKind>:$kind,
-    OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
-    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$target,
-    OptionalParameter<"::mlir::IntegerAttr">:$storage,
-    "uint64_t":$low,
-    "uint64_t":$width
-  );
+  let parameters = (ins EnumParameter<SimRandomValueReferenceKind>:$kind,
+      OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$path,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$target,
+      OptionalParameter<"::mlir::IntegerAttr">:$storage, "uint64_t":$low,
+      "uint64_t":$width);
   let assemblyFormat = [{
     `<` `kind` `=` $kind `,`
     (`path` `=` `[` $path^ `]` `,`)?
@@ -180,11 +154,10 @@ def SimRandomConstraintBlockReferenceAttr
     : SimAttr<"RandomConstraintBlockReference",
               "random_constraint_block_reference"> {
   let summary = "symbolic constraint_mode state consumed by a template";
-  let parameters = (ins
-    EnumParameter<SimRandomConstraintBlockReferenceKind>:$kind,
-    OptionalParameter<"::mlir::IntegerAttr">:$index,
-    OptionalParameter<"::mlir::IntegerAttr">:$storage
-  );
+  let parameters =
+      (ins EnumParameter<SimRandomConstraintBlockReferenceKind>:$kind,
+          OptionalParameter<"::mlir::IntegerAttr">:$index,
+          OptionalParameter<"::mlir::IntegerAttr">:$storage);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -196,18 +169,11 @@ def SimRandomConstraintBlockReferenceArrayAttr
 }
 
 def SimComputeEffectAttr : SimAttr<"ComputeEffect", "effect"> {
-  let parameters = (ins
-    EnumParameter<SimComputeEffectKind>:$effect,
-    EnumParameter<SimComputeResourceKind>:$resource,
-    EnumParameter<SimComputeTargetKind>:$target,
-    "uint64_t":$descriptor,
-    "uint32_t":$formal,
-    "uint64_t":$low,
-    "uint64_t":$width,
-    "bool":$dynamic,
-    "bool":$deferred,
-    EnumParameter<SimComputeTriggerKind>:$trigger
-  );
+  let parameters = (ins EnumParameter<SimComputeEffectKind>:$effect,
+      EnumParameter<SimComputeResourceKind>:$resource,
+      EnumParameter<SimComputeTargetKind>:$target, "uint64_t":$descriptor,
+      "uint32_t":$formal, "uint64_t":$low, "uint64_t":$width, "bool":$dynamic,
+      "bool":$deferred, EnumParameter<SimComputeTriggerKind>:$trigger);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -222,84 +188,58 @@ def SimComputeEffectArrayAttr
 }
 
 def SimComputeFragmentAttr : SimAttr<"ComputeFragment", "fragment"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "::mlir::FlatSymbolRefAttr":$function,
-    "uint32_t":$block,
-    EnumParameter<SimComputeRegionKind>:$region,
-    EnumParameter<SimComputeActionKind>:$action,
-    EnumParameter<SimComputeTierKind>:$tier,
-    "uint64_t":$cost,
-    "uint32_t":$lane,
-    "bool":$twoState,
-    "::mlir::ArrayAttr":$effects
-  );
+  let parameters = (ins "uint32_t":$id, "::mlir::FlatSymbolRefAttr":$function,
+      "uint32_t":$block, EnumParameter<SimComputeRegionKind>:$region,
+      EnumParameter<SimComputeActionKind>:$action,
+      EnumParameter<SimComputeTierKind>:$tier, "uint64_t":$cost,
+      "uint32_t":$lane, "bool":$twoState, "::mlir::ArrayAttr":$effects);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeNBACommitAttr : SimAttr<"ComputeNBACommit", "nba_commit"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "::mlir::DenseI64ArrayAttr":$slots,
-    "::mlir::DenseI64ArrayAttr":$accumulatorSites,
-    "::mlir::DenseI64ArrayAttr":$frontierSites,
-    SimComputeEffectAttr:$effect
-  );
+  let parameters = (ins "uint32_t":$id, "::mlir::DenseI64ArrayAttr":$slots,
+      "::mlir::DenseI64ArrayAttr":$accumulatorSites,
+      "::mlir::DenseI64ArrayAttr":$frontierSites, SimComputeEffectAttr:$effect);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeEventCommitAttr : SimAttr<"ComputeEventCommit", "event_commit"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "::mlir::DenseI64ArrayAttr":$sites,
-    SimComputeEffectAttr:$effect
-  );
+  let parameters = (ins "uint32_t":$id, "::mlir::DenseI64ArrayAttr":$sites,
+      SimComputeEffectAttr:$effect);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeEdgeAttr : SimAttr<"ComputeEdge", "edge"> {
-  let parameters = (ins
-    "uint32_t":$source,
-    "uint32_t":$target,
-    EnumParameter<SimComputeEdgeKind>:$kind,
-    OptionalParameter<"::obelisk::sim::ComputeEffectAttr">:$resource
-  );
+  let parameters = (ins "uint32_t":$source, "uint32_t":$target,
+      EnumParameter<SimComputeEdgeKind>:$kind,
+      OptionalParameter<"::obelisk::sim::ComputeEffectAttr">:$resource);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeGroupAttr : SimAttr<"ComputeGroup", "group"> {
-  let parameters = (ins
-    "::mlir::DenseI64ArrayAttr":$fragments,
-    EnumParameter<SimComputeScheduleKind>:$schedule,
-    "::mlir::ArrayAttr":$feedback
-  );
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$fragments,
+      EnumParameter<SimComputeScheduleKind>:$schedule,
+      "::mlir::ArrayAttr":$feedback);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeFusionAttr : SimAttr<"ComputeFusion", "fusion"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "::mlir::DenseI64ArrayAttr":$fragments
-  );
+  let parameters = (ins "uint32_t":$id, "::mlir::DenseI64ArrayAttr":$fragments);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeKernelAttr : SimAttr<"ComputeKernel", "kernel"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    EnumParameter<SimComputeRegionKind>:$region,
-    EnumParameter<SimComputeScheduleKind>:$schedule,
-    "uint32_t":$lane,
-    "uint64_t":$cost,
-    "bool":$loweringReady,
-    "::mlir::DenseI64ArrayAttr":$fragments
-  );
+  let parameters = (ins "uint32_t":$id,
+      EnumParameter<SimComputeRegionKind>:$region,
+      EnumParameter<SimComputeScheduleKind>:$schedule, "uint32_t":$lane,
+      "uint64_t":$cost, "bool":$loweringReady,
+      "::mlir::DenseI64ArrayAttr":$fragments);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -308,31 +248,22 @@ def SimComputeKernelAttr : SimAttr<"ComputeKernel", "kernel"> {
 // already canonical within a frozen design, so this tuple distinguishes exact
 // packed ranges and edge senses without duplicating shared downstream cones.
 def SimPhysicalTriggerAttr : SimAttr<"PhysicalTrigger", "physical_trigger"> {
-  let parameters = (ins
-    EnumParameter<SimComputeResourceKind>:$resource,
-    "uint64_t":$descriptor,
-    "uint64_t":$low,
-    "uint64_t":$width,
-    EnumParameter<SimComputeTriggerKind>:$edge
-  );
+  let parameters = (ins EnumParameter<SimComputeResourceKind>:$resource,
+      "uint64_t":$descriptor, "uint64_t":$low, "uint64_t":$width,
+      EnumParameter<SimComputeTriggerKind>:$edge);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimTriggerGroupAttr : SimAttr<"TriggerGroup", "trigger_group"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    SimPhysicalTriggerAttr:$key
-  );
+  let parameters = (ins "uint32_t":$id, SimPhysicalTriggerAttr:$key);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimInductiveRootAttr : SimAttr<"InductiveRoot", "inductive_root"> {
-  let parameters = (ins
-    EnumParameter<SimComputeResourceKind>:$resource,
-    "uint64_t":$descriptor
-  );
+  let parameters = (ins EnumParameter<SimComputeResourceKind>:$resource,
+      "uint64_t":$descriptor);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -343,30 +274,20 @@ def SimInductiveRootAttr : SimAttr<"InductiveRoot", "inductive_root"> {
 // always have a four-state body; twoStateEligible requests a second body and
 // one promotion-dirty latch for the complete owner closure.
 def SimScheduledKernelAttr : SimAttr<"ScheduledKernel", "scheduled_kernel"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "uint32_t":$owner,
-    "uint32_t":$readyBit,
-    EnumParameter<SimSchedulerTierKind>:$tier,
-    EnumParameter<SimComputeRegionKind>:$region,
-    EnumParameter<SimComputeScheduleKind>:$schedule,
-    "bool":$shared,
-    "bool":$loweringReady,
-    "bool":$twoStateEligible,
-    "::mlir::ArrayAttr":$promotionRoots,
-    "::mlir::DenseI64ArrayAttr":$fragments
-  );
+  let parameters = (ins "uint32_t":$id, "uint32_t":$owner, "uint32_t":$readyBit,
+      EnumParameter<SimSchedulerTierKind>:$tier,
+      EnumParameter<SimComputeRegionKind>:$region,
+      EnumParameter<SimComputeScheduleKind>:$schedule, "bool":$shared,
+      "bool":$loweringReady, "bool":$twoStateEligible,
+      "::mlir::ArrayAttr":$promotionRoots,
+      "::mlir::DenseI64ArrayAttr":$fragments);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimSchedulerIngressAttr : SimAttr<"SchedulerIngress", "scheduler_ingress"> {
-  let parameters = (ins
-    "uint32_t":$trigger,
-    "uint32_t":$owner,
-    "uint32_t":$readyBit,
-    "uint32_t":$fragment
-  );
+  let parameters = (ins "uint32_t":$trigger, "uint32_t":$owner,
+      "uint32_t":$readyBit, "uint32_t":$fragment);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -375,14 +296,9 @@ def SimSchedulerIngressAttr : SimAttr<"SchedulerIngress", "scheduler_ingress"> {
 // barrier owner.  The owner tier is the least-static writer tier and therefore
 // preserves ordering without cloning the root into multiple schedulers.
 def SimScheduledRootAttr : SimAttr<"ScheduledRoot", "scheduled_root"> {
-  let parameters = (ins
-    EnumParameter<SimComputeResourceKind>:$resource,
-    "uint64_t":$descriptor,
-    "uint64_t":$low,
-    "uint64_t":$width,
-    "uint32_t":$owner,
-    EnumParameter<SimSchedulerTierKind>:$tier
-  );
+  let parameters = (ins EnumParameter<SimComputeResourceKind>:$resource,
+      "uint64_t":$descriptor, "uint64_t":$low, "uint64_t":$width,
+      "uint32_t":$owner, EnumParameter<SimSchedulerTierKind>:$tier);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -392,22 +308,15 @@ def SimScheduledRootAttr : SimAttr<"ScheduledRoot", "scheduled_root"> {
 // it materializes the revision-coupled runtime plan; this persistent form
 // records the exact descriptor/range/edge proof made by the compute graph.
 def SimClockKeyAttr : SimAttr<"ClockKey", "clock_key"> {
-  let parameters = (ins
-    EnumParameter<SimComputeResourceKind>:$resource,
-    "uint64_t":$descriptor,
-    "uint64_t":$low,
-    "uint64_t":$width,
-    EnumParameter<SimComputeTriggerKind>:$edge
-  );
+  let parameters = (ins EnumParameter<SimComputeResourceKind>:$resource,
+      "uint64_t":$descriptor, "uint64_t":$low, "uint64_t":$width,
+      EnumParameter<SimComputeTriggerKind>:$edge);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimClockKernelAttr : SimAttr<"ClockKernel", "clock_kernel"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    SimClockKeyAttr:$key
-  );
+  let parameters = (ins "uint32_t":$id, SimClockKeyAttr:$key);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -416,47 +325,32 @@ def SimClockKernelAttr : SimAttr<"ClockKernel", "clock_kernel"> {
 // owned shared/fallback kernel.  `bit` is stable within that owner and is the
 // native ready-mask identity; original graph IDs remain in `fragments`.
 def SimMergedFragmentAttr : SimAttr<"MergedFragment", "merged_fragment"> {
-  let parameters = (ins
-    "uint32_t":$id,
-    "uint32_t":$owner,
-    "uint32_t":$bit,
-    "bool":$shared,
-    "bool":$loweringReady,
-    "::mlir::DenseI64ArrayAttr":$fragments
-  );
+  let parameters = (ins "uint32_t":$id, "uint32_t":$owner, "uint32_t":$bit,
+      "bool":$shared, "bool":$loweringReady,
+      "::mlir::DenseI64ArrayAttr":$fragments);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimKernelIngressAttr : SimAttr<"KernelIngress", "kernel_ingress"> {
-  let parameters = (ins
-    "uint32_t":$clock,
-    "uint32_t":$owner,
-    "uint32_t":$bit,
-    "uint32_t":$fragment
-  );
+  let parameters = (ins "uint32_t":$clock, "uint32_t":$owner, "uint32_t":$bit,
+      "uint32_t":$fragment);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeRegionAttr : SimAttr<"ComputeRegion", "region"> {
-  let parameters = (ins
-    EnumParameter<SimComputeRegionKind>:$kind,
-    "::mlir::ArrayAttr":$groups
-  );
+  let parameters = (ins EnumParameter<SimComputeRegionKind>:$kind,
+      "::mlir::ArrayAttr":$groups);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimComputeGraphAttr : SimAttr<"ComputeGraph", "graph"> {
-  let parameters = (ins
-    "uint32_t":$version,
-    EnumParameter<SimComputeVPIMode>:$vpi,
-    "uint32_t":$workers,
-    "::mlir::ArrayAttr":$nodes,
-    "::mlir::ArrayAttr":$edges,
-    "::mlir::ArrayAttr":$regions
-  );
+  let parameters = (ins "uint32_t":$version,
+      EnumParameter<SimComputeVPIMode>:$vpi, "uint32_t":$workers,
+      "::mlir::ArrayAttr":$nodes, "::mlir::ArrayAttr":$edges,
+      "::mlir::ArrayAttr":$regions);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -464,55 +358,35 @@ def SimComputeGraphAttr : SimAttr<"ComputeGraph", "graph"> {
 def SimThreeTierScheduleAttr
     : SimAttr<"ThreeTierSchedule", "three_tier_schedule"> {
   let summary = "exclusive physical-trigger and fine-kernel ownership plan";
-  let parameters = (ins
-    "uint32_t":$version,
-    SimComputeGraphAttr:$sourceGraph,
-    "uint32_t":$ownerCount,
-    "::mlir::ArrayAttr":$triggers,
-    "::mlir::ArrayAttr":$kernels,
-    "::mlir::ArrayAttr":$roots,
-    "::mlir::ArrayAttr":$ingress
-  );
+  let parameters = (ins "uint32_t":$version, SimComputeGraphAttr:$sourceGraph,
+      "uint32_t":$ownerCount, "::mlir::ArrayAttr":$triggers,
+      "::mlir::ArrayAttr":$kernels, "::mlir::ArrayAttr":$roots,
+      "::mlir::ArrayAttr":$ingress);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimClockKernelPlanAttr : SimAttr<"ClockKernelPlan", "clock_kernel_plan"> {
   let summary = "stable clock-keyed native-kernel ownership plan";
-  let parameters = (ins
-    "uint32_t":$version,
-    SimComputeGraphAttr:$sourceGraph,
-    "uint32_t":$ownerCount,
-    "::mlir::ArrayAttr":$clocks,
-    "::mlir::ArrayAttr":$mergedFragments,
-    "::mlir::ArrayAttr":$ingress
-  );
+  let parameters = (ins "uint32_t":$version, SimComputeGraphAttr:$sourceGraph,
+      "uint32_t":$ownerCount, "::mlir::ArrayAttr":$clocks,
+      "::mlir::ArrayAttr":$mergedFragments, "::mlir::ArrayAttr":$ingress);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimStaticStateRootAttr : SimAttr<"StaticStateRoot", "static_state_root"> {
   let summary = "one fixed storage root selected for static specialization";
-  let parameters = (ins
-    "uint64_t":$descriptor,
-    "uint32_t":$width,
-    "bool":$direct,
-    "bool":$guarded,
-    "bool":$nba
-  );
+  let parameters = (ins "uint64_t":$descriptor, "uint32_t":$width,
+      "bool":$direct, "bool":$guarded, "bool":$nba);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
-def SimStaticActorRootAttr
-    : SimAttr<"StaticActorRoot", "static_actor_root"> {
+def SimStaticActorRootAttr : SimAttr<"StaticActorRoot", "static_actor_root"> {
   let summary = "one actor's dependency on a fixed packed root";
-  let parameters = (ins
-    "::mlir::FlatSymbolRefAttr":$function,
-    "uint64_t":$descriptor,
-    "bool":$read,
-    "bool":$write
-  );
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$function,
+      "uint64_t":$descriptor, "bool":$read, "bool":$write);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -520,35 +394,24 @@ def SimStaticActorRootAttr
 def SimStaticSpecializationAttr
     : SimAttr<"StaticSpecialization", "static_specialization"> {
   let summary = "revision-coupled direct-state and fixed-root NBA plan";
-  let parameters = (ins
-    "uint32_t":$version,
-    "uint32_t":$maxPackedWidth,
-    SimComputeGraphAttr:$sourceGraph,
-    "::mlir::ArrayAttr":$roots,
-    "::mlir::ArrayAttr":$actorRoots,
-    "::mlir::DenseI64ArrayAttr":$nbaRoots
-  );
+  let parameters = (ins "uint32_t":$version, "uint32_t":$maxPackedWidth,
+      SimComputeGraphAttr:$sourceGraph, "::mlir::ArrayAttr":$roots,
+      "::mlir::ArrayAttr":$actorRoots, "::mlir::DenseI64ArrayAttr":$nbaRoots);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
-def SimStaticSuperstepAttr
-    : SimAttr<"StaticSuperstep", "static_superstep"> {
+def SimStaticSuperstepAttr : SimAttr<"StaticSuperstep", "static_superstep"> {
   let summary = "verified-graph fixed-actor clean AOT superstep candidate";
-  let parameters = (ins
-    "uint32_t":$version,
-    SimComputeGraphAttr:$sourceGraph,
-    "::mlir::ArrayAttr":$actors
-  );
+  let parameters = (ins "uint32_t":$version, SimComputeGraphAttr:$sourceGraph,
+      "::mlir::ArrayAttr":$actors);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimFragmentABIAttr : SimAttr<"FragmentABI", "fragment_abi"> {
-  let parameters = (ins
-    "uint32_t":$version,
-    "::mlir::DenseI64ArrayAttr":$fragments
-  );
+  let parameters = (ins "uint32_t":$version,
+      "::mlir::DenseI64ArrayAttr":$fragments);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -560,13 +423,9 @@ def SimContinuationSiteAttr : SimAttr<"ContinuationSite", "continuation"> {
 
 def SimDPIABIAttr : SimAttr<"DPIABI", "dpi_abi"> {
   let summary = "one logical value in a DPI-C import signature";
-  let parameters = (ins
-    EnumParameter<SimDPIABIKind>:$kind,
-    EnumParameter<SimDPIArgumentDirection>:$direction,
-    "uint32_t":$width,
-    "bool":$fourState,
-    "bool":$isSigned
-  );
+  let parameters = (ins EnumParameter<SimDPIABIKind>:$kind,
+      EnumParameter<SimDPIArgumentDirection>:$direction, "uint32_t":$width,
+      "bool":$fourState, "bool":$isSigned);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
@@ -576,31 +435,68 @@ def SimDPIABIArrayAttr
   let constBuilderCall = "$_builder.getArrayAttr($0)";
 }
 
-def SimTimingSiteAttr : SimAttr<"TimingSite", "timing_site"> {
+def SimDPIOpenArrayABIAttr : SimAttr<"DPIOpenArrayABI", "dpi_open_array_abi"> {
+  let summary = "concrete actual shape bound to one DPI open-array formal";
   let parameters = (ins
-    "uint64_t":$id,
-    EnumParameter<SimComputeTimingKind>:$kind
-  );
+      // 0 is a fixed packed transport, 1 is a single dynamic-array or queue
+      // handle, and 2 is a provenance-layout value interpreted by shapePlan.
+      "uint32_t":$storage,
+      EnumParameter<SimDPIABIKind>:$elementKind, "uint32_t":$elementWidth,
+      "uint64_t":$transportWidth, "bool":$transportFourState,
+      "bool":$fourState,
+      // Exact canonical C layout of one element. The recursive plan is reused
+      // across all elements, so metadata stays proportional to the element type
+      // rather than the actual array extent.
+      "uint64_t":$elementCSize, "uint32_t":$elementCAlignment,
+      "uint64_t":$elementStringCount,
+      "::mlir::DenseI64ArrayAttr":$elementLeaves, "int64_t":$packedLeft,
+      "int64_t":$packedRight,
+      // Declared left/right pairs for unpacked dimensions, outermost first.
+      "::mlir::DenseI64ArrayAttr":$ranges,
+      // Original actual ranges retain source direction for copy-in/copy-out;
+      // sized formal dimensions may have different normalized descriptor
+      // ranges even though their extents match.
+      "::mlir::DenseI64ArrayAttr":$sourceRanges,
+      // Eight-word records for runtime-shaped actuals. Each record describes
+      // one unpacked dimension without expanding fixed extents in the IR:
+      // kind, descriptor left/right, source start, signed source stride,
+      // child provenance span, child four-state flag, reserved. Kinds are
+      // fixed(0), dynamic array(1), and queue(2).
+      "::mlir::DenseI64ArrayAttr":$shapePlan);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimDPIAggregateABIAttr : SimAttr<"DPIAggregateABI", "dpi_aggregate_abi"> {
+  let summary = "exact C layout for one sized DPI unpacked aggregate";
+  let parameters = (ins "uint64_t":$cSize, "uint32_t":$cAlignment,
+      // Number of recursively expanded string leaves. Native lowering reserves
+      // one persistent inline-string scratch slot per leaf for the whole call.
+      "uint64_t":$stringCount,
+      // Eight-word leaf/repeat records form a compact recursive layout plan;
+      // repeat bit strides are signed to encode lower-index-first C arrays.
+      "::mlir::DenseI64ArrayAttr":$leaves);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTimingSiteAttr : SimAttr<"TimingSite", "timing_site"> {
+  let parameters = (ins "uint64_t":$id,
+      EnumParameter<SimComputeTimingKind>:$kind);
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
 def SimNBASiteAttr : SimAttr<"NBASite", "nba_site"> {
-  let parameters = (ins
-    "uint64_t":$id,
-    "uint32_t":$commit,
-    EnumParameter<SimComputeNBAStorageKind>:$storage,
-    OptionalParameter<"::obelisk::sim::TimingSiteAttr">:$timing
-  );
+  let parameters = (ins "uint64_t":$id, "uint32_t":$commit,
+      EnumParameter<SimComputeNBAStorageKind>:$storage,
+      OptionalParameter<"::obelisk::sim::TimingSiteAttr">:$timing);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
 
 def SimEventSiteAttr : SimAttr<"EventSite", "event_site"> {
-  let parameters = (ins
-    "uint64_t":$id,
-    "uint32_t":$commit,
-    OptionalParameter<"::obelisk::sim::TimingSiteAttr">:$timing
-  );
+  let parameters = (ins "uint64_t":$id, "uint32_t":$commit,
+      OptionalParameter<"::obelisk::sim::TimingSiteAttr">:$timing);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

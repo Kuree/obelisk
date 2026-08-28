@@ -98,7 +98,7 @@ module attributes {
         attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
       %status = obelisk_sim.dpi.call "host" id 200 scope 0
           context %ctx : !obelisk_sim.context() {
-            abi_signature = [], is_context = false, is_pure = false,
+            abi_signature = [], is_context = true, is_pure = false,
             is_task = false, source_column = 1 : i32,
             source_file = "dpi-export-runtime.mlir", source_line = 1 : i32
           } : () -> !obelisk_rt.status
@@ -288,7 +288,7 @@ module attributes {
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
-            is_context = false, is_pure = false, is_task = false,
+            is_context = true, is_pure = false, is_task = false,
             source_column = 1 : i32, source_file = "dpi-export-runtime.mlir",
             source_line = 2 : i32
           } : () -> (!obelisk_sim.string, !obelisk_rt.status)

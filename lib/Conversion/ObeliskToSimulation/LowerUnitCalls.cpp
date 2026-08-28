@@ -937,9 +937,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (!implicitThisBlock)
         receiverNode = memberChildren.front();
     }
-    FailureOr<Value> loweredReceiver =
-        implicitThisBlock ? FailureOr<Value>(thisObject)
-                          : lowerExpression(receiverNode);
+    FailureOr<Value> loweredReceiver = implicitThisBlock
+                                           ? FailureOr<Value>(thisObject)
+                                           : lowerExpression(receiverNode);
     auto objectType =
         succeeded(loweredReceiver)
             ? dyn_cast<sim::ClassHandleType>((*loweredReceiver).getType())
@@ -1859,12 +1859,18 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     Value destination;
     Value taskDestination;
     Type formalType;
+    Type resultType;
     bool formalSigned;
     bool destinationSigned;
     uint32_t dpiCategory;
+    uint32_t dpiWidth;
+    bool dpiFourState;
+    sim::DPIOpenArrayABIAttr openArray;
+    sim::DPIAggregateABIAttr aggregate;
   };
   auto getDPITransportWidth = [](Type type) -> std::optional<unsigned> {
-    if (isa<sim::StringType, sim::ChandleType>(type))
+    if (isa<sim::StringType, sim::ChandleType, sim::DynamicArrayType,
+            sim::QueueType>(type))
       return 64;
     if (type.isF32())
       return 32;
@@ -1878,37 +1884,267 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   };
   SmallVector<CopyOut> copyOuts;
   SmallVector<Attribute> dpiOperandABI;
-  for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
-    auto formal = cast<DictionaryAttr>(formalAttr);
-    auto direction = static_cast<semantic::SVArgumentDirection>(
-        formal.getAs<IntegerAttr>("direction").getInt());
-    Type formalType = formal.getAs<TypeAttr>("type").getValue();
-    bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
-    auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
-    uint32_t dpiCategory =
-        dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
-    bool isInput = direction == semantic::SVArgumentDirection::In;
-    if (op->hasAttr("obelisk.dpi.import_id")) {
-      if (isa<semantic::DynArrayType, semantic::QueueType,
-              semantic::AssocArrayType, sim::DynamicArrayType, sim::QueueType,
-              sim::AssocArrayType>(formalType)) {
-        emitError(location)
-            << "DPI-C dynamic-array, queue, and associative-array "
-               "marshalling is unsupported";
-        return failure();
+  SmallVector<Attribute> dpiOpenArrayLayouts;
+  SmallVector<Attribute> dpiAggregateLayouts;
+  auto packOpenArrayActual = [&](Value value) -> FailureOr<Value> {
+    std::optional<SmallVector<uint64_t>> plan =
+        sim::getDPIAggregateBitStreamPlan(value.getType());
+    if (!plan)
+      return value;
+    uint64_t width = (*plan)[3];
+    if (width == 0 || width > std::numeric_limits<unsigned>::max())
+      return emitError(location)
+                 << "DPI open-array transport width is not representable",
+             failure();
+    Type packed = streamContainsFourState(value.getType())
+                      ? Type(sim::LogicType::get(builder.getContext(), width))
+                      : Type(IntegerType::get(builder.getContext(), width));
+    SmallVector<int64_t> encoded;
+    encoded.reserve(plan->size());
+    llvm::transform(*plan, std::back_inserter(encoded),
+                    [](uint64_t word) { return static_cast<int64_t>(word); });
+    return sim::SimAggregateExportBitstreamOp::create(
+               builder, location, packed, value,
+               builder.getDenseI64ArrayAttr(encoded))
+        .getResult();
+  };
+  auto makeOpenArrayLayout =
+      [&](Type formalSemantic, Type actualSemantic,
+          Type transportType) -> FailureOr<sim::DPIOpenArrayABIAttr> {
+    // The actual supplies the concrete width of unsized packed dimensions.
+    // Remove only its unpacked dimensions; the remaining packed shape is one
+    // canonical C element and is normalized to [width-1:0] by the DPI ABI.
+    Type element = actualSemantic;
+    while (true) {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(element)) {
+        element = array.getElementType();
+        continue;
       }
-      std::optional<unsigned> width = getDPITransportWidth(formalType);
-      if (!width) {
-        emitError(location) << "DPI formal has no fixed transport width";
-        return failure();
+      if (auto array = dyn_cast<semantic::UnpackedArrayType>(element)) {
+        element = array.getElementType();
+        continue;
       }
-      dpiOperandABI.push_back(sim::DPIABIAttr::get(
-          builder.getContext(), static_cast<sim::DPIABIKind>(dpiCategory),
-          static_cast<sim::DPIArgumentDirection>(direction), *width,
-          isDPIFourState(formalType), formalSigned));
+      if (auto array = dyn_cast<semantic::DynArrayType>(element)) {
+        element = array.getElementType();
+        continue;
+      }
+      break;
     }
+    FailureOr<DPIABIType> elementABI = classifyDPIABIType(element, location);
+    if (failed(elementABI))
+      return failure();
+    FailureOr<Type> normalizedElement =
+        normalizeSemanticType(element, location);
+    if (failed(normalizedElement))
+      return failure();
+    FailureOr<sim::DPIAggregateABIAttr> elementLayout =
+        makeDPIAggregateABI(element, *normalizedElement, location, builder,
+                            /*compactTransport=*/true);
+    if (failed(elementLayout))
+      return failure();
+    SmallVector<SemanticDimension> actualDimensions;
+    SmallVector<SemanticDimension> formalDimensions;
+    llvm::copy_if(getSemanticDimensions(actualSemantic),
+                  std::back_inserter(actualDimensions),
+                  [](const SemanticDimension &dimension) {
+                    return dimension.unpacked;
+                  });
+    llvm::copy_if(getSemanticDimensions(formalSemantic),
+                  std::back_inserter(formalDimensions),
+                  [](const SemanticDimension &dimension) {
+                    return dimension.unpacked;
+                  });
+    if (actualDimensions.size() != formalDimensions.size())
+      return emitError(location)
+                 << "DPI open-array actual and formal have different "
+                    "unpacked dimension counts",
+             failure();
 
+    auto fixedExtent = [&](const SemanticDimension &dimension)
+        -> FailureOr<uint64_t> {
+      uint64_t distance = dimension.left >= dimension.right
+                              ? static_cast<uint64_t>(dimension.left) -
+                                    static_cast<uint64_t>(dimension.right)
+                              : static_cast<uint64_t>(dimension.right) -
+                                    static_cast<uint64_t>(dimension.left);
+      if (distance == UINT64_MAX)
+        return failure();
+      return distance + 1;
+    };
+    auto childType = [](Type type) -> Type {
+      return llvm::TypeSwitch<Type, Type>(type)
+          .Case<sim::UnpackedArrayType, sim::DynamicArrayType, sim::QueueType>(
+              [](auto array) { return array.getElementType(); })
+          .Default([](Type) { return Type{}; });
+    };
+
+    SmallVector<int64_t> ranges;
+    SmallVector<int64_t> sourceRanges;
+    SmallVector<int64_t> shapePlan;
+    bool hasRuntimeShape = false;
+    bool simpleRootRuntime = actualDimensions.size() == 1;
+    Type sourceType = transportType;
+    for (auto [index, actualDimension] : llvm::enumerate(actualDimensions)) {
+      const SemanticDimension &formalDimension = formalDimensions[index];
+      bool formalUnsized =
+          formalDimension.kind == SemanticDimensionKind::OpenArray;
+      bool runtime =
+          actualDimension.kind == SemanticDimensionKind::DynamicArray ||
+          actualDimension.kind == SemanticDimensionKind::Queue;
+      if (!runtime && !actualDimension.isFixed())
+        return emitError(location)
+                   << "DPI open-array actual has an unsupported runtime "
+                      "dimension",
+               failure();
+      if (!formalUnsized && !formalDimension.isFixed())
+        return emitError(location)
+                   << "DPI open-array formal has an unsupported dimension",
+               failure();
+
+      FailureOr<uint64_t> actualExtent =
+          runtime ? FailureOr<uint64_t>(uint64_t{0})
+                  : fixedExtent(actualDimension);
+      FailureOr<uint64_t> formalExtent =
+          formalUnsized ? FailureOr<uint64_t>(uint64_t{0})
+                        : fixedExtent(formalDimension);
+      if (failed(actualExtent) || failed(formalExtent) ||
+          (!runtime && !formalUnsized && *actualExtent != *formalExtent) ||
+          (!formalUnsized && *formalExtent > INT32_MAX))
+        return emitError(location)
+                   << "DPI open-array dimension size is not representable or "
+                      "does not match its sized formal",
+               failure();
+
+      int64_t descriptorLeft = 0;
+      int64_t descriptorRight = 0;
+      if (formalUnsized) {
+        if (!runtime) {
+          descriptorLeft = actualDimension.left;
+          descriptorRight = actualDimension.right;
+        }
+      } else {
+        descriptorRight = static_cast<int64_t>(*formalExtent - 1);
+      }
+      ranges.append({descriptorLeft, descriptorRight});
+      if (runtime)
+        sourceRanges.append({0, 0});
+      else
+        sourceRanges.append(
+            {actualDimension.left, actualDimension.right});
+
+      Type child = childType(sourceType);
+      std::optional<uint64_t> childSpan = sim::getProvenanceSpan(child);
+      if (!child || !childSpan || *childSpan == 0 ||
+          *childSpan > INT64_MAX)
+        return emitError(location)
+                   << "DPI open-array dimension has no bounded element layout",
+               failure();
+      // Managed containers are always two-state handle words even when their
+      // eventual leaf type is four-state. Only the immediate provenance view
+      // determines whether container_export_fixed has an unknown plane.
+      bool childFourState = sim::containsFourStateLeaf(child);
+      if (runtime) {
+        uint32_t kind =
+            actualDimension.kind == SemanticDimensionKind::Queue ? 2u : 1u;
+        shapePlan.append({static_cast<int64_t>(kind), descriptorLeft,
+                          descriptorRight, 0, 0,
+                          static_cast<int64_t>(*childSpan),
+                          childFourState ? 1 : 0,
+                          formalUnsized ? 0 : 1});
+        hasRuntimeShape = true;
+        simpleRootRuntime &= formalUnsized;
+      } else {
+        std::optional<uint64_t> alignment =
+            sim::getProvenanceAlignment(child);
+        if (!alignment || *alignment == 0 ||
+            *childSpan > UINT64_MAX - (*alignment - 1))
+          return emitError(location)
+                     << "DPI open-array fixed dimension has no bounded stride",
+                 failure();
+        uint64_t stride = (*childSpan + *alignment - 1) & ~(*alignment - 1);
+        if (stride == 0 || stride > INT64_MAX ||
+            (*actualExtent - 1) > UINT64_MAX / stride)
+          return emitError(location)
+                     << "DPI open-array fixed dimension stride overflows",
+                 failure();
+        uint64_t start = actualDimension.left <= actualDimension.right
+                             ? 0
+                             : (*actualExtent - 1) * stride;
+        int64_t signedStride = actualDimension.left <= actualDimension.right
+                                   ? static_cast<int64_t>(stride)
+                                   : -static_cast<int64_t>(stride);
+        shapePlan.append({0, descriptorLeft, descriptorRight,
+                          static_cast<int64_t>(start), signedStride,
+                          static_cast<int64_t>(*childSpan),
+                          childFourState ? 1 : 0,
+                          formalUnsized ? 0 : 1});
+      }
+      sourceType = child;
+    }
+    uint32_t elementWidth = elementABI->width;
+    uint32_t storage = 0;
+    if (hasRuntimeShape) {
+      elementLayout =
+          makeDPIAggregateABI(element, *normalizedElement, location, builder,
+                              /*compactTransport=*/false);
+      std::optional<uint64_t> span = sim::getProvenanceSpan(*normalizedElement);
+      if (failed(elementLayout) || !span || *span == 0 ||
+          *span > std::numeric_limits<uint32_t>::max())
+        return emitError(location)
+                   << "DPI dynamic open-array element has no bounded layout",
+               failure();
+      elementWidth = static_cast<uint32_t>(*span);
+      storage = simpleRootRuntime ? 1u : 2u;
+    }
+    std::optional<unsigned> transportWidth;
+    if (storage == 0) {
+      std::optional<SmallVector<uint64_t>> plan =
+          sim::getDPIAggregateBitStreamPlan(transportType);
+      uint64_t width = plan ? (*plan)[3] : 0;
+      if (width != 0 && width <= UINT_MAX)
+        transportWidth = static_cast<unsigned>(width);
+      else
+        transportWidth = getDPITransportWidth(transportType);
+    } else if (storage == 1) {
+      transportWidth = 64;
+    } else if (std::optional<uint64_t> width =
+                   sim::getProvenanceSpan(transportType);
+               width && *width <= UINT_MAX) {
+      transportWidth = static_cast<unsigned>(*width);
+    }
+    if (!transportWidth || *transportWidth == 0)
+      return emitError(location)
+                 << "DPI open-array actual has no bounded transport for "
+                 << transportType,
+             failure();
+    int64_t packedLeft = static_cast<int64_t>(elementWidth) - 1;
+    bool transportFourState =
+        storage == 0 ? elementABI->fourState
+                     : sim::containsFourStateLeaf(transportType);
+    return sim::DPIOpenArrayABIAttr::get(
+        builder.getContext(), storage,
+        static_cast<sim::DPIABIKind>(elementABI->kind), elementWidth,
+        *transportWidth, transportFourState, elementABI->fourState,
+        elementLayout->getCSize(),
+        elementLayout->getCAlignment(), elementLayout->getStringCount(),
+        elementLayout->getLeaves(), packedLeft, 0,
+        builder.getDenseI64ArrayAttr(ranges),
+        builder.getDenseI64ArrayAttr(sourceRanges),
+        builder.getDenseI64ArrayAttr(storage == 2 ? shapePlan
+                                                  : ArrayRef<int64_t>{}));
+  };
+  auto makeAggregateLayout =
+      [&](Type semanticType,
+          Type normalizedType) -> FailureOr<sim::DPIAggregateABIAttr> {
+    return makeDPIAggregateABI(semanticType, normalizedType, location, builder);
+  };
+  for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
     Operation *actual = child;
+    auto direction = static_cast<semantic::SVArgumentDirection>(
+        cast<DictionaryAttr>(formalAttr)
+            .getAs<IntegerAttr>("direction")
+            .getInt());
+    bool isInput = direction == semantic::SVArgumentDirection::In;
     if (!isInput)
       if (auto assignment =
               dyn_cast<semantic::SVAssignmentExpressionOp>(child)) {
@@ -1925,11 +2161,95 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             actual = outputChildren.front();
         }
       }
+    auto formal = cast<DictionaryAttr>(formalAttr);
+    Type formalType = formal.getAs<TypeAttr>("type").getValue();
+    bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
+    auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
+    uint32_t dpiCategory =
+        dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
+    bool dpiImport = op->hasAttr("obelisk.dpi.import_id");
+    auto formalSemantic = formal.getAs<TypeAttr>("semantic_type");
+    bool openFormal =
+        dpiImport && formalSemantic &&
+        llvm::any_of(getSemanticDimensions(formalSemantic.getValue()),
+                     [](const SemanticDimension &dimension) {
+                       return dimension.kind ==
+                              SemanticDimensionKind::OpenArray;
+                     });
+    sim::DPIAggregateABIAttr formalAggregateLayout;
+    if (dpiImport && !openFormal) {
+      if (isa<semantic::DynArrayType, semantic::QueueType,
+              semantic::AssocArrayType, sim::DynamicArrayType, sim::QueueType,
+              sim::AssocArrayType>(formalType)) {
+        emitError(location)
+            << "DPI-C dynamic-array, queue, and associative-array "
+               "marshalling is unsupported";
+        return failure();
+      }
+      bool aggregateFormal =
+          dpiCategory ==
+          static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+      std::optional<unsigned> width = getDPITransportWidth(formalType);
+      if (aggregateFormal)
+        if (std::optional<uint64_t> span = sim::getProvenanceSpan(formalType);
+            span && *span <= std::numeric_limits<unsigned>::max())
+          width = static_cast<unsigned>(*span);
+      if (!width) {
+        emitError(location) << "DPI formal has no fixed transport width";
+        return failure();
+      }
+      if (aggregateFormal) {
+        TypeAttr formalSemantic = formal.getAs<TypeAttr>("semantic_type");
+        if (!formalSemantic)
+          return failure();
+        FailureOr<sim::DPIAggregateABIAttr> layout =
+            makeAggregateLayout(formalSemantic.getValue(), formalType);
+        if (failed(layout))
+          return failure();
+        formalAggregateLayout = *layout;
+      }
+      dpiOperandABI.push_back(sim::DPIABIAttr::get(
+          builder.getContext(), static_cast<sim::DPIABIKind>(dpiCategory),
+          static_cast<sim::DPIArgumentDirection>(direction), *width,
+          aggregateFormal ? streamContainsFourState(formalType)
+                          : isDPIFourState(formalType),
+          formalSigned));
+      dpiOpenArrayLayouts.push_back(builder.getUnitAttr());
+      dpiAggregateLayouts.push_back(formalAggregateLayout
+                                        ? Attribute(formalAggregateLayout)
+                                        : Attribute(builder.getUnitAttr()));
+    }
 
     if (isInput) {
       FailureOr<Value> argument = lowerExpression(actual);
       if (failed(argument))
         return failure();
+      if (dpiImport && openFormal) {
+        auto semanticType = actual->getAttrOfType<TypeAttr>("semantic_type");
+        TypeAttr formalSemantic = formal.getAs<TypeAttr>("semantic_type");
+        if (!semanticType || !formalSemantic)
+          return emitError(location)
+                     << "DPI open-array binding has no semantic shape",
+                 failure();
+        FailureOr<sim::DPIOpenArrayABIAttr> layout = makeOpenArrayLayout(
+            formalSemantic.getValue(), semanticType.getValue(),
+            (*argument).getType());
+        if (failed(layout))
+          return failure();
+        FailureOr<Value> transport =
+            layout->getStorage() == 0 ? packOpenArrayActual(*argument)
+                                      : FailureOr<Value>(*argument);
+        if (failed(transport))
+          return failure();
+        dpiOperandABI.push_back(sim::DPIABIAttr::get(
+            builder.getContext(), sim::DPIABIKind::OpenArray,
+            sim::DPIArgumentDirection::Input, layout->getElementWidth(),
+            layout->getFourState(), false));
+        dpiOpenArrayLayouts.push_back(*layout);
+        dpiAggregateLayouts.push_back(builder.getUnitAttr());
+        operands.push_back(cloneSequentialValue(*transport, location));
+        continue;
+      }
       FailureOr<Value> converted = convert(
           *argument, formalType, isSignedNode(actual), location, formalSigned);
       if (failed(converted))
@@ -1965,6 +2285,53 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       operands.push_back(*argument);
+      continue;
+    }
+
+    if (dpiImport && openFormal) {
+      FailureOr<Value> loaded = loadReference(*destination, location);
+      if (failed(loaded))
+        return failure();
+      auto semanticType = actual->getAttrOfType<TypeAttr>("semantic_type");
+      if (!semanticType || !formalSemantic)
+        return emitError(location)
+                   << "DPI open-array binding has no semantic shape",
+               failure();
+      FailureOr<sim::DPIOpenArrayABIAttr> layout =
+          makeOpenArrayLayout(formalSemantic.getValue(),
+                              semanticType.getValue(), (*loaded).getType());
+      if (failed(layout))
+        return failure();
+      if (layout->getStorage() != 0 &&
+          direction == semantic::SVArgumentDirection::Out)
+        return emitError(location)
+                   << "dynamic-array and queue actuals cannot be passed to "
+                      "an output DPI open-array formal with unsized "
+                      "dimensions",
+               failure();
+      FailureOr<Value> transport =
+          layout->getStorage() == 0 ? packOpenArrayActual(*loaded)
+                                    : FailureOr<Value>(*loaded);
+      if (failed(transport))
+        return failure();
+      dpiOperandABI.push_back(sim::DPIABIAttr::get(
+          builder.getContext(), sim::DPIABIKind::OpenArray,
+          static_cast<sim::DPIArgumentDirection>(direction),
+          layout->getElementWidth(), layout->getFourState(), false));
+      dpiOpenArrayLayouts.push_back(*layout);
+      dpiAggregateLayouts.push_back(builder.getUnitAttr());
+      operands.push_back(cloneSequentialValue(*transport, location));
+      copyOuts.push_back({*destination,
+                          {},
+                          destinationType,
+                          (*transport).getType(),
+                          false,
+                          isSignedNode(actual),
+                          static_cast<uint32_t>(sim::DPIABIKind::OpenArray),
+                          layout->getElementWidth(),
+                          layout->getFourState(),
+                          *layout,
+                          {}});
       continue;
     }
 
@@ -2009,8 +2376,22 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             sim::RefType::get(function.getContext(), formalType), initial);
       operands.push_back(taskDestination);
     }
-    copyOuts.push_back({*destination, taskDestination, formalType, formalSigned,
-                        isSignedNode(actual), dpiCategory});
+    copyOuts.push_back(
+        {*destination,
+         taskDestination,
+         formalType,
+         formalType,
+         formalSigned,
+         isSignedNode(actual),
+         dpiCategory,
+         formalAggregateLayout
+             ? static_cast<uint32_t>(
+                   sim::getProvenanceSpan(formalType).value_or(0))
+             : getDPITransportWidth(formalType).value_or(0),
+         formalAggregateLayout ? streamContainsFourState(formalType)
+                               : isDPIFourState(formalType),
+         {},
+         formalAggregateLayout});
   }
 
   llvm::StringSet<> readCaptures;
@@ -2018,8 +2399,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
   llvm::StringSet<> writtenCaptures;
-  if (auto writes =
-          op->getAttrOfType<ArrayAttr>(calleeWrittenCapturesAttrName))
+  if (auto writes = op->getAttrOfType<ArrayAttr>(calleeWrittenCapturesAttrName))
     for (Attribute written : writes)
       writtenCaptures.insert(cast<StringAttr>(written).getValue());
   bool excludeWrittenSensitivity =
@@ -2027,8 +2407,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       function.getEntryKind() == sim::EntryKind::AlwaysLatch;
   if (!virtualCallees)
     for (const auto &read : readCaptures) {
-      if (excludeWrittenSensitivity &&
-          writtenCaptures.contains(read.getKey()))
+      if (excludeWrittenSensitivity && writtenCaptures.contains(read.getKey()))
         continue;
       Value capture = values.lookup(read.getKey());
       if (!capture)
@@ -2047,8 +2426,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           return failure();
         }
         if (readCaptures.contains(path) &&
-            (!excludeWrittenSensitivity ||
-             !writtenCaptures.contains(path)))
+            (!excludeWrittenSensitivity || !writtenCaptures.contains(path)))
           recordSensitivity(capture);
         operands.push_back(capture);
       }
@@ -2068,7 +2446,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
   if (!directTask)
     for (const CopyOut &copyOut : copyOuts)
-      callResultTypes.push_back(copyOut.formalType);
+      callResultTypes.push_back(copyOut.resultType);
   SmallVector<Value> callResults;
   if (auto importID = op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
     if (operands.empty())
@@ -2097,18 +2475,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           builder.getContext(), static_cast<sim::DPIABIKind>(*resultCategory),
           sim::DPIArgumentDirection::Result, *width, isDPIFourState(resultType),
           isSignedSemanticType(semanticResult.getValue())));
+      dpiOpenArrayLayouts.push_back(builder.getUnitAttr());
+      dpiAggregateLayouts.push_back(builder.getUnitAttr());
     }
     for (const CopyOut &copyOut : copyOuts) {
-      std::optional<unsigned> width = getDPITransportWidth(copyOut.formalType);
-      if (!width)
+      if (copyOut.dpiWidth == 0)
         return emitError(location)
                    << "DPI copy-out has no fixed transport width",
                failure();
       signature.push_back(sim::DPIABIAttr::get(
           builder.getContext(),
           static_cast<sim::DPIABIKind>(copyOut.dpiCategory),
-          sim::DPIArgumentDirection::Output, *width,
-          isDPIFourState(copyOut.formalType), copyOut.formalSigned));
+          sim::DPIArgumentDirection::Output, copyOut.dpiWidth,
+          copyOut.dpiFourState, copyOut.formalSigned));
+      dpiOpenArrayLayouts.push_back(copyOut.openArray
+                                        ? Attribute(copyOut.openArray)
+                                        : Attribute(builder.getUnitAttr()));
+      dpiAggregateLayouts.push_back(copyOut.aggregate
+                                        ? Attribute(copyOut.aggregate)
+                                        : Attribute(builder.getUnitAttr()));
     }
     FileLineColLoc fileLocation = dyn_cast<FileLineColLoc>(location);
     StringRef sourceFile =
@@ -2130,6 +2515,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         builder.getStringAttr(sourceFile),
         builder.getI32IntegerAttr(sourceLine),
         builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
+    call->setAttr("obelisk.dpi.open_array_layouts",
+                  builder.getArrayAttr(dpiOpenArrayLayouts));
+    call->setAttr("obelisk.dpi.aggregate_layouts",
+                  builder.getArrayAttr(dpiAggregateLayouts));
     sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
     llvm::append_range(callResults, call.getResults().drop_back());
   } else if (!directTask) {
@@ -2280,9 +2669,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Type destinationType = getReferenceElementType(copyOut.destination);
       if (!destinationType)
         return failure();
-      FailureOr<Value> converted = convert(
-          callResults[index + (hasFunctionResult ? 1 : 0)], destinationType,
-          copyOut.formalSigned, location, copyOut.destinationSigned);
+      Value result = callResults[index + (hasFunctionResult ? 1 : 0)];
+      FailureOr<Value> converted =
+          copyOut.openArray &&
+                  sim::getDPIAggregateBitStreamImportPlan(destinationType)
+              ? convertFixedBitstreamTarget(result, destinationType, location,
+                                            false, true)
+              : convert(result, destinationType, copyOut.formalSigned, location,
+                        copyOut.destinationSigned);
       if (failed(converted))
         return failure();
       if (failed(storeReference(copyOut.destination, *converted, location)))

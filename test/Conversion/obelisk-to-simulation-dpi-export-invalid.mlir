@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   -verify-diagnostics
+// RUN:   | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
@@ -15,7 +15,6 @@ module {
       obelisk.sv.symbol.instance_body attributes {
           hierarchical_name = "task_export", name = "task_export",
           node_id = 3 : i64, sym_name = "task_body"} {
-        // expected-error @+1 {{DPI exported tasks are not supported; only zero-time functions can be exported}}
         obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32,
             dpi_export_c_identifier = "unsupported_task",
             hierarchical_name = "task_export.unsupported_task",
@@ -29,6 +28,8 @@ module {
     }
   }
 }
+
+// CHECK: entry_kind = 12
 
 // -----
 
@@ -59,7 +60,6 @@ module {
                 semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
-          // expected-error @+1 {{DPI-C supports only string, chandle, scalar predefined integers, scalar bit/logic, enums, and fixed packed integral values}}
           obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32,
               hierarchical_name = "aggregate_export.unsupported_aggregate.value",
               name = "value", node_id = 7 : i64,
@@ -71,3 +71,6 @@ module {
     }
   }
 }
+
+// CHECK: #obelisk_sim.dpi_abi<kind = unpacked_aggregate
+// CHECK: dpi_aggregate_abi

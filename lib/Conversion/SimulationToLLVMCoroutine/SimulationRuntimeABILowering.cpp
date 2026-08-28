@@ -734,6 +734,76 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_import_call", managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI32, managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_import_call_noncontext", managedI32,
+      {managedPointer, managedPointer, managedPointer, managedI32,
+       managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_import_call_guarded", managedI32,
+      {managedI32, managedPointer, managedPointer, managedPointer, managedI32,
+       managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_import_call_noncontext_guarded", managedI32,
+      {managedI32, managedPointer, managedPointer, managedPointer, managedI32,
+       managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_pack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedI32, managedI32, managedI64, managedI32, managedPointer,
+       managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_open_array_unpack",
+                           managedI32,
+                           {managedPointer, managedI64, managedI32, managedI32,
+                            managedI64, managedPointer, managedPointer,
+                            managedI64, managedI64, managedI32, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_aggregate_pack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedI32, managedI64, managedI32, managedPointer, managedI32,
+       managedPointer, managedI64, managedI64, managedI64, managedI64,
+       managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_aggregate_unpack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedPointer,
+       managedI64, managedI64, managedI32, managedPointer, managedI32,
+       managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_prepare_recursive", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedI32, managedI32, managedI32, managedI32, managedI32, managedI32,
+       managedI64, managedI32, managedI64, managedPointer, managedI64,
+       managedPointer, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_finish_recursive", managedI32,
+      {managedI32, managedPointer, managedPointer, managedPointer,
+       managedPointer, managedI64, managedI64, managedI32, managedI32,
+       managedI32, managedI64, managedPointer, managedI64, managedPointer,
+       managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_open_array_release_recursive",
+      LLVM::LLVMVoidType::get(context), {managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_aggregate_pack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedPointer, managedI64, managedI64, managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_aggregate_unpack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedPointer, managedI64,
+       managedPointer, managedPointer, managedI64, managedI64, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_aggregate_roots_push", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedPointer,
+       managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_aggregate_roots_pop", managedI32,
+      {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_dpi_aggregate_export_pack", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI64, managedI32,
+       managedPointer, managedI64, managedPointer, managedI64, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_current_context",
+                           managedPointer, {});
 }
 
 } // namespace obelisk::detail

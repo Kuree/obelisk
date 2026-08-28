@@ -747,14 +747,16 @@ bool validIntrinsic(const Image &image, const Function &function,
                             input(index)->kind != OBELISK_RT_DBREG_LOGIC &&
                             input(index)->kind != OBELISK_RT_DBREG_STRING &&
                             input(index)->kind != OBELISK_RT_DBREG_REAL32 &&
-                            input(index)->kind != OBELISK_RT_DBREG_REAL64))
+                            input(index)->kind != OBELISK_RT_DBREG_REAL64 &&
+                            input(index)->kind != OBELISK_RT_DBREG_MANAGED))
         return false;
     for (uint32_t index = 0; index + 1 != site.outputCount; ++index)
       if (!output(index) || (output(index)->kind != OBELISK_RT_DBREG_BITS &&
                              output(index)->kind != OBELISK_RT_DBREG_LOGIC &&
                              output(index)->kind != OBELISK_RT_DBREG_STRING &&
                              output(index)->kind != OBELISK_RT_DBREG_REAL32 &&
-                             output(index)->kind != OBELISK_RT_DBREG_REAL64))
+                             output(index)->kind != OBELISK_RT_DBREG_REAL64 &&
+                             output(index)->kind != OBELISK_RT_DBREG_MANAGED))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC:
@@ -1312,17 +1314,15 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 5 && string(input(0)) && bits(input(1), 32) &&
            string(input(2)) && bits(input(3), 32) && bits(input(4), 32) &&
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
-           bits(input(8), 64) && string(output(0)) &&
-           bits(output(1), 32) && bits(output(2), 32) &&
-           bits(output(3), 32) && bits(output(4), 32);
+           bits(input(8), 64) && string(output(0)) && bits(output(1), 32) &&
+           bits(output(2), 32) && bits(output(3), 32) && bits(output(4), 32);
   case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
     return signature.flags == 0 && site.inputCount == 8 &&
            site.outputCount == 5 && bits(input(0), 32) && string(input(1)) &&
            bits(input(2), 32) && bits(input(3), 32) && bits(input(4), 64) &&
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
-           string(output(0)) && bits(output(1), 32) &&
-           bits(output(2), 32) && bits(output(3), 32) &&
-           bits(output(4), 32);
+           string(output(0)) && bits(output(1), 32) && bits(output(2), 32) &&
+           bits(output(3), 32) && bits(output(4), 32);
   case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW:
     if (signature.flags != 0 || site.inputCount != 7 || !string(input(0)) ||
         !bits(input(1), 32) || !bytes(input(2)) || !bits(input(3), 64) ||
@@ -2720,7 +2720,7 @@ bool validateImage(const Image &image) {
       }
       case OBELISK_RT_DB_LOAD_FRAME:
       case OBELISK_RT_DB_STORE_FRAME: {
-        if (instruction.source1 || instruction.source2 ||
+        if (instruction.source2 ||
             (instruction.opcode == OBELISK_RT_DB_LOAD_FRAME
                  ? instruction.source0 != 0
                  : instruction.destination != 0))
@@ -2746,12 +2746,18 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         } else if (value.kind == OBELISK_RT_DBREG_LOGIC &&
-                   instruction.auxiliary % 2 != 0) {
+                   (instruction.auxiliary % 2 != 0 ||
+                    (instruction.source1 != 0 &&
+                     instruction.source1 < instruction.auxiliary / 2))) {
           // A four-state transfer always names both canonical frame planes,
           // so its size is the value plane size doubled. An odd size cannot
           // describe one, and would truncate the unknown plane.
           return reject(__LINE__,
                         "four-state frame transfer is not a plane pair",
+                        functionIndex, pc, instruction.opcode);
+        } else if (value.kind != OBELISK_RT_DBREG_LOGIC &&
+                   instruction.source1 != 0) {
+          return reject(__LINE__, "secondary frame offset on two-state value",
                         functionIndex, pc, instruction.opcode);
         }
         break;

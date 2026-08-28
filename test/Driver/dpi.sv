@@ -7,6 +7,10 @@
 // RUN:   | FileCheck %s --check-prefix=NATIVE-ONLY
 // RUN: obelisk -fno-lto %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
+// RUN: %obelisk -emit-llvm %s -o - \
+// RUN:   | FileCheck %s --check-prefix=NONCONTEXT-IR
+// RUN: %obelisk -emit-llvm %s -o - \
+// RUN:   | FileCheck %s --check-prefix=CONTEXT-IR
 // RUN: llvm-readelf --dyn-syms %t.native \
 // RUN:   | FileCheck %s --check-prefix=EXPORTS \
 // RUN:     --implicit-check-not=obelisk_rt_v1_
@@ -28,8 +32,13 @@
 // RUN: %t.archive | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib \
 // RUN:   -shared %t.o -o %t.so
+// RUN: not obelisk --target=wasm32 %s %t.so -o %t.wasm 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=WASM-NATIVE
 // RUN: obelisk -fno-lto %s %t.so -o %t.shared
 // RUN: %t.shared | FileCheck %s --check-prefix=OUTPUT
+// RUN: ln -f %t.so %t.hardlink.so
+// RUN: obelisk -fno-lto %s %t.so %t.hardlink.so -o %t.hardlink
+// RUN: %t.hardlink | FileCheck %s --check-prefix=OUTPUT
 // RUN: llvm-readelf -d %t.shared \
 // RUN:   | FileCheck %s --check-prefix=NO-SONAME \
 // RUN:     --implicit-check-not='Shared library: [/'
@@ -104,6 +113,8 @@ endmodule
 // OUTPUT: 12 10 40 7 100000000
 // OUTPUT: void=42
 // OUTPUT: real=3.75 rounded=4.00 accumulated=4.25
+// NONCONTEXT-IR-COUNT-5: call i32 @obelisk_rt_v1_import_call_noncontext_guarded(
+// CONTEXT-IR: call i32 @obelisk_rt_v1_import_call_guarded(
 // EXPORTS-DAG: svGetScope
 // EXPORTS-DAG: svGetNameFromScope
 // NO-SONAME: Library runpath: [/
@@ -114,6 +125,7 @@ endmodule
 // BAD-SONAME: has a DT_SONAME containing '/'
 // REMOVED: unknown argument '--dpi-link=
 // NATIVE-ONLY: at least one SystemVerilog input or command file is required
+// WASM-NATIVE: native input '{{.*}}.so' is only valid when linking a final executable
 // INCOMPATIBLE: ld.lld: error: unified LTO compilation must use compatible bitcode modules
 // MISSING-DAG: undefined symbol: dpi_add
 // MISSING-DAG: undefined symbol: dpi_scalars

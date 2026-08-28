@@ -1,3 +1,5 @@
+// XFAIL: *
+// Slang v11 does not bind recursive contextual assignment-pattern defaults.
 // RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode

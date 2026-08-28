@@ -163,7 +163,7 @@ LogicalResult linkELFExecutable(
     StringRef supportRoot, StringRef explicitSysroot, StringRef thinLTOCacheDir,
     ArrayRef<NativeLinkInput> nativeLinkInputs,
     ArrayRef<SharedLibraryInput> sharedLibraryInputs, uint32_t optLevel,
-    bool noLTO, uint32_t linkThreads, bool thinLTO) {
+    bool noLTO, uint32_t linkThreads, bool thinLTO, bool dpi) {
   bool fullLTO = optLevel != 0 && !noLTO && !thinLTO;
   SmallString<256> glibcRoot;
   if (explicitSysroot.empty()) {
@@ -238,7 +238,8 @@ LogicalResult linkELFExecutable(
   owned.push_back("--no-dependent-libraries");
   owned.push_back("--gc-sections");
   owned.push_back("-pie");
-  owned.push_back("--export-dynamic-symbol=sv*");
+  if (dpi)
+    owned.push_back("--export-dynamic-symbol=sv*");
   owned.push_back("--export-dynamic-symbol=vpi*");
   owned.push_back((Twine("--threads=") + Twine(linkThreads)).str());
   if (fullLTO) {
@@ -444,11 +445,11 @@ public:
                                StringRef outputPath, StringRef supportRoot,
                                const NativeOutputOptions &options,
                                bool thinLTO) override {
-    return linkELFExecutable(modulePaths, outputPath, supportRoot,
-                             options.explicitSysroot, options.thinLTOCacheDir,
-                             options.nativeLinkInputs,
-                             options.sharedLibraryInputs, options.optLevel,
-                             options.noLTO, options.compileThreads, thinLTO);
+    return linkELFExecutable(
+        modulePaths, outputPath, supportRoot, options.explicitSysroot,
+        options.thinLTOCacheDir, options.nativeLinkInputs,
+        options.sharedLibraryInputs, options.optLevel, options.noLTO,
+        options.compileThreads, thinLTO, options.dpi);
   }
 };
 

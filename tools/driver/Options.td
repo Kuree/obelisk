@@ -131,6 +131,15 @@ def l : JoinedOrSeparate<["-"], "l">, Alias<v>, Flags<[HelpHidden]>;
 def libmap : JoinedOrSeparate<["--"], "libmap">, Group<Compilation_Group>,
   MetaVarName<"<file>">,
   HelpText<"Read SystemVerilog library declarations from a library map">;
+def sv_root : Separate<["-"], "sv_root">, Group<Compilation_Group>,
+  MetaVarName<"<dir>">,
+  HelpText<"Set the Annex J root for following foreign-library options">;
+def sv_lib : Separate<["-"], "sv_lib">, Group<Compilation_Group>,
+  MetaVarName<"<path-without-extension>">,
+  HelpText<"Link an Annex J DPI shared library">;
+def sv_liblist : Separate<["-"], "sv_liblist">, Group<Compilation_Group>,
+  MetaVarName<"<bootstrap-file>">,
+  HelpText<"Read Annex J DPI shared libraries from a bootstrap file">;
 def single_unit : Flag<["--"], "single-unit">, Group<Compilation_Group>,
   HelpText<"Treat all primary sources as one compilation unit">;
 def libraries_inherit_macros :

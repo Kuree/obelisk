@@ -376,9 +376,8 @@ inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
     "obelisk_sim.sampled_observer";
 
 inline bool isGlobalPastSampledFunction(::llvm::StringRef name) {
-  return name == "$past_gclk" || name == "$rose_gclk" ||
-         name == "$fell_gclk" || name == "$stable_gclk" ||
-         name == "$changed_gclk";
+  return name == "$past_gclk" || name == "$rose_gclk" || name == "$fell_gclk" ||
+         name == "$stable_gclk" || name == "$changed_gclk";
 }
 
 inline bool isGlobalFutureSampledFunction(::llvm::StringRef name) {
@@ -423,8 +422,9 @@ inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =
     "obelisk_sim.clocking_event_monitor";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorPathAttrName =
     "obelisk_sim.clocking_event_monitor_path";
-inline constexpr ::mlir::StringLiteral virtualInterfaceClockEventMembersAttrName =
-    "obelisk_sim.virtual_interface_clock_events";
+inline constexpr ::mlir::StringLiteral
+    virtualInterfaceClockEventMembersAttrName =
+        "obelisk_sim.virtual_interface_clock_events";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =
@@ -579,6 +579,10 @@ struct SemanticDimension {
 getNormalizedSemanticType(::mlir::Operation *op);
 ::mlir::FailureOr<::mlir::Type>
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
+::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
+makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
+                    ::mlir::Location location, ::mlir::Builder &builder,
+                    bool compactTransport = false);
 
 /// Whether a timing condition is decided by its watched storage being nonzero.
 /// A `wait` on such an expression can suspend on the storage directly; anything

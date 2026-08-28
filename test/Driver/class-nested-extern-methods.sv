@@ -1,3 +1,5 @@
+// XFAIL: *
+// Slang v11 does not resolve multiply-qualified out-of-block class methods.
 // RUN: obelisk -fno-lto --std=1800-2017 -O0 %s -o %t.o0.native
 // RUN: %t.o0.native > %t.o0.native.out
 // RUN: obelisk -fno-lto --std=1800-2017 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode

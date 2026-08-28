@@ -2799,12 +2799,11 @@ obelisk_rt_status ensureAssocCapacity(obelisk_rt_gc_lane_v1 *lane,
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((noinline, cold))
 #endif
-obelisk_rt_status
-prepareAssocWriteCapacity(obelisk_rt_gc_lane_v1 *lane,
-                          obelisk_rt_object_v1 *array,
-                          obelisk_rt_string_v1 &keyRootValue,
-                          NormalizedAssocKey &normalized,
-                          ContainerHeader &snapshot) {
+obelisk_rt_status prepareAssocWriteCapacity(obelisk_rt_gc_lane_v1 *lane,
+                                            obelisk_rt_object_v1 *array,
+                                            obelisk_rt_string_v1 &keyRootValue,
+                                            NormalizedAssocKey &normalized,
+                                            ContainerHeader &snapshot) {
   while (true) {
     normalized.string = keyRootValue;
     obelisk_rt_status status = snapshotHeader(array, snapshot);
@@ -6378,17 +6377,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_import_fixed(
     const void *value, const void *unknown, uint64_t planeSize,
     uint64_t bitWidth, uint32_t fourState, uint64_t elementSpan,
     uint64_t count) {
-  if (!lane || !container || !value || planeSize == 0 || planeSize > SIZE_MAX ||
-      bitWidth == 0 || planeSize < bitWidth / 8 + ((bitWidth & 7) != 0) ||
-      fourState > 1 || (fourState && !unknown) || elementSpan == 0 ||
-      count > bitWidth / elementSpan)
+  if (!lane || fourState > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (!container)
+    return count == 0 && bitWidth == 0 && planeSize == 0
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_ARGUMENT;
   ContainerHeader header;
   obelisk_rt_status status = snapshotHeader(container, header);
   if (status != OBELISK_RT_OK || header.size != count ||
       ((header.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0) !=
           (fourState != 0))
     return status == OBELISK_RT_OK ? OBELISK_RT_ARGUMENT_MISMATCH : status;
+  if (count == 0)
+    return bitWidth == 0 && planeSize == 0 ? OBELISK_RT_OK
+                                           : OBELISK_RT_INVALID_ARGUMENT;
+  if (!value || planeSize == 0 || planeSize > SIZE_MAX || bitWidth == 0 ||
+      planeSize < bitWidth / 8 + ((bitWidth & 7) != 0) ||
+      (fourState && !unknown) || elementSpan == 0 ||
+      count > bitWidth / elementSpan)
+    return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t elementWidth = referenceElementBitWidth(header.element);
   if (elementWidth > elementSpan || header.element->value_size > SIZE_MAX)
     return OBELISK_RT_ARGUMENT_MISMATCH;
@@ -6422,17 +6430,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_export_fixed(
     obelisk_rt_object_v1 *container, void *outValue, void *outUnknown,
     uint64_t planeSize, uint64_t bitWidth, uint32_t fourState,
     uint64_t elementSpan, uint64_t count) {
-  if (!container || !outValue || planeSize == 0 || bitWidth == 0 ||
-      planeSize < bitWidth / 8 + ((bitWidth & 7) != 0) || fourState > 1 ||
-      (fourState && !outUnknown) || elementSpan == 0 ||
-      count > bitWidth / elementSpan || planeSize > SIZE_MAX)
+  if (fourState > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (!container)
+    return count == 0 && bitWidth == 0 && planeSize == 0
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_ARGUMENT;
   ContainerHeader header;
   obelisk_rt_status status = snapshotHeader(container, header);
   if (status != OBELISK_RT_OK || header.size != count ||
       ((header.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0) !=
           (fourState != 0))
     return status == OBELISK_RT_OK ? OBELISK_RT_ARGUMENT_MISMATCH : status;
+  if (count == 0)
+    return bitWidth == 0 && planeSize == 0 ? OBELISK_RT_OK
+                                           : OBELISK_RT_INVALID_ARGUMENT;
+  if (!outValue || planeSize == 0 || bitWidth == 0 ||
+      planeSize < bitWidth / 8 + ((bitWidth & 7) != 0) || fourState > 1 ||
+      (fourState && !outUnknown) || elementSpan == 0 ||
+      count > bitWidth / elementSpan || planeSize > SIZE_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t elementWidth = referenceElementBitWidth(header.element);
   if (elementWidth > elementSpan || header.element->value_size > SIZE_MAX)
     return OBELISK_RT_ARGUMENT_MISMATCH;

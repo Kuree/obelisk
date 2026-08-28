@@ -212,8 +212,117 @@ DPIABIAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     if (isSigned)
       return emitError() << "DPI floating category cannot be signed";
     return require(64, false);
+  case DPIABIKind::OpenArray:
+    if (isSigned)
+      return emitError() << "DPI open-array category cannot be signed";
+    return success();
+  case DPIABIKind::UnpackedAggregate:
+    return success();
   }
   llvm_unreachable("unknown DPI ABI category");
+}
+
+LogicalResult DPIOpenArrayABIAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t storage,
+    DPIABIKind elementKind, uint32_t elementWidth, uint64_t transportWidth,
+    bool transportFourState, bool fourState, uint64_t elementCSize,
+    uint32_t elementCAlignment,
+    uint64_t elementStringCount, DenseI64ArrayAttr elementLeaves,
+    int64_t packedLeft, int64_t packedRight, DenseI64ArrayAttr ranges,
+    DenseI64ArrayAttr sourceRanges, DenseI64ArrayAttr shapePlan) {
+  if (storage > 2)
+    return emitError() << "DPI open-array storage kind is invalid";
+  if (elementWidth == 0)
+    return emitError() << "DPI open-array element width must be nonzero";
+  if (!ranges || (ranges.size() & 1) != 0)
+    return emitError() << "DPI open-array ranges must be left/right pairs";
+  if (ranges.size() / 2 > UINT32_MAX)
+    return emitError() << "DPI open-array dimension count is too large";
+  if (!sourceRanges || sourceRanges.size() != ranges.size())
+    return emitError() << "DPI open-array source ranges are incomplete";
+  if (storage == 0 && transportWidth == 0)
+    return emitError() << "fixed DPI open-array transport cannot be empty";
+  if (storage == 1 && transportWidth != 64)
+    return emitError() << "dynamic DPI open-array transport must be a handle";
+  if (storage == 1 && transportFourState)
+    return emitError() << "dynamic DPI open-array handle cannot be four-state";
+  if (!shapePlan || shapePlan.size() % 8 != 0)
+    return emitError() << "DPI open-array shape plan must use eight-word records";
+  if (storage == 2 && shapePlan.size() / 8 != ranges.size() / 2)
+    return emitError() << "recursive DPI open-array shape is incomplete";
+  if (storage != 2 && !shapePlan.empty())
+    return emitError() << "non-recursive DPI open-array has a shape plan";
+  if (elementKind != DPIABIKind::UnpackedAggregate &&
+      ((elementKind == DPIABIKind::Logic ||
+        elementKind == DPIABIKind::LogicVector) != fourState))
+    return emitError() << "DPI open-array element state kind is inconsistent";
+  if (elementCSize == 0 || elementCAlignment == 0 ||
+      (elementCAlignment & (elementCAlignment - 1)) != 0)
+    return emitError() << "DPI open-array element C layout is invalid";
+  if (!elementLeaves || elementLeaves.empty() || elementLeaves.size() % 8 != 0)
+    return emitError() << "DPI open-array element plan is incomplete";
+  if (elementStringCount > (UINT64_MAX - elementCSize) / 8)
+    return emitError() << "DPI open-array element string layout overflows";
+  if (packedLeft < INT32_MIN || packedLeft > INT32_MAX ||
+      packedRight < INT32_MIN || packedRight > INT32_MAX)
+    return emitError() << "DPI packed range exceeds the standardized C ABI";
+  auto verifyBounds = [&](ArrayRef<int64_t> bounds) {
+    return llvm::all_of(bounds, [](int64_t bound) {
+      return bound >= INT32_MIN && bound <= INT32_MAX;
+    });
+  };
+  if (!verifyBounds(ranges.asArrayRef()) ||
+      !verifyBounds(sourceRanges.asArrayRef()))
+    return emitError() << "DPI unpacked range exceeds the standardized C ABI";
+  for (int64_t index = 0; index != shapePlan.size(); index += 8) {
+    ArrayRef<int64_t> record = shapePlan.asArrayRef().slice(index, 8);
+    if (record[0] < 0 || record[0] > 2 || record[1] < INT32_MIN ||
+        record[1] > INT32_MAX || record[2] < INT32_MIN ||
+        record[2] > INT32_MAX || record[3] < 0 || record[5] <= 0 ||
+        (record[6] != 0 && record[6] != 1) ||
+        (record[7] != 0 && record[7] != 1))
+      return emitError() << "DPI open-array shape record " << index / 8
+                         << " is malformed";
+    if (record[0] == 0 && record[4] == 0)
+      return emitError() << "fixed DPI open-array shape has zero stride";
+    if (record[0] != 0 && (record[3] != 0 || record[4] != 0))
+      return emitError() << "runtime DPI open-array shape has fixed offsets";
+  }
+  return success();
+}
+
+LogicalResult
+DPIAggregateABIAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                            uint64_t cSize, uint32_t cAlignment,
+                            uint64_t stringCount, DenseI64ArrayAttr leaves) {
+  if (cSize == 0 || cAlignment == 0 || (cAlignment & (cAlignment - 1)) != 0)
+    return emitError() << "requires nonzero power-of-two C layout";
+  ArrayRef<int64_t> words = leaves.asArrayRef();
+  if (words.empty() || words.size() % 8 != 0)
+    return emitError() << "requires complete eight-word layout records";
+  for (size_t index = 0; index != words.size(); index += 8) {
+    if (words[index] == 0) {
+      if (words[index + 1] < 0 || words[index + 2] < 0 ||
+          words[index + 3] < 0 ||
+          words[index + 3] > static_cast<int64_t>(DPIABIKind::Real) ||
+          words[index + 4] <= 0 || words[index + 4] > UINT32_MAX ||
+          (words[index + 5] != 0 && words[index + 5] != 1) ||
+          (words[index + 6] != 0 && words[index + 6] != 1) ||
+          words[index + 7] != 0)
+        return emitError() << "has malformed leaf record " << index / 8;
+    } else if (words[index] == 1) {
+      if (words[index + 1] < 0 || words[index + 2] < 0 ||
+          words[index + 3] <= 0 || words[index + 4] == 0 ||
+          words[index + 5] <= 0 || words[index + 6] != 0 ||
+          words[index + 7] <= 0)
+        return emitError() << "has malformed repeat record " << index / 8;
+    } else {
+      return emitError() << "has unknown layout opcode " << words[index];
+    }
+  }
+  if (stringCount > (UINT64_MAX - cSize) / 8)
+    return emitError() << "has an unrepresentable string scratch layout";
+  return success();
 }
 
 uint64_t getDPISignatureHash(ArrayAttr signature, uint64_t logicalInputs) {

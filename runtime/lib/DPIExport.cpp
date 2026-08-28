@@ -11,8 +11,7 @@
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((weak))
 #endif
-obelisk_rt_status
-obelisk_rt_execute_dpi_export_bytecode(
+obelisk_rt_status obelisk_rt_execute_dpi_export_bytecode(
     const obelisk_rt_execution_descriptor_v1 &execution,
     const obelisk_rt_export_descriptor_v1 &descriptor,
     obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
@@ -29,7 +28,8 @@ uint64_t limbCount(uint32_t width) { return (uint64_t{width} + 63) / 64; }
 bool validKind(obelisk_rt_design_register_kind kind) {
   return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC ||
          kind == OBELISK_RT_DBREG_STATUS || kind == OBELISK_RT_DBREG_STRING ||
-         kind == OBELISK_RT_DBREG_REAL32 || kind == OBELISK_RT_DBREG_REAL64;
+         kind == OBELISK_RT_DBREG_REAL32 || kind == OBELISK_RT_DBREG_REAL64 ||
+         kind == OBELISK_RT_DBREG_AGGREGATE;
 }
 
 bool validReal(obelisk_rt_design_register_kind kind, uint8_t flags,
@@ -56,6 +56,8 @@ bool validInput(const obelisk_rt_import_input_v1 &input) {
   if (input.kind == OBELISK_RT_DBREG_REAL32 ||
       input.kind == OBELISK_RT_DBREG_REAL64)
     return validReal(input.kind, input.flags, input.bit_width, input.unknown);
+  if (input.kind == OBELISK_RT_DBREG_AGGREGATE)
+    return true;
   return input.kind == OBELISK_RT_DBREG_LOGIC ? input.unknown != nullptr
                                               : input.unknown == nullptr;
 }
@@ -77,6 +79,8 @@ bool validOutput(const obelisk_rt_import_output_v1 &output) {
       output.kind == OBELISK_RT_DBREG_REAL64)
     return validReal(output.kind, output.flags, output.bit_width,
                      output.unknown);
+  if (output.kind == OBELISK_RT_DBREG_AGGREGATE)
+    return true;
   return output.kind == OBELISK_RT_DBREG_LOGIC ? output.unknown != nullptr
                                                : output.unknown == nullptr;
 }
@@ -247,8 +251,9 @@ obelisk_rt_v1_dpi_export_pack_vector(void *destination, const void *value,
 OBELISK_RT_FEATURE_TEXT bool obelisk_rt_validate_dpi_exports(
     const obelisk_rt_execution_descriptor_v1 &execution,
     const obelisk_rt_execution_extension_v2 &extension) noexcept {
-  constexpr uint32_t validFlags =
-      OBELISK_RT_EXPORT_HAS_NATIVE | OBELISK_RT_EXPORT_HAS_BYTECODE;
+  constexpr uint32_t validFlags = OBELISK_RT_EXPORT_HAS_NATIVE |
+                                  OBELISK_RT_EXPORT_HAS_BYTECODE |
+                                  OBELISK_RT_EXPORT_TASK;
   uint32_t previousExportID = 0;
   uint64_t previousScopeID = 0;
   for (uint64_t index = 0; index != extension.export_count; ++index) {
@@ -266,7 +271,9 @@ OBELISK_RT_FEATURE_TEXT bool obelisk_rt_validate_dpi_exports(
     previousExportID = descriptor.export_id;
     previousScopeID = descriptor.scope_id;
     bool hasNative = (descriptor.flags & OBELISK_RT_EXPORT_HAS_NATIVE) != 0;
-    if (hasNative != (descriptor.native_entry != nullptr))
+    bool task = (descriptor.flags & OBELISK_RT_EXPORT_TASK) != 0;
+    if ((!task && hasNative != (descriptor.native_entry != nullptr)) ||
+        (task && (!descriptor.native_entry || hasNative)))
       return false;
     bool hasBytecode = (descriptor.flags & OBELISK_RT_EXPORT_HAS_BYTECODE) != 0;
     if (hasBytecode) {
@@ -304,6 +311,8 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
     return fail(OBELISK_RT_INVALID_ARGUMENT);
   if (!call || !call->context || !call->scope)
     return fail(OBELISK_RT_INVALID_LIFECYCLE);
+  if (call->disabledState)
+    return fail(OBELISK_RT_FATAL);
   if (call->exportStatus != OBELISK_RT_OK)
     return call->exportStatus;
   if (exportID == 0 || abiSignature == 0)
@@ -389,7 +398,12 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
         obelisk_rt_status status;
         bool requireBytecode =
             (execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
-        if (!requireBytecode && descriptor->native_entry) {
+        bool task = (descriptor->flags & OBELISK_RT_EXPORT_TASK) != 0;
+        if (task && (call->importFlags &
+                     (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK)) !=
+                        (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK))
+          return fail(OBELISK_RT_FATAL);
+        if (task || (!requireBytecode && descriptor->native_entry)) {
           status = descriptor->native_entry(context, convertedInputs.data(),
                                             inputCount, convertedOutputs.data(),
                                             outputCount);
@@ -399,6 +413,10 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
               inputCount, convertedOutputs.data(), outputCount);
         } else {
           status = OBELISK_RT_TIER_UNAVAILABLE;
+        }
+        if (status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED) {
+          call->disabledState = true;
+          return status;
         }
         if (status != OBELISK_RT_OK)
           return fail(status);
@@ -429,9 +447,26 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
         }
         return OBELISK_RT_OK;
       });
-  if (result != OBELISK_RT_OK)
+  if (result != OBELISK_RT_OK && result != OBELISK_RT_DPI_DISABLE_UNSUPPORTED)
     latchFailure(*call, result);
   return result;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_dpi_export_status(
+    obelisk_rt_status status) {
+  if (status != OBELISK_RT_OK && activeDpiCall)
+    latchFailure(*activeDpiCall, status);
+  return status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_export_call_guarded(
+    obelisk_rt_status priorStatus, uint32_t exportID, uint64_t abiSignature,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+  if (priorStatus != OBELISK_RT_OK)
+    return obelisk_rt_v1_dpi_export_status(priorStatus);
+  return obelisk_rt_v1_export_call(exportID, abiSignature, inputs, inputCount,
+                                   outputs, outputCount);
 }
 
 extern "C" OBELISK_RT_FEATURE_TEXT const char *

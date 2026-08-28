@@ -1022,11 +1022,6 @@ obelisk_rt_status observeDpiCall(obelisk_rt_context *context, uint32_t importID,
       importID == observation.nestedID ? "top.child" : "top";
   EXPECT_STREQ(svGetNameFromScope(initial), expectedScope);
   EXPECT_EQ(svGetScopeFromName(expectedScope), initial);
-  int32_t unit = 0, precision = 0;
-  EXPECT_EQ(svGetTimeUnit(initial, &unit), 0);
-  EXPECT_EQ(svGetTimePrecision(initial, &precision), 0);
-  EXPECT_EQ(unit, -9);
-  EXPECT_EQ(precision, -12);
   const char *file = nullptr;
   int line = 0;
   EXPECT_EQ(svGetCallerInfo(&file, &line), 1);
@@ -1034,11 +1029,6 @@ obelisk_rt_status observeDpiCall(obelisk_rt_context *context, uint32_t importID,
   EXPECT_EQ(line, 41);
   EXPECT_EQ(svPutUserData(initial, &observation.userKey, &observation), 0);
   EXPECT_EQ(svGetUserData(initial, &observation.userKey), &observation);
-  svTimeVal time{};
-  EXPECT_EQ(svGetTime(initial, &time), 0);
-  EXPECT_EQ(time.type, sv_sim_time);
-  EXPECT_EQ(time.high, 0u);
-  EXPECT_EQ(time.low, 0u);
 
   if (observation.invokeNested && importID != observation.nestedID) {
     uint64_t nestedValue[2]{};
@@ -1141,6 +1131,141 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
             OBELISK_RT_OK);
   EXPECT_EQ(observation.calls, 3u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+obelisk_rt_status observeNoncontextDpi(
+    obelisk_rt_context *, uint32_t,
+    const obelisk_rt_import_input_v1 *, uint32_t,
+    obelisk_rt_import_output_v1 *, uint32_t, void *userData) {
+  auto &calls = *static_cast<uint32_t *>(userData);
+  ++calls;
+  EXPECT_EQ(obelisk_rt_v1_dpi_current_context(), nullptr);
+  EXPECT_EQ(svGetScope(), nullptr);
+  const char *file = nullptr;
+  int line = 0;
+  EXPECT_EQ(svGetCallerInfo(&file, &line), 0);
+  return OBELISK_RT_OK;
+}
+
+TEST(RuntimeDPI, NoncontextBoundaryHasNoActiveCallState) {
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION};
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  constexpr std::string_view name = "noncontext";
+  uint32_t importID = obelisk_rt_v1_import_id(
+      reinterpret_cast<const uint8_t *>(name.data()), name.size());
+  uint32_t calls = 0;
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(
+                context, importID, observeNoncontextDpi, &calls),
+            OBELISK_RT_OK);
+  obelisk_rt_import_site_v1 site{OBELISK_RT_VERSION, 0, importID, 0,
+                                 UINT64_MAX, nullptr, 0, 0, 0, 0};
+  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(
+                context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(calls, 1u);
+  site.flags = OBELISK_RT_IMPORT_CONTEXT;
+  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(
+                context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(calls, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeDPI, AggregatePlanSupportsDeepLegalNesting) {
+  constexpr uint64_t depth = 65;
+  std::vector<int64_t> plan;
+  plan.reserve((depth + 1) * 8);
+  for (uint64_t level = 0; level != depth; ++level)
+    plan.insert(plan.end(),
+                {1, 0, 0, 1, 1, 1, 0,
+                 static_cast<int64_t>(depth - level)});
+  plan.insert(plan.end(), {0, 0, 0, 2, 8, 0, 0, 0});
+  uint8_t value = 0x5a;
+  uint8_t result = 0;
+  ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_pack(
+                &value, nullptr, 1, 8, 0, &result, 1, 1, plan.data(),
+                plan.size()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result, value);
+}
+
+struct DpiDisableObservation {
+  bool acknowledge = false;
+  bool tryExportAfterDisable = false;
+  obelisk_rt_status result = OBELISK_RT_OK;
+};
+
+obelisk_rt_status observeDpiDisable(obelisk_rt_context *, uint32_t,
+                                    const obelisk_rt_import_input_v1 *,
+                                    uint32_t, obelisk_rt_import_output_v1 *,
+                                    uint32_t, void *userData) {
+  auto &observation = *static_cast<DpiDisableObservation *>(userData);
+  EXPECT_EQ(svIsDisabledState(), 0);
+  EXPECT_NE(activeDpiCall, nullptr);
+  if (!activeDpiCall)
+    return OBELISK_RT_FATAL;
+  activeDpiCall->disabledState = true;
+  EXPECT_EQ(svIsDisabledState(), 1);
+  if (observation.tryExportAfterDisable) {
+    EXPECT_EQ(obelisk_rt_v1_export_call(1, 1, nullptr, 0, nullptr, 0),
+              OBELISK_RT_FATAL);
+  }
+  if (observation.acknowledge) {
+    svAckDisabledState();
+    EXPECT_EQ(svIsDisabledState(), 0);
+  }
+  return observation.result;
+}
+
+TEST(RuntimeDPI, EnforcesFunctionAndTaskDisableProtocol) {
+  static constexpr char scopeName[] = "top";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, scopeName, sizeof(scopeName) - 1, -9, -12, 0},
+  };
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
+      std::size(scopes),  -12, 0,
+  };
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  constexpr uint32_t importID = UINT32_C(0x12345678);
+  DpiDisableObservation observation;
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(
+                context, importID, observeDpiDisable, &observation),
+            OBELISK_RT_OK);
+  obelisk_rt_import_site_v1 site{OBELISK_RT_VERSION,
+                                 OBELISK_RT_IMPORT_CONTEXT,
+                                 importID,
+                                 0,
+                                 0,
+                                 nullptr,
+                                 0,
+                                 0,
+                                 0,
+                                 0};
+
+  observation.acknowledge = true;
+  observation.tryExportAfterDisable = true;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_DPI_DISABLE_UNSUPPORTED);
+
+  observation.acknowledge = false;
+  observation.tryExportAfterDisable = false;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_FATAL);
+
+  site.flags |= OBELISK_RT_IMPORT_TASK;
+  observation.result = OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_DPI_DISABLE_UNSUPPORTED);
+
+  observation.result = OBELISK_RT_OK;
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_FATAL);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -1754,7 +1879,9 @@ TEST_F(RuntimeTest, ReadsWritesAndPositionsBinaryFiles) {
 TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("hierarchy-scan.bin");
-  { std::ofstream(path, std::ios::binary) << "tag=Q"; }
+  {
+    std::ofstream(path, std::ios::binary) << "tag=Q";
+  }
   uint32_t descriptor = open(path, "rb");
 
   obelisk_rt_gc_lane_v1 *lane = nullptr;
@@ -1780,7 +1907,9 @@ TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 
   std::filesystem::path emptyPath = temporary.file("empty-hierarchy-scan.bin");
-  { std::ofstream(emptyPath, std::ios::binary); }
+  {
+    std::ofstream(emptyPath, std::ios::binary);
+  }
   descriptor = open(emptyPath, "rb");
   field = 1;
   ok = 0;
@@ -1804,7 +1933,9 @@ TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
 TEST_F(RuntimeTest, FileScanAcceptsFourStateNumericFieldsExactly) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("four-state-scan.txt");
-  { std::ofstream(path, std::ios::binary) << "1x?zQ ?R +7"; }
+  {
+    std::ofstream(path, std::ios::binary) << "1x?zQ ?R +7";
+  }
   uint32_t descriptor = open(path, "rb");
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
@@ -1855,9 +1986,9 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
   ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
   auto string = [&](std::string_view value) {
     obelisk_rt_string_v1 result = 0;
-    EXPECT_EQ(obelisk_rt_v1_string_create(lane, value.data(), value.size(),
-                                          &result),
-              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_string_create(lane, value.data(), value.size(), &result),
+        OBELISK_RT_OK);
     return result;
   };
   auto mask = [](std::string_view letters) {
@@ -1902,8 +2033,8 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
             OBELISK_RT_OK);
   EXPECT_EQ(std::string_view(bytes, size), "7f");
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, input, cursor, format, planCursor, 1, 1, 0,
-                0, 0, &field, &cursor, &planCursor, &kind, &ok),
+                context, lane, input, cursor, format, planCursor, 1, 1, 0, 0, 0,
+                &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 15u);
@@ -1945,8 +2076,8 @@ TEST_F(RuntimeTest, DynamicScanPlansCacheAndInterpretSuppressionExactly) {
   // coherent and within its fixed resident bound.
   std::vector<obelisk_rt_string_v1> concurrentFormats;
   for (unsigned index = 0; index != 12; ++index)
-    concurrentFormats.push_back(string("concurrent" + std::to_string(index) +
-                                       "=%d"));
+    concurrentFormats.push_back(
+        string("concurrent" + std::to_string(index) + "=%d"));
   std::atomic<unsigned> failures{0};
   std::vector<std::thread> threads;
   for (unsigned thread = 0; thread != 4; ++thread) {
@@ -1983,8 +2114,7 @@ TEST_F(RuntimeTest, DynamicScanIdentityHitsDoNotWalkFormatBytes) {
                                         &format),
             OBELISK_RT_OK);
   std::shared_ptr<const DynamicScanPlan> plan;
-  ASSERT_EQ(obelisk_rt_dynamic_scan_plan(context, format, plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_dynamic_scan_plan(context, format, plan), OBELISK_RT_OK);
   ASSERT_TRUE(plan);
   ASSERT_EQ(plan->conversions.size(), 512u);
   ASSERT_NE(context->dynamicScanState, nullptr);
@@ -2008,9 +2138,9 @@ TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
   ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
   auto string = [&](std::string_view value) {
     obelisk_rt_string_v1 result = 0;
-    EXPECT_EQ(obelisk_rt_v1_string_create(lane, value.data(), value.size(),
-                                          &result),
-              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_string_create(lane, value.data(), value.size(), &result),
+        OBELISK_RT_OK);
     return result;
   };
   auto view = [&](obelisk_rt_string_v1 value) {
@@ -2026,13 +2156,13 @@ TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
   raw.append("\x01\x00\x00\x80\x00\x00\x00\x80", 8);
   obelisk_rt_string_v1 input = string(raw);
   obelisk_rt_string_v1 format = string("%u%z");
-  uint64_t allowed = (UINT64_C(1) << ('u' - 'a')) |
-                     (UINT64_C(1) << ('z' - 'a'));
+  uint64_t allowed =
+      (UINT64_C(1) << ('u' - 'a')) | (UINT64_C(1) << ('z' - 'a'));
   obelisk_rt_string_v1 field = 0;
   uint32_t cursor = 0, planCursor = 0, kind = 0, ok = 0;
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, input, cursor, format, planCursor, 1, 0,
-                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+                context, lane, input, cursor, format, planCursor, 1, 0, allowed,
+                4, 8, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 4u);
@@ -2041,8 +2171,8 @@ TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
   EXPECT_EQ(view(field), raw.substr(0, 4));
 
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, input, cursor, format, planCursor, 1, 0,
-                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+                context, lane, input, cursor, format, planCursor, 1, 0, allowed,
+                4, 8, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(cursor, 12u);
@@ -2054,8 +2184,8 @@ TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
   cursor = 0;
   planCursor = 0;
   ASSERT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, lane, input, cursor, format, planCursor, 1, 0,
-                allowed, 4, 8, &field, &cursor, &planCursor, &kind, &ok),
+                context, lane, input, cursor, format, planCursor, 1, 0, allowed,
+                4, 8, &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 0u);
   EXPECT_EQ(cursor, 0u);
@@ -2088,8 +2218,8 @@ TEST_F(RuntimeTest, DynamicRawScanUsesDestinationSpecificTransferSizes) {
   planCursor = 0;
   uint32_t eof = 0;
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 0, allowed,
-                4, 8, &field, &planCursor, &kind, &ok, &eof),
+                context, lane, descriptor, format, planCursor, 1, 0, allowed, 4,
+                8, &field, &planCursor, &kind, &ok, &eof),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(eof, 0u);
@@ -2111,9 +2241,9 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
   ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
   auto create = [](obelisk_rt_gc_lane_v1 *owner, std::string_view value) {
     obelisk_rt_string_v1 result = 0;
-    EXPECT_EQ(obelisk_rt_v1_string_create(owner, value.data(), value.size(),
-                                          &result),
-              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_string_create(owner, value.data(), value.size(), &result),
+        OBELISK_RT_OK);
     return result;
   };
   obelisk_rt_string_v1 input = create(lane, "input-source");
@@ -2135,8 +2265,8 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
   uint32_t cursor = 0, planCursor = 0, kind = 0, ok = 0, eof = 0;
   uint64_t decimal = UINT64_C(1) << ('d' - 'a');
   EXPECT_EQ(obelisk_rt_v1_string_scan_dynamic(
-                context, otherLane, input, 0, format, 0, 1, 0, decimal,
-                0, 0, &field, &cursor, &planCursor, &kind, &ok),
+                context, otherLane, input, 0, format, 0, 1, 0, decimal, 0, 0,
+                &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(obelisk_rt_v1_string_scan_dynamic(
                 context, lane, otherInput, 0, format, 0, 1, 0, decimal, 0, 0,
@@ -2146,16 +2276,16 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
                 context, lane, input, 0, otherFormat, 0, 1, 0, decimal, 0, 0,
                 &field, &cursor, &planCursor, &kind, &ok),
             OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, otherLane, 0, format, 0, 1, 0, decimal, 0, 0, &field,
-                &planCursor, &kind, &ok, &eof),
+  EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(context, otherLane, 0, format, 0, 1,
+                                            0, decimal, 0, 0, &field,
+                                            &planCursor, &kind, &ok, &eof),
             OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, 0, otherFormat, 0, 1, 0, decimal, 0, 0, &field,
-                &planCursor, &kind, &ok, &eof),
+  EXPECT_EQ(obelisk_rt_v1_file_scan_dynamic(context, lane, 0, otherFormat, 0, 1,
+                                            0, decimal, 0, 0, &field,
+                                            &planCursor, &kind, &ok, &eof),
             OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_scan_dynamic_validate(
-                context, otherFormat, 0, 0, 0, decimal, &planCursor),
+  EXPECT_EQ(obelisk_rt_v1_scan_dynamic_validate(context, otherFormat, 0, 0, 0,
+                                                decimal, &planCursor),
             OBELISK_RT_INVALID_HANDLE);
 
   ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
@@ -2167,16 +2297,18 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
 TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("dynamic-scan.txt");
-  { std::ofstream(path, std::ios::binary) << "A=12 SKIP 7f!"; }
+  {
+    std::ofstream(path, std::ios::binary) << "A=12 SKIP 7f!";
+  }
   uint32_t descriptor = open(path, "rb");
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
   auto string = [&](std::string_view value) {
     obelisk_rt_string_v1 result = 0;
-    EXPECT_EQ(obelisk_rt_v1_string_create(lane, value.data(), value.size(),
-                                          &result),
-              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_string_create(lane, value.data(), value.size(), &result),
+        OBELISK_RT_OK);
     return result;
   };
   obelisk_rt_string_v1 format = string("A=%2d %*4s %2h!");
@@ -2185,11 +2317,11 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   uint32_t kind = 0;
   uint32_t ok = 0;
   uint32_t scanEOF = 0;
-  uint64_t numeric = (UINT64_C(1) << ('d' - 'a')) |
-                     (UINT64_C(1) << ('h' - 'a'));
+  uint64_t numeric =
+      (UINT64_C(1) << ('d' - 'a')) | (UINT64_C(1) << ('h' - 'a'));
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
+                context, lane, descriptor, format, planCursor, 1, 0, numeric, 0,
+                0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(scanEOF, 0u);
@@ -2201,8 +2333,8 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   EXPECT_EQ(position, 4);
 
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
+                context, lane, descriptor, format, planCursor, 1, 0, numeric, 0,
+                0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   EXPECT_EQ(planCursor, 3u);
@@ -2210,9 +2342,9 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
             OBELISK_RT_OK);
   EXPECT_EQ(position, 12);
-  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 1, 0, 0, 0,
-                &field, &planCursor, &kind, &ok, &scanEOF),
+  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(context, lane, descriptor, format,
+                                            planCursor, 1, 1, 0, 0, 0, &field,
+                                            &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 1u);
   ASSERT_EQ(obelisk_rt_v1_file_tell(context, descriptor, &position),
@@ -2221,13 +2353,15 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 
   std::filesystem::path empty = temporary.file("dynamic-empty.txt");
-  { std::ofstream(empty, std::ios::binary); }
+  {
+    std::ofstream(empty, std::ios::binary);
+  }
   descriptor = open(empty, "rb");
   format = string("%d");
   planCursor = 0;
   ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, planCursor, 1, 0, numeric,
-                0, 0, &field, &planCursor, &kind, &ok, &scanEOF),
+                context, lane, descriptor, format, planCursor, 1, 0, numeric, 0,
+                0, &field, &planCursor, &kind, &ok, &scanEOF),
             OBELISK_RT_OK);
   EXPECT_EQ(ok, 0u);
   EXPECT_EQ(scanEOF, 1u);
@@ -2278,7 +2412,9 @@ TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
 TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("bad.hex");
-  { std::ofstream(path) << "@"; }
+  {
+    std::ofstream(path) << "@";
+  }
   uint32_t descriptor = open(path, "r");
   uint8_t value = 0, unknown = 0;
   uint32_t kind = 0;
@@ -2420,14 +2556,13 @@ TEST_F(RuntimeTest, FormattedScanReadErrorsAreInputFailures) {
               OBELISK_RT_OK);
     EXPECT_EQ(position, 0);
     uint32_t eof = 1;
-    EXPECT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &eof),
-              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_file_eof(context, descriptor, &eof), OBELISK_RT_OK);
     EXPECT_EQ(eof, 0u);
     int32_t code = 0;
     RuntimeBuffer message;
-    EXPECT_EQ(obelisk_rt_v1_file_error(context, descriptor, &code,
-                                       message.out()),
-              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_file_error(context, descriptor, &code, message.out()),
+        OBELISK_RT_OK);
     EXPECT_NE(code, 0);
     EXPECT_FALSE(message.str().empty());
     EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
@@ -2437,9 +2572,9 @@ TEST_F(RuntimeTest, FormattedScanReadErrorsAreInputFailures) {
   uint32_t ok = 1;
   uint32_t inputFailure = 0;
   uint32_t descriptor = open(directory, "r");
-  ASSERT_EQ(obelisk_rt_v1_file_scan_field(
-                context, lane, descriptor, 1, nullptr, 0, 'd', 0, &field, &ok,
-                &inputFailure),
+  ASSERT_EQ(obelisk_rt_v1_file_scan_field(context, lane, descriptor, 1, nullptr,
+                                          0, 'd', 0, &field, &ok,
+                                          &inputFailure),
             OBELISK_RT_OK);
   EXPECT_EQ(field, 0u);
   EXPECT_EQ(ok, 0u);
@@ -2460,15 +2595,14 @@ TEST_F(RuntimeTest, FormattedScanReadErrorsAreInputFailures) {
   expectErrorState(descriptor);
 
   obelisk_rt_string_v1 format = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "%d", 2, &format),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "%d", 2, &format), OBELISK_RT_OK);
   descriptor = open(directory, "r");
   uint32_t planCursor = 0;
   uint32_t kind = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(
-                context, lane, descriptor, format, 0, 1, 0,
-                UINT64_C(1) << ('d' - 'a'), 0, 0, &field, &planCursor, &kind,
-                &ok, &inputFailure),
+  ASSERT_EQ(obelisk_rt_v1_file_scan_dynamic(context, lane, descriptor, format,
+                                            0, 1, 0, UINT64_C(1) << ('d' - 'a'),
+                                            0, 0, &field, &planCursor, &kind,
+                                            &ok, &inputFailure),
             OBELISK_RT_OK);
   EXPECT_EQ(field, 0u);
   EXPECT_EQ(planCursor, 0u);

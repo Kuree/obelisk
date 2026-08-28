@@ -2,6 +2,8 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/RuntimeInternal.h"
+
 #include "gtest/gtest.h"
 
 #include <array>
@@ -1032,6 +1034,66 @@ TEST_F(ManagedValueTest, ContainersTraceStringsAndRecursivelyCloneContainers) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &innerRoot), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &stringsRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, DPIAggregateRootsTraceMultipleStringsWithScalarRoot) {
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *executionLane = nullptr;
+  bool executionEntered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(
+                context, &executionLane, &executionEntered),
+            OBELISK_RT_OK);
+  ASSERT_NE(executionLane, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
+  constexpr int64_t stringPlan[] = {0, 0, 0, 8, 64, 0, 0, 0};
+
+  obelisk_rt_string_v1 aggregateStrings[2] = {};
+  void *aggregateRoots[2] = {};
+  ASSERT_EQ(obelisk_rt_v1_string_create(executionLane, "first-aggregate", 15,
+                                        &aggregateStrings[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_roots_push(
+                context, &aggregateStrings[0], sizeof(aggregateStrings[0]),
+                64, stringPlan, std::size(stringPlan), &aggregateRoots[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(executionLane, "second-aggregate", 16,
+                                        &aggregateStrings[1]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_roots_push(
+                context, &aggregateStrings[1], sizeof(aggregateStrings[1]),
+                64, stringPlan, std::size(stringPlan), &aggregateRoots[1]),
+            OBELISK_RT_OK);
+
+  obelisk_rt_string_v1 scalarString = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(executionLane, "scalar-string", 13,
+                                        &scalarString),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 scalarRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(executionLane, &scalarRoot,
+                                               &scalarString),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(executionLane), OBELISK_RT_OK);
+
+  auto expectString = [](obelisk_rt_string_v1 value, std::string expected) {
+    char scratch[8];
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string(bytes, size), expected);
+  };
+  expectString(aggregateStrings[0], "first-aggregate");
+  expectString(aggregateStrings[1], "second-aggregate");
+  expectString(scalarString, "scalar-string");
+
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(executionLane, &scalarRoot),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_dpi_aggregate_roots_pop(context, aggregateRoots[1]),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_dpi_aggregate_roots_pop(context, aggregateRoots[0]),
+            OBELISK_RT_OK);
+  obelisk_rt_managed_execution_leave(executionLane, executionEntered);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
 }
 
 TEST_F(ManagedValueTest,

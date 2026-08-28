@@ -40,6 +40,11 @@ bool isReal(const DPIOperandABI &abi) {
          abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real);
 }
 
+bool isAggregate(const DPIOperandABI &abi) {
+  return abi.category ==
+         static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+}
+
 Type cScalarType(MLIRContext *context, const DPIOperandABI &abi) {
   switch (abi.category) {
   case 0:
@@ -64,6 +69,8 @@ Type cScalarType(MLIRContext *context, const DPIOperandABI &abi) {
 uint8_t descriptorKind(const DPIOperandABI &abi) {
   if (isString(abi))
     return OBELISK_RT_DBREG_STRING;
+  if (isAggregate(abi))
+    return OBELISK_RT_DBREG_AGGREGATE;
   if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
     return OBELISK_RT_DBREG_REAL32;
   if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
@@ -95,7 +102,9 @@ struct ExportSpec {
   uint64_t abiHash;
   uint32_t inputCount;
   ArrayAttr signature;
+  ArrayAttr aggregateLayouts;
   SmallVector<DPIOperandABI> abi;
+  bool isTask;
 };
 
 FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
@@ -107,11 +116,21 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
       operation->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
   auto inputs =
       operation->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+  auto aggregateLayouts =
+      operation->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_aggregate_layouts");
   if (!identifier || !exportID || !signature || !inputs ||
       exportID.getValue().getActiveBits() > 32 ||
       inputs.getValue().getActiveBits() > 32 ||
       inputs.getValue().getZExtValue() > signature.size())
     return operation->emitError("has invalid DPI export lowering metadata"),
+           failure();
+  if (!aggregateLayouts) {
+    SmallVector<Attribute> empty(signature.size(),
+                                 UnitAttr::get(operation->getContext()));
+    aggregateLayouts = ArrayAttr::get(operation->getContext(), empty);
+  }
+  if (aggregateLayouts.size() != signature.size())
+    return operation->emitError("has invalid DPI export aggregate metadata"),
            failure();
   SmallVector<DPIOperandABI> abi;
   for (Attribute attribute : signature) {
@@ -129,7 +148,9 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
                     sim::getDPISignatureHash(signature, inputCount),
                     inputCount,
                     signature,
-                    std::move(abi)};
+                    aggregateLayouts,
+                    std::move(abi),
+                    operation->hasAttr("obelisk_sim.dpi_task")};
 }
 
 Value descriptorField(OpBuilder &builder, Location location, Value base,
@@ -209,7 +230,9 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
       hasResult ? &spec.abi[spec.inputCount] : nullptr;
 
   Type cResultType = voidType;
-  if (resultABI && !isVector(*resultABI))
+  if (spec.isTask)
+    cResultType = i32;
+  else if (resultABI && !isVector(*resultABI))
     cResultType = isString(*resultABI) || isChandle(*resultABI)
                       ? pointer
                       : cScalarType(context, *resultABI);
@@ -220,7 +243,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     const DPIOperandABI &abi = spec.abi[index];
     bool byPointer = abi.direction != static_cast<uint32_t>(
                                           sim::DPIArgumentDirection::Input) ||
-                     isVector(abi);
+                     isVector(abi) || isAggregate(abi);
     cArguments.push_back(byPointer || isString(abi) || isChandle(abi)
                              ? pointer
                              : cScalarType(context, abi));
@@ -285,15 +308,20 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     const DPIOperandABI &abi = spec.abi[index];
     if (abi.direction ==
             static_cast<uint32_t>(sim::DPIArgumentDirection::Input) &&
-        !isVector(abi) && !isString(abi) && !isChandle(abi) && !isReal(abi))
+        !isVector(abi) && !isAggregate(abi) && !isString(abi) &&
+        !isChandle(abi) && !isReal(abi))
       setNarrowExtension(false, attributeCursor, abi);
     ++attributeCursor;
   }
   Block *entry = wrapper.addEntryBlock(builder);
   Block *copy = new Block;
+  Block *cleanup = new Block;
   Block *done = new Block;
   wrapper.getBody().push_back(copy);
+  wrapper.getBody().push_back(cleanup);
   wrapper.getBody().push_back(done);
+  cleanup->addArgument(i32, location);
+  done->addArgument(i32, location);
   builder.setInsertionPointToStart(entry);
   Value null = zero(builder, location, pointer);
   Type descriptorType = LLVM::LLVMStructType::getLiteral(
@@ -308,9 +336,37 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   SmallVector<std::pair<Value, Value>> inputPlanes;
   SmallVector<std::pair<Value, Value>> outputPlanes;
   SmallVector<Value> formalArguments;
+  SmallVector<Value> aggregatePlans(spec.abi.size());
+  SmallVector<Value> aggregateRootHandles;
+  Value marshallingStatus = llvmConstant(builder, location, i32, OBELISK_RT_OK);
+  auto mergeMarshallingStatus = [&](Value next) {
+    Value succeeded = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, marshallingStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    marshallingStatus = arith::SelectOp::create(
+        builder, location, succeeded, next, marshallingStatus);
+  };
   uint32_t cCursor = resultABI && isVector(*resultABI) ? 1 : 0;
   for (uint32_t index = 0; index != spec.inputCount; ++index)
     formalArguments.push_back(entry->getArgument(cCursor++));
+
+  auto aggregateLayout = [&](uint32_t index) {
+    return dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+  };
+  auto aggregatePlan = [&](uint32_t index) -> Value {
+    if (aggregatePlans[index])
+      return aggregatePlans[index];
+    sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+    ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
+    Value plan = entryAlloca(builder, location, i64, words.size(), 8);
+    for (auto [word, constant] : llvm::enumerate(words))
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, i64, static_cast<uint64_t>(constant)),
+          byteGEP(builder, location, plan, word * sizeof(uint64_t)), 8);
+    aggregatePlans[index] = plan;
+    return plan;
+  };
 
   auto makePlanes = [&](const DPIOperandABI &abi) {
     Type type = isVector(abi) ? Type(LLVM::LLVMArrayType::get(
@@ -348,6 +404,41 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     LLVM::StoreOp::create(builder, location, value, address, 8);
   };
 
+  Value activeContext;
+  auto rootAggregate = [&](uint32_t signatureIndex,
+                           std::pair<Value, Value> planes) {
+    sim::DPIAggregateABIAttr layout = aggregateLayout(signatureIndex);
+    if (!layout || layout.getStringCount() == 0)
+      return;
+    if (!activeContext)
+      activeContext =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{pointer},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_dpi_current_context"),
+              ValueRange{})
+              .getResult();
+    Value handle = entryAlloca(builder, location, pointer, 1, 8);
+    LLVM::StoreOp::create(builder, location, null, handle, 8);
+    Value rootStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_dpi_aggregate_roots_push"),
+            ValueRange{activeContext, planes.first,
+                       llvmConstant(builder, location, i64,
+                                    planeBytes(spec.abi[signatureIndex])),
+                       llvmConstant(builder, location, i64,
+                                    spec.abi[signatureIndex].width),
+                       aggregatePlan(signatureIndex),
+                       llvmConstant(builder, location, i64,
+                                    layout.getLeaves().size()),
+                       handle})
+            .getResult();
+    mergeMarshallingStatus(rootStatus);
+    aggregateRootHandles.push_back(handle);
+  };
+
   // Snapshot every inout before deterministic output initialization.
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
@@ -357,7 +448,37 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
                       static_cast<uint32_t>(sim::DPIArgumentDirection::Output);
     Value argument = formalArguments[index];
     if (initialize) {
-      if (isReal(abi)) {
+      if (isAggregate(abi)) {
+        sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+        if (!layout)
+          return spec.operation->emitError(
+              "has no concrete exported aggregate layout");
+        Value activeContext =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{pointer},
+                SymbolRefAttr::get(context,
+                                   "obelisk_rt_v1_dpi_current_context"),
+                ValueRange{})
+                .getResult();
+        Value unpackStatus =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context,
+                                   "obelisk_rt_v1_dpi_aggregate_unpack"),
+                ValueRange{
+                    activeContext, argument,
+                    llvmConstant(builder, location, i64, layout.getCSize()),
+                    aggregatePlan(index),
+                    llvmConstant(builder, location, i64,
+                                 layout.getLeaves().size()),
+                    planes.first, planes.second,
+                    llvmConstant(builder, location, i64, planeBytes(abi)),
+                    llvmConstant(builder, location, i64, abi.width),
+                    llvmConstant(builder, location, i32, abi.fourState)})
+                .getResult();
+        mergeMarshallingStatus(unpackStatus);
+        rootAggregate(index, planes);
+      } else if (isReal(abi)) {
         Value value = abi.direction == static_cast<uint32_t>(
                                            sim::DPIArgumentDirection::Input)
                           ? argument
@@ -416,6 +537,10 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
                     planes.second);
   }
 
+  for (uint32_t index = 0; index != outputCount; ++index)
+    if (isAggregate(spec.abi[spec.inputCount + index]))
+      rootAggregate(spec.inputCount + index, outputPlanes[index]);
+
   Value resultSlot;
   Value vectorResult =
       resultABI && isVector(*resultABI) ? entry->getArgument(0) : Value{};
@@ -434,7 +559,12 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     Value target = formalArguments[index];
     if (isVector(abi))
       zeroCVector(builder, location, target, abi);
-    else
+    else if (isAggregate(abi)) {
+      sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+      LLVM::MemsetOp::create(
+          builder, location, target, llvmConstant(builder, location, i8, 0),
+          llvmConstant(builder, location, i64, layout.getCSize()), false);
+    } else
       LLVM::StoreOp::create(builder, location,
                             zero(builder, location,
                                  isString(abi) || isChandle(abi)
@@ -445,19 +575,55 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
 
   auto status = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_export_call"),
-      ValueRange{llvmConstant(builder, location, i32, spec.exportID),
+      SymbolRefAttr::get(context, "obelisk_rt_v1_export_call_guarded"),
+      ValueRange{marshallingStatus,
+                 llvmConstant(builder, location, i32, spec.exportID),
                  llvmConstant(builder, location, i64, spec.abiHash), inputs,
                  llvmConstant(builder, location, i32, spec.inputCount), outputs,
                  llvmConstant(builder, location, i32, outputCount)});
   Value succeeded = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, status.getResult(),
       llvmConstant(builder, location, i32, OBELISK_RT_OK));
-  LLVM::CondBrOp::create(builder, location, succeeded, copy, done);
+  LLVM::CondBrOp::create(builder, location, succeeded, copy, ValueRange{},
+                         cleanup, ValueRange{status.getResult()});
 
   builder.setInsertionPointToStart(copy);
   auto writeCValue = [&](uint32_t outputIndex, const DPIOperandABI &abi,
                          Value target) {
+    if (isAggregate(abi)) {
+      uint32_t signatureIndex = spec.inputCount + outputIndex;
+      sim::DPIAggregateABIAttr layout = aggregateLayout(signatureIndex);
+      if (!layout)
+        return;
+      SmallVector<Value> arguments{
+          outputPlanes[outputIndex].first,
+          outputPlanes[outputIndex].second,
+          llvmConstant(builder, location, i64, planeBytes(abi)),
+          llvmConstant(builder, location, i64, abi.width),
+          llvmConstant(builder, location, i32, abi.fourState),
+          target,
+          llvmConstant(builder, location, i64, layout.getCSize())};
+      StringRef function;
+      if (layout.getStringCount() != 0) {
+        function = "obelisk_rt_v1_dpi_aggregate_export_pack";
+        arguments.append(
+            {aggregatePlan(signatureIndex),
+             llvmConstant(builder, location, i64, layout.getLeaves().size()),
+             llvmConstant(builder, location, i32, outputIndex)});
+      } else {
+        function = "obelisk_rt_v1_dpi_aggregate_pack";
+        arguments.append(
+            {llvmConstant(builder, location, i64, layout.getCSize()),
+             aggregatePlan(signatureIndex),
+             llvmConstant(builder, location, i64, layout.getLeaves().size())});
+      }
+      Value packStatus =
+          LLVM::CallOp::create(builder, location, TypeRange{i32},
+                               SymbolRefAttr::get(context, function), arguments)
+              .getResult();
+      mergeMarshallingStatus(packStatus);
+      return;
+    }
     if (isVector(abi)) {
       LLVM::CallOp::create(
           builder, location, TypeRange{},
@@ -529,10 +695,43 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     writeCValue(outputCursor, outputABI, formalArguments[index]);
     ++outputCursor;
   }
-  LLVM::BrOp::create(builder, location, ValueRange{}, done);
+  LLVM::BrOp::create(builder, location, ValueRange{marshallingStatus}, cleanup);
+
+  builder.setInsertionPointToStart(cleanup);
+  marshallingStatus = cleanup->getArgument(0);
+  for (Value handleSlot : llvm::reverse(aggregateRootHandles)) {
+    Value handle =
+        LLVM::LoadOp::create(builder, location, pointer, handleSlot, 8);
+    Value popStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_dpi_aggregate_roots_pop"),
+            ValueRange{activeContext, handle})
+            .getResult();
+    mergeMarshallingStatus(popStatus);
+  }
+  marshallingStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_export_status"),
+          ValueRange{marshallingStatus})
+          .getResult();
+  LLVM::BrOp::create(builder, location, ValueRange{marshallingStatus}, done);
 
   builder.setInsertionPointToStart(done);
-  if (resultSlot)
+  Value finalStatus = done->getArgument(0);
+  if (spec.isTask) {
+    Value disabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, finalStatus,
+        llvmConstant(builder, location, i32,
+                     OBELISK_RT_DPI_DISABLE_UNSUPPORTED));
+    LLVM::ReturnOp::create(
+        builder, location,
+        arith::SelectOp::create(builder, location, disabled,
+                                llvmConstant(builder, location, i32, 1),
+                                llvmConstant(builder, location, i32, 0)));
+  } else if (resultSlot)
     LLVM::ReturnOp::create(
         builder, location,
         LLVM::LoadOp::create(builder, location, cResultType, resultSlot, 8));
@@ -649,6 +848,427 @@ FailureOr<InlinedCall> inlineLLVMCall(OpBuilder &builder, LLVM::CallOp call,
   call.erase();
   builder.setInsertionPointToStart(continuation);
   return InlinedCall{continuation, std::move(results)};
+}
+
+LogicalResult materializeNativeTaskThunk(ModuleOp module,
+                                         LLVM::LLVMFuncOp thunk,
+                                         LLVM::LLVMFuncOp activation,
+                                         const ExportSpec &spec) {
+  MLIRContext *context = module.getContext();
+  OpBuilder builder(context);
+  Location location = spec.location;
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i8 = builder.getI8Type();
+  Type i16 = builder.getI16Type();
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  if (!thunk.getBody().empty())
+    return thunk.emitError("native DPI exported-task thunk is defined twice");
+  if (!spec.isTask)
+    return thunk.emitError("task thunk has function export metadata");
+  uint32_t outputCount = spec.abi.size() - spec.inputCount;
+  Block *entry = thunk.addEntryBlock(builder);
+  Block *invoke = new Block;
+  Block *invalid = new Block;
+  Block *copy = new Block;
+  Block *cleanup = new Block;
+  thunk.getBody().push_back(invoke);
+  thunk.getBody().push_back(invalid);
+  thunk.getBody().push_back(copy);
+  thunk.getBody().push_back(cleanup);
+  builder.setInsertionPointToStart(entry);
+  Type descriptorType = LLVM::LLVMStructType::getLiteral(
+      context, {i8, i8, i16, i32, pointer, pointer, i64});
+  Value inputs = entry->getArgument(1);
+  Value outputs = entry->getArgument(3);
+  SmallVector<Value> aggregatePlans(spec.abi.size());
+  auto aggregateLayout = [&](uint32_t index) {
+    return dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+  };
+  auto aggregatePlan = [&](uint32_t index) -> Value {
+    if (aggregatePlans[index])
+      return aggregatePlans[index];
+    sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+    if (!layout)
+      return {};
+    ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
+    Value plan = entryAlloca(builder, location, i64, words.size(), 8);
+    for (auto [word, constant] : llvm::enumerate(words))
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, i64, static_cast<uint64_t>(constant)),
+          byteGEP(builder, location, plan, word * sizeof(uint64_t)), 8);
+    aggregatePlans[index] = plan;
+    return plan;
+  };
+  Value descriptorsMatch = LLVM::AndOp::create(
+      builder, location,
+      LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::eq, entry->getArgument(2),
+          llvmConstant(builder, location, i32, spec.inputCount)),
+      LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::eq,
+                           entry->getArgument(4),
+                           llvmConstant(builder, location, i32, outputCount)));
+  auto requireEqual = [&](Value actual, Value expected) {
+    descriptorsMatch = LLVM::AndOp::create(
+        builder, location, descriptorsMatch,
+        LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::eq, actual,
+                             expected));
+  };
+  auto validate = [&](Value base, uint32_t index, const DPIOperandABI &abi) {
+    requireEqual(LLVM::LoadOp::create(builder, location, i8,
+                                      descriptorField(builder, location, base,
+                                                      descriptorType, index, 0),
+                                      1),
+                 llvmConstant(builder, location, i8, descriptorKind(abi)));
+    requireEqual(LLVM::LoadOp::create(builder, location, i8,
+                                      descriptorField(builder, location, base,
+                                                      descriptorType, index, 1),
+                                      1),
+                 llvmConstant(builder, location, i8,
+                              abi.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+    requireEqual(LLVM::LoadOp::create(builder, location, i16,
+                                      descriptorField(builder, location, base,
+                                                      descriptorType, index, 2),
+                                      2),
+                 llvmConstant(builder, location, i16, 0));
+    requireEqual(LLVM::LoadOp::create(builder, location, i32,
+                                      descriptorField(builder, location, base,
+                                                      descriptorType, index, 3),
+                                      4),
+                 llvmConstant(builder, location, i32, abi.width));
+    requireEqual(
+        LLVM::LoadOp::create(
+            builder, location, i64,
+            descriptorField(builder, location, base, descriptorType, index, 6),
+            8),
+        llvmConstant(builder, location, i64, (uint64_t{abi.width} + 63) / 64));
+  };
+  for (uint32_t index = 0; index != spec.inputCount; ++index)
+    validate(inputs, index, spec.abi[index]);
+  for (uint32_t index = 0; index != outputCount; ++index)
+    validate(outputs, index, spec.abi[spec.inputCount + index]);
+  LLVM::CondBrOp::create(builder, location, descriptorsMatch, invoke, invalid);
+  builder.setInsertionPointToStart(invalid);
+  LLVM::ReturnOp::create(
+      builder, location,
+      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT));
+
+  builder.setInsertionPointToStart(invoke);
+  auto plane = [&](Value base, uint32_t index, bool unknown) {
+    return LLVM::LoadOp::create(builder, location, pointer,
+                                descriptorField(builder, location, base,
+                                                descriptorType, index,
+                                                unknown ? 5 : 4));
+  };
+  Value statusSlot = entryAlloca(builder, location, i32, 1, 4);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i32, OBELISK_RT_OK),
+                        statusSlot, 4);
+  SmallVector<Value> handleSlots;
+  for (uint32_t index = 0; index != spec.inputCount; ++index)
+    if (spec.abi[index].direction !=
+        static_cast<uint32_t>(sim::DPIArgumentDirection::Input)) {
+      Value slot = entryAlloca(builder, location, i64, 1, 8);
+      LLVM::StoreOp::create(builder, location,
+                            llvmConstant(builder, location, i64, UINT64_MAX),
+                            slot, 8);
+      handleSlots.push_back(slot);
+    }
+  auto failToCleanup = [&](Value status) {
+    Block *next = new Block;
+    Block *failed = new Block;
+    thunk.getBody().push_back(next);
+    thunk.getBody().push_back(failed);
+    Value ok = LLVM::ICmpOp::create(
+        builder, location, LLVM::ICmpPredicate::eq, status,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    LLVM::CondBrOp::create(builder, location, ok, next, failed);
+    builder.setInsertionPointToStart(failed);
+    LLVM::StoreOp::create(builder, location, status, statusSlot, 4);
+    LLVM::BrOp::create(builder, location, cleanup);
+    builder.setInsertionPointToStart(next);
+  };
+  auto loadFormalPlane = [&](uint32_t inputIndex, const DPIOperandABI &abi,
+                             bool unknown, Type expected) {
+    Type stored = planeType(context, abi);
+    Value value = LLVM::LoadOp::create(builder, location, stored,
+                                       plane(inputs, inputIndex, unknown),
+                                       isReal(abi) ? abi.width / 8 : 8);
+    if (value.getType() != expected)
+      value = LLVM::TruncOp::create(builder, location, expected, value);
+    return value;
+  };
+  ArrayRef<Type> activationParameters =
+      activation.getFunctionType().getParams();
+  SmallVector<Value> arguments{entry->getArgument(0)};
+  size_t parameter = 1;
+  size_t handle = 0;
+  for (uint32_t index = 0; index != spec.inputCount; ++index) {
+    const DPIOperandABI &abi = spec.abi[index];
+    if (parameter >= activationParameters.size())
+      return activation.emitError("has too few exported-task arguments");
+    arguments.push_back(
+        loadFormalPlane(index, abi, false, activationParameters[parameter++]));
+    if (abi.fourState) {
+      if (parameter >= activationParameters.size())
+        return activation.emitError(
+            "is missing an exported-task unknown argument");
+      arguments.push_back(
+          loadFormalPlane(index, abi, true, activationParameters[parameter++]));
+    }
+    if (abi.direction ==
+        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+      continue;
+    if (parameter >= activationParameters.size() ||
+        activationParameters[parameter] != i64)
+      return activation.emitError(
+          "is missing an exported-task destination reference");
+    Value allocationStatus;
+    sim::DPIAggregateABIAttr aggregate =
+        isAggregate(abi) ? aggregateLayout(index) : sim::DPIAggregateABIAttr{};
+    if (aggregate && aggregate.getStringCount() != 0) {
+      allocationStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_dpi_aggregate_state_alloc"),
+              ValueRange{entry->getArgument(0),
+                         llvmConstant(builder, location, i64, abi.width),
+                         plane(inputs, index, false),
+                         plane(inputs, index, true), aggregatePlan(index),
+                         llvmConstant(builder, location, i64,
+                                      aggregate.getLeaves().size()),
+                         handleSlots[handle]})
+              .getResult();
+    } else if (isString(abi)) {
+      Type slotType =
+          LLVM::LLVMStructType::getLiteral(context, {i64, i32, i32});
+      Value root = entryAlloca(builder, location, slotType, 1, 8);
+      Value record = LLVM::ZeroOp::create(builder, location, slotType);
+      record = LLVM::InsertValueOp::create(
+          builder, location, record,
+          llvmConstant(builder, location, i32,
+                       OBELISK_RT_MANAGED_ROOT_KIND_STRING),
+          ArrayRef<int64_t>{1});
+      LLVM::StoreOp::create(builder, location, record, root, 8);
+      allocationStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(
+                  context, "obelisk_rt_v1_native_state_alloc_with_typed_roots"),
+              ValueRange{
+                  entry->getArgument(0),
+                  llvmConstant(builder, location, i64, abi.width),
+                  plane(inputs, index, false), plane(inputs, index, true), root,
+                  llvmConstant(builder, location, i64, 1), handleSlots[handle]})
+              .getResult();
+    } else {
+      allocationStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_alloc"),
+              ValueRange{entry->getArgument(0),
+                         llvmConstant(builder, location, i64, abi.width),
+                         plane(inputs, index, false),
+                         plane(inputs, index, true), handleSlots[handle]})
+              .getResult();
+    }
+    failToCleanup(allocationStatus);
+    Value reference =
+        LLVM::LoadOp::create(builder, location, i64, handleSlots[handle], 8);
+    Value retain =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_retain"),
+            ValueRange{entry->getArgument(0), reference})
+            .getResult();
+    failToCleanup(retain);
+    arguments.push_back(reference);
+    ++parameter;
+    ++handle;
+  }
+  if (parameter + 1 != activationParameters.size() ||
+      activationParameters.back() != pointer)
+    return activation.emitError(
+        "exported-task activation signature disagrees with its DPI ABI");
+  Value activationSlot = entryAlloca(builder, location, i64, 1, 8);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i64, 0), activationSlot,
+                        8);
+  arguments.push_back(activationSlot);
+  Value activated =
+      LLVM::CallOp::create(builder, location, TypeRange{i32},
+                           SymbolRefAttr::get(context, activation.getSymName()),
+                           arguments)
+          .getResult();
+  failToCleanup(activated);
+  Value activationWord =
+      LLVM::LoadOp::create(builder, location, i64, activationSlot, 8);
+  Value instance =
+      LLVM::IntToPtrOp::create(builder, location, pointer, activationWord);
+  Value taskStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_export_task_run"),
+          ValueRange{entry->getArgument(0), instance})
+          .getResult();
+  LLVM::StoreOp::create(builder, location, taskStatus, statusSlot, 4);
+  Value completed = LLVM::ICmpOp::create(
+      builder, location, LLVM::ICmpPredicate::eq, taskStatus,
+      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+  LLVM::CondBrOp::create(builder, location, completed, copy, cleanup);
+
+  builder.setInsertionPointToStart(copy);
+  uint32_t output = 0;
+  handle = 0;
+  auto mergeStatus = [&](Value next) {
+    Value current = LLVM::LoadOp::create(builder, location, i32, statusSlot, 4);
+    Value ok = LLVM::ICmpOp::create(
+        builder, location, LLVM::ICmpPredicate::eq, current,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    LLVM::StoreOp::create(
+        builder, location,
+        LLVM::SelectOp::create(builder, location, ok, next, current),
+        statusSlot, 4);
+  };
+  for (uint32_t index = 0; index != spec.inputCount; ++index) {
+    const DPIOperandABI &abi = spec.abi[index];
+    if (abi.direction ==
+        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+      continue;
+    Value reference =
+        LLVM::LoadOp::create(builder, location, i64, handleSlots[handle++], 8);
+    Value valueDestination = plane(outputs, output, false);
+    Value loadValue =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_native_state_load_plane"),
+            ValueRange{entry->getArgument(0), valueDestination,
+                       llvmConstant(builder, location, i64, 0), reference,
+                       llvmConstant(builder, location, i64, abi.width),
+                       llvmConstant(builder, location, i32, 0),
+                       llvmConstant(builder, location, i32, 0),
+                       valueDestination})
+            .getResult();
+    mergeStatus(loadValue);
+    if (abi.fourState) {
+      Value unknownDestination = plane(outputs, output, true);
+      Value loadUnknown =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_native_state_load_plane"),
+              ValueRange{entry->getArgument(0), unknownDestination,
+                         llvmConstant(builder, location, i64, 0), reference,
+                         llvmConstant(builder, location, i64, abi.width),
+                         llvmConstant(builder, location, i32, 1),
+                         llvmConstant(builder, location, i32, 0),
+                         unknownDestination})
+              .getResult();
+      mergeStatus(loadUnknown);
+    }
+    ++output;
+  }
+  LLVM::BrOp::create(builder, location, cleanup);
+
+  builder.setInsertionPointToStart(cleanup);
+  for (Value slot : handleSlots) {
+    Block *release = new Block;
+    Block *next = new Block;
+    thunk.getBody().push_back(release);
+    thunk.getBody().push_back(next);
+    Value reference = LLVM::LoadOp::create(builder, location, i64, slot, 8);
+    Value valid = LLVM::ICmpOp::create(
+        builder, location, LLVM::ICmpPredicate::ne, reference,
+        llvmConstant(builder, location, i64, UINT64_MAX));
+    LLVM::CondBrOp::create(builder, location, valid, release, next);
+    builder.setInsertionPointToStart(release);
+    Value released =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_release"),
+            ValueRange{entry->getArgument(0), reference,
+                       llvmConstant(builder, location, i32, 1)})
+            .getResult();
+    mergeStatus(released);
+    LLVM::BrOp::create(builder, location, next);
+    builder.setInsertionPointToStart(next);
+  }
+  LLVM::ReturnOp::create(
+      builder, location,
+      LLVM::LoadOp::create(builder, location, i32, statusSlot, 4));
+  return success();
+}
+
+LogicalResult materializeBytecodeTaskThunk(LLVM::LLVMFuncOp thunk,
+                                           const ExportSpec &spec) {
+  MLIRContext *context = thunk.getContext();
+  OpBuilder builder(context);
+  Location location = spec.location;
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i8 = builder.getI8Type();
+  Type i32 = builder.getI32Type();
+  if (!thunk.getBody().empty())
+    return thunk.emitError("bytecode DPI exported-task thunk is defined twice");
+  Block *entry = thunk.addEntryBlock(builder);
+  builder.setInsertionPointToStart(entry);
+  Value directions = LLVM::ZeroOp::create(builder, location, pointer);
+  Value aggregatePlans = LLVM::ZeroOp::create(builder, location, pointer);
+  Value aggregatePlanWords = LLVM::ZeroOp::create(builder, location, pointer);
+  if (spec.inputCount != 0) {
+    directions = entryAlloca(builder, location, i8, spec.inputCount, 1);
+    aggregatePlans =
+        entryAlloca(builder, location, pointer, spec.inputCount, 8);
+    aggregatePlanWords = entryAlloca(builder, location, builder.getI64Type(),
+                                     spec.inputCount, 8);
+    for (uint32_t index = 0; index != spec.inputCount; ++index)
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, i8, spec.abi[index].direction),
+          elementGEP(builder, location, directions, i8, index), 1);
+    for (uint32_t index = 0; index != spec.inputCount; ++index) {
+      Value plan = LLVM::ZeroOp::create(builder, location, pointer);
+      uint64_t wordCount = 0;
+      auto layout =
+          dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+      if (layout && layout.getStringCount() != 0) {
+        ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
+        plan = entryAlloca(builder, location, builder.getI64Type(),
+                           words.size(), 8);
+        for (auto [word, constant] : llvm::enumerate(words))
+          LLVM::StoreOp::create(
+              builder, location,
+              llvmConstant(builder, location, builder.getI64Type(),
+                           static_cast<uint64_t>(constant)),
+              byteGEP(builder, location, plan, word * sizeof(uint64_t)), 8);
+        wordCount = words.size();
+      }
+      LLVM::StoreOp::create(
+          builder, location, plan,
+          elementGEP(builder, location, aggregatePlans, pointer, index), 8);
+      LLVM::StoreOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI64Type(), wordCount),
+          elementGEP(builder, location, aggregatePlanWords,
+                     builder.getI64Type(), index),
+          8);
+    }
+  }
+  Value status =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_dpi_export_task_bytecode_run"),
+          ValueRange{entry->getArgument(0),
+                     llvmConstant(builder, location, i32, spec.exportID),
+                     entry->getArgument(1), entry->getArgument(2),
+                     entry->getArgument(3), entry->getArgument(4), directions,
+                     aggregatePlans, aggregatePlanWords})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, status);
+  return success();
 }
 
 LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
@@ -937,12 +1557,16 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
   });
   bool needsString = false;
   bool needsVector = false;
+  bool needsTask = false;
+  bool needsAggregate = false;
   for (sim::SimFuncOp bridge : bridges) {
     FailureOr<ExportSpec> spec = getExportSpec(bridge, bridge.getSymName());
     if (failed(spec))
       return failure();
     needsString |= llvm::any_of(spec->abi, isString);
     needsVector |= llvm::any_of(spec->abi, isVector);
+    needsAggregate |= llvm::any_of(spec->abi, isAggregate);
+    needsTask |= spec->isTask;
     if (failed(materializeCWrapper(module, *spec, functions)))
       return failure();
   }
@@ -952,8 +1576,17 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
   Type i32 = builder.getI32Type();
   Type voidType = LLVM::LLVMVoidType::get(context);
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_export_call", i32,
-      {i32, builder.getI64Type(), pointer, i32, pointer, i32});
+      module, "obelisk_rt_v1_export_call_guarded", i32,
+      {i32, i32, builder.getI64Type(), pointer, i32, pointer, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_status", i32,
+                           {i32});
+  if (needsTask)
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_task_run", i32,
+                             {pointer, pointer});
+  if (needsTask)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_dpi_export_task_bytecode_run", i32,
+        {pointer, i32, pointer, i32, pointer, i32, pointer, pointer, pointer});
   if (needsString)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_export_string", pointer,
                              {i32});
@@ -962,6 +1595,34 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
                              voidType, {pointer, pointer, pointer, i32, i32});
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_pack_vector",
                              voidType, {pointer, pointer, pointer, i32, i32});
+  }
+  if (needsAggregate) {
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_current_context",
+                             pointer, {});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_pack", i32,
+                             {pointer, pointer, builder.getI64Type(),
+                              builder.getI64Type(), i32, pointer,
+                              builder.getI64Type(), builder.getI64Type(),
+                              pointer, builder.getI64Type()});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_unpack", i32,
+                             {pointer, pointer, builder.getI64Type(), pointer,
+                              builder.getI64Type(), pointer, pointer,
+                              builder.getI64Type(), builder.getI64Type(), i32});
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_dpi_aggregate_roots_push", i32,
+        {pointer, pointer, builder.getI64Type(), builder.getI64Type(), pointer,
+         builder.getI64Type(), pointer});
+    getOrDeclareLLVMFunction(module,
+                             "obelisk_rt_v1_dpi_aggregate_roots_pop", i32,
+                             {pointer, pointer});
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_dpi_aggregate_export_pack", i32,
+        {pointer, pointer, builder.getI64Type(), builder.getI64Type(), i32,
+         pointer, builder.getI64Type(), pointer, builder.getI64Type(), i32});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_state_alloc",
+                             i32,
+                             {pointer, builder.getI64Type(), pointer, pointer,
+                              pointer, builder.getI64Type(), pointer});
   }
   return success();
 }
@@ -981,6 +1642,25 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
     auto bridgeName =
         thunk->getAttrOfType<StringAttr>("obelisk.dpi.export_bridge");
     auto bodyName = thunk->getAttrOfType<StringAttr>("obelisk.dpi.export_body");
+    if (!bridgeName)
+      return thunk.emitError("native DPI export has no bridge symbol");
+    FailureOr<ExportSpec> spec = getExportSpec(thunk, bridgeName.getValue());
+    if (failed(spec))
+      return failure();
+    if (spec->isTask) {
+      std::string activationName =
+          (bridgeName.getValue() + ".__obelisk_activate_checked").str();
+      auto found = functions.find(activationName);
+      if (found == functions.end()) {
+        if (failed(materializeBytecodeTaskThunk(thunk, *spec)))
+          return failure();
+        continue;
+      }
+      if (failed(
+              materializeNativeTaskThunk(module, thunk, found->second, *spec)))
+        return failure();
+      continue;
+    }
     auto bridgeFound =
         bridgeName ? functions.find(bridgeName.getValue()) : functions.end();
     auto bridge = bridgeFound == functions.end() ? LLVM::LLVMFuncOp{}
@@ -993,9 +1673,7 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
         bodyFound == functions.end() ? LLVM::LLVMFuncOp{} : bodyFound->second;
     if (!body)
       return thunk.emitError("native DPI export body definition is missing");
-    FailureOr<ExportSpec> spec = getExportSpec(thunk, bridge.getSymName());
-    if (failed(spec) ||
-        failed(materializeNativeThunk(module, thunk, bridge, body, *spec)))
+    if (failed(materializeNativeThunk(module, thunk, bridge, body, *spec)))
       return failure();
     bodies.push_back(body);
   }

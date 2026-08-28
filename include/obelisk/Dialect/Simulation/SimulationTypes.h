@@ -49,6 +49,11 @@ std::optional<uint64_t> getProvenanceSpan(::mlir::Type type);
 /// Natural bit alignment used by structural provenance layout.
 std::optional<uint64_t> getProvenanceAlignment(::mlir::Type type);
 
+/// Whether the immediate fixed provenance representation owns an unknown
+/// plane. Managed-container handles are leaves here; their element type does
+/// not make the handle word four-state.
+bool containsFourStateLeaf(::mlir::Type type);
+
 /// Structural offset/span for one declaration-order child. Union children all
 /// overlap at offset zero.
 std::optional<std::pair<uint64_t, uint64_t>>
@@ -63,6 +68,14 @@ getFixedBitStreamPlan(::mlir::Type type);
 /// destination leaf is two- or four-state so final X/Z coercion is exact.
 std::optional<::llvm::SmallVector<uint64_t>>
 getFixedBitStreamImportPlan(::mlir::Type type);
+
+/// Build equivalent plans against structural provenance storage. These are
+/// reserved for DPI aggregate marshalling, where naturally aligned managed
+/// handles and padding must not change language bit-stream cast semantics.
+std::optional<::llvm::SmallVector<uint64_t>>
+getDPIAggregateBitStreamPlan(::mlir::Type type);
+std::optional<::llvm::SmallVector<uint64_t>>
+getDPIAggregateBitStreamImportPlan(::mlir::Type type);
 
 /// Build the compact preorder plan for a bit-stream source containing at
 /// least one dynamically sized member. Fixed arrays and structures are

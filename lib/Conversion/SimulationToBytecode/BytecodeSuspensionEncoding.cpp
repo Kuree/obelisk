@@ -34,14 +34,15 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
         return boundary.emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
       emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
-                        static_cast<uint32_t>(transferSize));
+                        static_cast<uint32_t>(transferSize),
+                        slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
     }
     if (failed(emitIntrinsic(plan, kIntrinsicControlBoundary,
                              {boundary.getActivation()}, {},
                              suspension->continuationID)))
       return failure();
-    auto mapping = addMap(plan, boundary.getBody()->getArguments(), plan,
-                          ValueRange{});
+    auto mapping =
+        addMap(plan, boundary.getBody()->getArguments(), plan, ValueRange{});
     uint64_t jump = emit({Jump, 0, 0, static_cast<uint32_t>(mapping.first),
                           static_cast<uint32_t>(mapping.second)});
     plan.branches.push_back({jump, boundary.getBody()});
@@ -86,7 +87,8 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
         return control.emitOpError(
             "canonical frame transfer exceeds the bytecode ABI limit");
       emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
-                        static_cast<uint32_t>(transferSize));
+                        static_cast<uint32_t>(transferSize),
+                        slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
     }
     emit({ProcessControl, static_cast<uint16_t>(control.getKind()), 0,
           reg(plan, control.getProcess()), 0, 0, 0,

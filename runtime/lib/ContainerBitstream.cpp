@@ -12,11 +12,11 @@
 
 namespace {
 
-using obelisk::runtime_detail::BufferHeader;
-using obelisk::runtime_detail::ContainerHeader;
 using obelisk::runtime_detail::AssocSlot;
 using obelisk::runtime_detail::assocSlotStride;
 using obelisk::runtime_detail::assocValueOffset;
+using obelisk::runtime_detail::BufferHeader;
+using obelisk::runtime_detail::ContainerHeader;
 using obelisk::runtime_detail::ensureAssocOrdered;
 using obelisk::runtime_detail::ensureAssocOrderedWithoutSafepoint;
 
@@ -132,20 +132,19 @@ struct AssocBufferRequest {
   const uint64_t *indices;
 };
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-packAssocBuffer(void *opaque, uint8_t *buffer, uint64_t extent) {
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocBuffer(void *opaque,
+                                                            uint8_t *buffer,
+                                                            uint64_t extent) {
   auto *environment = static_cast<AssocBufferRequest *>(opaque);
   ContainerHeader &header = *environment->header;
   ExportRequest &request = *environment->request;
   if (extent < sizeof(BufferHeader) ||
       reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
-      (request.elementFourState &&
-       request.elementPlaneSize > UINT64_MAX / 2))
+      (request.elementFourState && request.elementPlaneSize > UINT64_MAX / 2))
     return OBELISK_RT_INVALID_HANDLE;
   uint64_t stride = assocSlotStride(header.element);
   uint64_t valueOffset = assocValueOffset(header.element);
-  if (stride == 0 || header.capacity >
-                         (extent - sizeof(BufferHeader)) / stride)
+  if (stride == 0 || header.capacity > (extent - sizeof(BufferHeader)) / stride)
     return OBELISK_RT_INVALID_HANDLE;
   const uint8_t *data = buffer + sizeof(BufferHeader);
   for (uint64_t ordinal = 0; ordinal != request.count; ++ordinal) {
@@ -157,11 +156,9 @@ packAssocBuffer(void *opaque, uint8_t *buffer, uint64_t extent) {
     if (slot->hash == 0)
       return OBELISK_RT_INVALID_HANDLE;
     const uint8_t *source = slotBytes + valueOffset;
-    const uint8_t *sourceUnknown = request.elementFourState
-                                       ? source + request.elementPlaneSize
-                                       : nullptr;
-    uint64_t destination =
-        (request.count - ordinal - 1) * request.elementWidth;
+    const uint8_t *sourceUnknown =
+        request.elementFourState ? source + request.elementPlaneSize : nullptr;
+    uint64_t destination = (request.count - ordinal - 1) * request.elementWidth;
     copyBits(static_cast<uint8_t *>(request.value), destination, source,
              sourceUnknown, 0, request.elementWidth, request.fourState != 0,
              static_cast<uint8_t *>(request.unknown));
@@ -174,21 +171,22 @@ struct AssocOrderRequest {
   ExportRequest *request;
 };
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-packAssocOrder(void *opaque, uint8_t *buffer, uint64_t extent) {
+OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocOrder(void *opaque,
+                                                           uint8_t *buffer,
+                                                           uint64_t extent) {
   auto *environment = static_cast<AssocOrderRequest *>(opaque);
   if (extent < sizeof(BufferHeader) ||
       reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
       environment->request->count >
           (extent - sizeof(BufferHeader)) / sizeof(uint64_t))
     return OBELISK_RT_INVALID_HANDLE;
-  auto *indices = reinterpret_cast<const uint64_t *>(buffer +
-                                                      sizeof(BufferHeader));
+  auto *indices =
+      reinterpret_cast<const uint64_t *>(buffer + sizeof(BufferHeader));
   AssocBufferRequest request{environment->header, environment->request,
                              indices};
-  return obelisk_rt_managed_object_access(
-      environment->header->buffer, OBELISK_RT_MANAGED_BUFFER,
-      packAssocBuffer, &request);
+  return obelisk_rt_managed_object_access(environment->header->buffer,
+                                          OBELISK_RT_MANAGED_BUFFER,
+                                          packAssocBuffer, &request);
 }
 
 OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
@@ -200,16 +198,15 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
   auto *request = static_cast<ExportRequest *>(opaque);
   bool sequential = header->kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
                     header->kind == OBELISK_RT_CONTAINER_QUEUE;
-  bool associative =
-      header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+  bool associative = header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
   bool fourState = header->element && (header->element->flags &
                                        OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
   if ((!sequential && !associative) || !header->element ||
       (header->element->kind != OBELISK_RT_ELEMENT_BITS &&
        header->element->kind != OBELISK_RT_ELEMENT_LOGIC) ||
       (header->element->kind == OBELISK_RT_ELEMENT_LOGIC) != fourState ||
-      (header->element->flags & ~(OBELISK_RT_ELEMENT_FOUR_STATE |
-                                  OBELISK_RT_ELEMENT_SIGNED)) != 0 ||
+      (header->element->flags &
+       ~(OBELISK_RT_ELEMENT_FOUR_STATE | OBELISK_RT_ELEMENT_SIGNED)) != 0 ||
       header->element->bit_width != request->elementWidth ||
       header->element->value_size != request->elementPlaneSize ||
       fourState != (request->elementFourState != 0) ||
@@ -219,17 +216,16 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
        (header->capacity == 0 ||
         (header->capacity & (header->capacity - 1)) != 0 ||
         header->head >= header->capacity)) ||
-      (associative &&
-       (header->capacity == 0 ||
-        (header->capacity & (header->capacity - 1)) != 0)))
+      (associative && (header->capacity == 0 ||
+                       (header->capacity & (header->capacity - 1)) != 0)))
     return OBELISK_RT_ARGUMENT_MISMATCH;
   if (associative) {
     if (!header->ordered)
       return assocOrderRequired;
     AssocOrderRequest orderRequest{header, request};
-    return obelisk_rt_managed_object_access(
-        header->ordered, OBELISK_RT_MANAGED_BUFFER, packAssocOrder,
-        &orderRequest);
+    return obelisk_rt_managed_object_access(header->ordered,
+                                            OBELISK_RT_MANAGED_BUFFER,
+                                            packAssocOrder, &orderRequest);
   }
   BufferRequest bufferRequest{header, request};
   return obelisk_rt_managed_object_access(
@@ -1335,10 +1331,9 @@ struct PlanFrame {
 
 enum class PlanValidation { Invalid, Valid, NeedsDepth };
 
-OBELISK_RT_FEATURE_HELPER PlanValidation
-validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
-             uint64_t outputWidth, bool importing, PlanFrame *stack,
-             uint64_t capacity) {
+OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
+    const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
+    uint64_t outputWidth, bool importing, PlanFrame *stack, uint64_t capacity) {
   uint64_t depth = 0;
   stack[0].index = 0;
   stack[0].end = recordCount;
@@ -1348,7 +1343,7 @@ validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
     auto &validation = frame.state.validation;
     if (frame.index == frame.end) {
       if (validation.output != validation.expectedOutput ||
-          validation.sourceCursor != validation.sourceSpan)
+          validation.sourceCursor > validation.sourceSpan)
         return PlanValidation::Invalid;
       if (depth == 0)
         return PlanValidation::Valid;
@@ -1364,23 +1359,21 @@ validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
          record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC)) {
       if (record.bodyRecords != 0 || record.extent == 0 || record.stride != 0 ||
           record.sourceSpan != 0 || record.outputWidth != record.extent ||
-          record.sourceOffset != validation.sourceCursor ||
+          record.sourceOffset < validation.sourceCursor ||
           record.sourceOffset > validation.sourceSpan ||
           record.extent > validation.sourceSpan - record.sourceOffset ||
-          record.extent > UINT64_MAX - validation.output ||
-          record.extent > UINT64_MAX - validation.sourceCursor)
+          record.extent > UINT64_MAX - validation.output)
         return PlanValidation::Invalid;
       validation.output += record.extent;
-      validation.sourceCursor += record.extent;
+      validation.sourceCursor = record.sourceOffset + record.extent;
       continue;
     }
     if (record.opcode != OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT ||
         record.bodyRecords == 0 || record.extent == 0 ||
         record.sourceSpan == 0 || record.outputWidth == 0 ||
         record.bodyRecords > frame.end - frame.index ||
-        record.sourceOffset != validation.sourceCursor ||
-        record.stride != record.sourceSpan ||
-        record.sourceSpan != record.outputWidth)
+        record.sourceOffset < validation.sourceCursor ||
+        record.stride < record.sourceSpan)
       return PlanValidation::Invalid;
     uint64_t bodyEnd = frame.index + record.bodyRecords;
     uint64_t last = record.extent - 1;
@@ -1392,13 +1385,11 @@ validatePlan(const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
         record.sourceSpan >
             validation.sourceSpan - record.sourceOffset - lastOffset ||
         record.outputWidth > UINT64_MAX / record.extent ||
-        record.outputWidth * record.extent > UINT64_MAX - validation.output ||
-        record.sourceSpan > UINT64_MAX / record.extent ||
-        record.sourceSpan * record.extent >
-            UINT64_MAX - validation.sourceCursor)
+        record.outputWidth * record.extent > UINT64_MAX - validation.output)
       return PlanValidation::Invalid;
     validation.output += record.outputWidth * record.extent;
-    validation.sourceCursor += record.sourceSpan * record.extent;
+    validation.sourceCursor =
+        record.sourceOffset + lastOffset + record.sourceSpan;
     uint64_t bodyStart = frame.index;
     frame.index = bodyEnd;
     if (depth == OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH)
@@ -1460,8 +1451,7 @@ OBELISK_RT_FEATURE_HELPER void
 executeImportPlan(const uint8_t *records, uint64_t recordCount,
                   const uint8_t *inputValue, const uint8_t *inputUnknown,
                   uint8_t *outputValue, uint8_t *outputUnknown,
-                  uint64_t inputWidth, bool outputFourState,
-                  PlanFrame *stack) {
+                  uint64_t inputWidth, bool outputFourState, PlanFrame *stack) {
   uint64_t depth = 0;
   uint64_t cursor = inputWidth;
   stack[0].index = 0;
@@ -1565,8 +1555,7 @@ obelisk_rt_v1_aggregate_export_bitstream(
       recordCount > OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
       recordCount > (UINT64_MAX - headerSize) / recordSize ||
       planSize != headerSize + recordCount * recordSize ||
-      sourceSpan != inputBitWidth || streamWidth != outputBitWidth ||
-      sourceSpan != streamWidth)
+      sourceSpan != inputBitWidth || streamWidth != outputBitWidth)
     return OBELISK_RT_INVALID_ARGUMENT;
   const uint8_t *records = bytes + headerSize;
   constexpr size_t inlineDepth = 16;
@@ -1574,9 +1563,9 @@ obelisk_rt_v1_aggregate_export_bitstream(
   std::unique_ptr<PlanFrame[]> deepFrames;
   PlanFrame *frames = inlineFrames.data();
   uint64_t frameCapacity = inlineFrames.size();
-  PlanValidation validation = validatePlan(records, recordCount, sourceSpan,
-                                           streamWidth, false, frames,
-                                           frameCapacity);
+  PlanValidation validation =
+      validatePlan(records, recordCount, sourceSpan, streamWidth, false, frames,
+                   frameCapacity);
   if (validation == PlanValidation::NeedsDepth) {
     frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
     deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);
@@ -1660,8 +1649,7 @@ obelisk_rt_v1_aggregate_import_bitstream(
       recordCount > OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
       recordCount > (UINT64_MAX - headerSize) / recordSize ||
       planSize != headerSize + recordCount * recordSize ||
-      targetSpan != outputBitWidth || streamWidth != inputBitWidth ||
-      targetSpan != streamWidth)
+      targetSpan != outputBitWidth || streamWidth != inputBitWidth)
     return OBELISK_RT_INVALID_ARGUMENT;
   const uint8_t *records = bytes + headerSize;
   constexpr size_t inlineDepth = 16;
@@ -1669,9 +1657,9 @@ obelisk_rt_v1_aggregate_import_bitstream(
   std::unique_ptr<PlanFrame[]> deepFrames;
   PlanFrame *frames = inlineFrames.data();
   uint64_t frameCapacity = inlineFrames.size();
-  PlanValidation validation = validatePlan(records, recordCount, targetSpan,
-                                           streamWidth, true, frames,
-                                           frameCapacity);
+  PlanValidation validation =
+      validatePlan(records, recordCount, targetSpan, streamWidth, true, frames,
+                   frameCapacity);
   if (validation == PlanValidation::NeedsDepth) {
     frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
     deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);

@@ -59,9 +59,21 @@ bool isDPIReal(uint32_t category) {
          category == static_cast<uint32_t>(sim::DPIABIKind::Real);
 }
 
+bool isDPIOpenArray(uint32_t category) {
+  return category == static_cast<uint32_t>(sim::DPIABIKind::OpenArray);
+}
+
+bool isDPIAggregate(uint32_t category) {
+  return category == static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+}
+
 uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
   if (isDPIString(abi.category))
     return OBELISK_RT_DBREG_STRING;
+  if (isDPIOpenArray(abi.category))
+    return OBELISK_RT_DBREG_OPEN_ARRAY;
+  if (isDPIAggregate(abi.category))
+    return OBELISK_RT_DBREG_AGGREGATE;
   if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
     return OBELISK_RT_DBREG_REAL32;
   if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
@@ -119,8 +131,23 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
         existing->getAttrOfType<StringAttr>("obelisk.dpi.c_identifier");
     auto signature =
         existing->getAttrOfType<ArrayAttr>("obelisk.dpi.abi_signature");
+    auto compatible = [](ArrayAttr lhs, ArrayAttr rhs) {
+      if (!lhs || !rhs || lhs.size() != rhs.size())
+        return false;
+      for (auto [left, right] : llvm::zip_equal(lhs, rhs)) {
+        auto leftABI = dyn_cast<sim::DPIABIAttr>(left);
+        auto rightABI = dyn_cast<sim::DPIABIAttr>(right);
+        if (!leftABI || !rightABI || leftABI.getKind() != rightABI.getKind() ||
+            leftABI.getDirection() != rightABI.getDirection())
+          return false;
+        if (leftABI.getKind() != sim::DPIABIKind::OpenArray &&
+            leftABI != rightABI)
+          return false;
+      }
+      return true;
+    };
     if (!cIdentifier || cIdentifier != spec.cIdentifier ||
-        signature != spec.abiSignature)
+        !compatible(signature, spec.abiSignature))
       return spec.operation->emitError()
              << "conflicts with another DPI import using ID " << spec.importID;
     return success();
@@ -136,9 +163,15 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
                  builder.getI32IntegerAttr(spec.importID));
   thunk->setAttr("obelisk.dpi.c_identifier", spec.cIdentifier);
   thunk->setAttr("obelisk.dpi.abi_signature", spec.abiSignature);
+  bool openSignature = llvm::any_of(spec.abiSignature, [](Attribute attribute) {
+    auto abi = dyn_cast<sim::DPIABIAttr>(attribute);
+    return abi && abi.getKind() == sim::DPIABIKind::OpenArray;
+  });
   thunk->setAttr("obelisk.dpi.abi_hash",
-                 builder.getI64IntegerAttr(sim::getDPISignatureHash(
-                     spec.abiSignature, logicalInputs)));
+                 builder.getI64IntegerAttr(
+                     openSignature ? 0
+                                   : sim::getDPISignatureHash(spec.abiSignature,
+                                                              logicalInputs)));
   Block *entry = thunk.addEntryBlock(builder);
   Block *validate = new Block;
   Block *invoke = new Block;
@@ -182,29 +215,28 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   };
   auto validateDescriptor = [&](Value base, uint64_t index,
                                 const DPIOperandABI &entryABI) {
+    uint32_t descriptorWidth =
+        (isDPIOpenArray(entryABI.category) || isDPIAggregate(entryABI.category))
+            ? 64
+            : entryABI.width;
     requireEqual(
-        LLVM::LoadOp::create(
-            builder, location, i8, descriptorPointer(base, index, 0), 1),
+        LLVM::LoadOp::create(builder, location, i8,
+                             descriptorPointer(base, index, 0), 1),
         llvmConstant(builder, location, i8, dpiDescriptorKind(entryABI)));
-    requireEqual(
-        LLVM::LoadOp::create(
-            builder, location, i8, descriptorPointer(base, index, 1), 1),
-        llvmConstant(builder, location, i8,
-                     entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
-    requireEqual(
-        LLVM::LoadOp::create(
-            builder, location, builder.getI16Type(),
-            descriptorPointer(base, index, 2), 2),
-        llvmConstant(builder, location, builder.getI16Type(), 0));
-    requireEqual(
-        LLVM::LoadOp::create(
-            builder, location, i32, descriptorPointer(base, index, 3), 4),
-        llvmConstant(builder, location, i32, entryABI.width));
-    requireEqual(
-        LLVM::LoadOp::create(
-            builder, location, i64, descriptorPointer(base, index, 6), 8),
-        llvmConstant(builder, location, i64,
-                     (uint64_t{entryABI.width} + 63) / 64));
+    requireEqual(LLVM::LoadOp::create(builder, location, i8,
+                                      descriptorPointer(base, index, 1), 1),
+                 llvmConstant(builder, location, i8,
+                              entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+    requireEqual(LLVM::LoadOp::create(builder, location, builder.getI16Type(),
+                                      descriptorPointer(base, index, 2), 2),
+                 llvmConstant(builder, location, builder.getI16Type(), 0));
+    requireEqual(LLVM::LoadOp::create(builder, location, i32,
+                                      descriptorPointer(base, index, 3), 4),
+                 llvmConstant(builder, location, i32, descriptorWidth));
+    requireEqual(LLVM::LoadOp::create(builder, location, i64,
+                                      descriptorPointer(base, index, 6), 8),
+                 llvmConstant(builder, location, i64,
+                              (uint64_t{descriptorWidth} + 63) / 64));
   };
   for (uint64_t index = 0; index != logicalInputs; ++index)
     validateDescriptor(inputs, index, abi[index]);
@@ -338,6 +370,26 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   }
   for (uint64_t index = 0; index != logicalInputs; ++index) {
     const DPIOperandABI &entryABI = abi[index];
+    if (isDPIOpenArray(entryABI.category)) {
+      cArguments.push_back(planePointer(inputs, index, false));
+      if (entryABI.direction != 0) {
+        if (outputCursor >= logicalOutputs)
+          return spec.operation->emitError(
+              "DPI thunk has too few open-array copy-out results");
+        ++outputCursor;
+      }
+      continue;
+    }
+    if (isDPIAggregate(entryABI.category)) {
+      cArguments.push_back(planePointer(inputs, index, false));
+      if (entryABI.direction != 0) {
+        if (outputCursor >= logicalOutputs)
+          return spec.operation->emitError(
+              "DPI thunk has too few aggregate copy-out results");
+        ++outputCursor;
+      }
+      continue;
+    }
     if (entryABI.direction == 0) {
       if (isDPIString(entryABI.category))
         cArguments.push_back(readString(index));
@@ -569,14 +621,19 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   }
 
   if (spec.isTask) {
-    Value nonzero = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, call.getResult(),
-        llvmConstant(builder, location, i32, 0));
-    Value taskStatus = arith::SelectOp::create(
-        builder, location, nonzero,
+    Value zero = llvmConstant(builder, location, i32, 0);
+    Value one = llvmConstant(builder, location, i32, 1);
+    Value succeeded = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, call.getResult(), zero);
+    Value disabled = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, call.getResult(), one);
+    Value failureStatus = arith::SelectOp::create(
+        builder, location, disabled,
         llvmConstant(builder, location, i32,
                      OBELISK_RT_DPI_DISABLE_UNSUPPORTED),
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, OBELISK_RT_FATAL));
+    Value taskStatus = arith::SelectOp::create(
+        builder, location, succeeded, zero, failureStatus);
     mergeStatus(taskStatus);
   }
   if (stringOutputCount != 0) {

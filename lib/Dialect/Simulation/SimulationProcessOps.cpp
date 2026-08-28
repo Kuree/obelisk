@@ -310,7 +310,7 @@ LogicalResult SimFuncOp::verify() {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
              TimeType, ManagedWatchType, CovergroupHandleType,
-             VirtualInterfaceType, ChandleType>(input) &&
+             VirtualInterfaceType, ChandleType, DPIOpenArrayType>(input) &&
         !isManagedHandleType(input) && !isa<FloatType>(input) &&
         !isAggregateType(input))
       return emitOpError() << "contains non-normalized argument type " << input;
@@ -321,7 +321,7 @@ LogicalResult SimFuncOp::verify() {
   for (Type result : type.getResults()) {
     if (!isa<IntegerType, LogicType, TimeType, EventType, ProcessType,
              ManagedRefType, ArgumentRefType, CovergroupHandleType,
-             VirtualInterfaceType, ChandleType>(result) &&
+             VirtualInterfaceType, ChandleType, DPIOpenArrayType>(result) &&
         !isManagedHandleType(result) && !isa<FloatType>(result) &&
         !isAggregateType(result))
       return emitOpError() << "contains non-normalized result type " << result;
@@ -672,6 +672,33 @@ LogicalResult SimDPICallOp::verify() {
       return emitOpError("ABI signature entries must be DPI ABI attributes");
     signature.push_back(abi);
   }
+  ArrayAttr openLayouts = getOperation()->getAttrOfType<ArrayAttr>(
+      "obelisk.dpi.open_array_layouts");
+  if (openLayouts && openLayouts.size() != signature.size())
+    return emitOpError(
+        "DPI open-array layout inventory must match the ABI signature");
+  ArrayAttr aggregateLayouts =
+      getOperation()->getAttrOfType<ArrayAttr>("obelisk.dpi.aggregate_layouts");
+  if (aggregateLayouts && aggregateLayouts.size() != signature.size())
+    return emitOpError(
+        "DPI aggregate layout inventory must match the ABI signature");
+  for (auto [index, abi] : llvm::enumerate(signature)) {
+    Attribute layout = openLayouts ? openLayouts[index] : Attribute{};
+    if (abi.getKind() == DPIABIKind::OpenArray) {
+      if (!isa_and_nonnull<DPIOpenArrayABIAttr>(layout))
+        return emitOpError("open-array ABI entry has no concrete shape");
+    } else if (layout && !isa<UnitAttr>(layout)) {
+      return emitOpError("non-open DPI ABI entry has open-array shape");
+    }
+    Attribute aggregate =
+        aggregateLayouts ? aggregateLayouts[index] : Attribute{};
+    if (abi.getKind() == DPIABIKind::UnpackedAggregate) {
+      if (!isa_and_nonnull<DPIAggregateABIAttr>(aggregate))
+        return emitOpError("aggregate ABI entry has no exact C layout");
+    } else if (aggregate && !isa<UnitAttr>(aggregate)) {
+      return emitOpError("non-aggregate DPI ABI entry has aggregate layout");
+    }
+  }
 
   uint64_t outputCursor = logicalInputs;
   if (!getIsTask() && outputCursor < signature.size() &&
@@ -702,7 +729,49 @@ LogicalResult SimDPICallOp::verify() {
   if (outputCursor != signature.size())
     return emitOpError("DPI signature has excess result entries");
 
-  auto verifyLogicalType = [&](Type type, DPIABIAttr abi) -> LogicalResult {
+  auto verifyLogicalType = [&](Type type, DPIABIAttr abi,
+                               uint64_t index) -> LogicalResult {
+    if (abi.getKind() == DPIABIKind::OpenArray) {
+      auto layout = cast<DPIOpenArrayABIAttr>(openLayouts[index]);
+      if (layout.getStorage() == 1)
+        return isa<DynamicArrayType, QueueType>(type)
+                   ? success()
+                   : emitOpError(
+                         "dynamic open-array ABI entry requires a dynamic "
+                         "array or queue value");
+      std::optional<uint64_t> provenance = getProvenanceSpan(type);
+      std::optional<unsigned> packed = getPackedWidth(type);
+      uint64_t width = layout.getStorage() == 2
+                           ? provenance.value_or(0)
+                           : packed.value_or(0);
+      bool fourState = layout.getStorage() == 2
+                           ? containsFourStateLeaf(type)
+                           : isa<LogicType>(getPackedScalarType(type));
+      return width == layout.getTransportWidth() &&
+                     fourState == layout.getTransportFourState()
+                 ? success()
+                 : emitOpError(
+                       "fixed open-array value disagrees with its transport "
+                       "layout");
+    }
+    if (abi.getKind() == DPIABIKind::UnpackedAggregate) {
+      std::optional<uint64_t> width = getProvenanceSpan(type);
+      std::function<bool(Type)> hasLogic = [&](Type current) {
+        if (Type scalar = getPackedScalarType(current))
+          return isa<LogicType>(scalar);
+        for (unsigned index = 0, count = getAggregateNumElements(current);
+             index != count; ++index)
+          if (hasLogic(getAggregateElementType(current, index)))
+            return true;
+        return false;
+      };
+      bool fourState = hasLogic(type);
+      return isa<UnpackedArrayType, UnpackedStructType>(type) && width &&
+                     *width == abi.getWidth() && fourState == abi.getFourState()
+                 ? success()
+                 : emitOpError(
+                       "sized aggregate value disagrees with its DPI layout");
+    }
     if (abi.getKind() == DPIABIKind::String)
       return isa<StringType>(type)
                  ? success()
@@ -736,35 +805,48 @@ LogicalResult SimDPICallOp::verify() {
         getNumResults() - 1 != logicalOutputs)
       return emitOpError(
           "ABI signature must describe every data operand and result");
-    for (auto [value, abi] : llvm::zip_equal(
+    for (auto [index, pair] : llvm::enumerate(llvm::zip_equal(
              getArguments(),
-             ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs)))
-      if (failed(verifyLogicalType(value.getType(), abi)))
+             ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs)))) {
+      auto [value, abi] = pair;
+      if (failed(verifyLogicalType(value.getType(), abi, index)))
         return failure();
-    for (auto [value, abi] : llvm::zip_equal(
+    }
+    for (auto [offset, pair] : llvm::enumerate(llvm::zip_equal(
              getResults().drop_back(),
-             ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs)))
-      if (failed(verifyLogicalType(value.getType(), abi)))
+             ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs)))) {
+      auto [value, abi] = pair;
+      if (failed(
+              verifyLogicalType(value.getType(), abi, logicalInputs + offset)))
         return failure();
+    }
     return success();
   }
 
   auto verifyPhysicalTypes = [&](TypeRange types, ArrayRef<DPIABIAttr> entries,
+                                 uint64_t entryBase,
                                  StringRef role) -> LogicalResult {
     size_t physical = 0;
-    for (DPIABIAttr abi : entries) {
-      unsigned planes = abi.getFourState() ? 2 : 1;
+    for (auto [offset, abi] : llvm::enumerate(entries)) {
+      auto open = abi.getKind() == DPIABIKind::OpenArray
+                      ? cast<DPIOpenArrayABIAttr>(
+                            openLayouts[entryBase + offset])
+                      : DPIOpenArrayABIAttr{};
+      unsigned planes =
+          (open ? open.getTransportFourState() : abi.getFourState()) ? 2 : 1;
       if (physical + planes > types.size())
         return emitOpError()
                << "is missing a physical DPI " << role << " plane";
       for (unsigned plane = 0; plane != planes; ++plane) {
         Type type = types[physical++];
-        bool valid =
-            abi.getKind() == DPIABIKind::ShortReal ? type.isF32()
-            : abi.getKind() == DPIABIKind::Real
-                ? type.isF64()
-                : isa<IntegerType>(type) &&
-                      cast<IntegerType>(type).getWidth() == abi.getWidth();
+        uint64_t width = abi.getWidth();
+        if (open)
+          width = open.getTransportWidth();
+        bool valid = abi.getKind() == DPIABIKind::ShortReal ? type.isF32()
+                     : abi.getKind() == DPIABIKind::Real
+                         ? type.isF64()
+                         : isa<IntegerType>(type) &&
+                               cast<IntegerType>(type).getWidth() == width;
         if (!valid)
           return emitOpError()
                  << "has a malformed physical DPI " << role << " plane";
@@ -776,11 +858,13 @@ LogicalResult SimDPICallOp::verify() {
   };
   if (failed(verifyPhysicalTypes(
           getArguments().getTypes(),
-          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs), "input")))
+          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs), 0,
+          "input")))
     return failure();
   return verifyPhysicalTypes(
       getResults().drop_back().getTypes(),
-      ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs), "result");
+      ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs), logicalInputs,
+      "result");
 }
 
 LogicalResult SimSpawnOp::verify() {
@@ -1084,47 +1168,64 @@ LogicalResult SimAggregateSplatOp::verify() {
 LogicalResult SimAggregateExportBitstreamOp::verify() {
   Type input = getInput().getType();
   Type result = getResult().getType();
-  std::optional<SmallVector<uint64_t>> expected = getFixedBitStreamPlan(input);
+  std::optional<SmallVector<uint64_t>> languagePlan =
+      getFixedBitStreamPlan(input);
+  std::optional<SmallVector<uint64_t>> dpiPlan =
+      getDPIAggregateBitStreamPlan(input);
+  ArrayRef<int64_t> actual = getPlan();
+  auto matches = [&](const std::optional<SmallVector<uint64_t>> &candidate) {
+    return candidate && actual.size() == candidate->size() &&
+           llvm::equal(actual, *candidate, [](int64_t lhs, uint64_t rhs) {
+             return static_cast<uint64_t>(lhs) == rhs;
+           });
+  };
+  const SmallVector<uint64_t> *expected = matches(languagePlan) ? &*languagePlan
+                                          : matches(dpiPlan)    ? &*dpiPlan
+                                                                : nullptr;
   std::optional<unsigned> resultWidth = getPackedWidth(result);
-  if (!expected)
+  if (!languagePlan && !dpiPlan)
     return emitOpError(
         "input must be a nonempty fixed unpacked array or struct of fixed "
         "packed leaves");
+  if (!expected)
+    return emitOpError("plan does not match the fixed aggregate layout");
   if (!isa<IntegerType, LogicType>(result) || !resultWidth ||
       *resultWidth != (*expected)[3])
     return emitOpError(
         "result must be a packed bit or logic value exactly matching the "
         "source bit-stream width");
-  ArrayRef<int64_t> actual = getPlan();
-  if (actual.size() != expected->size())
-    return emitOpError("plan does not match the fixed aggregate layout");
-  for (auto [lhs, rhs] : llvm::zip_equal(actual, *expected))
-    if (static_cast<uint64_t>(lhs) != rhs)
-      return emitOpError("plan does not match the fixed aggregate layout");
   return success();
 }
 
 LogicalResult SimAggregateImportBitstreamOp::verify() {
   Type input = getInput().getType();
   Type result = getResult().getType();
-  std::optional<SmallVector<uint64_t>> expected =
+  std::optional<SmallVector<uint64_t>> languagePlan =
       getFixedBitStreamImportPlan(result);
+  std::optional<SmallVector<uint64_t>> dpiPlan =
+      getDPIAggregateBitStreamImportPlan(result);
+  ArrayRef<int64_t> actual = getPlan();
+  auto matches = [&](const std::optional<SmallVector<uint64_t>> &candidate) {
+    return candidate && actual.size() == candidate->size() &&
+           llvm::equal(actual, *candidate, [](int64_t lhs, uint64_t rhs) {
+             return static_cast<uint64_t>(lhs) == rhs;
+           });
+  };
+  const SmallVector<uint64_t> *expected = matches(languagePlan) ? &*languagePlan
+                                          : matches(dpiPlan)    ? &*dpiPlan
+                                                                : nullptr;
   std::optional<unsigned> inputWidth = getPackedWidth(input);
-  if (!expected)
+  if (!languagePlan && !dpiPlan)
     return emitOpError(
         "result must be a nonempty fixed unpacked array or struct of fixed "
         "packed leaves");
+  if (!expected)
+    return emitOpError("plan does not match the fixed aggregate layout");
   if (!isa<IntegerType, LogicType>(input) || !inputWidth ||
       *inputWidth != (*expected)[3])
     return emitOpError(
         "input must be a packed bit or logic value exactly matching the "
         "result bit-stream width");
-  ArrayRef<int64_t> actual = getPlan();
-  if (actual.size() != expected->size())
-    return emitOpError("plan does not match the fixed aggregate layout");
-  for (auto [lhs, rhs] : llvm::zip_equal(actual, *expected))
-    if (static_cast<uint64_t>(lhs) != rhs)
-      return emitOpError("plan does not match the fixed aggregate layout");
   return success();
 }
 

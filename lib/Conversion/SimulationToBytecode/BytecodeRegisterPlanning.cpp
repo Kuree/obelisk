@@ -87,6 +87,13 @@ planTwoStateRegisters(sim::SimDesignOp design) {
         if (auto alloc = dyn_cast<sim::SimRefAllocOp>(operation))
           force(alloc.getInitialValue());
 
+        // The managed container descriptor fixes the element representation.
+        // A known logic value written to a four-state container therefore
+        // remains a two-plane ABI operand even though its unknown plane is
+        // all zero. This is an ABI boundary, not an arithmetic scratch value.
+        if (auto write = dyn_cast<sim::SimContainerWriteOp>(operation))
+          force(write.getValue());
+
         if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation)) {
           if (op.getKind() != sim::UnaryKind::LogicalNot)
             constrain(op.getResult(), op.getInput());

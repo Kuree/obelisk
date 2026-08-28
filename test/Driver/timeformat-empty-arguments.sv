@@ -1,3 +1,5 @@
+// XFAIL: *
+// Slang v11 rejects explicitly empty $timeformat arguments.
 // RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
 // RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode

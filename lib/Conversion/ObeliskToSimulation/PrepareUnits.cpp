@@ -215,14 +215,6 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         invalid = true;
         continue;
       }
-      if (subroutine.getSubroutineKind() !=
-          semantic::SVSubroutineKind::Function) {
-        emitError(getSemanticLocation(source))
-            << "DPI exported tasks are not supported; only zero-time "
-               "functions can be exported";
-        invalid = true;
-        continue;
-      }
     }
     FailureOr<sim::EntryKind> entryKind = getEntryKind(source);
     if (failed(entryKind)) {

@@ -1,6 +1,7 @@
-# DPI-C imports
+# DPI-C
 
-Obelisk supports zero-time DPI-C imported functions and synchronous tasks.
+Obelisk supports DPI-C imported functions and tasks plus scope-specific
+exported functions and suspending tasks.
 The native and embedded-bytecode execution tiers enter the same validated
 runtime boundary and invoke the same generated C thunk, so marshalling,
 context functions, errors, and copy-outs are shared.
@@ -15,11 +16,14 @@ function result types. IEEE binary32 `shortreal` maps directly to C `float`;
 binary64 `real` and `realtime` map directly to C `double`. Four-state
 `integer` and `time` use `svLogicVecVal`, preserving X and Z in every
 direction. Renamed C identifiers, `pure`, and `context` imports are preserved,
-and the deprecated `"DPI"` spelling follows the implementation's `"DPI-C"`
-ABI. Fixed packed aggregates, including packed structs and unions, use the
-standard bit-vector or logic-vector representation.
+and the optional pre-standard `"DPI"` spelling is rejected; use normative
+`"DPI-C"`. Fixed packed aggregates, including packed structs and unions, use
+the standard bit-vector or logic-vector representation. Fixed, dynamic, queue,
+and empty open-array shapes use `svOpenArrayHandle`; sized unpacked arrays and
+unpacked structs use exact generated C layouts. Compact layout plans remain
+explicit in Simulation MLIR and are shared by native and bytecode lowering.
 
-Following IEEE 1800-2023 H.7.4 and H.8.10, an input string uses `const char *`
+Following IEEE 1800-2017 H.7.4 and H.8.10, an input string uses `const char *`
 and an output or inout string uses `const char **`; `chandle` uses `void *`
 and the corresponding extra pointer level for copy-out formals. Input string
 storage remains simulator-owned and is valid only for the call. Returned and
@@ -27,19 +31,24 @@ copy-out C strings must be valid initialized null-terminated addresses and
 are copied immediately into simulator-owned managed strings. Neither side
 frees the other side's string storage.
 
-Generated headers include prototypes for zero-time DPI exported functions, and
-Simulation IR freezes one scalar/fixed-packed export signature and exact scope
-record per elaborated function clone. Generated C entry points select the
-active elaborated scope and dispatch through pay-for-play native, hybrid, or
-validated bytecode descriptors. Exported tasks, packed/unpacked aggregate
-formals, open and unpacked arrays, `ref`, task suspension, and disable
-acknowledgement produce diagnostics instead of falling back to a different
-ABI.
+Generated headers include prototypes and concrete aggregate layouts for
+imports, exported functions, and exported tasks. Simulation IR freezes one
+checked signature, aggregate/open-array layout, and exact scope record per
+elaborated clone. Generated C entry points select that scope and dispatch
+through native, hybrid, or validated bytecode descriptors. Exported tasks can
+suspend and re-enter the scheduler. The Clause 35.9 disable/acknowledgement
+protocol propagates across nested calls and suppresses copy-out on disable.
+`ref` imports and open-array exports are rejected as required by the LRM.
+
+Pristine Slang v11 rejects a small set of otherwise legal queue and mixed
+fixed/dynamic open-array source bindings before Obelisk receives an AST. Those
+cases remain explicit source-level XFAILs; the Simulation MLIR and runtime
+shape paths are tested independently without patching Slang.
 
 ## Build an implementation
 
-Print the resource directory and generate prototypes from the elaborated
-imports and zero-time function exports:
+Print the resource directory and generate prototypes from the elaborated DPI
+imports and exports:
 
 ```sh
 RESOURCE_DIR=$(obelisk --print-resource-dir)
@@ -73,6 +82,11 @@ cc -shared -o libdpi.so dpi.pic.o
 obelisk design.sv libdpi.so -o simulator
 ```
 
+Annex J discovery is also available. `-sv_root` establishes the relative
+root, `-sv_liblist` reads an indented `#!SV_LIBRARIES` bootstrap list, and
+`-sv_lib name` adds `name.so`; bootstrap libraries are ordered before direct
+libraries and aliases of the same file are suppressed.
+
 Direct inputs are classified by contents rather than filename suffix. ELF
 objects, archives, LLVM bitcode, and ELF shared objects are passed to the
 native link; text remains SystemVerilog input. Native inputs are rejected for
@@ -105,6 +119,9 @@ a build-internal compatibility surface, not a portable DPI distribution
 format. LLD reports incompatible LLVM bitcode directly; Obelisk never silently
 falls back to native or non-LTO linking.
 
+The wasm32 target has no host C ABI. It rejects DPI and Annex J inputs
+explicitly before probing or loading foreign libraries.
+
 ## Select the execution tier
 
 Native execution is the default:
@@ -120,19 +137,23 @@ obelisk --execution-tier=bytecode design.sv \
   dpi.o -o simulator
 ```
 
-Bytecode contains stable import and scope IDs, source coordinates, and typed
-register references only. The generated native wrapper still contains and
-registers the C thunks before the root process is spawned.
+Bytecode contains stable import and scope IDs, source coordinates, typed
+register references, and compact aggregate/open-array plans. The generated
+native wrapper still contains and registers the C thunks before the root
+process is spawned.
 
 ## Context functions
 
-The supplied `svdpi.h` exposes the canonical packed-vector size/mask macros,
-bit-select and narrow part-select utilities, scope get/set and lookup, scope
-names, per-scope user data, caller file and line, simulation time, time unit,
-and time precision. Scope handles are stable for the lifetime of one runtime
-context.
-Nested calls restore the previous thread-local active scope. A nonzero C
-return from an imported task reports the dedicated unsupported-disable status.
-Both execution tiers stop the current process before committing copy-outs or
-executing later statements. Exported-task re-entry and disable acknowledgement
-remain deferred.
+The supplied `svdpi.h` follows the non-deprecated IEEE 1800-2017 Annex I
+surface: canonical packed-vector macros and helpers, the complete open-array
+query/access family, scope get/set and lookup, scope names, per-scope user
+data, caller file and line, and disable state. The optional deprecated SV3.1a
+tail is omitted. Scope handles are stable for the lifetime of one runtime
+context, and nested calls restore the previous thread-local active scope.
+
+Non-context imports use a distinct lowering and runtime entry point. They emit
+no caller-file or scope metadata and perform no scope lookup, source-string
+allocation, active-call construction, context transaction, or thread-local
+write. Context imports retain those services. For tasks, return status zero is
+normal completion and status one is the disable protocol; any other status is
+fatal. Native and bytecode tiers suppress copy-out when disable propagates.

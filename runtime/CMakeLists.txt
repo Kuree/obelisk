@@ -51,6 +51,8 @@ set(_obelisk_runtime_cold_tail_sources
   lib/ClassBitstreamBytecode.cpp
   lib/DPIExport.cpp
   lib/DPIExportBytecode.cpp
+  lib/DPIOpenArray.cpp
+  lib/DPIAggregate.cpp
 )
 add_library(obelisk_rt STATIC
   ${_obelisk_runtime_common_sources}

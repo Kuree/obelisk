@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "dynamic_array_dpi_unsupported", name = "dynamic_array_dpi_unsupported", node_id = 0 : i64, sym_name = "s0.dynamic_array_dpi_unsupported"} {
@@ -19,4 +19,4 @@ module {
   }
 }
 
-// CHECK: DPI-C dynamic-array, queue, and associative-array marshalling is unsupported
+// CHECK: #obelisk_sim.dpi_abi<kind = open_array

@@ -1196,7 +1196,8 @@ obelisk_rt_v1_scheduler_report_status(obelisk_rt_context *context,
       std::fprintf(stderr, "error: %s (status %d)\n",
                    error->second.message.c_str(), status);
     else
-      std::fprintf(stderr, "error: simulation ended with status %d\n", status);
+      std::fprintf(stderr, "error: simulation ended: %s (status %d)\n",
+                   obelisk_rt_v1_status_string(status), status);
   }
   OBELISK_RT_CATCH_ALL {}
 }

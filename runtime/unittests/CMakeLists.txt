@@ -24,6 +24,7 @@ add_executable(ObeliskRuntimeTests
   ContainerTest.cpp
   CoverageTest.cpp
   DesignBytecodeTest.cpp
+  DPIOpenArrayTest.cpp
   RandSolveTest.cpp
   RandSolveWideTest.cpp
   RuntimeControlTest.cpp

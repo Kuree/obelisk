@@ -122,6 +122,18 @@ validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
           unknownEnd > layout.frame_size)
         return OBELISK_RT_LAYOUT_MISMATCH;
       previousEnd = unknownEnd;
+    } else if (field.flags == OBELISK_RT_FRAME_FOUR_STATE_UNKNOWN) {
+      // Managed-root instrumentation may retain only precise word-sized
+      // pieces of a value plane while the corresponding unknown plane remains
+      // live as a whole. In that case there is deliberately no adjacent
+      // FOUR_STATE_VALUE record to pair with this field.
+      bool followsRoot =
+          index != 0 &&
+          (layout.fields[index - 1].flags == OBELISK_RT_FRAME_MANAGED_ROOT ||
+           layout.fields[index - 1].flags == OBELISK_RT_FRAME_CANDIDATE_ROOT);
+      if (field.reserved != 0 || !followsRoot)
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      previousEnd = end;
     } else if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
       if (field.reserved != 0 ||
           field.size != sizeof(obelisk_rt_managed_word_v1) ||
@@ -344,8 +356,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     break;
   case OBELISK_RT_SUSPEND_EDGE:
     if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE) {
-      uint32_t conditions = static_cast<uint32_t>(
-          __builtin_popcountll(wait->auxiliary));
+      uint32_t conditions =
+          static_cast<uint32_t>(__builtin_popcountll(wait->auxiliary));
       uint32_t primaries =
           conditions < wait->count ? wait->count - conditions : 0;
       valid = wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
@@ -355,8 +367,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
         bool condition = index >= primaries;
         valid = validSignalHandle(entries[index].stable_id) &&
                 entries[index].reserved != 0 &&
-                (condition ? entries[index].edge ==
-                                 OBELISK_RT_WAIT_EDGE_NONE
+                (condition ? entries[index].edge == OBELISK_RT_WAIT_EDGE_NONE
                            : validEdge(entries[index].edge));
       }
     } else if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)

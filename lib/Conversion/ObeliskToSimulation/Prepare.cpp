@@ -70,6 +70,7 @@ static uint32_t getStableDPIID(StringRef cIdentifier) {
 
 struct PreparedDPISignature {
   ArrayAttr entries;
+  ArrayAttr aggregateLayouts;
   uint32_t logicalInputs;
 };
 
@@ -79,6 +80,8 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
   MLIRContext *context = builder.getContext();
   SmallVector<Attribute> inputs;
   SmallVector<Attribute> copyOuts;
+  SmallVector<Attribute> aggregateInputs;
+  SmallVector<Attribute> aggregateCopyOuts;
   bool invalid = false;
   auto makeABI = [&](Type type, sim::DPIArgumentDirection direction,
                      Location location) -> FailureOr<sim::DPIABIAttr> {
@@ -107,13 +110,41 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
       invalid = true;
       continue;
     }
+    Attribute aggregateLayout = builder.getUnitAttr();
+    if (input->getKind() == sim::DPIABIKind::UnpackedAggregate) {
+      FailureOr<Type> normalized = getNormalizedSemanticType(formal);
+      if (failed(normalized)) {
+        invalid = true;
+        continue;
+      }
+      FailureOr<sim::DPIAggregateABIAttr> layout = makeDPIAggregateABI(
+          *semanticType, *normalized, getSemanticLocation(formal), builder);
+      if (failed(layout)) {
+        invalid = true;
+        continue;
+      }
+      std::optional<uint64_t> span = sim::getProvenanceSpan(*normalized);
+      if (!span || *span == 0 || *span > std::numeric_limits<uint32_t>::max()) {
+        formal.emitError("DPI aggregate has no bounded transport layout");
+        invalid = true;
+        continue;
+      }
+      input = sim::DPIABIAttr::get(context, input->getKind(), direction,
+                                   static_cast<uint32_t>(*span),
+                                   input->getFourState(), input->getIsSigned());
+      aggregateLayout = *layout;
+    }
     inputs.push_back(*input);
+    aggregateInputs.push_back(aggregateLayout);
     if (direction != sim::DPIArgumentDirection::Input)
       copyOuts.push_back(sim::DPIABIAttr::get(
           context, input->getKind(), sim::DPIArgumentDirection::Output,
           input->getWidth(), input->getFourState(), input->getIsSigned()));
+    if (direction != sim::DPIArgumentDirection::Input)
+      aggregateCopyOuts.push_back(aggregateLayout);
   }
   SmallVector<Attribute> signature(inputs);
+  SmallVector<Attribute> aggregateLayouts(aggregateInputs);
   if (subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Function) {
     auto semanticType = subroutine->getAttrOfType<TypeAttr>("semantic_type");
     auto subroutineType =
@@ -135,12 +166,16 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
         invalid = true;
       else
         signature.push_back(*result);
+      if (succeeded(result))
+        aggregateLayouts.push_back(builder.getUnitAttr());
     }
   }
   if (invalid)
     return failure();
   llvm::append_range(signature, copyOuts);
+  llvm::append_range(aggregateLayouts, aggregateCopyOuts);
   return PreparedDPISignature{builder.getArrayAttr(signature),
+                              builder.getArrayAttr(aggregateLayouts),
                               static_cast<uint32_t>(inputs.size())};
 }
 
@@ -226,14 +261,18 @@ static bool isStatefulResolutionSystemCall(StringRef name) {
       .Cases({"$dumpfile", "$dumpvars", "$dumpon", "$dumpoff"}, true)
       .Cases({"$dumpall", "$dumplimit", "$dumpflush"}, true)
       .Cases({"$display", "$write", "$monitor", "$strobe"}, true)
-      .Cases({"$async$and$array", "$sync$and$array",
-              "$async$and$plane", "$sync$and$plane"}, true)
-      .Cases({"$async$nand$array", "$sync$nand$array",
-              "$async$nand$plane", "$sync$nand$plane"}, true)
-      .Cases({"$async$or$array", "$sync$or$array",
-              "$async$or$plane", "$sync$or$plane"}, true)
-      .Cases({"$async$nor$array", "$sync$nor$array",
-              "$async$nor$plane", "$sync$nor$plane"}, true)
+      .Cases({"$async$and$array", "$sync$and$array", "$async$and$plane",
+              "$sync$and$plane"},
+             true)
+      .Cases({"$async$nand$array", "$sync$nand$array", "$async$nand$plane",
+              "$sync$nand$plane"},
+             true)
+      .Cases({"$async$or$array", "$sync$or$array", "$async$or$plane",
+              "$sync$or$plane"},
+             true)
+      .Cases({"$async$nor$array", "$sync$nor$array", "$async$nor$plane",
+              "$sync$nor$plane"},
+             true)
       .Cases({"$info", "$warning", "$error", "$fatal"}, true)
       .Default(false);
 }
@@ -1888,10 +1927,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     int64_t edgeIdentifierValue = edgeIdentifier ? edgeIdentifier.getInt() : 0;
     int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
     auto delays = path->getAttrOfType<DenseI64ArrayAttr>("timing_delay_fs");
-    if (!inputs || inputs.empty() || !output || !polarity || polarity.getInt() < 0 ||
-        polarity.getInt() > 2 || edgeIdentifierValue < 0 ||
-        edgeIdentifierValue > 3 || edgePolarityValue < 0 ||
-        edgePolarityValue > 2 ||
+    if (!inputs || inputs.empty() || !output || !polarity ||
+        polarity.getInt() < 0 || polarity.getInt() > 2 ||
+        edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
+        edgePolarityValue < 0 || edgePolarityValue > 2 ||
         (!edgeSensitive &&
          (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
         !delays ||
@@ -1924,15 +1963,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       uint64_t lsbValue = lsb ? static_cast<uint64_t>(lsb.getInt())
                               : static_cast<uint64_t>(low.getInt());
       if (lsbValue < static_cast<uint64_t>(low.getInt()) ||
-          lsbValue >=
-              static_cast<uint64_t>(low.getInt()) +
-                  static_cast<uint64_t>(width.getInt()))
+          lsbValue >= static_cast<uint64_t>(low.getInt()) +
+                          static_cast<uint64_t>(width.getInt()))
         return std::nullopt;
       return TimingTerminal{terminalPath.getValue().str(),
                             static_cast<uint64_t>(rootWidth.getInt()),
                             static_cast<uint64_t>(low.getInt()),
-                            static_cast<uint64_t>(width.getInt()),
-                            lsbValue};
+                            static_cast<uint64_t>(width.getInt()), lsbValue};
     };
     SmallVector<TimingTerminal, 2> inputPaths;
     for (Attribute attr : inputs) {
@@ -1955,8 +1992,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Operation *> children = getChildren(path);
     bool conditional = path->hasAttr("timing_condition");
     bool ifnone = path->hasAttr("timing_ifnone");
-    size_t expectedChildren = static_cast<size_t>(conditional) +
-                              static_cast<size_t>(edgeSensitive);
+    size_t expectedChildren =
+        static_cast<size_t>(conditional) + static_cast<size_t>(edgeSensitive);
     if ((conditional && ifnone) || (edgeSensitive && ifnone) ||
         children.size() != expectedChildren) {
       emitError(getSemanticLocation(path))
@@ -1975,8 +2012,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool full = connectionFull.getValue();
     simpleTimingPaths[outputTerminal->path].push_back(
         {path, inputPaths, *outputTerminal, full,
-         static_cast<int32_t>(polarity.getInt()),
-         edgeSensitive, static_cast<int32_t>(edgeIdentifierValue),
+         static_cast<int32_t>(polarity.getInt()), edgeSensitive,
+         static_cast<int32_t>(edgeIdentifierValue),
          static_cast<int32_t>(edgePolarityValue),
          SmallVector<int64_t, 12>(delays.asArrayRef()),
          conditional ? children.front() : nullptr, ifnone});
@@ -2066,9 +2103,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    bool hasEdgeSensitive = llvm::any_of(paths, [](const SimpleTimingPath &p) {
-      return p.edgeSensitive;
-    });
+    bool hasEdgeSensitive = llvm::any_of(
+        paths, [](const SimpleTimingPath &p) { return p.edgeSensitive; });
 
     SmallVector<TimingDriverSpan> spans;
     for (auto &drivers : continuousDrivers) {
@@ -2105,8 +2141,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           break;
         }
-        spans.push_back({drivers.first, first.nodeId, first.drivenLow,
-                         first.drivenWidth});
+        spans.push_back(
+            {drivers.first, first.nodeId, first.drivenLow, first.drivenWidth});
       }
       if (invalid)
         break;
@@ -2115,13 +2151,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool sawContinuousStorageWriter = false;
     if (hasEdgeSensitive) {
       auto descriptor = descriptors.find(output);
-      bool directStorage = descriptor != descriptors.end() &&
-                           descriptor->second.kind ==
-                               DescriptorInfo::Kind::Storage;
+      bool directStorage =
+          descriptor != descriptors.end() &&
+          descriptor->second.kind == DescriptorInfo::Kind::Storage;
       for (Operation *source : sourceUnits) {
         bool procedural = isa<semantic::SVProceduralBlockSymbolOp>(source);
-        bool continuous =
-            isa<semantic::SVContinuousAssignSymbolOp>(source);
+        bool continuous = isa<semantic::SVContinuousAssignSymbolOp>(source);
         if (!procedural && !continuous)
           continue;
         source->walk([&](Operation *nested) {
@@ -2302,15 +2337,14 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto delay = dyn_cast<semantic::SVDelayControlOp>(operation);
         SmallVector<Operation *> children =
             delay ? getChildren(delay) : SmallVector<Operation *>{};
-        auto literal = children.size() == 1
-                           ? dyn_cast<semantic::SVIntegerLiteralOp>(
-                                 children.front())
-                           : semantic::SVIntegerLiteralOp{};
+        auto literal =
+            children.size() == 1
+                ? dyn_cast<semantic::SVIntegerLiteralOp>(children.front())
+                : semantic::SVIntegerLiteralOp{};
         if (!literal)
           return false;
-        FailureOr<ParsedConstant> value =
-            parseSVInteger(literal.getConstantValue(), 64,
-                           getSemanticLocation(literal));
+        FailureOr<ParsedConstant> value = parseSVInteger(
+            literal.getConstantValue(), 64, getSemanticLocation(literal));
         return succeeded(value) && value->unknown.isZero() &&
                value->value.isZero();
       };
@@ -2336,12 +2370,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                   nested->getAttrOfType<StringAttr>("referenced_path"))
             touchesDependency |=
                 referencedPaths.contains(referenced.getValue());
-          containsDelay |=
-              (isa<semantic::SVDelayControlOp>(nested) &&
-               !isLiteralZeroDelay(nested)) ||
-              isa<semantic::SVDelay3ControlOp,
-                  semantic::SVOneStepDelayControlOp,
-                  semantic::SVCycleDelayControlOp>(nested);
+          containsDelay |= (isa<semantic::SVDelayControlOp>(nested) &&
+                            !isLiteralZeroDelay(nested)) ||
+                           isa<semantic::SVDelay3ControlOp,
+                               semantic::SVOneStepDelayControlOp,
+                               semantic::SVCycleDelayControlOp>(nested);
         });
         if (touchesDependency && containsDelay)
           return true;
@@ -2354,8 +2387,8 @@ void ObeliskSimPreparePass::runOnOperation() {
              llvm::all_of(p.inputs,
                           [](const TimingTerminal &t) { return t.isWhole(); });
     });
-    bool hasExplicitDriverDelay = llvm::any_of(
-        spans, [](const TimingDriverSpan &span) {
+    bool hasExplicitDriverDelay =
+        llvm::any_of(spans, [](const TimingDriverSpan &span) {
           return !span.procedural && span.unit->hasAttr("delay_fs");
         });
     if (hasExplicitDriverDelay) {
@@ -2398,8 +2431,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               referenced && !isWrittenResolutionReference(nested))
             dependencies.insert(referenced.getValue());
         });
-        bool observesEverySource = llvm::all_of(
-            candidate.inputs, [&](const TimingTerminal &input) {
+        bool observesEverySource =
+            llvm::all_of(candidate.inputs, [&](const TimingTerminal &input) {
               return dependencies.contains(input.path);
             });
         result.kind = observesEverySource ? 2 : 0;
@@ -2408,12 +2441,11 @@ void ObeliskSimPreparePass::runOnOperation() {
 
       std::function<Operation *(Operation *)> leadingStatement =
           [&](Operation *statement) -> Operation * {
-        if (!isa<semantic::SVBlockStatementOp,
-                 semantic::SVStatementListOp>(statement))
+        if (!isa<semantic::SVBlockStatementOp, semantic::SVStatementListOp>(
+                statement))
           return statement;
         SmallVector<Operation *> children = getChildren(statement);
-        return children.empty() ? nullptr
-                                : leadingStatement(children.front());
+        return children.empty() ? nullptr : leadingStatement(children.front());
       };
       SmallVector<Operation *> body = getChildren(span.unit);
       Operation *leading =
@@ -2426,8 +2458,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           dyn_cast<semantic::SVSignalEventControlOp>(timedChildren.front());
       SmallVector<Operation *> eventChildren =
           event ? getChildren(event) : SmallVector<Operation *>{};
-      Operation *primary = eventChildren.empty() ? nullptr
-                                                 : eventChildren.front();
+      Operation *primary =
+          eventChildren.empty() ? nullptr : eventChildren.front();
       auto directPath =
           primary ? primary->getAttrOfType<StringAttr>("referenced_path")
                   : StringAttr{};
@@ -2436,20 +2468,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                           semantic::SVHierarchicalValueExpressionOp>(primary);
       int32_t eventEdge =
           event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
-      bool edgeMatches =
-          candidate.edgeIdentifier == 0 ||
-          candidate.edgeIdentifier == eventEdge ||
-          (candidate.edgeIdentifier == 3 &&
-           (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
-      bool exactWake = event && candidate.inputs.size() == 1 &&
-                       candidate.inputs.front().isWhole() && directNamed &&
-                       directPath &&
-                       directPath.getValue() == candidate.inputs.front().path &&
-                       edgeMatches;
+      bool edgeMatches = candidate.edgeIdentifier == 0 ||
+                         candidate.edgeIdentifier == eventEdge ||
+                         (candidate.edgeIdentifier == 3 &&
+                          (eventEdge == 1 || eventEdge == 2 || eventEdge == 3));
+      bool exactWake =
+          event && candidate.inputs.size() == 1 &&
+          candidate.inputs.front().isWhole() && directNamed && directPath &&
+          directPath.getValue() == candidate.inputs.front().path && edgeMatches;
       result.kind = exactWake ? 1 : 0;
       timedChildren.front()->walk([&](Operation *nested) {
-        auto referenced =
-            nested->getAttrOfType<StringAttr>("referenced_path");
+        auto referenced = nested->getAttrOfType<StringAttr>("referenced_path");
         if (referenced && candidate.inputs.size() == 1 &&
             referenced.getValue() == candidate.inputs.front().path)
           result.ambiguousSourceControl = true;
@@ -2472,8 +2501,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                                 candidate.output.low + candidate.output.width);
         if (begin >= end || !span.procedural)
           continue;
-        auto procedure =
-            cast<semantic::SVProceduralBlockSymbolOp>(span.unit);
+        auto procedure = cast<semantic::SVProceduralBlockSymbolOp>(span.unit);
         if (procedure.getProcedureKind() ==
                 semantic::SVProceduralBlockKind::Initial ||
             procedure.getProcedureKind() ==
@@ -2526,8 +2554,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         bool invalidWakeShape = false;
         std::function<Operation *(Operation *)> leadingStatement =
             [&](Operation *statement) -> Operation * {
-          if (!isa<semantic::SVBlockStatementOp,
-                   semantic::SVStatementListOp>(statement))
+          if (!isa<semantic::SVBlockStatementOp, semantic::SVStatementListOp>(
+                  statement))
             return statement;
           SmallVector<Operation *> children = getChildren(statement);
           return children.empty() ? nullptr
@@ -2548,12 +2576,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           break;
         }
-        bool implicit =
-            procedure.getProcedureKind() ==
-                semantic::SVProceduralBlockKind::AlwaysComb ||
-            procedure.getProcedureKind() ==
-                semantic::SVProceduralBlockKind::AlwaysLatch;
-        if (!implicit && !isa_and_nonnull<semantic::SVTimedStatementOp>(leading))
+        bool implicit = procedure.getProcedureKind() ==
+                            semantic::SVProceduralBlockKind::AlwaysComb ||
+                        procedure.getProcedureKind() ==
+                            semantic::SVProceduralBlockKind::AlwaysLatch;
+        if (!implicit &&
+            !isa_and_nonnull<semantic::SVTimedStatementOp>(leading))
           invalidWakeShape = true;
         span.unit->walk([&](Operation *nested) {
           if (isa<semantic::SVDelay3ControlOp,
@@ -2573,8 +2601,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             delayed = true;
             return;
           }
-          FailureOr<ParsedConstant> value = parseSVInteger(
-              *spelling, 64, getSemanticLocation(delay));
+          FailureOr<ParsedConstant> value =
+              parseSVInteger(*spelling, 64, getSemanticLocation(delay));
           delayed |= failed(value) || !value->unknown.isZero() ||
                      !value->value.isZero();
         });
@@ -2686,8 +2714,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           groupKey.push_back(':');
           groupKey += input.path;
           groupKey +=
-              (":" + Twine(input.low) + ":" + Twine(input.width) + ";")
-                  .str();
+              (":" + Twine(input.low) + ":" + Twine(input.width) + ";").str();
         }
         groupKey += ("->" + Twine(candidate.output.low) + ":" +
                      Twine(candidate.output.width))
@@ -2725,10 +2752,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             break;
           }
           uint64_t stateIndex = frozenTimingRules[span.unit].size();
-          std::string prefix =
-              (output + ".$timing_path_edge_" + Twine(*span.nodeID) + "_" +
-               Twine(stateIndex))
-                  .str();
+          std::string prefix = (output + ".$timing_path_edge_" +
+                                Twine(*span.nodeID) + "_" + Twine(stateIndex))
+                                   .str();
           auto addEdgeState = [&](StringRef suffix, Type type,
                                   StringRef debugName) -> StringAttr {
             std::string statePath = (Twine(prefix) + suffix).str();
@@ -2749,9 +2775,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                 sim::ComputeObservabilityKindAttr{});
             return builder.getStringAttr(statePath);
           };
-          edgePendingPath = addEdgeState(
-              ".$pending", builder.getIntegerType(span.width),
-              "__obelisk_timing_path_edge_pending");
+          edgePendingPath =
+              addEdgeState(".$pending", builder.getIntegerType(span.width),
+                           "__obelisk_timing_path_edge_pending");
           edgeEpochPath = addEdgeState(".$epoch", builder.getI64Type(),
                                        "__obelisk_timing_path_edge_epoch");
           if (!edgePendingPath || !edgeEpochPath) {
@@ -2772,11 +2798,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                                  builder.getDenseI64ArrayAttr(inputWidths)),
             builder.getNamedAttr("input_lsbs",
                                  builder.getDenseI64ArrayAttr(inputLsbs)),
-            builder.getNamedAttr(
-                "output_low",
-                builder.getI64IntegerAttr(intersectionLow - span.low)),
-            builder.getNamedAttr(
-                "output_width", builder.getI64IntegerAttr(intersectionWidth)),
+            builder.getNamedAttr("output_low", builder.getI64IntegerAttr(
+                                                   intersectionLow - span.low)),
+            builder.getNamedAttr("output_width",
+                                 builder.getI64IntegerAttr(intersectionWidth)),
             builder.getNamedAttr("output_root_width",
                                  builder.getI64IntegerAttr(span.width)),
             builder.getNamedAttr("driver_node_id",
@@ -2790,16 +2815,14 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getNamedAttr(
                 "edge_identifier",
                 builder.getI32IntegerAttr(candidate.edgeIdentifier)),
-            builder.getNamedAttr(
-                "edge_polarity",
-                builder.getI32IntegerAttr(candidate.edgePolarity)),
+            builder.getNamedAttr("edge_polarity", builder.getI32IntegerAttr(
+                                                      candidate.edgePolarity)),
             builder.getNamedAttr(
                 "delay_fs", builder.getDenseI64ArrayAttr(candidate.delays)),
-            builder.getNamedAttr(
-                "condition_kind",
-                builder.getI32IntegerAttr(candidate.condition
-                                              ? 1
-                                              : candidate.ifnone ? 2 : 0)),
+            builder.getNamedAttr("condition_kind", builder.getI32IntegerAttr(
+                                                       candidate.condition ? 1
+                                                       : candidate.ifnone  ? 2
+                                                                          : 0)),
             builder.getNamedAttr("condition_group",
                                  builder.getI32IntegerAttr(group->second)),
         };
@@ -2810,8 +2833,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (span.procedural) {
           auto descriptor = descriptors.find(output);
-          attrs.push_back(builder.getNamedAttr(
-              "procedural_storage", builder.getBoolAttr(true)));
+          attrs.push_back(builder.getNamedAttr("procedural_storage",
+                                               builder.getBoolAttr(true)));
           attrs.push_back(builder.getNamedAttr(
               "path_site_id",
               builder.getI64IntegerAttr(descriptor->second.id)));
@@ -7138,8 +7161,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (edgeSensitive)
         for (StringRef name : {"edge_pending", "edge_epoch"}) {
           auto state = rule.getAs<StringAttr>(name);
-          auto found = state ? descriptors.find(state.getValue())
-                             : descriptors.end();
+          auto found =
+              state ? descriptors.find(state.getValue()) : descriptors.end();
           if (!state || found == descriptors.end()) {
             emitError(getSemanticLocation(unit.source))
                 << "edge-sensitive timing path qualification state no longer "
@@ -7477,10 +7500,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             captures.push_back(builder.getStringAttr(capture.first));
         candidates.push_back(builder.getDictionaryAttr({
             builder.getNamedAttr(
-                "scope", builder.getI64IntegerAttr(
-                             preparedUnits->declarations
-                                 .lookup(record->dispatchSource)
-                                 .getScopeId())),
+                "scope",
+                builder.getI64IntegerAttr(
+                    preparedUnits->declarations.lookup(record->dispatchSource)
+                        .getScopeId())),
             builder.getNamedAttr(
                 "callee", FlatSymbolRefAttr::get(
                               context, directCalleeNames.lookup(candidate))),
@@ -7525,6 +7548,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                builder.getBoolAttr(isStaticFormal(formal))),
       };
       if (dpiTarget && semanticType) {
+        formalAttrs.push_back(builder.getNamedAttr(
+            "semantic_type", TypeAttr::get(*semanticType)));
         FailureOr<DPIABIKind> category =
             getDPIABIKind(*semanticType, getSemanticLocation(formal));
         if (failed(category)) {
@@ -8183,11 +8208,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             edgePolarityValue < 0 || edgePolarityValue > 2 ||
             (!edgeSensitiveValue &&
              (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
-            (edgeSensitiveValue && (!edgePending || !edgeEpoch)) ||
-            !delays ||
-            (delays.size() != 1 && delays.size() != 2 &&
-             delays.size() != 3 && delays.size() != 6 &&
-             delays.size() != 12) ||
+            (edgeSensitiveValue && (!edgePending || !edgeEpoch)) || !delays ||
+            (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
+             delays.size() != 6 && delays.size() != 12) ||
             (arrayTerminals &&
              (!inputLows || !inputWidths ||
               static_cast<size_t>(inputLows.size()) != inputs.size() ||
@@ -8195,8 +8218,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               (edgeSensitiveValue &&
                (!inputLsbs ||
                 static_cast<size_t>(inputLsbs.size()) != inputs.size())) ||
-              !outputLow ||
-              !outputWidth || !outputRootWidth || !connectionFull))) {
+              !outputLow || !outputWidth || !outputRootWidth ||
+              !connectionFull))) {
           rulesInvalid = true;
           break;
         }
@@ -8233,20 +8256,19 @@ void ObeliskSimPreparePass::runOnOperation() {
             fields.push_back(
                 builder.getNamedAttr("driver_node_id", driverNodeID));
           if (proceduralStorage)
-            fields.push_back(builder.getNamedAttr("procedural_storage",
-                                                  proceduralStorage));
+            fields.push_back(
+                builder.getNamedAttr("procedural_storage", proceduralStorage));
           if (pathSiteID)
             fields.push_back(builder.getNamedAttr("path_site_id", pathSiteID));
           if (proceduralWakeKind)
-            fields.push_back(builder.getNamedAttr(
-                "procedural_wake_kind", proceduralWakeKind));
+            fields.push_back(builder.getNamedAttr("procedural_wake_kind",
+                                                  proceduralWakeKind));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(
             "edge_sensitive", builder.getBoolAttr(edgeSensitiveValue)));
         fields.push_back(builder.getNamedAttr(
-            "edge_identifier",
-            builder.getI32IntegerAttr(edgeIdentifierValue)));
+            "edge_identifier", builder.getI32IntegerAttr(edgeIdentifierValue)));
         fields.push_back(builder.getNamedAttr(
             "edge_polarity", builder.getI32IntegerAttr(edgePolarityValue)));
         if (edgeSensitiveValue) {
@@ -8350,6 +8372,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         functionAttrs.push_back(builder.getNamedAttr(
             "obelisk_sim.dpi_abi_signature", dpi->entries));
         functionAttrs.push_back(builder.getNamedAttr(
+            "obelisk_sim.dpi_aggregate_layouts", dpi->aggregateLayouts));
+        functionAttrs.push_back(builder.getNamedAttr(
             "obelisk_sim.dpi_logical_inputs",
             builder.getI32IntegerAttr(dpi->logicalInputs)));
         sim::SimCodeUnitDeclOp declaration =
@@ -8357,6 +8381,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         declaration->setAttr(role, builder.getUnitAttr());
         declaration->setAttr("obelisk_sim.dpi_c_identifier", cIdentifier);
         declaration->setAttr("obelisk_sim.dpi_abi_signature", dpi->entries);
+        declaration->setAttr("obelisk_sim.dpi_aggregate_layouts",
+                             dpi->aggregateLayouts);
         declaration->setAttr("obelisk_sim.dpi_logical_inputs",
                              builder.getI32IntegerAttr(dpi->logicalInputs));
         if (!dpiImport)
@@ -8385,8 +8411,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             functionAttrs.push_back(builder.getNamedAttr(
                 "obelisk_sim.dpi_context", builder.getUnitAttr()));
         } else {
-          module->setAttr("obelisk_sim.has_dpi_exports",
-                          builder.getUnitAttr());
+          module->setAttr("obelisk_sim.has_dpi_exports", builder.getUnitAttr());
           IntegerAttr exportID =
               builder.getI32IntegerAttr(getStableDPIID(dpiExport.getValue()));
           functionAttrs.push_back(
@@ -8404,12 +8429,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
     if (auto passSwitchIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.pass_switch_ids"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.pass_switch_ids", passSwitchIds));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.pass_switch_ids", passSwitchIds));
     if (auto mosTopologyIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.mos_topology_ids"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.mos_topology_ids", mosTopologyIds));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.mos_topology_ids", mosTopologyIds));
     if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
       functionAttrs.push_back(builder.getNamedAttr(
           sequenceEndpointMonitorAttrName, builder.getUnitAttr()));

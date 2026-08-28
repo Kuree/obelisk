@@ -1,6 +1,11 @@
 //===- DPI.cpp - Shared native and bytecode DPI-C boundary ---------------===//
 
 #include "RuntimeInternal.h"
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+#define DPI_DLLISPEC __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define DPI_EXTERN __attribute__((visibility("default")))
+#endif
 #include "svdpi.h"
 
 #include <algorithm>
@@ -9,6 +14,10 @@
 #include <string>
 
 thread_local ActiveDpiCall *activeDpiCall = nullptr;
+
+extern "C" obelisk_rt_context *obelisk_rt_v1_dpi_current_context(void) {
+  return activeDpiCall ? activeDpiCall->context : nullptr;
+}
 
 namespace {
 
@@ -28,7 +37,9 @@ uint64_t limbCount(uint32_t width) { return (uint64_t{width} + 63) / 64; }
 bool validKind(obelisk_rt_design_register_kind kind) {
   return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC ||
          kind == OBELISK_RT_DBREG_STATUS || kind == OBELISK_RT_DBREG_STRING ||
-         kind == OBELISK_RT_DBREG_REAL32 || kind == OBELISK_RT_DBREG_REAL64;
+         kind == OBELISK_RT_DBREG_REAL32 || kind == OBELISK_RT_DBREG_REAL64 ||
+         kind == OBELISK_RT_DBREG_OPEN_ARRAY ||
+         kind == OBELISK_RT_DBREG_AGGREGATE;
 }
 
 bool validReal(obelisk_rt_design_register_kind kind, uint8_t flags,
@@ -60,6 +71,10 @@ bool validInput(const obelisk_rt_import_input_v1 &input) {
   if (input.kind == OBELISK_RT_DBREG_STRING)
     return input.flags == 0 && input.bit_width == 64 &&
            input.unknown == nullptr && validStringWord(input.value);
+  if (input.kind == OBELISK_RT_DBREG_OPEN_ARRAY ||
+      input.kind == OBELISK_RT_DBREG_AGGREGATE)
+    return input.flags == 0 && input.bit_width == 64 && input.limb_count == 1 &&
+           input.unknown == nullptr;
   if (input.kind == OBELISK_RT_DBREG_REAL32 ||
       input.kind == OBELISK_RT_DBREG_REAL64)
     return validReal(input.kind, input.flags, input.bit_width, input.unknown);
@@ -80,6 +95,10 @@ bool validOutput(const obelisk_rt_import_output_v1 &output) {
   if (output.kind == OBELISK_RT_DBREG_STRING)
     return output.flags == 0 && output.bit_width == 64 &&
            output.unknown == nullptr;
+  if (output.kind == OBELISK_RT_DBREG_OPEN_ARRAY ||
+      output.kind == OBELISK_RT_DBREG_AGGREGATE)
+    return output.flags == 0 && output.bit_width == 64 &&
+           output.limb_count == 1 && output.unknown == nullptr;
   if (output.kind == OBELISK_RT_DBREG_REAL32 ||
       output.kind == OBELISK_RT_DBREG_REAL64)
     return validReal(output.kind, output.flags, output.bit_width,
@@ -91,7 +110,9 @@ bool validOutput(const obelisk_rt_import_output_v1 &output) {
 void normalize(obelisk_rt_import_output_v1 &output) {
   if (output.kind == OBELISK_RT_DBREG_STRING ||
       output.kind == OBELISK_RT_DBREG_REAL32 ||
-      output.kind == OBELISK_RT_DBREG_REAL64)
+      output.kind == OBELISK_RT_DBREG_REAL64 ||
+      output.kind == OBELISK_RT_DBREG_OPEN_ARRAY ||
+      output.kind == OBELISK_RT_DBREG_AGGREGATE)
     return;
   uint32_t width =
       output.kind == OBELISK_RT_DBREG_STATUS ? 32 : output.bit_width;
@@ -112,16 +133,6 @@ DpiScopeHandle *scopeFromOpaque(ActiveDpiCall *call, const svScope scope) {
     if (candidate.get() == scope)
       return candidate.get();
   return nullptr;
-}
-
-bool timeScaleRatio(int32_t unit, int32_t precision, uint64_t &value) {
-  if (!validTimeExponent(unit) || !validTimeExponent(precision) ||
-      unit < precision)
-    return false;
-  value = 1;
-  for (int32_t index = precision; index < unit; ++index)
-    value *= 10;
-  return true;
 }
 
 } // namespace
@@ -181,10 +192,11 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
   return sawRoot ? OBELISK_RT_OK : OBELISK_RT_INVALID_DESIGN;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
+static obelisk_rt_status importCallImpl(
     obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
-    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount,
+    bool exposeContext) {
   if (!context || !site || (inputs == nullptr && inputCount != 0) ||
       (outputs == nullptr && outputCount != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -196,6 +208,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
       ((site->flags & OBELISK_RT_IMPORT_PURE) != 0 &&
        (site->flags & (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK)) !=
            0) ||
+      exposeContext !=
+          ((site->flags & OBELISK_RT_IMPORT_CONTEXT) != 0) ||
       !validBytes(site->source_file, site->source_file_size))
     return OBELISK_RT_INVALID_ARGUMENT;
   for (uint32_t index = 0; index != inputCount; ++index)
@@ -205,12 +219,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     if (!validOutput(outputs[index]))
       return OBELISK_RT_INVALID_ARGUMENT;
 
-  ContextTransaction transaction(context);
   DpiScopeHandle *scope = nullptr;
   ImportBinding binding;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (site->scope_id != UINT64_MAX) {
+    if (exposeContext && site->scope_id != UINT64_MAX) {
       scope = obelisk_rt_find_dpi_scope(context, site->scope_id);
       if (!scope)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -220,10 +233,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
       return OBELISK_RT_TIER_UNAVAILABLE;
     binding = found->second;
   }
-  if (binding.abiSignature != 0 && binding.abiSignature != site->abi_signature)
+  if (binding.abiSignature != 0 && site->abi_signature != 0 &&
+      binding.abiSignature != site->abi_signature)
     return OBELISK_RT_ARGUMENT_MISMATCH;
 
   for (uint32_t index = 0; index != outputCount; ++index) {
+    if (outputs[index].kind == OBELISK_RT_DBREG_OPEN_ARRAY ||
+        outputs[index].kind == OBELISK_RT_DBREG_AGGREGATE)
+      continue;
     if (outputs[index].kind == OBELISK_RT_DBREG_REAL32 ||
         outputs[index].kind == OBELISK_RT_DBREG_REAL64)
       std::memset(outputs[index].value, 0, outputs[index].bit_width / 8);
@@ -234,10 +251,37 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
                   uint64_t{0});
   }
 
+  auto finishOutputs = [&](obelisk_rt_status status) {
+    if (status != OBELISK_RT_OK)
+      return status;
+    for (uint32_t index = 0; index != outputCount; ++index) {
+      if (outputs[index].kind == OBELISK_RT_DBREG_STRING &&
+          !validStringWord(outputs[index].value))
+        return OBELISK_RT_INVALID_HANDLE;
+      normalize(outputs[index]);
+    }
+    return OBELISK_RT_OK;
+  };
+
+  // A non-context import cannot call an exported SystemVerilog subroutine or
+  // use the svScope / caller-info API. Keep that common native boundary free
+  // of ActiveDpiCall construction, source-string allocation, and TLS writes.
+  if (!exposeContext)
+    return guarded(context, [&] {
+      obelisk_rt_status status =
+          binding.callback(context, site->import_id, inputs, inputCount,
+                           outputs, outputCount, binding.userData);
+      if (status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED)
+        return OBELISK_RT_FATAL;
+      return finishOutputs(status);
+    });
+
+  ContextTransaction transaction(context);
   return guarded(context, [&] {
     ActiveDpiCall call;
     call.context = context;
     call.scope = scope;
+    call.importFlags = site->flags;
     if (site->source_file_size != 0)
       call.callerFile.assign(site->source_file,
                              static_cast<size_t>(site->source_file_size));
@@ -246,18 +290,67 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
     obelisk_rt_status status =
         binding.callback(context, site->import_id, inputs, inputCount, outputs,
                          outputCount, binding.userData);
+    bool task = (site->flags & OBELISK_RT_IMPORT_TASK) != 0;
+    bool returnedDisabled = status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+    if (call.disabledState) {
+      if (task) {
+        if (!returnedDisabled)
+          return OBELISK_RT_FATAL;
+      } else {
+        if (status != OBELISK_RT_OK || !call.disableAcknowledged)
+          return OBELISK_RT_FATAL;
+        return OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+      }
+    } else if (returnedDisabled) {
+      return OBELISK_RT_FATAL;
+    }
     if (status != OBELISK_RT_OK)
       return status;
     if (call.exportStatus != OBELISK_RT_OK)
       return call.exportStatus;
-    for (uint32_t index = 0; index != outputCount; ++index) {
-      if (outputs[index].kind == OBELISK_RT_DBREG_STRING &&
-          !validStringWord(outputs[index].value))
-        return OBELISK_RT_INVALID_HANDLE;
-      normalize(outputs[index]);
-    }
-    return OBELISK_RT_OK;
+    return finishOutputs(OBELISK_RT_OK);
   });
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_import_call(
+    obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+  if (!site)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return importCallImpl(context, site, inputs, inputCount, outputs, outputCount,
+                        (site->flags & OBELISK_RT_IMPORT_CONTEXT) != 0);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_import_call_noncontext(
+    obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+  return importCallImpl(context, site, inputs, inputCount, outputs, outputCount,
+                        false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_import_call_guarded(
+    obelisk_rt_status priorStatus, obelisk_rt_context *context,
+    const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+  if (priorStatus != OBELISK_RT_OK)
+    return priorStatus;
+  return obelisk_rt_v1_import_call(context, site, inputs, inputCount, outputs,
+                                   outputCount);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_import_call_noncontext_guarded(
+    obelisk_rt_status priorStatus, obelisk_rt_context *context,
+    const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
+  if (priorStatus != OBELISK_RT_OK)
+    return priorStatus;
+  return obelisk_rt_v1_import_call_noncontext(
+      context, site, inputs, inputCount, outputs, outputCount);
 }
 
 extern "C" obelisk_rt_status
@@ -292,63 +385,66 @@ extern "C" svLogic svGetBitselLogic(const svLogicVecVal *source, int index) {
 }
 
 extern "C" void svPutBitselBit(svBitVecVal *destination, int index,
-                                 svBit source) {
+                               svBit source) {
   if (!destination || index < 0)
     return;
   unsigned word = static_cast<unsigned>(index) / 32;
   unsigned bit = static_cast<unsigned>(index) % 32;
   uint32_t mask = uint32_t{1} << bit;
-  destination[word] = (destination[word] & ~mask) |
-                      (static_cast<uint32_t>(source & 1U) << bit);
+  destination[word] =
+      (destination[word] & ~mask) | (static_cast<uint32_t>(source & 1U) << bit);
 }
 
 extern "C" void svPutBitselLogic(svLogicVecVal *destination, int index,
-                                   svLogic source) {
+                                 svLogic source) {
   if (!destination || index < 0)
     return;
   unsigned word = static_cast<unsigned>(index) / 32;
   unsigned bit = static_cast<unsigned>(index) % 32;
   uint32_t mask = uint32_t{1} << bit;
-  destination[word].aval =
-      (destination[word].aval & ~mask) |
-      (static_cast<uint32_t>(source & 1U) << bit);
-  destination[word].bval =
-      (destination[word].bval & ~mask) |
-      (static_cast<uint32_t>((source >> 1) & 1U) << bit);
+  destination[word].aval = (destination[word].aval & ~mask) |
+                           (static_cast<uint32_t>(source & 1U) << bit);
+  destination[word].bval = (destination[word].bval & ~mask) |
+                           (static_cast<uint32_t>((source >> 1) & 1U) << bit);
 }
 
 extern "C" void svGetPartselBit(svBitVecVal *destination,
-                                  const svBitVecVal *source, int index,
-                                  int width) {
+                                const svBitVecVal *source, int index,
+                                int width) {
   if (!destination)
     return;
-  *destination = 0;
   if (!source || index < 0 || width <= 0 || width > 32)
     return;
+  uint32_t selected = 0;
   for (int bit = 0; bit != width; ++bit)
-    *destination |= static_cast<uint32_t>(svGetBitselBit(source, index + bit))
-                    << bit;
+    selected |= static_cast<uint32_t>(svGetBitselBit(source, index + bit))
+                << bit;
+  uint32_t mask = width == 32 ? UINT32_MAX : (uint32_t{1} << width) - 1;
+  *destination = (*destination & ~mask) | selected;
 }
 
 extern "C" void svGetPartselLogic(svLogicVecVal *destination,
-                                    const svLogicVecVal *source, int index,
-                                    int width) {
+                                  const svLogicVecVal *source, int index,
+                                  int width) {
   if (!destination)
     return;
-  destination->aval = 0;
-  destination->bval = 0;
   if (!source || index < 0 || width <= 0 || width > 32)
     return;
+  uint32_t aval = 0;
+  uint32_t bval = 0;
   for (int bit = 0; bit != width; ++bit) {
     svLogic value = svGetBitselLogic(source, index + bit);
-    destination->aval |= static_cast<uint32_t>(value & 1U) << bit;
-    destination->bval |= static_cast<uint32_t>((value >> 1) & 1U) << bit;
+    aval |= static_cast<uint32_t>(value & 1U) << bit;
+    bval |= static_cast<uint32_t>((value >> 1) & 1U) << bit;
   }
+  uint32_t mask = width == 32 ? UINT32_MAX : (uint32_t{1} << width) - 1;
+  destination->aval = (destination->aval & ~mask) | aval;
+  destination->bval = (destination->bval & ~mask) | bval;
 }
 
 extern "C" void svPutPartselBit(svBitVecVal *destination,
-                                  const svBitVecVal source, int index,
-                                  int width) {
+                                const svBitVecVal source, int index,
+                                int width) {
   if (!destination || index < 0 || width <= 0 || width > 32)
     return;
   for (int bit = 0; bit != width; ++bit)
@@ -357,8 +453,8 @@ extern "C" void svPutPartselBit(svBitVecVal *destination,
 }
 
 extern "C" void svPutPartselLogic(svLogicVecVal *destination,
-                                    const svLogicVecVal source, int index,
-                                    int width) {
+                                  const svLogicVecVal source, int index,
+                                  int width) {
   if (!destination || index < 0 || width <= 0 || width > 32)
     return;
   for (int bit = 0; bit != width; ++bit) {
@@ -424,78 +520,13 @@ extern "C" int svGetCallerInfo(const char **fileName, int *lineNumber) {
   return 1;
 }
 
-extern "C" int svIsDisabledState(void) { return 0; }
-extern "C" void svAckDisabledState(void) {}
-
-extern "C" int svGetTime(const svScope scope, svTimeVal *time) {
-  if (!activeDpiCall || !time)
-    return -1;
-  int32_t unit = 0;
-  if (scope) {
-    DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
-    if (!handle)
-      return -1;
-    unit = handle->timeUnit;
-  } else {
-    const obelisk_rt_execution_descriptor_v1 *execution =
-        activeDpiCall->context->execution;
-    if (!execution)
-      return -1;
-    unit = execution->dpi_time_precision;
-  }
-  const obelisk_rt_execution_descriptor_v1 *execution =
-      activeDpiCall->context->execution;
-  if (!execution)
-    return -1;
-  uint64_t precisionTicksPerUnit = 0;
-  if (!timeScaleRatio(unit, execution->dpi_time_precision,
-                      precisionTicksPerUnit))
-    return -1;
-  uint64_t ticks = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(activeDpiCall->context->mutex);
-    ticks = activeDpiCall->context->schedulerTime;
-  }
-  uint64_t scaled = ticks / precisionTicksPerUnit;
-  time->type = sv_sim_time;
-  time->high = static_cast<uint32_t>(scaled >> 32);
-  time->low = static_cast<uint32_t>(scaled);
-  time->real = 0.0;
-  return 0;
+extern "C" int svIsDisabledState(void) {
+  return activeDpiCall && activeDpiCall->disabledState &&
+                 !activeDpiCall->disableAcknowledged
+             ? 1
+             : 0;
 }
-
-extern "C" int svGetTimeUnit(const svScope scope, int32_t *timeUnit) {
-  if (!activeDpiCall || !timeUnit)
-    return -1;
-  if (!scope) {
-    const obelisk_rt_execution_descriptor_v1 *execution =
-        activeDpiCall->context->execution;
-    if (!execution)
-      return -1;
-    *timeUnit = execution->dpi_time_precision;
-    return 0;
-  }
-  DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
-  if (!handle)
-    return -1;
-  *timeUnit = handle->timeUnit;
-  return 0;
-}
-
-extern "C" int svGetTimePrecision(const svScope scope, int32_t *timePrecision) {
-  if (!activeDpiCall || !timePrecision)
-    return -1;
-  if (!scope) {
-    const obelisk_rt_execution_descriptor_v1 *execution =
-        activeDpiCall->context->execution;
-    if (!execution)
-      return -1;
-    *timePrecision = execution->dpi_time_precision;
-    return 0;
-  }
-  DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
-  if (!handle)
-    return -1;
-  *timePrecision = handle->timePrecision;
-  return 0;
+extern "C" void svAckDisabledState(void) {
+  if (activeDpiCall && activeDpiCall->disabledState)
+    activeDpiCall->disableAcknowledged = true;
 }

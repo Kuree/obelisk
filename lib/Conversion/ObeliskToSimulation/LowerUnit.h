@@ -484,11 +484,11 @@ private:
   convertStringBitstream(::mlir::Value value, ::mlir::Type targetType,
                          ::mlir::Type targetScalar, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> convertExplicitBitstreamToPacked(
-      ::mlir::Value value, ::mlir::Type targetScalar,
-      ::mlir::Location location, bool allowHiddenRoot = false);
+      ::mlir::Value value, ::mlir::Type targetScalar, ::mlir::Location location,
+      bool allowHiddenRoot = false);
   ::mlir::FailureOr<::mlir::Value> convertFixedBitstreamTarget(
-      ::mlir::Value value, ::mlir::Type targetType,
-      ::mlir::Location location, bool allowHiddenRoot = false);
+      ::mlir::Value value, ::mlir::Type targetType, ::mlir::Location location,
+      bool allowHiddenRoot = false, bool dpiLayout = false);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`

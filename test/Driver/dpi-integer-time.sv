@@ -15,7 +15,7 @@
 // RUN:   -I%resource_dir/include /dev/null
 
 module dpi_integer_time;
-  import "DPI" function int dpi_legacy(input int value);
+  import "DPI-C" function int dpi_legacy(input int value);
   import "DPI-C" function void dpi_integer_time_io(
       input integer integer_input, input time time_input,
       output integer integer_output, output time time_output,
@@ -42,7 +42,7 @@ module dpi_integer_time;
     if (time_output !== time_input || time_inout !== time_input)
       $fatal(1, "time DPI four-state transport mismatch");
     if (legacy_result != 42)
-      $fatal(1, "deprecated DPI spelling did not bind");
+      $fatal(1, "DPI-C scalar binding mismatch");
     $display("DPI INTEGER TIME PASS");
   end
 endmodule

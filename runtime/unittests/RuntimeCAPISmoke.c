@@ -4,6 +4,11 @@
 #include "obelisk/Runtime/StableHandle.h"
 #include "svdpi.h"
 
+#if defined(DPI_EXTERN) || defined(DPI_PROTOTYPES) || defined(XXTERN) ||         \
+    defined(EETERN)
+#error "svdpi.h leaked its implementation helper macros"
+#endif
+
 #include <stddef.h>
 #include <string.h>
 
@@ -125,6 +130,19 @@ _Static_assert(sizeof(obelisk_rt_dpi_scope_v1) == 48,
                "DPI scope descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_dpi_scope_v1, name) == 16,
                "DPI scope name offset changed");
+_Static_assert(sizeof(obelisk_rt_dpi_dimension_v1) == 24,
+               "DPI open-array dimension size changed");
+_Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, byte_stride) == 8,
+               "DPI open-array dimension stride offset changed");
+_Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, flags) == 16,
+               "DPI open-array dimension flags offset changed");
+_Static_assert(sizeof(obelisk_rt_dpi_open_array_v1) == SMOKE_PTR(64, 56),
+               "DPI open-array descriptor size changed");
+_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, data) == 32,
+               "DPI open-array data offset changed");
+_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, ranges) ==
+                   SMOKE_PTR(48, 44),
+               "DPI open-array ranges offset changed");
 _Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
                "activation descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,

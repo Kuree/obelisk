@@ -4,6 +4,7 @@
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/ELF.h"
@@ -95,6 +96,7 @@ Expected<std::optional<std::string>> readELFSoname(StringRef path) {
 
 LogicalResult classifySharedLibrary(StringRef suppliedPath, StringRef vpiMode,
                                     StringSet<> &canonicalPaths,
+                                    DenseSet<sys::fs::UniqueID> &uniqueFiles,
                                     StringMap<std::string> &loaderIdentities,
                                     ClassifiedInputs &result) {
   SmallString<256> canonical;
@@ -104,6 +106,14 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, StringRef vpiMode,
     return failure();
   }
   if (!canonicalPaths.insert(canonical).second)
+    return success();
+  sys::fs::UniqueID uniqueID;
+  if (std::error_code ec = sys::fs::getUniqueID(canonical, uniqueID)) {
+    error(Twine("could not identify shared library '") + suppliedPath +
+          "': " + ec.message());
+    return failure();
+  }
+  if (!uniqueFiles.insert(uniqueID).second)
     return success();
 
   Expected<std::optional<std::string>> soname = readELFSoname(canonical);
@@ -182,6 +192,7 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
                                    bool nativeInputsAllowed, StringRef vpiMode,
                                    ClassifiedInputs &result) {
   StringSet<> canonicalSharedLibraries;
+  DenseSet<sys::fs::UniqueID> uniqueSharedLibraries;
   StringMap<std::string> loaderIdentities;
   for (const std::string &input : inputs) {
     if (input == "-") {
@@ -223,7 +234,8 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
         return failure();
       }
       if (failed(classifySharedLibrary(input, vpiMode, canonicalSharedLibraries,
-                                       loaderIdentities, result)))
+                                       uniqueSharedLibraries, loaderIdentities,
+                                       result)))
         return failure();
       continue;
     case file_magic::elf_executable:

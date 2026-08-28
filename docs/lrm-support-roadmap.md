@@ -90,6 +90,14 @@ zero UVM errors or fatals. The strict native scheduler matrix retained zero
 generic candidate scans, readiness calls, and AOT fallbacks at 0, 1024, and
 3072 dormant waiters through one million cycles.
 
+The 2026-08-28 DPI closure repeated that strict native AOT matrix after moving
+all DPI disable handling behind the existing non-OK fragment path. Three-run
+one-million-cycle medians were 0.510, 0.944, and 1.160 seconds at 0, 1024, and
+3072 dormant waiters respectively (ranges 0.509-0.516, 0.943-0.952, and
+1.155-1.169 seconds). Every run retained zero generic candidate scans,
+readiness calls, scheduler iterations, and AOT fallbacks; DPI therefore adds no
+successful-fragment scheduler branch to the top tier.
+
 The bytecode direct-signal scheduler follow-up rejected an initial
 all-candidates-ready cache after an end-to-end `-O0` clocked design showed
 unchanged counters: the clock generator and control waiter remain slow poll
@@ -233,10 +241,10 @@ regressions. Before fixes, ivtest reported 1,831 ordinary passes, 371 expected
 diagnostic passes, 236 compile failures, 231 run failures, and 6 skips;
 Verilator reported 1,204 ordinary passes, 15 expected diagnostic passes, 331
 compile failures, 46 run failures, and 112 standards-cited skips. The first
-closure tranche removes a Slang v11 compiler crash on empty-queue rvalue
-selection during speculative constant evaluation and restores loop-carried
-values across the implicit coroutine resume edge of nested named blocks. The
-same fix closes the independent `pr2913927` unsized-parameter selection loop.
+closure tranche restores loop-carried values across the implicit coroutine
+resume edge of nested named blocks. The empty-queue rvalue and independent
+`pr2913927` unsized-parameter cases depended on a downstream Slang change that
+is no longer carried; both remain explicit pristine-Slang frontend `XFAIL`s.
 Its UVM smoke ran in 34.362 seconds compile / 0.176 seconds simulate for
 bytecode and 72.318 seconds compile / 0.019 seconds simulate for native, with
 zero UVM errors or fatals. Resume reachability is analyzed only for actual
@@ -256,12 +264,13 @@ seconds compile / 0.179 seconds simulate for bytecode and 71.801 seconds
 compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
 The full regression suite passes 1277/1277 tests and all 426 runtime tests.
 
-L12's third closure tranche binds recursive array `default` assignment
-patterns with their known element type, gives an untyped assignment pattern
-the aggregate type of its opposite equality operand, and preserves the
-surrounding handle type for conditional expressions whose two arms are
-`null`. The similarly named Verilator array-pattern flattening case is a
-non-standard extension rather than IEEE 1800-2017 work and remains excluded.
+L12's third closure tranche originally depended on downstream Slang changes
+for recursive array `default` assignment patterns, untyped assignment-pattern
+comparison context, and conditional expressions with two `null` arms. Those
+changes are no longer carried, so the three source cases remain explicit
+pristine-Slang frontend `XFAIL`s. The similarly named Verilator array-pattern
+flattening case is a non-standard extension rather than IEEE 1800-2017 work
+and remains excluded.
 The UVM smoke ran in 34.608 seconds compile / 0.181 seconds simulate for
 bytecode and 71.710 seconds compile / 0.020 seconds simulate for native, with
 zero UVM errors or fatals. The full regression suite passes 1280/1280 tests
@@ -418,18 +427,13 @@ seconds compile / 0.176 seconds simulate for bytecode and 71.716 seconds
 compile / 0.019 seconds simulate for native, with zero UVM errors or fatals.
 The full regression suite passes 1295/1295 tests and all 427 runtime tests.
 
-L12's fifteenth closure tranche admits explicit empty optional arguments to
-`$timeformat` under 20.4.2. The existing lowering already supplied the
-independent defaults for units, fractional digits, suffix, and minimum width;
-the pinned frontend now preserves an empty ordered position instead of
-rejecting the call before that lowering. This is a reproducible dependency
-patch and adds no generated operation, runtime branch, or simulation state.
-The exact upstream `t_display_time` case passes, with focused compilation in
-0.05 seconds native / 0.03 seconds bytecode and simulation below 0.01 seconds.
-The UVM smoke ran in 34.582 seconds compile / 0.179 seconds simulate for
-bytecode and 72.112 seconds compile / 0.019 seconds simulate for native, with
-zero UVM errors or fatals. The full regression suite passes 1296/1296 tests
-and all 427 runtime tests.
+L12's fifteenth closure tranche prepared independent defaults for every
+`$timeformat` argument under 20.4.2. Pristine Slang v11 still rejects an
+explicitly empty ordered position before Obelisk receives an AST, so the legal
+source case is retained as an `XFAIL`; no dependency patch is carried. The
+previous focused timings and UVM measurements were collected with the
+downstream frontend change and are historical evidence only, not a claim that
+the current pristine-Slang source gate passes.
 
 L12's sixteenth closure tranche implements runtime string-like formats for
 `$value$plusargs` under 21.6, including packed and `string` expressions,
@@ -568,21 +572,19 @@ zero UVM errors or fatals. The full regression suite passes 1304/1304 tests and
 all 427 runtime tests.
 
 L12's twentieth closure tranche implements the informative Annex D.2
-`$countdrivers` compatibility query for scalar nets and vector bit-selects.
+`$countdrivers` compatibility query in the backend for scalar nets and vector
+bit-selects.
 It reports optional force, total, zero, one, and unknown counts; excludes Z
 contributions; preserves underlying counts during force; follows collapsed
 inout components; and counts the complementary strength banks of one
 conditional primitive as one logical driver. Native and bytecode execution
 read their own authoritative state planes, and each query walks only the
 queried component's drivers with logarithmic paired-bank lookup, leaving the
-ordinary net-resolution hot path unchanged. All five upstream `countdrivers`
-cases now pass after the following `tran` tranche supplied the last case's
-pass-switch topology. The focused O3 case compiles in 0.06 seconds at
-77 MB RSS for bytecode and 0.42 seconds at 94 MB RSS for native, then simulates
-below 0.01 seconds in either tier. The UVM smoke ran in 34.910 seconds compile /
-0.181 seconds simulate for bytecode and 72.585 seconds compile / 0.020 seconds
-simulate for native, with zero UVM errors or fatals. The full regression suite
-passes 1305/1305 tests and all 427 runtime tests.
+ordinary net-resolution hot path unchanged. Pristine Slang v11 rejects the
+legal net bit-select argument before lowering, so the combined scalar/select
+source regression remains an `XFAIL`; the prior all-five-pass and performance
+measurements were collected with a downstream frontend change and are retained
+only as historical backend evidence.
 
 G1's second closure tranche implements static, unconditional `tran` channels
 without collapsing their terminal nets. Distinct endpoints retain local
@@ -989,31 +991,99 @@ D5 closes the imported-DPI scalar type and signature surface from 35.4-35.6.
 Four-state `integer` and 64-bit `time` now marshal through the existing
 `svLogicVecVal` path for input, output, and inout formals, preserving X and Z
 without a new runtime category or dispatch path. The audit also locks down the
-35.5.4 boundary that excludes those types from function results, accepts the
-deprecated `"DPI"` spelling through the `"DPI-C"` ABI, and verifies that two
-declarations cannot assign incompatible signatures to one C identifier.
+35.5.4 boundary that excludes those types from function results and verifies
+that two declarations cannot assign incompatible signatures to one C
+identifier. The optional pre-standard SystemVerilog 3.1a Annex H.13 `"DPI"`
+compatibility spelling is deliberately rejected with a diagnostic; the
+normative `"DPI-C"` interface is complete.
 Native and bytecode O0/O3 tests include generated-header C compilation. The
 focused O3 design compiles in 0.07 seconds at 78 MB RSS for native and 0.04
 seconds at 74 MB RSS for bytecode, then simulates below 0.01 seconds in either
 tier. Zero-time exported functions are complete in D1. Open arrays and unpacked
-aggregates remain explicitly owned by D3/D4; exported-task re-entry and disable
-handling remain D2/D6.
+aggregates are closed by D3/D4, exported-task re-entry by D2, and disable
+handling by D6.
 
-L12's twenty-second closure tranche implements nested-class out-of-block method
-definitions from 8.24. A definition such as `Outer::Nested::method` now parses,
-binds to the exact nested prototype, and remains distinct from the same nested
-class name under another outer class. Source-order validation compares the
-definition against the outermost containing class instead of comparing symbol
-indexes from unrelated scopes. This is frontend-only work: it adds no runtime
-lookup or generated simulation state. The upstream `t_class_extern` case now
-passes in both native and whole-design bytecode execution. Its focused O3
-compile takes 0.11 seconds / 80 MB RSS for native and 0.04 seconds / 75 MB RSS
-for bytecode, then simulates below 0.01 seconds in either tier. The isolated
-full gate passes all 1305 available tests; its two in-tree real-UVM wrappers
-are unsupported only because that fixture is not mirrored into the worktree.
-The external Accellera UVM smoke passes separately in 34.772 seconds compile /
-0.183 seconds simulate for bytecode and 73.658 seconds compile / 0.019 seconds
-simulate for native, with zero errors or fatals.
+D2 closes exported suspending tasks and synchronous DPI re-entry from 35.8.
+Generated C task thunks create a normal simulator activation, run the nested
+scheduler until that activation terminates, and return to the importing C task
+at the required call point. The same descriptor path selects native or
+validated whole-design bytecode execution without adding dispatch to ordinary
+SystemVerilog task calls. Automatic arguments stay live across suspension and
+copy out only after normal task completion. Focused native and bytecode tests
+exercise a C import calling an exported task across a delay, generated-header C
+compilation, and the explicit wasm32 DPI diagnostic. Clause 35.9 cancellation
+and acknowledgement behavior is tracked separately by D6.
+
+D3 closes the Obelisk-owned open-array ABI from 35.5.6 and Annexes H-I. Imported functions
+and tasks accept fixed unpacked arrays and dynamic arrays through stack-owned
+`svOpenArrayHandle` descriptors with original bounds, normalized packed
+ranges, byte strides, pointer and element accessors, and canonical packed
+bit/logic accessors. Native and bytecode calls share compact MLIR layout
+metadata and exercise mixed-direction multidimensional arrays, aggregate,
+string, chandle, and unsized packed elements, writable copy-out, and dynamic
+and empty arrays. Exported open-array formals remain rejected as required by
+the LRM. Queue and mixed fixed/dynamic legal source bindings remain explicit
+pristine-Slang frontend `XFAIL`s.
+
+D4 closes the Obelisk-owned sized-unpacked-aggregate backend. Fixed unpacked arrays and unpacked
+structs, including legal packed/unpacked nesting and open-array composition,
+strings, chandles, and four-state leaves, marshal through an exact generated C
+layout in imported and exported functions/tasks. A compact recursive plan
+keeps compiler work proportional to type structure; byte-aligned leaves use
+bulk copies, and runtime expansion occurs only at a DPI boundary, with precise
+managed roots for suspending exported tasks. Generated headers are compiled as
+C and C++ in focused native and bytecode tests. Annex H.12.1 direct-reference
+transport remains a performance follow-up; current aggregate transport is
+confined to the DPI boundary and does not affect ordinary simulation paths.
+
+D6 closes the 35.9 disable protocol. Disable of an exported task propagates
+through nested native or bytecode scheduler re-entry, suppresses copy-out, and
+exposes the disabled and acknowledgement state through `svIsDisabledState`
+and `svAckDisabledState`. DPI is intentionally unavailable on wasm32 and is
+rejected before backend lowering with an explicit diagnostic.
+
+D7 closes the normative `svdpi.h` C layer. The shipped header follows the
+non-deprecated IEEE 1800-2017 Annex I surface: canonical vector helpers, the
+complete open-array query/access family, scope/caller/userdata services, and
+disable state. Optional pre-standard
+Annex H.13 compatibility is intentionally absent. DPI runtime objects and
+`sv*` dynamic exports are link-time pay-for-play: native, full-LTO, and
+whole-design-bytecode executables without DPI retain none of them. The
+whole-design-bytecode interpreter still retains one cold DPI opcode decoder;
+it is outside the native AOT execution path and does not add a branch to a
+successful native simulation fragment.
+
+D8 closes Annex J native shared-library discovery. `-sv_root`, `-sv_liblist`,
+and `-sv_lib` preserve the standard bootstrap-before-direct ordering, root
+semantics, extension handling, and duplicate suppression, including aliases of
+the same inode. Positional shared libraries remain supported. wasm32 rejects
+native objects and shared libraries before probing or loading them, and rejects
+DPI before lowering because it has no host C ABI.
+
+The native top tier keeps context support strictly pay-for-play. A non-context
+import lowers to its own runtime entry point and carries no caller-file or scope
+metadata; that entry point performs no scope lookup, source-string allocation,
+active-call construction, context transaction, or thread-local write. Context
+imports retain the full re-entry and scope services. Compact aggregate and
+open-array layout plans remain explicit MLIR attributes through tier selection,
+so native and bytecode
+lowering share one checked ABI description without putting interpretation on
+ordinary simulation paths. Fixed scalar and packed calls retain the direct
+stack-plane path; aggregate traversal occurs only at a DPI boundary.
+
+The pinned Slang v11 source tree is not patched. Frontend defects exposed by
+the closure gate are recorded as source-level `XFAIL`s, while Obelisk-owned DPI
+validation and lowering remain tested independently. In particular, the
+deprecated pre-standard `"DPI"` spelling is rejected by Obelisk and is not
+implemented by changing Slang.
+
+L12's twenty-second closure audit covers nested-class out-of-block method
+definitions from 8.24. The required qualified-definition binding change is
+frontend-owned and is not carried in pristine Slang v11, so the upstream
+`t_class_extern` source case remains an explicit `XFAIL`. Earlier pass and
+performance measurements used the downstream frontend change and are
+historical only; Obelisk adds no runtime lookup or generated simulation state
+for this syntax.
 
 The accompanying parse/name audit found no shared permissive switch that can be
 enabled as language support. Most residual cases are mandatory declaration
@@ -1691,8 +1761,9 @@ mutates a value it also reads, so 10.3.2 requires reevaluation and Verilator
 reports a nonconvergent settle cycle rather than Icarus's one-shot result. The
 four immediate-check partial NBA cases retain the standard Active/NBA race
 instead of changing NBA into a blocking update to match one scheduler
-ordering. The final full hermetic regression passed 1,602 tests with 7
-expected failures, and all 495 runtime-unit tests passed.
+ordering. The final full hermetic regression discovered 1,641 tests: 1,622
+passed and 19 explicit source-level XFAILs remained. All 348 tests in the
+primary runtime-unit executable passed.
 
 ## Clause ledger
 
@@ -1701,7 +1772,7 @@ expected failures, and all 495 runtime-unit tests passed.
 | 3 Design and verification building blocks | Partial | Modules, programs, interfaces, packages, ordinary hierarchy, and basic configuration selection elaborate. Compilation-unit, package, module, directive, and command-line time-unit/precision precedence executes across the full legal 1 fs through 100 s scale range. Checker bodies are semantic only; combinational and sequential UDPs execute under Clause 29. |
 | 4 Scheduling semantics | Partial | Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, and the Preponed snapshot hook execute through one native/bytecode scheduler. Remaining language gaps are attached to the timed constructs below. PLI callback regions are excluded with VPI. |
 | 5 Lexical conventions | Partial | Slang supplies the lexer, preprocessor-facing tokens, literals, attributes, keywords, and identifiers. A source-level `XFAIL` records the upstream multiline `` `timescale`` bug without a local frontend patch. Keep this clause under differential testing, especially revision switches and literal corner cases. |
-| 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, static timing/delay `specparam` expressions, casts, strengths, common net kinds, user-defined nettypes/resolution functions, typed/heterogeneous fixed-array `interconnect`, and trireg charge strength/retention/decay/sharing execute. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
+| 6 Data types | Partial | Packed 2/4-state values, real/realtime variables and nets, strings, chandles, events, enums, typedefs, parameters, static timing/delay `specparam` expressions, casts, strengths, common net kinds, and trireg charge strength/retention/decay/sharing execute. User-defined-nettype resolution and typed/heterogeneous fixed-array `interconnect` have backend coverage, but their package-qualified legal source regressions remain pristine-Slang frontend `XFAIL`s. Remaining gaps are tracked by the operator, aggregate, and container chunks below. |
 | 7 Aggregate data types | Partial | Fixed arrays/structs/unions, tagged managed unions, and untagged managed unions using validated candidate roots execute, including four-state overlapping arms. Dynamic arrays, queues, associative arrays, queries, traversal, ordering, registered manipulation methods, queue/unpacked slice lvalues, and persistent element references execute. Whole-container replacement and structural mutation preserve the LRM's reference lifetime rules. String character selection and NBA execute; strings are not sliceable, and a string character select is not a legal `ref` actual under 13.5.2. Continue differential closure for residual aggregate corner cases. |
 | 8 Classes | Partial | Construction, inheritance, polymorphism, virtual/interface methods, parameterized classes, copying, managed properties, garbage collection, and the UVM-used surface execute. Complete the residual class/type/operator/constructor long tail exposed by focused probes and the aggregate/reference gaps shared with Clauses 6, 7, and 11. |
 | 9 Processes | Partial | Structured procedures, all fork/join forms, `wait fork`, `disable fork`, timed and recursive tasks, `process` handles and control, automatic capture, and cancellation execute. Implicit event controls derive complete read dependencies, wait before their first execution, and permanently suspend when the controlled statement has no readable dependency. Edge controls and `iff` guards execute over static signals, computed expressions, and class properties without allowing a guard-only change to trigger the statement. Named-block disable exits the exact live target activation across process and task boundaries, cancels only its descendants, preserves outer task copy-out, suppresses abandoned inner copy-out, and supports concurrent and repeated activations in native and bytecode tiers. Nonrecursive function-call exits also execute; recursive zero-time function-call corner cases remain in the core long tail. |
@@ -1715,7 +1786,7 @@ expected failures, and all 495 runtime-unit tests passed.
 | 17 Checkers | Semantic only | Declarations, ports, resolved instances, identities, cloned bodies, clocks/disables, properties, procedures, and expressions are retained. Executable instances now receive a targeted Clause 17 diagnostic instead of being silently erased; A9 implements checker procedures, free variables, inferred clocks, assertions, hierarchy, and runtime behavior. Covergroups in checkers are excluded with coverage. |
 | 18 Constrained random generation | Partial | Object streams, broad packed constraints, modes, finite domains, soft constraints, direct solve ordering, distributions, bounded `randc`, lifecycle hooks, and much of randsequence execute. The authoritative boundary is `docs/randomization-support.md`; R1-R7 below close the remaining standard surface without treating a solver resource cap as language semantics. |
 | 19 Functional coverage | Excluded | Explicitly outside this project goal. |
-| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries plus every omitted and explicitly empty `$timeformat` argument—conversions, static and recursively live dynamic `$bits`, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, all ten global-clock sampled functions, and the other implemented sampled functions execute. Remaining work includes complete assertion statistics/control behavior. |
+| 20 Utility system tasks/functions | Partial | Simulation/time control—including compile-time `$timeunit` and `$timeprecision` scope queries and omitted `$timeformat` arguments—conversions, static and recursively live dynamic `$bits`, data/array queries, real math, bit-vector functions, severity, random distributions, `$system`, the complete `$q_initialize`/`$q_add`/`$q_remove`/`$q_full`/`$q_exam` queue manager, all sixteen synchronous/asynchronous PLA tasks, most assertion control, all ten global-clock sampled functions, and the other implemented sampled functions execute. Explicitly empty `$timeformat` positions remain a pristine-Slang frontend `XFAIL`. Remaining work includes complete assertion statistics/control behavior. |
 | 21 Input/output tasks/functions | Executable for the audited surface | Display/write/strobe/monitor families, formatted strings, file I/O and scanning—including field widths, suppression, `%m`, `%t`, `%v`, `%u`, `%z`, runtime formats and exact EOF/file-position behavior—plus fixed/dynamic/queue `$fread`, read/write-memory across fixed, dynamic, queue, multidimensional and integral-associative forms, plusargs, VCD and dumpports execute. Surplus arguments after a designated `$sformat`/`$sformatf` format use ordinary default-radix formatting. Continue differential testing for newly identified Clause 21 cases. |
 | 22 Compiler directives | Executable for the audited surface | The Slang preprocessor implements the normative directive family. Directive persistence, separate-compilation-unit reset, and command-line default-timescale precedence have native/bytecode tests. Protected envelopes are a separate Clause 34 feature, not ordinary pragma acceptance. |
 | 23 Modules and hierarchy | Partial | ANSI/non-ANSI modules, parameters, ports, arrays, hierarchy, bind, common upward references, and the audited generated-scope/parameter-binding shapes elaborate. Direct named-event input actuals execute in every tier: read-only formals alias scheduler descriptors or live cells, while child-written formals receive dependency-ordered cell initialization or propagation before event waits. Side-effect-free computed event actuals, including conditional and selected forms, also execute after exact transitive ordinary-port startup settling; downstream event cells and affected waits retain handle-capture order, while feature-reachable cycles and effectful computed actuals are diagnosed. Automatic root inference still imports an unset required parameter as frontend `ErrorType` and is retained as an xfail. Verifier-proven full-range wide hierarchical port forwarding uses bounded vector-shaped native lowering; irregular, delayed, resolved, or competing-driver topology retains scalar lowering. |
@@ -1730,7 +1801,7 @@ expected failures, and all 495 runtime-unit tests passed.
 | 32 SDF backannotation | Missing | `$sdf_annotate`, SDF parsing/mapping, multiple annotation, pulse limits, and delay replacement are absent. |
 | 33 Configuring a design | Executable for the audited surface | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. Configurations execute ordered default library lists; cell and exact-instance `use`, `liblist`, and parameter rules; multiple roots; nested configuration selection; arrays; and bind interaction. `-emit-bindings` deterministically reports the effective selected cell, config/root/liblist, bind provenance, and retained rule location. The boundary is intentionally effective elaboration: Slang does not expose the configuration declaration source AST to semantic visitors, so Obelisk does not reconstruct a source-rule tree. |
 | 34 Protected envelopes | Missing | Ordinary pragmas do not provide the standard encryption/decryption envelope flow. Implement required encodings, cipher/key/digest descriptors, key-provider integration, nested decrypted envelopes, diagnostics, and preprocessing order. |
-| 35 DPI | Partial | Imported zero-time functions and synchronous tasks plus scope-specific exported zero-time functions execute through generated C thunks in native, hybrid, and bytecode-only tiers. Every legal scalar formal type including four-state `integer` and `time`, fixed-packed bit/logic vectors, strings, and chandles marshal; deprecated `"DPI"` spelling, context scope APIs, linking, signature-conflict diagnostics, and header generation execute. Packed and unpacked structs/unions, open/unpacked arrays, suspending exported-task re-entry, and disable acknowledgement remain. `ref` is not legal on a DPI import and is therefore not a missing import feature. |
+| 35 DPI | Partial | Imported functions/tasks and scope-specific exported functions/suspending tasks execute through generated C thunks in native, hybrid, and bytecode-only tiers. Legal scalar and fixed-packed types, strings, chandles, open arrays, and sized unpacked aggregates have MLIR/runtime native-bytecode parity; generated headers expose exact C layouts. Pristine Slang v11 still rejects legal queue and mixed fixed/dynamic open-array source bindings, which remain source-level `XFAIL`s. Sized aggregate calls use exact boundary packing; the Annex H.12.1 direct-reference/no-marshalling optimization remains a performance residual. Context scope/caller/userdata services, exported-task disable/acknowledgement, canonical packed-data helpers, Annex J library loading, and signature diagnostics execute. The optional pre-standard `"DPI"` compatibility layer is rejected, `ref` is not legal on an import, open arrays are not legal on an export, and wasm32 rejects DPI explicitly because it has no host C ABI. |
 | 36-39 PLI/VPI and assertion API | Excluded | Explicitly outside this project goal. |
 | 40 Code coverage | Excluded | Explicitly outside this project goal. |
 | 41 Data read API | Not applicable | The 2017 clause contains no API, only a deprecation notice referring to 1800-2005. |
@@ -1759,11 +1830,11 @@ one commit.
    Compilation-unit, package, module, directive, and command-line
    timeunit/precision interactions execute across the full legal scale range;
    `--timing=min|typ|max` selects constant and dynamic min/typ/max expressions.
-3. **L3 — Net-type closure (6.6-6.7, 10.3.3), completed.** Real/realtime nets,
-   atomic user-defined nettypes and pure resolution functions, time-zero and
-   Active/Reactive resolution, single inertial UDNT delays, alias chains, and
-   typed or heterogeneous fixed-array `interconnect` execute in native and
-   bytecode tiers. The exact Doulos 6.6.8 example also lowers successfully.
+3. **L3 — Net-type backend closure (6.6-6.7, 10.3.3), completed.**
+   Real/realtime nets execute end to end. Atomic user-defined nettypes, pure
+   resolution functions, and typed or heterogeneous fixed-array `interconnect`
+   have native/bytecode lowering coverage, while the package-qualified legal
+   source forms remain explicit pristine-Slang frontend `XFAIL`s.
 4. **L4 — Trireg charge semantics (6.6.4, 28.16, 28.16.2), completed.**
    Small/medium/large stored charge, retention, third-delay decay, connected
    charge sharing, and strength resolution execute in native and bytecode
@@ -2088,33 +2159,44 @@ one commit.
     fixed-packed bit/logic vector, string, and chandle arguments/results, and
     call zero-time SystemVerilog bodies through pay-for-play native or validated
     bytecode descriptors. Nested calls preserve managed roots and propagate the
-    first export failure through the enclosing import. Packed/unpacked
-    struct/union and open/unpacked-array formals remain D3/D4 work rather than
-    part of this scalar/vector tranche.
-44. **D2 — Exported tasks and re-entry (35.8).** Permit imported C tasks to
-    call exported suspending tasks, retain simulator/process state across
-    re-entry, and resume the import at the required point.
-45. **D3 — Open-array ABI (35.5.6, Annexes H-I).** Implement
-    `svOpenArrayHandle`, dimensions, bounds, strides, element/array pointer
-    accessors, packed vector accessors, copy-in/out, and diagnostics for forms
-    the LRM forbids on exports.
-46. **D4 — Sized unpacked aggregates (35.5-35.8).** Marshal fixed unpacked
-    arrays, unpacked structs, legal packed/unpacked nesting, and exported
-    aggregate arguments with exact C layout rules.
+    first export failure through the enclosing import. Aggregate and open-array
+    forms are completed separately by D3/D4.
+44. **D2 — Exported tasks and re-entry (35.8), completed.** Imported C tasks
+    call exported suspending tasks through generated C thunks, retain automatic
+    arguments and simulator/process state across nested scheduler re-entry, and
+    resume the import at the required point in native and whole-design bytecode
+    execution. wasm32 continues to reject DPI explicitly.
+45. **D3 — Open-array ABI (35.5.6, Annexes H-I), backend-complete.**
+    `svOpenArrayHandle` descriptors preserve dimensions, original bounds,
+    normalized packed ranges, and strides; the full pointer, element, packed
+    vector, and copy-in/out surface executes for fixed, dynamic, and empty
+    arrays in both tiers. Forbidden export forms are diagnosed. Legal queue
+    and mixed fixed/dynamic source bindings remain pristine-Slang `XFAIL`s.
+46. **D4 — Sized unpacked aggregates (35.5-35.8), backend-complete.** Fixed unpacked
+    arrays, unpacked structs, legal packed/unpacked nesting, strings, chandles,
+    and four-state leaves marshal through exact generated C layouts for imports
+    and exports in both tiers. Exact boundary packing is implemented; direct
+    reference/no-marshalling for Annex H.12.1 sized formals remains a
+    performance follow-up.
 47. **D5 — DPI type/signature closure (35.4-35.6), completed.** Every legal
     scalar formal category executes, including four-state `time` and
-    `integer`; function-result restrictions, deprecated `"DPI"` spelling, and
-    cross-declaration C-name/signature conflicts are covered. Open and sized
-    unpacked aggregate forms remain deliberately owned by D3/D4.
-48. **D6 — DPI disable protocol (35.9).** Implement disabled-state propagation,
+    `integer`; function-result restrictions, explicit rejection of the
+    optional pre-standard `"DPI"` spelling, and cross-declaration
+    C-name/signature conflicts are covered. Open and sized
+    unpacked aggregate forms are completed separately by D3/D4.
+48. **D6 — DPI disable protocol (35.9), completed.** Disabled-state propagation,
     `svIsDisabledState`, `svAckDisabledState`, copy-out suppression, exported
-    task cancellation, and nested-call behavior.
-49. **D7 — Complete `svdpi.h`/C-layer conformance (Annexes H-I).** Audit every
-    required type, macro, scope/time/userdata routine, canonical header
-    signature, C/C++ compatibility, and error/lifetime rule after D1-D6. The
-    scalar/packed layer now includes the canonical size/mask macros and exact
-    bit-select and narrow part-select helpers; open-array-dependent declarations
-    remain owned by D3 rather than advertising unimplemented runtime symbols.
+    task cancellation, and nested native/bytecode calls execute. wasm32 rejects
+    DPI explicitly before backend lowering.
+49. **D7 — Complete `svdpi.h`/C-layer conformance (Annexes H-I), completed.**
+    The normative C/C++ header surface, canonical vector helpers, complete
+    open-array API, scope/caller/userdata services, and disable state are
+    implemented. Optional pre-standard Annex H.13 compatibility is omitted.
+50. **D8 — DPI library loading (Annex J), completed.** `-sv_root`,
+    `-sv_liblist`, and `-sv_lib` implement root-relative discovery,
+    bootstrap-before-direct ordering, `.so` extension handling, and duplicate
+    suppression. Positional shared-library inputs remain supported; wasm32
+    rejects foreign-library loading explicitly.
 
 ## Optional non-standard annex tail
 

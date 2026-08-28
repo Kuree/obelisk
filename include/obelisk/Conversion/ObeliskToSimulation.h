@@ -37,6 +37,8 @@ enum class DPIABIKind : uint32_t {
   Chandle = 9,
   ShortReal = 10,
   Real = 11,
+  OpenArray = 12,
+  UnpackedAggregate = 13,
 };
 
 struct DPIABIType {
@@ -47,6 +49,11 @@ struct DPIABIType {
 
   bool isVector() const {
     return kind == DPIABIKind::BitVector || kind == DPIABIKind::LogicVector;
+  }
+
+  bool isIndirect() const {
+    return isVector() || kind == DPIABIKind::OpenArray ||
+           kind == DPIABIKind::UnpackedAggregate;
   }
 };
 

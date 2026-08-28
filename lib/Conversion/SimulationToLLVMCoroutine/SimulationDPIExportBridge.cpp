@@ -32,12 +32,13 @@ constexpr StringLiteral kExportBridgeAttr = "obelisk_sim.dpi_export_bridge";
 constexpr StringLiteral kExportBodySymbolAttr =
     "obelisk_sim.dpi_export_body_symbol";
 constexpr StringLiteral kLogicalInputsAttr = "obelisk_sim.dpi_logical_inputs";
-constexpr std::array<StringLiteral, 6> kExportMetadata = {
+constexpr std::array<StringLiteral, 7> kExportMetadata = {
     kExportAttr,
     "obelisk_sim.dpi_c_identifier",
     "obelisk_sim.dpi_scope_id",
     "obelisk_sim.dpi_export_id",
     "obelisk_sim.dpi_abi_signature",
+    "obelisk_sim.dpi_aggregate_layouts",
     kLogicalInputsAttr,
 };
 
@@ -168,10 +169,11 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     return lhs.getSymName() < rhs.getSymName();
   });
   for (sim::SimFuncOp function : exports) {
-    if (function.getEntryKind() != sim::EntryKind::Function ||
+    bool task = function.getEntryKind() == sim::EntryKind::Task;
+    if ((!task && function.getEntryKind() != sim::EntryKind::Function) ||
         function.isExternal())
       return function.emitOpError(
-          "DPI export must be a defined zero-time function");
+          "DPI export must be a defined function or task");
     auto logicalInputs =
         function->getAttrOfType<IntegerAttr>(kLogicalInputsAttr);
     if (!logicalInputs || logicalInputs.getValue().isNegative() ||
@@ -212,10 +214,25 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     }
 
     unsigned bridgeInputs = static_cast<unsigned>(inputCount + 1);
+    if (task) {
+      // Task output/inout formals carry an additional destination reference.
+      // Keep every leading context/formal capture on the capture-free bridge;
+      // only scope descriptors are reconstructed below.
+      bridgeInputs = 0;
+      for (unsigned index = 0; index != function.getNumArguments(); ++index) {
+        auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
+            function.getArgAttr(index, sim::metadata::captureKind));
+        if (!kind || (kind.getValue() != sim::CaptureKind::Context &&
+                      kind.getValue() != sim::CaptureKind::Formal))
+          break;
+        ++bridgeInputs;
+      }
+    }
     SmallVector<Type> inputs(
         function.getArgumentTypes().take_front(bridgeInputs));
-    FunctionType type = FunctionType::get(module.getContext(), inputs,
-                                          function.getResultTypes());
+    FunctionType type =
+        FunctionType::get(module.getContext(), inputs,
+                          task ? TypeRange{} : function.getResultTypes());
     SmallVector<DictionaryAttr> argAttrs;
     argAttrs.reserve(bridgeInputs);
     for (unsigned index = 0; index != bridgeInputs; ++index)
@@ -232,6 +249,8 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
       attrs.append(attr);
     }
     attrs.set(kExportBridgeAttr, UnitAttr::get(module.getContext()));
+    if (task)
+      attrs.set("obelisk_sim.dpi_task", UnitAttr::get(module.getContext()));
     attrs.set(kExportBodySymbolAttr,
               StringAttr::get(module.getContext(), function.getSymName()));
     attrs.set("code_unit_id",
@@ -241,13 +260,15 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     builder.setInsertionPointAfter(function);
     sim::SimCodeUnitDeclOp::create(
         builder, function.getLoc(), codeUnitID,
-        sourceDeclaration->second.getScopeId(), sim::EntryKind::Function,
+        sourceDeclaration->second.getScopeId(),
+        task ? sim::EntryKind::Task : sim::EntryKind::Function,
         builder.getStringAttr(symbol),
         builder.getStringAttr("scope-specific DPI export bridge"),
         builder.getUnitAttr());
-    auto bridge = sim::SimFuncOp::create(builder, function.getLoc(), symbol,
-                                         type, sim::EntryKind::Function,
-                                         attrs.getAttrs(), argAttrs);
+    auto bridge = sim::SimFuncOp::create(
+        builder, function.getLoc(), symbol, type,
+        task ? sim::EntryKind::Task : sim::EntryKind::Function,
+        attrs.getAttrs(), argAttrs);
     siblingSymbols.insert(siblingKey);
     bridge.setVisibility(SymbolTable::Visibility::Private);
     Block *entry = &bridge.getBody().front();
@@ -266,11 +287,23 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
       }
       operands.push_back(*capture);
     }
-    auto call = sim::SimCallOp::create(
-        builder, function.getLoc(), function.getResultTypes(),
-        FlatSymbolRefAttr::get(module.getContext(), function.getSymName()),
-        operands, ArrayAttr{}, ArrayAttr{});
-    sim::SimReturnOp::create(builder, function.getLoc(), call.getResults());
+    if (task) {
+      Block *continuation = new Block;
+      bridge.getBody().push_back(continuation);
+      sim::SimTaskCallOp::create(
+          builder, function.getLoc(),
+          FlatSymbolRefAttr::get(module.getContext(), function.getSymName()),
+          operands, builder.getI64IntegerAttr(operands.size()),
+          sim::ContinuationSiteAttr{}, continuation);
+      builder.setInsertionPointToStart(continuation);
+      sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
+    } else {
+      auto call = sim::SimCallOp::create(
+          builder, function.getLoc(), function.getResultTypes(),
+          FlatSymbolRefAttr::get(module.getContext(), function.getSymName()),
+          operands, ArrayAttr{}, ArrayAttr{});
+      sim::SimReturnOp::create(builder, function.getLoc(), call.getResults());
+    }
     // Only the capture-free bridge is externally reachable. Keeping the
     // marker on both functions would create duplicate scope registrations;
     // the ordinary body remains reachable through this bridge and internal

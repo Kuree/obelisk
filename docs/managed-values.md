@@ -131,5 +131,8 @@ the path detaches onto private storage with the last referenced value. Fixed
 arrays use bulk import/export for ordering methods so large arrays do not
 become wide per-element IR chains. Default untyped mailboxes store an exact
 type descriptor per message and can safely interleave heterogeneous payloads.
-DPI-C marshalling of managed containers remains outside the current boundary;
-VPI marshalling is excluded from the project target.
+DPI-C open-array marshalling covers dynamic arrays and queues in the backend,
+including recursive mixed shapes and managed string elements; pristine-Slang
+source XFAILs record the remaining legal frontend bindings. Associative
+arrays and mailboxes are outside the DPI boundary. VPI marshalling is excluded
+from the project target.

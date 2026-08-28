@@ -686,7 +686,8 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
         uint64_t transferSize =
             slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
         emitFrameTransfer(plan, LoadFrame, argument, slot.valueOffset,
-                          static_cast<uint32_t>(transferSize));
+                          static_cast<uint32_t>(transferSize),
+                          slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
         if (consumeRoots)
           for (const sim::ManagedHandleSlot &root : slot.managedRootSlots)
             emit({ClearFrameRoot,

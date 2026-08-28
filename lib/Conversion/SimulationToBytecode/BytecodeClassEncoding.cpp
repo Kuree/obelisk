@@ -211,7 +211,8 @@ Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
     uint64_t transferSize =
         slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
     emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
-                      static_cast<uint32_t>(transferSize));
+                      static_cast<uint32_t>(transferSize),
+                      slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
   }
 
   if (call.getSlot() > UINT32_MAX || call.getArguments().size() > UINT32_MAX ||

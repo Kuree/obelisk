@@ -29,7 +29,8 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       return operation.emitOpError(
           "canonical frame transfer exceeds the bytecode ABI limit");
     emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
-                      static_cast<uint32_t>(transferSize));
+                      static_cast<uint32_t>(transferSize),
+                      slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
   }
 
   uint32_t primaryCount = operation.getEdges().size();
@@ -130,8 +131,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
           dependenciesOffset + uint64_t{dependencyCursor} *
                                    sizeof(obelisk_rt_computed_dependency_v1);
       if (isa<sim::ManagedWatchType>(dependency.getType())) {
-        write32(bytes, entryOffset + 8,
-                OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
+        write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
         write32(bytes, entryOffset + 12, 1);
       } else if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
         (void)event;
@@ -197,8 +197,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       uint32_t transferSize =
           sim::isManagedHandleType(capture.getType())
               ? static_cast<uint32_t>(sizeof(uint64_t))
-              : static_cast<uint32_t>(
-                    sizeof(obelisk_rt_computed_capture_v1));
+              : static_cast<uint32_t>(sizeof(obelisk_rt_computed_capture_v1));
       emitFrameTransfer(plan, StoreFrame, capture,
                         suspension->waitOffset + capturesOffset +
                             uint64_t{captureCursor++} *
@@ -207,12 +206,11 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
     }
     for (Value dependency : binding.getDependencies()) {
       if (isa<sim::ManagedWatchType>(dependency.getType())) {
-        emitFrameTransfer(
-            plan, StoreFrame, dependency,
-            suspension->waitOffset + dependenciesOffset +
-                uint64_t{dependencyCursor++} *
-                    sizeof(obelisk_rt_computed_dependency_v1),
-            sizeof(uint64_t));
+        emitFrameTransfer(plan, StoreFrame, dependency,
+                          suspension->waitOffset + dependenciesOffset +
+                              uint64_t{dependencyCursor++} *
+                                  sizeof(obelisk_rt_computed_dependency_v1),
+                          sizeof(uint64_t));
         continue;
       }
       uint32_t stableID =
@@ -277,7 +275,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
       uint64_t transferSize =
           slot.storageSize * (slot.hasSecondaryStorage() ? 2 : 1);
       emitFrameTransfer(plan, StoreFrame, value, slot.valueOffset,
-                        static_cast<uint32_t>(transferSize));
+                        static_cast<uint32_t>(transferSize),
+                        slot.isFourState() ? slot.unknownOffset : UINT64_MAX);
     }
   if (suspension->waitSize < 32 || (suspension->waitSize - 32) % 16 != 0)
     return operation->emitOpError("wait record size does not match operands");
@@ -295,8 +294,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   plan.scratchSize = record.offset + record.size;
   plan.layouts.push_back(record);
   SmallVector<uint8_t> bytes(suspension->waitSize, 0);
-  bool signalWait = kind == OBELISK_RT_SUSPEND_CHANGE ||
-                    kind == OBELISK_RT_SUSPEND_EDGE;
+  bool signalWait =
+      kind == OBELISK_RT_SUSPEND_CHANGE || kind == OBELISK_RT_SUSPEND_EDGE;
   write32(bytes, 0, OBELISK_RT_VERSION);
   write32(bytes, 4, kind);
   write32(bytes, 8, flags);

@@ -1288,9 +1288,11 @@ UnitLowering::convertExplicitBitstreamToPacked(Value value, Type targetScalar,
 LLVM_ATTRIBUTE_NOINLINE FailureOr<Value>
 UnitLowering::convertFixedBitstreamTarget(Value value, Type targetType,
                                           Location location,
-                                          bool allowHiddenRoot) {
+                                          bool allowHiddenRoot,
+                                          bool dpiLayout) {
   std::optional<SmallVector<uint64_t>> plan =
-      sim::getFixedBitStreamImportPlan(targetType);
+      dpiLayout ? sim::getDPIAggregateBitStreamImportPlan(targetType)
+                : sim::getFixedBitStreamImportPlan(targetType);
   if (!plan)
     return failure();
   uint64_t width = (*plan)[3];

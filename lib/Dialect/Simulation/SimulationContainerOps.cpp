@@ -333,7 +333,7 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
 }
 
 static std::optional<SmallVector<uint64_t>>
-getFixedBitStreamPlanImpl(Type type, bool importing) {
+getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
   if (!isa<UnpackedArrayType, UnpackedStructType>(type))
     return std::nullopt;
 
@@ -359,14 +359,40 @@ getFixedBitStreamPlanImpl(Type type, bool importing) {
       records.append({opcode, offset, *width, 0, 0, *width});
       return *width;
     }
+    // Managed DPI leaves have stable 64-bit provenance storage even though
+    // they are not language-level packed values. Aggregate import/export uses
+    // this plan only as an internal transport; the owning aggregate remains a
+    // precise GC root for the duration of the transfer.
+    if (provenanceLayout && !isAggregateType(current)) {
+      std::optional<uint64_t> width = getProvenanceSpan(current);
+      if (!width || *width == 0)
+        return std::nullopt;
+      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_COPY}, offset,
+                      *width, 0, 0, *width});
+      return *width;
+    }
     if (auto array = dyn_cast<UnpackedArrayType>(current)) {
       uint64_t count = getAggregateNumElements(array);
       Type element = count ? getAggregateElementType(array, 0) : Type{};
       if (!count || !element)
         return std::nullopt;
+      uint64_t firstOffset = 0;
+      uint64_t stride = 0;
+      uint64_t provenanceSpan = 0;
+      if (provenanceLayout) {
+        auto first = getAggregateProvenanceSubelement(array, 0);
+        auto second = count > 1
+                          ? getAggregateProvenanceSubelement(array, 1)
+                          : std::optional<std::pair<uint64_t, uint64_t>>{};
+        if (!first)
+          return std::nullopt;
+        firstOffset = first->first;
+        stride = second ? second->first - first->first : first->second;
+        provenanceSpan = first->second;
+      }
       size_t record = records.size();
-      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT}, offset,
-                      count, 0, 0, 0});
+      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT},
+                      offset + firstOffset, count, stride, provenanceSpan, 0});
       size_t bodyStart = records.size();
       std::optional<uint64_t> childWidth = append(element, 0, depth + 1);
       if (!childWidth)
@@ -377,8 +403,10 @@ getFixedBitStreamPlanImpl(Type type, bool importing) {
           *childWidth > std::numeric_limits<uint64_t>::max() / count)
         return std::nullopt;
       records[record] |= bodyRecords << 32;
-      records[record + 3] = *childWidth;
-      records[record + 4] = *childWidth;
+      if (!provenanceLayout) {
+        records[record + 3] = *childWidth;
+        records[record + 4] = *childWidth;
+      }
       records[record + 5] = *childWidth;
       return *childWidth * count;
     }
@@ -388,11 +416,18 @@ getFixedBitStreamPlanImpl(Type type, bool importing) {
     uint64_t total = 0;
     for (unsigned ordinal = 0, end = getAggregateNumElements(structure);
          ordinal != end; ++ordinal) {
-      if (total > std::numeric_limits<uint64_t>::max() - offset)
+      uint64_t childOffset = total;
+      if (provenanceLayout) {
+        auto provenance = getAggregateProvenanceSubelement(structure, ordinal);
+        if (!provenance)
+          return std::nullopt;
+        childOffset = provenance->first;
+      }
+      if (childOffset > UINT64_MAX - offset)
         return std::nullopt;
       std::optional<uint64_t> child =
-          append(getAggregateElementType(structure, ordinal), offset + total,
-                 depth + 1);
+          append(getAggregateElementType(structure, ordinal),
+                 offset + childOffset, depth + 1);
       if (!child || *child > std::numeric_limits<uint64_t>::max() - total)
         return std::nullopt;
       total += *child;
@@ -403,7 +438,8 @@ getFixedBitStreamPlanImpl(Type type, bool importing) {
   if (!outputWidth)
     return std::nullopt;
   std::optional<uint64_t> sourceSpan = getProvenanceSpan(type);
-  if (!sourceSpan || *outputWidth != *sourceSpan || records.empty() ||
+  if (!sourceSpan || (!provenanceLayout && *outputWidth != *sourceSpan) ||
+      records.empty() ||
       records.size() % OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS != 0)
     return std::nullopt;
   uint64_t recordCount =
@@ -417,11 +453,20 @@ getFixedBitStreamPlanImpl(Type type, bool importing) {
 }
 
 std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
-  return getFixedBitStreamPlanImpl(type, false);
+  return getFixedBitStreamPlanImpl(type, false, false);
 }
 
 std::optional<SmallVector<uint64_t>> getFixedBitStreamImportPlan(Type type) {
-  return getFixedBitStreamPlanImpl(type, true);
+  return getFixedBitStreamPlanImpl(type, true, false);
+}
+
+std::optional<SmallVector<uint64_t>> getDPIAggregateBitStreamPlan(Type type) {
+  return getFixedBitStreamPlanImpl(type, false, true);
+}
+
+std::optional<SmallVector<uint64_t>>
+getDPIAggregateBitStreamImportPlan(Type type) {
+  return getFixedBitStreamPlanImpl(type, true, true);
 }
 
 uint64_t getClassBitStreamGroupID(ClassHandleType type, bool allowHiddenRoot) {
@@ -1177,8 +1222,7 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
                     OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
   if (objectPlan) {
     ModuleOp module = (*this)->getParentOfType<ModuleOp>();
-    if (!module ||
-        !module->hasAttr(sim::metadata::classBitstreamSourceFeature))
+    if (!module || !module->hasAttr(sim::metadata::classBitstreamSourceFeature))
       return emitOpError(
           "object plan requires the class bit-stream source feature marker");
   }

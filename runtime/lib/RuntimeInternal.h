@@ -1067,10 +1067,31 @@ struct ActiveDpiCall {
   std::string callerFile;
   uint32_t callerLine = 0;
   obelisk_rt_status exportStatus = OBELISK_RT_OK;
+  uint32_t importFlags = 0;
+  bool disabledState = false;
+  bool disableAcknowledged = false;
   ActiveDpiCall *previous = nullptr;
 };
 
 extern thread_local ActiveDpiCall *activeDpiCall;
+
+// The bytecode interpreter is always linked, while DPI aggregate marshalling
+// is pay-for-play. A DPI bytecode feature anchor installs these pointers;
+// ordinary designs retain null pointers and no undefined DPI symbols.
+extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_pack)
+    designBytecodeDpiOpenAggregatePack;
+extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_unpack)
+    designBytecodeDpiOpenAggregateUnpack;
+extern decltype(&obelisk_rt_v1_dpi_aggregate_pack)
+    designBytecodeDpiAggregatePack;
+extern decltype(&obelisk_rt_v1_dpi_aggregate_unpack)
+    designBytecodeDpiAggregateUnpack;
+extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_roots_push)
+    designBytecodeDpiOpenAggregateRootsPush;
+extern decltype(&obelisk_rt_v1_dpi_aggregate_roots_pop)
+    designBytecodeDpiAggregateRootsPop;
+extern decltype(&obelisk_rt_v1_dpi_aggregate_state_alloc)
+    designBytecodeDpiAggregateStateAlloc;
 
 class ManagedHeap;
 
@@ -1436,6 +1457,11 @@ struct obelisk_rt_context {
   uint64_t activeLogicalProcessToken = 0;
   uint64_t activeProgramOwner = 0;
   bool controlEscapePending = false;
+  // Cold Clause 35.9 bookkeeping for the one exported task currently being
+  // serviced by a nested scheduler. Ordinary scheduler dispatch never reads
+  // these fields.
+  uint64_t activeDpiExportTaskLogical = 0;
+  bool activeDpiExportTaskDisabled = false;
   // Bytecode tasks are removed from the scheduler vector while executing.
   // Preserve their logical parent so ancestor-directed process control can
   // still identify that the active activation belongs to the target tree.
@@ -1924,10 +1950,12 @@ obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
 // still uses the ordinary allocator and updates all accounting; a subsequent
 // ordinary allocation observes the collection threshold.
 OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-obelisk_rt_managed_allocate_without_safepoint(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
-    uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
-    obelisk_rt_object_v1 **outObject);
+obelisk_rt_managed_allocate_without_safepoint(obelisk_rt_gc_lane_v1 *lane,
+                                              obelisk_rt_managed_kind_v1 kind,
+                                              uint64_t extent,
+                                              uint64_t alignment,
+                                              const void *runtimeDescriptor,
+                                              obelisk_rt_object_v1 **outObject);
 obelisk_rt_status
 obelisk_rt_managed_object_access(obelisk_rt_object_v1 *object,
                                  obelisk_rt_managed_kind_v1 expectedKind,
@@ -2195,6 +2223,17 @@ obelisk_rt_status obelisk_rt_execute_design_export(
     obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
     uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
     uint32_t outputCount) noexcept;
+obelisk_rt_status obelisk_rt_execute_design_export_task(
+    const obelisk_rt_execution_descriptor_v1 &execution,
+    const obelisk_rt_export_descriptor_v1 &descriptor,
+    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
+    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+    uint32_t outputCount, const uint8_t *directions,
+    const int64_t *const *aggregatePlans,
+    const uint64_t *aggregatePlanWords) noexcept;
+obelisk_rt_status
+obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
+                                       uint64_t logical) noexcept;
 obelisk_rt_status
 obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
 

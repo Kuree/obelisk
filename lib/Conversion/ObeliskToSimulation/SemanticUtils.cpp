@@ -722,6 +722,13 @@ static FailureOr<Type> normalizeType(Type type, Location location,
       return failure();
     return sim::DynamicArrayType::get(context, *element);
   }
+  if (auto array = dyn_cast<semantic::OpenArrayType>(type)) {
+    FailureOr<Type> element = normalizeType(array.getElementType(), location,
+                                            /*allowRealScalar=*/true);
+    if (failed(element))
+      return failure();
+    return sim::DPIOpenArrayType::get(context, *element, array.getIsPacked());
+  }
   if (auto queue = dyn_cast<semantic::QueueType>(type)) {
     FailureOr<Type> element = normalizeType(queue.getElementType(), location,
                                             /*allowRealScalar=*/true);
@@ -944,9 +951,54 @@ namespace obelisk {
 FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   using namespace simlowering;
   namespace semantic = ::obelisk::ir;
+  // A formal is an open array when any packed or unpacked dimension is
+  // unsized. The open dimension can be nested below sized dimensions, but the
+  // whole formal is still passed as one svOpenArrayHandle.
+  std::function<Type(Type)> findOpenElement = [&](Type current) -> Type {
+    if (auto array = dyn_cast<semantic::OpenArrayType>(current)) {
+      current = array.getElementType();
+      while (true) {
+        Type next = llvm::TypeSwitch<Type, Type>(current)
+                        .Case<semantic::RangedPackedArrayType,
+                              semantic::RangedUnpackedArrayType,
+                              semantic::PackedArrayType,
+                              semantic::UnpackedArrayType,
+                              semantic::OpenArrayType>(
+                            [](auto nested) {
+                              return nested.getElementType();
+                            })
+                        .Default([](Type) { return Type{}; });
+        if (!next)
+          return current;
+        current = next;
+      }
+    }
+    if (auto array = dyn_cast<semantic::RangedPackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    if (auto array = dyn_cast<semantic::PackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    if (auto array = dyn_cast<semantic::UnpackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    if (auto array = dyn_cast<sim::DPIOpenArrayType>(current))
+      return array.getElementType();
+    if (auto array = dyn_cast<sim::PackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(current))
+      return findOpenElement(array.getElementType());
+    return {};
+  };
+  if (Type element = findOpenElement(type)) {
+    FailureOr<DPIABIType> classified =
+        classifyDPIABIType(element, location);
+    if (failed(classified))
+      return failure();
+    return DPIABIType{DPIABIKind::OpenArray, classified->width,
+                      classified->fourState, false};
+  }
   if (isa<semantic::DynArrayType, semantic::QueueType, semantic::AssocArrayType,
-          semantic::OpenArrayType, sim::DynamicArrayType, sim::QueueType,
-          sim::AssocArrayType>(type)) {
+          sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
     emitError(location)
         << "DPI-C dynamic-array, queue, and associative-array marshalling is "
            "unsupported";
@@ -1009,6 +1061,89 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
                       integral.getIsFourState(), integral.getIsSigned()};
   }
 
+  bool unpackedArray =
+      isa<semantic::RangedUnpackedArrayType, semantic::UnpackedArrayType,
+          sim::UnpackedArrayType>(type);
+  bool unpackedStruct =
+      isa<semantic::UnpackedStructType, sim::UnpackedStructType>(type);
+  bool unpackedUnion =
+      isa<semantic::UnpackedUnionType, sim::UnpackedUnionType>(type);
+  if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+    unpackedStruct = !aggregate.getIsPacked() && !aggregate.getIsUnion();
+    unpackedUnion = !aggregate.getIsPacked() && aggregate.getIsUnion();
+  }
+  if (unpackedUnion) {
+    emitError(location)
+        << "DPI-C permits unions in formal aggregate types only when packed";
+    return failure();
+  }
+  if (unpackedArray || unpackedStruct) {
+    std::optional<uint64_t> width;
+    bool normalizedAggregate =
+        isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type);
+    if (normalizedAggregate)
+      width = sim::getProvenanceSpan(type);
+    bool aggregateFourState = false;
+    uint64_t semanticWidth = 0;
+    auto validateChild = [&](Type child, uint64_t count = 1) -> LogicalResult {
+      FailureOr<DPIABIType> childABI = classifyDPIABIType(child, location);
+      if (failed(childABI))
+        return failure();
+      aggregateFourState |= childABI->fourState;
+      if (!normalizedAggregate) {
+        if (count != 0 && childABI->width > UINT64_MAX / count)
+          return failure();
+        uint64_t contribution = uint64_t{childABI->width} * count;
+        if (semanticWidth > UINT64_MAX - contribution)
+          return failure();
+        semanticWidth += contribution;
+      }
+      return success();
+    };
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+      std::optional<uint64_t> count =
+          getRangeExtent(array.getLeft(), array.getRight());
+      if (!count || failed(validateChild(array.getElementType(), *count)))
+        return failure();
+    } else if (auto array = dyn_cast<semantic::UnpackedArrayType>(type)) {
+      if (failed(validateChild(array.getElementType(), array.getSize())))
+        return failure();
+    } else if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+      if (failed(validateChild(array.getElementType())))
+        return failure();
+    } else if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+      for (Attribute fieldAttr : aggregate.getFields()) {
+        auto field = dyn_cast<DictionaryAttr>(fieldAttr);
+        auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        if (!fieldType || failed(validateChild(fieldType.getValue())))
+          return failure();
+      }
+    } else if (auto structure = dyn_cast<semantic::UnpackedStructType>(type)) {
+      for (NamedAttribute field : structure.getFields()) {
+        auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+        if (!fieldType || failed(validateChild(fieldType.getValue())))
+          return failure();
+      }
+    } else {
+      for (Attribute fieldAttr :
+           cast<sim::UnpackedStructType>(type).getFields()) {
+        auto field = dyn_cast<sim::FieldAttr>(fieldAttr);
+        if (!field || failed(validateChild(field.getType())))
+          return failure();
+      }
+    }
+    if (!normalizedAggregate)
+      width = semanticWidth;
+    if (!width || *width == 0 ||
+        *width > std::numeric_limits<uint32_t>::max()) {
+      emitError(location)
+          << "DPI sized aggregate has no bounded transport representation";
+      return failure();
+    }
+    return DPIABIType{DPIABIKind::UnpackedAggregate,
+                      static_cast<uint32_t>(*width), aggregateFourState, false};
+  }
+
   std::optional<uint64_t> width = getSemanticPackedWidth(type);
   bool packedAggregate =
       isa<semantic::RangedPackedArrayType, semantic::PackedArrayType,
@@ -1027,6 +1162,299 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
   return DPIABIType{fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
                     static_cast<uint32_t>(*width), fourState,
                     simlowering::isSignedSemanticType(type)};
+}
+
+FailureOr<sim::DPIAggregateABIAttr>
+simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
+                                 Location location, Builder &builder,
+                                 bool compactTransport) {
+  namespace semantic = ::obelisk::ir;
+  struct Node {
+    bool array = false;
+    bool descending = false;
+    uint64_t count = 0;
+    Type element;
+    SmallVector<Type> fields;
+  };
+  struct Shape {
+    uint64_t size = 0;
+    uint64_t alignment = 1;
+  };
+  auto alignTo = [](uint64_t value,
+                    uint64_t alignment) -> std::optional<uint64_t> {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        value > UINT64_MAX - alignment + 1)
+      return std::nullopt;
+    return (value + alignment - 1) & ~(alignment - 1);
+  };
+  auto node = [](Type type) -> FailureOr<Node> {
+    Node result;
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
+      int64_t left = array.getLeft(), right = array.getRight();
+      uint64_t distance =
+          left >= right
+              ? static_cast<uint64_t>(left) - static_cast<uint64_t>(right)
+              : static_cast<uint64_t>(right) - static_cast<uint64_t>(left);
+      if (distance == UINT64_MAX)
+        return failure();
+      result.array = true;
+      result.descending = left > right;
+      result.count = distance + 1;
+      result.element = array.getElementType();
+    } else if (auto array = dyn_cast<semantic::UnpackedArrayType>(type)) {
+      if (array.getSize() == 0)
+        return failure();
+      result.array = true;
+      result.count = array.getSize();
+      result.element = array.getElementType();
+    } else if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+      if (aggregate.getIsPacked())
+        return result;
+      if (aggregate.getIsUnion())
+        return failure();
+      for (Attribute attribute : aggregate.getFields()) {
+        auto field = dyn_cast<DictionaryAttr>(attribute);
+        auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        if (!typeAttr)
+          return failure();
+        result.fields.push_back(typeAttr.getValue());
+      }
+    } else if (auto structure = dyn_cast<semantic::UnpackedStructType>(type)) {
+      for (NamedAttribute field : structure.getFields()) {
+        auto typeAttr = dyn_cast<TypeAttr>(field.getValue());
+        if (!typeAttr)
+          return failure();
+        result.fields.push_back(typeAttr.getValue());
+      }
+    }
+    return result;
+  };
+  auto leafShape = [&](Type type) -> FailureOr<Shape> {
+    FailureOr<DPIABIType> abi = classifyDPIABIType(type, location);
+    if (failed(abi) || abi->kind == DPIABIKind::OpenArray ||
+        abi->kind == DPIABIKind::UnpackedAggregate)
+      return failure();
+    switch (abi->kind) {
+    case DPIABIKind::Bit:
+    case DPIABIKind::Logic:
+    case DPIABIKind::Byte:
+      return Shape{1, 1};
+    case DPIABIKind::ShortInt:
+      return Shape{2, 2};
+    case DPIABIKind::Int:
+    case DPIABIKind::ShortReal:
+      return Shape{4, 4};
+    case DPIABIKind::LongInt:
+    case DPIABIKind::Real:
+    case DPIABIKind::String:
+    case DPIABIKind::Chandle:
+      return Shape{8, 8};
+    case DPIABIKind::BitVector:
+      return Shape{((uint64_t{abi->width} + 31) / 32) * 4, 4};
+    case DPIABIKind::LogicVector:
+      return Shape{((uint64_t{abi->width} + 31) / 32) * 8, 4};
+    case DPIABIKind::OpenArray:
+    case DPIABIKind::UnpackedAggregate:
+      return failure();
+    }
+    return failure();
+  };
+  DenseMap<Type, std::optional<Shape>> shapeCache;
+  std::function<FailureOr<Shape>(Type)> shape =
+      [&](Type type) -> FailureOr<Shape> {
+    auto [cached, inserted] = shapeCache.try_emplace(type, std::nullopt);
+    if (!inserted) {
+      if (cached->second)
+        return *cached->second;
+      return failure();
+    }
+    auto finish = [&](Shape result) -> FailureOr<Shape> {
+      cached->second = result;
+      return result;
+    };
+    FailureOr<Node> current = node(type);
+    if (failed(current))
+      return failure();
+    if (current->array) {
+      FailureOr<Shape> element = shape(current->element);
+      if (failed(element) || element->size > UINT64_MAX / current->count)
+        return failure();
+      return finish(
+          Shape{element->size * current->count, element->alignment});
+    }
+    if (current->fields.empty()) {
+      FailureOr<Shape> leaf = leafShape(type);
+      if (failed(leaf))
+        return failure();
+      return finish(*leaf);
+    }
+    Shape result;
+    for (Type fieldType : current->fields) {
+      FailureOr<Shape> field = shape(fieldType);
+      if (failed(field))
+        return failure();
+      std::optional<uint64_t> offset = alignTo(result.size, field->alignment);
+      if (!offset || field->size > UINT64_MAX - *offset)
+        return failure();
+      result.size = *offset + field->size;
+      result.alignment = std::max(result.alignment, field->alignment);
+    }
+    std::optional<uint64_t> final = alignTo(result.size, result.alignment);
+    if (!final)
+      return failure();
+    result.size = *final;
+    return finish(result);
+  };
+  DenseMap<Type, std::optional<uint64_t>> compactWidthCache;
+  std::function<std::optional<uint64_t>(Type)> compactWidth =
+      [&](Type type) -> std::optional<uint64_t> {
+    auto [cached, inserted] =
+        compactWidthCache.try_emplace(type, std::nullopt);
+    if (!inserted)
+      return cached->second;
+    auto finish = [&](uint64_t result) -> std::optional<uint64_t> {
+      cached->second = result;
+      return result;
+    };
+    FailureOr<Node> current = node(type);
+    if (failed(current))
+      return std::nullopt;
+    if (current->array) {
+      std::optional<uint64_t> element = compactWidth(current->element);
+      if (!element || *element > UINT64_MAX / current->count)
+        return std::nullopt;
+      return finish(*element * current->count);
+    }
+    if (!current->fields.empty()) {
+      uint64_t total = 0;
+      for (Type field : current->fields) {
+        std::optional<uint64_t> width = compactWidth(field);
+        if (!width || *width > UINT64_MAX - total)
+          return std::nullopt;
+        total += *width;
+      }
+      return finish(total);
+    }
+    FailureOr<DPIABIType> abi = classifyDPIABIType(type, location);
+    return succeeded(abi) ? finish(abi->width) : std::nullopt;
+  };
+  FailureOr<Shape> cShape = shape(semanticType);
+  if (failed(cShape) || cShape->size == 0 || cShape->size > INT64_MAX ||
+      cShape->alignment > UINT32_MAX)
+    return emitError(location)
+               << "DPI aggregate C layout is not representable for "
+               << semanticType,
+           failure();
+  SmallVector<int64_t> records;
+  uint64_t stringCount = 0;
+  std::function<LogicalResult(Type, Type, uint64_t, uint64_t)> emit =
+      [&](Type source, Type normalized, uint64_t bitBase,
+          uint64_t byteBase) -> LogicalResult {
+    FailureOr<Node> current = node(source);
+    if (failed(current))
+      return failure();
+    if (current->array || !current->fields.empty()) {
+      uint64_t count = current->array ? current->count : current->fields.size();
+      if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(normalized) ||
+          sim::getAggregateNumElements(normalized) != count)
+        return failure();
+      if (current->array) {
+        FailureOr<Shape> elementShape = shape(current->element);
+        std::optional<uint64_t> compactElement =
+            compactTransport ? compactWidth(current->element) : std::nullopt;
+        uint64_t firstOrdinal = current->descending ? count - 1 : 0;
+        auto locationOf = [&](uint64_t ordinal)
+            -> std::optional<std::pair<uint64_t, uint64_t>> {
+          if (!compactTransport)
+            return sim::getAggregateProvenanceSubelement(
+                normalized, static_cast<unsigned>(ordinal));
+          if (!compactElement || ordinal >= count ||
+              count - 1 - ordinal > UINT64_MAX / *compactElement)
+            return std::nullopt;
+          return std::pair<uint64_t, uint64_t>{
+              (count - 1 - ordinal) * *compactElement, *compactElement};
+        };
+        auto first = locationOf(firstOrdinal);
+        auto second =
+            count > 1 ? locationOf(current->descending ? firstOrdinal - 1 : 1)
+                      : std::optional<std::pair<uint64_t, uint64_t>>{};
+        if (failed(elementShape) || !first)
+          return failure();
+        int64_t stride = second ? static_cast<int64_t>(second->first) -
+                                      static_cast<int64_t>(first->first)
+                                : static_cast<int64_t>(first->second);
+        size_t repeat = records.size();
+        records.append({1, static_cast<int64_t>(bitBase + first->first),
+                        static_cast<int64_t>(byteBase),
+                        static_cast<int64_t>(count), stride,
+                        static_cast<int64_t>(elementShape->size), 0, 0});
+        size_t bodyStart = records.size();
+        uint64_t stringsBefore = stringCount;
+        if (failed(emit(current->element,
+                        sim::getAggregateElementType(
+                            normalized, static_cast<unsigned>(firstOrdinal)),
+                        0, 0)))
+          return failure();
+        uint64_t bodyRecords = (records.size() - bodyStart) / 8;
+        uint64_t bodyStrings = stringCount - stringsBefore;
+        if (bodyRecords == 0 || bodyRecords > INT64_MAX ||
+            (bodyStrings && count > (UINT64_MAX - stringsBefore) / bodyStrings))
+          return failure();
+        stringCount = stringsBefore + bodyStrings * count;
+        records[repeat + 7] = static_cast<int64_t>(bodyRecords);
+        return success();
+      }
+      uint64_t cursor = 0;
+      std::optional<uint64_t> compactCursor =
+          compactTransport ? compactWidth(source) : std::nullopt;
+      if (compactTransport && !compactCursor)
+        return failure();
+      for (auto [ordinal, field] : llvm::enumerate(current->fields)) {
+        FailureOr<Shape> fieldShape = shape(field);
+        auto provenance = sim::getAggregateProvenanceSubelement(
+            normalized, static_cast<unsigned>(ordinal));
+        std::optional<uint64_t> fieldBits =
+            compactTransport ? compactWidth(field) : std::nullopt;
+        if (failed(fieldShape) || !provenance ||
+            (compactTransport && (!fieldBits || *fieldBits > *compactCursor)))
+          return failure();
+        if (compactTransport)
+          *compactCursor -= *fieldBits;
+        std::optional<uint64_t> offset = alignTo(cursor, fieldShape->alignment);
+        if (!offset ||
+            failed(emit(field,
+                        sim::getAggregateElementType(normalized, ordinal),
+                        bitBase + (compactTransport ? *compactCursor
+                                                    : provenance->first),
+                        byteBase + *offset)))
+          return failure();
+        cursor = *offset + fieldShape->size;
+      }
+      return success();
+    }
+    FailureOr<DPIABIType> abi = classifyDPIABIType(source, location);
+    if (failed(abi) || abi->kind == DPIABIKind::OpenArray ||
+        abi->kind == DPIABIKind::UnpackedAggregate || bitBase > INT64_MAX ||
+        byteBase > INT64_MAX)
+      return failure();
+    if (abi->kind == DPIABIKind::String) {
+      if (stringCount == UINT64_MAX)
+        return failure();
+      ++stringCount;
+    }
+    records.append(
+        {0, static_cast<int64_t>(bitBase), static_cast<int64_t>(byteBase),
+         static_cast<int64_t>(abi->kind), static_cast<int64_t>(abi->width),
+         abi->fourState ? 1 : 0, abi->isSigned ? 1 : 0, 0});
+    return success();
+  };
+  if (failed(emit(semanticType, normalizedType, 0, 0)))
+    return emitError(location) << "cannot construct DPI aggregate leaf layout",
+           failure();
+  return sim::DPIAggregateABIAttr::get(builder.getContext(), cShape->size,
+                                       static_cast<uint32_t>(cShape->alignment),
+                                       stringCount,
+                                       builder.getDenseI64ArrayAttr(records));
 }
 
 StringRef getDPICTypeSpelling(const DPIABIType &type) {
@@ -1055,6 +1483,10 @@ StringRef getDPICTypeSpelling(const DPIABIType &type) {
     return "float";
   case DPIABIKind::Real:
     return "double";
+  case DPIABIKind::OpenArray:
+    return "svOpenArrayHandle";
+  case DPIABIKind::UnpackedAggregate:
+    llvm_unreachable("unpacked aggregate spelling requires a generated type");
   }
   llvm_unreachable("unknown DPI ABI kind");
 }

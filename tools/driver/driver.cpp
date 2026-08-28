@@ -29,11 +29,13 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Allocator.h"
@@ -68,6 +70,83 @@ static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
   WithColor::error(errs(), "obelisk") << message << '\n';
+}
+
+static std::string resolveSVLibraryPath(StringRef root, StringRef path,
+                                        bool appendExtension) {
+  SmallString<256> resolved;
+  if (!sys::path::is_absolute(path) && !root.empty()) {
+    resolved = root;
+    sys::path::append(resolved, path);
+  } else {
+    resolved = path;
+  }
+  if (appendExtension)
+    resolved += ".so";
+  sys::path::remove_dots(resolved, true);
+  return resolved.str().str();
+}
+
+static bool collectSVLibraryInputs(const InputArgList &args,
+                                   SmallVectorImpl<std::string> &libraries) {
+  SmallVector<std::string> bootstrapLibraries;
+  SmallVector<std::string> directLibraries;
+  std::string root;
+  for (const Arg *arg : args) {
+    if (arg->getOption().matches(OPT_sv_root)) {
+      root = arg->getValue();
+      continue;
+    }
+    if (arg->getOption().matches(OPT_sv_lib)) {
+      directLibraries.push_back(
+          resolveSVLibraryPath(root, arg->getValue(), true));
+      continue;
+    }
+    if (!arg->getOption().matches(OPT_sv_liblist))
+      continue;
+
+    std::string bootstrapPath =
+        resolveSVLibraryPath(root, arg->getValue(), false);
+    ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
+        MemoryBuffer::getFile(bootstrapPath, /*IsText=*/true);
+    if (!buffer) {
+      emitDriverError(Twine("could not read DPI bootstrap file '") +
+                      bootstrapPath + "': " + buffer.getError().message());
+      return false;
+    }
+    SmallVector<StringRef> lines;
+    (*buffer)->getBuffer().split(lines, '\n');
+    if (lines.empty() || lines.front().rtrim("\r") != "#!SV_LIBRARIES") {
+      emitDriverError(Twine("DPI bootstrap file '") + bootstrapPath +
+                      "' must begin with #!SV_LIBRARIES");
+      return false;
+    }
+    for (auto [lineNumber, original] :
+         llvm::enumerate(ArrayRef<StringRef>(lines).drop_front())) {
+      StringRef line = original.rtrim("\r");
+      StringRef trimmed = line.trim();
+      if (trimmed.empty() || trimmed.starts_with("#"))
+        continue;
+      if (line.empty() || (line.front() != ' ' && line.front() != '\t')) {
+        emitDriverError(Twine("DPI bootstrap file '") + bootstrapPath +
+                        "' line " + Twine(lineNumber + 2) +
+                        " must indent its library path");
+        return false;
+      }
+      bootstrapLibraries.push_back(resolveSVLibraryPath(root, trimmed, true));
+    }
+  }
+  llvm::StringSet<> seen;
+  auto appendUnique = [&](ArrayRef<std::string> candidates) {
+    for (const std::string &candidate : candidates)
+      if (seen.insert(candidate).second)
+        libraries.push_back(candidate);
+  };
+  // Annex J gives bootstrap entries precedence over direct -sv_lib entries,
+  // independent of where their options occur on the command line.
+  appendUnique(bootstrapLibraries);
+  appendUnique(directLibraries);
+  return true;
 }
 
 // Command files are the delivery format for real testbenches, and every other
@@ -306,33 +385,185 @@ static bool parseUnsignedOption(const ArgList &args, OptSpecifier option,
 
 struct DPIHeaderType {
   std::string spelling;
+  std::string suffix;
   bool vector = false;
+  bool openArray = false;
+  bool aggregate = false;
 };
 
-static FailureOr<DPIHeaderType> getDPIHeaderType(mlir::Type type,
-                                                 Location location) {
-  FailureOr<obelisk::DPIABIType> abi =
-      obelisk::classifyDPIABIType(type, location);
-  if (failed(abi))
-    return failure();
-  return DPIHeaderType{obelisk::getDPICTypeSpelling(*abi).str(),
-                       abi->isVector()};
-}
+class DPIHeaderTypes {
+public:
+  void reserveIdentifier(StringRef identifier) {
+    reservedIdentifiers.insert(identifier);
+  }
+
+  FailureOr<DPIHeaderType> get(mlir::Type type, Location location) {
+    FailureOr<obelisk::DPIABIType> abi =
+        obelisk::classifyDPIABIType(type, location);
+    if (failed(abi))
+      return failure();
+    if (abi->kind != obelisk::DPIABIKind::UnpackedAggregate) {
+      std::string suffix;
+      if (abi->isVector())
+        suffix = ("[" + Twine((uint64_t{abi->width} + 31) / 32) + "]").str();
+      return DPIHeaderType{obelisk::getDPICTypeSpelling(*abi).str(), suffix,
+                           abi->isVector(),
+                           abi->kind == obelisk::DPIABIKind::OpenArray, false};
+    }
+    SmallVector<uint64_t> dimensions;
+    while (true) {
+      if (auto array = dyn_cast<obelisk::ir::RangedUnpackedArrayType>(type)) {
+        uint64_t left = static_cast<uint64_t>(array.getLeft());
+        uint64_t right = static_cast<uint64_t>(array.getRight());
+        uint64_t distance =
+            array.getLeft() >= array.getRight() ? left - right : right - left;
+        if (distance == UINT64_MAX) {
+          emitError(location) << "DPI array extent is not representable";
+          return failure();
+        }
+        dimensions.push_back(distance + 1);
+        type = array.getElementType();
+        continue;
+      }
+      if (auto array = dyn_cast<obelisk::ir::UnpackedArrayType>(type)) {
+        dimensions.push_back(array.getSize());
+        type = array.getElementType();
+        continue;
+      }
+      break;
+    }
+    if (!dimensions.empty()) {
+      FailureOr<DPIHeaderType> element = get(type, location);
+      if (failed(element) || element->openArray)
+        return failure();
+      std::string suffix;
+      for (uint64_t dimension : dimensions)
+        suffix += ("[" + Twine(dimension) + "]").str();
+      suffix += element->suffix;
+      return DPIHeaderType{element->spelling, suffix, false, false, true};
+    }
+
+    auto aggregate = dyn_cast<obelisk::ir::SourceAggregateType>(type);
+    if (!aggregate || aggregate.getIsPacked() || aggregate.getIsUnion()) {
+      emitError(location)
+          << "DPI header generation requires a named unpacked struct";
+      return failure();
+    }
+    auto found = names.find(type);
+    if (found != names.end())
+      return DPIHeaderType{found->second, {}, false, false, true};
+    std::string name = sanitize(aggregate.getName().getValue());
+    if (name.empty())
+      name = ("obelisk_dpi_struct_" + Twine(names.size())).str();
+    std::string baseName = name;
+    for (uint64_t suffix = 1;; ++suffix) {
+      auto collision = namedTypes.find(name);
+      if ((collision == namedTypes.end() || collision->second == type) &&
+          !reservedIdentifiers.contains(name))
+        break;
+      name = (baseName + "_" + Twine(suffix)).str();
+    }
+    names.try_emplace(type, name);
+    namedTypes.try_emplace(name, type);
+    std::string definition = "typedef struct " + name + " {\n";
+    llvm::StringSet<> fieldNames;
+    for (auto [fieldIndex, attribute] :
+         llvm::enumerate(aggregate.getFields())) {
+      auto field = dyn_cast<DictionaryAttr>(attribute);
+      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+      auto fieldName = field ? field.getAs<StringAttr>("name") : StringAttr{};
+      if (!fieldType || !fieldName) {
+        emitError(location) << "DPI struct has incomplete field metadata";
+        return failure();
+      }
+      FailureOr<DPIHeaderType> cField = get(fieldType.getValue(), location);
+      if (failed(cField) || cField->openArray) {
+        emitError(location) << "DPI struct field has no concrete C type";
+        return failure();
+      }
+      std::string cName = sanitize(fieldName.getValue());
+      if (cName.empty())
+        cName = ("obelisk_field_" + Twine(fieldIndex)).str();
+      std::string base = cName;
+      for (uint64_t suffix = 1; !fieldNames.insert(cName).second; ++suffix)
+        cName = (base + "_" + Twine(suffix)).str();
+      definition += "  " + cField->spelling + " " + cName + cField->suffix +
+                    ";\n";
+    }
+    definition += "} " + name + ";";
+    definitions.push_back(std::move(definition));
+    return DPIHeaderType{name, {}, false, false, true};
+  }
+
+  ArrayRef<std::string> getDefinitions() const { return definitions; }
+
+private:
+  static std::string sanitize(StringRef value) {
+    std::string result;
+    for (char character : value) {
+      bool valid = llvm::isAlnum(static_cast<unsigned char>(character)) ||
+                   character == '_';
+      result += valid ? character : '_';
+    }
+    if (!result.empty() && llvm::isDigit(result.front()))
+      result.insert(result.begin(), '_');
+    static constexpr StringLiteral keywords[] = {
+        "alignas",       "alignof",        "and",           "and_eq",
+        "asm",           "atomic_cancel",  "atomic_commit", "atomic_noexcept",
+        "auto",          "bitand",         "bitor",         "bool",
+        "break",         "case",           "catch",         "char",
+        "char8_t",       "char16_t",       "char32_t",      "class",
+        "co_await",      "co_return",      "co_yield",      "compl",
+        "concept",       "const",          "consteval",     "constexpr",
+        "constinit",     "const_cast",     "continue",      "contract_assert",
+        "decltype",      "default",        "delete",        "do",
+        "double",        "dynamic_cast",   "else",          "enum",
+        "explicit",      "export",         "extern",        "false",
+        "float",         "for",            "friend",        "goto",
+        "if",            "import",         "inline",        "int",
+        "long",          "module",         "mutable",       "namespace",
+        "new",           "noexcept",       "not",           "not_eq",
+        "nullptr",       "operator",       "or",            "or_eq",
+        "private",       "protected",      "public",        "reflexpr",
+        "register",      "reinterpret_cast", "requires",    "restrict",
+        "return",        "short",          "signed",        "sizeof",
+        "static",        "static_assert",  "static_cast",   "struct",
+        "switch",        "synchronized",   "template",      "this",
+        "thread_local",  "throw",          "true",          "try",
+        "typedef",       "typeid",          "typename",      "typeof",
+        "typeof_unqual", "union",          "unsigned",      "using",
+        "virtual",       "void",           "volatile",      "wchar_t",
+        "while",         "xor",            "xor_eq",        "_Alignas",
+        "_Alignof",      "_Atomic",        "_BitInt",       "_Bool",
+        "_Complex",      "_Decimal128",    "_Decimal32",    "_Decimal64",
+        "_Generic",      "_Imaginary",     "_Noreturn",     "_Static_assert",
+        "_Thread_local"};
+    if (llvm::is_contained(keywords, result))
+      result.insert(0, "obelisk_");
+    return result;
+  }
+
+  llvm::DenseMap<mlir::Type, std::string> names;
+  StringMap<mlir::Type> namedTypes;
+  llvm::StringSet<> reservedIdentifiers;
+  SmallVector<std::string> definitions;
+};
 
 static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   llvm::StringMap<std::string> prototypes;
+  DPIHeaderTypes headerTypes;
+  module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
+    bool imported = op.getIsDpiImport().value_or(false);
+    StringAttr identifier = imported ? op.getDpiCIdentifierAttr()
+                                     : op.getDpiExportCIdentifierAttr();
+    if (identifier)
+      headerTypes.reserveIdentifier(identifier.getValue());
+  });
   WalkResult walked = module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
     bool imported = op.getIsDpiImport().value_or(false);
     StringAttr exported = op.getDpiExportCIdentifierAttr();
     if (!imported && !exported)
       return WalkResult::advance();
-    if (exported &&
-        op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task) {
-      op.emitError(
-          "DPI exported tasks are not supported; only zero-time functions "
-          "can be exported");
-      return WalkResult::interrupt();
-    }
     StringAttr cIdentifier = imported ? op.getDpiCIdentifierAttr() : exported;
     if (!cIdentifier) {
       op.emitError("DPI subroutine has no resolved C identifier");
@@ -350,18 +581,24 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
         return WalkResult::interrupt();
       }
       FailureOr<DPIHeaderType> type =
-          getDPIHeaderType(*semanticType, formal.getLoc());
+          headerTypes.get(*semanticType, formal.getLoc());
       if (failed(type))
         return WalkResult::interrupt();
       auto direction = formal.getDirection();
       bool input = direction == obelisk::ir::SVArgumentDirection::In;
-      bool pointer = !input || type->vector;
+      bool pointer =
+          !type->openArray && !type->aggregate && (!input || type->vector);
       std::string declaration;
-      if (input && type->vector)
+      if (((input && (type->vector || type->aggregate)) || type->openArray) &&
+          !StringRef(type->spelling).starts_with("const "))
         declaration += "const ";
       declaration += type->spelling;
+      if (type->aggregate && type->suffix.empty())
+        pointer = true;
       declaration += pointer ? " *" : " ";
       declaration += ("arg" + Twine(argumentIndex++)).str();
+      if (type->aggregate)
+        declaration += type->suffix;
       arguments.push_back(std::move(declaration));
     }
 
@@ -384,7 +621,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
         returnType = "void";
       } else {
         FailureOr<DPIHeaderType> result =
-            getDPIHeaderType(signature.getResult(0), op.getLoc());
+            headerTypes.get(signature.getResult(0), op.getLoc());
         if (failed(result))
           return WalkResult::interrupt();
         if (result->vector) {
@@ -420,8 +657,10 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   output << "#ifndef OBELISK_GENERATED_DPI_H\n"
             "#define OBELISK_GENERATED_DPI_H\n\n"
             "#include <stdint.h>\n"
-            "#include <svdpi.h>\n\n"
-            "#ifdef __cplusplus\n"
+            "#include <svdpi.h>\n\n";
+  for (const std::string &definition : headerTypes.getDefinitions())
+    output << definition << "\n\n";
+  output << "#ifdef __cplusplus\n"
             "extern \"C\" {\n"
             "#endif\n\n";
   SmallVector<StringRef> names;
@@ -519,10 +758,10 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
 
     for (StringRef extension : extensions) {
       if (extension.empty()) {
-        emitDriverError(Twine("empty module library extension in '") +
-                        (isPlusList ? alias->getAsString(args)
-                                    : arg->getAsString(args)) +
-                        "'");
+        emitDriverError(
+            Twine("empty module library extension in '") +
+            (isPlusList ? alias->getAsString(args) : arg->getAsString(args)) +
+            "'");
         valid = false;
         continue;
       }
@@ -716,9 +955,20 @@ static int executeCompilation(const InputArgList &args) {
   if (!valid)
     return 1;
 
+  SmallVector<std::string> svLibraries;
+  if (targetName != "native" &&
+      (args.hasArg(OPT_sv_lib) || args.hasArg(OPT_sv_liblist))) {
+    emitDriverError("Annex J DPI libraries require --target=native");
+    return 1;
+  }
+  if (!collectSVLibraryInputs(args, svLibraries))
+    return 1;
+  inputs.append(svLibraries);
+
   obelisk::driver::ClassifiedInputs classifiedInputs;
-  if (failed(obelisk::driver::classifyDirectInputs(inputs, action == nullptr,
-                                                   vpiMode, classifiedInputs)))
+  if (failed(obelisk::driver::classifyDirectInputs(
+          inputs, action == nullptr && targetName == "native", vpiMode,
+          classifiedInputs)))
     return 1;
   if (classifiedInputs.systemVerilog.empty()) {
     emitDriverError(
@@ -835,6 +1085,19 @@ static int executeCompilation(const InputArgList &args) {
       return 1;
   }
 
+  bool hasDPI = false;
+  (*module)->walk([&](obelisk::sim::SimCodeUnitDeclOp declaration) {
+    hasDPI |= declaration->hasAttr("obelisk_sim.dpi_import") ||
+              declaration->hasAttr("obelisk_sim.dpi_export");
+  });
+  if (native && targetName == "wasm32") {
+    if (hasDPI) {
+      emitDriverError(
+          "DPI is unavailable for the wasm32 target; use --target=native");
+      return 1;
+    }
+  }
+
   if (native) {
     obelisk::driver::NativeOutputOptions nativeOptions;
     nativeOptions.kind = emitObject ? obelisk::driver::NativeOutputKind::Object
@@ -851,6 +1114,7 @@ static int executeCompilation(const InputArgList &args) {
         std::move(classifiedInputs.nativeLinkInputs);
     nativeOptions.sharedLibraryInputs =
         std::move(classifiedInputs.sharedLibraries);
+    nativeOptions.dpi = hasDPI || !nativeOptions.sharedLibraryInputs.empty();
     nativeOptions.vpi = vpiMode.str();
     nativeOptions.nativeScheduler = nativeScheduler.str();
     nativeOptions.thinLTOCacheDir =

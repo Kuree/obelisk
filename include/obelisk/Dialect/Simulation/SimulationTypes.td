@@ -210,6 +210,17 @@ def SimDynamicArrayType : SimType<"DynamicArray"> {
   let genVerifyDecl = 1;
 }
 
+// A source DPI open-array formal is a borrowed ABI shape, not an owned
+// SystemVerilog container. It survives semantic freezing only long enough for
+// each call site to bind a concrete fixed or dynamic actual and attach its
+// declared ranges to sim.dpi.call.
+def SimDPIOpenArrayType : SimType<"DPIOpenArray"> {
+  let mnemonic = "dpi_open_array";
+  let summary = "unbound DPI open-array formal shape";
+  let parameters = (ins "::mlir::Type":$elementType, "bool":$isPacked);
+  let assemblyFormat = "`<` $elementType `,` $isPacked `>`";
+}
+
 def SimQueueType : SimType<"Queue"> {
   let mnemonic = "queue";
   let summary = "managed SystemVerilog queue value";

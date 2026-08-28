@@ -177,7 +177,7 @@ set(_obelisk_target_runtime_common_sources
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
     ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport
-    DPIExportBytecode)
+    DPIExportBytecode DPIOpenArray DPIAggregate)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")

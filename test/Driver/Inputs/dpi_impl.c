@@ -53,3 +53,8 @@ int dpi_fail(int32_t *value) {
   *value = 99;
   return 1;
 }
+
+int dpi_fail_invalid(int32_t *value) {
+  *value = 101;
+  return 2;
+}

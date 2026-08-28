@@ -467,8 +467,7 @@ enum {
 // DPI scope records are immutable execution metadata and remain available
 // independently of the optional VPI design database. IDs are dense from zero;
 // UINT64_MAX denotes the root's absent parent. Time unit and precision are
-// decimal exponents in seconds, as returned by svGetTimeUnit and
-// svGetTimePrecision.
+// decimal exponents in seconds retained as simulator scope metadata.
 typedef struct obelisk_rt_dpi_scope_v1 {
   uint64_t id;
   uint64_t parent_id;
@@ -478,6 +477,155 @@ typedef struct obelisk_rt_dpi_scope_v1 {
   int32_t time_precision;
   uint32_t reserved;
 } obelisk_rt_dpi_scope_v1;
+
+// One unpacked dimension of the private descriptor carried by an
+// svOpenArrayHandle.  Generated call thunks point at immutable records with
+// source-declared bounds and a byte stride in the canonical C buffer.  Keeping
+// strides in the descriptor makes every svGet* operation O(dimensions) and
+// avoids type reflection in the runtime hot path.
+typedef struct obelisk_rt_dpi_dimension_v1 {
+  int32_t left;
+  int32_t right;
+  uint64_t byte_stride;
+  uint32_t flags;
+  uint32_t reserved;
+} obelisk_rt_dpi_dimension_v1;
+
+#define OBELISK_RT_DPI_DIMENSION_EMPTY (UINT32_C(1) << 0)
+#define OBELISK_RT_DPI_DIMENSION_RUNTIME (UINT32_C(1) << 1)
+
+#define OBELISK_RT_DPI_OPEN_ARRAY_MAGIC UINT32_C(0x4f424f41)
+#define OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE (UINT32_C(1) << 0)
+#define OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT (UINT32_C(1) << 1)
+#define OBELISK_RT_DPI_OPEN_ARRAY_PACKED (UINT32_C(1) << 2)
+#define OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE (UINT32_C(1) << 3)
+#define OBELISK_RT_DPI_OPEN_ARRAY_EMPTY (UINT32_C(1) << 4)
+
+// Stack-owned svOpenArrayHandle payload. `data` contains one canonical C
+// representation per unpacked element: an ordinary scalar/aggregate C value,
+// svBitVecVal words, or svLogicVecVal words. The handle and its range table are
+// valid only for the duration of the enclosing DPI call.
+typedef struct obelisk_rt_dpi_open_array_v1 {
+  uint32_t magic;
+  uint32_t flags;
+  uint32_t dimensions;
+  uint32_t element_bit_width;
+  int32_t packed_left;
+  int32_t packed_right;
+  uint64_t element_size;
+  void *data;
+  uint64_t data_size;
+  const obelisk_rt_dpi_dimension_v1 *ranges;
+  uint64_t reserved;
+} obelisk_rt_dpi_open_array_v1;
+
+typedef struct obelisk_rt_dpi_open_array_storage_v1 {
+  obelisk_rt_dpi_open_array_v1 descriptor;
+  void *allocation;
+} obelisk_rt_dpi_open_array_storage_v1;
+
+// Canonicalize a compact Simulation-IR value/unknown bit stream to the exact
+// per-element representation required by Annex H, and invert that mapping.
+// These leaf helpers allocate nothing; native lowering owns stack storage and
+// bytecode lowering owns interpreter scratch storage.
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_pack(
+    const void *value, const void *unknown, uint64_t plane_size,
+    uint64_t total_bit_width, uint32_t four_state, uint32_t element_category,
+    uint32_t element_bit_width, uint64_t element_count,
+    uint32_t reverse_elements, void *out_data, uint64_t out_size);
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_unpack(
+    const void *data, uint64_t data_size, uint32_t element_category,
+    uint32_t element_bit_width, uint64_t element_count, void *out_value,
+    void *out_unknown, uint64_t plane_size, uint64_t total_bit_width,
+    uint32_t four_state, uint32_t reverse_elements);
+
+// Compose the open-array descriptor with the exact recursive C layout of one
+// element. The element plan is wrapped in one runtime repeat record, keeping
+// emitted metadata and native code independent of the actual array extent.
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_pack(
+    const void *value, const void *unknown, uint64_t plane_size,
+    uint64_t total_bit_width, uint32_t four_state, uint32_t element_bit_width,
+    uint64_t element_count, uint32_t reverse_elements,
+    const int64_t *unpacked_ranges, uint32_t unpacked_dimensions,
+    void *out_data, uint64_t data_size, uint64_t out_capacity,
+    uint64_t element_c_size, uint64_t element_string_count,
+    const int64_t *element_plan, uint64_t element_plan_words);
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_unpack(
+    obelisk_rt_context *context, const void *data, uint64_t data_size,
+    uint64_t element_c_size, const int64_t *element_plan,
+    uint64_t element_plan_words, uint64_t element_count,
+    uint32_t reverse_elements, const int64_t *unpacked_ranges,
+    uint32_t unpacked_dimensions, void *out_value, void *out_unknown,
+    uint64_t plane_size, uint64_t total_bit_width, uint32_t four_state,
+    uint32_t element_bit_width);
+// Keep every heap string in a repeated open-array element plan rooted while
+// the caller installs unpacked values into managed containers.
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
+    obelisk_rt_context *context, void *value, uint64_t plane_size,
+    uint64_t total_bit_width, uint32_t element_bit_width,
+    uint64_t element_count, uint32_t reverse_elements,
+    const int64_t *unpacked_ranges, uint32_t unpacked_dimensions,
+    uint64_t element_c_size, const int64_t *element_plan,
+    uint64_t element_plan_words, void **out_handle);
+
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_prepare_recursive(
+    const void *value, const void *unknown, uint64_t plane_size,
+    uint64_t transport_width, uint32_t transport_four_state,
+    uint32_t writable, uint32_t element_category, uint32_t element_bit_width,
+    uint32_t element_four_state, int32_t packed_left, int32_t packed_right,
+    uint64_t element_c_size, uint32_t element_c_alignment,
+    uint64_t element_string_count, const int64_t *element_plan,
+    uint64_t element_plan_words, const int64_t *shape_plan,
+    uint32_t dimensions, obelisk_rt_dpi_open_array_storage_v1 *out_storage);
+obelisk_rt_status obelisk_rt_v1_dpi_open_array_finish_recursive(
+    obelisk_rt_status call_status, obelisk_rt_context *context,
+    const obelisk_rt_dpi_open_array_storage_v1 *storage, void *value,
+    void *unknown, uint64_t plane_size, uint64_t transport_width,
+    uint32_t transport_four_state, uint32_t element_bit_width,
+    uint32_t element_four_state, uint64_t element_c_size,
+    const int64_t *element_plan, uint64_t element_plan_words,
+    const int64_t *shape_plan, uint32_t dimensions);
+void obelisk_rt_v1_dpi_open_array_release_recursive(
+    obelisk_rt_dpi_open_array_storage_v1 *storage);
+
+// Convert one sized unpacked aggregate between the simulator's compact
+// value/unknown planes and its exact recursive C layout. The immutable plan
+// uses eight-word leaf/repeat records. `out_capacity` may exceed `c_size` and
+// supplies eight persistent scratch bytes for every string leaf; this keeps
+// inline C string pointers valid through the enclosing DPI call.
+obelisk_rt_status
+obelisk_rt_v1_dpi_aggregate_pack(const void *value, const void *unknown,
+                                 uint64_t plane_size, uint64_t total_bit_width,
+                                 uint32_t four_state, void *out_data,
+                                 uint64_t c_size, uint64_t out_capacity,
+                                 const int64_t *plan, uint64_t plan_words);
+obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
+    obelisk_rt_context *context, const void *data, uint64_t c_size,
+    const int64_t *plan, uint64_t plan_words, void *out_value,
+    void *out_unknown, uint64_t plane_size, uint64_t total_bit_width,
+    uint32_t four_state);
+// Keep every heap string word described by an aggregate plan rooted across an
+// exported wrapper's complete unpack / dispatch / pack sequence.
+obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_push(
+    obelisk_rt_context *context, void *value, uint64_t plane_size,
+    uint64_t total_bit_width, const int64_t *plan, uint64_t plan_words,
+    void **out_handle);
+obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_pop(
+    obelisk_rt_context *context, void *handle);
+// Exported aggregate string pointers are retained per output slot until that
+// slot is produced by a later exported call on the same thread.
+obelisk_rt_status obelisk_rt_v1_dpi_aggregate_export_pack(
+    const void *value, const void *unknown, uint64_t plane_size,
+    uint64_t total_bit_width, uint32_t four_state, void *out_data,
+    uint64_t c_size, const int64_t *plan, uint64_t plan_words,
+    uint32_t output_slot);
+// Allocate automatic task state while deriving precise string roots from the
+// same compact aggregate plan used by the C marshaller. This keeps compiler
+// work proportional to type structure even for very large fixed arrays.
+obelisk_rt_status obelisk_rt_v1_dpi_aggregate_state_alloc(
+    obelisk_rt_context *context, uint64_t total_bit_width, const uint8_t *value,
+    const uint8_t *unknown, const int64_t *plan, uint64_t plan_words,
+    uint64_t *out_handle);
 
 struct obelisk_rt_process_descriptor_v1;
 
@@ -564,6 +712,7 @@ typedef obelisk_rt_status (*obelisk_rt_native_export_v1)(
 
 #define OBELISK_RT_EXPORT_HAS_NATIVE (UINT32_C(1) << 0)
 #define OBELISK_RT_EXPORT_HAS_BYTECODE (UINT32_C(1) << 1)
+#define OBELISK_RT_EXPORT_TASK (UINT32_C(1) << 2)
 #define OBELISK_RT_EXPORT_NO_BYTECODE UINT32_MAX
 typedef struct obelisk_rt_export_descriptor_v1 {
   uint32_t export_id;
@@ -717,7 +866,13 @@ enum {
   // integer opcodes over IEEE payloads.
   OBELISK_RT_DBREG_STRING = 10,
   OBELISK_RT_DBREG_REAL32 = 11,
-  OBELISK_RT_DBREG_REAL64 = 12
+  OBELISK_RT_DBREG_REAL64 = 12,
+  // Import descriptors use this kind for a value pointer that is itself an
+  // obelisk_rt_dpi_open_array_v1. It is never a bytecode register layout.
+  OBELISK_RT_DBREG_OPEN_ARRAY = 13,
+  // Import descriptors use this kind for a pointer to an exact C-layout
+  // sized unpacked aggregate. It is never a bytecode register layout.
+  OBELISK_RT_DBREG_AGGREGATE = 14
 };
 
 #define OBELISK_RT_DBREG_SIGNED (UINT8_C(1) << 0)
@@ -1631,10 +1786,12 @@ typedef struct obelisk_rt_bytecode_service_site_v1 {
 } obelisk_rt_bytecode_service_site_v1;
 
 // Canonical process frames are shared by every executable tier. Layout fields
-// are sorted by offset and describe all compiler-owned ranges, including both
-// paired planes of a four-state value and scheduler wait records. ABI-required
-// padding may appear between the value and unknown planes. Native addresses
-// are forbidden in the canonical frame.
+// are sorted by offset and describe all compiler-owned ranges, including the
+// live planes of four-state values and scheduler wait records. Value/unknown
+// planes are paired when both remain live; precise managed-root partitioning
+// can leave an independently described unknown plane. ABI-required padding
+// may appear between planes. Native addresses are forbidden in the canonical
+// frame.
 typedef uint32_t obelisk_rt_frame_field_kind;
 enum {
   OBELISK_RT_FRAME_CAPTURE = 1,
@@ -1903,6 +2060,25 @@ obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     obelisk_rt_fragment_action_v1 *out_action);
 obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
     obelisk_rt_process_instance_v1 *instance);
+
+// Cold DPI re-entry service. Takes ownership of a ready exported-task
+// activation, runs the nested scheduler until that logical task finishes, and
+// returns OBELISK_RT_DPI_DISABLE_UNSUPPORTED when it was disabled. The legacy
+// status spelling is retained for ABI stability; it now denotes the standard
+// Clause 35.9 disabled return rather than an unsupported feature.
+obelisk_rt_status
+obelisk_rt_v1_dpi_export_task_run(obelisk_rt_context *context,
+                                  obelisk_rt_process_instance_v1 *instance);
+
+// Compiler-emitted bytecode exported-task marshalling entry. `directions`
+// contains one 0=input, 1=output, or 2=inout byte per logical formal. Compact
+// aggregate plans are null/zero for non-aggregate formals.
+obelisk_rt_status obelisk_rt_v1_dpi_export_task_bytecode_run(
+    obelisk_rt_context *context, uint32_t export_id,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count,
+    const uint8_t *directions, const int64_t *const *aggregate_plans,
+    const uint64_t *aggregate_plan_words);
 
 // Construct a context bound to a generated design. The legacy constructor is
 // equivalent to passing a null execution descriptor and remains useful for
@@ -4016,6 +4192,23 @@ obelisk_rt_status obelisk_rt_v1_import_call(
     obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+// Specialized non-context boundary used by generated native code. It has no
+// active DPI scope/caller state and never touches the thread-local context
+// chain; context imports use obelisk_rt_v1_import_call instead.
+obelisk_rt_status obelisk_rt_v1_import_call_noncontext(
+    obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+obelisk_rt_status obelisk_rt_v1_import_call_guarded(
+    obelisk_rt_status prior_status, obelisk_rt_context *context,
+    const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+obelisk_rt_status obelisk_rt_v1_import_call_noncontext_guarded(
+    obelisk_rt_status prior_status, obelisk_rt_context *context,
+    const obelisk_rt_import_site_v1 *site,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
 // Enter a scope-specific exported SystemVerilog function from generated C.
 // The active DPI call supplies the hidden context and scope. A call made
 // outside that dynamic extent returns INVALID_LIFECYCLE.
@@ -4023,9 +4216,18 @@ obelisk_rt_status obelisk_rt_v1_export_call(
     uint32_t export_id, uint64_t abi_signature,
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
+obelisk_rt_status obelisk_rt_v1_export_call_guarded(
+    obelisk_rt_status prior_status, uint32_t export_id,
+    uint64_t abi_signature, const obelisk_rt_import_input_v1 *inputs,
+    uint32_t input_count, obelisk_rt_import_output_v1 *outputs,
+    uint32_t output_count);
+// Latch wrapper-side marshalling failures into the active import call.
+obelisk_rt_status obelisk_rt_v1_dpi_export_status(obelisk_rt_status status);
 // String export outputs are copied into per-thread C storage by export_call.
 // The address remains valid until the next exported call on this thread.
 const char *obelisk_rt_v1_export_string(uint32_t output_index);
+// Active scope-specific DPI call context, or null outside that dynamic extent.
+obelisk_rt_context *obelisk_rt_v1_dpi_current_context(void);
 // Marshal DPI's 32-bit svBitVecVal/svLogicVecVal words to and from the
 // runtime's independent 64-bit value/unknown planes.
 void obelisk_rt_v1_dpi_export_unpack_vector(const void *source, void *value,
