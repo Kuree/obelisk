@@ -58,12 +58,18 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   };
   auto isClockCoordinatorActor = [&](Operation *operation) {
     sim::SimFuncOp function = findContainingFunction(operation);
-    if (!function ||
-        !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
+    if (!function)
+      return false;
+    bool assertionCoordinator =
+        function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") &&
+        function.getHomeRegion() == sim::EventRegion::Observed;
+    bool timingCheckCoordinator =
+        function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+        function.getHomeRegion() == sim::EventRegion::Active;
+    if ((!assertionCoordinator && !timingCheckCoordinator) ||
         SymbolTable::getSymbolVisibility(function) !=
             SymbolTable::Visibility::Private ||
         function.getEntryKind() != sim::EntryKind::Always ||
-        function.getHomeRegion() != sim::EventRegion::Observed ||
         function.getDomain() != sim::ExecutionDomain::Design)
       return false;
     unsigned clockWaits = 0;
@@ -74,12 +80,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     auto function = findContainingFunction(operation);
     if (!function)
       return false;
-    // A multi-clock occurrence coordinator is another feature-local runtime
-    // island: the surrounding ordinary assertion monitors remain in the AOT
-    // plan, while this one actor retains exact publication-wave ordering in
-    // bytecode.  Treating it like the existing cold assertion callbacks is
-    // what makes explicit AOT select the hybrid plan instead of rejecting the
-    // complete design.
+    // IEEE 1800-2017 16.14 multiclock assertions and Clause 31 timing checks
+    // both require exact event-cohort ordering. Keep only their coordinator
+    // actors as feature-local bytecode islands; surrounding ordinary actors
+    // retain the generated AOT plan.
     if (isClockCoordinatorActor(function))
       return true;
     if (function->hasAttr(

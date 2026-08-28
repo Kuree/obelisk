@@ -25,7 +25,9 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     return function.emitError("basic timing check has a malformed frozen ABI");
 
   int32_t kind = static_cast<int32_t>(kindAttr.getInt());
-  if (kind != 1 && kind != 2 && kind != 4 && kind != 5)
+  bool combined = kind == 3 || kind == 6;
+  if (kind != 1 && kind != 2 && kind != 3 && kind != 4 && kind != 5 &&
+      kind != 6)
     return function.emitError("unsupported basic timing-check kind");
   auto childFor = [&](size_t index) -> Operation * {
     int64_t child = expressionChildren[index];
@@ -35,7 +37,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   };
   Operation *event0 = childFor(0);
   Operation *event1 = childFor(1);
-  if (!event0 || !event1 || ticks[2] < 0)
+  if (!event0 || !event1 || ticks[2] < 0 ||
+      (combined && (ticks.size() < 4 || ticks[3] < 0)))
     return function.emitError(
         "basic timing check has no direct events or limit");
 
@@ -58,8 +61,10 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   }
 
   std::optional<CapturedLValue> notifier;
-  if (expressionChildren.size() > 3 && expressionChildren[3] >= 0) {
-    Operation *notifierExpression = childFor(3);
+  size_t notifierIndex = combined ? 4 : 3;
+  if (static_cast<size_t>(expressionChildren.size()) > notifierIndex &&
+      expressionChildren[notifierIndex] >= 0) {
+    Operation *notifierExpression = childFor(notifierIndex);
     SmallVector<Operation *> notifierChildren = getChildren(notifierExpression);
     if (isa<semantic::SVAssignmentExpressionOp>(notifierExpression) &&
         !notifierChildren.empty())
@@ -83,6 +88,16 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Value timestampValid = sim::SimRefAllocOp::create(
       builder, location, sim::RefType::get(function.getContext(), i1),
       falseValue);
+  Value oppositeTimestamp;
+  Value oppositeTimestampValid;
+  if (combined) {
+    oppositeTimestamp = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i64),
+        zero64);
+    oppositeTimestampValid = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i1),
+        falseValue);
+  }
 
   auto codeUnit = function->getAttrOfType<IntegerAttr>("code_unit_id");
   uint32_t occurrenceSite =
@@ -133,53 +148,110 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Value valid =
       sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
 
-  // IEEE 1800-2017 31.3.1/.4 use an open setup/removal window, while
-  // 31.3.2/.5 include the hold/recovery timestamp endpoint. Keep the two
-  // lattices explicit: simultaneous events do not violate setup/removal but
-  // do violate a positive hold/recovery check.
-  bool setupStyle = kind == 1 || kind == 5;
-  unsigned timestampEvent = kind == 5 ? 1 : 0;
-  Value timestampOccurred = timestampEvent ? event1Occurred : event0Occurred;
-  Value checkOccurred = timestampEvent ? event0Occurred : event1Occurred;
-  Value effectiveTimestamp =
-      setupStyle ? previous
-                 : Value(arith::SelectOp::create(
-                       builder, location, timestampOccurred, now, previous));
-  Value effectiveValid =
-      setupStyle ? valid
-                 : Value(arith::OrIOp::create(builder, location, valid,
-                                              timestampOccurred));
-  Value delta = arith::SubIOp::create(builder, location, now,
-                                      effectiveTimestamp);
-  Value limit = arith::ConstantOp::create(
-      builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
-  Value positiveLimit = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::ne, limit, zero64);
-  Value inWindow = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::ult, delta, limit);
-  Value qualified = arith::AndIOp::create(builder, location, checkOccurred,
-                                          effectiveValid);
-  qualified = arith::AndIOp::create(builder, location, qualified,
-                                    positiveLimit);
-  qualified = arith::AndIOp::create(builder, location, qualified, inWindow);
-  if (setupStyle) {
-    Value notSimultaneous = arith::XOrIOp::create(
-        builder, location, timestampOccurred,
-        arith::ConstantOp::create(builder, location, i1,
-                                  builder.getBoolAttr(true)));
-    Value nonzeroDelta = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, delta, zero64);
-    qualified = arith::AndIOp::create(builder, location, qualified,
-                                      notSimultaneous);
-    qualified = arith::AndIOp::create(builder, location, qualified,
-                                      nonzeroDelta);
+  Value qualified;
+  if (combined) {
+    Value previous1 =
+        sim::SimRefLoadOp::create(builder, location, i64, oppositeTimestamp);
+    Value valid1 = sim::SimRefLoadOp::create(builder, location, i1,
+                                             oppositeTimestampValid);
+    auto checkOpposite = [&](Value checkOccurred, Value timestampOccurred,
+                             Value priorTimestamp, Value priorValid,
+                             int64_t limitTicks) {
+      Value effectiveTimestamp = arith::SelectOp::create(
+          builder, location, timestampOccurred, now, priorTimestamp);
+      Value effectiveValid = arith::OrIOp::create(builder, location, priorValid,
+                                                  timestampOccurred);
+      Value delta =
+          arith::SubIOp::create(builder, location, now, effectiveTimestamp);
+      Value limit = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(limitTicks));
+      Value positiveLimit = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, limit, zero64);
+      Value inWindow = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, delta, limit);
+      Value result = arith::AndIOp::create(builder, location, checkOccurred,
+                                           effectiveValid);
+      result = arith::AndIOp::create(builder, location, result, positiveLimit);
+      return Value(arith::AndIOp::create(builder, location, result, inWindow));
+    };
+    // IEEE 1800-2017 31.3.3/.6 make whichever event occurs second the
+    // timecheck event. For $setuphold, reference event 0 checks setup slot 2
+    // and data event 1 checks hold slot 3. For $recrem, data event 1 checks
+    // recovery slot 2 and reference event 0 checks removal slot 3. Both
+    // regions include their shared timestamp endpoint and exclude only the
+    // limit endpoint. OR the directions before the cold path so one
+    // simultaneous cohort can toggle the Clause 31.6 notifier at most once.
+    int64_t event1Limit = kind == 3 ? ticks[3] : ticks[2];
+    int64_t event0Limit = kind == 3 ? ticks[2] : ticks[3];
+    Value event1Violation = checkOpposite(event1Occurred, event0Occurred,
+                                          previous, valid, event1Limit);
+    Value event0Violation = checkOpposite(event0Occurred, event1Occurred,
+                                          previous1, valid1, event0Limit);
+    qualified = arith::OrIOp::create(builder, location, event1Violation,
+                                     event0Violation);
+    Value nextTimestamp0 = arith::SelectOp::create(
+        builder, location, event0Occurred, now, previous);
+    Value nextValid0 =
+        arith::OrIOp::create(builder, location, valid, event0Occurred);
+    Value nextTimestamp1 = arith::SelectOp::create(
+        builder, location, event1Occurred, now, previous1);
+    Value nextValid1 =
+        arith::OrIOp::create(builder, location, valid1, event1Occurred);
+    sim::SimRefStoreOp::create(builder, location, nextTimestamp0, timestamp);
+    sim::SimRefStoreOp::create(builder, location, nextValid0, timestampValid);
+    sim::SimRefStoreOp::create(builder, location, nextTimestamp1,
+                               oppositeTimestamp);
+    sim::SimRefStoreOp::create(builder, location, nextValid1,
+                               oppositeTimestampValid);
+  } else {
+    // IEEE 1800-2017 31.3.1/.4 use an open setup/removal window, while
+    // 31.3.2/.5 include the hold/recovery timestamp endpoint. Keep the two
+    // lattices explicit: simultaneous events do not violate setup/removal but
+    // do violate a positive hold/recovery check.
+    bool setupStyle = kind == 1 || kind == 5;
+    unsigned timestampEvent = kind == 5 ? 1 : 0;
+    Value timestampOccurred = timestampEvent ? event1Occurred : event0Occurred;
+    Value checkOccurred = timestampEvent ? event0Occurred : event1Occurred;
+    Value effectiveTimestamp =
+        setupStyle ? previous
+                   : Value(arith::SelectOp::create(
+                         builder, location, timestampOccurred, now, previous));
+    Value effectiveValid =
+        setupStyle ? valid
+                   : Value(arith::OrIOp::create(builder, location, valid,
+                                                timestampOccurred));
+    Value delta =
+        arith::SubIOp::create(builder, location, now, effectiveTimestamp);
+    Value limit = arith::ConstantOp::create(
+        builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+    Value positiveLimit = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, limit, zero64);
+    Value inWindow = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, delta, limit);
+    qualified =
+        arith::AndIOp::create(builder, location, checkOccurred, effectiveValid);
+    qualified =
+        arith::AndIOp::create(builder, location, qualified, positiveLimit);
+    qualified = arith::AndIOp::create(builder, location, qualified, inWindow);
+    if (setupStyle) {
+      Value notSimultaneous = arith::XOrIOp::create(
+          builder, location, timestampOccurred,
+          arith::ConstantOp::create(builder, location, i1,
+                                    builder.getBoolAttr(true)));
+      Value nonzeroDelta = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, delta, zero64);
+      qualified =
+          arith::AndIOp::create(builder, location, qualified, notSimultaneous);
+      qualified =
+          arith::AndIOp::create(builder, location, qualified, nonzeroDelta);
+    }
+    Value nextTimestamp = arith::SelectOp::create(
+        builder, location, timestampOccurred, now, previous);
+    Value nextValid =
+        arith::OrIOp::create(builder, location, valid, timestampOccurred);
+    sim::SimRefStoreOp::create(builder, location, nextTimestamp, timestamp);
+    sim::SimRefStoreOp::create(builder, location, nextValid, timestampValid);
   }
-  Value nextTimestamp = arith::SelectOp::create(
-      builder, location, timestampOccurred, now, previous);
-  Value nextValid = arith::OrIOp::create(builder, location, valid,
-                                         timestampOccurred);
-  sim::SimRefStoreOp::create(builder, location, nextTimestamp, timestamp);
-  sim::SimRefStoreOp::create(builder, location, nextValid, timestampValid);
   cf::CondBranchOp::create(builder, location, qualified, violation,
                            ValueRange{}, drain, ValueRange{});
 

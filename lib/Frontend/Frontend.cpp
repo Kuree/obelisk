@@ -2170,15 +2170,30 @@ private:
                 builder.getI64IntegerAttr(precisionFs));
 
       using Kind = slang::ast::SystemTimingCheckKind;
-      bool basic = node.timingCheckKind == Kind::Setup ||
-                   node.timingCheckKind == Kind::Hold ||
-                   node.timingCheckKind == Kind::Recovery ||
-                   node.timingCheckKind == Kind::Removal;
-      if (basic && staticTimes && arguments.size() >= 3 &&
+      bool singleLimit = node.timingCheckKind == Kind::Setup ||
+                         node.timingCheckKind == Kind::Hold ||
+                         node.timingCheckKind == Kind::Recovery ||
+                         node.timingCheckKind == Kind::Removal;
+      bool combined = node.timingCheckKind == Kind::SetupHold ||
+                      node.timingCheckKind == Kind::RecRem;
+      size_t requiredArguments = combined ? 4 : 3;
+      bool unsupportedCombinedOption = false;
+      if (combined) {
+        // IEEE 1800-2017 31.3.3/.6 assign slots 5--8 to negative-check
+        // conditions and delayed signals. Keep the positive, unconditioned
+        // actor pay-for-play: retain those forms semantically for the later
+        // Clause 31.9 tranche instead of silently ignoring them here.
+        for (size_t index = 5; index < arguments.size(); ++index)
+          unsupportedCombinedOption |= arguments[index].expr != nullptr ||
+                                       arguments[index].condition != nullptr;
+      }
+      if ((singleLimit || combined) && staticTimes &&
+          arguments.size() >= requiredArguments &&
           arguments[0].expr && arguments[1].expr &&
           !arguments[0].condition && !arguments[1].condition &&
           arguments[0].edgeDescriptors.empty() &&
-          arguments[1].edgeDescriptors.empty())
+          arguments[1].edgeDescriptors.empty() &&
+          !unsupportedCombinedOption)
         attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
     }
 
