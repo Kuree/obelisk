@@ -635,12 +635,9 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
   FailureOr<Value> count = lowerExpression(children[0]);
   if (failed(count))
     return failure();
-  FailureOr<Value> scalar = toPackedScalar(*count, location);
-  if (failed(scalar))
-    return failure();
   Type countType = builder.getI64Type();
   FailureOr<Value> normalized =
-      convert(*scalar, countType, isSignedNode(children[0]), location);
+      convert(*count, countType, isSignedNode(children[0]), location);
   if (failed(normalized))
     return failure();
 
@@ -1149,8 +1146,7 @@ UnitLowering::outlineForkBranch(
                  << "outlined global-future call is outside the branch",
              failure();
     }
-    nested.globalFutureCurrentCaptures[cloned] =
-        outlined.getArgument(argument);
+    nested.globalFutureCurrentCaptures[cloned] = outlined.getArgument(argument);
   }
   if (failed(nested.lower({root}))) {
     outlined.erase();

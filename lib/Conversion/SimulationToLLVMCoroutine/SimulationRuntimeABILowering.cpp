@@ -73,10 +73,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_wait_order_failed",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_clock_occurrence_consume",
-                           IntegerType::get(context, 64),
-                           {LLVM::LLVMPointerType::get(context),
-                            IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_clock_occurrence_consume",
+      IntegerType::get(context, 64),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_handle_offset",
       IntegerType::get(context, 64),
@@ -111,6 +111,17 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_packed_slice_nba",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 32),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_driver_nba",
@@ -158,11 +169,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
-       IntegerType::get(context, 64), IntegerType::get(context, 64),
-       IntegerType::get(context, 64), IntegerType::get(context, 32),
-       IntegerType::get(context, 32), IntegerType::get(context, 32),
-       IntegerType::get(context, 32), IntegerType::get(context, 64),
-       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64),       IntegerType::get(context, 64),
+       IntegerType::get(context, 64),       IntegerType::get(context, 32),
+       IntegerType::get(context, 32),       IntegerType::get(context, 32),
+       IntegerType::get(context, 32),       IntegerType::get(context, 64),
+       IntegerType::get(context, 64),       IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
@@ -712,10 +723,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_scan", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_plusarg_parse_logic", managedI32,
-      {managedI64, managedI32, managedI64, managedPointer, managedI64,
-       managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_parse_logic",
+                           managedI32,
+                           {managedI64, managedI32, managedI64, managedPointer,
+                            managedI64, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_parse_real",
                            managedI32, {managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_system", managedI32,

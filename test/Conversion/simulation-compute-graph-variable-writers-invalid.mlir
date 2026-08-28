@@ -81,6 +81,63 @@ module {
   }
 }
 
+// -----
+
+// Writes performed as a function-call side effect are not continuous drivers.
+// Only each unit's lvalue_only binding participates in the variable-driver
+// legality rule, so two continuous RHS evaluations may legally race on shared
+// procedural state while driving distinct targets.
+module {
+  obelisk_sim.design @continuous_rhs_side_effects {
+    obelisk_sim.code_unit.decl 9300021 in 0 continuous
+        hierarchy "top.first"
+    obelisk_sim.code_unit.decl 9300022 in 0 continuous
+        hierarchy "top.second"
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "top.side"
+    obelisk_sim.storage.decl 1 in 0 : i32 design hierarchy "top.first_target"
+    obelisk_sim.storage.decl 2 in 0 : i32 design hierarchy "top.second_target"
+
+    obelisk_sim.func @first_side_effect(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %side: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 0 : i64},
+        %target: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 7 : i32, code_unit_id = 9300021 : i64,
+                    obelisk_sim.bindings = [
+                      #obelisk_sim.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.first_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
+      %constant = arith.constant 12 : i32
+      obelisk_sim.ref.store %constant to %side : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.ref.store %constant to %target : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func @second_side_effect(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %side: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 0 : i64},
+        %target: !obelisk_sim.ref<i32>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 2 : i64})
+        attributes {entry_kind = 7 : i32, code_unit_id = 9300022 : i64,
+                    obelisk_sim.bindings = [
+                      #obelisk_sim.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
+                      #obelisk_sim.argument_binding<path = "top.second_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
+      %constant = arith.constant 13 : i32
+      obelisk_sim.ref.store %constant to %side : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.ref.store %constant to %target : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.return
+    }
+  }
+}
+
 
 // -----
 

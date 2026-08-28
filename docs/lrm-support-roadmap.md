@@ -1605,6 +1605,51 @@ excluded from both forms. Two source-only `XFAIL`s retain Slang's
 static-property object-width and nominal-class-width diagnostics without a
 local Slang patch.
 
+L12's final audited closure tranche closes the remaining legal core cases in
+the bounded ivtest differential. Four-state integral conversion to
+`shortreal`, and real-valued `repeat` and repeated-event counts, now use the
+same explicit Simulation-IR conversion semantics as their existing `real`
+counterparts. Implicit conversions around the inout seed of `$random(seed)`
+no longer hide the writable variable, so concatenation operands retain source
+evaluation order, execute once, and store the updated seed exactly once.
+Direct string-variable change events subscribe to the existing storage
+descriptor: string stores already compare contents before publishing, which
+is exact and avoids a hash, retained previous heap value, or observer dispatch
+in both native and bytecode execution.
+
+Coroutine threading now restores live values through suspension and
+reconvergence while rematerializing pure constant-expression DAGs instead of
+adding frame lanes. Eval-body fusion rejects values that cannot legally cross
+a suspension, and operand-less control boundaries retain their body edge.
+Continuous-driver verification counts only lvalue-only binding effects as
+continuous targets, rather than mistaking direct RHS side effects for another
+driver. These are compile-time analyses and add no runtime work.
+
+Packed partial NBA lowering now captures aggregate, selected, and dynamically
+overhanging destinations at scheduling time as required by 4.9.4. Dynamic
+clipping is constant-size generated IR and the generic runtime uses bounded
+128-bit offset arithmetic. Planned native AOT updates whose root and payload
+fit 64 bits remain direct scalar accumulator/dirty-root operations: generated
+code has no packed-slice scheduler call, allocation, loop, or width-dependent
+dispatch. The generic native and bytecode paths retain the compact fallback
+only for unplanned or dynamic shapes. MLIR checks lock down both paths.
+
+The final 2026-08-27 refresh ran all 2,675 selected ivtest cases and reported
+1,946 ordinary passes, 370 expected-error passes, 104 compile failures, 242
+run failures, and 13 skips. The prior pre-tranche refresh was 1,940/371/114/237
+with the same 13 skips; newly compiled cases can therefore move into the run
+failure column before a different clause is closed. The remaining compile
+buckets are assigned to already documented frontend, SDF/timing-check,
+gate/delay, timescale, harness, strictness, and unclassified differential
+work, not to an identified legal L12 feature. `concat4` is likewise not a
+closure target: its continuous-assignment RHS mutates a value it also reads,
+so 10.3.2 requires reevaluation and Verilator reports a nonconvergent settle
+cycle rather than Icarus's one-shot result. The four immediate-check partial
+NBA cases retain the standard Active/NBA race instead of changing NBA into a
+blocking update to match one scheduler ordering. The final hermetic regression
+passes 1,600 tests with 7 expected failures, and all 495 runtime-unit tests
+pass.
+
 ## Clause ledger
 
 | Clause | Level | Executable evidence and remaining work |
@@ -1741,10 +1786,11 @@ one commit.
     preserves outer task copy-out and deferred-report state, suppresses
     abandoned inner copy-out, and supports concurrent, nested, and repeating
     activations without adding runtime work to untargeted blocks.
-12. **L12 — Core frontend/lowering long-tail closure (5-13).** Reduce every
-    remaining non-extension ivtest/Verilator core failure to a minimal clause
-    test, then close declaration, conversion, lvalue, call, and pattern cases
-    not already named above. Dynamic-array/queue-to-fixed-packed explicit
+12. **L12 — Core frontend/lowering long-tail closure (5-13), completed for the
+    audited L12 surface.** Every identified legal core failure in the bounded
+    audit has a clause decision or a focused MLIR test. Declaration,
+    conversion, lvalue, call, event, suspension, and partial-NBA cases not
+    already named above are closed. Dynamic-array/queue-to-fixed-packed explicit
     bit-stream casts now execute through exact-width bulk paths for dynamic
     arrays, queues, strings, typed associative arrays, recursively fixed
     unpacked arrays/structs, nested dynamic sources, and acyclic class/object
@@ -1752,8 +1798,9 @@ one commit.
     repartition by target element width, including recursively greedy
     unbounded members. Wildcard-index associative sources, typed-associative
     streaming, fixed class streaming, and compact wide-fixed streaming
-    lowering also execute. Continue the differential frontend audit; the two
-    documented Slang class-width cases remain source-only xfails.
+    lowering also execute. Further differential failures remain audit caveats
+    assigned to their owning clauses; the two documented Slang class-width
+    cases remain source-only xfails rather than identified L12 residuals.
 13. **L13 — Hierarchy, ports, and generate closure (23, 25, 27), completed.**
     The bounded hierarchy/port/generate audit closes the identified legal
     backend failures in port conversion and connection, hierarchical and

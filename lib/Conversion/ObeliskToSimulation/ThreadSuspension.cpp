@@ -423,6 +423,40 @@ public:
                   operand.set(replacement);
               }
           };
+          // A control boundary's body edge is synchronous and intentionally
+          // has no successor operands. If the boundary itself is reached
+          // through a restored continuation, use the closest value available
+          // at the boundary in its body instead of trying to manufacture a
+          // block argument on the operand-less body edge.
+          auto predecessors = block.getPredecessors();
+          if (predecessors.begin() != predecessors.end() &&
+              std::next(predecessors.begin()) == predecessors.end()) {
+            Block *predecessor = *predecessors.begin();
+            auto boundary = dyn_cast<sim::SimControlBoundaryOp>(
+                predecessor->getTerminator());
+            if (boundary && boundary.getBody() == &block) {
+              Value incoming;
+              Block *incomingBlock = nullptr;
+              for (auto &[candidateBlock, candidates] : threadedValues) {
+                auto found = candidates.find(root);
+                if (found == candidates.end() ||
+                    !dominance.dominates(candidateBlock, predecessor))
+                  continue;
+                if (!incomingBlock ||
+                    dominance.dominates(incomingBlock, candidateBlock)) {
+                  incoming = found->second;
+                  incomingBlock = candidateBlock;
+                }
+              }
+              if (!incoming &&
+                  dominance.dominates(root, boundary.getOperation()))
+                incoming = root;
+              if (incoming) {
+                replaceExternalUses(incoming);
+                continue;
+              }
+            }
+          }
           auto existing = threaded.find(root);
           if (existing != threaded.end()) {
             replaceExternalUses(existing->second);

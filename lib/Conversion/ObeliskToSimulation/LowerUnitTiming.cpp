@@ -577,8 +577,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       llvm::append_range(observerValues, continuationOperands);
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          sim::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Reactive),
           continuation);
@@ -605,8 +605,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       llvm::append_range(observerValues, continuationOperands);
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          sim::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Reactive),
           continuation);
@@ -624,12 +624,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         return failure();
       FailureOr<Value> scalar =
           isa<sim::ClassHandleType>((*initial).getType())
-              ? FailureOr<Value>(sim::SimClassIdOp::create(
-                                    builder, location, builder.getI64Type(),
-                                    *initial)
-                                    .getResult())
-              : toPackedScalar(*initial,
-                               getSemanticLocation(children.front()));
+              ? FailureOr<Value>(sim::SimClassIdOp::create(builder, location,
+                                                           builder.getI64Type(),
+                                                           *initial)
+                                     .getResult())
+              : toPackedScalar(*initial, getSemanticLocation(children.front()));
       if (failed(scalar))
         return failure();
       Value watch = sim::SimManagedWatchOp::create(
@@ -700,9 +699,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       llvm::append_range(observerValues, continuationOperands);
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
-          sim::EventRegionAttr{}, continuation);
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
       return success();
     }
     if (!isa<sim::RefType, sim::NetType>((*handle).getType()) ||
@@ -735,9 +733,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    computed |=
-        event.getHasIff() || !isAddressableExpression(eventChildren.front()) ||
-        !hasWatchableSignalHandle(eventChildren.front());
+    computed |= event.getHasIff() ||
+                !isAddressableExpression(eventChildren.front()) ||
+                !hasWatchableSignalHandle(eventChildren.front());
     FailureOr<Type> watchedType =
         eventChildren.front()->hasAttr("virtual_interface_clocking_block_event")
             ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
@@ -777,13 +775,13 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   return success();
 }
 
-LogicalResult UnitLowering::lowerClockingEventMonitor(
-    ArrayRef<Operation *> roots) {
-  auto path = function->getAttrOfType<StringAttr>(
-      clockingEventMonitorPathAttrName);
+LogicalResult
+UnitLowering::lowerClockingEventMonitor(ArrayRef<Operation *> roots) {
+  auto path =
+      function->getAttrOfType<StringAttr>(clockingEventMonitorPathAttrName);
   if (!path || roots.size() != 1 ||
-      !isa<semantic::SVSignalEventControlOp,
-           semantic::SVEventListControlOp>(roots.front()))
+      !isa<semantic::SVSignalEventControlOp, semantic::SVEventListControlOp>(
+          roots.front()))
     return function.emitError(
         "clocking event monitor requires one frozen event control");
   Value event = values.lookup(path.getValue());
@@ -868,16 +866,14 @@ FailureOr<Value> UnitLowering::lowerRepeatedEventCount(Operation *control) {
   FailureOr<Value> count = lowerExpression(children[0]);
   if (failed(count))
     return failure();
-  FailureOr<Value> scalar = toPackedScalar(*count, location);
-  if (failed(scalar))
-    return failure();
-  return convert(*scalar, builder.getI64Type(), isSignedNode(children[0]),
+  return convert(*count, builder.getI64Type(), isSignedNode(children[0]),
                  location);
 }
 
-LogicalResult UnitLowering::emitCycleDelaySuspend(
-    semantic::SVCycleDelayControlOp control, Block *continuation,
-    ValueRange continuationOperands) {
+LogicalResult
+UnitLowering::emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
+                                    Block *continuation,
+                                    ValueRange continuationOperands) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
   bool hasIff = control->hasAttr(clockingEventHasIffAttrName);
@@ -891,11 +887,12 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
   auto eventEdge =
       control->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
   if (!clockPath || !eventEdge) {
-    emitError(location) << "cycle delay has no supported default clocking event";
+    emitError(location)
+        << "cycle delay has no supported default clocking event";
     return failure();
   }
-  FailureOr<Value> clock = lowerReferencedValue(
-      control, clockPath.getValue(), /*lvalue=*/true);
+  FailureOr<Value> clock =
+      lowerReferencedValue(control, clockPath.getValue(), /*lvalue=*/true);
   if (failed(clock))
     return failure();
   std::optional<Value> incomingOccurrence = getCurrentClockingOccurrence(
@@ -914,11 +911,11 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       auto primaryType = cast<sim::ObserverType>(primaryObserver.getType());
       Value initial;
       if (auto reference = dyn_cast<sim::RefType>((*clock).getType()))
-        initial = sim::SimRefLoadOp::create(
-            waitBuilder, location, reference.getElementType(), *clock);
+        initial = sim::SimRefLoadOp::create(waitBuilder, location,
+                                            reference.getElementType(), *clock);
       else if (auto net = dyn_cast<sim::NetType>((*clock).getType()))
-        initial = sim::SimNetReadOp::create(
-            waitBuilder, location, net.getElementType(), *clock);
+        initial = sim::SimNetReadOp::create(waitBuilder, location,
+                                            net.getElementType(), *clock);
       if (!initial) {
         emitError(location) << "cycle-delay clock is not directly readable";
         return failure();
@@ -930,28 +927,26 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
       llvm::append_range(values, operands);
       sim::SimSuspendObserveOp::create(
           waitBuilder, location, values, 1,
-          ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{}, reactive,
-          successor);
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          sim::ContinuationSiteAttr{}, reactive, successor);
       return success();
     }
     if (isa<sim::EventType>((*clock).getType()))
-      sim::SimSuspendEventOp::create(
-          waitBuilder, location, *clock, operands,
-          sim::ContinuationSiteAttr{}, reactive, successor);
+      sim::SimSuspendEventOp::create(waitBuilder, location, *clock, operands,
+                                     sim::ContinuationSiteAttr{}, reactive,
+                                     successor);
     else if (edge == sim::EdgeKind::Change)
-      sim::SimSuspendChangeOp::create(
-          waitBuilder, location, *clock, operands,
-          sim::ContinuationSiteAttr{}, reactive, successor);
+      sim::SimSuspendChangeOp::create(waitBuilder, location, *clock, operands,
+                                      sim::ContinuationSiteAttr{}, reactive,
+                                      successor);
     else
-      sim::SimSuspendEdgeOp::create(
-          waitBuilder, location, edge, *clock, operands,
-          sim::ContinuationSiteAttr{}, reactive, successor);
+      sim::SimSuspendEdgeOp::create(waitBuilder, location, edge, *clock,
+                                    operands, sim::ContinuationSiteAttr{},
+                                    reactive, successor);
     return success();
   };
 
-  FailureOr<Type> expressionType =
-      getNormalizedSemanticType(children.front());
+  FailureOr<Type> expressionType = getNormalizedSemanticType(children.front());
   std::optional<unsigned> countWidth =
       succeeded(expressionType) ? sim::getPackedWidth(*expressionType)
                                 : std::nullopt;
@@ -980,8 +975,7 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
     // event unconditionally is what makes it already occurred, so preserve the
     // occurrence rather than crossing a boundary.
     timingBoundaryContinuations.erase(continuation);
-    cf::BranchOp::create(builder, location, continuation,
-                         continuationOperands);
+    cf::BranchOp::create(builder, location, continuation, continuationOperands);
     return success();
   }
   if (hasIff) {
@@ -1026,25 +1020,24 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
         builder.getIntegerAttr(countType, *constantCount));
   } else {
     FailureOr<Value> value = lowerExpression(children.front());
-    FailureOr<Value> scalar =
-        succeeded(value) ? toPackedScalar(*value, location)
-                         : FailureOr<Value>(failure());
+    FailureOr<Value> scalar = succeeded(value)
+                                  ? toPackedScalar(*value, location)
+                                  : FailureOr<Value>(failure());
     FailureOr<Value> normalized =
-        succeeded(scalar)
-            ? convert(*scalar, countType, isSignedNode(children.front()),
-                      location)
-            : FailureOr<Value>(failure());
+        succeeded(scalar) ? convert(*scalar, countType,
+                                    isSignedNode(children.front()), location)
+                          : FailureOr<Value>(failure());
     if (failed(normalized))
       return failure();
     count = *normalized;
-    Value zero = arith::ConstantOp::create(builder, location, countType,
-                                           builder.getIntegerAttr(
-                                               countType, APInt(*countWidth, 0)));
-    positive = arith::CmpIOp::create(
-        builder, location,
-        isSignedNode(children.front()) ? arith::CmpIPredicate::sgt
-                                       : arith::CmpIPredicate::ne,
-        count, zero);
+    Value zero = arith::ConstantOp::create(
+        builder, location, countType,
+        builder.getIntegerAttr(countType, APInt(*countWidth, 0)));
+    positive = arith::CmpIOp::create(builder, location,
+                                     isSignedNode(children.front())
+                                         ? arith::CmpIPredicate::sgt
+                                         : arith::CmpIPredicate::ne,
+                                     count, zero);
     if (!incomingOccurrence || *incomingOccurrence)
       continuation->addArgument(builder.getI1Type(), location);
   }
@@ -1067,12 +1060,11 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
                                initialWaitOperands, continuation,
                                continuationOperands);
     } else {
-      Value didNotWait =
-          incomingOccurrence && *incomingOccurrence
-              ? *incomingOccurrence
-              : arith::ConstantOp::create(builder, location,
-                                          builder.getI1Type(),
-                                          builder.getBoolAttr(false));
+      Value didNotWait = incomingOccurrence && *incomingOccurrence
+                             ? *incomingOccurrence
+                             : arith::ConstantOp::create(
+                                   builder, location, builder.getI1Type(),
+                                   builder.getBoolAttr(false));
       SmallVector<Value> zeroOperands(continuationOperands);
       zeroOperands.push_back(didNotWait);
       cf::CondBranchOp::create(builder, location, positive, wait,
@@ -1090,8 +1082,8 @@ LogicalResult UnitLowering::emitCycleDelaySuspend(
   Value zero = arith::ConstantOp::create(
       resumeBuilder, location, countType,
       resumeBuilder.getIntegerAttr(countType, APInt(*countWidth, 0)));
-  Value remaining = arith::SubIOp::create(
-      resumeBuilder, location, resume->getArgument(0), one);
+  Value remaining = arith::SubIOp::create(resumeBuilder, location,
+                                          resume->getArgument(0), one);
   Value more = arith::CmpIOp::create(resumeBuilder, location,
                                      arith::CmpIPredicate::ne, remaining, zero);
   SmallVector<Value> nextWaitOperands{remaining};

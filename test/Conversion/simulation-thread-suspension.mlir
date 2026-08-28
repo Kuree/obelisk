@@ -17,6 +17,7 @@ module {
     obelisk_sim.code_unit.decl 9000013 in 0 always hierarchy "test.threading.loop_constant_expression.9000013"
     obelisk_sim.code_unit.decl 9000014 in 0 always hierarchy "test.threading.self_loop_next.9000014"
     obelisk_sim.code_unit.decl 9000015 in 0 always hierarchy "test.threading.self_loop_side_next.9000015"
+    obelisk_sim.code_unit.decl 9000016 in 0 initial hierarchy "test.threading.control_body_restored.9000016"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>> design
@@ -148,6 +149,31 @@ module {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.ref.store %value to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       obelisk_sim.return
+    }
+
+    // A value restored before a named-block boundary is directly available
+    // to its synchronous body. The body edge cannot carry block arguments;
+    // only the boundary's resumable exit has continuation operands.
+    // CHECK-LABEL: obelisk_sim.func @control_body_restored
+    // CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[CONTROL_START:.*]](%[[CONTROL_LIVE:.*]] : !obelisk_sim.logic<8>)
+    // CHECK: ^[[CONTROL_START]](%[[CONTROL_RESTORED:.*]]: !obelisk_sim.logic<8>):
+    // CHECK: obelisk_sim.control.boundary %{{.*}} resume ^[[CONTROL_EXIT:.*]] body ^[[CONTROL_BODY:.*]]
+    // CHECK: ^[[CONTROL_EXIT]]:
+    // CHECK: ^[[CONTROL_BODY]]:
+    // CHECK: obelisk_sim.ref.store %[[CONTROL_RESTORED]]
+    obelisk_sim.func @control_body_restored(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000016 : i64} {
+      %live = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^start
+    ^start:
+      %activation = obelisk_sim.control.enter 1
+      obelisk_sim.control.boundary %activation resume ^exit body ^body
+    ^exit:
+      obelisk_sim.return
+    ^body:
+      obelisk_sim.ref.store %live to %ref : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      obelisk_sim.control.leave %activation
+      cf.br ^exit
     }
 
     // A loop back-edge into the continuation must also carry the value.

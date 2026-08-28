@@ -16,6 +16,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <functional>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -24,10 +26,9 @@ namespace {
 class InertialDriverConversion final
     : public OpConversionPattern<sim::SimDriverDriveInertialOp> {
 public:
-  InertialDriverConversion(const TypeConverter &converter,
-                           MLIRContext *context, uint64_t stateBitCount)
-      : OpConversionPattern(converter, context),
-        stateBitCount(stateBitCount) {}
+  InertialDriverConversion(const TypeConverter &converter, MLIRContext *context,
+                           uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
 
   LogicalResult
   matchAndRewrite(sim::SimDriverDriveInertialOp op, OneToNOpAdaptor adaptor,
@@ -59,8 +60,8 @@ public:
     Value unknownPlane = LLVM::ZeroOp::create(rewriter, location, pointer);
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
-      unknownPlane = LLVM::AddressOfOp::create(
-          rewriter, location, pointer, "__obelisk_state_unknown");
+      unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
     }
     uint32_t flags = 0;
     if (op.getVectorDelay())
@@ -86,13 +87,10 @@ public:
                 llvmConstant(rewriter, location, i64, stateBitCount),
                 adaptor.getDriver().front(),
                 llvmConstant(rewriter, location, i64, *width),
-                llvmConstant(rewriter, location, i64,
-                             op.getCodeUnitId()),
-                llvmConstant(rewriter, location, i32,
-                             op.getComponent()),
+                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+                llvmConstant(rewriter, location, i32, op.getComponent()),
                 llvmConstant(rewriter, location, i32, flags),
-                adaptor.getRiseDelay().front(),
-                adaptor.getFallDelay().front(),
+                adaptor.getRiseDelay().front(), adaptor.getFallDelay().front(),
                 adaptor.getTurnoffDelay().front(), value, unknown})
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
@@ -204,8 +202,7 @@ public:
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
 
   LogicalResult
-  matchAndRewrite(sim::SimRefStoreInertialPathOp op,
-                  OneToNOpAdaptor adaptor,
+  matchAndRewrite(sim::SimRefStoreInertialPathOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getReference().size() != 1 || adaptor.getValue().empty() ||
         adaptor.getWriteMask().size() != 1 ||
@@ -262,7 +259,9 @@ public:
                 llvmConstant(rewriter, location, i32, op.getNonblocking()),
                 adaptor.getRiseDelay().front(),
                 adaptor.getFallDelay().front(),
-                adaptor.getTurnoffDelay().front(), value, unknown,
+                adaptor.getTurnoffDelay().front(),
+                value,
+                unknown,
                 savePlane(adaptor.getWriteMask().front()),
                 savePlane(adaptor.getActiveMask().front()),
                 savePlane(adaptor.getRiseMask().front()),
@@ -356,6 +355,408 @@ public:
 
 private:
   uint64_t stateBitCount = 0;
+};
+
+/// Preserve the declaration boundary of a dynamic packed reference through
+/// native lowering. A stable handle records only a root-relative offset; the
+/// input reference type supplies the narrower view width needed to clip a
+/// partial NBA without spilling into an adjacent aggregate element.
+class PackedSliceNBAConversion final
+    : public OpConversionPattern<sim::SimNBAEnqueueOp> {
+public:
+  PackedSliceNBAConversion(const TypeConverter &converter, MLIRContext *context,
+                           uint64_t stateBitCount,
+                           const NativeStaticNBAPlan *staticPlan,
+                           bool staticSitesEnabled, bool guardedClaims)
+      : OpConversionPattern(converter, context, PatternBenefit(2)),
+        stateBitCount(stateBitCount), staticPlan(staticPlan),
+        staticSitesEnabled(staticSitesEnabled), guardedClaims(guardedClaims) {}
+
+  LogicalResult
+  matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto view = op.getDestination().getDefiningOp<sim::SimRefDynExtractOp>();
+    if (!view || adaptor.getValue().empty() ||
+        adaptor.getDestination().size() != 1)
+      return failure();
+    std::optional<unsigned> baseWidth =
+        sim::getPackedWidth(view.getInput().getType().getElementType());
+    std::optional<unsigned> sourceWidth =
+        nativeStateWidth(op.getValue().getType());
+    if (!baseWidth || !sourceWidth || *baseWidth == 0 || *sourceWidth == 0)
+      return failure();
+
+    Value base = rewriter.getRemappedValue(view.getInput());
+    SmallVector<Value> lowPlanes;
+    if (!base ||
+        failed(rewriter.getRemappedValues(view.getLowBit(), lowPlanes)) ||
+        lowPlanes.empty() || lowPlanes.size() > 2)
+      return failure();
+
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i32 = rewriter.getI32Type();
+    Type i64 = rewriter.getI64Type();
+    SignedI64Index low =
+        resizeSignedIndexToI64(rewriter, location, lowPlanes.front());
+    Value valid = low.representable;
+    if (lowPlanes.size() == 2) {
+      Value known = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::eq, lowPlanes[1],
+          arith::ConstantOp::create(
+              rewriter, location, lowPlanes[1].getType(),
+              rewriter.getZeroAttr(lowPlanes[1].getType())));
+      valid = arith::AndIOp::create(rewriter, location, valid, known);
+    }
+    // The ordinary dynamic-reference conversion already folds the complete
+    // handle contract, including an X/Z index and representability/range
+    // checks that may have consumed a now-specialized unknown plane. Reuse
+    // that remapped result instead of trying to reconstruct knownness from the
+    // low-bit producer after one-to-N conversion has rewritten it.
+    valid = arith::AndIOp::create(
+        rewriter, location, valid,
+        arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::ne,
+            adaptor.getDestination().front(),
+            llvmConstant(rewriter, location, i64, UINT64_MAX)));
+    Value valid32 = LLVM::ZExtOp::create(rewriter, location, i32, valid);
+    sim::NBASiteAttr site = op.getSiteAttr();
+    bool staticallyStaged =
+        !op.getClockingOutputAttr() && staticSitesEnabled && staticPlan &&
+        site && staticPlan->siteRoots.contains(site.getId()) &&
+        adaptor.getDelay().empty() && !site.getTiming() &&
+        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+
+    uint32_t rootIndex = UINT32_MAX;
+    if (staticallyStaged) {
+      auto staticRoot = staticPlan->siteRoots.find(site.getId());
+      if (staticRoot != staticPlan->siteRoots.end())
+        rootIndex = staticRoot->second;
+    }
+    std::function<std::optional<uint64_t>(Value)> resolveViewOffset =
+        [&](Value reference) -> std::optional<uint64_t> {
+      if (reference.getDefiningOp<sim::SimContextStorageOp>())
+        return 0;
+      // Capture specialization replaces direct descriptor arguments with a
+      // context-storage op. A surviving entry argument can be a runtime view;
+      // descriptor provenance alone does not prove root-relative offset zero.
+      if (isa<BlockArgument>(reference))
+        return std::nullopt;
+      if (auto extract = reference.getDefiningOp<sim::SimRefExtractOp>()) {
+        std::optional<uint64_t> parent = resolveViewOffset(extract.getInput());
+        if (!parent || extract.getLowBit() > UINT64_MAX - *parent)
+          return std::nullopt;
+        return *parent + extract.getLowBit();
+      }
+      if (auto subelement =
+              reference.getDefiningOp<sim::SimRefSubelementOp>()) {
+        std::optional<uint64_t> parent =
+            resolveViewOffset(subelement.getInput());
+        if (!parent)
+          return std::nullopt;
+        uint64_t offset = *parent;
+        Type type = subelement.getInput().getType().getElementType();
+        for (int64_t rawIndex : subelement.getIndices()) {
+          if (rawIndex < 0)
+            return std::nullopt;
+          auto child = sim::getAggregateProvenanceSubelement(
+              type, static_cast<unsigned>(rawIndex));
+          if (!child || child->first > UINT64_MAX - offset)
+            return std::nullopt;
+          offset += child->first;
+          type = sim::getAggregateElementType(type,
+                                              static_cast<unsigned>(rawIndex));
+        }
+        return offset;
+      }
+      return std::nullopt;
+    };
+
+    // Inspect original Simulation reference provenance only when it can enable
+    // the generated static path. Generic conversion may already have rewritten
+    // producers while legalizing an unplanned function, so needlessly walking
+    // that IR is both wasted compile time and unsafe during dialect conversion.
+    std::optional<uint64_t> viewOffset;
+    if (staticallyStaged && rootIndex != UINT32_MAX)
+      viewOffset = resolveViewOffset(view.getInput());
+    StringRef generatedAccumulator =
+        staticPlan && rootIndex < staticPlan->generatedAccumulators.size()
+            ? staticPlan->generatedAccumulators[rootIndex]
+            : StringRef{};
+    uint64_t rootWidth = staticPlan && rootIndex < staticPlan->roots.size()
+                             ? staticPlan->roots[rootIndex].bit_width
+                             : 0;
+    sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
+    uint32_t homeRegion =
+        function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
+    uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
+                                    homeRegion == OBELISK_RT_REGION_REACTIVE
+                                ? homeRegion + 2
+                                : UINT32_MAX;
+    bool scalarValue =
+        llvm::all_of(
+            adaptor.getValue(),
+            [](Value value) { return isa<IntegerType>(value.getType()); }) ||
+        (adaptor.getValue().size() == 1 &&
+         isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType()));
+    bool directGeneratedStage = staticallyStaged && rootIndex != UINT32_MAX &&
+                                !generatedAccumulator.empty() &&
+                                rootWidth <= 64 && *sourceWidth <= 64 &&
+                                viewOffset && *viewOffset <= rootWidth &&
+                                *baseWidth <= rootWidth - *viewOffset &&
+                                commitRegion != UINT32_MAX && scalarValue;
+
+    auto widen = [&](Value value) {
+      if (isa<LLVM::LLVMPointerType>(value.getType()))
+        value = LLVM::LoadOp::create(
+            rewriter, location,
+            IntegerType::get(rewriter.getContext(), *sourceWidth), value, 1);
+      auto type = cast<IntegerType>(value.getType());
+      return type.getWidth() == 64
+                 ? value
+                 : LLVM::ZExtOp::create(rewriter, location, i64, value)
+                       .getResult();
+    };
+    auto emitDirectGeneratedStage = [&] {
+      Value zero = llvmConstant(rewriter, location, i64, 0);
+      Value sourceWidthValue =
+          llvmConstant(rewriter, location, i64, *sourceWidth);
+      Value baseWidthValue = llvmConstant(rewriter, location, i64, *baseWidth);
+      Value lowerBound = llvmConstant(rewriter, location, i64,
+                                      -static_cast<int64_t>(*sourceWidth));
+      Value belowEnd =
+          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::slt,
+                                low.value, baseWidthValue);
+      Value aboveBegin = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::sgt, low.value, lowerBound);
+      Value overlaps = arith::AndIOp::create(
+          rewriter, location, valid,
+          arith::AndIOp::create(rewriter, location, belowEnd, aboveBegin));
+      Value lowPositive = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::sgt, low.value, zero);
+      Value start = arith::SelectOp::create(rewriter, location, lowPositive,
+                                            low.value, zero);
+      Value rawEnd = arith::AddIOp::create(rewriter, location, low.value,
+                                           sourceWidthValue);
+      Value endBelowBound =
+          arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::slt,
+                                rawEnd, baseWidthValue);
+      Value end = arith::SelectOp::create(rewriter, location, endBelowBound,
+                                          rawEnd, baseWidthValue);
+      Value overlapWidth =
+          arith::SubIOp::create(rewriter, location, end, start);
+      Value sourceStart =
+          arith::SubIOp::create(rewriter, location, start, low.value);
+      Value destinationStart = arith::AddIOp::create(
+          rewriter, location, start,
+          llvmConstant(rewriter, location, i64, *viewOffset));
+      Value safeWidth = arith::SelectOp::create(rewriter, location, overlaps,
+                                                overlapWidth, zero);
+      Value safeSource = arith::SelectOp::create(rewriter, location, overlaps,
+                                                 sourceStart, zero);
+      Value safeDestination = arith::SelectOp::create(
+          rewriter, location, overlaps, destinationStart, zero);
+      Value widthIs64 = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::eq, safeWidth,
+          llvmConstant(rewriter, location, i64, 64));
+      Value maskShift = arith::SelectOp::create(
+          rewriter, location, widthIs64,
+          llvmConstant(rewriter, location, i64, 63), safeWidth);
+      Value lowMask = arith::SubIOp::create(
+          rewriter, location,
+          arith::ShLIOp::create(rewriter, location,
+                                llvmConstant(rewriter, location, i64, 1),
+                                maskShift),
+          llvmConstant(rewriter, location, i64, 1));
+      lowMask = arith::SelectOp::create(
+          rewriter, location, widthIs64,
+          llvmConstant(rewriter, location, i64, UINT64_MAX), lowMask);
+      Value mask =
+          arith::ShLIOp::create(rewriter, location, lowMask, safeDestination);
+      Value sourceValue = widen(adaptor.getValue().front());
+      Value sourceUnknown = llvmConstant(rewriter, location, i64, 0);
+      if (adaptor.getValue().size() == 2)
+        sourceUnknown = widen(adaptor.getValue()[1]);
+      auto position = [&](Value source) {
+        return arith::AndIOp::create(
+            rewriter, location,
+            arith::ShLIOp::create(
+                rewriter, location,
+                arith::ShRUIOp::create(rewriter, location, source, safeSource),
+                safeDestination),
+            mask);
+      };
+      Value accumulator = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                    generatedAccumulator);
+      auto mergeField = [&](size_t fieldOffset, Value positioned) {
+        Value address = byteGEP(rewriter, location, accumulator, fieldOffset);
+        Value previous =
+            LLVM::LoadOp::create(rewriter, location, i64, address, 8);
+        Value merged = arith::OrIOp::create(
+            rewriter, location,
+            arith::AndIOp::create(
+                rewriter, location, previous,
+                arith::XOrIOp::create(
+                    rewriter, location, mask,
+                    llvmConstant(rewriter, location, i64, UINT64_MAX))),
+            positioned);
+        LLVM::StoreOp::create(rewriter, location, merged, address, 8);
+      };
+      mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
+                 position(sourceValue));
+      mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+                 position(sourceUnknown));
+      Value maskAddress = byteGEP(
+          rewriter, location, accumulator,
+          offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
+      Value previousMask =
+          LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          arith::OrIOp::create(rewriter, location, previousMask, mask),
+          maskAddress, 8);
+      Value validAddress =
+          byteGEP(rewriter, location, accumulator,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid));
+      Value previousValid =
+          LLVM::LoadOp::create(rewriter, location, i32, validAddress, 4);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          arith::OrIOp::create(
+              rewriter, location, previousValid,
+              LLVM::ZExtOp::create(rewriter, location, i32, overlaps)),
+          validAddress, 4);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          llvmConstant(rewriter, location, i32, commitRegion),
+          byteGEP(
+              rewriter, location, accumulator,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
+          4);
+      Value dirtyBit =
+          arith::SelectOp::create(rewriter, location, overlaps,
+                                  llvmConstant(rewriter, location, i64,
+                                               uint64_t{1} << (rootIndex % 64)),
+                                  zero);
+      Value dirtyBase = LLVM::AddressOfOp::create(
+          rewriter, location, pointer, "__obelisk_aot_nba_dirty_roots_v1");
+      Value dirtyAddress =
+          byteGEP(rewriter, location, dirtyBase,
+                  static_cast<uint64_t>(rootIndex / 64) * sizeof(uint64_t));
+      Value previousDirty =
+          LLVM::LoadOp::create(rewriter, location, i64, dirtyAddress, 8);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          arith::OrIOp::create(rewriter, location, previousDirty, dirtyBit),
+          dirtyAddress, 8);
+      uint32_t dirtyWord = rootIndex / 64;
+      Value summaryBase = LLVM::AddressOfOp::create(
+          rewriter, location, pointer, "__obelisk_aot_nba_dirty_summary_v1");
+      Value summaryAddress =
+          byteGEP(rewriter, location, summaryBase,
+                  static_cast<uint64_t>(dirtyWord / 64) * sizeof(uint64_t));
+      Value summaryBit =
+          arith::SelectOp::create(rewriter, location, overlaps,
+                                  llvmConstant(rewriter, location, i64,
+                                               uint64_t{1} << (dirtyWord % 64)),
+                                  zero);
+      Value previousSummary =
+          LLVM::LoadOp::create(rewriter, location, i64, summaryAddress, 8);
+      LLVM::StoreOp::create(
+          rewriter, location,
+          arith::OrIOp::create(rewriter, location, previousSummary, summaryBit),
+          summaryAddress, 8);
+    };
+
+    Block *guardContinuation = nullptr;
+    if (directGeneratedStage) {
+      bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+      bool useGuardedClaim = !assumeClean && guardedClaims;
+      if (!useGuardedClaim) {
+        emitDirectGeneratedStage();
+        rewriter.eraseOp(op);
+        return success();
+      }
+      Value useDirect =
+          staticNBASpecializationGuard(rewriter, location, rootIndex);
+      Block *head = rewriter.getInsertionBlock();
+      guardContinuation =
+          rewriter.splitBlock(head, rewriter.getInsertionPoint());
+      Region *region = head->getParent();
+      Block *direct =
+          rewriter.createBlock(region, guardContinuation->getIterator());
+      Block *fallback =
+          rewriter.createBlock(region, guardContinuation->getIterator());
+      recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+      rewriter.setInsertionPointToEnd(head);
+      markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
+                                              direct, ValueRange{}, fallback,
+                                              ValueRange{}));
+      rewriter.setInsertionPointToEnd(direct);
+      emitDirectGeneratedStage();
+      cf::BranchOp::create(rewriter, location, guardContinuation);
+      rewriter.setInsertionPointToEnd(fallback);
+    }
+
+    auto savePlane = [&](Value value) {
+      Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
+      LLVM::StoreOp::create(rewriter, location, value, address, 1);
+      return address;
+    };
+    Value value = savePlane(adaptor.getValue().front());
+    Value unknown = LLVM::ZeroOp::create(rewriter, location, pointer);
+    Value unknownPlane = LLVM::ZeroOp::create(rewriter, location, pointer);
+    if (adaptor.getValue().size() == 2) {
+      unknown = savePlane(adaptor.getValue()[1]);
+      unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
+    }
+    Value contextAddress = LLVM::AddressOfOp::create(
+        rewriter, location, pointer, "__obelisk_current_context");
+    Value runtimeContext =
+        LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+    Value delay = adaptor.getDelay().empty()
+                      ? llvmConstant(rewriter, location, i64, 0)
+                      : adaptor.getDelay().front();
+    Value staticSite = llvmConstant(
+        rewriter, location, i64, staticallyStaged ? site.getId() : UINT64_MAX);
+    Value clockingOutput =
+        llvmConstant(rewriter, location, i64,
+                     op.getClockingOutputAttr()
+                         ? op.getClockingOutputAttr().getValue().getZExtValue()
+                         : UINT64_MAX);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_packed_slice_nba"),
+            ValueRange{runtimeContext,
+                       LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                                 "__obelisk_state_value"),
+                       unknownPlane,
+                       llvmConstant(rewriter, location, i64, stateBitCount),
+                       base, llvmConstant(rewriter, location, i64, *baseWidth),
+                       low.value, valid32,
+                       llvmConstant(rewriter, location, i64, *sourceWidth),
+                       delay, staticSite, clockingOutput, value, unknown})
+            .getResult();
+    LLVM::CallOp::create(rewriter, location, TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{runtimeContext, status});
+    if (guardContinuation) {
+      cf::BranchOp::create(rewriter, location, guardContinuation);
+      rewriter.setInsertionPointToStart(guardContinuation);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount = 0;
+  const NativeStaticNBAPlan *staticPlan = nullptr;
+  bool staticSitesEnabled = false;
+  bool guardedClaims = false;
 };
 
 class ImmediateNBAConversion final
@@ -459,32 +860,29 @@ public:
       bool directLaneStage = !generatedAccumulator.empty() && *width == 32 &&
                              adaptor.getValue().size() == 1 &&
                              (decoded.offset & 31) == 0;
-      bool directPartialScalarStage = !generatedAccumulator.empty() &&
-                                      rootWidth <= 64;
-      bool directGeneratedStage =
-          commitRegion != UINT32_MAX &&
-          (directPartialScalarStage || directLaneStage);
+      bool directPartialScalarStage =
+          !generatedAccumulator.empty() && rootWidth <= 64;
+      bool directGeneratedStage = commitRegion != UINT32_MAX &&
+                                  (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
         bool fixedRegionEvalStage =
-            compactEvalMetadata && staticRoot->second <
-                               staticPlan->generatedCommitRegions.size() &&
+            compactEvalMetadata &&
+            staticRoot->second < staticPlan->generatedCommitRegions.size() &&
             staticPlan->generatedCommitRegions[staticRoot->second] !=
                 UINT32_MAX;
         bool fullRootEvalStage =
-            fixedRegionEvalStage && staticRoot->second <
-                                        staticPlan->generatedFullRootStages.size() &&
+            fixedRegionEvalStage &&
+            staticRoot->second < staticPlan->generatedFullRootStages.size() &&
             staticPlan->generatedFullRootStages[staticRoot->second];
         uint64_t fixedWriteMask =
-            staticRoot->second <
-                    staticPlan->generatedFixedWriteMasks.size()
+            staticRoot->second < staticPlan->generatedFixedWriteMasks.size()
                 ? staticPlan->generatedFixedWriteMasks[staticRoot->second]
                 : 0;
         Value base = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                generatedAccumulator);
         if (directPartialScalarStage) {
-          uint64_t sourceMask = *width == 64
-                                    ? UINT64_MAX
-                                    : (uint64_t{1} << *width) - 1;
+          uint64_t sourceMask =
+              *width == 64 ? UINT64_MAX : (uint64_t{1} << *width) - 1;
           uint64_t mask = sourceMask << decoded.offset;
           auto mergeField = [&](size_t fieldOffset, Value fieldValue) {
             Value address = byteGEP(rewriter, location, base, fieldOffset);
@@ -498,8 +896,8 @@ public:
                 llvmConstant(rewriter, location, i64, mask));
             Value merged = masked;
             if (!compactEvalMetadata || fixedWriteMask == 0) {
-              Value old = LLVM::LoadOp::create(rewriter, location, i64,
-                                                address, 8);
+              Value old =
+                  LLVM::LoadOp::create(rewriter, location, i64, address, 8);
               merged = arith::OrIOp::create(
                   rewriter, location,
                   arith::AndIOp::create(
@@ -509,21 +907,19 @@ public:
             }
             LLVM::StoreOp::create(rewriter, location, merged, address, 8);
           };
-          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
-                              value),
+          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
                      value);
           if (!inductiveTwoStateAccess)
-            mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256,
-                                unknown),
-                       unknown);
+            mergeField(
+                offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+                unknown);
           if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = byteGEP(
                 rewriter, location, base,
-                offsetof(obelisk_rt_generated_nba_accumulator_256,
-                         write_mask));
-            Value oldMask = LLVM::LoadOp::create(rewriter, location, i64,
-                                                  maskAddress, 8);
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
+            Value oldMask =
+                LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
             LLVM::StoreOp::create(
                 rewriter, location,
                 arith::OrIOp::create(
@@ -555,13 +951,11 @@ public:
               4);
           if (!inductiveTwoStateAccess)
             LLVM::StoreOp::create(
-                rewriter, location,
-                llvmConstant(rewriter, location, i32, 0),
-                byteGEP(
-                    rewriter, location, base,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             unknown) +
-                        laneOffset),
+                rewriter, location, llvmConstant(rewriter, location, i32, 0),
+                byteGEP(rewriter, location, base,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 unknown) +
+                            laneOffset),
                 4);
         }
         if (!fixedRegionEvalStage) {
@@ -580,8 +974,7 @@ public:
               4);
         }
         Value dirtyBase = LLVM::AddressOfOp::create(
-            rewriter, location, pointer,
-            "__obelisk_aot_nba_dirty_roots_v1");
+            rewriter, location, pointer, "__obelisk_aot_nba_dirty_roots_v1");
         Value dirtyWord = byteGEP(
             rewriter, location, dirtyBase,
             static_cast<uint64_t>(staticRoot->second / 64) * sizeof(uint64_t));
@@ -593,9 +986,9 @@ public:
                          uint64_t{1} << (staticRoot->second % 64)));
         LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
         if (!compactEvalMetadata) {
-          Value summaryBase = LLVM::AddressOfOp::create(
-              rewriter, location, pointer,
-              "__obelisk_aot_nba_dirty_summary_v1");
+          Value summaryBase =
+              LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                        "__obelisk_aot_nba_dirty_summary_v1");
           uint32_t dirtyWordIndex = staticRoot->second / 64;
           Value summaryWord = byteGEP(
               rewriter, location, summaryBase,
@@ -823,11 +1216,13 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          stateBitCount);
   patterns.add<InertialPathDriverConversion>(converter, patterns.getContext(),
                                              stateBitCount);
-  patterns.add<InertialPathStorageConversion>(converter,
-                                              patterns.getContext(),
+  patterns.add<InertialPathStorageConversion>(converter, patterns.getContext(),
                                               stateBitCount);
   patterns.add<InertialStrengthPairConversion>(converter, patterns.getContext(),
                                                stateBitCount);
+  patterns.add<PackedSliceNBAConversion>(converter, patterns.getContext(),
+                                         stateBitCount, staticPlan,
+                                         staticSitesEnabled, guardedClaims);
   patterns.add<ImmediateNBAConversion>(
       converter, patterns.getContext(), stateBitCount, staticPlan,
       staticSitesEnabled, guardedClaims, evalCeiling);

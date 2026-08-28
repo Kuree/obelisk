@@ -334,7 +334,7 @@ module attributes {
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, -1>
 // CHECK-LABEL: llvm.func @suspension_live_value.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
-// CHECK-SAME: obelisk.frame.size = 48 : i64
+// CHECK-SAME: obelisk.frame.size = 40 : i64
 // CHECK-LABEL: llvm.func @plain_process
 // CHECK-SAME: obelisk.native_scratch_size = 0 : i64
 // CHECK: llvm.call @obelisk_rt_v1_native_state_alloc

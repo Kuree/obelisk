@@ -273,17 +273,36 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     mapping.map(source, destination);
   builder.setInsertionPointToStart(&evalEntry);
   SmallVector<Value> activationEntryOperands;
+  auto appendMappedValues = [&](ValueRange values,
+                                SmallVectorImpl<Value> &mappedValues) {
+    for (Value value : values) {
+      Value mapped = mapping.lookupOrNull(value);
+      if (!mapped)
+        return failure();
+      mappedValues.push_back(mapped);
+    }
+    return success();
+  };
   for (Block *source : preambleBlocks) {
     for (Operation &operation : source->without_terminator())
       builder.clone(operation, mapping);
     auto branch = cast<cf::BranchOp>(source->getTerminator());
     if (startsAtActivation && branch.getDest() == activation) {
-      for (Value value : branch.getDestOperands())
-        activationEntryOperands.push_back(mapping.lookup(value));
+      if (failed(appendMappedValues(branch.getDestOperands(),
+                                    activationEntryOperands))) {
+        abandon();
+        return success();
+      }
     } else {
       for (auto [argument, value] : llvm::zip_equal(
-               branch.getDest()->getArguments(), branch.getDestOperands()))
-        mapping.map(argument, mapping.lookup(value));
+               branch.getDest()->getArguments(), branch.getDestOperands())) {
+        Value mapped = mapping.lookupOrNull(value);
+        if (!mapped) {
+          abandon();
+          return success();
+        }
+        mapping.map(argument, mapped);
+      }
     }
   }
   bool cloneTerminalWait =
@@ -326,8 +345,15 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     auto forwarded = cast<BranchOpInterface>(wait->getTerminator())
                          .getSuccessorOperands(0)
                          .getForwardedOperands();
-    for (Value value : forwarded)
-      entryOperands.push_back(mapping.lookup(value));
+    // Values produced in the suspension block represent coroutine state that
+    // was sampled before the wait (for example an intra-assignment event
+    // control RHS). Recomputing them in the zero-time activation body would
+    // sample after the event and change SystemVerilog semantics. Such actors
+    // retain their coroutine identity instead of receiving an eval clone.
+    if (failed(appendMappedValues(forwarded, entryOperands))) {
+      abandon();
+      return success();
+    }
   }
   if (!startsAtActivation && !cloneTerminalWait)
     for (Operation &operation : wait->without_terminator())
@@ -722,8 +748,7 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
     if (auto context = dyn_cast_or_null<sim::SimContextDriverOp>(definition))
       return ExactDriverSlice{context.getId(), lowBit};
     if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition)) {
-      if (extract.getLowBit() >
-          std::numeric_limits<uint64_t>::max() - lowBit)
+      if (extract.getLowBit() > std::numeric_limits<uint64_t>::max() - lowBit)
         return std::nullopt;
       lowBit += extract.getLowBit();
       value = extract.getInput();
@@ -738,12 +763,12 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
           return std::nullopt;
         auto child = sim::getAggregateProvenanceSubelement(
             current, static_cast<unsigned>(rawIndex));
-        if (!child || child->first >
-                          std::numeric_limits<uint64_t>::max() - lowBit)
+        if (!child ||
+            child->first > std::numeric_limits<uint64_t>::max() - lowBit)
           return std::nullopt;
         lowBit += child->first;
-        current = sim::getAggregateElementType(
-            current, static_cast<unsigned>(rawIndex));
+        current = sim::getAggregateElementType(current,
+                                               static_cast<unsigned>(rawIndex));
       }
       value = subelement.getInput();
       continue;
@@ -1405,15 +1430,15 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       Value bit = arith::ConstantOp::create(
           builder, kernel.getLoc(), maskType,
           builder.getI64IntegerAttr(uint64_t{1} << watch.candidate));
-      Value selected =
-          arith::SelectOp::create(builder, kernel.getLoc(), changed, bit, dirty);
+      Value selected = arith::SelectOp::create(builder, kernel.getLoc(),
+                                               changed, bit, dirty);
       dirty = arith::OrIOp::create(builder, kernel.getLoc(), dirty, selected);
     }
     Value allDirty = arith::ConstantOp::create(
         builder, kernel.getLoc(), maskType,
-        builder.getI64IntegerAttr(candidates.size() == 64
-                                      ? UINT64_MAX
-                                      : (uint64_t{1} << candidates.size()) - 1));
+        builder.getI64IntegerAttr(
+            candidates.size() == 64 ? UINT64_MAX
+                                    : (uint64_t{1} << candidates.size()) - 1));
     dirty = arith::SelectOp::create(builder, kernel.getLoc(), initialize,
                                     allDirty, dirty);
 
@@ -1459,9 +1484,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                                ValueRange{}, next, ValueRange{currentMask});
 
       builder.setInsertionPointToStart(execute);
-      Value changed = arith::ConstantOp::create(
-          builder, kernel.getLoc(), builder.getI1Type(),
-          builder.getBoolAttr(false));
+      Value changed = arith::ConstantOp::create(builder, kernel.getLoc(),
+                                                builder.getI1Type(),
+                                                builder.getBoolAttr(false));
       for (Operation &operation : candidate.body->without_terminator()) {
         if (hoistedWatchOps.contains(&operation))
           continue;
@@ -1515,9 +1540,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       }
     }
     builder.setInsertionPointToStart(wait);
-    Value resumed = arith::ConstantOp::create(
-        builder, kernel.getLoc(), builder.getI1Type(),
-        builder.getBoolAttr(false));
+    Value resumed =
+        arith::ConstantOp::create(builder, kernel.getLoc(), builder.getI1Type(),
+                                  builder.getBoolAttr(false));
     SmallVector<Value> waitOperands(watched);
     waitOperands.push_back(resumed);
     for (const Watch &watch : watchSnapshots) {
@@ -1865,8 +1890,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         // selected inertial site compares against that plane to schedule its
         // first publication. No immediate resolver exists in this shape.
         if (resolveDriveOperations.empty() &&
-            !deferredDriveOperations.empty() &&
-            drive.getChanged().use_empty())
+            !deferredDriveOperations.empty() && drive.getChanged().use_empty())
           continue;
         Value driver = helperMapping.lookup(drive.getDriver());
         Value value = helperMapping.lookup(drive.getValue());

@@ -85,6 +85,31 @@ findOverlap(ArrayRef<DescriptorWrite> candidates,
   return std::nullopt;
 }
 
+/// Whether a storage effect is the lvalue driven by a continuous assignment,
+/// rather than a procedural side effect of a function invoked by its RHS.
+/// Prepared code units identify their assignment targets with LValueOnly
+/// bindings. Retain the conservative legacy behavior when transient binding
+/// metadata is absent, which also keeps hand-authored validation IR useful.
+static bool isContinuousTarget(sim::SimFuncOp function,
+                               sim::ComputeEffectAttr effect) {
+  ArrayAttr bindings =
+      function->getAttrOfType<ArrayAttr>(sim::metadata::bindings);
+  if (!bindings)
+    return true;
+  for (Attribute attribute : bindings) {
+    auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+    if (!binding || binding.getKind() != sim::UnitArgumentKind::LValueOnly ||
+        binding.getArgument() >= function.getNumArguments())
+      continue;
+    auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+        binding.getArgument(), sim::metadata::descriptorId);
+    if (descriptor &&
+        descriptor.getValue().getZExtValue() == effect.getDescriptor())
+      return true;
+  }
+  return false;
+}
+
 static LogicalResult
 verifyVariableWriters(sim::SimDesignOp design,
                       const simlowering::ComputeGraphResult &derived) {
@@ -103,6 +128,8 @@ verifyVariableWriters(sim::SimDesignOp design,
           effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
           (effect.getEffect() != sim::ComputeEffectKind::Write &&
            effect.getEffect() != sim::ComputeEffectKind::NBA))
+        continue;
+      if (continuous && !isContinuousTarget(function, effect))
         continue;
       auto &writes = continuous ? continuousWrites[effect.getDescriptor()]
                                 : proceduralWrites[effect.getDescriptor()];

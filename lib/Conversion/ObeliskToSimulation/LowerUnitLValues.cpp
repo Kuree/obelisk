@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -93,9 +94,8 @@ bool drivesDelayedNet(sim::SimFuncOp function, Value driver) {
       continue;
     }
     auto argument = dyn_cast<BlockArgument>(driver);
-    return argument &&
-           static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
-               argument.getArgNumber(), "obelisk_sim.delayed_net"));
+    return argument && static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
+                           argument.getArgNumber(), "obelisk_sim.delayed_net"));
   }
   return false;
 }
@@ -481,9 +481,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         // subreference describes it. IEEE 1800-2017 11.5.1 keeps only the bits
         // that are in range, which the read-modify-write path below does by
         // discarding the padding it wrote through.
-        bool reachesOutsideStorage =
-            *sim::getPackedWidth(*destinationType) >
-            *sim::getPackedWidth(*baseType);
+        bool reachesOutsideStorage = *sim::getPackedWidth(*destinationType) >
+                                     *sim::getPackedWidth(*baseType);
         bool hasDirectView =
             base->kind == CapturedLValue::Kind::Reference &&
             isa<sim::RefType, sim::DriverType>(base->reference.getType()) &&
@@ -491,12 +490,12 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
               isa<sim::RefType>(base->reference.getType()));
         if (hasDirectView) {
           Operation *root = base->semanticNode;
-          auto nodeID = root
-                            ? root->getAttrOfType<IntegerAttr>("node_id")
-                            : IntegerAttr{};
-          auto plan = nodeID ? timingPathMaskedPlans.find(
-                                   nodeID.getValue().getZExtValue())
-                             : timingPathMaskedPlans.end();
+          auto nodeID = root ? root->getAttrOfType<IntegerAttr>("node_id")
+                             : IntegerAttr{};
+          auto plan =
+              nodeID
+                  ? timingPathMaskedPlans.find(nodeID.getValue().getZExtValue())
+                  : timingPathMaskedPlans.end();
           if (plan != timingPathMaskedPlans.end() &&
               plan->second.proceduralStorage)
             hasDirectView = false;
@@ -715,9 +714,8 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
       return failure();
     FailureOr<Value> aggregate =
         loadCapturedLValue(destination.children.front(), location);
-    if (failed(aggregate) ||
-        sim::getAggregateElementType((*aggregate).getType(), 0) !=
-            destination.type)
+    if (failed(aggregate) || sim::getAggregateElementType(
+                                 (*aggregate).getType(), 0) != destination.type)
       return failure();
     return sim::SimArrayDynExtractOp::create(builder, location,
                                              destination.type, *aggregate,
@@ -939,8 +937,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       }
       if (auto nodeID = root ? root->getAttrOfType<IntegerAttr>("node_id")
                              : IntegerAttr{}) {
-        auto found = timingPathMaskedPlans.find(
-            nodeID.getValue().getZExtValue());
+        auto found =
+            timingPathMaskedPlans.find(nodeID.getValue().getZExtValue());
         if (found != timingPathMaskedPlans.end() &&
             found->second.proceduralStorage) {
           storagePlan = &found->second;
@@ -948,8 +946,10 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         }
       }
       if (storagePlan) {
-        std::optional<unsigned> width = sim::getPackedWidth(published.getType());
-        auto maskType = dyn_cast<IntegerType>(storagePlan->coverageMask.getType());
+        std::optional<unsigned> width =
+            sim::getPackedWidth(published.getType());
+        auto maskType =
+            dyn_cast<IntegerType>(storagePlan->coverageMask.getType());
         if (!width || !maskType || maskType.getWidth() != *width ||
             storagePlan->groups.empty() ||
             storagePlan->groups.size() > UINT32_MAX)
@@ -966,8 +966,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           }
           if (isa<sim::LogicType>(scalar.getType()))
             return scalar;
-          return Value(sim::SimLogicFromBitsOp::create(
-              builder, location, logicType, scalar));
+          return Value(sim::SimLogicFromBitsOp::create(builder, location,
+                                                       logicType, scalar));
         };
         FailureOr<Value> previousLogic = toLogic(previous);
         FailureOr<Value> publishedLogic = toLogic(published);
@@ -976,21 +976,23 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               "procedural timing path value is not a packed scalar");
         APInt zero = APInt::getZero(*width);
         APInt ones = APInt::getAllOnes(*width);
-        Value zeroMask = arith::ConstantOp::create(
-            builder, location, maskType, builder.getIntegerAttr(maskType, zero));
-        Value onesMask = arith::ConstantOp::create(
-            builder, location, maskType, builder.getIntegerAttr(maskType, ones));
+        Value zeroMask =
+            arith::ConstantOp::create(builder, location, maskType,
+                                      builder.getIntegerAttr(maskType, zero));
+        Value onesMask =
+            arith::ConstantOp::create(builder, location, maskType,
+                                      builder.getIntegerAttr(maskType, ones));
         Value writeMask = proceduralTimingWriteMask.value_or(onesMask);
         auto consume = [&](Value changed) {
-          Value consumed = arith::AndIOp::create(builder, location, changed,
-                                                 writeMask);
-          Value retained = arith::XOrIOp::create(builder, location, consumed,
-                                                 onesMask);
+          Value consumed =
+              arith::AndIOp::create(builder, location, changed, writeMask);
+          Value retained =
+              arith::XOrIOp::create(builder, location, consumed, onesMask);
           for (Value pendingRef : storagePlan->edgePending) {
-            Value pending = sim::SimRefLoadOp::create(
-                builder, location, maskType, pendingRef);
-            pending = arith::AndIOp::create(builder, location, pending,
-                                            retained);
+            Value pending = sim::SimRefLoadOp::create(builder, location,
+                                                      maskType, pendingRef);
+            pending =
+                arith::AndIOp::create(builder, location, pending, retained);
             sim::SimRefStoreOp::create(builder, location, pending, pendingRef);
           }
         };
@@ -1032,22 +1034,24 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           newSymbols[symbol] = equalMask(*publishedLogic);
         }
         auto remaining = [&](const std::array<Value, 4> &symbols) {
-          Value used = arith::OrIOp::create(builder, location, symbols[0],
-                                            symbols[1]);
+          Value used =
+              arith::OrIOp::create(builder, location, symbols[0], symbols[1]);
           used = arith::OrIOp::create(builder, location, used, symbols[2]);
-          return Value(arith::XOrIOp::create(builder, location, used, onesMask));
+          return Value(
+              arith::XOrIOp::create(builder, location, used, onesMask));
         };
         oldSymbols[3] = remaining(oldSymbols);
         newSymbols[3] = remaining(newSymbols);
-        constexpr std::array<unsigned, 12> from = {
-            0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
-        constexpr std::array<unsigned, 12> to = {
-            1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+        constexpr std::array<unsigned, 12> from = {0, 1, 0, 3, 1, 3,
+                                                   0, 2, 1, 2, 2, 3};
+        constexpr std::array<unsigned, 12> to = {1, 0, 3, 1, 3, 0,
+                                                 2, 1, 2, 0, 3, 2};
         std::array<Value, 12> transitions;
         Value changed = zeroMask;
         for (unsigned index = 0; index != 12; ++index) {
-          transitions[index] = arith::AndIOp::create(
-              builder, location, oldSymbols[from[index]], newSymbols[to[index]]);
+          transitions[index] =
+              arith::AndIOp::create(builder, location, oldSymbols[from[index]],
+                                    newSymbols[to[index]]);
           changed = arith::OrIOp::create(builder, location, changed,
                                          transitions[index]);
         }
@@ -1055,11 +1059,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         for (auto [index, group] : llvm::enumerate(storagePlan->groups)) {
           std::array<Value, 3> masks{zeroMask, zeroMask, zeroMask};
           auto add = [&](unsigned bank, unsigned transition) {
-            Value selected = arith::AndIOp::create(
-                builder, location, group.masks[transition],
-                transitions[transition]);
-            masks[bank] = arith::OrIOp::create(builder, location, masks[bank],
-                                               selected);
+            Value selected = arith::AndIOp::create(builder, location,
+                                                   group.masks[transition],
+                                                   transitions[transition]);
+            masks[bank] =
+                arith::OrIOp::create(builder, location, masks[bank], selected);
           };
           for (unsigned transition : {0u, 3u, 7u})
             add(0, transition);
@@ -1116,10 +1120,10 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           "obelisk_sim.propagation_delays");
       TimingPathMaskedPlan *maskedPlan = nullptr;
       Operation *driverNode = destination.semanticNode;
-      while (isa_and_nonnull<semantic::SVElementSelectExpressionOp,
-                             semantic::SVRangeSelectExpressionOp,
-                             semantic::SVMemberAccessExpressionOp>(
-          driverNode)) {
+      while (
+          isa_and_nonnull<semantic::SVElementSelectExpressionOp,
+                          semantic::SVRangeSelectExpressionOp,
+                          semantic::SVMemberAccessExpressionOp>(driverNode)) {
         SmallVector<Operation *> children = getChildren(driverNode);
         if (children.empty())
           break;
@@ -1128,12 +1132,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       if (auto nodeID = driverNode
                             ? driverNode->getAttrOfType<IntegerAttr>("node_id")
                             : IntegerAttr{}) {
-        auto found = timingPathMaskedPlans.find(
-            nodeID.getValue().getZExtValue());
+        auto found =
+            timingPathMaskedPlans.find(nodeID.getValue().getZExtValue());
         if (found != timingPathMaskedPlans.end()) {
           maskedPlan = &found->second;
-          usedTimingPathMaskedPlans.insert(
-              nodeID.getValue().getZExtValue());
+          usedTimingPathMaskedPlans.insert(nodeID.getValue().getZExtValue());
         }
       }
       if (!maskedPlan && timingPathMaskedPlan)
@@ -1145,15 +1148,13 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         auto maskType =
             dyn_cast<IntegerType>(maskedPlan->coverageMask.getType());
         if (!codeUnitID || !drivenWidth || !maskType ||
-            maskType.getWidth() != *drivenWidth ||
-            maskedPlan->groups.empty() ||
+            maskType.getWidth() != *drivenWidth || maskedPlan->groups.empty() ||
             maskedPlan->groups.size() > UINT32_MAX ||
             nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("invalid masked timing path drive plan");
         uint32_t component =
             static_cast<uint32_t>(nextInertialDriveComponent++);
-        uint32_t groupCount =
-            static_cast<uint32_t>(maskedPlan->groups.size());
+        uint32_t groupCount = static_cast<uint32_t>(maskedPlan->groups.size());
         Value previous = sim::SimDriverReadOp::create(
             builder, location, published.getType(), destination.reference);
         auto logicType =
@@ -1167,8 +1168,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           }
           if (isa<sim::LogicType>(value.getType()))
             return value;
-          return Value(sim::SimLogicFromBitsOp::create(
-              builder, location, logicType, value));
+          return Value(sim::SimLogicFromBitsOp::create(builder, location,
+                                                       logicType, value));
         };
         FailureOr<Value> previousLogic = toLogic(previous);
         FailureOr<Value> publishedLogic = toLogic(published);
@@ -1177,32 +1178,30 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               "timing path driver value is not a packed scalar");
         APInt zero = APInt::getZero(*drivenWidth);
         APInt ones = APInt::getAllOnes(*drivenWidth);
-        Value zeroMask = arith::ConstantOp::create(
-            builder, location, maskType,
-            builder.getIntegerAttr(maskType, zero));
-        Value onesMask = arith::ConstantOp::create(
-            builder, location, maskType,
-            builder.getIntegerAttr(maskType, ones));
+        Value zeroMask =
+            arith::ConstantOp::create(builder, location, maskType,
+                                      builder.getIntegerAttr(maskType, zero));
+        Value onesMask =
+            arith::ConstantOp::create(builder, location, maskType,
+                                      builder.getIntegerAttr(maskType, ones));
         auto consumeEdgePending = [&](Value consumed) {
           if (maskedPlan->edgePending.empty())
             return;
-          Value retainedMask = arith::XOrIOp::create(
-              builder, location, consumed, onesMask);
+          Value retainedMask =
+              arith::XOrIOp::create(builder, location, consumed, onesMask);
           for (Value pendingRef : maskedPlan->edgePending) {
-            Value pending = sim::SimRefLoadOp::create(
-                builder, location, maskType, pendingRef);
-            Value retained = arith::AndIOp::create(
-                builder, location, pending, retainedMask);
-            sim::SimRefStoreOp::create(builder, location, retained,
-                                       pendingRef);
+            Value pending = sim::SimRefLoadOp::create(builder, location,
+                                                      maskType, pendingRef);
+            Value retained =
+                arith::AndIOp::create(builder, location, pending, retainedMask);
+            sim::SimRefStoreOp::create(builder, location, retained, pendingRef);
           }
         };
         if (maskedPlan->transitionIndependent) {
           Value consumed = sim::SimLogicCaseDifferenceMaskOp::create(
               builder, location, maskType, *previousLogic, *publishedLogic);
           consumeEdgePending(consumed);
-          for (auto [index, group] :
-               llvm::enumerate(maskedPlan->groups)) {
+          for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
             Value mask = group.masks.front();
             auto drive = sim::SimDriverDriveInertialPathOp::create(
                 builder, location, destination.reference, published,
@@ -1237,17 +1236,17 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           publishedSymbols[symbol] = symbolMask(*publishedLogic);
         }
         auto remainingSymbol = [&](const std::array<Value, 4> &symbols) {
-          Value used = arith::OrIOp::create(builder, location, symbols[0],
-                                            symbols[1]);
+          Value used =
+              arith::OrIOp::create(builder, location, symbols[0], symbols[1]);
           used = arith::OrIOp::create(builder, location, used, symbols[2]);
           return arith::XOrIOp::create(builder, location, used, onesMask);
         };
         previousSymbols[3] = remainingSymbol(previousSymbols);
         publishedSymbols[3] = remainingSymbol(publishedSymbols);
-        constexpr std::array<unsigned, 12> fromSymbols = {
-            0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
-        constexpr std::array<unsigned, 12> toSymbols = {
-            1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+        constexpr std::array<unsigned, 12> fromSymbols = {0, 1, 0, 3, 1, 3,
+                                                          0, 2, 1, 2, 2, 3};
+        constexpr std::array<unsigned, 12> toSymbols = {1, 0, 3, 1, 3, 0,
+                                                        2, 1, 2, 0, 3, 2};
         std::array<Value, 12> transitionMasks;
         for (unsigned transition = 0; transition != 12; ++transition)
           transitionMasks[transition] = arith::AndIOp::create(
@@ -1256,17 +1255,16 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         if (!maskedPlan->edgePending.empty()) {
           Value consumed = zeroMask;
           for (Value transition : transitionMasks)
-            consumed = arith::OrIOp::create(builder, location, consumed,
-                                            transition);
+            consumed =
+                arith::OrIOp::create(builder, location, consumed, transition);
           consumeEdgePending(consumed);
         }
-        for (auto [index, group] :
-             llvm::enumerate(maskedPlan->groups)) {
+        for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
           auto addTransition = [&](unsigned bank, unsigned transition) {
-            Value selected = arith::AndIOp::create(
-                builder, location, group.masks[transition],
-                transitionMasks[transition]);
+            Value selected = arith::AndIOp::create(builder, location,
+                                                   group.masks[transition],
+                                                   transitionMasks[transition]);
             runtimeMasks[bank] = arith::OrIOp::create(
                 builder, location, runtimeMasks[bank], selected);
           };
@@ -1303,8 +1301,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder, location, sim::TimeType::get(function.getContext()),
               builder.getI64IntegerAttr(ticks));
         };
-        auto codeUnitID =
-            function->getAttrOfType<IntegerAttr>("code_unit_id");
+        auto codeUnitID = function->getAttrOfType<IntegerAttr>("code_unit_id");
         if (!codeUnitID)
           return function.emitError(
               "delayed drive has no stable code unit identity");
@@ -1315,9 +1312,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         if (!drivenWidth)
           return function.emitError(
               "delayed drive value has no fixed packed width");
-        bool vectorDelay =
-            !function->hasAttr("obelisk_sim.primitive_name") &&
-            *drivenWidth != 1;
+        bool vectorDelay = !function->hasAttr("obelisk_sim.primitive_name") &&
+                           *drivenWidth != 1;
         if (nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("too many delayed drive sites");
         Value riseDelay;
@@ -1331,11 +1327,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           ArrayRef<int64_t> values = delays.asArrayRef();
           int64_t rise = values[0];
           int64_t fall = values.size() == 1 ? rise : values[1];
-          int64_t turnoff = values.size() == 1
-                                ? rise
-                                : values.size() == 2
-                                      ? std::min(rise, fall)
-                                      : values[2];
+          int64_t turnoff = values.size() == 1   ? rise
+                            : values.size() == 2 ? std::min(rise, fall)
+                                                 : values[2];
           riseDelay = timeConstant(rise);
           fallDelay = timeConstant(fall);
           turnoffDelay = timeConstant(turnoff);
@@ -1393,6 +1387,23 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     const unsigned selectedBitWidth = resultWidth.value();
     if (selectedBitWidth == 0 || selectedBitWidth > baseBitWidth)
       return failure();
+
+    // Preserve the exact input-view boundary for an NBA. Native lowering
+    // clips this dynamic view once in the scheduler, and bytecode references
+    // already carry the same begin/end bounds. This keeps generated IR
+    // independent of the selection width while capturing both the index and
+    // RHS at the point where the NBA is encountered.
+    if (nonblocking) {
+      CapturedLValue selected;
+      selected.semanticNode = destination.semanticNode;
+      selected.type = destination.type;
+      selected.reference = sim::SimRefDynExtractOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), destination.type),
+          destination.reference, destination.index);
+      return writeCapturedLValue(selected, *converted, false, true, location,
+                                 delay);
+    }
 
     // A dynamic packed reference cannot by itself carry its declaration
     // boundary when its stable handle is global. Split partial overlaps into
@@ -1543,30 +1554,98 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     bool proceduralPath = false;
     if (!destination.children.empty()) {
       Operation *root = destination.children.front().semanticNode;
-      auto nodeID = root ? root->getAttrOfType<IntegerAttr>("node_id")
-                         : IntegerAttr{};
-      auto found = nodeID ? timingPathMaskedPlans.find(
-                                nodeID.getValue().getZExtValue())
-                          : timingPathMaskedPlans.end();
+      auto nodeID =
+          root ? root->getAttrOfType<IntegerAttr>("node_id") : IntegerAttr{};
+      auto found =
+          nodeID ? timingPathMaskedPlans.find(nodeID.getValue().getZExtValue())
+                 : timingPathMaskedPlans.end();
       proceduralPath = found != timingPathMaskedPlans.end() &&
                        found->second.proceduralStorage;
+    }
+    FailureOr<Value> converted =
+        convert(value, destination.type, sourceSigned, location,
+                isSignedNode(destination.semanticNode));
+    if (failed(converted))
+      return failure();
+    FailureOr<Value> replacement = toPackedScalar(*converted, location);
+    if (failed(replacement))
+      return failure();
+
+    // Reify a statically selected fixed-aggregate path as an exact ordinary
+    // reference. Its element type is the view boundary used by the bounded
+    // packed-slice NBA path, so an overhang cannot reach an adjacent member.
+    std::function<FailureOr<Value>(CapturedLValue &)> exactReference =
+        [&](CapturedLValue &captured) -> FailureOr<Value> {
+      if (captured.kind == CapturedLValue::Kind::Reference &&
+          isa<sim::RefType>(captured.reference.getType()))
+        return captured.reference;
+      if (captured.kind != CapturedLValue::Kind::AggregateElement ||
+          captured.children.size() != 1 ||
+          isa<sim::UnpackedUnionType>(captured.children.front().type))
+        return failure();
+      FailureOr<Value> parent = exactReference(captured.children.front());
+      if (failed(parent) ||
+          sim::getAggregateElementType(captured.children.front().type,
+                                       captured.ordinal) != captured.type)
+        return failure();
+      return sim::SimRefSubelementOp::create(
+                 builder, location,
+                 sim::RefType::get(function.getContext(), captured.type),
+                 *parent,
+                 builder.getDenseI64ArrayAttr(
+                     {static_cast<int64_t>(captured.ordinal)}))
+          .getResult();
+    };
+    FailureOr<Value> boundedBase =
+        nonblocking && !proceduralPath
+            ? exactReference(destination.children.front())
+            : FailureOr<Value>(failure());
+    if (succeeded(boundedBase)) {
+      Value low = destination.index;
+      if (!low)
+        low = arith::ConstantOp::create(
+            builder, location, builder.getI64Type(),
+            builder.getI64IntegerAttr(destination.lowBit));
+      if (destination.padding) {
+        if (auto integer = dyn_cast<IntegerType>(low.getType())) {
+          Value padding = arith::ConstantOp::create(
+              builder, location, integer,
+              builder.getIntegerAttr(integer, destination.padding));
+          low = arith::SubIOp::create(builder, location, low, padding);
+        } else if (auto logic = dyn_cast<sim::LogicType>(low.getType())) {
+          auto plane = builder.getIntegerType(logic.getWidth());
+          Value padding = sim::SimLogicConstantOp::create(
+              builder, location, logic,
+              builder.getIntegerAttr(plane, destination.padding),
+              builder.getIntegerAttr(plane, 0));
+          low = sim::SimLogicBinaryOp::create(
+              builder, location, logic, sim::BinaryKind::Sub, low, padding);
+        } else {
+          return failure();
+        }
+      }
+      Type selectedReference =
+          sim::RefType::get(function.getContext(), destination.type);
+      CapturedLValue selected;
+      selected.semanticNode = destination.semanticNode;
+      selected.type = destination.type;
+      selected.reference = sim::SimRefDynExtractOp::create(
+          builder, location, selectedReference, *boundedBase, low);
+      return writeCapturedLValue(selected, *converted, false, true, location,
+                                 delay);
     }
     if (nonblocking && !proceduralPath) {
       emitError(location)
           << "nonblocking packed selection assignment requires a captured "
-             "partial-update path";
+             "whole-storage partial-update path";
       return failure();
     }
     CapturedLValue &base = destination.children.front();
     FailureOr<Value> baseValue = loadCapturedLValue(base, location);
-    FailureOr<Value> converted =
-        convert(value, destination.type, sourceSigned, location,
-                isSignedNode(destination.semanticNode));
-    if (failed(baseValue) || failed(converted))
+    if (failed(baseValue))
       return failure();
     FailureOr<Value> baseScalar = toPackedScalar(*baseValue, location);
-    FailureOr<Value> replacement = toPackedScalar(*converted, location);
-    if (failed(baseScalar) || failed(replacement))
+    if (failed(baseScalar))
       return failure();
     Type unpaddedType = (*baseScalar).getType();
     if (destination.padding) {
@@ -1620,18 +1699,17 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       std::optional<unsigned> baseWidth = sim::getPackedWidth(base.type);
       std::optional<unsigned> selectedWidth =
           sim::getPackedWidth(destination.type);
-      if (!baseWidth || !selectedWidth ||
-          destination.lowBit >= *baseWidth ||
+      if (!baseWidth || !selectedWidth || destination.lowBit >= *baseWidth ||
           *selectedWidth > *baseWidth - destination.lowBit)
         return function.emitError("invalid procedural timing path selection");
       auto maskType = builder.getIntegerType(*baseWidth);
       APInt bits = APInt::getBitsSet(*baseWidth, destination.lowBit,
-                                    destination.lowBit + *selectedWidth);
+                                     destination.lowBit + *selectedWidth);
       proceduralTimingWriteMask = arith::ConstantOp::create(
           builder, location, maskType, builder.getIntegerAttr(maskType, bits));
     }
-    LogicalResult result = writeCapturedLValue(
-        base, *rebuilt, false, nonblocking, location, delay);
+    LogicalResult result = writeCapturedLValue(base, *rebuilt, false,
+                                               nonblocking, location, delay);
     proceduralTimingWriteMask = savedMask;
     return result;
   }
@@ -2137,7 +2215,8 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
-             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
+             destination.kind ==
+                 CapturedLValue::Kind::AggregateDynamicElement) {
     values.push_back(destination.index);
   } else if (destination.kind == CapturedLValue::Kind::PackedValueSlice &&
              destination.index) {
@@ -2174,7 +2253,8 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
     destination.index = values[next++];
   } else if (destination.kind == CapturedLValue::Kind::StringCharacter ||
              destination.kind == CapturedLValue::Kind::PackedDynamicSlice ||
-             destination.kind == CapturedLValue::Kind::AggregateDynamicElement) {
+             destination.kind ==
+                 CapturedLValue::Kind::AggregateDynamicElement) {
     if (next >= values.size())
       return failure();
     destination.index = values[next++];
@@ -3144,15 +3224,14 @@ FailureOr<Value> UnitLowering::unflattenBitStreamValue(Value packed,
       Value shifted = packed;
       if (highBit) {
         Value amount = arith::ConstantOp::create(
-            builder, location, full,
-            builder.getIntegerAttr(full, highBit));
+            builder, location, full, builder.getIntegerAttr(full, highBit));
         shifted = arith::ShRUIOp::create(builder, location, packed, amount);
       }
-      window = width == full.getWidth()
-                   ? shifted
-                   : arith::TruncIOp::create(builder, location, windowType,
-                                             shifted)
-                         .getResult();
+      window =
+          width == full.getWidth()
+              ? shifted
+              : arith::TruncIOp::create(builder, location, windowType, shifted)
+                    .getResult();
     }
     SmallVector<int64_t> encoded;
     encoded.reserve(plan->size());
@@ -3179,18 +3258,17 @@ FailureOr<Value> UnitLowering::unflattenBitStreamValue(Value packed,
       auto full = cast<IntegerType>(packed.getType());
       Value shifted = packed;
       if (highBit) {
-        Value amount =
-            arith::ConstantOp::create(builder, location, full,
-                                      builder.getIntegerAttr(full, highBit));
+        Value amount = arith::ConstantOp::create(
+            builder, location, full, builder.getIntegerAttr(full, highBit));
         shifted = arith::ShRUIOp::create(builder, location, packed, amount);
       }
-      window = *width == full.getWidth()
-                   ? shifted
-                   : arith::TruncIOp::create(
-                         builder, location,
-                         IntegerType::get(function.getContext(), *width),
-                         shifted)
-                         .getResult();
+      window =
+          *width == full.getWidth()
+              ? shifted
+              : arith::TruncIOp::create(
+                    builder, location,
+                    IntegerType::get(function.getContext(), *width), shifted)
+                    .getResult();
     }
     FailureOr<Value> converted = convert(window, scalarType, false, location);
     if (failed(converted))
@@ -3334,16 +3412,15 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   // would hand a left-to-right stream the source's rightmost bits. Targets
   // that include a dynamic container consume the whole source (11.4.14.4's
   // greedy resize), so there is nothing to leave behind there.
-  bool everyTargetFixed = llvm::none_of(
-      infos, [](const TargetInfo &info) { return info.dynamic; });
-  if (everyTargetFixed &&
-      fixedWidth > std::numeric_limits<unsigned>::max())
+  bool everyTargetFixed =
+      llvm::none_of(infos, [](const TargetInfo &info) { return info.dynamic; });
+  if (everyTargetFixed && fixedWidth > std::numeric_limits<unsigned>::max())
     return emitError(location)
                << "fixed streaming assignment width is not representable",
            failure();
-  FailureOr<Value> reordered = reorderBitStream(
-      *generic, destination.getSliceSize(), location,
-      everyTargetFixed ? i64Constant(fixedWidth) : Value{});
+  FailureOr<Value> reordered =
+      reorderBitStream(*generic, destination.getSliceSize(), location,
+                       everyTargetFixed ? i64Constant(fixedWidth) : Value{});
   if (failed(reordered))
     return failure();
 
@@ -3351,9 +3428,8 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
   uint64_t fixedHighBit = fixedWidth;
   if (everyTargetFixed) {
     Type packedType =
-        fourState
-            ? Type(sim::LogicType::get(function.getContext(), fixedWidth))
-            : Type(IntegerType::get(function.getContext(), fixedWidth));
+        fourState ? Type(sim::LogicType::get(function.getContext(), fixedWidth))
+                  : Type(IntegerType::get(function.getContext(), fixedWidth));
     fixedPacked = sim::SimContainerExportBitstreamOp::create(
         builder, location, packedType, *reordered);
   }
@@ -4216,17 +4292,14 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
           builder, location, destination, *converted,
           builder.getBoolAttr(userRaw));
       if (userRaw)
-        drive->setAttr("obelisk_sim.user_net_raw_drive",
-                       builder.getUnitAttr());
+        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
     } else {
-      auto drive =
-          sim::SimDriverDriveOp::create(builder, location, destination,
-                                        *converted);
+      auto drive = sim::SimDriverDriveOp::create(builder, location, destination,
+                                                 *converted);
       if (isUserNetDriver(destination)) {
         drive->setAttr("obelisk_sim.defer_net_resolution",
                        builder.getUnitAttr());
-        drive->setAttr("obelisk_sim.user_net_raw_drive",
-                       builder.getUnitAttr());
+        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
       }
     }
     return success();

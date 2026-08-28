@@ -359,10 +359,10 @@ LogicalResult SimFuncOp::verify() {
     WalkResult blocking = getBody().walk([&](Operation *op) {
       if (isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
               SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-              SimSuspendClockSetOp,
-              SimSuspendEventOp, SimSuspendEventOrderOp, SimSuspendMailboxOp,
-              SimSuspendSemaphoreOp, SimSuspendObserveOp, SimSuspendForeverOp,
-              SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp>(op)) {
+              SimSuspendClockSetOp, SimSuspendEventOp, SimSuspendEventOrderOp,
+              SimSuspendMailboxOp, SimSuspendSemaphoreOp, SimSuspendObserveOp,
+              SimSuspendForeverOp, SimSuspendAwaitOp, SimSuspendJoinOp,
+              SimSuspendChildrenOp>(op)) {
         op->emitOpError(getEntryKind() == EntryKind::Function
                             ? "is not permitted in a zero-time function entry"
                             : "is not permitted in a zero-time observer entry");
@@ -829,8 +829,7 @@ LogicalResult SimControlEnterOp::verify() {
   return verifyPositive(*this, getTargetIdAttr(), "control target ID");
 }
 
-SuccessorOperands
-SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
+SuccessorOperands SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
   assert(index < 2 && "control boundary has two successors");
   return index == 0 ? SuccessorOperands(getResumeOperandsMutable())
                     : SuccessorOperands(MutableOperandRange(
@@ -1852,8 +1851,15 @@ LogicalResult SimRefDynExtractOp::verify() {
     return failure();
   auto input = getPackedWidth(inputType);
   auto result = getPackedWidth(resultType);
-  if (!input || !result || *result > *input)
-    return emitOpError("result element width exceeds input element width");
+  if (!input || !result)
+    return emitOpError("input and result require fixed packed widths");
+  if (*result > *input &&
+      !llvm::all_of(getResult().getUsers(), [&](Operation *user) {
+        auto nba = dyn_cast<SimNBAEnqueueOp>(user);
+        return nba && nba.getDestination() == getResult();
+      }))
+    return emitOpError(
+        "overhanging result is only valid as an NBA destination");
   return success();
 }
 

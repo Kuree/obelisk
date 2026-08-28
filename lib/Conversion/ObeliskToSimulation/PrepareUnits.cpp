@@ -5,8 +5,8 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include <functional>
@@ -780,6 +780,17 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           children.front()->hasAttr("virtual_interface_clocking_block_event")
               ? FailureOr<Type>(sim::LogicType::get(module.getContext(), 1))
               : getNormalizedSemanticType(children.front());
+      // Direct string variables already publish a signal occurrence only
+      // when their contents change.  Subscribe to that descriptor instead of
+      // outlining a value observer: string handles are not value identity,
+      // and retaining a previous heap string in every waiter would add both
+      // scheduler work and lifetime traffic to this common exact case.
+      if (!event.getHasIff() &&
+          event.getEdgeKind() == semantic::EdgeKind::Change &&
+          succeeded(primaryType) && isa<sim::StringType>(*primaryType) &&
+          isAddressableTimingExpression(children.front()) &&
+          !isManagedMemberExpression(children.front()))
+        return;
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
         primaryResult = ObserverResult::Event;
       else if (succeeded(primaryType) &&
@@ -807,8 +818,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         !path->hasAttr("timing_condition"))
       return;
     SmallVector<Operation *> children = getChildren(path);
-    size_t expectedChildren =
-        path->hasAttr("timing_edge_sensitive") ? 2 : 1;
+    size_t expectedChildren = path->hasAttr("timing_edge_sensitive") ? 2 : 1;
     if (children.size() != expectedChildren) {
       emitError(getSemanticLocation(path))
           << "conditional specify path has no unique frozen condition";

@@ -24,7 +24,8 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   bool globalClock =
       globalCall && isGlobalSampledFunction(globalCall.getCalleeName());
   if (!event && !globalClock)
-    return emitError(location) << "sampled value has no static clock", failure();
+    return emitError(location) << "sampled value has no static clock",
+           failure();
 
   SmallVector<Operation *> clockChildren;
   Operation *clockExpression = nullptr;
@@ -67,8 +68,8 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
       clockCondition
           ? dyn_cast<semantic::SVNamedValueExpressionOp>(clockCondition)
           : semantic::SVNamedValueExpressionOp{};
-  if (!isAddressableExpression(expression) ||
-      (!globalClock && !clockNode) || (gateExpression && !gateNode) ||
+  if (!isAddressableExpression(expression) || (!globalClock && !clockNode) ||
+      (gateExpression && !gateNode) ||
       (clockCondition && !clockConditionNode)) {
     emitError(location)
         << "alternate-clock sampled values currently require direct named "
@@ -78,8 +79,9 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
 
   FailureOr<Value> source = lowerExpression(expression, true);
   FailureOr<Value> watched =
-      globalClock ? lowerReferencedValue(clock, globalClockPath.getValue(), true)
-                  : lowerExpression(clockExpression, true);
+      globalClock
+          ? lowerReferencedValue(clock, globalClockPath.getValue(), true)
+          : lowerExpression(clockExpression, true);
   FailureOr<Value> gate = failure();
   FailureOr<Value> clockQualifier = failure();
   if (gateExpression)
@@ -171,8 +173,8 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
       clockCondition && gateExpression ? gateAttrs : DictionaryAttr{};
   std::string key =
       (Twine(captureKey(*sourceAttrs)) + "|" +
-       Twine(static_cast<uint32_t>(edge)) + "|" +
-       captureKey(*clockAttrs) + "|condition:" +
+       Twine(static_cast<uint32_t>(edge)) + "|" + captureKey(*clockAttrs) +
+       "|condition:" +
        (suspendConditionAttrs ? Twine(captureKey(suspendConditionAttrs))
                               : Twine("true")) +
        "|gate:" +
@@ -262,16 +264,14 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
         clockConditionArgument ? clockConditionArgument : gateArgument;
     if (suspendConditionArgument)
       suspend = sim::SimSuspendEdgeIffOp::create(
-                    waitBuilder, location,
-                    static_cast<sim::EdgeKind>(edge),
+                    waitBuilder, location, static_cast<sim::EdgeKind>(edge),
                     entry.getArgument(2),
                     entry.getArgument(*suspendConditionArgument), ValueRange{},
                     sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
                     .getOperation();
     else
       suspend = sim::SimSuspendEdgeOp::create(
-                    waitBuilder, location,
-                    static_cast<sim::EdgeKind>(edge),
+                    waitBuilder, location, static_cast<sim::EdgeKind>(edge),
                     entry.getArgument(2), ValueRange{},
                     sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
                     .getOperation();
@@ -744,18 +744,29 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     FailureOr<Value> seedDestination = failure();
     if (!children.empty()) {
-      seedDestination = lowerExpression(children.front(), true);
+      // The elaborated inout argument commonly carries an implicit integral
+      // conversion.  That conversion describes the value passed to the
+      // system function, but it is not itself an lvalue.  Preserve the
+      // underlying writable variable so the updated seed is stored back.
+      Operation *seedNode = children.front();
+      while (isa<semantic::SVConversionExpressionOp>(seedNode)) {
+        SmallVector<Operation *> converted = getChildren(seedNode);
+        if (converted.size() != 1)
+          break;
+        seedNode = converted.front();
+      }
+      seedDestination = lowerExpression(seedNode, true);
       if (failed(seedDestination)) {
-        emitError(getSemanticLocation(children.front()))
+        emitError(getSemanticLocation(seedNode))
             << "$random seed must be a writable integral variable";
         return failure();
       }
-      FailureOr<Value> seedValue = loadReference(
-          *seedDestination, getSemanticLocation(children.front()));
+      FailureOr<Value> seedValue =
+          loadReference(*seedDestination, getSemanticLocation(seedNode));
       if (failed(seedValue))
         return failure();
       FailureOr<Value> seed32 =
-          convert(*seedValue, i32, isSignedNode(children.front()), location);
+          convert(*seedValue, i32, isSignedNode(seedNode), location);
       if (failed(seed32))
         return failure();
       Value seed = arith::ExtUIOp::create(builder, location, i64, *seed32);
@@ -988,8 +999,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     if (!function->hasAttr("obelisk_sim.global_future_resolver")) {
       emitError(location)
-          << name
-          << " requires the detached global-future assertion resolver";
+          << name << " requires the detached global-future assertion resolver";
       return failure();
     }
     FailureOr<Value> future = sampledValue(children.front());
@@ -1037,8 +1047,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
           futureBit, target);
       Value currentIsNotTarget = arith::XOrIOp::create(
-          builder, location, currentIsTarget,
-          constant(builder.getI1Type(), 1));
+          builder, location, currentIsTarget, constant(builder.getI1Type(), 1));
       return convertResult(arith::AndIOp::create(
           builder, location, currentIsNotTarget, futureIsTarget));
     }
@@ -1064,26 +1073,23 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   }
 
   bool globalPastFunction = isGlobalPastSampledFunction(name);
-  StringRef historyName =
-      llvm::StringSwitch<StringRef>(name)
-          .Case("$past_gclk", "$past")
-          .Case("$rose_gclk", "$rose")
-          .Case("$fell_gclk", "$fell")
-          .Case("$stable_gclk", "$stable")
-          .Case("$changed_gclk", "$changed")
-          .Default(name);
+  StringRef historyName = llvm::StringSwitch<StringRef>(name)
+                              .Case("$past_gclk", "$past")
+                              .Case("$rose_gclk", "$rose")
+                              .Case("$fell_gclk", "$fell")
+                              .Case("$stable_gclk", "$stable")
+                              .Case("$changed_gclk", "$changed")
+                              .Default(name);
   bool historyFunction = historyName == "$past" || historyName == "$rose" ||
-                         historyName == "$fell" ||
-                         historyName == "$stable" ||
+                         historyName == "$fell" || historyName == "$stable" ||
                          historyName == "$changed";
   if (historyFunction) {
     size_t maximum = globalPastFunction ? 1 : historyName == "$past" ? 4 : 2;
     if (children.empty() || children.size() > maximum) {
       emitError(location) << name << " requires "
-                          << (globalPastFunction
-                                  ? "exactly one"
-                                  : historyName == "$past" ? "one to four"
-                                                            : "one or two")
+                          << (globalPastFunction       ? "exactly one"
+                              : historyName == "$past" ? "one to four"
+                                                       : "one or two")
                           << " arguments";
       return failure();
     }
@@ -1175,8 +1181,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       alternateClock = true;
 
     uint64_t depth = 1;
-    if (historyName == "$past" && !globalPastFunction &&
-        children.size() >= 2 &&
+    if (historyName == "$past" && !globalPastFunction && children.size() >= 2 &&
         !isa<semantic::SVEmptyArgumentExpressionOp>(children[1])) {
       std::optional<StringRef> spelling = getConstantSpelling(children[1]);
       if (!spelling) {
@@ -1207,9 +1212,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       Operation *sampleClock =
           globalPastFunction ? op.getOperation() : explicitEvent.getOperation();
       if (historyName == "$past") {
-        FailureOr<Value> past = lowerAlternateClockSample(
-            children.front(), gateExpression, sampleClock, depth, depth - 1,
-            location);
+        FailureOr<Value> past =
+            lowerAlternateClockSample(children.front(), gateExpression,
+                                      sampleClock, depth, depth - 1, location);
         return failed(past) ? FailureOr<Value>(failure())
                             : convertResult(*past);
       }
@@ -2109,14 +2114,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   }
 
   // The whole of IEEE 1800-2017 Table 20-4.
-  bool realMath = llvm::StringSwitch<bool>(name)
-                      .Cases({"$ceil", "$floor", "$sqrt", "$exp", "$ln",
-                              "$log10", "$pow", "$atan2", "$hypot", "$sin",
-                              "$cos", "$tan", "$asin", "$acos", "$atan",
-                              "$sinh", "$cosh", "$tanh", "$asinh", "$acosh",
-                              "$atanh"},
-                             true)
-                      .Default(false);
+  bool realMath =
+      llvm::StringSwitch<bool>(name)
+          .Cases({"$ceil",  "$floor", "$sqrt",  "$exp",  "$ln",   "$log10",
+                  "$pow",   "$atan2", "$hypot", "$sin",  "$cos",  "$tan",
+                  "$asin",  "$acos",  "$atan",  "$sinh", "$cosh", "$tanh",
+                  "$asinh", "$acosh", "$atanh"},
+                 true)
+          .Default(false);
   if (realMath)
     return lowerRealMathSystemCall(op);
 
@@ -2260,8 +2265,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     if (failed(rounded))
       return failure();
     if (name == "$stime")
-      rounded = arith::TruncIOp::create(builder, location, i32, *rounded)
-                    .getResult();
+      rounded =
+          arith::TruncIOp::create(builder, location, i32, *rounded).getResult();
     return convertResult(*rounded);
   }
 
@@ -2351,14 +2356,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   if (fileCall)
     return lowerFileSystemCall(op);
 
-  bool dumpCall = llvm::StringSwitch<bool>(name)
-                      .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon",
-                              "$dumpall", "$dumpflush", "$dumplimit",
-                              "$dumpports", "$dumpportsoff", "$dumpportson",
-                              "$dumpportsall", "$dumpportsflush",
-                              "$dumpportslimit"},
-                             true)
-                      .Default(false);
+  bool dumpCall =
+      llvm::StringSwitch<bool>(name)
+          .Cases({"$dumpfile", "$dumpvars", "$dumpoff", "$dumpon", "$dumpall",
+                  "$dumpflush", "$dumplimit", "$dumpports", "$dumpportsoff",
+                  "$dumpportson", "$dumpportsall", "$dumpportsflush",
+                  "$dumpportslimit"},
+                 true)
+          .Default(false);
   if (dumpCall)
     return lowerDumpSystemCall(op);
 

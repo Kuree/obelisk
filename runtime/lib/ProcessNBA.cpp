@@ -134,13 +134,12 @@ void refreshStaticNBAAccumulatorsPending(obelisk_rt_context *context) {
                   });
 }
 
-static obelisk_rt_status
-schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
-             uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t bitOffset,
-             uint64_t bitWidth, uint64_t delay, const uint8_t *value,
-             const uint8_t *unknown, bool stringValue,
-             uint64_t staticSite = UINT64_MAX, bool driver = false,
-             uint64_t clockingOutput = UINT64_MAX) {
+static obelisk_rt_status schedulerNBA(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t delay, const uint8_t *value, const uint8_t *unknown,
+    bool stringValue, uint64_t staticSite = UINT64_MAX, bool driver = false,
+    uint64_t clockingOutput = UINT64_MAX, uint64_t sourceBitOffset = 0) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   auto fail = [&](obelisk_rt_status status) {
@@ -148,7 +147,8 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
     return status;
   };
   if (!valuePlane || bitWidth == 0 || (bitWidth + 7) < bitWidth ||
-      (stringValue && (bitWidth != 64 || unknownPlane)))
+      sourceBitOffset > UINT64_MAX - bitWidth ||
+      (stringValue && (bitWidth != 64 || unknownPlane || sourceBitOffset != 0)))
     return fail(OBELISK_RT_INVALID_ARGUMENT);
   if (bitOffset == UINT64_MAX)
     return OBELISK_RT_OK;
@@ -169,6 +169,9 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
   if (!value || (unknownPlane && !unknown) ||
       byteCount > std::numeric_limits<size_t>::max())
     return fail(OBELISK_RT_INVALID_ARGUMENT);
+  auto sourceBit = [&](const uint8_t *plane, uint64_t bit) {
+    return byteBit(plane, sourceBitOffset + bit);
+  };
   obelisk_rt_string_v1 queuedString = 0;
   if (stringValue) {
     std::memcpy(&queuedString, value, sizeof(queuedString));
@@ -295,10 +298,10 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
         if (packedStage) {
           uint64_t packedValue = 0;
           uint64_t packedUnknown = 0;
-          for (uint64_t byte = 0; byte != byteCount; ++byte) {
-            packedValue |= uint64_t{value[byte]} << (byte * 8);
+          for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+            packedValue |= uint64_t{sourceBit(value, bit)} << bit;
             if (unknownPlane)
-              packedUnknown |= uint64_t{unknown[byte]} << (byte * 8);
+              packedUnknown |= uint64_t{sourceBit(unknown, bit)} << bit;
           }
           uint64_t sourceMask = packedWidthMask(bitWidth);
           packedValue &= sourceMask;
@@ -342,9 +345,9 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
           for (uint64_t source = first; source < last; ++source) {
             uint64_t destination =
                 static_cast<uint64_t>(static_cast<__int128>(offset) + source);
-            setByteBit(accValue, destination, byteBit(value, source));
+            setByteBit(accValue, destination, sourceBit(value, source));
             setByteBit(accUnknown, destination,
-                       unknownPlane && byteBit(unknown, source));
+                       unknownPlane && sourceBit(unknown, source));
             setByteBit(accMask, destination, true);
           }
         }
@@ -380,17 +383,21 @@ schedulerNBA(obelisk_rt_context *context, uint8_t *valuePlane,
         (context->nativeSchedulePlan->flags &
          OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
     if (update.inlinePacked) {
-      for (uint64_t byte = 0; byte != byteCount; ++byte)
-        update.inlineValue |= uint64_t{value[byte]} << (byte * 8);
+      for (uint64_t bit = 0; bit != bitWidth; ++bit)
+        update.inlineValue |= uint64_t{sourceBit(value, bit)} << bit;
       if (unknownPlane)
-        for (uint64_t byte = 0; byte != byteCount; ++byte)
-          update.inlineUnknown |= uint64_t{unknown[byte]} << (byte * 8);
+        for (uint64_t bit = 0; bit != bitWidth; ++bit)
+          update.inlineUnknown |= uint64_t{sourceBit(unknown, bit)} << bit;
       ++context->signalDiagnostics.aotNBAStages;
     } else {
-      update.value.assign(value, value + static_cast<size_t>(byteCount));
+      update.value.assign(static_cast<size_t>(byteCount), 0);
       if (unknownPlane)
-        update.unknown.assign(unknown,
-                              unknown + static_cast<size_t>(byteCount));
+        update.unknown.assign(static_cast<size_t>(byteCount), 0);
+      for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+        setByteBit(update.value.data(), bit, sourceBit(value, bit));
+        if (unknownPlane)
+          setByteBit(update.unknown.data(), bit, sourceBit(unknown, bit));
+      }
     }
     update.sequence = context->nextSchedulerSequence++;
     update.dueTime = delay > UINT64_MAX - context->schedulerTime
@@ -417,6 +424,41 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_packed_slice_nba(
+    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+    uint64_t planeBitCount, uint64_t baseHandle, uint64_t baseBitWidth,
+    int64_t lowBit, uint32_t lowBitValid, uint64_t sourceBitWidth,
+    uint64_t delay, uint64_t staticSite, uint64_t clockingOutput,
+    const uint8_t *value, const uint8_t *unknown) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!lowBitValid || baseHandle == UINT64_MAX)
+    return OBELISK_RT_OK;
+  if (baseBitWidth == 0 || sourceBitWidth == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  __int128 low = lowBit;
+  __int128 first = std::max<__int128>(0, -low);
+  __int128 last = std::min<__int128>(sourceBitWidth,
+                                     static_cast<__int128>(baseBitWidth) - low);
+  if (first >= last)
+    return OBELISK_RT_OK;
+  __int128 destinationOffset = low + first;
+  if (destinationOffset < 0 || destinationOffset > INT64_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t selectedWidth = static_cast<uint64_t>(last - first);
+  uint64_t sourceOffset = static_cast<uint64_t>(first);
+  if (sourceOffset > sourceBitWidth ||
+      selectedWidth > sourceBitWidth - sourceOffset)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t destination = obelisk_rt_stable_handle_offset(
+      baseHandle, static_cast<int64_t>(destinationOffset));
+  if (destination == UINT64_MAX)
+    return OBELISK_RT_INVALID_HANDLE;
+  return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
+                      destination, selectedWidth, delay, value, unknown, false,
+                      staticSite, false, clockingOutput, sourceOffset);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(

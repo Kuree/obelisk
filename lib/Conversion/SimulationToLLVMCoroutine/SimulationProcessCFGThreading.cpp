@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
@@ -165,6 +166,42 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     }
   } while (discoveredRoot);
 
+  // A continuation operand is restored from the canonical process frame and
+  // therefore starts a second dynamic path for its semantic root. Ordinary
+  // dominance does not model that path: after coroutine splitting, it may
+  // reach a loop exit without executing the original SSA definition again.
+  // Remember the direct continuation blocks now, before later threading adds
+  // ordinary phi-like arguments that must not themselves be treated as frame
+  // restores.
+  DenseMap<Value, llvm::SmallPtrSet<Block *, 4>> restoredRoots;
+  for (Block &predecessor : function.getBody()) {
+    Operation *terminator = predecessor.getTerminator();
+    if (!isa<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp,
+             sim::SimProcessControlOp, sim::SimSuspendDelayOp,
+             sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+             sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+             sim::SimSuspendAnyOp, sim::SimSuspendClockSetOp,
+             sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
+             sim::SimSuspendMailboxOp, sim::SimSuspendSemaphoreOp,
+             sim::SimSuspendObserveOp, sim::SimSuspendAwaitOp,
+             sim::SimSuspendJoinOp, sim::SimSuspendChildrenOp>(terminator))
+      continue;
+    auto branch = cast<BranchOpInterface>(terminator);
+    for (auto [successorIndex, successor] :
+         llvm::enumerate(predecessor.getSuccessors())) {
+      SuccessorOperands operands = branch.getSuccessorOperands(successorIndex);
+      for (auto [argumentIndex, argument] :
+           llvm::enumerate(successor->getArguments())) {
+        if (argumentIndex >= operands.size() ||
+            operands.isOperandProduced(argumentIndex))
+          continue;
+        Value root = rootOf(argument);
+        if (root && rootOf(operands[argumentIndex]) == root)
+          restoredRoots[root].insert(successor);
+      }
+    }
+  }
+
   DominanceInfo dominance(function);
 
   // A control boundary has a scheduler resume edge that is deliberately not
@@ -237,24 +274,42 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   // reconvergence points between ordinary execution and a restored resume
   // lane, keeping both the canonical frame and native CFG compact.
   DenseMap<Value, llvm::SmallPtrSet<Block *, 16>> resumeReachable;
-  for (ControlRequirement &requirement : controlRequirements) {
-    Block *definition = requirement.root.getParentBlock();
-    SmallVector<Block *> worklist{requirement.boundary.getResume()};
-    auto &reachable = resumeReachable[requirement.root];
+  auto markRestoredReachability = [&](Value root, Block *start) {
+    Block *definition = root.getParentBlock();
+    SmallVector<Block *> worklist{start};
+    auto &reachable = resumeReachable[root];
     while (!worklist.empty()) {
       Block *block = worklist.pop_back_val();
-      if (block == definition)
-        continue;
-      if (!reachable.insert(block).second)
+      if (block == definition || !reachable.insert(block).second)
         continue;
       llvm::append_range(worklist, block->getSuccessors());
     }
+  };
+  for (ControlRequirement &requirement : controlRequirements) {
+    markRestoredReachability(requirement.root,
+                             requirement.boundary.getResume());
   }
+  for (auto &[root, starts] : restoredRoots)
+    for (Block *start : starts)
+      markRestoredReachability(root, start);
 
   std::function<FailureOr<Value>(Value, Block *)> makeAvailable;
+  struct CreatedThreadArgument {
+    Block *block;
+    Value root;
+    BlockArgument argument;
+  };
+  struct AppendedThreadOperand {
+    Operation *terminator;
+    unsigned successorIndex;
+  };
+  SmallVector<CreatedThreadArgument> createdThreadArguments;
+  SmallVector<AppendedThreadOperand> appendedThreadOperands;
   makeAvailable = [&](Value root, Block *block) -> FailureOr<Value> {
     if (block == entry)
-      return failure();
+      return dominance.dominates(root, block->getTerminator())
+                 ? FailureOr<Value>(root)
+                 : FailureOr<Value>(failure());
     auto existing = threadedValues[block].find(root);
     if (existing != threadedValues[block].end())
       return existing->second;
@@ -278,6 +333,7 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     BlockArgument argument = block->addArgument(root.getType(), root.getLoc());
     threadedValues[block].insert({root, argument});
     threadedRoots.try_emplace(argument, root);
+    createdThreadArguments.push_back({block, root, argument});
 
     llvm::SmallPtrSet<Block *, 4> seenPredecessors;
     for (Block *predecessor : block->getPredecessors()) {
@@ -291,10 +347,39 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         return failure();
       for (auto [index, successor] :
            llvm::enumerate(predecessor->getSuccessors()))
-        if (successor == block)
+        if (successor == block) {
           branch.getSuccessorOperands(index).append(*incoming);
+          appendedThreadOperands.push_back(
+              {predecessor->getTerminator(), static_cast<unsigned>(index)});
+        }
     }
     return argument;
+  };
+
+  // Recursive reconstruction creates phi-like lanes eagerly to break CFG
+  // cycles. If a later predecessor proves unavailable, roll the entire
+  // speculative subgraph back; otherwise abandoned block arguments accumulate
+  // without corresponding successor operands and invalidate unrelated loops.
+  auto tryMakeAvailable = [&](Value root, Block *block) -> FailureOr<Value> {
+    size_t argumentCheckpoint = createdThreadArguments.size();
+    size_t operandCheckpoint = appendedThreadOperands.size();
+    FailureOr<Value> result = makeAvailable(root, block);
+    if (succeeded(result))
+      return result;
+    while (appendedThreadOperands.size() != operandCheckpoint) {
+      AppendedThreadOperand appended = appendedThreadOperands.pop_back_val();
+      auto branch = cast<BranchOpInterface>(appended.terminator);
+      SuccessorOperands operands =
+          branch.getSuccessorOperands(appended.successorIndex);
+      operands.erase(operands.size() - 1);
+    }
+    while (createdThreadArguments.size() != argumentCheckpoint) {
+      CreatedThreadArgument created = createdThreadArguments.pop_back_val();
+      threadedValues[created.block].erase(created.root);
+      threadedRoots.erase(created.argument);
+      created.block->eraseArgument(created.argument.getArgNumber());
+    }
+    return failure();
   };
 
   // The resume successor can also have ordinary local-control predecessors.
@@ -314,7 +399,8 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         return predecessor->getTerminator()->emitError(
             "cannot thread control-resume state through a non-branch "
             "terminator");
-      FailureOr<Value> incoming = makeAvailable(requirement.root, predecessor);
+      FailureOr<Value> incoming =
+          tryMakeAvailable(requirement.root, predecessor);
       if (failed(incoming))
         return predecessor->getTerminator()->emitError(
             "cannot reconstruct control-resume state on this predecessor");
@@ -329,7 +415,8 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     Block *boundaryBlock = requirement.boundary->getBlock();
     if (!resumeReachable[requirement.root].contains(boundaryBlock))
       continue;
-    FailureOr<Value> available = makeAvailable(requirement.root, boundaryBlock);
+    FailureOr<Value> available =
+        tryMakeAvailable(requirement.root, boundaryBlock);
     if (failed(available))
       return requirement.boundary.emitOpError(
           "cannot reconstruct control-resume state on every predecessor");
@@ -362,7 +449,7 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
             argumentIndex >= operands.size() ||
             operands.isOperandProduced(argumentIndex))
           continue;
-        FailureOr<Value> incoming = makeAvailable(root, &predecessor);
+        FailureOr<Value> incoming = tryMakeAvailable(root, &predecessor);
         if (failed(incoming))
           return predecessor.getTerminator()->emitError(
               "cannot normalize threaded control-resume state");
@@ -379,6 +466,7 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   do {
     changed = false;
     Operation *unresolvedUse = nullptr;
+    Value unresolvedRoot;
     for (Block &block : function.getBody()) {
       if (&block == entry)
         continue;
@@ -386,18 +474,55 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
           llvm::any_of(synchronousControlBodies, [&](Block *body) {
             return dominance.dominates(body, &block);
           });
+      bool controlBoundaryEntryBody =
+          llvm::is_contained(synchronousControlBodies, &block);
       llvm::SetVector<Value> externalRoots;
+      DenseMap<Value, Value> rematerializedConstants;
+      DenseSet<Value> nonRematerializableConstants;
+      OpBuilder rematerializationBuilder(&block, block.begin());
+      std::function<Value(Value)> rematerializeConstantExpression =
+          [&](Value value) -> Value {
+        if (Value replacement = rematerializedConstants.lookup(value))
+          return replacement;
+        if (nonRematerializableConstants.contains(value))
+          return {};
+        auto result = dyn_cast<OpResult>(value);
+        Operation *definition = result ? result.getOwner() : nullptr;
+        if (!definition || definition->getNumRegions() != 0 ||
+            !isMemoryEffectFree(definition) || !isSpeculatable(definition)) {
+          nonRematerializableConstants.insert(value);
+          return {};
+        }
+        IRMapping mapping;
+        for (Value operand : definition->getOperands()) {
+          Value replacement = rematerializeConstantExpression(operand);
+          if (!replacement) {
+            nonRematerializableConstants.insert(value);
+            return {};
+          }
+          mapping.map(operand, replacement);
+        }
+        Operation *clone = rematerializationBuilder.clone(*definition, mapping);
+        for (auto [original, replacement] :
+             llvm::zip_equal(definition->getResults(), clone->getResults()))
+          rematerializedConstants.try_emplace(original, replacement);
+        return rematerializedConstants.lookup(value);
+      };
       for (Operation &operation : block)
-        for (Value value : operation.getOperands()) {
+        for (OpOperand &operand : operation.getOpOperands()) {
+          Value value = operand.get();
           if (value.getParentBlock() == &block)
             continue;
           if (auto argument = dyn_cast<BlockArgument>(value);
               argument && argument.getOwner() == entry)
             continue;
+          if (Value replacement = rematerializeConstantExpression(value)) {
+            operand.set(replacement);
+            continue;
+          }
           externalRoots.insert(rootOf(value));
         }
       for (Value root : externalRoots) {
-        auto &threaded = threadedValues[&block];
         auto replaceExternalUses = [&](Value replacement) {
           for (Operation &operation : block)
             for (OpOperand &operand : operation.getOpOperands()) {
@@ -410,8 +535,11 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         // synchronously. Prefer the closest restored lane when the hidden
         // resume edge can reach this body; otherwise ordinary SSA dominance
         // is sufficient and no frame slot is needed.
+        bool restoredPath = resumeReachable[root].contains(&block);
         Value dominating =
-            dominance.dominates(root, &block.front()) ? root : Value{};
+            !restoredPath && dominance.dominates(root, &block.front())
+                ? root
+                : Value{};
         Block *dominatingBlock = dominating ? root.getParentBlock() : nullptr;
         for (auto &[candidateBlock, candidates] : threadedValues) {
           auto found = candidates.find(root);
@@ -424,12 +552,13 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
             dominatingBlock = candidateBlock;
           }
         }
-        if (controlBoundaryBody && dominating) {
+        if (controlBoundaryBody && dominating &&
+            (!restoredPath || controlBoundaryEntryBody)) {
           replaceExternalUses(dominating);
           continue;
         }
-        auto existing = threaded.find(root);
-        if (existing != threaded.end()) {
+        auto existing = threadedValues[&block].find(root);
+        if (existing != threadedValues[&block].end()) {
           replaceExternalUses(existing->second);
           continue;
         }
@@ -455,23 +584,12 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
             return predecessor->getTerminator()->emitError(
                 "cannot thread suspension-live state through a non-branch "
                 "terminator");
-          Value incoming;
-          Block *incomingBlock = nullptr;
-          for (auto &[candidateBlock, candidates] : threadedValues) {
-            auto found = candidates.find(root);
-            if (found == candidates.end() ||
-                !dominance.dominates(candidateBlock, predecessor))
-              continue;
-            if (!incomingBlock ||
-                dominance.dominates(incomingBlock, candidateBlock)) {
-              incoming = found->second;
-              incomingBlock = candidateBlock;
-            }
-          }
-          if (!incoming &&
-              dominance.dominates(root, predecessor->getTerminator()))
-            incoming = root;
-          if (!incoming) {
+          FailureOr<Value> incoming =
+              !resumeReachable[root].contains(predecessor) &&
+                      dominance.dominates(root, predecessor->getTerminator())
+                  ? FailureOr<Value>(root)
+                  : tryMakeAvailable(root, predecessor);
+          if (failed(incoming)) {
             unavailable = true;
             break;
           }
@@ -481,7 +599,7 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
             if (successor != &block)
               continue;
             incomingEdges.push_back(
-                {branch, static_cast<unsigned>(index), incoming});
+                {branch, static_cast<unsigned>(index), *incoming});
             found = true;
           }
           if (!found)
@@ -489,14 +607,19 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
                 "predecessor is missing its CFG successor");
         }
         if (unavailable || incomingEdges.empty()) {
-          if (!block.hasNoPredecessors())
+          if (!block.hasNoPredecessors()) {
             unresolvedUse = &block.front();
+            unresolvedRoot = root;
+          }
           continue;
         }
 
         BlockArgument argument =
             block.addArgument(root.getType(), root.getLoc());
-        threaded.insert({root, argument});
+        // `tryMakeAvailable` above may insert entries for predecessor blocks
+        // and rehash the outer map. Do not retain a reference to this inner
+        // map across that recursion.
+        threadedValues[&block].insert({root, argument});
         threadedRoots.try_emplace(argument, root);
         replaceExternalUses(argument);
         for (IncomingEdge &incoming : incomingEdges)
@@ -505,9 +628,13 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         changed = true;
       }
     }
-    if (!changed && unresolvedUse)
-      return unresolvedUse->emitError(
+    if (!changed && unresolvedUse) {
+      InFlightDiagnostic diagnostic = unresolvedUse->emitError(
           "cannot reconstruct suspension-live state on every predecessor");
+      if (unresolvedRoot)
+        diagnostic << " for " << unresolvedRoot;
+      return failure();
+    }
   } while (changed);
   return success();
 }

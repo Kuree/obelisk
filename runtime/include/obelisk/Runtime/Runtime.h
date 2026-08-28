@@ -3175,6 +3175,16 @@ obelisk_rt_status obelisk_rt_v1_scheduler_nba(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
     uint64_t plane_bit_count, uint64_t bit_offset, uint64_t bit_width,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown);
+// Queue a packed-view NBA while retaining the exact boundary of the input
+// reference. The signed low bit is relative to that view. Unknown,
+// unrepresentable, or nonoverlapping selections are ignored; partial overlaps
+// copy only the corresponding source bits.
+obelisk_rt_status obelisk_rt_v1_scheduler_packed_slice_nba(
+    obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
+    uint64_t plane_bit_count, uint64_t base_handle, uint64_t base_bit_width,
+    int64_t low_bit, uint32_t low_bit_valid, uint64_t source_bit_width,
+    uint64_t delay, uint64_t static_site, uint64_t clocking_output,
+    const uint8_t *value, const uint8_t *unknown);
 // Queue an update to a net driver's contribution. The scheduler commits it in
 // the same NBA/Re-NBA region as a variable NBA and then resolves affected nets.
 obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(

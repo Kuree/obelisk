@@ -5,6 +5,9 @@ module {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "thread_process_cfg.process"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "thread_process_cfg.cyclic_resume"
+    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "thread_process_cfg.side_resume"
+    obelisk_sim.code_unit.decl 5 in 0 initial hierarchy "thread_process_cfg.control_side_resume"
+    obelisk_sim.code_unit.decl 6 in 0 initial hierarchy "thread_process_cfg.constant_dag"
 
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context
@@ -44,6 +47,94 @@ module {
       obelisk_sim.file.flush %ctx, %live :
           (!obelisk_sim.context, i32) -> ()
       cf.br ^loop(%current : i32)
+    }
+
+    // A restored lane can rejoin a loop through a side block rather than
+    // branching directly to its header. The original definition dominates
+    // the exit in the source CFG, but not the coroutine's hidden resume path.
+    obelisk_sim.func @side_resume(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %input: i32 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {code_unit_id = 4 : i64, entry_kind = 1 : i32} {
+      %live = arith.addi %input, %input : i32
+      cf.br ^loop
+    ^loop:
+      %condition = arith.constant true
+      cf.cond_br %condition, ^wait, ^use
+    ^wait:
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume(%live : i32)
+    ^resume(%restored: i32):
+      cf.br ^side
+    ^side:
+      cf.br ^loop
+    ^use:
+      obelisk_sim.file.flush %ctx, %live :
+          (!obelisk_sim.context, i32) -> ()
+      obelisk_sim.return
+    }
+
+    // The same reconvergence inside a synchronous named-block body must not
+    // trust source-CFG dominance from the boundary entry. A later suspension
+    // restores both the live value and the control activation on a path that
+    // bypasses that entry.
+    obelisk_sim.func @control_side_resume(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %input: i32 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {code_unit_id = 5 : i64, entry_kind = 1 : i32} {
+      %live = arith.addi %input, %input : i32
+      %initial_delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %initial_delay to ^start(%live : i32)
+    ^start(%initial: i32):
+      %activation = obelisk_sim.control.enter 1
+      obelisk_sim.control.boundary %activation resume ^exit body ^body
+    ^exit:
+      obelisk_sim.return
+    ^body:
+      cf.br ^loop
+    ^loop:
+      %condition = arith.constant true
+      cf.cond_br %condition, ^wait, ^use
+    ^wait:
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume(
+          %initial, %activation : i32, !obelisk_sim.control)
+    ^resume(%restored: i32, %restored_activation: !obelisk_sim.control):
+      cf.br ^side
+    ^side:
+      cf.br ^loop
+    ^use:
+      obelisk_sim.file.flush %ctx, %initial :
+          (!obelisk_sim.context, i32) -> ()
+      obelisk_sim.control.leave %activation
+      cf.br ^exit
+    }
+
+    // A pure value derived only from constants is cheaper and safer to
+    // recreate after a suspension than to reserve a canonical-frame lane and
+    // thread it through every loop edge.
+    obelisk_sim.func @constant_dag(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32})
+        attributes {code_unit_id = 6 : i64, entry_kind = 1 : i32} {
+      %two = arith.constant 2 : i32
+      %three = arith.constant 3 : i32
+      %derived = arith.addi %two, %three : i32
+      cf.br ^loop
+    ^loop:
+      %condition = arith.constant true
+      cf.cond_br %condition, ^wait, ^use
+    ^wait:
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume(%derived : i32)
+    ^resume(%restored: i32):
+      cf.br ^loop
+    ^use:
+      obelisk_sim.file.flush %ctx, %derived :
+          (!obelisk_sim.context, i32) -> ()
+      cf.br ^loop
     }
   }
 
@@ -85,6 +176,48 @@ module {
 // CHECK: cf.br ^[[LOOP]](%[[RESTORED]] : i32)
 // CHECK: ^[[USE]](%[[USE_VALUE:.*]]: i32):
 // CHECK: obelisk_sim.file.flush %{{.*}}, %[[USE_VALUE]]
+
+// CHECK-LABEL: obelisk_sim.func @side_resume
+// CHECK: cf.br ^[[SIDE_LOOP:.*]](%[[SIDE_LIVE:.*]] : i32)
+// CHECK: ^[[SIDE_LOOP]](%[[SIDE_CURRENT:.*]]: i32):
+// CHECK: cf.cond_br %{{.*}}, ^[[SIDE_WAIT:.*]](%[[SIDE_CURRENT]] : i32), ^[[SIDE_USE:.*]](%[[SIDE_CURRENT]] : i32)
+// CHECK: ^[[SIDE_WAIT]](%[[SIDE_WAIT_VALUE:.*]]: i32):
+// CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[SIDE_RESUME:.*]](%[[SIDE_WAIT_VALUE]] : i32)
+// CHECK: ^[[SIDE_RESUME]](%[[SIDE_RESTORED:.*]]: i32):
+// CHECK: cf.br ^[[SIDE:.*]](%[[SIDE_RESTORED]] : i32)
+// CHECK: ^[[SIDE]](%[[SIDE_VALUE:.*]]: i32):
+// CHECK: cf.br ^[[SIDE_LOOP]](%[[SIDE_VALUE]] : i32)
+// CHECK: ^[[SIDE_USE]](%[[SIDE_USE_VALUE:.*]]: i32):
+// CHECK: obelisk_sim.file.flush %{{.*}}, %[[SIDE_USE_VALUE]]
+
+// CHECK-LABEL: obelisk_sim.func @control_side_resume
+// CHECK: obelisk_sim.control.boundary %[[CONTROL_ACTIVATION:.*]] resume ^[[CONTROL_EXIT:.*]] body ^[[CONTROL_BODY:.*]]
+// CHECK: ^[[CONTROL_BODY]]:
+// CHECK: cf.br ^[[CONTROL_LOOP:.*]](%{{.*}}, %[[CONTROL_ACTIVATION]] : i32, !obelisk_sim.control)
+// CHECK: ^[[CONTROL_LOOP]](%[[CONTROL_VALUE:.*]]: i32, %[[CONTROL_CURRENT:.*]]: !obelisk_sim.control):
+// CHECK: cf.cond_br %{{.*}}, ^[[CONTROL_WAIT:.*]](%[[CONTROL_VALUE]], %[[CONTROL_CURRENT]] : i32, !obelisk_sim.control), ^[[CONTROL_USE:.*]](%[[CONTROL_VALUE]], %[[CONTROL_CURRENT]] : i32, !obelisk_sim.control)
+// CHECK: ^[[CONTROL_WAIT]](%[[CONTROL_WAIT_VALUE:.*]]: i32, %[[CONTROL_WAIT_ACTIVATION:.*]]: !obelisk_sim.control):
+// CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[CONTROL_RESUME:.*]](%[[CONTROL_WAIT_VALUE]], %[[CONTROL_WAIT_ACTIVATION]] : i32, !obelisk_sim.control)
+// CHECK: ^[[CONTROL_RESUME]](%[[CONTROL_RESTORED:.*]]: i32, %[[CONTROL_RESTORED_ACTIVATION:.*]]: !obelisk_sim.control):
+// CHECK: cf.br ^[[CONTROL_SIDE:.*]](%[[CONTROL_RESTORED]], %[[CONTROL_RESTORED_ACTIVATION]] : i32, !obelisk_sim.control)
+// CHECK: ^[[CONTROL_SIDE]](%[[CONTROL_SIDE_VALUE:.*]]: i32, %[[CONTROL_SIDE_ACTIVATION:.*]]: !obelisk_sim.control):
+// CHECK: cf.br ^[[CONTROL_LOOP]](%[[CONTROL_SIDE_VALUE]], %[[CONTROL_SIDE_ACTIVATION]] : i32, !obelisk_sim.control)
+// CHECK: ^[[CONTROL_USE]](%[[CONTROL_USE_VALUE:.*]]: i32, %[[CONTROL_USE_ACTIVATION:.*]]: !obelisk_sim.control):
+// CHECK: obelisk_sim.file.flush %{{.*}}, %[[CONTROL_USE_VALUE]]
+// CHECK: obelisk_sim.control.leave %[[CONTROL_USE_ACTIVATION]]
+
+// CHECK-LABEL: obelisk_sim.func @constant_dag
+// CHECK: %[[ORIGINAL_TWO:.*]] = arith.constant 2 : i32
+// CHECK-NEXT: %[[ORIGINAL_THREE:.*]] = arith.constant 3 : i32
+// CHECK-NEXT: arith.addi %[[ORIGINAL_TWO]], %[[ORIGINAL_THREE]] : i32
+// CHECK: %[[WAIT_TWO:.*]] = arith.constant 2 : i32
+// CHECK-NEXT: %[[WAIT_THREE:.*]] = arith.constant 3 : i32
+// CHECK-NEXT: %[[WAIT_DERIVED:.*]] = arith.addi %[[WAIT_TWO]], %[[WAIT_THREE]] : i32
+// CHECK: obelisk_sim.suspend.delay %{{.*}} to ^{{.*}}(%[[WAIT_DERIVED]] : i32)
+// CHECK: %[[USE_TWO:.*]] = arith.constant 2 : i32
+// CHECK-NEXT: %[[USE_THREE:.*]] = arith.constant 3 : i32
+// CHECK-NEXT: %[[USE_DERIVED:.*]] = arith.addi %[[USE_TWO]], %[[USE_THREE]] : i32
+// CHECK-NEXT: obelisk_sim.file.flush %{{.*}}, %[[USE_DERIVED]]
 
 // CHECK-LABEL: obelisk_sim.func @duplicate_successor_process
 // CHECK: %[[DUP_LIVE:.*]] = arith.addi

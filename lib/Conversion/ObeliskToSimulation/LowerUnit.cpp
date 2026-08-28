@@ -1752,6 +1752,19 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return sim::SimRealFromIntegerOp::create(builder, location, targetType,
                                                value, sourceSigned)
           .getResult();
+    if (auto sourceLogic = dyn_cast<sim::LogicType>(value.getType())) {
+      // IEEE 1800-2017 6.12.2 applies the same per-bit X/Z-to-zero rule to
+      // shortreal as to real. Keep the conversion in Simulation IR so native
+      // and bytecode tiers share the rounding semantics.
+      Type bitsType =
+          IntegerType::get(value.getContext(), sourceLogic.getWidth());
+      Value bits =
+          sim::SimLogicToBitsOp::create(builder, location, bitsType, value);
+      return sim::SimRealFromIntegerOp::create(
+                 builder, location, targetType, bits,
+                 builder.getBoolAttr(sourceSigned))
+          .getResult();
+    }
   }
   if (targetType.isF64()) {
     if (auto sourceInt = dyn_cast<IntegerType>(value.getType()))
