@@ -8553,6 +8553,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (invalid)
         continue;
+      for (StringRef name : {"timing_check_event_based",
+                             "timing_check_remain_active"})
+        if (Attribute value = unit.source->getAttr(name))
+          functionAttrs.push_back(builder.getNamedAttr(name, value));
     }
     if (auto delays =
             unit.source->getAttrOfType<DenseI64ArrayAttr>("delay_fs")) {

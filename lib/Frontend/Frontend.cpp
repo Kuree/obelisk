@@ -2215,9 +2215,12 @@ private:
       bool combined = node.timingCheckKind == Kind::SetupHold ||
                       node.timingCheckKind == Kind::RecRem;
       bool skew = node.timingCheckKind == Kind::Skew;
+      bool timeSkew = node.timingCheckKind == Kind::TimeSkew;
+      bool fullSkew = node.timingCheckKind == Kind::FullSkew;
       bool period = node.timingCheckKind == Kind::Period;
       bool width = node.timingCheckKind == Kind::Width;
-      size_t requiredArguments = combined ? 4 : period || width ? 2 : 3;
+      size_t requiredArguments =
+          combined || fullSkew ? 4 : period || width ? 2 : 3;
       bool unsupportedCombinedOption = false;
       if (combined) {
         // IEEE 1800-2017 31.3.3/.6 assign slots 5--8 to negative-check
@@ -2253,19 +2256,52 @@ private:
             auto [value, time] = valueAndTime;
             return !time || value >= 0;
           });
+      auto freezeFlag = [&](size_t index) -> std::optional<bool> {
+        if (index >= arguments.size() || !arguments[index].expr)
+          return false;
+        slang::ConstantValue value = arguments[index].expr->eval(evalContext);
+        if (!value)
+          return std::nullopt;
+        if (value.isInteger()) {
+          if (value.integer().hasUnknown())
+            return std::nullopt;
+        } else if (!value.isReal() && !value.isShortReal()) {
+          return std::nullopt;
+        }
+        return value.isTrue();
+      };
+      std::optional<bool> eventBased;
+      std::optional<bool> remainActive;
+      if (timeSkew || fullSkew) {
+        eventBased = freezeFlag(fullSkew ? 5 : 4);
+        remainActive = freezeFlag(fullSkew ? 6 : 5);
+      }
       // IEEE 1800-2017 31.4.1, 31.4.4, and 31.4.5 make these
       // clock/control checks static event-distance comparisons. Canonical
       // $skew events reuse every existing standard-edge subscription;
       // $period requires a controlled edge, while $width additionally needs
       // a unique posedge/negedge inverse for its implicit timecheck event.
-      if ((singleLimit || combined || skew || period || width) && staticTimes &&
-          nonnegativeTimes && hasRequiredArguments && arguments[0].expr &&
-          ((period || width) || arguments[1].expr) && directConditions &&
-          canonicalEvents && (!(period || width) || controlledEdge) &&
+      if ((singleLimit || combined || skew || timeSkew || fullSkew || period ||
+           width) &&
+          staticTimes && nonnegativeTimes && hasRequiredArguments &&
+          arguments[0].expr && ((period || width) || arguments[1].expr) &&
+          directConditions && canonicalEvents &&
+          (!(period || width) || controlledEdge) &&
           (!width || effectiveEdges[0] !=
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&
-          !unsupportedCombinedOption)
+          (!(timeSkew || fullSkew) ||
+           (eventBased && *eventBased && remainActive)) &&
+          !unsupportedCombinedOption) {
         attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
+        if (timeSkew || fullSkew) {
+          // IEEE 1800-2017 31.4.2/.3 default to timer-based checks. Freeze
+          // only an explicitly nonzero event_based_flag into this no-timer
+          // tranche; remain_active_flag is an ordinary compile-time mode bit.
+          attrs.set("timing_check_event_based", builder.getBoolAttr(true));
+          attrs.set("timing_check_remain_active",
+                    builder.getBoolAttr(*remainActive));
+        }
+      }
     }
 
     if constexpr (std::same_as<T, slang::ast::PulseStyleSymbol>) {
