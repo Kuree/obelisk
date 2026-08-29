@@ -4120,12 +4120,17 @@ def SimSuspendClockSetOp : SimOp<"suspend.clock_set", [
     primary. At most 64 primaries are accepted. The runtime groups all matched
     primaries from one exact scheduler publication wave into an occurrence
     mask without coalescing repeated occurrences in that wave.
+    The optional `slot_final` marker is reserved for Clause 31 coordinators
+    whose simultaneous-event decision needs every producer region at the
+    current numeric simulation time. It changes scheduler admission only; the
+    occurrence ABI and queue representation remain identical.
   }];
   let arguments = (ins Variadic<AnyType>:$values,
                        I32Attr:$condition_count,
                        DenseI32ArrayAttr:$edges,
                        DenseI32ArrayAttr:$condition_indices,
                        I64Attr:$occurrence_site,
+                       OptionalAttr<UnitAttr>:$slot_final,
                        OptionalAttr<SimContinuationSiteAttr>:$site,
                        OptionalAttr<SimEventRegion>:$resume_region);
   let successors = (successor AnySuccessor:$continuation);

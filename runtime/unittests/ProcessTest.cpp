@@ -1676,6 +1676,7 @@ TEST(RuntimeInternals,
 
 TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
+  static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -1705,6 +1706,20 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   EXPECT_FALSE(context->clockOccurrences);
   obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 9,
                                              false);
+  EXPECT_FALSE(context->clockOccurrences);
+
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } slotFinal{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+               OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
+                   OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL,
+               1, 91, 0},
+              {32, OBELISK_RT_WAIT_EDGE_POSEDGE, 1}};
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &slotFinal.wait, subscriptions, latch, 10, false));
+  EXPECT_TRUE(context->clockOccurrences);
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 10, false);
   EXPECT_FALSE(context->clockOccurrences);
   obelisk_rt_v1_context_destroy(context);
 }

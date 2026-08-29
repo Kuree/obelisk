@@ -63,6 +63,7 @@ module {
 // CHECK: cf.br ^{{.*}}({{.*}} : i64, i1)
 // CHECK: obelisk_sim.suspend.clock_set
 // CHECK-SAME: conditions 0 edges [1, 1]
+// CHECK-SAME: slot_final
 // CHECK: obelisk_sim.assert.clock_occurrence.consume
 // CHECK: obelisk_sim.time.now
 // CHECK: arith.cmpi ult

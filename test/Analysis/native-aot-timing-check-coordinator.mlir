@@ -2,7 +2,7 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
-// A private Active Clause 31 coordinator is an actor-local hybrid island;
+// A private Observed Clause 31 coordinator is an actor-local hybrid island;
 // explicit AOT keeps the rest of the design in its generated schedule.
 // CHECK: native-aot eligible=true fully=false{{.*}}forced_hybrid=true
 // CHECK-NEXT: actor 0 @root
@@ -33,7 +33,7 @@ module {
             {obelisk_sim.capture_kind = 3 : i32,
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
-                    domain = 0 : i32, home_region = 2 : i32,
+                    domain = 0 : i32, home_region = 8 : i32,
                     obelisk_sim.timing_check_coordinator} {
       cf.br ^wait
     ^wait:

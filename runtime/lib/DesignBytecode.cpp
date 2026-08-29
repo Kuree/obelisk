@@ -2747,6 +2747,26 @@ bool indexedSignalBlocked(const ScheduledDesignTask &task) {
   return obelisk_rt_design_signal_wait_blocked(task);
 }
 
+OBELISK_RT_FEATURE_HELPER const obelisk_rt_wait_record_v1 *
+designTaskCurrentWait(const ScheduledDesignTask &task) {
+  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+      task.waitOffset > task.frame.size() ||
+      task.waitSize > task.frame.size() - task.waitOffset)
+    return nullptr;
+  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
+                                                             task.waitOffset);
+}
+
+OBELISK_RT_FEATURE_HELPER uint32_t
+designTaskOrderingRegion(const ScheduledDesignTask &task, bool signalResume) {
+  if (signalResume && obelisk_rt_is_slot_final_clock_occurrence_wait(
+                          designTaskCurrentWait(task)))
+    return OBELISK_RT_REGION_POSTPONED;
+  return task.queuedRegion == OBELISK_RT_REGION_POSTPONED
+             ? OBELISK_RT_REGION_POSTPONED + 1
+             : task.queuedRegion;
+}
+
 OBELISK_RT_FEATURE_HELPER bool
 designReadyCohortLater(const DesignReadyCohortEntry &lhs,
                        const DesignReadyCohortEntry &rhs) {
@@ -2768,8 +2788,14 @@ OBELISK_RT_FEATURE_HELPER bool classifyDirectDesignReadyCohortMember(
   if (!signalTriggered ||
       (task.queuedRegion >= unstartedActorRegion && !task.prioritySignal))
     return false;
+  // Clause 31 slot-final waits are a tiny cold feature cohort whose effective
+  // scheduler region depends on its wait flag. Keep them out of the ordinary
+  // direct-signal cache so the common entry layout and classifier stay flat.
+  const obelisk_rt_wait_record_v1 *wait = designTaskCurrentWait(task);
+  if (obelisk_rt_is_slot_final_clock_occurrence_wait(wait))
+    return false;
   entry.id = task.id;
-  entry.region = task.queuedRegion;
+  entry.region = designTaskOrderingRegion(task, signalTriggered);
   entry.rank = task.scheduleRank;
   entry.insertionSequence = task.insertionSequence;
   return true;
@@ -4995,11 +5021,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
               signalTriggered && !iterator->urgent && !iterator->prioritySignal)
             runnable = false;
-          auto key =
-              iterator->prioritySignal && signalTriggered
-                  ? std::tuple{iterator->queuedRegion, uint32_t{0}, uint64_t{0}}
-                  : std::tuple{iterator->queuedRegion, iterator->scheduleRank,
-                               iterator->insertionSequence};
+          uint32_t orderingRegion =
+              designTaskOrderingRegion(*iterator, signalTriggered);
+          auto key = iterator->prioritySignal && signalTriggered
+                         ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
+                         : std::tuple{orderingRegion, iterator->scheduleRank,
+                                      iterator->insertionSequence};
           auto selectedKey = std::tuple{selectedRegion, selectedRank,
                                         selectedInsertionSequence};
           if (runnable && iterator->urgent) {
@@ -5193,11 +5220,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             else
               readyCohortBuild->slow.push_back(candidateID);
           }
-          auto key =
-              iterator->prioritySignal && signalTriggered
-                  ? std::tuple{iterator->queuedRegion, uint32_t{0}, uint64_t{0}}
-                  : std::tuple{iterator->queuedRegion, iterator->scheduleRank,
-                               iterator->insertionSequence};
+          uint32_t orderingRegion =
+              designTaskOrderingRegion(*iterator, signalTriggered);
+          auto key = iterator->prioritySignal && signalTriggered
+                         ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
+                         : std::tuple{orderingRegion, iterator->scheduleRank,
+                                      iterator->insertionSequence};
           auto selectedKey = std::tuple{selectedRegion, selectedRank,
                                         selectedInsertionSequence};
           if (runnable && iterator->urgent) {
@@ -5508,9 +5536,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         const auto *waitEntries =
             reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
         uint32_t behaviorFlags =
-            wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+            wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
+                            OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
         bool suppressActiveSelf =
             (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
+        bool slotFinal =
+            (wait->flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
         bool mailboxWait = action.suspend_kind == OBELISK_RT_SUSPEND_MAILBOX;
         bool semaphoreWait =
             action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE;
@@ -5522,7 +5553,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                 : (wait->flags &
                    ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
                      OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
-                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE)) == 0 &&
+                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
+                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL)) == 0 &&
                       (!suppressActiveSelf ||
                        (signalWait && behaviorFlags == 0)) &&
                       (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
@@ -5542,12 +5574,13 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                                            : 0;
         bool validOccurrence =
             behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE ||
-            (wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
+            (obelisk_rt_is_clock_occurrence_wait_flags(wait->flags) &&
              wait->payload != 0 && occurrencePrimaries >= 1 &&
              occurrencePrimaries <= 64 &&
              (occurrencePrimaries == 64 ||
               (wait->auxiliary >> occurrencePrimaries) == 0));
         if (!validFlags || !validOccurrence ||
+            (slotFinal && behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE &&
              behaviorFlags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count != 1) ||
             (action.suspend_kind == OBELISK_RT_SUSPEND_EDGE &&

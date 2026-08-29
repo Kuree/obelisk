@@ -1857,7 +1857,13 @@ enum {
   // up to 64 frozen direct clocks, grouped by exact scheduler publication
   // wave. The payload is its nonzero compiler site and the auxiliary word is
   // the per-primary iff-condition presence mask.
-  OBELISK_RT_WAIT_CLOCK_OCCURRENCE = UINT32_C(1) << 3
+  OBELISK_RT_WAIT_CLOCK_OCCURRENCE = UINT32_C(1) << 3,
+  // A Clause 31 clock-occurrence coordinator whose same-time decision must
+  // run only after every ordinary producer region and barrier at the current
+  // numeric simulation time is quiescent, but before Postponed or time
+  // advance. This modifier is legal only with WAIT_CLOCK_OCCURRENCE and uses
+  // the existing wait-record flags word and occurrence queue.
+  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL = UINT32_C(1) << 4
 };
 typedef uint32_t obelisk_rt_wait_edge_kind;
 enum {

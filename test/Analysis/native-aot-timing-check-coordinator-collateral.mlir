@@ -21,13 +21,13 @@ module {
           region = active, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
         #obelisk_sim.fragment<id = 1, function = @coordinator, block = 0,
-          region = active, action = continue, tier = native, cost = 1,
+          region = observed, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
         #obelisk_sim.fragment<id = 2, function = @coordinator, block = 1,
-          region = active, action = suspend_any, tier = native, cost = 1,
+          region = observed, action = suspend_any, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
         #obelisk_sim.fragment<id = 3, function = @ordinary, block = 0,
-          region = active, action = terminate, tier = native, cost = 1,
+          region = observed, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>
       ],
       edges = [
@@ -40,14 +40,15 @@ module {
       regions = [
         #obelisk_sim.region<kind = active, groups = [
           #obelisk_sim.group<fragments = [0], schedule = acyclic,
-            feedback = []>,
+            feedback = []>
+        ]>,
+        #obelisk_sim.region<kind = nba, groups = []>,
+        #obelisk_sim.region<kind = observed, groups = [
           #obelisk_sim.group<fragments = [1], schedule = acyclic,
             feedback = []>,
           #obelisk_sim.group<fragments = [2, 3], schedule = control_loop,
             feedback = []>
         ]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
         #obelisk_sim.region<kind = reactive, groups = []>,
         #obelisk_sim.region<kind = postponed, groups = []>
       ]>
@@ -77,7 +78,7 @@ module {
             {obelisk_sim.capture_kind = 3 : i32,
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
-                    domain = 0 : i32, home_region = 2 : i32,
+                    domain = 0 : i32, home_region = 8 : i32,
                     obelisk_sim.timing_check_coordinator} {
       cf.br ^wait
     ^wait:
@@ -88,7 +89,8 @@ module {
 
     obelisk_sim.func @ordinary(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+        attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64,
+                    domain = 0 : i32, home_region = 8 : i32} {
       obelisk_sim.return
     }
   }

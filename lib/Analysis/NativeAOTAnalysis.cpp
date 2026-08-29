@@ -65,7 +65,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         function.getHomeRegion() == sim::EventRegion::Observed;
     bool timingCheckCoordinator =
         function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-        function.getHomeRegion() == sim::EventRegion::Active;
+        function.getHomeRegion() == sim::EventRegion::Observed;
     if ((!assertionCoordinator && !timingCheckCoordinator) ||
         SymbolTable::getSymbolVisibility(function) !=
             SymbolTable::Visibility::Private ||

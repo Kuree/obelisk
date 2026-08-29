@@ -8938,6 +8938,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         isa<semantic::SVClockingBlockSymbolOp>(unit.source) &&
         (unit.source->hasAttr(clockingEventMonitorRequiredAttrName) ||
          unit.source->hasAttr(clockingEventListAttrName));
+    bool timingCheckCoordinator =
+        isa<semantic::SVSystemTimingCheckSymbolOp>(unit.source);
     if (clockingEventMonitor) {
       functionAttrs.push_back(builder.getNamedAttr(clockingEventMonitorAttrName,
                                                    builder.getUnitAttr()));
@@ -8977,11 +8979,17 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Reactive-home final is rejected by both native and bytecode scheduling
     // because no ordinary reactive work may be introduced during finalization.
     bool finalProcedure = unit.entryKind == sim::EntryKind::Final;
+    // IEEE 1800-2017 31.4.1 defines simultaneous timing-check transitions by
+    // simulation time, not by an individual scheduler producer wave. Observed
+    // remains the coordinator's ABI home and legal notifier-publication region;
+    // numeric-lookahead checks carry a slot_final wait marker that the
+    // scheduler admits only after Reactive/Re-Inactive/Re-NBA quiesce.
+    sim::EventRegion homeRegion =
+        timingCheckCoordinator             ? sim::EventRegion::Observed
+        : programDomain && !finalProcedure ? sim::EventRegion::Reactive
+                                           : sim::EventRegion::Active;
     functionAttrs.push_back(builder.getNamedAttr(
-        "home_region",
-        sim::EventRegionAttr::get(context, programDomain && !finalProcedure
-                                               ? sim::EventRegion::Reactive
-                                               : sim::EventRegion::Active)));
+        "home_region", sim::EventRegionAttr::get(context, homeRegion)));
     functionAttrs.push_back(builder.getNamedAttr(
         "domain", sim::ExecutionDomainAttr::get(
                       context, programDomain ? sim::ExecutionDomain::Program

@@ -4689,6 +4689,56 @@ TEST(DesignBytecode, SmallDirectSignalSetDoesNotAllocateCohort) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode,
+     ClockOccurrenceCacheSeparatesOrdinaryFromSlotFinalWaits) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  addReadyTerminatingDesignTasks(context, 19, OBELISK_RT_REGION_OBSERVED);
+
+  for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
+    task.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+    task.waitOffset = 0;
+    task.waitSize = sizeof(obelisk_rt_wait_record_v1) +
+                    sizeof(obelisk_rt_wait_entry_v1);
+    auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+        task.frame.data() + task.waitOffset);
+    auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 1, 91, 0};
+    *entry = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
+  }
+  ScheduledDesignTask &slotFinal = context->scheduledDesignTasks.front();
+  uint64_t slotFinalID = slotFinal.id;
+  auto *slotFinalWait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+      slotFinal.frame.data() + slotFinal.waitOffset);
+  slotFinalWait->flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+
+  bool progress = false;
+  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+                                           UINT64_MAX, &progress),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(progress);
+  ASSERT_NE(context->designReadyCohort, nullptr);
+  ASSERT_TRUE(context->designReadyCohort->valid);
+  EXPECT_EQ(context->designReadyCohort->ready.size(), 17u);
+  ASSERT_EQ(context->designReadyCohort->slowCandidates.size(), 1u);
+  EXPECT_EQ(context->designReadyCohort->slowCandidates.front(), slotFinalID);
+  for (const DesignReadyCohortEntry &ready :
+       context->designReadyCohort->ready) {
+    auto indexed = context->scheduledDesignTaskIndices.find(ready.id);
+    ASSERT_NE(indexed, context->scheduledDesignTaskIndices.end());
+    const ScheduledDesignTask &task =
+        context->scheduledDesignTasks[indexed->second];
+    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        task.frame.data() + task.waitOffset);
+    EXPECT_EQ(wait->flags, OBELISK_RT_WAIT_CLOCK_OCCURRENCE);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;

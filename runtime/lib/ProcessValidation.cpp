@@ -338,7 +338,11 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     return true;
   };
   bool valid = false;
-  uint32_t behaviorFlags = wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  bool slotFinal =
+      (wait->flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
+  uint32_t behaviorFlags =
+      wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
   bool suppressActiveSelf =
       (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   switch (wait->kind) {
@@ -360,7 +364,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
           static_cast<uint32_t>(__builtin_popcountll(wait->auxiliary));
       uint32_t primaries =
           conditions < wait->count ? wait->count - conditions : 0;
-      valid = wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
+      valid = obelisk_rt_is_clock_occurrence_wait_flags(wait->flags) &&
               wait->payload != 0 && primaries >= 1 && primaries <= 64 &&
               (primaries == 64 || (wait->auxiliary >> primaries) == 0);
       for (uint32_t index = 0; valid && index != wait->count; ++index) {
@@ -427,6 +431,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     valid = wait->payload == 0 && wait->auxiliary == 0 &&
             (wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) == 0 &&
             entriesMatch(true, OBELISK_RT_WAIT_EDGE_NONE, true);
+  valid &= !slotFinal || behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
   return valid ? OBELISK_RT_OK : OBELISK_RT_INVALID_FRAME;
 }
 

@@ -440,12 +440,26 @@ static bool indexedSignalBlocked(const ScheduledProcess &process) {
     const obelisk_rt_wait_record_v1 *wait = currentWait(process);
     if (wait && (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
                  wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
-                 wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE))
+                 obelisk_rt_is_clock_occurrence_wait_flags(wait->flags)))
       return true;
   }
   return !process.signalSubscriptions.empty() && process.signalLatch &&
          !process.signalLatch->triggered &&
          (signalSuspend || process.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
+}
+
+// Slot-final timing coordinators sort after every ordinary executable region
+// and NBA barrier at the current numeric time, but before true Postponed work.
+// The stored queued/home region remains Observed so notifier publication is
+// legal and no process ABI or event-region ordinal changes.
+static uint32_t schedulerOrderingRegion(const ScheduledProcess &process,
+                                        bool signalResume) {
+  if (signalResume &&
+      obelisk_rt_is_slot_final_clock_occurrence_wait(currentWait(process)))
+    return OBELISK_RT_REGION_POSTPONED;
+  return process.queuedRegion == OBELISK_RT_REGION_POSTPONED
+             ? OBELISK_RT_REGION_POSTPONED + 1
+             : process.queuedRegion;
 }
 
 void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
@@ -2450,10 +2464,11 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
           context, computedWait(scheduled), scheduled.token, false,
           scheduled.signalSubscriptions, scheduled.signalLatch))
     return context->schedulerStatus;
-  bool sameSignalWait = wait && wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
-                            ? obelisk_rt_same_clock_occurrence_wait_unlocked(
-                                  context, wait, scheduled.token, false)
-                            : hasSameDirectSignalWait(scheduled, wait);
+  bool sameSignalWait =
+      wait && obelisk_rt_is_clock_occurrence_wait_flags(wait->flags)
+          ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+                context, wait, scheduled.token, false)
+          : hasSameDirectSignalWait(scheduled, wait);
   if (directSignalSuspend && !sameSignalWait &&
       !obelisk_rt_register_signal_wait_unlocked(
           context, wait, scheduled.signalSubscriptions, scheduled.signalLatch,
@@ -2698,11 +2713,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                    context->schedulerCursor % nativeScanProcessCount) %
                       nativeScanProcessCount;
         if (candidate.prioritySignal && signalResume) {
-          ready.region = candidate.queuedRegion;
+          ready.region = schedulerOrderingRegion(candidate, signalResume);
           ready.rank = 0;
           ready.insertionSequence = 0;
         } else {
-          ready.region = candidate.queuedRegion;
+          ready.region = schedulerOrderingRegion(candidate, signalResume);
           ready.rank = candidate.scheduleRank;
           ready.insertionSequence = candidate.insertionSequence;
         }
@@ -2753,6 +2768,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           considerNativeToken(context->nativeScheduleForcedProcessToken);
       } else if (context->nativeScheduleControlOnly) {
         clearCachedNativeReady();
+        // A generated control-only step may return only after pending
+        // slot-final Clause 31 work. Ordinary actors remain owned by the
+        // generated node selected by the caller.
+        for (uint64_t token : context->nativePollCandidates) {
+          bool signalResume = false;
+          size_t index = SIZE_MAX;
+          auto ready = classifyNativeToken(token, signalResume, index);
+          if (ready && signalResume &&
+              obelisk_rt_is_slot_final_clock_occurrence_wait(
+                  currentWait(context->scheduledProcesses[index])))
+            considerNativeReady(*ready, index);
+        }
       } else {
         bool cacheShapeValid =
             cachedNativeReadyValid &&
@@ -3001,11 +3028,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         bool signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
-        auto key =
-            candidate.prioritySignal && signalResume
-                ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
-                : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                             candidate.insertionSequence};
+        uint32_t orderingRegion =
+            schedulerOrderingRegion(candidate, signalResume);
+        auto key = candidate.prioritySignal && signalResume
+                       ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
+                       : std::tuple{orderingRegion, candidate.scheduleRank,
+                                    candidate.insertionSequence};
         if (runnable &&
             (candidate.urgent ||
              (key == std::tuple{nativeRegion, nativeRank,
@@ -3043,11 +3071,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           bool signalResume =
               candidate.signalTriggered ||
               (candidate.signalLatch && candidate.signalLatch->triggered);
-          auto key =
-              candidate.prioritySignal && signalResume
-                  ? std::tuple{candidate.queuedRegion, uint32_t{0}, uint64_t{0}}
-                  : std::tuple{candidate.queuedRegion, candidate.scheduleRank,
-                               candidate.insertionSequence};
+          uint32_t orderingRegion =
+              schedulerOrderingRegion(candidate, signalResume);
+          auto key = candidate.prioritySignal && signalResume
+                         ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
+                         : std::tuple{orderingRegion, candidate.scheduleRank,
+                                      candidate.insertionSequence};
           if (!(key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))
             continue;
           if (selected && !(key < std::tuple{selectedRegion, selectedRank,
@@ -4601,7 +4630,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                                   : (selectedIndex + processCount -
                                      context->schedulerCursor % processCount) %
                                         processCount;
-            ready.region = scheduled.queuedRegion;
+            ready.region = schedulerOrderingRegion(scheduled, signalResume);
             if (scheduled.prioritySignal && signalResume) {
               ready.rank = 0;
               ready.insertionSequence = 0;

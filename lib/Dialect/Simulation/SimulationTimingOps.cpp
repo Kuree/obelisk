@@ -349,7 +349,9 @@ LogicalResult SimSuspendClockSetOp::verify() {
       function.getHomeRegion() == EventRegion::Observed;
   bool timingCheckCoordinator =
       function && function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-      function.getHomeRegion() == EventRegion::Active;
+      function.getHomeRegion() == EventRegion::Observed;
+  if (getSlotFinalAttr() && !timingCheckCoordinator)
+    return emitOpError("slot_final is reserved for a timing-check coordinator");
   if (!function ||
       (!assertionCoordinator && !timingCheckCoordinator) ||
       SymbolTable::getSymbolVisibility(function) !=

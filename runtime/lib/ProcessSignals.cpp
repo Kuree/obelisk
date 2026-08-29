@@ -397,7 +397,9 @@ bool obelisk_rt_register_signal_wait_unlocked(
   if (wait->kind != OBELISK_RT_SUSPEND_CHANGE &&
       wait->kind != OBELISK_RT_SUSPEND_EDGE)
     return true;
-  uint32_t behaviorFlags = wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+  uint32_t behaviorFlags =
+      wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
   if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE) {
     if (waiterToken == 0 || wait->payload == 0 || wait->count == 0 ||
         wait->count > 128)
@@ -533,8 +535,8 @@ bool obelisk_rt_same_clock_occurrence_wait_unlocked(
     return false;
   if ((wait->kind != OBELISK_RT_SUSPEND_CHANGE &&
        wait->kind != OBELISK_RT_SUSPEND_EDGE) ||
-      wait->flags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE || wait->payload == 0 ||
-      wait->count == 0 || wait->count > 128)
+      !obelisk_rt_is_clock_occurrence_wait_flags(wait->flags) ||
+      wait->payload == 0 || wait->count == 0 || wait->count > 128)
     return false;
   uint32_t conditionCount =
       static_cast<uint32_t>(__builtin_popcountll(wait->auxiliary));

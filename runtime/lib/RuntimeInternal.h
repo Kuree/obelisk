@@ -1883,6 +1883,23 @@ obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {
                       context->clockOccurrences->conditionalWaitCount != 0));
 }
 
+inline bool obelisk_rt_is_clock_occurrence_wait_flags(uint32_t flags) {
+  return (flags & ~OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) ==
+         OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
+}
+
+inline bool
+obelisk_rt_is_slot_final_clock_occurrence_wait_flags(uint32_t flags) {
+  return obelisk_rt_is_clock_occurrence_wait_flags(flags) &&
+         (flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
+}
+
+inline bool obelisk_rt_is_slot_final_clock_occurrence_wait(
+    const obelisk_rt_wait_record_v1 *wait) {
+  return wait &&
+         obelisk_rt_is_slot_final_clock_occurrence_wait_flags(wait->flags);
+}
+
 inline bool
 obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
   if (task.terminated || !task.started || task.signalTriggered)
@@ -1896,7 +1913,7 @@ obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
         task.frame.data() + task.waitOffset);
     if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
         wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
-        wait->flags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE)
+        obelisk_rt_is_clock_occurrence_wait_flags(wait->flags))
       return true;
   }
   return !task.signalSubscriptions.empty() && task.signalLatch &&

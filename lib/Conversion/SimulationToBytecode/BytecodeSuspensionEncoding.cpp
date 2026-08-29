@@ -152,10 +152,13 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
          llvm::enumerate(suspend.getConditionIndices()))
       if (condition >= 0)
         conditionMask |= uint64_t{1} << index;
-    return encodeWait(
-        plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_EDGE, OBELISK_RT_WAIT_CLOCK_OCCURRENCE, edges,
-        watched, Value{}, suspend.getOccurrenceSite(), conditionMask);
+    uint32_t flags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
+    if (suspend->hasAttr("slot_final"))
+      flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+    return encodeWait(plan, suspend.getOperation(),
+                      suspend.getContinuationOperands(),
+                      OBELISK_RT_SUSPEND_EDGE, flags, edges, watched, Value{},
+                      suspend.getOccurrenceSite(), conditionMask);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
     uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;

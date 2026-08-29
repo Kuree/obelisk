@@ -2214,7 +2214,10 @@ private:
                          node.timingCheckKind == Kind::Removal;
       bool combined = node.timingCheckKind == Kind::SetupHold ||
                       node.timingCheckKind == Kind::RecRem;
-      size_t requiredArguments = combined ? 4 : 3;
+      bool skew = node.timingCheckKind == Kind::Skew;
+      bool period = node.timingCheckKind == Kind::Period;
+      bool width = node.timingCheckKind == Kind::Width;
+      size_t requiredArguments = combined ? 4 : period || width ? 2 : 3;
       bool unsupportedCombinedOption = false;
       if (combined) {
         // IEEE 1800-2017 31.3.3/.6 assign slots 5--8 to negative-check
@@ -2225,16 +2228,42 @@ private:
           unsupportedCombinedOption |= arguments[index].expr != nullptr ||
                                        arguments[index].condition != nullptr;
       }
-      if ((singleLimit || combined) && staticTimes &&
-          arguments.size() >= requiredArguments &&
-          arguments[0].expr && arguments[1].expr &&
+      bool hasRequiredArguments = arguments.size() >= requiredArguments;
+      bool directConditions =
+          hasRequiredArguments &&
           (!arguments[0].condition ||
-           arguments[0].condition
+           arguments[0]
+               .condition
                ->template as_if<slang::ast::NamedValueExpression>()) &&
-          (!arguments[1].condition ||
-           arguments[1].condition
-               ->template as_if<slang::ast::NamedValueExpression>()) &&
-          effectiveEdges[0] >= 0 && effectiveEdges[1] >= 0 &&
+          (period || width || !arguments[1].condition ||
+           arguments[1]
+               .condition->template as_if<slang::ast::NamedValueExpression>());
+      bool canonicalEvents = hasRequiredArguments && effectiveEdges[0] >= 0 &&
+                             (period || width || effectiveEdges[1] >= 0);
+      bool controlledEdge =
+          hasRequiredArguments &&
+          (effectiveEdges[0] ==
+               static_cast<int32_t>(slangir::EdgeKind::PosEdge) ||
+           effectiveEdges[0] ==
+               static_cast<int32_t>(slangir::EdgeKind::NegEdge) ||
+           (period && effectiveEdges[0] ==
+                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)));
+      bool nonnegativeTimes =
+          llvm::all_of(llvm::zip_equal(timeFs, isTime), [](auto valueAndTime) {
+            auto [value, time] = valueAndTime;
+            return !time || value >= 0;
+          });
+      // IEEE 1800-2017 31.4.1, 31.4.4, and 31.4.5 make these
+      // clock/control checks static event-distance comparisons. Canonical
+      // $skew events reuse every existing standard-edge subscription;
+      // $period requires a controlled edge, while $width additionally needs
+      // a unique posedge/negedge inverse for its implicit timecheck event.
+      if ((singleLimit || combined || skew || period || width) && staticTimes &&
+          nonnegativeTimes && hasRequiredArguments && arguments[0].expr &&
+          ((period || width) || arguments[1].expr) && directConditions &&
+          canonicalEvents && (!(period || width) || controlledEdge) &&
+          (!width || effectiveEdges[0] !=
+                         static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&
           !unsupportedCombinedOption)
         attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
     }
