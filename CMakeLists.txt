@@ -361,19 +361,77 @@ endif()
 # slang v11.0 declares these dependencies by git tag. Declare checksummed
 # release archives first (FetchContent's first declaration wins) so Obelisk's
 # dependency graph is immutable and works without git.
+find_package(Python 3.8 COMPONENTS Interpreter REQUIRED)
 FetchContent_Declare(fmt
   URL "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"
   URL_HASH
     "SHA256=ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea"
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 if(OBELISK_SLANG_SOURCE_DIR)
+  # Keep an offline source override pristine. The checked, version-specific
+  # hook below is the maintained source of truth and is applied only to this
+  # build-local staging copy.
+  set(_obelisk_slang_offline_stage
+      "${CMAKE_BINARY_DIR}/slang-${OBELISK_SLANG_VERSION}-obelisk-source")
+  file(GLOB_RECURSE _obelisk_slang_source_files
+    LIST_DIRECTORIES FALSE
+    RELATIVE "${OBELISK_SLANG_SOURCE_DIR}"
+    "${OBELISK_SLANG_SOURCE_DIR}/*")
+  list(FILTER _obelisk_slang_source_files EXCLUDE REGEX "^\\.git/")
+  list(SORT _obelisk_slang_source_files)
+  set(_obelisk_slang_source_manifest "")
+  foreach(_obelisk_slang_source_file IN LISTS _obelisk_slang_source_files)
+    file(SHA256
+      "${OBELISK_SLANG_SOURCE_DIR}/${_obelisk_slang_source_file}"
+      _obelisk_slang_source_file_hash)
+    string(APPEND _obelisk_slang_source_manifest
+      "${_obelisk_slang_source_file}:${_obelisk_slang_source_file_hash}\n")
+  endforeach()
+  file(SHA256 "${PROJECT_SOURCE_DIR}/cmake/ApplySlangProtectHook.py"
+       _obelisk_slang_hook_script_hash)
+  file(SHA256 "${PROJECT_SOURCE_DIR}/cmake/slang/ProtectEnvelope.h"
+       _obelisk_slang_hook_header_hash)
+  file(SHA256 "${PROJECT_SOURCE_DIR}/cmake/slang/SecureBuffer.h"
+       _obelisk_slang_secure_buffer_hash)
+  string(SHA256 _obelisk_slang_stage_hash
+    "${_obelisk_slang_source_manifest}${_obelisk_slang_hook_script_hash}${_obelisk_slang_hook_header_hash}${_obelisk_slang_secure_buffer_hash}")
+  set(_obelisk_slang_stage_stamp
+      "${_obelisk_slang_offline_stage}/.obelisk-source-sha256")
+  set(_obelisk_slang_staged_hash "")
+  if(EXISTS "${_obelisk_slang_stage_stamp}")
+    file(READ "${_obelisk_slang_stage_stamp}" _obelisk_slang_staged_hash)
+    string(STRIP "${_obelisk_slang_staged_hash}" _obelisk_slang_staged_hash)
+  endif()
+  if(NOT _obelisk_slang_staged_hash STREQUAL _obelisk_slang_stage_hash)
+    file(REMOVE_RECURSE "${_obelisk_slang_offline_stage}")
+    file(COPY "${OBELISK_SLANG_SOURCE_DIR}/"
+         DESTINATION "${_obelisk_slang_offline_stage}")
+    execute_process(
+      COMMAND "${Python_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/cmake/ApplySlangProtectHook.py"
+              "${_obelisk_slang_offline_stage}"
+              "${PROJECT_SOURCE_DIR}/cmake/slang"
+      RESULT_VARIABLE _obelisk_slang_hook_status
+      ERROR_VARIABLE _obelisk_slang_hook_error)
+    if(NOT _obelisk_slang_hook_status EQUAL 0)
+      message(FATAL_ERROR
+        "Failed to apply the pinned Slang protected-envelope hook: "
+        "${_obelisk_slang_hook_error}")
+    endif()
+    file(WRITE "${_obelisk_slang_stage_stamp}"
+         "${_obelisk_slang_stage_hash}\n")
+  endif()
   FetchContent_Declare(obelisk_slang
-    SOURCE_DIR "${OBELISK_SLANG_SOURCE_DIR}")
+    SOURCE_DIR "${_obelisk_slang_offline_stage}")
 else()
   FetchContent_Declare(obelisk_slang
     URL "https://github.com/MikePopoloski/slang/archive/refs/tags/v${OBELISK_SLANG_VERSION}.tar.gz"
     URL_HASH "SHA256=${OBELISK_SLANG_ARCHIVE_SHA256}"
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    PATCH_COMMAND
+      "${Python_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/cmake/ApplySlangProtectHook.py"
+      <SOURCE_DIR> "${PROJECT_SOURCE_DIR}/cmake/slang"
   )
 endif()
 

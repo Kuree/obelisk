@@ -195,6 +195,5 @@ def suppress_warnings_EQ : Joined<["--"], "suppress-warnings=">,
 def Xslang : Separate<["-"], "Xslang">, Group<Internal_Group>,
   MetaVarName<"<arg>">, Flags<[HelpHidden]>,
   HelpText<"Pass one argument directly to the slang frontend">;
-
 def _DASH_DASH : Option<["--"], "", KIND_REMAINING_ARGS>,
   Flags<[HelpHidden]>;

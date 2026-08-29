@@ -62,8 +62,7 @@ else()
   set(OBELISK_DEFAULT_TARGET "wasm32")
 endif()
 
-add_llvm_executable(obelisk
-  PARTIAL_SOURCES_INTENDED
+set(OBELISK_DRIVER_COMMON_SOURCES
   driver.cpp
   TargetBackend.cpp
   ${OBELISK_BACKEND_SOURCES}
@@ -71,26 +70,53 @@ add_llvm_executable(obelisk
   Options.cpp
 )
 
-add_dependencies(obelisk
-  ObeliskDriverOptions
-  obelisk_native_support
-)
+function(obelisk_configure_driver target)
+  add_dependencies(${target}
+    ObeliskDriverOptions
+    obelisk_native_support
+  )
+  target_include_directories(${target} PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/runtime/include
+  )
+  target_compile_definitions(${target} PRIVATE
+    OBELISK_VERSION_STRING="${PROJECT_VERSION}"
+    OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
+    OBELISK_HAS_NATIVE_BACKEND=${OBELISK_HAS_NATIVE_BACKEND}
+    OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
+    OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
+  )
+  llvm_update_compile_flags(${target})
+  target_link_libraries(${target} PRIVATE
+    ObeliskFrontend
+    ObeliskIR
+    ObeliskRuntimeIR
+    ObeliskSimulationIR
+    ObeliskSimulationToBytecode
+    ObeliskSimulationToLLVMCoroutine
+    ObeliskSlangIR
+    ObeliskSlangToObelisk
+    ObeliskToSimulation
+    MLIRIR
+    MLIRBuiltinToLLVMIRTranslation
+    MLIRLLVMToLLVMIRTranslation
+    MLIRPass
+    MLIRSupport
+    MLIRTargetLLVMIRExport
+    lldCommon
+    lldWasm
+    $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:lldELF>
+  )
+  mlir_check_all_link_libraries(${target})
+endfunction()
 
-target_include_directories(obelisk
-  PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${PROJECT_SOURCE_DIR}/runtime/include
+add_llvm_executable(obelisk
+  PARTIAL_SOURCES_INTENDED
+  Main.cpp
+  ${OBELISK_DRIVER_COMMON_SOURCES}
 )
-
-target_compile_definitions(obelisk
-  PRIVATE
-  OBELISK_VERSION_STRING="${PROJECT_VERSION}"
-  OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
-  OBELISK_HAS_NATIVE_BACKEND=${OBELISK_HAS_NATIVE_BACKEND}
-  OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
-  OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
-)
+obelisk_configure_driver(obelisk)
 
 if(EMSCRIPTEN)
   # compiler-worker.js loads the compiler as a reusable factory and invokes it
@@ -105,28 +131,18 @@ if(EMSCRIPTEN)
     "-sENVIRONMENT=web,worker,node")
 endif()
 
-llvm_update_compile_flags(obelisk)
-
-target_link_libraries(obelisk
-  PRIVATE
-  ObeliskFrontend
-  ObeliskIR
-  ObeliskRuntimeIR
-  ObeliskSimulationIR
-  ObeliskSimulationToBytecode
-  ObeliskSimulationToLLVMCoroutine
-  ObeliskSlangIR
-  ObeliskSlangToObelisk
-  ObeliskToSimulation
-  MLIRIR
-  MLIRBuiltinToLLVMIRTranslation
-  MLIRLLVMToLLVMIRTranslation
-  MLIRPass
-  MLIRSupport
-  MLIRTargetLLVMIRExport
-  lldCommon
-  lldWasm
-  $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:lldELF>
-)
-
-mlir_check_all_link_libraries(obelisk)
+if(OBELISK_INCLUDE_TESTS)
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestProvider.cpp
+    PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  add_llvm_executable(obelisk-protect-test EXCLUDE_FROM_ALL
+    PARTIAL_SOURCES_INTENDED
+    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestMain.cpp
+    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestProvider.cpp
+    ${OBELISK_DRIVER_COMMON_SOURCES}
+  )
+  target_include_directories(obelisk-protect-test PRIVATE
+    ${PROJECT_SOURCE_DIR}/test/Support
+  )
+  obelisk_configure_driver(obelisk-protect-test)
+endif()

@@ -25,6 +25,12 @@ llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
 config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
 config.substitutions.append(
+    ("%protect-obelisk", config.obelisk_protect_test_executable)
+)
+config.substitutions.append(
+    ("%protect-inline-wipe-test", config.obelisk_protect_inline_wipe_test_executable)
+)
+config.substitutions.append(
     ("%resource_dir", '"{}"'.format(config.obelisk_resource_dir))
 )
 config.substitutions.append(
@@ -38,6 +44,9 @@ config.substitutions.append(
     ("%target_provision_script", config.obelisk_target_provision_script)
 )
 config.substitutions.append(("%source_root", config.obelisk_source_root))
+config.substitutions.append(
+    ("%slang_source_root", config.obelisk_slang_source_root)
+)
 config.substitutions.append(("%obj_root", config.obelisk_obj_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
 config.substitutions.append(

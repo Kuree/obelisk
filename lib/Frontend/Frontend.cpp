@@ -1,6 +1,7 @@
 //===- Frontend.cpp - slang semantic AST to Slang dialect importer -------===//
 
 #include "obelisk/Frontend/Frontend.h"
+#include "obelisk/Frontend/ProtectedEnvelope.h"
 
 #include "SDF.h"
 
@@ -31,6 +32,7 @@
 #include "slang/ast/types/TypePrinter.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
+#include "slang/parsing/ProtectEnvelope.h"
 #include "slang/syntax/AllSyntax.h"
 #include "slang/util/OS.h"
 #include "slang/util/VersionInfo.h"
@@ -68,6 +70,117 @@ using CaseProd = RandSeqProductionSymbol::CaseProd;
 
 namespace obelisk::frontend {
 namespace {
+
+ProtectedEncoding mapProtectEncoding(slang::parsing::ProtectEncoding value) {
+  switch (value) {
+  case slang::parsing::ProtectEncoding::UUEncode:
+    return ProtectedEncoding::UUEncode;
+  case slang::parsing::ProtectEncoding::Base64:
+    return ProtectedEncoding::Base64;
+  case slang::parsing::ProtectEncoding::QuotedPrintable:
+    return ProtectedEncoding::QuotedPrintable;
+  case slang::parsing::ProtectEncoding::Raw:
+    return ProtectedEncoding::Raw;
+  }
+  llvm_unreachable("unknown Slang protected encoding");
+}
+
+ProtectedBlockKind mapProtectBlockKind(slang::parsing::ProtectBlockKind value) {
+  switch (value) {
+  case slang::parsing::ProtectBlockKind::Data:
+    return ProtectedBlockKind::Data;
+  case slang::parsing::ProtectBlockKind::Digest:
+    return ProtectedBlockKind::Digest;
+  case slang::parsing::ProtectBlockKind::Key:
+    return ProtectedBlockKind::Key;
+  case slang::parsing::ProtectBlockKind::DataPublicKey:
+    return ProtectedBlockKind::DataPublicKey;
+  case slang::parsing::ProtectBlockKind::DataDecryptKey:
+    return ProtectedBlockKind::DataDecryptKey;
+  case slang::parsing::ProtectBlockKind::DigestPublicKey:
+    return ProtectedBlockKind::DigestPublicKey;
+  case slang::parsing::ProtectBlockKind::DigestDecryptKey:
+    return ProtectedBlockKind::DigestDecryptKey;
+  case slang::parsing::ProtectBlockKind::KeyPublicKey:
+    return ProtectedBlockKind::KeyPublicKey;
+  }
+  llvm_unreachable("unknown Slang protected block kind");
+}
+
+slang::parsing::ProtectEnvelopeStatus
+mapProtectStatus(ProtectedEnvelopeStatus value) {
+  switch (value) {
+  case ProtectedEnvelopeStatus::Success:
+    return slang::parsing::ProtectEnvelopeStatus::Success;
+  case ProtectedEnvelopeStatus::ProviderUnavailable:
+    return slang::parsing::ProtectEnvelopeStatus::ProviderUnavailable;
+  case ProtectedEnvelopeStatus::Rejected:
+    return slang::parsing::ProtectEnvelopeStatus::Rejected;
+  case ProtectedEnvelopeStatus::InvalidData:
+    return slang::parsing::ProtectEnvelopeStatus::InvalidData;
+  case ProtectedEnvelopeStatus::ResourceLimit:
+    return slang::parsing::ProtectEnvelopeStatus::ResourceLimit;
+  }
+  llvm_unreachable("unknown protected-envelope status");
+}
+
+class SlangProtectEnvelopeAdapter final
+    : public slang::parsing::ProtectEnvelopeDecryptor {
+public:
+  explicit SlangProtectEnvelopeAdapter(
+      std::shared_ptr<const ProtectedEnvelopeProvider> provider)
+      : provider(std::move(provider)) {}
+
+  slang::parsing::ProtectEnvelopeResult
+  decrypt(const slang::parsing::ProtectEnvelope &input) const override {
+    SmallVector<ProtectedEnvelopeRecord> records;
+    records.reserve(input.records.size());
+    for (const slang::parsing::ProtectEnvelopeRecord &inputRecord :
+         input.records) {
+      ProtectedEnvelopeRecord record;
+      switch (inputRecord.recordKind) {
+      case slang::parsing::ProtectRecordKind::Expression:
+        record.recordKind = ProtectedRecordKind::Expression;
+        record.name = inputRecord.name;
+        record.value = inputRecord.value;
+        break;
+      case slang::parsing::ProtectRecordKind::EncodedBlock:
+        record.recordKind = ProtectedRecordKind::EncodedBlock;
+        record.name = inputRecord.name;
+        record.blockKind = mapProtectBlockKind(inputRecord.blockKind);
+        record.encoding = mapProtectEncoding(inputRecord.encoding);
+        record.expectedBytes = inputRecord.expectedBytes;
+        record.encodedText = inputRecord.encodedText;
+        break;
+      }
+      records.push_back(std::move(record));
+    }
+
+    ProtectedEnvelopeResult result = provider->decrypt({records});
+    slang::parsing::ProtectEnvelopeResult converted;
+    converted.status = mapProtectStatus(result.status);
+    // Allocate exactly once before copying Clause 34.3.2 plaintext so an
+    // internal SmallVector growth cannot abandon a decrypted allocation.
+    converted.source.reserve(result.source.size());
+    converted.source.append(result.source.begin(), result.source.end());
+    result.clear();
+    return converted;
+  }
+
+private:
+  std::shared_ptr<const ProtectedEnvelopeProvider> provider;
+};
+
+void installProtectedEnvelopeProvider(slang::driver::Driver &driver,
+                                      const FrontendOptions &options) {
+  driver.options.maxProtectEnvelopeDepth = options.maxProtectedEnvelopeDepth;
+  driver.options.maxProtectEnvelopeBytes = options.maxProtectedEnvelopeBytes;
+  driver.options.maxProtectEnvelopeCount = options.maxProtectedEnvelopeCount;
+  if (options.protectedEnvelopeProvider)
+    driver.options.protectEnvelopeDecryptor =
+        std::make_shared<SlangProtectEnvelopeAdapter>(
+            options.protectedEnvelopeProvider);
+}
 
 std::string formatReal(double value) {
   std::array<char, 64> buffer;
@@ -2139,8 +2252,7 @@ private:
         attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
     }
 
-    if constexpr (std::same_as<T,
-                               slang::ast::SystemTimingCheckSymbol>) {
+    if constexpr (std::same_as<T, slang::ast::SystemTimingCheckSymbol>) {
       auto arguments = node.getArguments();
       attrs.set("timing_check_kind",
                 builder.getI32IntegerAttr(
@@ -2238,8 +2350,8 @@ private:
         hasCondition.push_back(argument.condition != nullptr);
         expressionChildren.push_back(argument.expr ? nextChild++ : -1);
         conditionChildren.push_back(argument.condition ? nextChild++ : -1);
-        edges.push_back(slangir::EdgeKindAttr::get(
-            builder.getContext(), convertEnum(argument.edge)));
+        edges.push_back(slangir::EdgeKindAttr::get(builder.getContext(),
+                                                   convertEnum(argument.edge)));
         SmallVector<Attribute> encoded;
         encoded.reserve(argument.edgeDescriptors.size());
         uint32_t descriptorMask = 0;
@@ -2265,19 +2377,21 @@ private:
             descriptorMask |= 1u << 5;
         }
         descriptors.push_back(builder.getArrayAttr(encoded));
-        int32_t effectiveEdge = static_cast<int32_t>(convertEnum(argument.edge));
+        int32_t effectiveEdge =
+            static_cast<int32_t>(convertEnum(argument.edge));
         if (!argument.edgeDescriptors.empty()) {
           // IEEE 1800-2017 31.5 treats Z as X in transition descriptors.
           // Canonical descriptor sets use the existing standard-edge ABI;
           // every proper subset remains semantic-only until exact transition
           // classes survive scheduler publication.
-          effectiveEdge = descriptorMask == 0x23
-                              ? static_cast<int32_t>(slangir::EdgeKind::PosEdge)
-                          : descriptorMask == 0x1c
-                              ? static_cast<int32_t>(slangir::EdgeKind::NegEdge)
-                          : descriptorMask == 0x3f
-                              ? static_cast<int32_t>(slangir::EdgeKind::BothEdges)
-                              : -1;
+          effectiveEdge =
+              descriptorMask == 0x23
+                  ? static_cast<int32_t>(slangir::EdgeKind::PosEdge)
+              : descriptorMask == 0x1c
+                  ? static_cast<int32_t>(slangir::EdgeKind::NegEdge)
+              : descriptorMask == 0x3f
+                  ? static_cast<int32_t>(slangir::EdgeKind::BothEdges)
+                  : -1;
         }
         effectiveEdges.push_back(effectiveEdge);
         bool time = isTimeSlot(index);
@@ -2310,10 +2424,8 @@ private:
       if (staticTimes)
         attrs.set("timing_check_arg_time_fs",
                   builder.getDenseI64ArrayAttr(timeFs));
-      attrs.set("time_unit_fs",
-                builder.getI64IntegerAttr(unitFs));
-      attrs.set("time_precision_fs",
-                builder.getI64IntegerAttr(precisionFs));
+      attrs.set("time_unit_fs", builder.getI64IntegerAttr(unitFs));
+      attrs.set("time_precision_fs", builder.getI64IntegerAttr(precisionFs));
 
       using Kind = slang::ast::SystemTimingCheckKind;
       bool singleLimit = node.timingCheckKind == Kind::Setup ||
@@ -2413,9 +2525,9 @@ private:
     }
 
     if constexpr (std::same_as<T, slang::ast::PulseStyleSymbol>) {
-      attrs.set("pulse_style_kind", builder.getI32IntegerAttr(
-                                        static_cast<int32_t>(
-                                            node.pulseStyleKind)));
+      attrs.set(
+          "pulse_style_kind",
+          builder.getI32IntegerAttr(static_cast<int32_t>(node.pulseStyleKind)));
       SmallVector<Attribute> terminals;
       slang::ast::EvalContext evalContext(node);
       for (const slang::ast::Expression *expression : node.getTerminals()) {
@@ -2472,8 +2584,8 @@ private:
           scale = scope->getTimeScale().value_or(slang::TimeScale{});
         uint64_t unitFs = getFemtoseconds(scale.base);
         uint64_t precisionFs = getFemtoseconds(scale.precision);
-        auto freezeLimit = [&](const slang::ConstantValue &value)
-            -> std::optional<int64_t> {
+        auto freezeLimit =
+            [&](const slang::ConstantValue &value) -> std::optional<int64_t> {
           if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
               unitFs % precisionFs != 0 || !value)
             return std::nullopt;
@@ -2505,8 +2617,8 @@ private:
               amount * static_cast<long double>(unitFs / precisionFs);
           long double femtoseconds = std::round(steps) * precisionFs;
           if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
-              femtoseconds > static_cast<long double>(
-                                   std::numeric_limits<int64_t>::max()))
+              femtoseconds >
+                  static_cast<long double>(std::numeric_limits<int64_t>::max()))
             return std::nullopt;
           return static_cast<int64_t>(femtoseconds);
         };
@@ -2520,8 +2632,7 @@ private:
         }
         attrs.set("path_pulse_name", builder.getStringAttr(node.name));
         if (reject && error) {
-          attrs.set("path_pulse_reject_fs",
-                    builder.getI64IntegerAttr(*reject));
+          attrs.set("path_pulse_reject_fs", builder.getI64IntegerAttr(*reject));
           attrs.set("path_pulse_error_fs", builder.getI64IntegerAttr(*error));
         }
       }
@@ -4502,8 +4613,7 @@ private:
         condition->visit(*this);
       if (const slang::ast::Expression *edgeSource = node.getEdgeSourceExpr())
         edgeSource->visit(*this);
-    } else if constexpr (std::same_as<
-                             T, slang::ast::SystemTimingCheckSymbol>) {
+    } else if constexpr (std::same_as<T, slang::ast::SystemTimingCheckSymbol>) {
       // Slang stores resolved timing-check operands as ordered metadata, not
       // owned symbol children. Visit expression then &&& condition for each
       // formal slot; the aligned Clause 31 attributes above preserve holes
@@ -5083,7 +5193,11 @@ preprocessSystemVerilog(ArrayRef<std::string> inputFilenames,
     slang::bitmask<slang::driver::PreprocessOutputFlags> flags;
     succeeded =
         driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) &&
-        driver.processOptions() && driver.runPreprocessor(flags);
+        driver.processOptions();
+    if (succeeded) {
+      installProtectedEnvelopeProvider(driver, options);
+      succeeded = driver.runPreprocessor(flags);
+    }
     output = slang::OS::capturedStdout;
     diagnostics = slang::OS::capturedStderr;
   }
@@ -5108,7 +5222,10 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     argv.push_back(argument.c_str());
 
   if (!driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) ||
-      !driver.processOptions() || !driver.parseAllSources())
+      !driver.processOptions())
+    return failure();
+  installProtectedEnvelopeProvider(driver, options);
+  if (!driver.parseAllSources())
     return failure();
 
   std::unique_ptr<slang::ast::Compilation> compilation =

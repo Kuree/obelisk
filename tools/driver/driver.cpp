@@ -9,6 +9,7 @@
 #include "NativeInputs.h"
 #include "Options.h"
 #include "TargetBackend.h"
+#include "DriverMain.h"
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
@@ -40,7 +41,6 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -732,8 +732,9 @@ static void writeBindingReport(ModuleOp module, raw_ostream &output) {
   }
 }
 
-static obelisk::frontend::FrontendOptions
-buildFrontendOptions(const InputArgList &args, bool &valid) {
+static obelisk::frontend::FrontendOptions buildFrontendOptions(
+    const InputArgList &args, bool &valid,
+    const obelisk::driver::ProtectedEnvelopeConfiguration &protectConfig) {
   obelisk::frontend::FrontendOptions options;
   options.includeDirs = args.getAllArgValues(OPT_I);
   options.includeSystemDirs = args.getAllArgValues(OPT_isystem);
@@ -815,10 +816,16 @@ buildFrontendOptions(const InputArgList &args, bool &valid) {
           : obelisk::frontend::LanguageVersion::IEEE1800_2023;
   for (std::string argument : args.getAllArgValues(OPT_Xslang))
     options.slangArgs.push_back(std::move(argument));
+  options.protectedEnvelopeProvider = protectConfig.provider;
+  options.maxProtectedEnvelopeDepth = protectConfig.maxDepth;
+  options.maxProtectedEnvelopeBytes = protectConfig.maxBytes;
+  options.maxProtectedEnvelopeCount = protectConfig.maxCount;
   return options;
 }
 
-static int executeCompilation(const InputArgList &args) {
+static int executeCompilation(
+    const InputArgList &args,
+    const obelisk::driver::ProtectedEnvelopeConfiguration &protectConfig) {
   SmallVector<std::string> inputs;
   for (const Arg *arg : args.filtered(OPT_INPUT))
     inputs.emplace_back(arg->getValue());
@@ -828,7 +835,7 @@ static int executeCompilation(const InputArgList &args) {
 
   bool valid = true;
   obelisk::frontend::FrontendOptions frontendOptions =
-      buildFrontendOptions(args, valid);
+      buildFrontendOptions(args, valid, protectConfig);
   // Command files were already spliced into argv, so anything they contributed
   // is present here as an ordinary input.
   if (inputs.empty()) {
@@ -1217,10 +1224,12 @@ static int executeCompilation(const InputArgList &args) {
 
 } // namespace
 
-int main(int argc, char **argv) {
-  InitLLVM initLLVM(argc, argv);
+int obelisk::driver::runObeliskDriver(
+    int argc, char **argv,
+    const ProtectedEnvelopeConfiguration &protectConfig) {
   driverExecutablePath =
-      sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
+      sys::fs::getMainExecutable(
+          argv[0], reinterpret_cast<void *>(&runObeliskDriver));
   const OptTable &optionTable = obelisk::driver::getDriverOptTable();
 
   BumpPtrAllocator allocator;
@@ -1258,7 +1267,7 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  int status = executeCompilation(args);
+  int status = executeCompilation(args, protectConfig);
   // A reusable Emscripten module does not exit after callMain(), so its libc
   // streams do not get the process-exit flush a native invocation receives.
   // Flush explicitly to deliver linker diagnostics to print/printErr.

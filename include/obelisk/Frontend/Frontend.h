@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,8 @@ class MLIRContext;
 } // namespace mlir
 
 namespace obelisk::frontend {
+
+class ProtectedEnvelopeProvider;
 
 enum class LanguageVersion : uint8_t {
   IEEE1800_2017,
@@ -68,6 +71,10 @@ struct FrontendOptions {
   std::optional<uint32_t> errorLimit;
   std::optional<std::string> timeScale;
   std::optional<uint32_t> numThreads;
+  std::shared_ptr<const ProtectedEnvelopeProvider> protectedEnvelopeProvider;
+  uint32_t maxProtectedEnvelopeDepth = 64;
+  uint64_t maxProtectedEnvelopeBytes = 64 * 1024 * 1024;
+  uint32_t maxProtectedEnvelopeCount = 4096;
 };
 
 /// Run preprocessing without parsing or elaborating the resulting token

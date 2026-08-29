@@ -41,6 +41,19 @@ set_target_properties(obelisk-sim-standard-api-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
+add_executable(obelisk-protect-inline-wipe-test EXCLUDE_FROM_ALL
+  Support/ProtectedInlineWipeTest.cpp
+)
+target_compile_features(obelisk-protect-inline-wipe-test PRIVATE cxx_std_20)
+target_include_directories(obelisk-protect-inline-wipe-test PRIVATE
+  "${OBELISK_SLANG_INCLUDE_DIR}"
+)
+target_link_libraries(obelisk-protect-inline-wipe-test PRIVATE slang::slang)
+set_target_properties(obelisk-protect-inline-wipe-test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_dependencies(obelisk-protect-test obelisk-protect-inline-wipe-test)
+
 function(obelisk_add_generated_process_object output_var directory input_file)
   set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/${directory}")
   set(generated_mlir "${generated_dir}/process.mlir")
@@ -185,6 +198,8 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
   obelisk
+  obelisk-protect-test
+  obelisk-protect-inline-wipe-test
   obelisk-filecheck
   obelisk-not
   obelisk-opt
