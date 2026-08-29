@@ -9,12 +9,22 @@ an unexpected upstream source fails configuration instead of being guessed at.
 from pathlib import Path
 import shutil
 import sys
+from typing import Optional
 
 
-def replace_once(path: Path, old: str, new: str) -> None:
+def replace_once(path: Path, old: str, new: str,
+                 *, previous: Optional[str] = None) -> None:
     text = path.read_text()
     if new in text:
         return
+    if previous is not None:
+        previous_count = text.count(previous)
+        if previous_count:
+            if previous_count != 1:
+                raise RuntimeError(
+                    f"expected one prior pinned-slang context in {path}, "
+                    f"found {previous_count}")
+            old = previous
     count = text.count(old)
     if count != 1:
         raise RuntimeError(f"expected one pinned-slang context in {path}, found {count}")
@@ -97,17 +107,28 @@ def main() -> None:
         "    ppoptions.maxProtectEnvelopeBytes = options.maxProtectEnvelopeBytes;\n"
         "    ppoptions.maxProtectEnvelopeCount = options.maxProtectEnvelopeCount;\n")
 
+    # IEEE 1800-2017 Clause 34: production deliberately excludes encrypted IP.
+    # Fail closed with a fixed diagnostic; never decrypt, emit, or silently skip it.
     replace_once(
         source / "scripts/diagnostics.txt",
         'warning protected-envelope ProtectedEnvelope "protected envelopes cannot be decrypted and will be skipped entirely"\n',
         'warning protected-envelope ProtectedEnvelope "protected envelopes cannot be decrypted and will be skipped entirely"\n'
-        'error ProtectedEnvelopeProviderUnavailable "protected envelope rejected (provider unavailable)"\n'
+        'error ProtectedEnvelopeProviderUnavailable "encrypted/protected IP is unsupported (IEEE 1800-2017 Clause 34)"\n'
         'error ProtectedEnvelopeRejected "protected envelope rejected (provider policy)"\n'
         'error ProtectedEnvelopeInvalidData "protected envelope rejected (invalid data)"\n'
         'error ProtectedEnvelopeResourceLimit "protected envelope rejected (resource limit)"\n'
         'error ProtectedEnvelopeProviderFailure "protected envelope rejected (provider failure)"\n'
         'error ProtectedEnvelopeDepthExceeded "protected envelope rejected (nesting limit)"\n'
-        'error ProtectedSourceDiagnostic "diagnostic in protected source (details suppressed)"\n')
+        'error ProtectedSourceDiagnostic "diagnostic in protected source (details suppressed)"\n',
+        previous=(
+            'warning protected-envelope ProtectedEnvelope "protected envelopes cannot be decrypted and will be skipped entirely"\n'
+            'error ProtectedEnvelopeProviderUnavailable "protected envelope rejected (provider unavailable)"\n'
+            'error ProtectedEnvelopeRejected "protected envelope rejected (provider policy)"\n'
+            'error ProtectedEnvelopeInvalidData "protected envelope rejected (invalid data)"\n'
+            'error ProtectedEnvelopeResourceLimit "protected envelope rejected (resource limit)"\n'
+            'error ProtectedEnvelopeProviderFailure "protected envelope rejected (provider failure)"\n'
+            'error ProtectedEnvelopeDepthExceeded "protected envelope rejected (nesting limit)"\n'
+            'error ProtectedSourceDiagnostic "diagnostic in protected source (details suppressed)"\n'))
 
     replace_once(
         source / "include/slang/text/SourceManager.h",

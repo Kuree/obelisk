@@ -37,7 +37,7 @@ raqzbqhyr
 // OBELISK-NOT: data_block
 // OBELISK-NOT: cebgrpgrq_ubbx
 // OUTPUT: PROTECT_OK
-// NO-PROVIDER: error: protected envelope rejected (provider unavailable)
+// NO-PROVIDER: error: encrypted/protected IP is unsupported (IEEE 1800-2017 Clause 34)
 // SIZE-LIMIT: error: protected envelope rejected (resource limit)
 // SIZE-LIMIT-NOT: protected_hook
 // COUNT-LIMIT: error: protected envelope rejected (resource limit)
