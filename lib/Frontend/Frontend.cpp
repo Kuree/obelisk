@@ -2448,9 +2448,10 @@ private:
       bool fullSkew = node.timingCheckKind == Kind::FullSkew;
       bool period = node.timingCheckKind == Kind::Period;
       bool width = node.timingCheckKind == Kind::Width;
-      size_t requiredArguments = combined || fullSkew ? 4
-                                 : period || width    ? 2
-                                                      : 3;
+      bool noChange = node.timingCheckKind == Kind::NoChange;
+      size_t requiredArguments = combined || fullSkew || noChange ? 4
+                                 : period || width                ? 2
+                                                                  : 3;
       bool unsupportedCombinedOption = false;
       if (combined) {
         // IEEE 1800-2017 31.3.3/.6 assign slots 5--8 to negative-check
@@ -2511,11 +2512,18 @@ private:
       // $skew events reuse every existing standard-edge subscription;
       // $period requires a controlled edge, while $width additionally needs
       // a unique posedge/negedge inverse for its implicit timecheck event.
+      bool noChangeReference =
+          !noChange || (arguments[0].edgeDescriptors.empty() && controlledEdge);
+      // IEEE 1800-2017 31.4.6 uniquely permits signed start/end offsets and
+      // requires the reference to name only posedge or negedge, without an
+      // edge-control descriptor. Its data event retains the ordinary direct
+      // canonical edge/change forms and Clause 31.7 condition sampling.
       if ((singleLimit || combined || skew || timeSkew || fullSkew || period ||
-           width) &&
-          staticTimes && nonnegativeTimes && hasRequiredArguments &&
-          arguments[0].expr && ((period || width) || arguments[1].expr) &&
-          directConditions && canonicalEvents &&
+           width || noChange) &&
+          staticTimes && (noChange || nonnegativeTimes) &&
+          hasRequiredArguments && arguments[0].expr &&
+          ((period || width) || arguments[1].expr) && directConditions &&
+          canonicalEvents && noChangeReference &&
           (!(period || width) || controlledEdge) &&
           (!width || effectiveEdges[0] !=
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&

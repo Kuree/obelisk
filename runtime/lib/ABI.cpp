@@ -1479,6 +1479,9 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_wait_order_failed,
              uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_clock_occurrence_consume,
              uint64_t (*)(obelisk_rt_context *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_nochange_update,
+             uint64_t (*)(obelisk_rt_context *, uint64_t, uint64_t, int64_t,
+                          int64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_fail,
              void (*)(obelisk_rt_context *, obelisk_rt_status));
 ABI_FUNCTION(obelisk_rt_v1_native_state_register_static,

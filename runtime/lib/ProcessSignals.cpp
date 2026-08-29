@@ -351,6 +351,17 @@ void obelisk_rt_unregister_signal_wait_unlocked(
       context->nativeConditionalSignalWaiters.erase(waiterToken);
     uint64_t logicalToken =
         designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
+    if (context->noChangeChecks) {
+      auto &checks = context->noChangeChecks->checks;
+      for (auto current = checks.begin(); current != checks.end();) {
+        if (current->first.logicalToken == logicalToken)
+          current = checks.erase(current);
+        else
+          ++current;
+      }
+      if (checks.empty())
+        context->noChangeChecks.reset();
+    }
     if (context->clockOccurrences) {
       ClockOccurrenceFeatureState &feature = *context->clockOccurrences;
       if (auto occurrence = feature.waits.find(logicalToken);

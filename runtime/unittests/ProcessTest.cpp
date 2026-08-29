@@ -1674,9 +1674,73 @@ TEST(RuntimeInternals,
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, NoChangeUsesPayForPlaySignedOpenWindows) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  EXPECT_FALSE(context->clockOccurrences);
+  EXPECT_FALSE(context->noChangeChecks);
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+  context->activeLogicalProcessToken = 41;
+
+  auto update = [&](uint64_t site, uint64_t time, uint64_t mask, int64_t start,
+                    int64_t end) {
+    context->schedulerTime = time;
+    return obelisk_rt_v1_nochange_update(context, site, mask, start, end);
+  };
+
+  // Positive start retains data before the leading edge. Both endpoints are
+  // open, so t=7 and t=20 are excluded from (10-3, 20+0).
+  EXPECT_EQ(update(91, 7, 2, 3, 0), 0u);
+  EXPECT_EQ(update(91, 8, 2, 3, 0), 0u);
+  EXPECT_EQ(update(91, 10, 1, 3, 0), 0u);
+  // Positive-start history is certain at the leading slot; Clause 31.6 does
+  // not wait for the later trailing edge to publish its one report.
+  EXPECT_EQ(update(91, 10, 0, 3, 0), 1u);
+  EXPECT_EQ(update(91, 20, 6, 3, 0), 0u);
+  EXPECT_EQ(update(91, 20, 0, 3, 0), 0u);
+
+  // Negative end defers all data until the trailing edge fixes t=28.
+  EXPECT_EQ(update(92, 20, 1, -2, -2), 0u);
+  EXPECT_EQ(update(92, 21, 2, -2, -2), 0u);
+  EXPECT_EQ(update(92, 23, 2, -2, -2), 0u);
+  EXPECT_EQ(update(92, 23, 2, -2, -2), 0u);
+  EXPECT_EQ(update(92, 27, 2, -2, -2), 0u);
+  EXPECT_EQ(update(92, 28, 2, -2, -2), 0u);
+  EXPECT_EQ(update(92, 30, 4, -2, -2), 0u);
+  EXPECT_EQ(update(92, 30, 0, -2, -2), 3u);
+
+  // A completed positive-end window can overlap the next open window. One
+  // data occurrence is then one violation for each Clause 31.4.6 interval.
+  EXPECT_EQ(update(93, 40, 1, 0, 10), 0u);
+  EXPECT_EQ(update(93, 45, 4, 0, 10), 0u);
+  EXPECT_EQ(update(93, 50, 1, 0, 10), 0u);
+  EXPECT_EQ(update(93, 52, 2, 0, 10), 0u);
+  // The data is in both the first positive-end tail and the second open
+  // window, so multiplicity is published in the data slot.
+  EXPECT_EQ(update(93, 52, 0, 0, 10), 2u);
+  EXPECT_EQ(update(93, 55, 4, 0, 10), 0u);
+  EXPECT_EQ(update(93, 55, 0, 0, 10), 0u);
+
+  context->activeLogicalProcessToken = 42;
+  EXPECT_EQ(update(94, 60, 1, 0, 0), 0u);
+  EXPECT_EQ(update(94, 60, 0, 0, 0), 0u);
+  ASSERT_TRUE(context->noChangeChecks);
+  ASSERT_EQ(context->noChangeChecks->checks.size(), 4u);
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 41, true);
+  ASSERT_TRUE(context->noChangeChecks);
+  EXPECT_EQ(context->noChangeChecks->checks.size(), 1u);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 42, true);
+  EXPECT_FALSE(context->noChangeChecks);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
   static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
+  static_assert(sizeof(void *) != 8 || sizeof(ClockOccurrenceFeatureState) ==
+                                                184);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -1689,6 +1753,7 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   EXPECT_LE(featureBegin + sizeof(context->clockOccurrences),
             contextBegin + sizeof(*context));
   ASSERT_FALSE(context->clockOccurrences);
+  ASSERT_FALSE(context->noChangeChecks);
   struct {
     obelisk_rt_wait_record_v1 wait;
     obelisk_rt_wait_entry_v1 entry;

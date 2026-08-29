@@ -8518,17 +8518,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       ticks.reserve(times.size());
       for (auto [value, time] :
            llvm::zip_equal(times.asArrayRef(), isTime.asArrayRef())) {
-        if (time &&
-            (value < 0 || static_cast<uint64_t>(value) % designPrecisionFs)) {
+        if (time && value % static_cast<int64_t>(designPrecisionFs) != 0) {
           emitError(getSemanticLocation(unit.source))
               << "basic timing-check limit is incompatible with design "
                  "precision";
           invalid = true;
           break;
         }
-        ticks.push_back(time ? static_cast<int64_t>(
-                                       static_cast<uint64_t>(value) /
-                                       designPrecisionFs)
+        ticks.push_back(time ? value / static_cast<int64_t>(designPrecisionFs)
                                   : 0);
       }
       if (invalid)

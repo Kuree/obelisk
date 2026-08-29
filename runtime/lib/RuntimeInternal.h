@@ -998,6 +998,53 @@ struct ReplaceableEventFeatureState {
   std::unordered_map<uint64_t, std::vector<uint64_t>> ownedTimers;
 };
 
+struct NoChangeDataOccurrence {
+  uint64_t time = 0;
+  uint64_t count = 0;
+};
+
+struct NoChangeClosedWindow {
+  __int128 begin = 0;
+  __int128 end = 0;
+  uint64_t multiplicity = 0;
+};
+
+struct NoChangeCheckState {
+  int64_t startOffset = 0;
+  int64_t endOffset = 0;
+  bool initialized = false;
+  bool open = false;
+  __int128 openBegin = 0;
+  size_t openDataBegin = 0;
+  uint64_t pendingReports = 0;
+  std::vector<NoChangeDataOccurrence> data;
+  size_t dataBegin = 0;
+  std::vector<NoChangeClosedWindow> windows;
+};
+
+struct NoChangeCheckKey {
+  uint64_t logicalToken = 0;
+  uint64_t occurrenceSite = 0;
+
+  bool operator==(const NoChangeCheckKey &other) const {
+    return logicalToken == other.logicalToken &&
+           occurrenceSite == other.occurrenceSite;
+  }
+};
+
+struct NoChangeCheckKeyHash {
+  size_t operator()(const NoChangeCheckKey &key) const {
+    size_t first = std::hash<uint64_t>{}(key.logicalToken);
+    size_t second = std::hash<uint64_t>{}(key.occurrenceSite);
+    return first ^ (second + size_t{0x9e3779b9} + (first << 6) + (first >> 2));
+  }
+};
+
+struct NoChangeFeatureState {
+  std::unordered_map<NoChangeCheckKey, NoChangeCheckState, NoChangeCheckKeyHash>
+      checks;
+};
+
 struct ClockOccurrenceFeatureState {
   std::unordered_map<uint64_t, ClockOccurrenceWaitState> waits;
   std::unordered_map<SignalSubscriptionBucketKey,
@@ -1014,6 +1061,15 @@ struct ClockOccurrenceFeatureState {
   // waits, named events, and event-based timing checks construct no map.
   std::unique_ptr<ReplaceableEventFeatureState> replaceableEvents;
 };
+
+static_assert(
+    sizeof(ClockOccurrenceFeatureState) ==
+        sizeof(decltype(ClockOccurrenceFeatureState::waits)) +
+            sizeof(decltype(ClockOccurrenceFeatureState::subscriptionBuckets)) +
+            sizeof(decltype(ClockOccurrenceFeatureState::subscriptions)) +
+            sizeof(uint64_t) +
+            sizeof(decltype(ClockOccurrenceFeatureState::replaceableEvents)),
+    "$nochange must not add storage to the ordinary clock feature");
 
 constexpr uint64_t kRecursiveWatchGroupBit = UINT64_C(1) << 63;
 constexpr uint64_t kClassWatchGroupBit = UINT64_C(1) << 62;
@@ -1725,6 +1781,10 @@ struct obelisk_rt_context {
   // the tail so every preexisting context field retains its offset, and leave
   // it null for designs that never execute a clock-cohort wait.
   std::unique_ptr<ClockOccurrenceFeatureState> clockOccurrences;
+  // IEEE 1800-2017 31.4.6 alone needs retroactive/deferred occurrence
+  // storage. Keep the entire map pointer-lazy and outside the ordinary clock
+  // feature so every other assertion/timing wait retains its exact layout.
+  std::unique_ptr<NoChangeFeatureState> noChangeChecks;
 
   // Cold, pay-for-play acceleration for a large bytecode direct-signal ready
   // cohort. Null preserves ordinary native/generic/AOT allocation behavior;

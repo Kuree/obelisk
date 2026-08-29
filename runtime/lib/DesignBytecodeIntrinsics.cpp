@@ -3154,6 +3154,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
     return sentinel(
         0, obelisk_rt_v1_clock_occurrence_consume(context, signature.flags));
+  case OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE: {
+    std::optional<uint64_t> mask = readScalar(image, frame, inputRegister(0));
+    std::optional<uint64_t> start = readScalar(image, frame, inputRegister(1));
+    std::optional<uint64_t> end = readScalar(image, frame, inputRegister(2));
+    if (!mask || !start || !end)
+      return OBELISK_RT_INVALID_DESIGN;
+    return sentinel(
+        0, obelisk_rt_v1_nochange_update(context, signature.flags, *mask,
+                                         static_cast<int64_t>(*start),
+                                         static_cast<int64_t>(*end)));
+  }
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
     if (!context)

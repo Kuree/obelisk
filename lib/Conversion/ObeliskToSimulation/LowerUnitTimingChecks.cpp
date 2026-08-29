@@ -36,11 +36,14 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   bool skewWithMode = timeSkew || fullSkew;
   bool period = kind == 10;
   bool width = kind == 11;
-  bool slotFinal = kind >= 1 && kind <= 9;
+  bool noChange = kind == 12;
+  bool slotFinal = (kind >= 1 && kind <= 9) || noChange;
   if (kind != 1 && kind != 2 && kind != 3 && kind != 4 && kind != 5 &&
-      kind != 6 && !skew && !skewWithMode && !period && !width)
+      kind != 6 && !skew && !skewWithMode && !period && !width && !noChange)
     return function.emitError("unsupported basic timing-check kind");
-  size_t minimumArguments = combined || fullSkew ? 4 : period || width ? 2 : 3;
+  size_t minimumArguments = combined || fullSkew || noChange ? 4
+                            : period || width                ? 2
+                                                             : 3;
   if (static_cast<size_t>(expressionChildren.size()) < minimumArguments)
     return function.emitError("basic timing check has a malformed frozen ABI");
   auto childFor = [&](size_t index) -> Operation * {
@@ -52,7 +55,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Operation *event0 = childFor(0);
   Operation *event1 = period || width ? nullptr : childFor(1);
   size_t firstLimit = period || width ? 1 : 2;
-  if (!event0 || (!(period || width) && !event1) || ticks[firstLimit] < 0 ||
+  if (!event0 || (!(period || width) && !event1) ||
+      (!noChange && ticks[firstLimit] < 0) ||
       ((combined || fullSkew) && ticks[3] < 0) ||
       (width && ticks.size() > 2 && ticks[2] < 0))
     return function.emitError(
@@ -171,28 +175,31 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     }
   }
 
-  if (width) {
+  if (width || noChange) {
     int32_t edge = eventEdges.front();
     if (edge != static_cast<int32_t>(sim::EdgeKind::Posedge) &&
         edge != static_cast<int32_t>(sim::EdgeKind::Negedge))
       return function.emitError(
-          "$width requires a canonical posedge or negedge event");
+          width ? "$width requires a canonical posedge or negedge event"
+                : "$nochange requires a canonical posedge or negedge "
+                  "reference event");
     handles.push_back(handles.front());
     eventEdges.push_back(edge == static_cast<int32_t>(sim::EdgeKind::Posedge)
                              ? static_cast<int32_t>(sim::EdgeKind::Negedge)
                              : static_cast<int32_t>(sim::EdgeKind::Posedge));
     conditionIndices.push_back(-1);
     if (eventConditions.front()) {
-      // Each derived $width event samples the same Clause 31.7 condition at
-      // publication time. Keep two ABI slots because a clock-set condition
-      // belongs to exactly one primary, even when both slots name one handle.
+      // Each derived $width/$nochange event samples the same Clause 31.7
+      // condition at publication time. Keep two ABI slots because a clock-set
+      // condition belongs to exactly one primary, even when both slots name one
+      // handle.
       conditionIndices.back() = static_cast<int32_t>(conditions.size());
       conditions.push_back(eventConditions.front());
     }
   }
 
   std::optional<CapturedLValue> notifier;
-  size_t notifierIndex = combined || fullSkew ? 4 : period ? 2 : 3;
+  size_t notifierIndex = combined || fullSkew || noChange ? 4 : period ? 2 : 3;
   if (static_cast<size_t>(expressionChildren.size()) > notifierIndex &&
       expressionChildren[notifierIndex] >= 0) {
     Operation *notifierExpression = childFor(notifierIndex);
@@ -222,17 +229,30 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   if (skewWithMode)
     trueValue = arith::ConstantOp::create(builder, location, i1,
                                           builder.getBoolAttr(true));
-  Value timestamp = sim::SimRefAllocOp::create(
-      builder, location, sim::RefType::get(function.getContext(), i64), zero64);
-  Value timestampValid = sim::SimRefAllocOp::create(
-      builder, location, sim::RefType::get(function.getContext(), i1),
-      falseValue);
+  Value noChangeStart;
+  Value noChangeEnd;
+  if (noChange) {
+    noChangeStart = arith::ConstantOp::create(
+        builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+    noChangeEnd = arith::ConstantOp::create(
+        builder, location, i64, builder.getI64IntegerAttr(ticks[3]));
+  }
+  Value timestamp;
+  Value timestampValid;
+  if (!noChange) {
+    timestamp = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i64),
+        zero64);
+    timestampValid = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i1),
+        falseValue);
+  }
   Value slotEvent0Count;
   Value slotEvent1Count;
   Value slotEventViolationCount;
   Value slotTimerRestart;
   Value slotTimerCancel;
-  if (slotFinal) {
+  if (slotFinal && !noChange) {
     slotEvent0Count = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), i64),
         zero64);
@@ -374,7 +394,17 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       arith::SelectOp::create(builder, location, event0Occurred, one64, zero64);
   Value event1Count =
       arith::SelectOp::create(builder, location, event1Occurred, one64, zero64);
-  if (eventMode) {
+  if (noChange) {
+    // IEEE 1800-2017 31.4.6 derives the trailing reference occurrence from
+    // the opposite standard edge and judges both open endpoints only after
+    // the complete numeric slot is known. The specialized state is the sole
+    // storage needed for retroactive positive-start data and deferred
+    // negative-end data; no generic timing interpreter or timer is emitted.
+    sim::SimNoChangeUpdateOp::create(builder, location, i64, context, cohort,
+                                     noChangeStart, noChangeEnd,
+                                     builder.getI64IntegerAttr(occurrenceSite));
+    cf::BranchOp::create(builder, location, drain, ValueRange{});
+  } else if (eventMode) {
     Value processNow =
         sim::SimTimeNowOp::create(builder, location, i64, context);
     Value processPrevious =
@@ -672,7 +702,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     cancel = arith::OrIOp::create(builder, location, previousCancel, cancel);
     sim::SimRefStoreOp::create(builder, location, cancel, slotTimerCancel);
   }
-  if (slotFinal) {
+  if (slotFinal && !noChange) {
     Value accumulated0 =
         sim::SimRefLoadOp::create(builder, location, i64, slotEvent0Count);
     Value accumulated1 =
@@ -697,10 +727,12 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     event1Occurred = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, event1Count, zero64);
   }
+  if (noChange)
+    setCurrent(slotFinalize);
   Value now;
   Value previous;
   Value valid;
-  if (!skewWithMode) {
+  if (!skewWithMode && !noChange) {
     now = sim::SimTimeNowOp::create(builder, location, i64, context);
     previous = sim::SimRefLoadOp::create(builder, location, i64, timestamp);
     valid = sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
@@ -708,7 +740,13 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
 
   Value qualified;
   Value baseReportCount = one64;
-  if (combined) {
+  if (noChange) {
+    baseReportCount = sim::SimNoChangeUpdateOp::create(
+        builder, location, i64, context, zero64, noChangeStart, noChangeEnd,
+        builder.getI64IntegerAttr(occurrenceSite));
+    qualified = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, baseReportCount, zero64);
+  } else if (combined) {
     Value previous1 =
         sim::SimRefLoadOp::create(builder, location, i64, oppositeTimestamp);
     Value valid1 = sim::SimRefLoadOp::create(builder, location, i1,
@@ -1025,8 +1063,10 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
 
   if (slotFinal) {
     setCurrent(slotReset);
-    sim::SimRefStoreOp::create(builder, location, zero64, slotEvent0Count);
-    sim::SimRefStoreOp::create(builder, location, zero64, slotEvent1Count);
+    if (!noChange) {
+      sim::SimRefStoreOp::create(builder, location, zero64, slotEvent0Count);
+      sim::SimRefStoreOp::create(builder, location, zero64, slotEvent1Count);
+    }
     if (eventMode) {
       sim::SimRefStoreOp::create(builder, location, zero64,
                                  slotEventViolationCount);

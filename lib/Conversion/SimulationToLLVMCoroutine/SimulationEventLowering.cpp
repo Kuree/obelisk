@@ -162,6 +162,32 @@ public:
   }
 };
 
+class NoChangeUpdateConversion final
+    : public OpConversionPattern<sim::SimNoChangeUpdateOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimNoChangeUpdateOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getMask().size() != 1 || adaptor.getStartOffset().size() != 1 ||
+        adaptor.getEndOffset().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Value site =
+        LLVM::ConstantOp::create(rewriter, location, rewriter.getI64Type(),
+                                 operation.getOccurrenceSiteAttr());
+    rewriter.replaceOpWithNewOp<LLVM::CallOp>(
+        operation, TypeRange{rewriter.getI64Type()},
+        SymbolRefAttr::get(rewriter.getContext(),
+                           "obelisk_rt_v1_nochange_update"),
+        ValueRange{loadCurrentRuntimeContext(rewriter, location), site,
+                   adaptor.getMask().front(), adaptor.getStartOffset().front(),
+                   adaptor.getEndOffset().front()});
+    return success();
+  }
+};
+
 class EventEqualConversion final
     : public OpConversionPattern<sim::SimEventEqualOp> {
 public:
@@ -185,7 +211,7 @@ void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                                            TypeConverter &converter) {
   patterns.add<EventCreateConversion, EventTriggerConversion,
                EventTriggeredConversion, WaitOrderFailedConversion,
-               ClockOccurrenceConsumeConversion,
+               ClockOccurrenceConsumeConversion, NoChangeUpdateConversion,
                EventEqualConversion>(converter, patterns.getContext());
 }
 

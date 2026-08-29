@@ -3982,6 +3982,25 @@ def SimClockOccurrenceConsumeOp : SimOp<"assert.clock_occurrence.consume", [
   let hasVerifier = 1;
 }
 
+def SimNoChangeUpdateOp : SimOp<"assert.nochange.update", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "update one static nochange timing-check state";
+  let description = [{
+    Records one nonzero ordered occurrence cohort for a static `$nochange`
+    check. A zero cohort finalizes the numeric simulation slot and returns the
+    number of violations accumulated by the specialized pending-window state.
+  }];
+  let arguments = (ins SimContextType:$context, I64:$mask, I64:$start_offset,
+                       I64:$end_offset, I64Attr:$occurrence_site);
+  let results = (outs I64:$reports);
+  let assemblyFormat = "$context `,` $mask `offsets` `(` $start_offset `,` $end_offset `)` `site` $occurrence_site attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
   let summary = "compare two event handles for synchronization-object identity";
   let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);

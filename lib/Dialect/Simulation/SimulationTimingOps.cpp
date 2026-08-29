@@ -380,6 +380,14 @@ LogicalResult SimClockOccurrenceConsumeOp::verify() {
     return emitOpError("must be nested in obelisk_sim.func");
   return success();
 }
+LogicalResult SimNoChangeUpdateOp::verify() {
+  if (!getOccurrenceSiteAttr().getValue().isStrictlyPositive() ||
+      getOccurrenceSite() > UINT32_MAX)
+    return emitOpError("requires a positive 32-bit occurrence site");
+  if (!getOperation()->getParentOfType<SimFuncOp>())
+    return emitOpError("must be nested in obelisk_sim.func");
+  return success();
+}
 LogicalResult SimSuspendEventOp::verify() {
   return verifyContinuation(*this, getContinuationOperands(),
                             getContinuation());

@@ -83,6 +83,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
       IntegerType::get(context, 64),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_nochange_update", IntegerType::get(context, 64),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_handle_offset",
       IntegerType::get(context, 64),
       {IntegerType::get(context, 64), IntegerType::get(context, 64)});

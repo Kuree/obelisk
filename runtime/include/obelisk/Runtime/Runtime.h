@@ -570,13 +570,13 @@ obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
 
 obelisk_rt_status obelisk_rt_v1_dpi_open_array_prepare_recursive(
     const void *value, const void *unknown, uint64_t plane_size,
-    uint64_t transport_width, uint32_t transport_four_state,
-    uint32_t writable, uint32_t element_category, uint32_t element_bit_width,
+    uint64_t transport_width, uint32_t transport_four_state, uint32_t writable,
+    uint32_t element_category, uint32_t element_bit_width,
     uint32_t element_four_state, int32_t packed_left, int32_t packed_right,
     uint64_t element_c_size, uint32_t element_c_alignment,
     uint64_t element_string_count, const int64_t *element_plan,
-    uint64_t element_plan_words, const int64_t *shape_plan,
-    uint32_t dimensions, obelisk_rt_dpi_open_array_storage_v1 *out_storage);
+    uint64_t element_plan_words, const int64_t *shape_plan, uint32_t dimensions,
+    obelisk_rt_dpi_open_array_storage_v1 *out_storage);
 obelisk_rt_status obelisk_rt_v1_dpi_open_array_finish_recursive(
     obelisk_rt_status call_status, obelisk_rt_context *context,
     const obelisk_rt_dpi_open_array_storage_v1 *storage, void *value,
@@ -610,8 +610,9 @@ obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_push(
     obelisk_rt_context *context, void *value, uint64_t plane_size,
     uint64_t total_bit_width, const int64_t *plan, uint64_t plan_words,
     void **out_handle);
-obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_pop(
-    obelisk_rt_context *context, void *handle);
+obelisk_rt_status
+obelisk_rt_v1_dpi_aggregate_roots_pop(obelisk_rt_context *context,
+                                      void *handle);
 // Exported aggregate string pointers are retained per output slot until that
 // slot is produced by a later exported call on the same thread.
 obelisk_rt_status obelisk_rt_v1_dpi_aggregate_export_pack(
@@ -1187,6 +1188,7 @@ enum {
   // Keeping this separate preserves the ordinary EVENT_TRIGGER bytecode hot
   // case and its flags ABI exactly.
   OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER = UINT32_C(0x0001024b),
+  OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE = UINT32_C(0x0001024c),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3454,32 +3456,29 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
 // Schedule one statically unrolled module-path delay group for the two
 // complementary strength banks of a conditional primitive. The banks mature
 // atomically and resolve only after the high-bank event is committed.
-obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
+obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
-    uint64_t plane_bit_count, uint64_t low_bit_offset,
-    uint64_t high_bit_offset, uint64_t bit_width, uint64_t code_unit,
-    uint32_t component, uint32_t group, uint32_t group_count,
-    uint32_t pulse_flags, uint64_t rise_delay, uint64_t fall_delay,
-    uint64_t turnoff_delay, uint64_t pulse_reject, uint64_t pulse_error,
-    const uint8_t *low_value, const uint8_t *low_unknown,
+    uint64_t plane_bit_count, uint64_t low_bit_offset, uint64_t high_bit_offset,
+    uint64_t bit_width, uint64_t code_unit, uint32_t component, uint32_t group,
+    uint32_t group_count, uint32_t pulse_flags, uint64_t rise_delay,
+    uint64_t fall_delay, uint64_t turnoff_delay, uint64_t pulse_reject,
+    uint64_t pulse_error, const uint8_t *low_value, const uint8_t *low_unknown,
     const uint8_t *high_value, const uint8_t *high_unknown,
     const uint8_t *transition_value, const uint8_t *transition_unknown,
     const uint8_t *active_mask, const uint8_t *rise_mask,
     const uint8_t *fall_mask, const uint8_t *turnoff_mask,
     const uint8_t *pulse_transition_masks);
-obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_strength_pair(
+obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_strength_pair(
     obelisk_rt_context *context, uint8_t *value_plane, uint8_t *unknown_plane,
-    uint64_t plane_bit_count, uint64_t low_bit_offset,
-    uint64_t high_bit_offset, uint64_t bit_width, uint64_t code_unit,
-    uint32_t component, uint32_t group, uint32_t group_count,
-    uint64_t rise_delay, uint64_t fall_delay, uint64_t turnoff_delay,
-    const uint8_t *low_value, const uint8_t *low_unknown,
-    const uint8_t *high_value, const uint8_t *high_unknown,
-    const uint8_t *transition_value, const uint8_t *transition_unknown,
-    const uint8_t *active_mask, const uint8_t *rise_mask,
-    const uint8_t *fall_mask, const uint8_t *turnoff_mask);
+    uint64_t plane_bit_count, uint64_t low_bit_offset, uint64_t high_bit_offset,
+    uint64_t bit_width, uint64_t code_unit, uint32_t component, uint32_t group,
+    uint32_t group_count, uint64_t rise_delay, uint64_t fall_delay,
+    uint64_t turnoff_delay, const uint8_t *low_value,
+    const uint8_t *low_unknown, const uint8_t *high_value,
+    const uint8_t *high_unknown, const uint8_t *transition_value,
+    const uint8_t *transition_unknown, const uint8_t *active_mask,
+    const uint8_t *rise_mask, const uint8_t *fall_mask,
+    const uint8_t *turnoff_mask);
 // Resolve a canonical driver-state range after an immediate native store.
 // Net declarations with propagation delays schedule their post-resolution
 // visible transitions; other nets publish immediately.
@@ -3611,9 +3610,10 @@ void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
 // by a compiler-private timing event. `active == 0` cancels; otherwise the
 // deadline uses the scheduler's saturating time arithmetic. This cold service
 // leaves ordinary named-event scheduling and its ABI path unchanged.
-void obelisk_rt_v1_scheduler_event_replace_after(
-    obelisk_rt_context *context, uint64_t stable_id, uint32_t active,
-    uint64_t delay);
+void obelisk_rt_v1_scheduler_event_replace_after(obelisk_rt_context *context,
+                                                 uint64_t stable_id,
+                                                 uint32_t active,
+                                                 uint64_t delay);
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
 uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);
@@ -3621,6 +3621,13 @@ uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);
 // process and exact compiler site. Zero means no complete cohort is pending.
 uint64_t obelisk_rt_v1_clock_occurrence_consume(obelisk_rt_context *context,
                                                 uint64_t occurrence_site);
+// Update one static IEEE 1800 `$nochange` pending-window state. A zero
+// occurrence mask finalizes the slot and returns its accumulated reports.
+uint64_t obelisk_rt_v1_nochange_update(obelisk_rt_context *context,
+                                       uint64_t occurrence_site,
+                                       uint64_t occurrence_mask,
+                                       int64_t start_offset,
+                                       int64_t end_offset);
 void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
                                   obelisk_rt_status status);
 // Register one compiler-assigned static-state object. Static handles retain
@@ -4287,10 +4294,9 @@ obelisk_rt_status obelisk_rt_v1_export_call(
     const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
     obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
 obelisk_rt_status obelisk_rt_v1_export_call_guarded(
-    obelisk_rt_status prior_status, uint32_t export_id,
-    uint64_t abi_signature, const obelisk_rt_import_input_v1 *inputs,
-    uint32_t input_count, obelisk_rt_import_output_v1 *outputs,
-    uint32_t output_count);
+    obelisk_rt_status prior_status, uint32_t export_id, uint64_t abi_signature,
+    const obelisk_rt_import_input_v1 *inputs, uint32_t input_count,
+    obelisk_rt_import_output_v1 *outputs, uint32_t output_count);
 // Latch wrapper-side marshalling failures into the active import call.
 obelisk_rt_status obelisk_rt_v1_dpi_export_status(obelisk_rt_status status);
 // String export outputs are copied into per-thread C storage by export_call.

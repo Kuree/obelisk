@@ -52,6 +52,107 @@ void finalizeClockOccurrenceWave(ClockOccurrenceWaitState &state) {
   state.hasCurrentKey = false;
 }
 
+constexpr size_t kMaximumNoChangePendingEntries = size_t{1} << 20;
+
+bool addNoChangeCount(obelisk_rt_context *context, uint64_t &target,
+                      uint64_t increment) {
+  if (increment > std::numeric_limits<uint64_t>::max() - target) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  target += increment;
+  return true;
+}
+
+bool noChangeContains(const NoChangeClosedWindow &window, uint64_t time) {
+  __int128 wide = static_cast<__int128>(time);
+  return window.begin < wide && wide < window.end;
+}
+
+void pruneNoChangeData(NoChangeCheckState &state, uint64_t now) {
+  __int128 futureBegin =
+      static_cast<__int128>(now) - std::max<int64_t>(state.startOffset, 0);
+  __int128 oldestBegin =
+      state.open ? std::min(state.openBegin, futureBegin) : futureBegin;
+  while (state.dataBegin != state.data.size() &&
+         static_cast<__int128>(state.data[state.dataBegin].time) <= oldestBegin)
+    ++state.dataBegin;
+  if (state.open)
+    state.openDataBegin = std::max(state.openDataBegin, state.dataBegin);
+  if (state.dataBegin >= 1024 && state.dataBegin * 2 >= state.data.size()) {
+    size_t erased = state.dataBegin;
+    state.data.erase(state.data.begin(), state.data.begin() + state.dataBegin);
+    state.dataBegin = 0;
+    if (state.open)
+      state.openDataBegin -= std::min(state.openDataBegin, erased);
+  }
+}
+
+bool recordNoChangeData(obelisk_rt_context *context, NoChangeCheckState &state,
+                        uint64_t now) {
+  for (const NoChangeClosedWindow &window : state.windows)
+    if (noChangeContains(window, now) &&
+        !addNoChangeCount(context, state.pendingReports, window.multiplicity))
+      return false;
+  if (!state.data.empty() && state.data.back().time == now)
+    return addNoChangeCount(context, state.data.back().count, 1);
+  if (state.data.size() - state.dataBegin >= kMaximumNoChangePendingEntries) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  state.data.push_back({now, 1});
+  return true;
+}
+
+bool closeNoChangeWindow(obelisk_rt_context *context, NoChangeCheckState &state,
+                         uint64_t now) {
+  if (!state.open)
+    return true;
+  NoChangeClosedWindow closed{state.openBegin,
+                              static_cast<__int128>(now) + state.endOffset, 1};
+  state.open = false;
+  if (closed.begin >= closed.end)
+    return true;
+  for (size_t index = std::max(state.dataBegin, state.openDataBegin);
+       index != state.data.size(); ++index)
+    if (noChangeContains(closed, state.data[index].time) &&
+        !addNoChangeCount(context, state.pendingReports,
+                          state.data[index].count))
+      return false;
+  if (closed.end <= static_cast<__int128>(now))
+    return true;
+  for (NoChangeClosedWindow &window : state.windows)
+    if (window.begin == closed.begin && window.end == closed.end)
+      return addNoChangeCount(context, window.multiplicity, 1);
+  if (state.windows.size() >= kMaximumNoChangePendingEntries) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  state.windows.push_back(closed);
+  return true;
+}
+
+bool finalizeNoChangeOpenWindow(obelisk_rt_context *context,
+                                NoChangeCheckState &state) {
+  if (!state.open || state.endOffset < 0)
+    return true;
+  // IEEE 1800-2017 31.4.6 makes data after the open beginning certain as soon
+  // as a complete numeric slot has no trailing edge: a future trailing edge
+  // plus a nonnegative end offset must lie later. Clause 31.6 therefore
+  // publishes these reports now, including positive-start history discovered
+  // by the leading edge, instead of delaying the notifier until the trailing
+  // edge. Only a negative end offset remains genuinely uncertain.
+  for (size_t index = std::max(state.dataBegin, state.openDataBegin);
+       index != state.data.size(); ++index) {
+    const NoChangeDataOccurrence &data = state.data[index];
+    if (state.openBegin < static_cast<__int128>(data.time) &&
+        !addNoChangeCount(context, state.pendingReports, data.count))
+      return false;
+  }
+  state.openDataBegin = state.data.size();
+  return true;
+}
+
 bool readClockOccurrenceCondition(obelisk_rt_context *context,
                                   ClockOccurrenceCondition condition) {
   if (!context || condition.stableID == UINT64_MAX || condition.width == 0)
@@ -1672,6 +1773,79 @@ obelisk_rt_v1_clock_occurrence_consume(obelisk_rt_context *context,
       state.consumedCohorts = 0;
     }
     return result;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return 0;
+  }
+  OBELISK_RT_CATCH_ALL {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
+    return 0;
+  }
+}
+
+extern "C" uint64_t obelisk_rt_v1_nochange_update(obelisk_rt_context *context,
+                                                  uint64_t occurrenceSite,
+                                                  uint64_t occurrenceMask,
+                                                  int64_t startOffset,
+                                                  int64_t endOffset) {
+  if (!context || occurrenceSite == 0 || (occurrenceMask & ~uint64_t{7}) != 0)
+    return 0;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    uint64_t token = context->activeLogicalProcessToken;
+    if (token == 0 || !context->clockOccurrences) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return 0;
+    }
+    if (!context->noChangeChecks)
+      context->noChangeChecks = std::make_unique<NoChangeFeatureState>();
+    NoChangeCheckState &state =
+        context->noChangeChecks->checks[{token, occurrenceSite}];
+    if (!state.initialized) {
+      state.startOffset = startOffset;
+      state.endOffset = endOffset;
+      state.initialized = true;
+    } else if (state.startOffset != startOffset ||
+               state.endOffset != endOffset) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return 0;
+    }
+
+    if (occurrenceMask == 0) {
+      if (!finalizeNoChangeOpenWindow(context, state))
+        return 0;
+      uint64_t reports = state.pendingReports;
+      state.pendingReports = 0;
+      pruneNoChangeData(state, context->schedulerTime);
+      return reports;
+    }
+
+    uint64_t now = context->schedulerTime;
+    state.windows.erase(
+        std::remove_if(state.windows.begin(), state.windows.end(),
+                       [&](const NoChangeClosedWindow &window) {
+                         return window.end <= static_cast<__int128>(now);
+                       }),
+        state.windows.end());
+
+    // IEEE 1800-2017 31.4.6 defines strict numeric-time endpoints. Ordered
+    // clock cohorts are retained for repeated derived edges, but data at the
+    // same time is independent of within-cohort processing order: history
+    // makes a later leading/trailing occurrence see it retroactively.
+    if ((occurrenceMask & 2) != 0 && !recordNoChangeData(context, state, now))
+      return 0;
+    if ((occurrenceMask & 1) != 0) {
+      state.openBegin = static_cast<__int128>(now) - startOffset;
+      state.openDataBegin = state.dataBegin;
+      state.open = true;
+    }
+    if ((occurrenceMask & 4) != 0 && !closeNoChangeWindow(context, state, now))
+      return 0;
+    pruneNoChangeData(state, now);
+    return 0;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) {
     ContextMutexLock lock(context);

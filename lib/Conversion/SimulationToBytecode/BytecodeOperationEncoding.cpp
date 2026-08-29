@@ -549,6 +549,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicClockOccurrenceConsume, {},
                          {op.getMask()},
                          static_cast<uint32_t>(op.getOccurrenceSite()));
+  if (auto op = dyn_cast<sim::SimNoChangeUpdateOp>(operation)) {
+    return emitIntrinsic(plan, kIntrinsicNoChangeUpdate,
+                         {op.getMask(), op.getStartOffset(), op.getEndOffset()},
+                         {op.getReports()},
+                         static_cast<uint32_t>(op.getOccurrenceSite()));
+  }
   if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
     emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
