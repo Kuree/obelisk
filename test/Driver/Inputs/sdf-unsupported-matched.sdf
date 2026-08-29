@@ -1,0 +1,8 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (TIMINGENV (PATHCONSTRAINT source destination (1)))
+  (CELL
+    (CELLTYPE "sdf_unsupported_cell")
+    (INSTANCE dut)
+    (TIMINGCHECK (SETUP source (posedge destination) (1)))))

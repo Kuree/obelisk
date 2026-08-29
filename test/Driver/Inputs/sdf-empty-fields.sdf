@@ -1,0 +1,26 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_empty_cell")
+    (INSTANCE one)
+    (DELAY (ABSOLUTE (IOPATH source destination ()))))
+  (CELL
+    (CELLTYPE "sdf_empty_cell")
+    (INSTANCE two)
+    (DELAY (ABSOLUTE (IOPATH source destination (2) ()))))
+  (CELL
+    (CELLTYPE "sdf_empty_cell")
+    (INSTANCE three)
+    (DELAY (ABSOLUTE (IOPATH source destination (2) () (4)))))
+  (CELL
+    (CELLTYPE "sdf_empty_cell")
+    (INSTANCE six)
+    (DELAY (ABSOLUTE (IOPATH source destination (2) () (4) () (6) ()))))
+  (CELL
+    (CELLTYPE "sdf_empty_cell")
+    (INSTANCE twelve)
+    (DELAY (ABSOLUTE
+      (IOPATH source destination
+        (2) () (4) () (6) () (8) () (10) () (12) ()))))
+)

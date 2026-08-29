@@ -1,0 +1,15 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (DESIGN "sdf_iopath_absolute")
+  (DATE "2026-08-28")
+  (VENDOR "Obelisk")
+  (PROGRAM "obelisk-test")
+  (VERSION "1")
+  (DIVIDER /)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_delay_cell")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (2) (3))))))

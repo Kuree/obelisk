@@ -1,0 +1,7 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_unordered_leaf")
+    (INSTANCE)
+    (DELAY (ABSOLUTE (IOPATH a y (2))))))

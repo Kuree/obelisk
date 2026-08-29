@@ -1,0 +1,8 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (DESIGN "sdf_aot_static")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_aot_static")
+    (INSTANCE)
+    (DELAY (ABSOLUTE))))

@@ -1,0 +1,7 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_scope_leaf")
+    (INSTANCE sdf_scope_contained.right.leaf)
+    (DELAY (ABSOLUTE (IOPATH source destination (2))))))

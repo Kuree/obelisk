@@ -1,0 +1,9 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_invalid_delay_cell")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (1) (2) (3) (4))))))

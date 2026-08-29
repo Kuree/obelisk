@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskFrontend
   Frontend.cpp
+  SDF.cpp
 
   DEPENDS
   SlangEnumsIncGen

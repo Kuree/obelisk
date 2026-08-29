@@ -1,0 +1,39 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (DESIGN "sdf_value_counts")
+  (DATE "2026-08-28")
+  (VENDOR "Obelisk")
+  (PROGRAM "obelisk-test")
+  (VERSION "1")
+  (VOLTAGE 1.0)
+  (PROCESS "typical")
+  (TEMPERATURE 25)
+  (DIVIDER /)
+  (TIMESCALE 1 ps)
+  (CELL
+    (CELLTYPE "sdf_count_1")
+    (INSTANCE one)
+    (DELAY (ABSOLUTE (IOPATH source destination (1.25)))))
+  (CELL
+    (CELLTYPE "sdf_count_2")
+    (INSTANCE two)
+    (DELAY (ABSOLUTE (IOPATH (POSEDGE source) destination (2) (3)))))
+  (CELL
+    (CELLTYPE "sdf_count_3")
+    (INSTANCE three)
+    (DELAY (ABSOLUTE (IOPATH source destination (4) (5) (6)))))
+  (CELL
+    (CELLTYPE "sdf_count_6")
+    (INSTANCE six)
+    (DELAY (ABSOLUTE (IOPATH source destination
+      (7) (8) (9) (10) (11) (12)))))
+  (CELL
+    (CELLTYPE "sdf_count_12")
+    (INSTANCE twelve)
+    (DELAY (ABSOLUTE (IOPATH source[2] destination[1]
+      (13) (14) (15) (16) (17) (18)
+      (19) (20) (21) (22) (23) (24)))))
+  (CELL
+    (CELLTYPE "not_in_the_design")
+    (INSTANCE missing)
+    (DELAY (ABSOLUTE (IOPATH source destination (1))))))

@@ -379,6 +379,15 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return constant(builder.getI1Type(), 0);
   };
 
+  if (name == "$sdf_annotate" &&
+      op->hasAttr("obelisk.sdf_compile_time_applied")) {
+    // IEEE 1800-2017 32.9 makes this task load timing data. The frontend has
+    // already resolved this statically named file into the exact Clause 30
+    // attributes, so executing a runtime reader would duplicate annotation
+    // and put a name lookup on the AOT path.
+    return dummyTaskResult();
+  }
+
   if (name.starts_with("$async$") || name.starts_with("$sync$"))
     return lowerPlaSystemCall(op);
 

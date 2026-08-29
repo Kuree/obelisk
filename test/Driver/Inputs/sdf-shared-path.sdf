@@ -1,0 +1,7 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "sdf_shared_path_cell")
+    (INSTANCE)
+    (DELAY (ABSOLUTE (IOPATH a y (2))))))

@@ -2,6 +2,8 @@
 
 #include "obelisk/Frontend/Frontend.h"
 
+#include "SDF.h"
+
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
 
@@ -272,6 +274,66 @@ uint64_t getFemtoseconds(slang::TimeScaleValue value) {
     break;
   }
   return unit * static_cast<uint64_t>(value.magnitude);
+}
+
+SmallVector<std::optional<int64_t>, 12>
+expandTimingDelays(ArrayRef<std::optional<int64_t>> values) {
+  using OptionalDelay = std::optional<int64_t>;
+  auto minimum = [](OptionalDelay lhs, OptionalDelay rhs) -> OptionalDelay {
+    return lhs && rhs ? OptionalDelay(std::min(*lhs, *rhs)) : std::nullopt;
+  };
+  auto maximum = [](OptionalDelay lhs, OptionalDelay rhs) -> OptionalDelay {
+    return lhs && rhs ? OptionalDelay(std::max(*lhs, *rhs)) : std::nullopt;
+  };
+  SmallVector<OptionalDelay, 12> result;
+  switch (values.size()) {
+  case 1:
+    result.assign(12, values[0]);
+    break;
+  case 2: {
+    OptionalDelay rise = values[0], fall = values[1];
+    result = {rise, fall, rise, rise, fall, fall, rise, rise, fall, fall,
+              maximum(rise, fall), minimum(rise, fall)};
+    break;
+  }
+  case 3: {
+    OptionalDelay rise = values[0], fall = values[1], turnOff = values[2];
+    result = {rise,
+              fall,
+              turnOff,
+              rise,
+              turnOff,
+              fall,
+              minimum(rise, turnOff),
+              rise,
+              minimum(fall, turnOff),
+              fall,
+              turnOff,
+              minimum(rise, fall)};
+    break;
+  }
+  case 6: {
+    OptionalDelay rise = values[0], fall = values[1], zeroToZ = values[2];
+    OptionalDelay zToOne = values[3], oneToZ = values[4], zToZero = values[5];
+    result = {rise,
+              fall,
+              zeroToZ,
+              zToOne,
+              oneToZ,
+              zToZero,
+              minimum(rise, zeroToZ),
+              maximum(rise, zToOne),
+              minimum(fall, oneToZ),
+              maximum(fall, zToZero),
+              maximum(oneToZ, zeroToZ),
+              minimum(zToOne, zToZero)};
+    break;
+  }
+  case 12:
+    result.assign(values.begin(), values.end());
+    break;
+  }
+  return result;
 }
 
 slangir::ArgumentDirection
@@ -859,9 +921,11 @@ class SlangASTImporter
 public:
   SlangASTImporter(ModuleOp module, const slang::SourceManager &sourceManager,
                    const slang::ast::Compilation &compilation,
-                   const slang::analysis::AnalysisManager &analysisManager)
+                   const slang::analysis::AnalysisManager &analysisManager,
+                   const SDFAnnotationDatabase &sdfAnnotations)
       : builder(module.getContext()), sourceManager(sourceManager),
         compilation(compilation), analysisManager(analysisManager),
+        sdfAnnotations(sdfAnnotations),
         typeConverter(module.getContext(),
                       [this](const slang::ast::Symbol &symbol) {
                         return getSemanticSymbolReference(symbol);
@@ -1958,6 +2022,7 @@ private:
       uint64_t unitFs = getFemtoseconds(scale.base);
       uint64_t precisionFs = getFemtoseconds(scale.precision);
       SmallVector<int64_t, 12> delays;
+      bool sdfAnnotated = false;
       bool staticDelays = unitFs != 0 && precisionFs != 0 &&
                           unitFs >= precisionFs && unitFs % precisionFs == 0;
       slang::ast::EvalContext evalContext(node);
@@ -2000,8 +2065,51 @@ private:
         }
         delays.push_back(static_cast<int64_t>(femtoseconds));
       }
+      if (const auto *annotated = sdfAnnotations.getTimingPathDelays(node)) {
+        // IEEE 1800-2017 32.4 replaces a matched path's existing timing
+        // values. Keep the annotation indistinguishable from a directly
+        // declared Clause 30 delay in semantic IR, so no SDF table reaches
+        // any simulation tier.
+        bool hasEmptyField = llvm::any_of(
+            *annotated, [](const std::optional<int64_t> &value) {
+              return !value;
+            });
+        if (!hasEmptyField) {
+          delays.clear();
+          llvm::transform(*annotated, std::back_inserter(delays),
+                          [](const std::optional<int64_t> &value) {
+                            return *value;
+                          });
+          staticDelays = true;
+        } else if (staticDelays) {
+          SmallVector<std::optional<int64_t>, 12> source;
+          llvm::transform(delays, std::back_inserter(source),
+                          [](int64_t value) { return value; });
+          source = expandTimingDelays(source);
+          SmallVector<std::optional<int64_t>, 12> replacement =
+              expandTimingDelays(*annotated);
+          if (source.size() == 12 && replacement.size() == 12) {
+            delays.clear();
+            for (size_t index = 0; index != 12; ++index)
+              delays.push_back(replacement[index].value_or(*source[index]));
+          } else {
+            staticDelays = false;
+          }
+        }
+        if (!staticDelays) {
+          // IEEE 1800-2017 32.3 says an empty SDF field preserves the
+          // preannotation value. Reject a nonconstant source value instead of
+          // silently inventing a compile-time replacement for it.
+          emitError(sourceLocation(node.location))
+              << "static SDF empty delay fields require constant "
+                 "preannotation path delays";
+          sawInvalidNode = true;
+        }
+        sdfAnnotated = true;
+      }
       attrs.set("timing_delay_count",
-                builder.getI64IntegerAttr(node.getDelays().size()));
+                builder.getI64IntegerAttr(
+                    sdfAnnotated ? delays.size() : node.getDelays().size()));
       if (staticDelays)
         attrs.set("timing_delay_fs", builder.getDenseI64ArrayAttr(delays));
 
@@ -2024,7 +2132,7 @@ private:
           (!edgeSource || !node.isStateDependent || node.getConditionExpr()) &&
           (edgeSource || (node.edgePolarity == TimingPath::Polarity::Unknown &&
                           node.edgeIdentifier == slang::ast::EdgeKind::None)) &&
-          delays.size() == node.getDelays().size() &&
+          (sdfAnnotated || delays.size() == node.getDelays().size()) &&
           (delays.size() == 1 || delays.size() == 2 || delays.size() == 3 ||
            delays.size() == 6 || delays.size() == 12);
       if (supportedCandidate)
@@ -2839,6 +2947,8 @@ private:
                   builder.getI64IntegerAttr(node.arguments().size()));
       SET_OP_ATTR(HasThisClass,
                   builder.getBoolAttr(node.thisClass() != nullptr));
+      if (sdfAnnotations.isAppliedCall(node))
+        attrs.set("obelisk.sdf_compile_time_applied", builder.getUnitAttr());
       bool isSuperClass = false;
       slang::SourceRange callRange = getSourceRange(node);
       if (callRange.start().valid() && callRange.end().valid() &&
@@ -4830,6 +4940,7 @@ private:
   const slang::SourceManager &sourceManager;
   const slang::ast::Compilation &compilation;
   const slang::analysis::AnalysisManager &analysisManager;
+  const SDFAnnotationDatabase &sdfAnnotations;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
@@ -5006,12 +5117,17 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   if (!driver.reportDiagnostics(/*quiet=*/true))
     return failure();
 
+  std::unique_ptr<SDFAnnotationDatabase> sdfAnnotations =
+      buildSDFAnnotationDatabase(*compilation, driver.sourceManager);
+  if (!sdfAnnotations)
+    return failure();
+
   slang::analysis::AnalysisManager analysisManager;
   analysisManager.analyze(*compilation);
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
   SlangASTImporter importer(*module, driver.sourceManager, *compilation,
-                            analysisManager);
+                            analysisManager, *sdfAnnotations);
   // Definitions are kept in Compilation's deterministic definition map and
   // are not children of RootSymbol. Import them explicitly so modules,
   // interfaces, programs, and primitives remain represented even when they
