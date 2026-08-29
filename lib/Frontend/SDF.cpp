@@ -2,6 +2,12 @@
 
 #include "SDF.h"
 
+#include "obelisk/Dialect/SDF/SDFOps.h"
+#include "obelisk/Frontend/SDF.h"
+
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Verifier.h"
+
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/Compilation.h"
 #include "slang/ast/EvalContext.h"
@@ -17,6 +23,7 @@
 #include "slang/text/SourceManager.h"
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -24,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -49,6 +57,11 @@ public:
       : filename(filename), input(input) {}
 
   std::optional<SDFNode> parse() {
+    constexpr size_t maxInputBytes = 64 * 1024 * 1024;
+    if (input.size() > maxInputBytes) {
+      error(1, 1, "SDF input exceeds the supported 64 MiB limit");
+      return std::nullopt;
+    }
     skipTrivia();
     std::optional<SDFNode> result = parseNode();
     skipTrivia();
@@ -111,6 +124,11 @@ private:
   }
 
   std::optional<SDFNode> parseNode(unsigned depth = 0) {
+    constexpr size_t maxNodes = 1'000'000;
+    if (++nodes > maxNodes) {
+      error(line, column, "SDF input exceeds the supported node limit");
+      return std::nullopt;
+    }
     skipTrivia();
     unsigned startLine = line;
     unsigned startColumn = column;
@@ -177,6 +195,7 @@ private:
   unsigned line = 1;
   unsigned column = 1;
   bool failed = false;
+  size_t nodes = 0;
 };
 
 static bool keyword(const SDFNode &node, StringRef expected) {
@@ -189,12 +208,6 @@ static const SDFNode *formHead(const SDFNode &node, StringRef expected) {
       !keyword(node.children.front(), expected))
     return nullptr;
   return &node;
-}
-
-static void sdfError(StringRef filename, const SDFNode &node,
-                     const Twine &message) {
-  errs() << filename << ':' << node.line << ':' << node.column
-         << ": error: " << message << '\n';
 }
 
 struct ExactDecimal {
@@ -253,17 +266,6 @@ static std::optional<ExactDecimal> parseDecimal(StringRef spelling) {
   return ExactDecimal{numerator, denominator};
 }
 
-static std::optional<uint64_t> unitFemtoseconds(StringRef unit) {
-  return StringSwitch<std::optional<uint64_t>>(unit.lower())
-      .Case("s", UINT64_C(1'000'000'000'000'000))
-      .Case("ms", UINT64_C(1'000'000'000'000))
-      .Case("us", UINT64_C(1'000'000'000))
-      .Case("ns", UINT64_C(1'000'000))
-      .Case("ps", UINT64_C(1'000))
-      .Case("fs", UINT64_C(1))
-      .Default(std::nullopt);
-}
-
 static uint64_t timeScaleValueFemtoseconds(slang::TimeScaleValue value) {
   uint64_t unit = 1;
   switch (value.unit) {
@@ -286,37 +288,6 @@ static uint64_t timeScaleValueFemtoseconds(slang::TimeScaleValue value) {
     break;
   }
   return unit * static_cast<uint64_t>(value.magnitude);
-}
-
-static std::optional<uint64_t> timeScaleFemtoseconds(const SDFNode &form) {
-  if ((form.children.size() != 2 && form.children.size() != 3) ||
-      form.children[1].kind != SDFNode::Kind::Atom ||
-      (form.children.size() == 3 &&
-       form.children[2].kind != SDFNode::Kind::Atom))
-    return std::nullopt;
-  std::string joined;
-  StringRef spelling = form.children[1].text;
-  if (form.children.size() == 3) {
-    joined = (Twine(spelling) + form.children[2].text).str();
-    spelling = joined;
-  }
-  size_t split = 0;
-  while (split < spelling.size() &&
-         (std::isdigit(static_cast<unsigned char>(spelling[split])) ||
-          spelling[split] == '.'))
-    ++split;
-  std::optional<ExactDecimal> amount = parseDecimal(spelling.take_front(split));
-  std::optional<uint64_t> unit = unitFemtoseconds(spelling.drop_front(split));
-  if (!amount || !unit)
-    return std::nullopt;
-  unsigned __int128 scaled = static_cast<unsigned __int128>(amount->numerator) *
-                             static_cast<unsigned __int128>(*unit);
-  if (scaled % amount->denominator != 0)
-    return std::nullopt;
-  scaled /= amount->denominator;
-  if (scaled == 0 || scaled > std::numeric_limits<uint64_t>::max())
-    return std::nullopt;
-  return static_cast<uint64_t>(scaled);
 }
 
 static std::optional<int64_t> roundDelay(const ExactDecimal &delay,
@@ -373,233 +344,6 @@ struct ParsedSDF {
   char divider = '/';
   SmallVector<ParsedCell, 8> cells;
 };
-
-static std::optional<ParsedIOPath::Port> parsePort(StringRef filename,
-                                                   const SDFNode &node) {
-  if (node.kind != SDFNode::Kind::Atom) {
-    sdfError(filename, node, "unsupported IOPATH port identifier");
-    return std::nullopt;
-  }
-  StringRef spelling = node.text;
-  ParsedIOPath::Port result;
-  size_t open = spelling.rfind('[');
-  if (open == StringRef::npos) {
-    if (spelling.contains(']')) {
-      sdfError(filename, node, "malformed indexed IOPATH port");
-      return std::nullopt;
-    }
-    result.name = spelling.str();
-    return result;
-  }
-  if (!spelling.ends_with("]") || open == 0) {
-    sdfError(filename, node, "malformed indexed IOPATH port");
-    return std::nullopt;
-  }
-  int32_t index = 0;
-  StringRef indexText = spelling.slice(open + 1, spelling.size() - 1);
-  if (indexText.empty() || indexText.getAsInteger(10, index)) {
-    sdfError(filename, node,
-             "IOPATH port selects require a constant integer index");
-    return std::nullopt;
-  }
-  result.name = spelling.take_front(open).str();
-  result.index = index;
-  return result;
-}
-
-static std::optional<
-    std::pair<ParsedIOPath::Port, std::optional<slang::ast::EdgeKind>>>
-parsePortSpec(StringRef filename, const SDFNode &node) {
-  if (node.kind == SDFNode::Kind::Atom) {
-    auto port = parsePort(filename, node);
-    if (!port)
-      return std::nullopt;
-    return std::make_pair(std::move(*port),
-                          std::optional<slang::ast::EdgeKind>{});
-  }
-  if (node.kind != SDFNode::Kind::List || node.children.size() != 2 ||
-      node.children[1].kind != SDFNode::Kind::Atom) {
-    sdfError(filename, node, "unsupported IOPATH port specification");
-    return std::nullopt;
-  }
-  slang::ast::EdgeKind edge;
-  if (keyword(node.children[0], "POSEDGE"))
-    edge = slang::ast::EdgeKind::PosEdge;
-  else if (keyword(node.children[0], "NEGEDGE"))
-    edge = slang::ast::EdgeKind::NegEdge;
-  else {
-    sdfError(filename, node, "unsupported IOPATH edge identifier");
-    return std::nullopt;
-  }
-  auto port = parsePort(filename, node.children[1]);
-  if (!port)
-    return std::nullopt;
-  return std::make_pair(std::move(*port),
-                        std::optional<slang::ast::EdgeKind>(edge));
-}
-
-struct ParsedDelayValue {
-  std::optional<ExactDecimal> value;
-};
-
-static std::optional<ParsedDelayValue> parseDelayValue(StringRef filename,
-                                                       const SDFNode &node) {
-  if (node.kind != SDFNode::Kind::List || node.children.size() > 1 ||
-      (node.children.size() == 1 &&
-       node.children[0].kind != SDFNode::Kind::Atom)) {
-    sdfError(filename, node,
-             "this SDF tranche requires one scalar per delay value");
-    return std::nullopt;
-  }
-  if (node.children.empty())
-    return ParsedDelayValue{};
-  std::optional<ExactDecimal> value = parseDecimal(node.children[0].text);
-  if (!value) {
-    sdfError(filename, node, "invalid nonnegative SDF delay value");
-    return std::nullopt;
-  }
-  return ParsedDelayValue{*value};
-}
-
-static std::optional<ParsedSDF> parseSDFFile(StringRef filename,
-                                             StringRef contents) {
-  std::optional<SDFNode> root = SDFParser(filename, contents).parse();
-  if (!root)
-    return std::nullopt;
-  if (!formHead(*root, "DELAYFILE")) {
-    sdfError(filename, *root, "SDF file must contain one DELAYFILE form");
-    return std::nullopt;
-  }
-  ParsedSDF result;
-  bool valid = true;
-  for (const SDFNode &entry : ArrayRef(root->children).drop_front()) {
-    if (const SDFNode *form = formHead(entry, "DIVIDER")) {
-      if (form->children.size() != 2 ||
-          form->children[1].kind != SDFNode::Kind::Atom ||
-          form->children[1].text.size() != 1) {
-        sdfError(filename, entry, "malformed DIVIDER header");
-        valid = false;
-      } else {
-        result.divider = form->children[1].text.front();
-      }
-      continue;
-    }
-    if (const SDFNode *form = formHead(entry, "TIMESCALE")) {
-      std::optional<uint64_t> scale = timeScaleFemtoseconds(*form);
-      if (!scale) {
-        sdfError(filename, entry, "invalid exact TIMESCALE header");
-        valid = false;
-      } else {
-        result.timeScaleFs = *scale;
-      }
-      continue;
-    }
-    const SDFNode *cellForm = formHead(entry, "CELL");
-    if (!cellForm)
-      continue;
-    ParsedCell cell;
-    cell.line = entry.line;
-    cell.column = entry.column;
-    bool sawCellType = false;
-    bool sawInstance = false;
-    for (const SDFNode &member : ArrayRef(cellForm->children).drop_front()) {
-      if (const SDFNode *form = formHead(member, "CELLTYPE")) {
-        if (form->children.size() != 2 ||
-            form->children[1].kind != SDFNode::Kind::String) {
-          sdfError(filename, member, "malformed CELLTYPE");
-          valid = false;
-        } else {
-          cell.cellType = form->children[1].text;
-          sawCellType = true;
-        }
-        continue;
-      }
-      if (const SDFNode *form = formHead(member, "INSTANCE")) {
-        if (form->children.size() == 1) {
-          cell.instance.clear();
-        } else if (form->children.size() == 2 &&
-                   form->children[1].kind == SDFNode::Kind::Atom) {
-          cell.instance = form->children[1].text;
-          cell.wildcard = cell.instance == "*";
-        } else {
-          sdfError(filename, member, "malformed INSTANCE");
-          valid = false;
-        }
-        sawInstance = true;
-        continue;
-      }
-      const SDFNode *delay = formHead(member, "DELAY");
-      if (!delay) {
-        if (formHead(member, "TIMINGCHECK") || formHead(member, "LABEL"))
-          cell.unsupportedTimingData.push_back(
-              {member.children.front().text, member.line, member.column});
-        continue;
-      }
-      for (const SDFNode &mode : ArrayRef(delay->children).drop_front()) {
-        const SDFNode *absolute = formHead(mode, "ABSOLUTE");
-        if (!absolute) {
-          cell.unsupportedTimingData.push_back(
-              {"non-ABSOLUTE DELAY", mode.line, mode.column});
-          continue;
-        }
-        for (const SDFNode &item : ArrayRef(absolute->children).drop_front()) {
-          const SDFNode *iopath = formHead(item, "IOPATH");
-          if (!iopath) {
-            cell.unsupportedTimingData.push_back(
-                {"non-IOPATH ABSOLUTE delay", item.line, item.column});
-            continue;
-          }
-          if (iopath->children.size() < 4) {
-            sdfError(filename, item, "IOPATH requires endpoints and delays");
-            valid = false;
-            continue;
-          }
-          auto input = parsePortSpec(filename, iopath->children[1]);
-          auto output = parsePort(filename, iopath->children[2]);
-          if (!input || !output) {
-            valid = false;
-            continue;
-          }
-          ParsedIOPath path;
-          path.input = std::move(input->first);
-          path.edge = input->second;
-          path.output = std::move(*output);
-          path.line = item.line;
-          path.column = item.column;
-          for (const SDFNode &delayValue :
-               ArrayRef(iopath->children).drop_front(3)) {
-            std::optional<ParsedDelayValue> value =
-                parseDelayValue(filename, delayValue);
-            if (!value) {
-              valid = false;
-              break;
-            }
-            path.delays.push_back(value->value);
-          }
-          if (path.delays.size() != 1 && path.delays.size() != 2 &&
-              path.delays.size() != 3 && path.delays.size() != 6 &&
-              path.delays.size() != 12) {
-            sdfError(filename, item,
-                     "IOPATH requires 1, 2, 3, 6, or 12 delay values");
-            valid = false;
-            continue;
-          }
-          cell.paths.push_back(std::move(path));
-        }
-      }
-    }
-    if (!sawCellType || !sawInstance) {
-      sdfError(filename, entry, "CELL requires CELLTYPE and INSTANCE");
-      valid = false;
-    }
-    result.cells.push_back(std::move(cell));
-  }
-  if (!result.timeScaleFs) {
-    errs() << filename << ": error: static SDF annotation requires TIMESCALE\n";
-    valid = false;
-  }
-  return valid ? std::optional<ParsedSDF>(std::move(result)) : std::nullopt;
-}
 
 struct DesignInventory
     : slang::ast::ASTVisitor<DesignInventory, slang::ast::VisitFlags::AllGood> {
@@ -839,6 +583,947 @@ static bool hasSDFAnnotationToken(const slang::ast::Compilation &compilation) {
   return false;
 }
 
+class SDFMLIRImporter {
+public:
+  SDFMLIRImporter(StringRef sourceName, mlir::MLIRContext &context)
+      : sourceName(sourceName), context(context), builder(&context) {}
+
+  mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>> import(const SDFNode &root) {
+    using namespace mlir;
+    if (!formHead(root, "DELAYFILE")) {
+      error(root, "SDF file must contain one DELAYFILE form");
+      return failure();
+    }
+
+    SmallVector<NamedAttribute> headers;
+    llvm::StringSet<> seenHeaders;
+    headers.emplace_back(builder.getStringAttr("source"),
+                         builder.getStringAttr(sourceName));
+    StringAttr version;
+    for (const SDFNode &entry : ArrayRef(root.children).drop_front()) {
+      if (const SDFNode *form = formHead(entry, "SDFVERSION")) {
+        if (!seenHeaders.insert("sdf_version").second) {
+          error(entry, "duplicate singleton SDFVERSION header");
+          continue;
+        }
+        if (form->children.size() != 2 ||
+            form->children[1].kind != SDFNode::Kind::String) {
+          error(entry, "malformed SDFVERSION header");
+          continue;
+        }
+        version = builder.getStringAttr(form->children[1].text);
+        continue;
+      }
+      if (parseHeader(entry, headers, seenHeaders))
+        continue;
+      if (!formHead(entry, "CELL") && !formHead(entry, "TIMINGENV"))
+        error(entry, "unsupported or misplaced SDF DELAYFILE form");
+    }
+    if (!version) {
+      error(root, "DELAYFILE requires an SDFVERSION header");
+      return failure();
+    }
+    headers.emplace_back(builder.getStringAttr("sdf_version"), version);
+    // Header names are singleton grammar productions in Clause 32.  Stop at
+    // the normalized boundary before constructing an operation whenever a
+    // malformed or duplicate header was diagnosed; MLIR must never receive a
+    // duplicate attribute dictionary as a secondary parser mechanism.
+    if (failedState)
+      return failure();
+
+    auto module = mlir::ModuleOp::create(location(root));
+    builder.setInsertionPointToStart(module.getBody());
+    Operation *delayFile = createRegionOp<sdf::SDFDelayFileOp>(root, headers);
+    builder.setInsertionPointToStart(&delayFile->getRegion(0).front());
+    for (const SDFNode &entry : ArrayRef(root.children).drop_front())
+      if (formHead(entry, "CELL"))
+        parseCell(entry);
+    if (failedState)
+      return failure();
+    return mlir::OwningOpRef<mlir::ModuleOp>(module);
+  }
+
+private:
+  mlir::Location location(const SDFNode &node) const {
+    return mlir::FileLineColLoc::get(&context, sourceName, node.line,
+                                     node.column);
+  }
+
+  void error(const SDFNode &node, const Twine &message) {
+    mlir::emitError(location(node)) << message;
+    failedState = true;
+  }
+
+  template <typename Op>
+  mlir::Operation *createOp(const SDFNode &node,
+                            ArrayRef<mlir::NamedAttribute> attributes) {
+    mlir::OperationState state(location(node), Op::getOperationName());
+    state.addAttributes(attributes);
+    return builder.create(state);
+  }
+
+  template <typename Op>
+  mlir::Operation *createRegionOp(const SDFNode &node,
+                                  ArrayRef<mlir::NamedAttribute> attributes) {
+    mlir::OperationState state(location(node), Op::getOperationName());
+    state.addAttributes(attributes);
+    mlir::Region *region = state.addRegion();
+    region->push_back(new mlir::Block);
+    return builder.create(state);
+  }
+
+  mlir::NamedAttribute named(StringRef name, mlir::Attribute value) {
+    return {builder.getStringAttr(name), value};
+  }
+
+  template <typename Attr, typename... Args>
+  Attr checked(const SDFNode &node, Args &&...arguments) {
+    return Attr::getChecked(
+        [&]() {
+          failedState = true;
+          return mlir::emitError(location(node));
+        },
+        &context, std::forward<Args>(arguments)...);
+  }
+
+  bool addHeader(const SDFNode &node, StringRef name, mlir::Attribute value,
+                 SmallVectorImpl<mlir::NamedAttribute> &attributes,
+                 llvm::StringSet<> &seenHeaders) {
+    if (!seenHeaders.insert(name).second) {
+      error(node, Twine("duplicate singleton ") + name + " header");
+      return false;
+    }
+    attributes.push_back(named(name, value));
+    return true;
+  }
+
+  bool parseHeader(const SDFNode &node,
+                   SmallVectorImpl<mlir::NamedAttribute> &attributes,
+                   llvm::StringSet<> &seenHeaders) {
+    static constexpr StringLiteral stringHeaders[] = {
+        "DESIGN", "DATE", "VENDOR", "PROGRAM", "VERSION", "PROCESS"};
+    for (StringRef keywordName : stringHeaders) {
+      const SDFNode *form = formHead(node, keywordName);
+      if (!form)
+        continue;
+      if (form->children.size() != 2 ||
+          (form->children[1].kind != SDFNode::Kind::String &&
+           form->children[1].kind != SDFNode::Kind::Atom)) {
+        error(node, Twine("malformed ") + keywordName + " header");
+        return true;
+      }
+      std::string attrName = keywordName == "VERSION"
+                                 ? "program_version"
+                                 : keywordName.lower();
+      addHeader(node, attrName, builder.getStringAttr(form->children[1].text),
+                attributes, seenHeaders);
+      return true;
+    }
+    if (const SDFNode *form = formHead(node, "DIVIDER")) {
+      if (form->children.size() != 2 ||
+          form->children[1].kind != SDFNode::Kind::Atom)
+        error(node, "malformed DIVIDER header");
+      else
+        addHeader(node, "divider", builder.getStringAttr(form->children[1].text),
+                  attributes, seenHeaders);
+      return true;
+    }
+    if (const SDFNode *form = formHead(node, "TIMESCALE")) {
+      parseTimeScale(*form, attributes, seenHeaders);
+      return true;
+    }
+    for (StringRef keywordName : {StringRef("VOLTAGE"),
+                                  StringRef("TEMPERATURE")}) {
+      if (const SDFNode *form = formHead(node, keywordName)) {
+        if (form->children.size() != 2) {
+          error(node, Twine("malformed ") + keywordName + " header");
+          return true;
+        }
+        if (auto value = parseDelayValue(form->children[1]))
+          addHeader(node, keywordName.lower(), value, attributes, seenHeaders);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void parseTimeScale(const SDFNode &form,
+                      SmallVectorImpl<mlir::NamedAttribute> &attributes,
+                      llvm::StringSet<> &seenHeaders) {
+    if (form.children.size() != 2 && form.children.size() != 3) {
+      error(form, "malformed TIMESCALE header");
+      return;
+    }
+    std::string spelling = form.children[1].text;
+    if (form.children.size() == 3)
+      spelling += form.children[2].text;
+    StringRef combined = spelling;
+    size_t unitLength = combined.ends_with_insensitive("ms") ||
+                                combined.ends_with_insensitive("us") ||
+                                combined.ends_with_insensitive("ns") ||
+                                combined.ends_with_insensitive("ps") ||
+                                combined.ends_with_insensitive("fs")
+                            ? 2
+                            : 1;
+    if (combined.size() <= unitLength) {
+      error(form, "malformed exact TIMESCALE header");
+      return;
+    }
+    auto amount = decimal(form, combined.drop_back(unitLength));
+    auto unit = llvm::StringSwitch<std::optional<sdf::TimeUnit>>(
+                    combined.take_back(unitLength).lower())
+                    .Case("s", sdf::TimeUnit::Seconds)
+                    .Case("ms", sdf::TimeUnit::Milliseconds)
+                    .Case("us", sdf::TimeUnit::Microseconds)
+                    .Case("ns", sdf::TimeUnit::Nanoseconds)
+                    .Case("ps", sdf::TimeUnit::Picoseconds)
+                    .Case("fs", sdf::TimeUnit::Femtoseconds)
+                    .Default(std::nullopt);
+    if (!amount || !unit) {
+      error(form, "malformed exact TIMESCALE header");
+      return;
+    }
+    auto timescale = checked<sdf::TimeScaleAttr>(form, amount, *unit);
+    if (timescale)
+      addHeader(form, "timescale", timescale, attributes, seenHeaders);
+  }
+
+  sdf::DecimalAttr decimal(const SDFNode &node, StringRef spelling) {
+    auto result = checked<sdf::DecimalAttr>(
+        node, builder.getStringAttr(spelling));
+    return result;
+  }
+
+  sdf::DelayValueAttr parseDelayValue(const SDFNode &node) {
+    if (node.kind == SDFNode::Kind::Atom) {
+      auto value = decimal(node, node.text);
+      return value ? checked<sdf::DelayValueAttr>(
+                         node, sdf::DelayValueForm::Scalar,
+                         sdf::DecimalAttr{}, value, sdf::DecimalAttr{})
+                   : sdf::DelayValueAttr{};
+    }
+    if (node.kind != SDFNode::Kind::List || node.children.size() > 1 ||
+        (!node.children.empty() &&
+         node.children.front().kind != SDFNode::Kind::Atom)) {
+      error(node, "delay value must be an empty or one-token list");
+      return {};
+    }
+    if (node.children.empty())
+      return checked<sdf::DelayValueAttr>(node, sdf::DelayValueForm::Empty,
+                                          sdf::DecimalAttr{},
+                                          sdf::DecimalAttr{},
+                                          sdf::DecimalAttr{});
+    StringRef token = node.children.front().text;
+    SmallVector<StringRef, 3> fields;
+    token.split(fields, ':', /*MaxSplit=*/2, /*KeepEmpty=*/true);
+    sdf::DecimalAttr min, typ, max;
+    if (fields.size() == 1) {
+      typ = decimal(node, fields[0]);
+    } else if (fields.size() == 3) {
+      if (!fields[0].empty())
+        min = decimal(node, fields[0]);
+      if (!fields[1].empty())
+        typ = decimal(node, fields[1]);
+      if (!fields[2].empty())
+        max = decimal(node, fields[2]);
+    } else {
+      error(node, "delay value must be scalar or min:typ:max");
+      return {};
+    }
+    return checked<sdf::DelayValueAttr>(
+        node, fields.size() == 1 ? sdf::DelayValueForm::Scalar
+                                 : sdf::DelayValueForm::Triple,
+        min, typ, max);
+  }
+
+  mlir::ArrayAttr parseDelayList(ArrayRef<SDFNode> nodes) {
+    SmallVector<mlir::Attribute, 12> values;
+    for (const SDFNode &node : nodes) {
+      auto value = parseDelayValue(node);
+      if (value)
+        values.push_back(value);
+    }
+    return builder.getArrayAttr(values);
+  }
+
+  sdf::PortAttr parsePort(const SDFNode &node) {
+    sdf::Edge edge = sdf::Edge::None;
+    const SDFNode *nameNode = &node;
+    if (node.kind == SDFNode::Kind::List && node.children.size() == 2) {
+      auto parsedEdge = llvm::StringSwitch<std::optional<sdf::Edge>>(
+                            StringRef(node.children[0].text).lower())
+                            .Case("posedge", sdf::Edge::Posedge)
+                            .Case("negedge", sdf::Edge::Negedge)
+                            .Case("01", sdf::Edge::ZeroOne)
+                            .Case("10", sdf::Edge::OneZero)
+                            .Case("0z", sdf::Edge::ZeroZ)
+                            .Case("z1", sdf::Edge::ZOne)
+                            .Case("1z", sdf::Edge::OneZ)
+                            .Case("z0", sdf::Edge::ZZero)
+                            .Default(std::nullopt);
+      if (!parsedEdge) {
+        error(node, "unsupported edge identifier");
+        return {};
+      }
+      edge = *parsedEdge;
+      nameNode = &node.children[1];
+    }
+    if (nameNode->kind != SDFNode::Kind::Atom) {
+      error(node, "port must be an identifier or edge-qualified identifier");
+      return {};
+    }
+    StringRef spelling = nameNode->text;
+    if (!spelling.starts_with("\\") && spelling.find_first_of("!~&|^=") !=
+                                               StringRef::npos) {
+      error(node, "port identifier cannot contain a condition operator");
+      return {};
+    }
+    bool hasIndex = false;
+    int64_t index = 0;
+    size_t open = spelling.rfind('[');
+    if (open != StringRef::npos && spelling.ends_with("]")) {
+      StringRef indexText = spelling.slice(open + 1, spelling.size() - 1);
+      if (indexText.empty() || indexText.getAsInteger(10, index)) {
+        error(node, "port select requires a constant integer index");
+        return {};
+      }
+      hasIndex = true;
+      spelling = spelling.take_front(open);
+    }
+    return checked<sdf::PortAttr>(node, builder.getStringAttr(spelling),
+                                  hasIndex, index, edge);
+  }
+
+  std::optional<sdf::ConditionOpcode> conditionOpcode(StringRef spelling) {
+    return llvm::StringSwitch<std::optional<sdf::ConditionOpcode>>(
+               spelling.lower())
+        .Cases({"!", "~"}, sdf::ConditionOpcode::Not)
+        .Cases({"&&", "&"}, sdf::ConditionOpcode::And)
+        .Cases({"||", "|"}, sdf::ConditionOpcode::Or)
+        .Case("^", sdf::ConditionOpcode::Xor)
+        .Case("==", sdf::ConditionOpcode::Eq)
+        .Case("!=", sdf::ConditionOpcode::Ne)
+        .Case("===", sdf::ConditionOpcode::CaseEq)
+        .Case("!==", sdf::ConditionOpcode::CaseNe)
+        .Default(std::nullopt);
+  }
+
+  struct ConditionLexeme {
+    enum class Kind { Operand, Operator } kind;
+    StringRef spelling;
+    sdf::ConditionOpcode opcode = sdf::ConditionOpcode::Port;
+  };
+
+  bool lexCompactCondition(const SDFNode &node,
+                           SmallVectorImpl<ConditionLexeme> &lexemes) {
+    StringRef spelling = node.text;
+    // An escaped SDF identifier ends at token whitespace; operator glyphs in
+    // that spelling are identifier data, not condition syntax.
+    if (spelling.starts_with("\\")) {
+      lexemes.push_back({ConditionLexeme::Kind::Operand, spelling,
+                         sdf::ConditionOpcode::Port});
+      return true;
+    }
+    size_t cursor = 0;
+    auto operatorAt = [&](size_t at)
+        -> std::optional<std::pair<sdf::ConditionOpcode, size_t>> {
+      StringRef remaining = spelling.drop_front(at);
+      for (auto candidate :
+           {std::pair<StringLiteral, sdf::ConditionOpcode>{
+                "!==", sdf::ConditionOpcode::CaseNe},
+            {"===", sdf::ConditionOpcode::CaseEq},
+            {"!=", sdf::ConditionOpcode::Ne},
+            {"==", sdf::ConditionOpcode::Eq},
+            {"&&", sdf::ConditionOpcode::And},
+            {"||", sdf::ConditionOpcode::Or},
+            {"!", sdf::ConditionOpcode::Not},
+            {"~", sdf::ConditionOpcode::Not},
+            {"&", sdf::ConditionOpcode::And},
+            {"|", sdf::ConditionOpcode::Or},
+            {"^", sdf::ConditionOpcode::Xor}})
+        if (remaining.starts_with(candidate.first))
+          return std::pair(candidate.second, candidate.first.size());
+      return std::nullopt;
+    };
+    while (cursor < spelling.size()) {
+      if (auto op = operatorAt(cursor)) {
+        lexemes.push_back(
+            {ConditionLexeme::Kind::Operator,
+             spelling.slice(cursor, cursor + op->second), op->first});
+        cursor += op->second;
+      } else {
+        size_t begin = cursor;
+        while (cursor < spelling.size() && !operatorAt(cursor))
+          ++cursor;
+        if (begin == cursor) {
+          error(node, "condition contains an empty operand");
+          return false;
+        }
+        lexemes.push_back({ConditionLexeme::Kind::Operand,
+                           spelling.slice(begin, cursor),
+                           sdf::ConditionOpcode::Port});
+      }
+      if (lexemes.size() > 4096) {
+        error(node, "condition exceeds the supported token limit of 4096");
+        return false;
+      }
+    }
+    return !lexemes.empty();
+  }
+
+  bool appendConditionOperand(const SDFNode &node, StringRef spelling,
+                              SmallVectorImpl<mlir::Attribute> &tokens) {
+    std::string lowerStorage = spelling.lower();
+    StringRef lower = lowerStorage;
+    std::optional<int64_t> constant =
+        llvm::StringSwitch<std::optional<int64_t>>(lower)
+            .Cases({"0", "1'b0"}, 0)
+            .Cases({"1", "1'b1"}, 1)
+            .Cases({"x", "1'bx"}, 2)
+            .Cases({"z", "1'bz"}, 3)
+            .Default(std::nullopt);
+    if (constant) {
+      if (tokens.size() >= 4096) {
+        error(node, "condition exceeds the supported token limit of 4096");
+        return false;
+      }
+      auto token = checked<sdf::ConditionTokenAttr>(
+          node, sdf::ConditionOpcode::Constant, sdf::PortAttr{},
+          builder.getI64IntegerAttr(*constant));
+      if (!token)
+        return false;
+      tokens.push_back(token);
+      return true;
+    }
+    SDFNode operand = node;
+    operand.text = spelling.str();
+    auto port = parsePort(operand);
+    if (!port)
+      return false;
+    if (tokens.size() >= 4096) {
+      error(node, "condition exceeds the supported token limit of 4096");
+      return false;
+    }
+    auto token = checked<sdf::ConditionTokenAttr>(
+        node, sdf::ConditionOpcode::Port, port, mlir::IntegerAttr{});
+    if (!token)
+      return false;
+    tokens.push_back(token);
+    return true;
+  }
+
+  bool appendCompactCondition(const SDFNode &node,
+                              SmallVectorImpl<mlir::Attribute> &tokens) {
+    SmallVector<ConditionLexeme, 16> lexemes;
+    if (!lexCompactCondition(node, lexemes))
+      return false;
+    size_t cursor = 0;
+    auto appendOperator = [&](sdf::ConditionOpcode opcode) {
+      if (tokens.size() >= 4096) {
+        error(node, "condition exceeds the supported token limit of 4096");
+        return false;
+      }
+      auto token = checked<sdf::ConditionTokenAttr>(
+          node, opcode, sdf::PortAttr{}, mlir::IntegerAttr{});
+      if (!token)
+        return false;
+      tokens.push_back(token);
+      return true;
+    };
+    std::function<bool(unsigned)> parseExpression;
+    auto precedence = [](sdf::ConditionOpcode opcode) -> unsigned {
+      switch (opcode) {
+      case sdf::ConditionOpcode::Or:
+        return 1;
+      case sdf::ConditionOpcode::Xor:
+        return 2;
+      case sdf::ConditionOpcode::And:
+        return 3;
+      case sdf::ConditionOpcode::Eq:
+      case sdf::ConditionOpcode::Ne:
+      case sdf::ConditionOpcode::CaseEq:
+      case sdf::ConditionOpcode::CaseNe:
+        return 4;
+      default:
+        return 0;
+      }
+    };
+    std::function<bool()> parseUnary = [&]() {
+      size_t notCount = 0;
+      while (cursor < lexemes.size() &&
+             lexemes[cursor].kind == ConditionLexeme::Kind::Operator &&
+             lexemes[cursor].opcode == sdf::ConditionOpcode::Not) {
+        ++cursor;
+        ++notCount;
+      }
+      if (cursor >= lexemes.size() ||
+          lexemes[cursor].kind != ConditionLexeme::Kind::Operand)
+        return false;
+      if (!appendConditionOperand(node, lexemes[cursor++].spelling, tokens))
+        return false;
+      while (notCount--)
+        if (!appendOperator(sdf::ConditionOpcode::Not))
+          return false;
+      return true;
+    };
+    parseExpression = [&](unsigned minimumPrecedence) {
+      if (!parseUnary())
+        return false;
+      while (cursor < lexemes.size() &&
+             lexemes[cursor].kind == ConditionLexeme::Kind::Operator) {
+        sdf::ConditionOpcode opcode = lexemes[cursor].opcode;
+        unsigned currentPrecedence = precedence(opcode);
+        if (currentPrecedence < minimumPrecedence || currentPrecedence == 0)
+          break;
+        ++cursor;
+        if (!parseExpression(currentPrecedence + 1))
+          return false;
+        if (!appendOperator(opcode))
+          return false;
+      }
+      return true;
+    };
+    if (!parseExpression(1) || cursor != lexemes.size()) {
+      error(node, "condition has malformed compact operator syntax");
+      return false;
+    }
+    return true;
+  }
+
+  bool appendCondition(const SDFNode &node,
+                       SmallVectorImpl<mlir::Attribute> &tokens) {
+    auto appendOperator = [&](sdf::ConditionOpcode opcode) {
+      if (tokens.size() >= 4096) {
+        error(node, "condition exceeds the supported token limit of 4096");
+        return false;
+      }
+      auto token = checked<sdf::ConditionTokenAttr>(
+          node, opcode, sdf::PortAttr{}, mlir::IntegerAttr{});
+      if (!token)
+        return false;
+      tokens.push_back(token);
+      return true;
+    };
+    if (node.kind == SDFNode::Kind::Atom) {
+      return appendCompactCondition(node, tokens);
+    }
+    if (node.kind != SDFNode::Kind::List || node.children.empty()) {
+      error(node, "condition contains an unsupported operand");
+      return false;
+    }
+    if (node.children.size() == 1)
+      return appendCondition(node.children.front(), tokens);
+    if (node.children.size() == 2) {
+      auto opcode = conditionOpcode(node.children[0].text);
+      if (!opcode || *opcode != sdf::ConditionOpcode::Not ||
+          !appendCondition(node.children[1], tokens)) {
+        error(node, "condition requires a supported unary operator");
+        return false;
+      }
+      return appendOperator(*opcode);
+    }
+    if (node.children.size() == 3) {
+      auto prefix = conditionOpcode(node.children[0].text);
+      auto infix = conditionOpcode(node.children[1].text);
+      std::optional<sdf::ConditionOpcode> opcode = prefix ? prefix : infix;
+      const SDFNode &left = prefix ? node.children[1] : node.children[0];
+      const SDFNode &right = node.children[2];
+      if (!opcode || *opcode == sdf::ConditionOpcode::Not ||
+          !appendCondition(left, tokens) || !appendCondition(right, tokens)) {
+        error(node, "condition requires a supported binary operator");
+        return false;
+      }
+      return appendOperator(*opcode);
+    }
+    error(node, "condition expression exceeds the normalized operator arity");
+    return false;
+  }
+
+  sdf::ConditionAttr parseCondition(const SDFNode &node) {
+    SmallVector<mlir::Attribute, 16> tokens;
+    if (!appendCondition(node, tokens) || tokens.size() > 4096)
+      return {};
+    return checked<sdf::ConditionAttr>(node, builder.getArrayAttr(tokens),
+                                       false);
+  }
+
+  sdf::TimingEventAttr parseTimingEvent(const SDFNode &node) {
+    sdf::ConditionAttr condition;
+    const SDFNode *portNode = &node;
+    if (node.kind == SDFNode::Kind::List && !node.children.empty() &&
+        (keyword(node.children.front(), "COND") ||
+         keyword(node.children.front(), "SCOND") ||
+         keyword(node.children.front(), "CCOND"))) {
+      if (node.children.size() != 3) {
+        error(node,
+              "conditional timing event requires exactly one port and expression");
+        return {};
+      }
+      portNode = &node.children[1];
+      condition = parseCondition(node.children[2]);
+    }
+    auto port = parsePort(*portNode);
+    return port ? checked<sdf::TimingEventAttr>(node, port, condition)
+                : sdf::TimingEventAttr{};
+  }
+
+  void parseCell(const SDFNode &cell) {
+    mlir::StringAttr cellType, instance;
+    bool wildcard = false;
+    for (const SDFNode &member : ArrayRef(cell.children).drop_front()) {
+      if (const SDFNode *form = formHead(member, "CELLTYPE")) {
+        if (form->children.size() == 2)
+          cellType = builder.getStringAttr(form->children[1].text);
+      } else if (const SDFNode *form = formHead(member, "INSTANCE")) {
+        if (form->children.size() == 2 && form->children[1].text == "*")
+          wildcard = true;
+        else if (form->children.size() == 2)
+          instance = builder.getStringAttr(form->children[1].text);
+      }
+    }
+    if (!cellType) {
+      error(cell, "CELL requires CELLTYPE");
+      return;
+    }
+    SmallVector<mlir::NamedAttribute> attrs{named("cell_type", cellType)};
+    if (instance)
+      attrs.push_back(named("instance", instance));
+    if (wildcard)
+      attrs.push_back(named("wildcard", builder.getUnitAttr()));
+    mlir::Operation *cellOp = createRegionOp<sdf::SDFCellOp>(cell, attrs);
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&cellOp->getRegion(0).front());
+    for (const SDFNode &member : ArrayRef(cell.children).drop_front()) {
+      if (const SDFNode *delay = formHead(member, "DELAY"))
+        parseDelaySection(*delay);
+      else if (const SDFNode *timing = formHead(member, "TIMINGCHECK"))
+        parseTimingChecks(*timing);
+      else if (const SDFNode *labels = formHead(member, "LABEL"))
+        parseLabels(*labels);
+    }
+  }
+
+  void parseDelaySection(const SDFNode &section) {
+    for (const SDFNode &modeNode : ArrayRef(section.children).drop_front()) {
+      sdf::DelayMode mode;
+      if (formHead(modeNode, "ABSOLUTE"))
+        mode = sdf::DelayMode::Absolute;
+      else if (formHead(modeNode, "INCREMENT"))
+        mode = sdf::DelayMode::Increment;
+      else {
+        error(modeNode, "DELAY requires ABSOLUTE or INCREMENT records");
+        continue;
+      }
+      for (const SDFNode &record : ArrayRef(modeNode.children).drop_front())
+        parseDelayRecord(record, mode);
+    }
+  }
+
+  void parseDelayRecord(const SDFNode &record, sdf::DelayMode mode) {
+    if (formHead(record, "IOPATH"))
+      return parsePath(record, mode, sdf::PathKind::IOPath, {});
+    if (const SDFNode *form = formHead(record, "COND")) {
+      if (form->children.size() != 3) {
+        error(record, "COND requires exactly one expression and IOPATH");
+        return;
+      }
+      const SDFNode &path = form->children.back();
+      if (!formHead(path, "IOPATH")) {
+        error(record, "COND must contain IOPATH");
+        return;
+      }
+      auto condition = parseCondition(form->children[1]);
+      return parsePath(path, mode, sdf::PathKind::Cond, condition);
+    }
+    if (const SDFNode *form = formHead(record, "CONDELSE")) {
+      if (form->children.size() != 2 ||
+          !formHead(form->children[1], "IOPATH")) {
+        error(record, "CONDELSE must contain one IOPATH");
+        return;
+      }
+      return parsePath(form->children[1], mode, sdf::PathKind::CondElse, {});
+    }
+    if (formHead(record, "INTERCONNECT"))
+      return parseInterconnect(record, mode);
+    if (formHead(record, "PORT"))
+      return parseTerminal(record, mode, sdf::TerminalDelayKind::Port);
+    if (formHead(record, "NETDELAY"))
+      return parseTerminal(record, mode, sdf::TerminalDelayKind::NetDelay);
+    if (formHead(record, "DEVICE"))
+      return parseTerminal(record, mode, sdf::TerminalDelayKind::Device);
+    if (formHead(record, "PATHPULSE"))
+      return parsePulse(record, sdf::PulseKind::Absolute);
+    if (formHead(record, "PATHPULSEPERCENT"))
+      return parsePulse(record, sdf::PulseKind::Percent);
+    error(record, "unsupported DELAY annotation record");
+  }
+
+  void parsePath(const SDFNode &record, sdf::DelayMode mode,
+                 sdf::PathKind kind, sdf::ConditionAttr condition) {
+    if (record.children.size() < 4) {
+      error(record, "IOPATH requires input, output, and delay values");
+      return;
+    }
+    auto input = parsePort(record.children[1]);
+    auto output = parsePort(record.children[2]);
+    SmallVector<mlir::NamedAttribute> attrs{
+        named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
+        named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(kind))),
+        named("input", input), named("output", output),
+        named("delays", parseDelayList(ArrayRef(record.children).drop_front(3)))};
+    if (condition)
+      attrs.push_back(named("condition", condition));
+    createOp<sdf::SDFPathDelayOp>(record, attrs);
+  }
+
+  void parseInterconnect(const SDFNode &record, sdf::DelayMode mode) {
+    if (record.children.size() < 4) {
+      error(record, "INTERCONNECT requires two ports and delay values");
+      return;
+    }
+    createOp<sdf::SDFInterconnectDelayOp>(
+        record,
+        {named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
+         named("source_port", parsePort(record.children[1])),
+         named("destination_port", parsePort(record.children[2])),
+         named("delays", parseDelayList(ArrayRef(record.children).drop_front(3)))});
+  }
+
+  void parseTerminal(const SDFNode &record, sdf::DelayMode mode,
+                     sdf::TerminalDelayKind kind) {
+    size_t delayStart = 1;
+    sdf::PortAttr terminal;
+    if (kind != sdf::TerminalDelayKind::Device ||
+        (record.children.size() > 1 &&
+         record.children[1].kind != SDFNode::Kind::List)) {
+      if (record.children.size() < 3) {
+        error(record, "terminal delay requires a terminal and delay values");
+        return;
+      }
+      terminal = parsePort(record.children[1]);
+      delayStart = 2;
+    }
+    SmallVector<mlir::NamedAttribute> attrs{
+        named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
+        named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(kind))),
+        named("delays", parseDelayList(ArrayRef(record.children).drop_front(delayStart)))};
+    if (terminal)
+      attrs.push_back(named("terminal", terminal));
+    createOp<sdf::SDFTerminalDelayOp>(record, attrs);
+  }
+
+  void parsePulse(const SDFNode &record, sdf::PulseKind kind) {
+    size_t cursor = 1;
+    sdf::PortAttr input, output;
+    if (record.children.size() >= 5) {
+      input = parsePort(record.children[cursor++]);
+      output = parsePort(record.children[cursor++]);
+    }
+    if (record.children.size() - cursor != 2) {
+      error(record, "pulse record requires reject and error limits");
+      return;
+    }
+    SmallVector<mlir::NamedAttribute> attrs{
+        named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(kind))),
+        named("reject", parseDelayValue(record.children[cursor])),
+        named("error", parseDelayValue(record.children[cursor + 1]))};
+    if (input) {
+      attrs.push_back(named("input", input));
+      attrs.push_back(named("output", output));
+    }
+    createOp<sdf::SDFPulseOp>(record, attrs);
+  }
+
+  void parseTimingChecks(const SDFNode &section) {
+    for (const SDFNode &record : ArrayRef(section.children).drop_front()) {
+      auto kind = llvm::StringSwitch<std::optional<sdf::TimingCheckKind>>(
+                      record.children.empty()
+                          ? StringRef{}
+                          : StringRef(record.children.front().text).lower())
+                      .Case("setup", sdf::TimingCheckKind::Setup)
+                      .Case("hold", sdf::TimingCheckKind::Hold)
+                      .Case("setuphold", sdf::TimingCheckKind::SetupHold)
+                      .Case("recovery", sdf::TimingCheckKind::Recovery)
+                      .Case("removal", sdf::TimingCheckKind::Removal)
+                      .Case("recrem", sdf::TimingCheckKind::Recrem)
+                      .Case("skew", sdf::TimingCheckKind::Skew)
+                      .Case("timeskew", sdf::TimingCheckKind::TimeSkew)
+                      .Case("fullskew", sdf::TimingCheckKind::FullSkew)
+                      .Case("period", sdf::TimingCheckKind::Period)
+                      .Case("width", sdf::TimingCheckKind::Width)
+                      .Case("nochange", sdf::TimingCheckKind::NoChange)
+                      .Default(std::nullopt);
+      if (!kind) {
+        error(record, "unsupported TIMINGCHECK record");
+        continue;
+      }
+      size_t eventCount = (*kind == sdf::TimingCheckKind::Period ||
+                           *kind == sdf::TimingCheckKind::Width)
+                              ? 1
+                              : 2;
+      size_t limitCount = (*kind == sdf::TimingCheckKind::SetupHold ||
+                           *kind == sdf::TimingCheckKind::Recrem ||
+                           *kind == sdf::TimingCheckKind::FullSkew ||
+                           *kind == sdf::TimingCheckKind::NoChange)
+                              ? 2
+                              : 1;
+      if (record.children.size() != 1 + eventCount + limitCount) {
+        error(record, "timing-check record has the wrong arity");
+        continue;
+      }
+      SmallVector<mlir::Attribute> events, limits;
+      for (size_t i = 0; i < eventCount; ++i)
+        if (auto event = parseTimingEvent(record.children[1 + i]))
+          events.push_back(event);
+      for (size_t i = 0; i < limitCount; ++i)
+        if (auto limit = parseDelayValue(record.children[1 + eventCount + i]))
+          limits.push_back(limit);
+      createOp<sdf::SDFTimingCheckOp>(
+          record,
+          {named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(*kind))),
+           named("events", builder.getArrayAttr(events)),
+           named("limits", builder.getArrayAttr(limits))});
+    }
+  }
+
+  void parseLabels(const SDFNode &section) {
+    for (const SDFNode &record : ArrayRef(section.children).drop_front()) {
+      if (record.kind != SDFNode::Kind::List || record.children.size() != 2 ||
+          record.children.front().kind != SDFNode::Kind::Atom) {
+        error(record, "LABEL entry requires a name and value");
+        continue;
+      }
+      createOp<sdf::SDFLabelOp>(
+          record, {named("name", builder.getStringAttr(record.children[0].text)),
+                   named("value", parseDelayValue(record.children[1]))});
+    }
+  }
+
+  StringRef sourceName;
+  mlir::MLIRContext &context;
+  mlir::OpBuilder builder;
+  bool failedState = false;
+};
+
+} // namespace
+
+mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>>
+importSDF(StringRef sourceName, StringRef contents, mlir::MLIRContext &context,
+          bool verifyIR) {
+  context.getOrLoadDialect<sdf::ObeliskSDFDialect>();
+  std::optional<SDFNode> root = SDFParser(sourceName, contents).parse();
+  if (!root)
+    return mlir::failure();
+  auto module = SDFMLIRImporter(sourceName, context).import(*root);
+  if (mlir::failed(module))
+    return mlir::failure();
+  if (verifyIR && mlir::failed(mlir::verify(**module)))
+    return mlir::failure();
+  return module;
+}
+
+namespace {
+
+static std::pair<unsigned, unsigned> sourcePosition(mlir::Operation *operation) {
+  if (auto location = dyn_cast<mlir::FileLineColLoc>(operation->getLoc()))
+    return {location.getLine(), location.getColumn()};
+  return {1, 1};
+}
+
+static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
+  auto files = module.getOps<sdf::SDFDelayFileOp>();
+  if (!llvm::hasSingleElement(files))
+    return std::nullopt;
+  sdf::SDFDelayFileOp file = *files.begin();
+  ParsedSDF result;
+  if (auto divider = file.getDividerAttr())
+    result.divider = divider.getValue().front();
+  auto timescale = file.getTimescaleAttr();
+  if (!timescale)
+    return std::nullopt;
+  auto amount = parseDecimal(timescale.getAmount().getSpelling().getValue());
+  if (!amount)
+    return std::nullopt;
+  uint64_t unit = 1;
+  switch (timescale.getUnit()) {
+  case sdf::TimeUnit::Seconds:
+    unit = UINT64_C(1'000'000'000'000'000);
+    break;
+  case sdf::TimeUnit::Milliseconds:
+    unit = UINT64_C(1'000'000'000'000);
+    break;
+  case sdf::TimeUnit::Microseconds:
+    unit = UINT64_C(1'000'000'000);
+    break;
+  case sdf::TimeUnit::Nanoseconds:
+    unit = UINT64_C(1'000'000);
+    break;
+  case sdf::TimeUnit::Picoseconds:
+    unit = UINT64_C(1'000);
+    break;
+  case sdf::TimeUnit::Femtoseconds:
+    break;
+  }
+  unsigned __int128 scaled = static_cast<unsigned __int128>(amount->numerator) *
+                             static_cast<unsigned __int128>(unit);
+  if (scaled % amount->denominator)
+    return std::nullopt;
+  scaled /= amount->denominator;
+  if (!scaled || scaled > std::numeric_limits<uint64_t>::max())
+    return std::nullopt;
+  result.timeScaleFs = static_cast<uint64_t>(scaled);
+
+  for (sdf::SDFCellOp cellOp : file.getBody().front().getOps<sdf::SDFCellOp>()) {
+    ParsedCell cell;
+    std::tie(cell.line, cell.column) = sourcePosition(cellOp);
+    cell.cellType = cellOp.getCellType().str();
+    if (auto instance = cellOp.getInstanceAttr())
+      cell.instance = instance.getValue().str();
+    cell.wildcard = static_cast<bool>(cellOp.getWildcardAttr());
+    for (mlir::Operation &operation : cellOp.getBody().front()) {
+      auto pathOp = dyn_cast<sdf::SDFPathDelayOp>(operation);
+      if (!pathOp || pathOp.getKind() != sdf::PathKind::IOPath ||
+          pathOp.getMode() != sdf::DelayMode::Absolute) {
+        auto [line, column] = sourcePosition(&operation);
+        StringRef description =
+            isa<sdf::SDFTimingCheckOp>(operation) ? "TIMINGCHECK"
+                                                  : operation.getName().getStringRef();
+        cell.unsupportedTimingData.push_back(
+            {description.str(), line, column});
+        continue;
+      }
+      ParsedIOPath path;
+      std::tie(path.line, path.column) = sourcePosition(pathOp);
+      auto copyPort = [](sdf::PortAttr port) {
+        ParsedIOPath::Port result{port.getName().getValue().str(), std::nullopt};
+        if (port.getHasIndex())
+          result.index = static_cast<int32_t>(port.getIndex());
+        return result;
+      };
+      path.input = copyPort(pathOp.getInput());
+      path.output = copyPort(pathOp.getOutput());
+      if (pathOp.getInput().getEdge() == sdf::Edge::Posedge)
+        path.edge = slang::ast::EdgeKind::PosEdge;
+      else if (pathOp.getInput().getEdge() == sdf::Edge::Negedge)
+        path.edge = slang::ast::EdgeKind::NegEdge;
+      for (mlir::Attribute attribute : pathOp.getDelays()) {
+        auto value = cast<sdf::DelayValueAttr>(attribute);
+        if (value.getForm() == sdf::DelayValueForm::Empty || !value.getTyp()) {
+          path.delays.push_back(std::nullopt);
+          continue;
+        }
+        auto exact = parseDecimal(value.getTyp().getSpelling().getValue());
+        if (!exact)
+          return std::nullopt;
+        path.delays.push_back(*exact);
+      }
+      cell.paths.push_back(std::move(path));
+    }
+    result.cells.push_back(std::move(cell));
+  }
+  return result;
+}
+
 } // namespace
 
 const SDFAnnotationDatabase::DelayVector *
@@ -912,6 +1597,7 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
            SmallVector<const slang::ast::TimingPathSymbol *, 4>>
       pathCache;
   bool invalid = false;
+  mlir::MLIRContext sdfContext;
 
   for (const DesignInventory::AnnotationCall &annotationCall :
        inventory.calls) {
@@ -955,8 +1641,13 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       invalid = true;
       continue;
     }
+    // IEEE 1800-2017 Clause 32: production and the translation test harness
+    // share one normalized parser/verifier boundary.  Resolution consumes the
+    // transient IR here; no obelisk_sdf operation reaches semantic IR.
+    auto sdfModule =
+        importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
     std::optional<ParsedSDF> sdf =
-        parseSDFFile(*filename, (*buffer)->getBuffer());
+        failed(sdfModule) ? std::nullopt : consumeSDFIR(**sdfModule);
     if (!sdf) {
       invalid = true;
       continue;

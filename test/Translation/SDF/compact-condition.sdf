@@ -1,0 +1,32 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (COND a&&b (IOPATH a z (1)))
+        (COND a==1 (IOPATH a z (2)))))
+    (TIMINGCHECK
+      (HOLD (COND data data!==1'b0) clk (3)))))
+
+// IEEE 1800-2017 32.4 conditions are normalized into typed postfix tokens;
+// compact operators must never disappear into a port spelling.
+// CHECK: condition = #obelisk_sdf.condition
+// CHECK-SAME: opcode = port, port = <name = "a"
+// CHECK-SAME: opcode = port, port = <name = "b"
+// CHECK-SAME: opcode = and
+// CHECK: condition = #obelisk_sdf.condition
+// CHECK-SAME: opcode = port, port = <name = "a"
+// CHECK-SAME: opcode = constant, constant = 1
+// CHECK-SAME: opcode = eq
+// CHECK: condition = <tokens =
+// CHECK-SAME: opcode = port, port = <name = "data"
+// CHECK-SAME: opcode = constant, constant = 0
+// CHECK-SAME: opcode = casene
+// CHECK-NOT: name = "a&&b"
+// CHECK-NOT: name = "a==1"

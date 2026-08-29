@@ -1,5 +1,9 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
 (DELAYFILE
   (SDFVERSION "4.0")
   (TIMESCALE 1ns)
   (VENDOR (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((x)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 )
+
+// CHECK: error: SDF nesting exceeds the supported limit of 64 lists

@@ -6,6 +6,7 @@
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
+#include "obelisk/Dialect/SDF/SDFDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
                   obelisk::runtime::ObeliskRuntimeDialect,
+                  obelisk::sdf::ObeliskSDFDialect,
                   obelisk::sim::ObeliskSimulationDialect>();
 
   return mlir::asMainReturnCode(

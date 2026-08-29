@@ -1,0 +1,17 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH a z () (::))))))
+
+// IEEE 1800-2017 32.3 gives both forms retention behavior, but normalization
+// and textual roundtrip must preserve whether a tuple was written.
+// CHECK: form = empty
+// CHECK: form = triple

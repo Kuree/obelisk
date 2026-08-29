@@ -1,0 +1,12 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (TIMINGCHECK
+      (HOLD (COND data data==1 ignored) clk (1)))))
+
+// CHECK: error: conditional timing event requires exactly one port and expression

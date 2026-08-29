@@ -2306,9 +2306,11 @@ one commit.
     `CELL`/`DELAY`/`ABSOLUTE`/`IOPATH`, edge and fixed-index endpoints, and
     one/two/three/six/twelve-value path replacement execute with exact decimal
     scaling and destination-precision rounding. Unmatched timing data warns as
-    required by 32.3. The result reuses the compact Clause 30 timing attributes;
-    there is no SDF dialect operation, runtime table, parser, or name lookup in
-    any simulation tier. Complete repeated/multiple annotation policy,
+    required by 32.3. Production and parser tests share a typed, transient
+    `obelisk_sdf` Clause 32 import boundary; production consumes and erases it
+    before semantic import. The result reuses the compact Clause 30 timing
+    attributes, so there is no runtime table, parser, SDF operation, or name
+    lookup in any simulation tier. Complete repeated/multiple annotation policy,
     configuration/log/MTM/scale arguments, conditional/device/interconnect
     delays, timing checks, labels/specparams, and pulse limits.
 42. **G7 — Protected envelopes (34), excluded.** Reject encrypted/protected IP

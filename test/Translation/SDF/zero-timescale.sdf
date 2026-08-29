@@ -1,0 +1,8 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 0e99 ns)
+  (CELL (CELLTYPE "dut") (INSTANCE)))
+
+// CHECK: error: TIMESCALE amount must be positive

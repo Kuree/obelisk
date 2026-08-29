@@ -12,6 +12,7 @@ add_mlir_library(ObeliskFrontend
   check-slang-ast-inventory
 
   LINK_LIBS PUBLIC
+  ObeliskSDFIR
   ObeliskSlangIR
   MLIRIR
   MLIRSupport

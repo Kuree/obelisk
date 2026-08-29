@@ -1,3 +1,5 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
 (DELAYFILE
   (SDFVERSION "4.0")
   (TIMESCALE 1ns)
@@ -7,3 +9,5 @@
     (DELAY
       (ABSOLUTE
         (IOPATH source destination (1) (2) (3) (4))))))
+
+// CHECK: error: 'obelisk_sdf.path_delay' op requires 1, 2, 3, 6, or 12 delay values

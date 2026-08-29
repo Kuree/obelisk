@@ -1,0 +1,11 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (DELAY (ABSOLUTE (IOPATH a&&b z (1))))))
+
+// CHECK: error: port identifier cannot contain a condition operator

@@ -9,7 +9,7 @@ from lit.llvm import llvm_config
 
 config.name = "OBELISK"
 config.test_format = lit.formats.ShTest()
-config.suffixes = [".mlir", ".sv", ".test"]
+config.suffixes = [".mlir", ".sv", ".test", ".sdf"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.obelisk_obj_root, "test")
 
@@ -85,10 +85,11 @@ tool_dirs = [
     config.obelisk_driver_dir,
     config.obelisk_filecheck_dir,
     config.obelisk_opt_dir,
+    config.obelisk_translate_dir,
     config.llvm_tools_dir,
 ]
 llvm_config.add_tool_substitutions(
-    ["obelisk", "obelisk-opt", "obelisk-sim-standard-api-test", "FileCheck",
+    ["obelisk", "obelisk-opt", "obelisk-translate", "obelisk-sim-standard-api-test", "FileCheck",
      "llvm-readelf", "llvm-strings", "mlir-opt", "mlir-runner",
      "mlir-translate", "not", "opt"],
     tool_dirs,

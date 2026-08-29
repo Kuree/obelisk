@@ -19,6 +19,7 @@ target_link_libraries(obelisk-opt
   PRIVATE
     ObeliskIR
     ObeliskRuntimeIR
+    ObeliskSDFIR
     ObeliskRuntimeToLLVM
     ObeliskSimulationIR
     ObeliskSimulationToLLVMCoroutine

@@ -1,0 +1,61 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf --mlir-print-op-generic %s | FileCheck %s --check-prefix=GENERIC
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (DESIGN "typed")
+  (DATE "today")
+  (VENDOR "obelisk")
+  (PROGRAM "obelisk-translate")
+  (VERSION "1")
+  (DIVIDER /)
+  (VOLTAGE (0.9:1.0:1.1))
+  (PROCESS "typ")
+  (TEMPERATURE (-40:25:125))
+  (TIMESCALE 1e0 ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE top/u)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (posedge a[2]) z (1) () (2:3:4))
+        (COND (a == 1'b1) (IOPATH a z (5)))
+        (CONDELSE (IOPATH a z (6)))
+        (INTERCONNECT top/a top/z (7) (8))
+        (PORT z (9))
+        (NETDELAY n (10))
+        (DEVICE (11))
+        (PATHPULSE a z (1) (2))
+        (PATHPULSEPERCENT (10) (20)))
+      (INCREMENT
+        (IOPATH a z (-0.25:0.5:1.25))))
+    (TIMINGCHECK
+      (SETUP data (posedge clk) (1))
+      (HOLD (COND data (data == 1'b1)) clk (2))
+      (SETUPHOLD data clk (1) (2))
+      (PERIOD (posedge clk) (3))
+      (WIDTH (negedge clk) (4))
+      (FULLSKEW a b (5) (6))
+      (NOCHANGE data clk (-1) (2)))
+    (LABEL
+      (LATENCY (1:2:3)))))
+
+// CHECK: obelisk_sdf.delay_file
+// CHECK-SAME: sdf_version = "4.0"
+// CHECK-SAME: timescale = #obelisk_sdf.timescale
+// CHECK: obelisk_sdf.cell
+// CHECK: obelisk_sdf.path_delay
+// CHECK-SAME: delays = [#obelisk_sdf.delay_value
+// CHECK: #obelisk_sdf.condition_token
+// CHECK: obelisk_sdf.interconnect_delay
+// CHECK: obelisk_sdf.terminal_delay
+// CHECK: obelisk_sdf.pulse
+// CHECK: obelisk_sdf.timing_check
+// CHECK: obelisk_sdf.label
+// CHECK-NOT: obelisk_sim
+// CHECK-NOT: obelisk_rt
+
+// GENERIC: "obelisk_sdf.delay_file"
+// GENERIC: "obelisk_sdf.path_delay"
+// GENERIC: #obelisk_sdf.condition<tokens = [#obelisk_sdf.condition_token

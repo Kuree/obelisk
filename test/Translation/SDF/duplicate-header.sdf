@@ -1,0 +1,10 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (TIMESCALE 10ps)
+  (CELL (CELLTYPE "dut") (INSTANCE)))
+
+// CHECK: error: duplicate singleton timescale header
+// CHECK-NOT: attribute occurs more than once

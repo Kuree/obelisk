@@ -203,6 +203,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-filecheck
   obelisk-not
   obelisk-opt
+  obelisk-translate
   obelisk-sim-standard-api-test
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )
