@@ -714,8 +714,11 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
       return status;
     obelisk_rt_program_complete_unlocked(
         context, kNativeLogicalProcessTag | token, scheduled.programOwner);
-    if (scheduled.rootProcess)
+    if (scheduled.rootProcess) {
+      if (!importNativeRootInitializerPlanesUnlocked(context))
+        return OBELISK_RT_LAYOUT_MISMATCH;
       obelisk_rt_program_seal_unlocked(context);
+    }
     obelisk_rt_reparent_process_children_unlocked(
         context, kNativeLogicalProcessTag | token, scheduled.parent);
     context->terminatedNativeProcesses.insert(token, scheduled.random);
@@ -1071,8 +1074,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       obelisk_rt_program_complete_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.programOwner);
-      if (scheduled.rootProcess)
+      if (scheduled.rootProcess) {
+        if (!importNativeRootInitializerPlanesUnlocked(context))
+          return OBELISK_RT_LAYOUT_MISMATCH;
         obelisk_rt_program_seal_unlocked(context);
+      }
       obelisk_rt_reparent_process_children_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.parent);

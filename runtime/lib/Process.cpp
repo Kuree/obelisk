@@ -4461,8 +4461,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           obelisk_rt_program_complete_unlocked(context,
                                                kNativeLogicalProcessTag | token,
                                                scheduled.programOwner);
-          if (scheduled.rootProcess)
+          if (scheduled.rootProcess) {
+            if (tier == OBELISK_RT_TIER_NATIVE &&
+                !importNativeRootInitializerPlanesUnlocked(context))
+              return OBELISK_RT_LAYOUT_MISMATCH;
             obelisk_rt_program_seal_unlocked(context);
+          }
           obelisk_rt_reparent_process_children_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token, scheduled.random);

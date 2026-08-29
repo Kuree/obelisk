@@ -552,6 +552,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   bool hasDelayedNet = false;
   bool hasInertialDriver = false;
   bool hasPassSwitch = false;
+  bool hasClockOccurrenceCondition = false;
   module.walk([&](mlir::Operation *operation) {
     if (mlir::isa<obelisk::sim::SimOverrideOp,
                   obelisk::sim::SimDynamicOverrideOp,
@@ -569,9 +570,13 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                   obelisk::sim::SimDriverDriveInertialPathStrengthPairOp>(
             operation);
     hasPassSwitch |= mlir::isa<obelisk::sim::SimPassSwitchDeclOp>(operation);
+    if (auto wait =
+            mlir::dyn_cast<obelisk::sim::SimSuspendClockSetOp>(operation))
+      hasClockOccurrenceCondition |= !wait.getConditions().empty();
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride || hasDriverNBA ||
-                      hasDelayedNet || hasInertialDriver;
+                      hasDelayedNet || hasInertialDriver ||
+                      hasClockOccurrenceCondition;
   module->setAttr("obelisk.native_scheduler",
                   obelisk::sim::NativeSchedulerModeAttr::get(
                       module.getContext(), nativeScheduler));
@@ -614,7 +619,9 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                              hasLanguageOverride || needsWaveformMetadata ||
                              hasDriverNBA || hasDelayedNet ||
                              hasInertialDriver || needsNetDriverTopology;
-  requiresStateSync |= needsSampledStatePlan && !needsDesignEncoding;
+  bool needsStandaloneStatePlan =
+      needsSampledStatePlan || hasClockOccurrenceCondition;
+  requiresStateSync |= needsStandaloneStatePlan && !needsDesignEncoding;
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA
     // shape. The coroutine pass also runs this canonicalization for native
@@ -626,13 +633,13 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
-  } else if (needsSampledStatePlan) {
+  } else if (needsStandaloneStatePlan) {
     SmallVector<obelisk::sim::SimDesignOp> designs;
     module.walk(
         [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
     if (designs.size() != 1)
       return module.emitError(
-          "sampled-state planning requires exactly one simulation design");
+          "native-state planning requires exactly one simulation design");
     FailureOr<SimulationSampledStatePlan> plan =
         planSimulationSampledState(designs.front());
     if (failed(plan))

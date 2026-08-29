@@ -274,6 +274,117 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
     rejectPlan("compute graph contains an unknown node kind");
   }
+  auto isolatesConcurrentColdActors = [&](sim::ComputeGroupAttr group) {
+    llvm::DenseSet<uint32_t> nonColdMembers;
+    bool hasConcurrentColdActor = false;
+    for (int64_t member : group.getFragments().asArrayRef()) {
+      if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
+        continue;
+      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+          nodes[static_cast<size_t>(member)]);
+      sim::SimFuncOp function =
+          fragment ? lookupFunction(fragment.getFunction().getValue())
+                   : sim::SimFuncOp{};
+      if (function && isConcurrentColdActor(function))
+        hasConcurrentColdActor = true;
+      else if (fragment)
+        nonColdMembers.insert(static_cast<uint32_t>(member));
+    }
+    if (!hasConcurrentColdActor)
+      return false;
+
+    llvm::DenseMap<uint32_t, SmallVector<uint32_t>> successors;
+    llvm::DenseMap<uint32_t, unsigned> indegree;
+    for (Attribute edgeAttribute : graph.getEdges()) {
+      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() == sim::ComputeEdgeKind::Resume ||
+          edge.getKind() == sim::ComputeEdgeKind::Spawn ||
+          !nonColdMembers.contains(edge.getSource()) ||
+          !nonColdMembers.contains(edge.getTarget()))
+        continue;
+      auto &targets = successors[edge.getSource()];
+      if (llvm::is_contained(targets, edge.getTarget()))
+        continue;
+      targets.push_back(edge.getTarget());
+    }
+
+    llvm::DenseMap<uint32_t, unsigned> discovery;
+    llvm::DenseMap<uint32_t, unsigned> lowlink;
+    llvm::DenseSet<uint32_t> onStack;
+    SmallVector<uint32_t> stack;
+    SmallVector<SmallVector<uint32_t>> components;
+    unsigned nextIndex = 0;
+    std::function<void(uint32_t)> visit = [&](uint32_t member) {
+      discovery[member] = nextIndex;
+      lowlink[member] = nextIndex++;
+      stack.push_back(member);
+      onStack.insert(member);
+      for (uint32_t successor : successors[member]) {
+        if (!discovery.count(successor)) {
+          visit(successor);
+          lowlink[member] = std::min(lowlink[member], lowlink[successor]);
+        } else if (onStack.contains(successor)) {
+          lowlink[member] = std::min(lowlink[member], discovery[successor]);
+        }
+      }
+      if (lowlink[member] != discovery[member])
+        return;
+      SmallVector<uint32_t> component;
+      while (true) {
+        uint32_t node = stack.pop_back_val();
+        onStack.erase(node);
+        component.push_back(node);
+        if (node == member)
+          break;
+      }
+      components.push_back(std::move(component));
+    };
+    for (uint32_t member : nonColdMembers)
+      if (!discovery.count(member))
+        visit(member);
+
+    llvm::DenseMap<uint32_t, unsigned> componentOf;
+    for (auto [index, component] : llvm::enumerate(components))
+      for (uint32_t member : component)
+        componentOf[member] = index;
+    llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
+    for (uint32_t member : nonColdMembers)
+      indegree.try_emplace(member, 0);
+    for (Attribute edgeAttribute : graph.getEdges()) {
+      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+          !nonColdMembers.contains(edge.getSource()) ||
+          !nonColdMembers.contains(edge.getTarget()) ||
+          componentOf[edge.getSource()] != componentOf[edge.getTarget()])
+        continue;
+      auto &targets = processSuccessors[edge.getSource()];
+      if (llvm::is_contained(targets, edge.getTarget()))
+        continue;
+      targets.push_back(edge.getTarget());
+      ++indegree[edge.getTarget()];
+    }
+    SmallVector<uint32_t> ready;
+    for (uint32_t member : nonColdMembers)
+      if (indegree[member] == 0)
+        ready.push_back(member);
+    size_t visited = 0;
+    while (!ready.empty()) {
+      uint32_t member = ready.pop_back_val();
+      ++visited;
+      for (uint32_t successor : processSuccessors[member])
+        if (--indegree[successor] == 0)
+          ready.push_back(successor);
+    }
+    if (visited != nonColdMembers.size())
+      return false;
+    // IEEE 1800-2017 Clause 31 coordinators can close scheduling SCCs around
+    // ordinary actors. Recompute the induced SCCs with every scheduling edge
+    // (all except resume/spawn, matching ComputeGraph.cpp), then apply the same
+    // ProcessOrder-cycle test used to distinguish a generic control loop from
+    // native-ready-node convergence. Any remaining procedural cycle belongs
+    // to the user design and cannot inherit coordinator-only hybrid admission.
+    return true;
+  };
   for (Attribute regionAttribute : graph.getRegions()) {
     auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
     if (!region)
@@ -283,8 +394,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       if (!group)
         continue;
       StringRef reason;
-      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
+      bool actorLocalColdLoop = false;
+      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop) {
         reason = "control-loop group requires bytecode scheduling";
+        actorLocalColdLoop = isolatesConcurrentColdActors(group);
+      }
       // Native ready-node scheduling is itself a dirty-set fixpoint: a write
       // that wakes an earlier-ranked member restarts the scan at that member.
       // Convergence SCCs therefore need no bytecode handoff.  Control loops
@@ -304,6 +418,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           continue;
         sim::SimFuncOp function =
             lookupFunction(fragment.getFunction().getValue());
+        if (actorLocalColdLoop && !isConcurrentColdActor(function))
+          continue;
         Block *block =
             function ? lookupComputeGraphBlock(function, fragment.getBlock())
                      : nullptr;

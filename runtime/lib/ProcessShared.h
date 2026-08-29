@@ -90,6 +90,7 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
                                      const uint8_t *value,
                                      const uint8_t *unknown,
                                      uint64_t bitCount);
+bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context);
 bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                      uint8_t *value, uint8_t *unknown,
                                      uint64_t bitCount);

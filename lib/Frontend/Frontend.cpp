@@ -2045,6 +2045,7 @@ private:
       SmallVector<int64_t> conditionChildren;
       SmallVector<Attribute> edges;
       SmallVector<Attribute> descriptors;
+      SmallVector<int32_t> effectiveEdges;
       SmallVector<int64_t> isTime;
       SmallVector<int64_t> timeFs;
       hasExpression.reserve(arguments.size());
@@ -2053,6 +2054,7 @@ private:
       conditionChildren.reserve(arguments.size());
       edges.reserve(arguments.size());
       descriptors.reserve(arguments.size());
+      effectiveEdges.reserve(arguments.size());
       isTime.reserve(arguments.size());
       timeFs.reserve(arguments.size());
       slang::TimeScale scale;
@@ -2132,10 +2134,44 @@ private:
             builder.getContext(), convertEnum(argument.edge)));
         SmallVector<Attribute> encoded;
         encoded.reserve(argument.edgeDescriptors.size());
-        for (const auto &descriptor : argument.edgeDescriptors)
+        uint32_t descriptorMask = 0;
+        for (const auto &descriptor : argument.edgeDescriptors) {
           encoded.push_back(builder.getStringAttr(
               StringRef(descriptor.data(), descriptor.size())));
+          auto lowerDescriptor = [](char value) {
+            return value == 'X' || value == 'Z' ? value + ('a' - 'A') : value;
+          };
+          char from = lowerDescriptor(descriptor[0]);
+          char to = lowerDescriptor(descriptor[1]);
+          if (from == '0' && to == '1')
+            descriptorMask |= 1u << 0;
+          else if (from == '0' && (to == 'x' || to == 'z'))
+            descriptorMask |= 1u << 1;
+          else if (from == '1' && to == '0')
+            descriptorMask |= 1u << 2;
+          else if (from == '1' && (to == 'x' || to == 'z'))
+            descriptorMask |= 1u << 3;
+          else if ((from == 'x' || from == 'z') && to == '0')
+            descriptorMask |= 1u << 4;
+          else if ((from == 'x' || from == 'z') && to == '1')
+            descriptorMask |= 1u << 5;
+        }
         descriptors.push_back(builder.getArrayAttr(encoded));
+        int32_t effectiveEdge = static_cast<int32_t>(convertEnum(argument.edge));
+        if (!argument.edgeDescriptors.empty()) {
+          // IEEE 1800-2017 31.5 treats Z as X in transition descriptors.
+          // Canonical descriptor sets use the existing standard-edge ABI;
+          // every proper subset remains semantic-only until exact transition
+          // classes survive scheduler publication.
+          effectiveEdge = descriptorMask == 0x23
+                              ? static_cast<int32_t>(slangir::EdgeKind::PosEdge)
+                          : descriptorMask == 0x1c
+                              ? static_cast<int32_t>(slangir::EdgeKind::NegEdge)
+                          : descriptorMask == 0x3f
+                              ? static_cast<int32_t>(slangir::EdgeKind::BothEdges)
+                              : -1;
+        }
+        effectiveEdges.push_back(effectiveEdge);
         bool time = isTimeSlot(index);
         isTime.push_back(time);
         std::optional<int64_t> frozen =
@@ -2159,6 +2195,8 @@ private:
       attrs.set("timing_check_arg_edges", builder.getArrayAttr(edges));
       attrs.set("timing_check_arg_edge_descriptors",
                 builder.getArrayAttr(descriptors));
+      attrs.set("timing_check_arg_effective_edges",
+                builder.getDenseI32ArrayAttr(effectiveEdges));
       attrs.set("timing_check_arg_is_time",
                 builder.getDenseI64ArrayAttr(isTime));
       if (staticTimes)
@@ -2190,9 +2228,13 @@ private:
       if ((singleLimit || combined) && staticTimes &&
           arguments.size() >= requiredArguments &&
           arguments[0].expr && arguments[1].expr &&
-          !arguments[0].condition && !arguments[1].condition &&
-          arguments[0].edgeDescriptors.empty() &&
-          arguments[1].edgeDescriptors.empty() &&
+          (!arguments[0].condition ||
+           arguments[0].condition
+               ->template as_if<slang::ast::NamedValueExpression>()) &&
+          (!arguments[1].condition ||
+           arguments[1].condition
+               ->template as_if<slang::ast::NamedValueExpression>()) &&
+          effectiveEdges[0] >= 0 && effectiveEdges[1] >= 0 &&
           !unsupportedCombinedOption)
         attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
     }

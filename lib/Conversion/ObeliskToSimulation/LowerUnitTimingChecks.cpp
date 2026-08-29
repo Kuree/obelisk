@@ -15,11 +15,16 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   auto kindAttr = function->getAttrOfType<IntegerAttr>("timing_check_kind");
   auto expressionChildren = function->getAttrOfType<DenseI64ArrayAttr>(
       "timing_check_arg_expression_children");
-  auto edges = function->getAttrOfType<ArrayAttr>("timing_check_arg_edges");
+  auto conditionChildren = function->getAttrOfType<DenseI64ArrayAttr>(
+      "timing_check_arg_condition_children");
+  auto edges = function->getAttrOfType<DenseI32ArrayAttr>(
+      "timing_check_arg_effective_edges");
   auto ticks = function->getAttrOfType<DenseI64ArrayAttr>(
       "obelisk_sim.timing_check_arg_ticks");
-  if (!kindAttr || !expressionChildren || !edges || !ticks ||
-      static_cast<size_t>(expressionChildren.size()) != edges.size() ||
+  if (!kindAttr || !expressionChildren || !conditionChildren || !edges ||
+      !ticks || expressionChildren.size() != conditionChildren.size() ||
+      static_cast<size_t>(expressionChildren.size()) !=
+          static_cast<size_t>(edges.size()) ||
       expressionChildren.size() != ticks.size() ||
       expressionChildren.size() < 3)
     return function.emitError("basic timing check has a malformed frozen ABI");
@@ -43,7 +48,9 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         "basic timing check has no direct events or limit");
 
   SmallVector<Value, 2> handles;
+  SmallVector<Value, 2> conditions;
   SmallVector<int32_t, 2> eventEdges;
+  SmallVector<int32_t, 2> conditionIndices(2, -1);
   std::array<Operation *, 2> events{event0, event1};
   for (auto [index, event] : llvm::enumerate(events)) {
     FailureOr<Value> handle = lowerExpression(event, true);
@@ -52,12 +59,73 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
             succeeded(handle) ? (*handle).getType() : Type{}))
       return function.emitError(
           "basic timing-check event is not a direct signal handle");
-    auto edge = dyn_cast<semantic::EdgeKindAttr>(edges[index]);
-    if (!edge)
+    int32_t edge = edges[index];
+    if (edge < static_cast<int32_t>(sim::EdgeKind::Change) ||
+        edge > static_cast<int32_t>(sim::EdgeKind::Both))
       return function.emitError(
           "basic timing-check event has an invalid edge");
+    // IEEE 1800-2017 31.8 defines one timing check when one or more bits of
+    // a vector transition change. Preserve the whole direct handle: the
+    // existing subscription scan reduces matching bits to one publication
+    // occurrence.
     handles.push_back(*handle);
-    eventEdges.push_back(static_cast<int32_t>(edge.getValue()));
+    eventEdges.push_back(edge);
+
+    int64_t conditionChild = conditionChildren[index];
+    if (conditionChild < 0)
+      continue;
+    if (static_cast<size_t>(conditionChild) >= roots.size())
+      return function.emitError(
+          "basic timing-check condition has an invalid child");
+    FailureOr<Value> condition =
+        lowerExpression(roots[conditionChild], true);
+    if (failed(condition) ||
+        !isa<sim::RefType, sim::NetType, sim::DriverType>(
+            succeeded(condition) ? (*condition).getType() : Type{}))
+      return function.emitError(
+          "basic timing-check condition is not a direct signal handle");
+
+    Type elementType;
+    if (auto ref = dyn_cast<sim::RefType>((*condition).getType()))
+      elementType = ref.getElementType();
+    else if (auto net = dyn_cast<sim::NetType>((*condition).getType()))
+      elementType = net.getElementType();
+    else
+      elementType = cast<sim::DriverType>((*condition).getType()).getElementType();
+    std::optional<unsigned> width = sim::getPackedWidth(elementType);
+    if (!width || *width == 0)
+      return function.emitError(
+          "basic timing-check condition has no packed LSB");
+    if (*width != 1) {
+      Type scalar = sim::getPackedScalarType(elementType);
+      Type bitType = isa<sim::LogicType>(scalar)
+                         ? Type(sim::LogicType::get(function.getContext(), 1))
+                         : Type(builder.getI1Type());
+      if (isa<sim::RefType>((*condition).getType())) {
+        Type type = sim::RefType::get(function.getContext(), bitType);
+        condition = sim::SimRefExtractOp::create(
+                        builder, location, type, *condition,
+                        builder.getI64IntegerAttr(0))
+                        .getResult();
+      } else if (isa<sim::NetType>((*condition).getType())) {
+        Type type = sim::NetType::get(function.getContext(), bitType);
+        condition = sim::SimNetExtractOp::create(
+                        builder, location, type, *condition,
+                        builder.getI64IntegerAttr(0))
+                        .getResult();
+      } else {
+        Type type = sim::DriverType::get(function.getContext(), bitType);
+        condition = sim::SimDriverExtractOp::create(
+                        builder, location, type, *condition,
+                        builder.getI64IntegerAttr(0))
+                        .getResult();
+      }
+    }
+    // IEEE 1800-2017 31.7 samples only the condition's LSB at the event.
+    // A bare condition enables only on a known one, exactly matching the
+    // existing publication-time clock-condition handle semantics.
+    conditionIndices[index] = static_cast<int32_t>(conditions.size());
+    conditions.push_back(*condition);
   }
 
   std::optional<CapturedLValue> notifier;
@@ -112,10 +180,14 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   emitBranch(wait);
 
   setCurrent(wait);
+  SmallVector<Value, 4> waitValues;
+  llvm::append_range(waitValues, handles);
+  llvm::append_range(waitValues, conditions);
   sim::SimSuspendClockSetOp::create(
-      builder, location, handles, builder.getI32IntegerAttr(0),
+      builder, location, waitValues,
+      builder.getI32IntegerAttr(conditions.size()),
       builder.getDenseI32ArrayAttr(eventEdges),
-      builder.getDenseI32ArrayAttr({-1, -1}),
+      builder.getDenseI32ArrayAttr(conditionIndices),
       builder.getI64IntegerAttr(occurrenceSite), sim::ContinuationSiteAttr{},
       sim::EventRegionAttr::get(function.getContext(),
                                 sim::EventRegion::Active),

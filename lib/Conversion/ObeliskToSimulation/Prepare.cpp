@@ -8540,7 +8540,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           "obelisk_sim.timing_check_coordinator", builder.getUnitAttr()));
       for (StringRef name : {"timing_check_kind",
                              "timing_check_arg_expression_children",
-                             "timing_check_arg_edges"}) {
+                             "timing_check_arg_condition_children",
+                             "timing_check_arg_effective_edges"}) {
         Attribute value = unit.source->getAttr(name);
         if (!value) {
           emitError(getSemanticLocation(unit.source))

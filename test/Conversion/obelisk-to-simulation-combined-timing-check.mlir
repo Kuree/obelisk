@@ -22,6 +22,14 @@ module {
           hierarchical_name = "top.data", lifetime = 1 : i32,
           name = "data", node_id = 4 : i64, semantic_type = !logic1,
           sym_name = "data"} {}
+      obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.reference_condition", lifetime = 1 : i32,
+          name = "reference_condition", node_id = 11 : i64,
+          semantic_type = !logic1, sym_name = "reference_condition"} {}
+      obelisk.sv.symbol.variable attributes {
+          hierarchical_name = "top.data_condition", lifetime = 1 : i32,
+          name = "data_condition", node_id = 12 : i64,
+          semantic_type = !logic1, sym_name = "data_condition"} {}
       obelisk.sv.symbol.specify_block attributes {
           hierarchical_name = "top", node_id = 5 : i64,
           sym_name = "specify"} {
@@ -33,11 +41,12 @@ module {
             timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,
             timing_check_arg_has_expression = array<i64: 1, 1, 1, 1>,
-            timing_check_arg_has_condition = array<i64: 0, 0, 0, 0>,
-            timing_check_arg_expression_children = array<i64: 0, 1, 2, 3>,
-            timing_check_arg_condition_children = array<i64: -1, -1, -1, -1>,
+            timing_check_arg_has_condition = array<i64: 1, 1, 0, 0>,
+            timing_check_arg_expression_children = array<i64: 0, 2, 4, 5>,
+            timing_check_arg_condition_children = array<i64: 1, 3, -1, -1>,
             timing_check_arg_edges = [1 : i32, 1 : i32, 0 : i32, 0 : i32],
             timing_check_arg_edge_descriptors = [[], [], [], []],
+            timing_check_arg_effective_edges = array<i32: 1, 1, 0, 0>,
             timing_check_arg_is_time = array<i64: 0, 0, 1, 1>,
             timing_check_arg_time_fs = array<i64: 0, 0, 3000000, 5000000>} {
           obelisk.sv.expression.named_value attributes {
@@ -45,8 +54,16 @@ module {
               referenced_symbol = @root::@body::@reference,
               semantic_type = !logic1} {}
           obelisk.sv.expression.named_value attributes {
+              node_id = 13 : i64, referenced_path = "top.reference_condition",
+              referenced_symbol = @root::@body::@reference_condition,
+              semantic_type = !logic1} {}
+          obelisk.sv.expression.named_value attributes {
               node_id = 8 : i64, referenced_path = "top.data",
               referenced_symbol = @root::@body::@data,
+              semantic_type = !logic1} {}
+          obelisk.sv.expression.named_value attributes {
+              node_id = 14 : i64, referenced_path = "top.data_condition",
+              referenced_symbol = @root::@body::@data_condition,
               semantic_type = !logic1} {}
           obelisk.sv.expression.integer_literal attributes {
               node_id = 9 : i64, constant_value = "3",
@@ -65,7 +82,7 @@ module {
 // CHECK-SAME: obelisk_sim.timing_check_coordinator
 // CHECK: cf.br ^{{.*}}({{.*}} : i64, i1, i64, i1)
 // CHECK: obelisk_sim.suspend.clock_set
-// CHECK-SAME: conditions 0 edges [1, 1]
+// CHECK-SAME: conditions 2 edges [1, 1] indices [0, 1]
 // CHECK: obelisk_sim.assert.clock_occurrence.consume
 // CHECK-COUNT-2: arith.cmpi ult
 // CHECK: arith.ori

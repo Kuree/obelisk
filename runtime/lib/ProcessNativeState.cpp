@@ -140,6 +140,22 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
   return true;
 }
 
+bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context) {
+  if (!context || !context->nativeStateValue || !context->nativeStateUnknown)
+    return true;
+  if (!context->execution ||
+      context->nativeStateBitCount < context->execution->state_bit_count)
+    return false;
+  // IEEE 1800-2017 Clause 31.7 conditions are sampled when the monitored
+  // event is published. Native root initialization deliberately stores
+  // directly into the generated planes without publishing transitions, so
+  // mirror that one-time initialized state into the canonical runtime plane
+  // before any spawned timing-check coordinator can observe an event.
+  return importNativeStatePlanesUnlocked(context, context->nativeStateValue,
+                                         context->nativeStateUnknown,
+                                         context->execution->state_bit_count);
+}
+
 bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                      uint8_t *value, uint8_t *unknown,
                                      uint64_t bitCount) {

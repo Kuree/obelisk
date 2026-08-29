@@ -1,0 +1,95 @@
+// RUN: obelisk-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' \
+// RUN:   2>&1 | FileCheck %s
+
+// A Clause 31 coordinator can join ordinary actors in one control-loop SCC.
+// Removing the proven cold actor leaves an acyclic induced process-order
+// graph, so only that coordinator becomes a bytecode island.
+// CHECK: native-aot eligible=true fully=false{{.*}}forced_hybrid=true
+// CHECK-NEXT: actor 0 @root
+// CHECK-NEXT: actor 1 @ordinary
+// CHECK-NEXT: bytecode @coordinator bb1
+// CHECK: reason clock cohort wait requires runtime ordering
+// CHECK: reason control-loop group requires bytecode scheduling
+
+module {
+  obelisk_sim.design @collateral attributes {
+    compute_graph = #obelisk_sim.graph<
+      version = 1, vpi = off, workers = 1,
+      nodes = [
+        #obelisk_sim.fragment<id = 0, function = @root, block = 0,
+          region = active, action = terminate, tier = native, cost = 1,
+          lane = 0, twoState = true, effects = []>,
+        #obelisk_sim.fragment<id = 1, function = @coordinator, block = 0,
+          region = active, action = continue, tier = native, cost = 1,
+          lane = 0, twoState = true, effects = []>,
+        #obelisk_sim.fragment<id = 2, function = @coordinator, block = 1,
+          region = active, action = suspend_any, tier = native, cost = 1,
+          lane = 0, twoState = true, effects = []>,
+        #obelisk_sim.fragment<id = 3, function = @ordinary, block = 0,
+          region = active, action = terminate, tier = native, cost = 1,
+          lane = 0, twoState = true, effects = []>
+      ],
+      edges = [
+        #obelisk_sim.edge<source = 0, target = 1, kind = spawn>,
+        #obelisk_sim.edge<source = 0, target = 3, kind = spawn>,
+        #obelisk_sim.edge<source = 1, target = 2, kind = process_order>,
+        #obelisk_sim.edge<source = 2, target = 3, kind = process_order>,
+        #obelisk_sim.edge<source = 3, target = 2, kind = process_order>
+      ],
+      regions = [
+        #obelisk_sim.region<kind = active, groups = [
+          #obelisk_sim.group<fragments = [0], schedule = acyclic,
+            feedback = []>,
+          #obelisk_sim.group<fragments = [1], schedule = acyclic,
+            feedback = []>,
+          #obelisk_sim.group<fragments = [2, 3], schedule = control_loop,
+            feedback = []>
+        ]>,
+        #obelisk_sim.region<kind = nba, groups = []>,
+        #obelisk_sim.region<kind = observed, groups = []>,
+        #obelisk_sim.region<kind = reactive, groups = []>,
+        #obelisk_sim.region<kind = postponed, groups = []>
+      ]>
+  } {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
+    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "coordinator"
+    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "ordinary"
+
+    obelisk_sim.func @root(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clock = obelisk_sim.context.storage %ctx[0] :
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %coordinator = obelisk_sim.spawn @coordinator(%ctx, %clock) :
+          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> ->
+          !obelisk_sim.process
+      %ordinary = obelisk_sim.spawn @ordinary(%ctx) :
+          !obelisk_sim.context -> !obelisk_sim.process
+      obelisk_sim.return
+    }
+
+    obelisk_sim.func private @coordinator(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 0 : i64})
+        attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
+                    domain = 0 : i32, home_region = 2 : i32,
+                    obelisk_sim.timing_check_coordinator} {
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
+          indices [-1] site 23 to ^wait :
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+    }
+
+    obelisk_sim.func @ordinary(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+      obelisk_sim.return
+    }
+  }
+}

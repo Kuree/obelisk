@@ -38,6 +38,7 @@ module {
             timing_check_arg_condition_children = array<i64: -1, -1, -1>,
             timing_check_arg_edges = [1 : i32, 1 : i32, 0 : i32],
             timing_check_arg_edge_descriptors = [[], [], []],
+            timing_check_arg_effective_edges = array<i32: 1, 1, 0>,
             timing_check_arg_is_time = array<i64: 0, 0, 1>,
             timing_check_arg_time_fs = array<i64: 0, 0, 3000000>} {
           obelisk.sv.expression.named_value attributes {
