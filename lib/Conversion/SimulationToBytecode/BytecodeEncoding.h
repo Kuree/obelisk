@@ -111,6 +111,8 @@ constexpr uint32_t kIntrinsicInertialPathStorage =
     OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE;
 constexpr uint32_t kIntrinsicEventTrigger =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER;
+constexpr uint32_t kIntrinsicEventReplaceAfter =
+    OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER;
 constexpr uint32_t kIntrinsicEventTriggered =
     OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED;
 constexpr uint32_t kIntrinsicWaitOrderFailed =

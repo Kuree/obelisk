@@ -535,6 +535,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     SmallVector<Value> inputs{op.getEvent()};
     if (op.getDelay())
       inputs.push_back(op.getDelay());
+    if (op.getReplaceable())
+      return emitIntrinsic(plan, kIntrinsicEventReplaceAfter, inputs, {});
     return emitIntrinsic(plan, kIntrinsicEventTrigger, inputs, {},
                          op.getNonblocking() ? 1 : 0);
   }

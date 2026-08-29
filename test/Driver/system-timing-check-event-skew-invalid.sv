@@ -11,7 +11,7 @@ module system_timing_check_event_skew_invalid(
   endspecify
 endmodule
 
-// IEEE 1800-2017 31.4.2/.3 default to timer mode. This tranche requires an
-// exactly constant, known, nonzero event_based_flag and a frozen
-// remain_active_flag; it never approximates timer or runtime-selected modes.
-// CHECK-COUNT-4: error: IEEE 1800-2017 Clause 31 system timing checks are retained in semantic IR but are not executable yet
+// IEEE 1800-2017 31.4.2/.3 default to timer mode; absent and explicit-zero
+// event_based flags are executable. An unknown mode remains diagnostic rather
+// than selecting timer or event behavior dynamically.
+// CHECK-COUNT-1: error: IEEE 1800-2017 Clause 31 system timing checks are retained in semantic IR but are not executable yet

@@ -3932,7 +3932,8 @@ def SimEventTriggerOp
             [MemoryEffects<[MemWrite<SimSchedulerResource>]>]> {
   let arguments = (ins SimEventType : $event, Optional<SimTimeType>:$delay,
                        BoolAttr : $nonblocking,
-                       OptionalAttr<SimEventSiteAttr>:$site);
+                       OptionalAttr<SimEventSiteAttr>:$site,
+                       OptionalAttr<UnitAttr>:$replaceable);
   let assemblyFormat = "$event (`after` $delay^)? `nonblocking` `=` "
                        "$nonblocking attr-dict";
   let hasVerifier = 1;

@@ -810,7 +810,7 @@ UnitLowering::lowerClockingEventMonitor(ArrayRef<Operation *> roots) {
   setCurrent(trigger);
   sim::SimEventTriggerOp::create(builder, location, event, Value{},
                                  builder.getBoolAttr(false),
-                                 sim::EventSiteAttr{});
+                                 sim::EventSiteAttr{}, UnitAttr{});
   cf::BranchOp::create(builder, location, wait);
   return success();
 }
@@ -1466,7 +1466,7 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
   }
   sim::SimEventTriggerOp::create(builder, location, *event, delay,
                                  builder.getBoolAttr(op.getIsNonblocking()),
-                                 sim::EventSiteAttr{});
+                                 sim::EventSiteAttr{}, UnitAttr{});
   return success();
 }
 

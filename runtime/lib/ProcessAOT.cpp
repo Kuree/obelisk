@@ -2368,6 +2368,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       considerDeadline(update.dueTime);
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
       considerDeadline(event.dueTime);
+    if (const ReplaceableEventFeatureState *replaceable =
+            obelisk_rt_replaceable_events(context);
+        replaceable && !replaceable->calendar.empty())
+      considerDeadline(replaceable->calendar.begin()->first.first);
     if (!context->scheduledPassSwitchEvents.empty())
       considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
     outControl->next_runtime_deadline = nextRuntimeDeadline;
@@ -2779,6 +2783,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
       appendNBA(nba.execRegion, nba.sequence, nba.dueTime);
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
       appendNBA(event.execRegion, event.sequence, event.dueTime);
+    if (const ReplaceableEventFeatureState *replaceable =
+            obelisk_rt_replaceable_events(context))
+      for (const auto &entry : replaceable->calendar) {
+        const ScheduledDesignEvent &event = entry.second;
+        appendNBA(event.execRegion, event.sequence, event.dueTime);
+      }
     for (const auto &entry : context->scheduledPassSwitchEvents)
       appendNBA(OBELISK_RT_REGION_ACTIVE, entry.first.second,
                 entry.first.first);
@@ -3179,6 +3189,9 @@ retryNativeSchedule:;
     pendingNBAs += context->scheduledManagedNBAs.size();
     pendingNBAs += context->scheduledDesignNBAs.size();
     pendingNBAs += context->scheduledDesignEvents.size();
+    if (const ReplaceableEventFeatureState *replaceable =
+            obelisk_rt_replaceable_events(context))
+      pendingNBAs += replaceable->calendar.size();
     pendingNBAs += context->scheduledPassSwitchEvents.size();
     for (const StaticNBAAccumulator &accumulator :
          context->staticNBAAccumulators)
@@ -3262,6 +3275,12 @@ retryNativeSchedule:;
       validateNBA(nba.execRegion, nba.sequence, nba.dueTime);
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
       validateNBA(event.execRegion, event.sequence, event.dueTime);
+    if (const ReplaceableEventFeatureState *replaceable =
+            obelisk_rt_replaceable_events(context))
+      for (const auto &entry : replaceable->calendar) {
+        const ScheduledDesignEvent &event = entry.second;
+        validateNBA(event.execRegion, event.sequence, event.dueTime);
+      }
     for (const auto &entry : context->scheduledPassSwitchEvents)
       validateNBA(OBELISK_RT_REGION_ACTIVE, entry.first.second,
                   entry.first.first);

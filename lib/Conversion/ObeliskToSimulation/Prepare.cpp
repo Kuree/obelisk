@@ -8553,10 +8553,36 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (invalid)
         continue;
-      for (StringRef name : {"timing_check_event_based",
-                             "timing_check_remain_active"})
+      for (StringRef name :
+           {"timing_check_event_based", "timing_check_remain_active"})
         if (Attribute value = unit.source->getAttr(name))
           functionAttrs.push_back(builder.getNamedAttr(name, value));
+      auto timingKind =
+          unit.source->getAttrOfType<IntegerAttr>("timing_check_kind");
+      auto eventBased =
+          unit.source->getAttrOfType<BoolAttr>("timing_check_event_based");
+      if (timingKind &&
+          (timingKind.getInt() == 8 || timingKind.getInt() == 9) &&
+          eventBased && !eventBased.getValue()) {
+        if (nextStorageId == UINT64_MAX) {
+          emitError(getSemanticLocation(unit.source))
+              << "timer timing check exceeds the storage descriptor space";
+          invalid = true;
+          continue;
+        }
+        uint64_t timerStorageID = nextStorageId++;
+        std::string hierarchy =
+            (Twine("__obelisk_timing_timer_") + Twine(unit.id)).str();
+        sim::SimStorageDeclOp::create(
+            builder, getSemanticLocation(unit.source), timerStorageID, scopeID,
+            builder.getI1Type(), sim::Lifetime::Design,
+            builder.getStringAttr(hierarchy),
+            builder.getStringAttr("timing-check timer deadline"),
+            sim::ComputeObservabilityKindAttr{});
+        functionAttrs.push_back(
+            builder.getNamedAttr("obelisk_sim.timing_timer_storage",
+                                 builder.getI64IntegerAttr(timerStorageID)));
+      }
     }
     if (auto delays =
             unit.source->getAttrOfType<DenseI64ArrayAttr>("delay_fs")) {
@@ -10983,6 +11009,137 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
     }
     llvm::append_range(units, generatedUnits);
+  }
+  if (invalid)
+    return abort();
+
+  // Timer-skew helpers are sibling code units, so inventory and materialize
+  // them here in the serial module pass. The nested per-function lowering is
+  // deliberately limited to its own body and may only consume these frozen
+  // symbols (MLIR pass isolation and symbol-table mutation rules).
+  {
+    llvm::StringSet<> functionSymbols;
+    llvm::DenseSet<uint64_t> codeUnitIDs;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>()) {
+      if (!functionSymbols.insert(function.getSymName()).second) {
+        function.emitError("duplicate prepared code-unit symbol");
+        invalid = true;
+      }
+      if (auto id = function.getCodeUnitId();
+          id && !codeUnitIDs.insert(*id).second) {
+        function.emitError("duplicate prepared stable code-unit ID");
+        invalid = true;
+      }
+    }
+    llvm::DenseSet<uint64_t> declarationIDs;
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+      if (!declarationIDs.insert(declaration.getId()).second) {
+        declaration.emitError("duplicate stable code-unit declaration ID");
+        invalid = true;
+      }
+      codeUnitIDs.insert(declaration.getId());
+    }
+    if (invalid)
+      return abort();
+
+    OpBuilder helperBuilder = OpBuilder::atBlockEnd(&design.getBody().front());
+    for (PreparedUnit &unit : units) {
+      sim::SimFuncOp coordinator = unit.function;
+      if (!coordinator ||
+          !coordinator->hasAttr("obelisk_sim.timing_timer_storage"))
+        continue;
+      Location location = getSemanticLocation(unit.source);
+      std::string helperSymbol =
+          (coordinator.getSymName() + ".$timing_timer").str();
+      std::string helperHierarchy = helperSymbol;
+      uint64_t helperCodeUnit = stableCodeUnitID(helperHierarchy);
+      if (!functionSymbols.insert(helperSymbol).second ||
+          !codeUnitIDs.insert(helperCodeUnit).second) {
+        emitError(location)
+            << "timer timing-check helper symbol or stable code-unit ID "
+               "collides for '"
+            << helperHierarchy << "'";
+        invalid = true;
+        continue;
+      }
+      sim::SimCodeUnitDeclOp parentDeclaration =
+          codeUnitDeclarations.lookup(unit.source);
+      if (!parentDeclaration) {
+        emitError(location)
+            << "timer timing-check coordinator has no code-unit declaration";
+        invalid = true;
+        continue;
+      }
+      sim::SimCodeUnitDeclOp::create(
+          helperBuilder, location, helperCodeUnit,
+          parentDeclaration.getScopeId(), sim::EntryKind::Always,
+          helperBuilder.getStringAttr(helperHierarchy),
+          helperBuilder.getStringAttr("timing-check timer maturity helper"),
+          helperBuilder.getUnitAttr());
+
+      Type contextType = sim::ContextType::get(context);
+      Type eventType = sim::EventType::get(context);
+      Type signalType = sim::RefType::get(context, helperBuilder.getI1Type());
+      SmallVector<Type> inputs{contextType, eventType, signalType};
+      SmallVector<DictionaryAttr> argumentAttrs{
+          captureMetadata(helperBuilder, sim::CaptureKind::Context),
+          captureMetadata(helperBuilder, sim::CaptureKind::Formal),
+          captureMetadata(helperBuilder, sim::CaptureKind::Formal)};
+      SmallVector<NamedAttribute> attrs{
+          helperBuilder.getNamedAttr(
+              "code_unit_id", helperBuilder.getI64IntegerAttr(helperCodeUnit)),
+          helperBuilder.getNamedAttr("internal", helperBuilder.getUnitAttr()),
+          helperBuilder.getNamedAttr("obelisk_sim.skew_deadline_helper",
+                                     helperBuilder.getUnitAttr()),
+          helperBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)),
+          helperBuilder.getNamedAttr("domain", coordinator.getDomainAttr()),
+          helperBuilder.getNamedAttr(
+              sim::metadata::hierarchicalName,
+              helperBuilder.getStringAttr(helperHierarchy))};
+      sim::SimFuncOp helper = sim::SimFuncOp::create(
+          helperBuilder, location, helperSymbol,
+          FunctionType::get(context, inputs, TypeRange{}),
+          sim::EntryKind::Always, attrs, argumentAttrs);
+      SymbolTable::setSymbolVisibility(helper,
+                                       SymbolTable::Visibility::Private);
+
+      Block &entry = helper.getBody().front();
+      Block *wait = new Block();
+      Block *publish = new Block();
+      helper.getBody().push_back(wait);
+      helper.getBody().push_back(publish);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      cf::BranchOp::create(entryBuilder, location, wait);
+      OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+      sim::SimSuspendEventOp::create(
+          waitBuilder, location, entry.getArgument(1), ValueRange{},
+          sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
+          publish);
+      OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
+      Value oldSignal = sim::SimRefLoadOp::create(publishBuilder, location,
+                                                  publishBuilder.getI1Type(),
+                                                  entry.getArgument(2));
+      Value one = arith::ConstantOp::create(publishBuilder, location,
+                                            publishBuilder.getI1Type(),
+                                            publishBuilder.getBoolAttr(true));
+      Value nextSignal =
+          arith::XOrIOp::create(publishBuilder, location, oldSignal, one);
+      // IEEE 1800-2017 31.4.2/.3: the delayed event matures in Re-NBA; this
+      // once-spawned Reactive helper publishes only a private scalar, leaving
+      // the exact coordinator to decide expiry after all producer regions.
+      sim::SimRefStoreOp::create(publishBuilder, location, nextSignal,
+                                 entry.getArgument(2));
+      cf::BranchOp::create(publishBuilder, location, wait);
+      helper->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
+      coordinator->setAttr(
+          "obelisk_sim.timing_timer_helper",
+          FlatSymbolRefAttr::get(context, helper.getSymName()));
+    }
   }
   if (invalid)
     return abort();

@@ -1183,6 +1183,10 @@ enum {
   OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE = UINT32_C(0x00010248),
   OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME = UINT32_C(0x00010249),
   OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR = UINT32_C(0x0001024a),
+  // Compiler-private replace/cancel service for one static Clause 31 timer.
+  // Keeping this separate preserves the ordinary EVENT_TRIGGER bytecode hot
+  // case and its flags ABI exactly.
+  OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER = UINT32_C(0x0001024b),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3603,6 +3607,13 @@ obelisk_rt_v1_scheduler_event_create(obelisk_rt_context *context,
 void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
                                          uint64_t stable_id,
                                          uint32_t nonblocking, uint64_t delay);
+// Schedule, replace, or cancel the one delayed nonblocking occurrence owned
+// by a compiler-private timing event. `active == 0` cancels; otherwise the
+// deadline uses the scheduler's saturating time arithmetic. This cold service
+// leaves ordinary named-event scheduling and its ABI path unchanged.
+void obelisk_rt_v1_scheduler_event_replace_after(
+    obelisk_rt_context *context, uint64_t stable_id, uint32_t active,
+    uint64_t delay);
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
 uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);

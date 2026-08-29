@@ -73,6 +73,8 @@ LogicalResult SimTimeFromRealOp::verify() {
 LogicalResult SimEventTriggerOp::verify() {
   if (getDelay() && !getNonblocking())
     return emitOpError("a delayed named-event trigger must be nonblocking");
+  if (getReplaceable() && !getNonblocking())
+    return emitOpError("a replaceable named-event timer must be nonblocking");
   return success();
 }
 

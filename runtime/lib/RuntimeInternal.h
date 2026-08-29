@@ -976,6 +976,28 @@ struct ClockOccurrenceBucketEntry {
   size_t slotIndex = 0;
 };
 
+using ReplaceableEventCalendar =
+    std::map<std::pair<uint64_t, uint64_t>, ScheduledDesignEvent>;
+
+struct ReplaceableEventPending {
+  uint64_t ownerToken = 0;
+  uint64_t generation = 0;
+  bool scheduled = false;
+  ReplaceableEventCalendar::iterator event;
+};
+
+struct ReplaceableEventFeatureState {
+  ReplaceableEventCalendar calendar;
+  // One fixed record per compiler-private static timer retains the monotonic
+  // generation after cancel/maturity. This bounded inventory is released with
+  // the owning clock-occurrence feature during process teardown.
+  std::unordered_map<uint64_t, ReplaceableEventPending> pending;
+  // Per-owner inventory makes coordinator teardown proportional only to that
+  // coordinator's fixed static timer count. Calendar removal remains O(log N)
+  // and another coordinator's pending deadline is never inspected or erased.
+  std::unordered_map<uint64_t, std::vector<uint64_t>> ownedTimers;
+};
+
 struct ClockOccurrenceFeatureState {
   std::unordered_map<uint64_t, ClockOccurrenceWaitState> waits;
   std::unordered_map<SignalSubscriptionBucketKey,
@@ -986,6 +1008,11 @@ struct ClockOccurrenceFeatureState {
                      std::vector<std::unique_ptr<ClockOccurrenceSubscription>>>
       subscriptions;
   uint64_t conditionalWaitCount = 0;
+  // Timer-mode Clause 31.4.2/.3 checks are the only users of replaceable
+  // named-event deadlines. Keep their indexed calendar behind the already
+  // cold clock-occurrence feature and one further null pointer so ordinary
+  // waits, named events, and event-based timing checks construct no map.
+  std::unique_ptr<ReplaceableEventFeatureState> replaceableEvents;
 };
 
 constexpr uint64_t kRecursiveWatchGroupBit = UINT64_C(1) << 63;
@@ -1710,6 +1737,20 @@ struct obelisk_rt_context {
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
+
+inline ReplaceableEventFeatureState *
+obelisk_rt_replaceable_events(obelisk_rt_context *context) {
+  return context && context->clockOccurrences
+             ? context->clockOccurrences->replaceableEvents.get()
+             : nullptr;
+}
+
+inline const ReplaceableEventFeatureState *
+obelisk_rt_replaceable_events(const obelisk_rt_context *context) {
+  return context && context->clockOccurrences
+             ? context->clockOccurrences->replaceableEvents.get()
+             : nullptr;
+}
 
 inline void
 obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {

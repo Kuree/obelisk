@@ -2874,7 +2874,7 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
     setCurrent(trigger);
     sim::SimEventTriggerOp::create(builder, location, endpoint, Value{},
                                    builder.getBoolAttr(false),
-                                   sim::EventSiteAttr{});
+                                   sim::EventSiteAttr{}, UnitAttr{});
     emitBranch(continuation);
     setCurrent(continuation);
   };
@@ -4942,7 +4942,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                finalEntry.getArgument(3));
     sim::SimEventTriggerOp::create(
         completeBuilder, location, finalEntry.getArgument(1), Value{},
-        completeBuilder.getBoolAttr(false), sim::EventSiteAttr{});
+        completeBuilder.getBoolAttr(false), sim::EventSiteAttr{}, UnitAttr{});
     sim::SimReturnOp::create(completeBuilder, location, ValueRange{});
     OpBuilder alreadyCompleteBuilder = OpBuilder::atBlockEnd(alreadyComplete);
     sim::SimReturnOp::create(alreadyCompleteBuilder, location, ValueRange{});
@@ -5323,7 +5323,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sim::SimRefStoreOp::create(builder, location, done, expectDoneStorage);
       sim::SimEventTriggerOp::create(builder, location, completed, Value{},
                                      builder.getBoolAttr(false),
-                                     sim::EventSiteAttr{});
+                                     sim::EventSiteAttr{}, UnitAttr{});
       sim::SimReturnOp::create(builder, location, ValueRange{});
     };
     finish(successBlock, !temporalNegation);

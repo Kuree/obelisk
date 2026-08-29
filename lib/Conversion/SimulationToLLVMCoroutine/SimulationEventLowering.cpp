@@ -66,6 +66,20 @@ public:
         adaptor.getDelay().empty()
             ? llvmConstant(rewriter, location, rewriter.getI64Type(), 0)
             : adaptor.getDelay().front();
+    if (operation.getReplaceable()) {
+      LLVM::CallOp::create(
+          rewriter, location, TypeRange{},
+          SymbolRefAttr::get(
+              rewriter.getContext(),
+              "obelisk_rt_v1_scheduler_event_replace_after"),
+          ValueRange{loadCurrentRuntimeContext(rewriter, location),
+                     adaptor.getEvent().front(),
+                     llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                  adaptor.getDelay().empty() ? 0 : 1),
+                     delay});
+      rewriter.eraseOp(operation);
+      return success();
+    }
     LLVM::CallOp::create(
         rewriter, location, TypeRange{},
         SymbolRefAttr::get(rewriter.getContext(),

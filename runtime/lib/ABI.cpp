@@ -1471,6 +1471,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_event_create,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_event_after,
              void (*)(obelisk_rt_context *, uint64_t, uint32_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_event_replace_after,
+             void (*)(obelisk_rt_context *, uint64_t, uint32_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_event_triggered,
              uint32_t (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_wait_order_failed,

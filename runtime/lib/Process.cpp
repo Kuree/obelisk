@@ -2192,6 +2192,8 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
   if (!context->scheduledManagedNBAs.empty() ||
       !context->scheduledDesignNBAs.empty() ||
       !context->scheduledDesignEvents.empty() ||
+      (obelisk_rt_replaceable_events(context) &&
+       !obelisk_rt_replaceable_events(context)->calendar.empty()) ||
       !context->scheduledPassSwitchEvents.empty() ||
       !context->scheduledInertialPathNBAs.empty() ||
       (!allowRuntimeTasks && !context->scheduledDesignTasks.empty()) ||
@@ -2335,6 +2337,12 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   considerBarrier(context->scheduledManagedNBAs);
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
+  if (const ReplaceableEventFeatureState *replaceable =
+          obelisk_rt_replaceable_events(context);
+      replaceable && !replaceable->calendar.empty() &&
+      replaceable->calendar.begin()->first.first <= context->schedulerTime)
+    barrierRegion = std::min(barrierRegion,
+                             replaceable->calendar.begin()->second.execRegion);
   if (!context->scheduledPassSwitchEvents.empty() &&
       context->scheduledPassSwitchEvents.begin()->first.first <=
           context->schedulerTime)
@@ -3964,6 +3972,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (context->scheduledManagedNBAs.empty() &&
             context->scheduledDesignNBAs.empty() &&
             context->scheduledDesignEvents.empty() &&
+            (!obelisk_rt_replaceable_events(context) ||
+             obelisk_rt_replaceable_events(context)->calendar.empty()) &&
             context->scheduledPassSwitchEvents.empty() &&
             context->scheduledInertialPathNBAs.empty()) {
           size_t retained = 0;
@@ -4041,6 +4051,20 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 eventIndex = index;
               }
             }
+            uint64_t replaceableSequence = UINT64_MAX;
+            ReplaceableEventFeatureState *replaceable =
+                obelisk_rt_replaceable_events(context);
+            ReplaceableEventCalendar::iterator replaceableEvent;
+            if (replaceable) {
+              replaceableEvent = replaceable->calendar.end();
+              auto event = replaceable->calendar.begin();
+              if (event != replaceable->calendar.end() &&
+                  event->first.first <= context->schedulerTime &&
+                  event->second.execRegion == barrierRegion) {
+                replaceableSequence = event->second.sequence;
+                replaceableEvent = event;
+              }
+            }
             uint64_t passSequence = UINT64_MAX;
             if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
                 !context->scheduledPassSwitchEvents.empty()) {
@@ -4084,11 +4108,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 pathUpdate = candidate;
               }
             }
-            uint64_t sequence =
-                std::min(std::min(std::min(nativeSequence, managedSequence),
-                                  pathSequence),
-                         std::min(std::min(eventSequence, passSequence),
-                                  designSequence));
+            uint64_t sequence = std::min(
+                std::min(std::min(nativeSequence, managedSequence),
+                         pathSequence),
+                std::min(std::min(std::min(eventSequence, replaceableSequence),
+                                  passSequence),
+                         designSequence));
             if (sequence == UINT64_MAX) {
               bool hadDelayedPublications = !delayedNetPublications.empty();
               if (!flushDelayedNetPublications())
@@ -4219,6 +4244,28 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               if (!notified)
                 return context->schedulerStatus;
               eventTriggered = true;
+            } else if (sequence == replaceableSequence) {
+              if (!replaceable ||
+                  replaceableEvent == replaceable->calendar.end())
+                return OBELISK_RT_INVALID_DESIGN;
+              ScheduledDesignEvent scheduled = replaceableEvent->second;
+              auto pending = replaceable->pending.find(scheduled.stableID);
+              if (pending == replaceable->pending.end() ||
+                  !pending->second.scheduled ||
+                  pending->second.event != replaceableEvent)
+                return OBELISK_RT_INVALID_DESIGN;
+              pending->second.scheduled = false;
+              replaceable->calendar.erase(replaceableEvent);
+              EventState &event = context->events[scheduled.stableID];
+              if (++event.generation == 0)
+                event.generation = 1;
+              event.lastTriggeredTime = context->schedulerTime;
+              if (!obelisk_rt_notify_event_order_waiters_unlocked(
+                      context, scheduled.stableID) ||
+                  !obelisk_rt_notify_observer_event_unlocked(
+                      context, scheduled.stableID))
+                return context->schedulerStatus;
+              eventTriggered = true;
             } else {
               if (!applyDesign(context->scheduledDesignNBAs[designIndex]))
                 return OBELISK_RT_INVALID_HANDLE;
@@ -4307,6 +4354,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
+        if (const ReplaceableEventFeatureState *replaceable =
+                obelisk_rt_replaceable_events(context);
+            replaceable && !replaceable->calendar.empty())
+          considerTime(replaceable->calendar.begin()->first.first);
         if (!context->scheduledPassSwitchEvents.empty())
           considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {

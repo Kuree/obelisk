@@ -1497,6 +1497,115 @@ extern "C" void obelisk_rt_v1_scheduler_event_after(obelisk_rt_context *context,
   }
 }
 
+extern "C" void
+obelisk_rt_v1_scheduler_event_replace_after(obelisk_rt_context *context,
+                                            uint64_t stableID, uint32_t active,
+                                            uint64_t delay) {
+  if (!context || active > 1) {
+    if (context)
+      obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return;
+  }
+  // A null named event is inert for cancellation as well as triggering
+  // (IEEE 1800-2017 15.5.5.2).
+  if (stableID == UINT64_MAX)
+    return;
+  ContextTransaction transaction(context);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (context->schedulerStatus != OBELISK_RT_OK)
+      return;
+    if (!context->clockOccurrences) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return;
+    }
+    ClockOccurrenceFeatureState &clock = *context->clockOccurrences;
+    uint64_t ownerToken = context->activeLogicalProcessToken;
+    if (ownerToken == 0 || clock.waits.find(ownerToken) == clock.waits.end()) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return;
+    }
+    if (!clock.replaceableEvents) {
+      if (!active)
+        return;
+      clock.replaceableEvents =
+          std::make_unique<ReplaceableEventFeatureState>();
+    }
+    ReplaceableEventFeatureState &feature = *clock.replaceableEvents;
+    auto foundPending = feature.pending.find(stableID);
+    if (foundPending != feature.pending.end() &&
+        foundPending->second.ownerToken != ownerToken) {
+      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+      return;
+    }
+    if (foundPending == feature.pending.end()) {
+      auto [owned, insertedOwner] = feature.ownedTimers.try_emplace(ownerToken);
+      size_t priorOwnedSize = owned->second.size();
+      OBELISK_RT_TRY {
+        owned->second.push_back(stableID);
+        auto [inserted, success] = feature.pending.try_emplace(stableID);
+        if (!success) {
+          owned->second.pop_back();
+          if (insertedOwner && owned->second.empty())
+            feature.ownedTimers.erase(owned);
+          context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+          return;
+        }
+        inserted->second.ownerToken = ownerToken;
+        foundPending = inserted;
+      }
+      OBELISK_RT_CATCH_ALL {
+        if (owned->second.size() != priorOwnedSize)
+          owned->second.resize(priorOwnedSize);
+        if (insertedOwner && owned->second.empty())
+          feature.ownedTimers.erase(owned);
+        OBELISK_RT_RETHROW;
+      }
+    }
+    ReplaceableEventPending &pending = foundPending->second;
+    // The generation is a permanent guard, not a wrapping stale-event tag.
+    // Once exhausted, no later replacement may accidentally make an ancient
+    // maturity current again.
+    if (pending.generation == UINT64_MAX ||
+        (active && context->nextSchedulerSequence == 0)) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return;
+    }
+    ++pending.generation;
+    if (pending.scheduled) {
+      feature.calendar.erase(pending.event);
+      pending.scheduled = false;
+    }
+    if (!active)
+      return;
+
+    // Match ordinary delayed named-event saturation exactly. UINT64_MAX is a
+    // permanent deadline/sentinel and must never wrap into an early expiry.
+    uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
+                           ? UINT64_MAX
+                           : context->schedulerTime + delay;
+    uint64_t sequence = context->nextSchedulerSequence++;
+    auto [event, inserted] = feature.calendar.emplace(
+        std::pair{dueTime, sequence},
+        ScheduledDesignEvent{sequence, dueTime, OBELISK_RT_REGION_RE_NBA,
+                             stableID, 0});
+    if (!inserted) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return;
+    }
+    pending.event = event;
+    pending.scheduled = true;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+  }
+  OBELISK_RT_CATCH_ALL {
+    ContextMutexLock lock(context);
+    context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
+  }
+}
+
 extern "C" uint32_t
 obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                         uint64_t stableID) {

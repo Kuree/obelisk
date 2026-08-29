@@ -1725,6 +1725,144 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
 }
 
 TEST(RuntimeInternals,
+     ReplaceableTimingEventIsLazyBoundedSaturatingAndPermanentlyGuarded) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  // This service is owned by a slot-final timing coordinator.  Its feature
+  // state consequently shares the exact lifecycle of that coordinator's
+  // clock-occurrence wait and is absent from ordinary designs.
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+  context->clockOccurrences->waits.try_emplace(21);
+  context->activeLogicalProcessToken = 21;
+  ASSERT_FALSE(context->clockOccurrences->replaceableEvents);
+
+  context->schedulerTime = 7;
+  for (uint64_t restart = 0; restart != 10000; ++restart) {
+    obelisk_rt_v1_scheduler_event_replace_after(context, 91, 1, 100 + restart);
+    ASSERT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+    ASSERT_TRUE(context->clockOccurrences->replaceableEvents);
+    EXPECT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(),
+              1u);
+    EXPECT_EQ(context->clockOccurrences->replaceableEvents->pending.size(), 1u);
+    // Restart replacement is indexed and never enters the ordinary delayed
+    // vector, so its live population cannot grow or induce a linear scan.
+    EXPECT_TRUE(context->scheduledDesignEvents.empty());
+  }
+  obelisk_rt_v1_scheduler_event_replace_after(context, 91, 0, 0);
+  EXPECT_TRUE(context->clockOccurrences->replaceableEvents->calendar.empty());
+  EXPECT_EQ(context->clockOccurrences->replaceableEvents->pending.size(), 1u);
+
+  context->schedulerTime = UINT64_MAX - 2;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 91, 1, 10);
+  ASSERT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  ASSERT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(), 1u);
+  EXPECT_EQ(context->clockOccurrences->replaceableEvents->calendar.begin()
+                ->first.first,
+            UINT64_MAX);
+
+  auto &pending = context->clockOccurrences->replaceableEvents->pending.at(91);
+  pending.generation = UINT64_MAX;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 91, 0, 0);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(pending.generation, UINT64_MAX);
+  EXPECT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(), 1u);
+
+  // Exhaustion is permanent: clearing the status cannot permit generation
+  // wrap to make an ancient maturity current again.
+  context->schedulerStatus = OBELISK_RT_OK;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 91, 1, 1);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(pending.generation, UINT64_MAX);
+  EXPECT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(), 1u);
+
+  context->schedulerStatus = OBELISK_RT_OK;
+  context->nextSchedulerSequence = 0;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 92, 1, 1);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(
+      context->clockOccurrences->replaceableEvents->pending.at(92).generation,
+      0u);
+  EXPECT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(), 1u);
+
+  context->activeLogicalProcessToken = 0;
+  context->clockOccurrences.reset();
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ReplaceableTimingEventTeardownIsTokenLocalAndRejectsInvalidOwners) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+  context->clockOccurrences->waits.try_emplace(31);
+  context->clockOccurrences->waits.try_emplace(32);
+
+  // Coordinator A owns a permanently saturated deadline while coordinator B
+  // owns an ordinary live deadline. Both records share the cold calendar but
+  // retain independent clock-wait lifetimes.
+  context->activeLogicalProcessToken = 31;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 301, 1, UINT64_MAX);
+  ASSERT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 32;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 302, 1, 5);
+  ASSERT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  auto &feature = *context->clockOccurrences->replaceableEvents;
+  ASSERT_EQ(feature.calendar.size(), 2u);
+  ASSERT_EQ(feature.pending.size(), 2u);
+  ASSERT_EQ(feature.ownedTimers.size(), 2u);
+
+  // The compiler-private service is valid only in the active coordinator
+  // that owns a registered clock-occurrence wait. A second coordinator may
+  // not replace another coordinator's static timer event.
+  context->activeLogicalProcessToken = 0;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 303, 1, 1);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_LIFECYCLE);
+  context->schedulerStatus = OBELISK_RT_OK;
+  context->activeLogicalProcessToken = 33;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 303, 1, 1);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_LIFECYCLE);
+  context->schedulerStatus = OBELISK_RT_OK;
+  context->activeLogicalProcessToken = 32;
+  obelisk_rt_v1_scheduler_event_replace_after(context, 301, 1, 1);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_LIFECYCLE);
+  context->schedulerStatus = OBELISK_RT_OK;
+  EXPECT_EQ(feature.calendar.size(), 2u);
+  EXPECT_EQ(feature.pending.size(), 2u);
+
+  std::vector<std::unique_ptr<SignalSubscription>> noSubscriptions;
+  obelisk_rt_unregister_signal_wait_unlocked(context, noSubscriptions, 31,
+                                             true);
+  ASSERT_TRUE(context->clockOccurrences);
+  ASSERT_TRUE(context->clockOccurrences->replaceableEvents);
+  auto &remaining = *context->clockOccurrences->replaceableEvents;
+  EXPECT_EQ(remaining.calendar.size(), 1u);
+  EXPECT_EQ(remaining.pending.size(), 1u);
+  EXPECT_EQ(remaining.pending.count(301), 0u);
+  EXPECT_EQ(remaining.pending.count(302), 1u);
+  EXPECT_EQ(remaining.ownedTimers.count(31), 0u);
+  EXPECT_EQ(remaining.ownedTimers.count(32), 1u);
+  ASSERT_EQ(remaining.calendar.begin()->second.stableID, 302u);
+
+  // A's UINT64_MAX node was physically removed, so it can neither retain
+  // state nor mature after teardown. B remains scheduled and fires normally.
+  context->activeLogicalProcessToken = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerTime, 5u);
+  EXPECT_EQ(context->events.count(301), 0u);
+  ASSERT_EQ(context->events.count(302), 1u);
+  EXPECT_NE(context->events.at(302).generation, 0u);
+  EXPECT_TRUE(remaining.calendar.empty());
+  EXPECT_EQ(remaining.pending.size(), 1u);
+
+  obelisk_rt_unregister_signal_wait_unlocked(context, noSubscriptions, 32,
+                                             true);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
      ClockOccurrenceWaitReuseComparesCompleteNativeAndDesignRecords) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -2009,6 +2147,15 @@ TEST(Scheduler, ClockOccurrenceWaitExitReclaimsFeatureState) {
               1u);
     ASSERT_FALSE(
         context->scheduledProcesses.front().signalSubscriptions.front());
+
+    context->activeLogicalProcessToken =
+        OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG |
+        context->scheduledProcesses.front().token;
+    obelisk_rt_v1_scheduler_event_replace_after(context, 191, 1, 100);
+    context->activeLogicalProcessToken = 0;
+    ASSERT_TRUE(context->clockOccurrences->replaceableEvents);
+    ASSERT_EQ(context->clockOccurrences->replaceableEvents->calendar.size(),
+              1u);
 
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
         context, 16, 1,

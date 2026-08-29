@@ -3104,6 +3104,36 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       context->schedulerEpoch = 1;
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER: {
+    if (!context)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    Layout event = layoutAt(image, frame.function, inputRegister(0));
+    uint32_t kind = 0;
+    int64_t start = -1;
+    const uint8_t *address = frame.data + event.offset;
+    std::memcpy(&kind, address, 4);
+    std::memcpy(&start, address + 16, 8);
+    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
+      return OBELISK_RT_INVALID_HANDLE;
+    // IEEE 1800-2017 15.5.5.2 makes a null named event inert for both
+    // scheduling and cancellation.
+    if (start == -1)
+      return OBELISK_RT_OK;
+    if (start < 0)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t delay = 0;
+    if (site.inputCount == 2) {
+      std::optional<uint64_t> encodedDelay = scalar(1);
+      if (!encodedDelay)
+        return OBELISK_RT_INVALID_BYTECODE;
+      delay = *encodedDelay;
+    }
+    obelisk_rt_v1_scheduler_event_replace_after(
+        context, static_cast<uint64_t>(start), site.inputCount == 2 ? 1u : 0u,
+        delay);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return context->schedulerStatus;
+  }
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;

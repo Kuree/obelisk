@@ -207,6 +207,33 @@ void eraseClockOccurrenceSubscriptionsUnlocked(obelisk_rt_context *context,
   feature.subscriptions.erase(owned);
 }
 
+void eraseReplaceableEventsForOwnerUnlocked(obelisk_rt_context *context,
+                                            uint64_t logicalToken) {
+  if (!context || !context->clockOccurrences ||
+      !context->clockOccurrences->replaceableEvents)
+    return;
+  ClockOccurrenceFeatureState &clock = *context->clockOccurrences;
+  ReplaceableEventFeatureState &feature = *clock.replaceableEvents;
+  auto owned = feature.ownedTimers.find(logicalToken);
+  if (owned == feature.ownedTimers.end())
+    return;
+  for (uint64_t stableID : owned->second) {
+    auto pending = feature.pending.find(stableID);
+    if (pending == feature.pending.end() ||
+        pending->second.ownerToken != logicalToken) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      continue;
+    }
+    if (pending->second.scheduled)
+      feature.calendar.erase(pending->second.event);
+    feature.pending.erase(pending);
+  }
+  feature.ownedTimers.erase(owned);
+  if (feature.pending.empty() && feature.calendar.empty() &&
+      feature.ownedTimers.empty())
+    clock.replaceableEvents.reset();
+}
+
 bool appendManagedSubscriptionUnlocked(
     obelisk_rt_context *context, uint64_t token,
     SignalSubscription::Target target, uint64_t waiterToken,
@@ -332,6 +359,12 @@ void obelisk_rt_unregister_signal_wait_unlocked(
             feature.conditionalWaitCount != 0)
           --feature.conditionalWaitCount;
         feature.waits.erase(occurrence);
+        // Compiler-private Clause 31 timers have the same lifetime as their
+        // coordinator's clock-occurrence wait. Remove only this token's live
+        // calendar nodes even when other timing coordinators remain
+        // registered. Ordinary signal-wait unregister never enters this cold
+        // owner index.
+        eraseReplaceableEventsForOwnerUnlocked(context, logicalToken);
       }
       eraseClockOccurrenceSubscriptionsUnlocked(context, logicalToken);
       if (feature.waits.empty() && feature.subscriptions.empty() &&

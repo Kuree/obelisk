@@ -86,8 +86,28 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     // retain the generated AOT plan.
     if (isClockCoordinatorActor(function))
       return true;
-    if (function->hasAttr(
-            "obelisk_sim.multiclock_sequence_eos_coordinator"))
+    if (function->hasAttr("obelisk_sim.skew_deadline_helper")) {
+      unsigned eventWaits = 0;
+      unsigned delayedTriggers = 0;
+      unsigned spawns = 0;
+      function.walk([&](sim::SimSuspendEventOp) { ++eventWaits; });
+      function.walk([&](sim::SimEventTriggerOp trigger) {
+        delayedTriggers += trigger.getDelay() && trigger.getNonblocking();
+      });
+      function.walk([&](sim::SimSpawnOp) { ++spawns; });
+      // IEEE 1800-2017 31.4.2/.3 timer checks use one compiler-owned,
+      // once-spawned Reactive actor. Keep precisely that bounded helper as a
+      // feature-local bytecode island; arbitrary user event loops cannot gain
+      // forced-hybrid admission from the marker alone.
+      return SymbolTable::getSymbolVisibility(function) ==
+                 SymbolTable::Visibility::Private &&
+             function->hasAttr("internal") &&
+             function.getEntryKind() == sim::EntryKind::Always &&
+             function.getHomeRegion() == sim::EventRegion::Reactive &&
+             function.getDomain() == sim::ExecutionDomain::Design &&
+             eventWaits == 1 && delayedTriggers == 0 && spawns == 0;
+    }
+    if (function->hasAttr("obelisk_sim.multiclock_sequence_eos_coordinator"))
       return SymbolTable::getSymbolVisibility(function) ==
                  SymbolTable::Visibility::Private &&
              function->hasAttr("internal") &&
@@ -227,6 +247,22 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   if (graph.getWorkers() != 1)
     rejectPlan("AOT scheduling requires one worker");
   ArrayAttr nodes = graph.getNodes();
+  DenseMap<uint32_t, bool> coldDeferredCommits;
+  for (Attribute edgeAttribute : graph.getEdges()) {
+    auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+    if (!edge || edge.getKind() != sim::ComputeEdgeKind::DeferredStage ||
+        edge.getSource() >= nodes.size())
+      continue;
+    auto source = dyn_cast<sim::ComputeFragmentAttr>(nodes[edge.getSource()]);
+    sim::SimFuncOp function =
+        source ? lookupFunction(source.getFunction().getValue())
+               : sim::SimFuncOp{};
+    bool cold = function && isConcurrentColdActor(function);
+    auto [found, inserted] =
+        coldDeferredCommits.try_emplace(edge.getTarget(), cold);
+    if (!inserted)
+      found->second &= cold;
+  }
   DenseMap<Block *, sim::ComputeFragmentAttr> fragmentsByBlock;
   for (auto [index, attribute] : llvm::enumerate(nodes)) {
     if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
@@ -268,7 +304,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         rejectPlan("event commit IDs do not match the node inventory");
       if (!commit.getSites().empty())
         result.reasons.emplace_back("deferred events require dynamic storage");
-      if (!commit.getSites().empty())
+      if (!commit.getSites().empty() &&
+          !coldDeferredCommits.lookup(commit.getId()))
         onlyConcurrentColdBoundaries = false;
       continue;
     }
@@ -669,8 +706,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   // shapes. No global reason-string allowlist can make an unrelated user
   // control loop eligible merely because a coordinator is also present.
   result.forcedHybridEligible =
-      result.eligible && !result.fullyEligible &&
-      onlyConcurrentColdBoundaries;
+      result.eligible && !result.fullyEligible && onlyConcurrentColdBoundaries;
   for (Attribute attribute : nodes) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)

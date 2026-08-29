@@ -405,8 +405,18 @@ expandTimingDelays(ArrayRef<std::optional<int64_t>> values) {
     break;
   case 2: {
     OptionalDelay rise = values[0], fall = values[1];
-    result = {rise, fall, rise, rise, fall, fall, rise, rise, fall, fall,
-              maximum(rise, fall), minimum(rise, fall)};
+    result = {rise,
+              fall,
+              rise,
+              rise,
+              fall,
+              fall,
+              rise,
+              rise,
+              fall,
+              fall,
+              maximum(rise, fall),
+              minimum(rise, fall)};
     break;
   }
   case 3: {
@@ -2183,16 +2193,15 @@ private:
         // values. Keep the annotation indistinguishable from a directly
         // declared Clause 30 delay in semantic IR, so no SDF table reaches
         // any simulation tier.
-        bool hasEmptyField = llvm::any_of(
-            *annotated, [](const std::optional<int64_t> &value) {
+        bool hasEmptyField =
+            llvm::any_of(*annotated, [](const std::optional<int64_t> &value) {
               return !value;
             });
         if (!hasEmptyField) {
           delays.clear();
-          llvm::transform(*annotated, std::back_inserter(delays),
-                          [](const std::optional<int64_t> &value) {
-                            return *value;
-                          });
+          llvm::transform(
+              *annotated, std::back_inserter(delays),
+              [](const std::optional<int64_t> &value) { return *value; });
           staticDelays = true;
         } else if (staticDelays) {
           SmallVector<std::optional<int64_t>, 12> source;
@@ -2439,8 +2448,9 @@ private:
       bool fullSkew = node.timingCheckKind == Kind::FullSkew;
       bool period = node.timingCheckKind == Kind::Period;
       bool width = node.timingCheckKind == Kind::Width;
-      size_t requiredArguments =
-          combined || fullSkew ? 4 : period || width ? 2 : 3;
+      size_t requiredArguments = combined || fullSkew ? 4
+                                 : period || width    ? 2
+                                                      : 3;
       bool unsupportedCombinedOption = false;
       if (combined) {
         // IEEE 1800-2017 31.3.3/.6 assign slots 5--8 to negative-check
@@ -2509,15 +2519,15 @@ private:
           (!(period || width) || controlledEdge) &&
           (!width || effectiveEdges[0] !=
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&
-          (!(timeSkew || fullSkew) ||
-           (eventBased && *eventBased && remainActive)) &&
+          (!(timeSkew || fullSkew) || (eventBased && remainActive)) &&
           !unsupportedCombinedOption) {
         attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
         if (timeSkew || fullSkew) {
-          // IEEE 1800-2017 31.4.2/.3 default to timer-based checks. Freeze
-          // only an explicitly nonzero event_based_flag into this no-timer
-          // tranche; remain_active_flag is an ordinary compile-time mode bit.
-          attrs.set("timing_check_event_based", builder.getBoolAttr(true));
+          // IEEE 1800-2017 31.4.2/.3 default to timer mode when the optional
+          // event_based_flag is absent or zero. Freeze both mode flags here:
+          // lowering must never select timer/event behavior at run time.
+          attrs.set("timing_check_event_based",
+                    builder.getBoolAttr(*eventBased));
           attrs.set("timing_check_remain_active",
                     builder.getBoolAttr(*remainActive));
         }

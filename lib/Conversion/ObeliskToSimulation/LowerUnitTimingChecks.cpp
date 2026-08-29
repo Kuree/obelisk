@@ -33,12 +33,12 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   bool skew = kind == 7;
   bool timeSkew = kind == 8;
   bool fullSkew = kind == 9;
-  bool eventBasedSkew = timeSkew || fullSkew;
+  bool skewWithMode = timeSkew || fullSkew;
   bool period = kind == 10;
   bool width = kind == 11;
   bool slotFinal = kind >= 1 && kind <= 9;
   if (kind != 1 && kind != 2 && kind != 3 && kind != 4 && kind != 5 &&
-      kind != 6 && !skew && !eventBasedSkew && !period && !width)
+      kind != 6 && !skew && !skewWithMode && !period && !width)
     return function.emitError("unsupported basic timing-check kind");
   size_t minimumArguments = combined || fullSkew ? 4 : period || width ? 2 : 3;
   if (static_cast<size_t>(expressionChildren.size()) < minimumArguments)
@@ -58,16 +58,19 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     return function.emitError(
         "basic timing check has no direct events or limit");
   bool remainActive = false;
-  if (eventBasedSkew) {
+  bool eventMode = false;
+  if (skewWithMode) {
     auto eventBased =
         function->getAttrOfType<BoolAttr>("timing_check_event_based");
     auto remain =
         function->getAttrOfType<BoolAttr>("timing_check_remain_active");
-    if (!eventBased || !eventBased.getValue() || !remain)
+    if (!eventBased || !remain)
       return function.emitError(
-          "event-based skew check has a malformed frozen mode");
+          "skew timing check has a malformed frozen mode");
+    eventMode = eventBased.getValue();
     remainActive = remain.getValue();
   }
+  bool timerMode = skewWithMode && !eventMode;
 
   SmallVector<Value, 2> handles;
   SmallVector<Value, 2> conditions;
@@ -153,7 +156,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   }
 
   std::array<unsigned, 2> rawEventBits{0, 1};
-  if (eventBasedSkew) {
+  if (skewWithMode) {
     for (size_t index = 0; index != sourceEventCount; ++index) {
       if (conditionChildren[index] < 0)
         continue;
@@ -206,6 +209,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
 
   Type i1 = builder.getI1Type();
   Type i64 = builder.getI64Type();
+  Value context = function.getBody().front().getArgument(0);
   Value zero64 = arith::ConstantOp::create(builder, location, i64,
                                            builder.getI64IntegerAttr(0));
   Value one64 = arith::ConstantOp::create(builder, location, i64,
@@ -215,7 +219,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Value falseValue = arith::ConstantOp::create(builder, location, i1,
                                                builder.getBoolAttr(false));
   Value trueValue;
-  if (eventBasedSkew)
+  if (skewWithMode)
     trueValue = arith::ConstantOp::create(builder, location, i1,
                                           builder.getBoolAttr(true));
   Value timestamp = sim::SimRefAllocOp::create(
@@ -226,6 +230,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Value slotEvent0Count;
   Value slotEvent1Count;
   Value slotEventViolationCount;
+  Value slotTimerRestart;
+  Value slotTimerCancel;
   if (slotFinal) {
     slotEvent0Count = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), i64),
@@ -233,10 +239,18 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     slotEvent1Count = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), i64),
         zero64);
-    if (eventBasedSkew)
+    if (eventMode)
       slotEventViolationCount = sim::SimRefAllocOp::create(
           builder, location, sim::RefType::get(function.getContext(), i64),
           zero64);
+    if (timerMode) {
+      slotTimerRestart = sim::SimRefAllocOp::create(
+          builder, location, sim::RefType::get(function.getContext(), i1),
+          falseValue);
+      slotTimerCancel = sim::SimRefAllocOp::create(
+          builder, location, sim::RefType::get(function.getContext(), i1),
+          falseValue);
+    }
   }
   Value oppositeTimestamp;
   Value oppositeTimestampValid;
@@ -254,6 +268,43 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         builder, location, sim::RefType::get(function.getContext(), i1),
         falseValue);
 
+  Value timerDeadline;
+  Value timerEvent;
+  Value timerSignal;
+  Value slotTimerFired;
+  unsigned timerEventBit = 0;
+  if (timerMode) {
+    timerDeadline = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i64),
+        zero64);
+    timerEvent = sim::SimEventCreateOp::create(
+        builder, location, sim::EventType::get(function.getContext()));
+    slotTimerFired = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i1),
+        falseValue);
+
+    auto timerStorage = function->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.timing_timer_storage");
+    auto helperSymbol = function->getAttrOfType<FlatSymbolRefAttr>(
+        "obelisk_sim.timing_timer_helper");
+    if (!timerStorage || !helperSymbol)
+      return function.emitError(
+          "timer timing check has no serial helper inventory");
+    function->removeAttr("obelisk_sim.timing_timer_storage");
+    function->removeAttr("obelisk_sim.timing_timer_helper");
+    timerSignal = sim::SimContextStorageOp::create(
+        builder, location, sim::RefType::get(function.getContext(), i1),
+        context, timerStorage);
+    timerEventBit = handles.size();
+    handles.push_back(timerSignal);
+    eventEdges.push_back(static_cast<int32_t>(sim::EdgeKind::Both));
+    conditionIndices.push_back(-1);
+
+    SmallVector<Value> helperCaptures{context, timerEvent, timerSignal};
+    sim::SimSpawnOp::create(builder, location, helperSymbol, helperCaptures,
+                            ArrayAttr{}, ArrayAttr{});
+  }
+
   auto codeUnit = function->getAttrOfType<IntegerAttr>("code_unit_id");
   uint32_t occurrenceSite =
       codeUnit ? static_cast<uint32_t>(codeUnit.getValue().getZExtValue()) : 0;
@@ -265,6 +316,12 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Block *process = addBlock();
   Block *slotFinalize = slotFinal ? addBlock() : nullptr;
   Block *slotReset = slotFinal ? addBlock() : nullptr;
+  Block *timerSchedule = timerMode ? addBlock() : nullptr;
+  Block *timerMaybeCancel = timerMode ? addBlock() : nullptr;
+  Block *timerCancel = timerMode ? addBlock() : nullptr;
+  Block *timerContinue = timerMode ? addBlock() : nullptr;
+  if (timerContinue)
+    timerContinue->addArgument(i1, location);
   Block *violation = addBlock();
   violation->addArgument(i64, location);
   emitBranch(wait);
@@ -286,7 +343,6 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       drain);
 
   setCurrent(drain);
-  Value context = function.getBody().front().getArgument(0);
   Value cohort = sim::SimClockOccurrenceConsumeOp::create(
       builder, location, i64, context,
       builder.getI64IntegerAttr(occurrenceSite));
@@ -308,17 +364,17 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         builder, location, i64,
         builder.getI64IntegerAttr(static_cast<int64_t>(uint64_t{1} << bit))));
   };
-  Value rawEvent0Occurred = eventBasedSkew
-                                ? occurred(occurrenceMask(rawEventBits[0]))
-                                : event0Occurred;
-  Value rawEvent1Occurred = eventBasedSkew
-                                ? occurred(occurrenceMask(rawEventBits[1]))
-                                : event1Occurred;
+  Value rawEvent0Occurred =
+      skewWithMode ? occurred(occurrenceMask(rawEventBits[0])) : event0Occurred;
+  Value rawEvent1Occurred =
+      skewWithMode ? occurred(occurrenceMask(rawEventBits[1])) : event1Occurred;
+  Value timerFired =
+      timerMode ? occurred(occurrenceMask(timerEventBit)) : Value{};
   Value event0Count =
       arith::SelectOp::create(builder, location, event0Occurred, one64, zero64);
   Value event1Count =
       arith::SelectOp::create(builder, location, event1Occurred, one64, zero64);
-  if (eventBasedSkew) {
+  if (eventMode) {
     Value processNow =
         sim::SimTimeNowOp::create(builder, location, i64, context);
     Value processPrevious =
@@ -465,6 +521,156 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
                                         processReportCount);
     sim::SimRefStoreOp::create(builder, location, accumulated,
                                slotEventViolationCount);
+  } else if (timerMode) {
+    Value priorTimerFired =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerFired);
+    Value sawTimer =
+        arith::OrIOp::create(builder, location, priorTimerFired, timerFired);
+    sim::SimRefStoreOp::create(builder, location, sawTimer, slotTimerFired);
+    Value processNow =
+        sim::SimTimeNowOp::create(builder, location, i64, context);
+    Value processPrevious =
+        sim::SimRefLoadOp::create(builder, location, i64, timestamp);
+    Value processValid =
+        sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
+    Value processDelta =
+        arith::SubIOp::create(builder, location, processNow, processPrevious);
+    Value previousRestart =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerRestart);
+    Value previousCancel =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerCancel);
+    Value restart;
+    Value cancel;
+
+    if (timeSkew) {
+      Value noReference =
+          arith::XOrIOp::create(builder, location, event0Occurred, trueValue);
+      Value falseReference = arith::AndIOp::create(
+          builder, location, rawEvent0Occurred, noReference);
+      Value nextTimestamp = arith::SelectOp::create(
+          builder, location, event0Occurred, processNow, processPrevious);
+      Value nextValid = processValid;
+      if (!remainActive)
+        nextValid = arith::SelectOp::create(builder, location, falseReference,
+                                            falseValue, nextValid);
+      nextValid = arith::SelectOp::create(builder, location, event0Occurred,
+                                          trueValue, nextValid);
+      Value effectiveDelta = arith::SelectOp::create(
+          builder, location, event0Occurred, zero64, processDelta);
+      Value limit = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+      Value withinLimit = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, effectiveDelta, limit);
+      Value completes =
+          arith::AndIOp::create(builder, location, event1Occurred, nextValid);
+      completes =
+          arith::AndIOp::create(builder, location, completes, withinLimit);
+      nextValid = arith::SelectOp::create(builder, location, completes,
+                                          falseValue, nextValid);
+      restart = arith::OrIOp::create(builder, location, previousRestart,
+                                     event0Occurred);
+      cancel = completes;
+      if (!remainActive) {
+        Value dormant = arith::AndIOp::create(builder, location, falseReference,
+                                              processValid);
+        cancel = arith::OrIOp::create(builder, location, cancel, dormant);
+      }
+      // IEEE 1800-2017 31.4.2 starts or replaces the timer on every true
+      // reference, cancels on an in-limit data event, and makes a false
+      // conditioned reference dormant unless remain_active says to ignore it.
+      // Ordered cohort folding preserves the last same-slot qualification.
+      sim::SimRefStoreOp::create(builder, location, nextTimestamp, timestamp);
+      sim::SimRefStoreOp::create(builder, location, nextValid, timestampValid);
+    } else {
+      Value direction =
+          sim::SimRefLoadOp::create(builder, location, i1, timestampDirection);
+      Value notEvent0 =
+          arith::XOrIOp::create(builder, location, event0Occurred, trueValue);
+      Value notEvent1 =
+          arith::XOrIOp::create(builder, location, event1Occurred, trueValue);
+      Value falseEvent0 = arith::AndIOp::create(builder, location,
+                                                rawEvent0Occurred, notEvent0);
+      Value falseEvent1 = arith::AndIOp::create(builder, location,
+                                                rawEvent1Occurred, notEvent1);
+      Value effectiveValid = processValid;
+      Value falseTimestamp = falseValue;
+      if (!remainActive) {
+        Value direction0 =
+            arith::XOrIOp::create(builder, location, direction, trueValue);
+        Value falseTimestamp0 =
+            arith::AndIOp::create(builder, location, falseEvent0, direction0);
+        Value falseTimestamp1 =
+            arith::AndIOp::create(builder, location, falseEvent1, direction);
+        falseTimestamp = arith::OrIOp::create(builder, location,
+                                              falseTimestamp0, falseTimestamp1);
+        falseTimestamp = arith::AndIOp::create(builder, location,
+                                               falseTimestamp, processValid);
+        effectiveValid = arith::SelectOp::create(
+            builder, location, falseTimestamp, falseValue, processValid);
+      }
+      Value both = arith::AndIOp::create(builder, location, event0Occurred,
+                                         event1Occurred);
+      Value any = arith::OrIOp::create(builder, location, event0Occurred,
+                                       event1Occurred);
+      Value notBoth = arith::XOrIOp::create(builder, location, both, trueValue);
+      Value oneEvent = arith::AndIOp::create(builder, location, any, notBoth);
+      Value incomingDirection = event1Occurred;
+      Value directionChanged = arith::XOrIOp::create(
+          builder, location, direction, incomingDirection);
+      Value opposite =
+          arith::AndIOp::create(builder, location, oneEvent, effectiveValid);
+      opposite =
+          arith::AndIOp::create(builder, location, opposite, directionChanged);
+      Value limit0 = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+      Value limit1 = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[3]));
+      Value limit =
+          arith::SelectOp::create(builder, location, direction, limit1, limit0);
+      Value withinLimit = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ule, processDelta, limit);
+      Value completedWithin =
+          arith::AndIOp::create(builder, location, opposite, withinLimit);
+      Value notValid =
+          arith::XOrIOp::create(builder, location, effectiveValid, trueValue);
+      Value sameDirection =
+          arith::XOrIOp::create(builder, location, directionChanged, trueValue);
+      Value notWithin =
+          arith::XOrIOp::create(builder, location, withinLimit, trueValue);
+      Value expiredOpposite =
+          arith::AndIOp::create(builder, location, opposite, notWithin);
+      Value timestampReason =
+          arith::OrIOp::create(builder, location, notValid, sameDirection);
+      timestampReason = arith::OrIOp::create(builder, location, timestampReason,
+                                             expiredOpposite);
+      Value becomesTimestamp =
+          arith::AndIOp::create(builder, location, oneEvent, timestampReason);
+      Value nextTimestamp = arith::SelectOp::create(
+          builder, location, becomesTimestamp, processNow, processPrevious);
+      Value nextDirection = arith::SelectOp::create(
+          builder, location, becomesTimestamp, incomingDirection, direction);
+      Value nextValid = arith::SelectOp::create(
+          builder, location, completedWithin, falseValue, effectiveValid);
+      nextValid = arith::SelectOp::create(builder, location, becomesTimestamp,
+                                          trueValue, nextValid);
+      nextValid = arith::SelectOp::create(builder, location, both, falseValue,
+                                          nextValid);
+      restart = arith::OrIOp::create(builder, location, previousRestart,
+                                     becomesTimestamp);
+      cancel = arith::OrIOp::create(builder, location, completedWithin, both);
+      cancel = arith::OrIOp::create(builder, location, cancel, falseTimestamp);
+      // IEEE 1800-2017 31.4.3 assigns each occurrence its directional role
+      // before the timer is armed at slot finalization. Same-direction events
+      // restart, an in-limit opposite event cancels, and false timestamp
+      // conditions obey remain_active without allocating a runtime table.
+      sim::SimRefStoreOp::create(builder, location, nextTimestamp, timestamp);
+      sim::SimRefStoreOp::create(builder, location, nextDirection,
+                                 timestampDirection);
+      sim::SimRefStoreOp::create(builder, location, nextValid, timestampValid);
+    }
+    sim::SimRefStoreOp::create(builder, location, restart, slotTimerRestart);
+    cancel = arith::OrIOp::create(builder, location, previousCancel, cancel);
+    sim::SimRefStoreOp::create(builder, location, cancel, slotTimerCancel);
   }
   if (slotFinal) {
     Value accumulated0 =
@@ -494,7 +700,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   Value now;
   Value previous;
   Value valid;
-  if (!eventBasedSkew) {
+  if (!skewWithMode) {
     now = sim::SimTimeNowOp::create(builder, location, i64, context);
     previous = sim::SimRefLoadOp::create(builder, location, i64, timestamp);
     valid = sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
@@ -569,6 +775,96 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
                                oppositeTimestamp);
     sim::SimRefStoreOp::create(builder, location, nextValid1,
                                oppositeTimestampValid);
+  } else if (timerMode) {
+    Value both = arith::AndIOp::create(builder, location, event0Occurred,
+                                       event1Occurred);
+    Value finalizedValid =
+        sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
+    finalizedValid = arith::SelectOp::create(builder, location, both,
+                                             falseValue, finalizedValid);
+    sim::SimRefStoreOp::create(builder, location, finalizedValid,
+                               timestampValid);
+    Value restart =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerRestart);
+    Value arm =
+        arith::AndIOp::create(builder, location, finalizedValid, restart);
+    cf::CondBranchOp::create(builder, location, arm, timerSchedule,
+                             ValueRange{}, timerMaybeCancel, ValueRange{});
+
+    setCurrent(timerSchedule);
+    Value delayTicks;
+    if (timeSkew) {
+      delayTicks = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+    } else {
+      Value direction =
+          sim::SimRefLoadOp::create(builder, location, i1, timestampDirection);
+      Value limit0 = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[2]));
+      Value limit1 = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(ticks[3]));
+      delayTicks =
+          arith::SelectOp::create(builder, location, direction, limit1, limit0);
+    }
+    Value armNow = sim::SimTimeNowOp::create(builder, location, i64, context);
+    Value wrappedDeadline =
+        arith::AddIOp::create(builder, location, armNow, delayTicks);
+    Value deadlineWrapped = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, wrappedDeadline, armNow);
+    Value permanentDeadline = arith::ConstantOp::create(
+        builder, location, i64, builder.getI64IntegerAttr(-1));
+    Value deadline = arith::SelectOp::create(
+        builder, location, deadlineWrapped, permanentDeadline, wrappedDeadline);
+    sim::SimRefStoreOp::create(builder, location, deadline, timerDeadline);
+    Value timerDelay = sim::SimTimeScaleOp::create(
+        builder, location, sim::TimeType::get(function.getContext()),
+        delayTicks, builder.getI64IntegerAttr(1), builder.getBoolAttr(false));
+    // IEEE 1800-2017 31.4.2/.3 replace one logical timer on every restart.
+    // The cold indexed calendar owns at most one delayed Re-NBA event per
+    // private identity; saturation matches the scheduler, so overflow becomes
+    // a permanent UINT64_MAX deadline rather than an early wrapped report.
+    sim::SimEventTriggerOp::create(builder, location, timerEvent, timerDelay,
+                                   builder.getBoolAttr(true),
+                                   sim::EventSiteAttr{}, builder.getUnitAttr());
+    cf::BranchOp::create(builder, location, timerContinue,
+                         ValueRange{trueValue});
+
+    setCurrent(timerMaybeCancel);
+    Value cancel =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerCancel);
+    cf::CondBranchOp::create(builder, location, cancel, timerCancel,
+                             ValueRange{}, timerContinue,
+                             ValueRange{falseValue});
+
+    setCurrent(timerCancel);
+    sim::SimEventTriggerOp::create(builder, location, timerEvent, Value{},
+                                   builder.getBoolAttr(true),
+                                   sim::EventSiteAttr{}, builder.getUnitAttr());
+    cf::BranchOp::create(builder, location, timerContinue,
+                         ValueRange{falseValue});
+
+    setCurrent(timerContinue);
+    Value armedThisSlot = timerContinue->getArgument(0);
+    Value fired =
+        sim::SimRefLoadOp::create(builder, location, i1, slotTimerFired);
+    Value active =
+        sim::SimRefLoadOp::create(builder, location, i1, timestampValid);
+    Value currentDeadline =
+        sim::SimRefLoadOp::create(builder, location, i64, timerDeadline);
+    Value expiryNow =
+        sim::SimTimeNowOp::create(builder, location, i64, context);
+    Value atDeadline =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              expiryNow, currentDeadline);
+    Value notArmed =
+        arith::XOrIOp::create(builder, location, armedThisSlot, trueValue);
+    qualified = arith::AndIOp::create(builder, location, fired, active);
+    qualified = arith::AndIOp::create(builder, location, qualified, atDeadline);
+    qualified = arith::AndIOp::create(builder, location, qualified, notArmed);
+    Value nextActive = arith::SelectOp::create(builder, location, qualified,
+                                               falseValue, active);
+    sim::SimRefStoreOp::create(builder, location, nextActive, timestampValid);
+    baseReportCount = one64;
   } else if (timeSkew) {
     baseReportCount = sim::SimRefLoadOp::create(builder, location, i64,
                                                 slotEventViolationCount);
@@ -731,10 +1027,18 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     setCurrent(slotReset);
     sim::SimRefStoreOp::create(builder, location, zero64, slotEvent0Count);
     sim::SimRefStoreOp::create(builder, location, zero64, slotEvent1Count);
-    if (eventBasedSkew) {
+    if (eventMode) {
       sim::SimRefStoreOp::create(builder, location, zero64,
                                  slotEventViolationCount);
     }
+    if (timerMode)
+      sim::SimRefStoreOp::create(builder, location, falseValue,
+                                 slotTimerRestart);
+    if (timerMode)
+      sim::SimRefStoreOp::create(builder, location, falseValue,
+                                 slotTimerCancel);
+    if (timerMode)
+      sim::SimRefStoreOp::create(builder, location, falseValue, slotTimerFired);
     cf::BranchOp::create(builder, location, wait, ValueRange{});
   }
 

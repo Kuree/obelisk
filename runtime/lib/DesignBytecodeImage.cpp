@@ -597,6 +597,11 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && handle(input(0)) &&
            (site.inputCount == 1 ||
             (signature.flags == 1 && bits(input(1), 64)));
+  case OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER:
+    return signature.flags == 0 &&
+           (site.inputCount == 1 || site.inputCount == 2) &&
+           site.outputCount == 0 && handle(input(0)) &&
+           (site.inputCount == 1 || bits(input(1), 64));
   case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
