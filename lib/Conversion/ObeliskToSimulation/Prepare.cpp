@@ -8561,7 +8561,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           unit.source->getAttrOfType<BoolAttr>("timing_check_event_based");
       if (timingKind &&
           (timingKind.getInt() == 8 || timingKind.getInt() == 9) &&
-          eventBased && !eventBased.getValue()) {
+          (!eventBased || !eventBased.getValue())) {
+        // IEEE 1800-2017 31.4.2/.3 require the timer state machine whenever
+        // event_based_flag can select zero.  An absent frozen attribute may
+        // be backed by the semantic argument child and is therefore timer-
+        // capable; inventory its one cold helper before actor lowering.
         if (nextStorageId == UINT64_MAX) {
           emitError(getSemanticLocation(unit.source))
               << "timer timing check exceeds the storage descriptor space";
