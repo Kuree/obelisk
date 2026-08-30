@@ -1,0 +1,17 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE top.middle.leaf)))
+
+// Preserve the SDF default dotted hierarchy text in transient IR. Per IEEE
+// 1800-2017 32.4, matching remains an annotator/frontend concern and adds no
+// runtime hierarchy lookup.
+// CHECK: obelisk_sdf.delay_file
+// CHECK-NOT: divider =
+// CHECK: obelisk_sdf.cell
+// CHECK-SAME: instance = "top.middle.leaf"

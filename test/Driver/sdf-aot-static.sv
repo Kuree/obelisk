@@ -1,6 +1,5 @@
 // RUN: cd %S && obelisk -fno-lto -O3 --native-scheduler=aot %s -o %t.aot-o3
 // RUN: %t.aot-o3 | FileCheck %s
-// RUN: obelisk-translate --import-sdf %S/Inputs/sdf-aot-static.sdf | FileCheck %s --check-prefix=SDF-IR
 
 `timescale 1ns / 1ns
 
@@ -18,6 +17,3 @@ module sdf_aot_static;
 endmodule
 
 // CHECK: SDF AOT 1
-// SDF-IR: obelisk_sdf.delay_file
-// SDF-IR: obelisk_sdf.cell
-// SDF-IR-SAME: cell_type = "sdf_aot_static"

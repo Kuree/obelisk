@@ -1,0 +1,16 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1 ns)
+  (CELL
+    (CELLTYPE "sdf_aot_static")
+    (INSTANCE)
+    (DELAY (ABSOLUTE))))
+
+// CHECK: obelisk_sdf.delay_file
+// CHECK-SAME: sdf_version = "4.0"
+// CHECK-SAME: timescale = #obelisk_sdf.timescale<amount = <"1">, unit = ns>
+// CHECK: obelisk_sdf.cell
+// CHECK-SAME: cell_type = "sdf_aot_static"

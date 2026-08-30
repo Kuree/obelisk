@@ -1,0 +1,24 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (TIMINGENV (PATHCONSTRAINT source destination (1)))
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE top/dut)
+    (TIMINGCHECK (SETUP source (posedge destination) (1)))))
+
+// IEEE 1800-2017 32.3 requires TIMINGENV data unrelated to SystemVerilog
+// timing to be ignored without warning. Obelisk
+// deliberately omits unsupported environment constraints from the transient
+// import dialect while retaining supported CELL data for static application.
+// CHECK: obelisk_sdf.delay_file
+// CHECK-NOT: PATHCONSTRAINT
+// CHECK-NOT: timing_env
+// CHECK: obelisk_sdf.cell
+// CHECK-SAME: cell_type = "dut"
+// CHECK-SAME: instance = "top/dut"
+// CHECK: obelisk_sdf.timing_check
+// CHECK-SAME: kind = 0 : i32

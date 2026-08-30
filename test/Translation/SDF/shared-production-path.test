@@ -1,8 +1,8 @@
 # RUN: FileCheck %s --check-prefix=SOURCE < %source_root/lib/Frontend/SDF.cpp
 
 # The production annotation database must consume the exact public importer
-# used by obelisk-translate. Keep this source invariant next to the behavioral
-# driver/translate equivalence run in Driver/sdf-aot-static.sv.
+# used by obelisk-translate. Keep this source invariant next to the direct
+# importer tests and the production Driver annotation tests.
 # SOURCE: auto sdfModule =
 # SOURCE-NEXT: importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
 # SOURCE-NOT: parseSDFFile

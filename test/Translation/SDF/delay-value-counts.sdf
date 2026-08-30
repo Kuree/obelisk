@@ -1,0 +1,43 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (DESIGN "delay_value_counts")
+  (VOLTAGE 1.0)
+  (TEMPERATURE 25)
+  (TIMESCALE 1 ps)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE top/u)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (1.25))
+        (IOPATH (POSEDGE source) destination (2) (3))
+        (IOPATH source destination (4) (5) (6))
+        (IOPATH source destination (7) (8) (9) (10) (11) (12))
+        (IOPATH source[2] destination[1]
+          (13) (14) (15) (16) (17) (18)
+          (19) (20) (21) (22) (23) (24))))))
+
+// IEEE 1800-2017 32.3 permits 1, 2, 3, 6, and 12 delay-value forms. Keep
+// these distinctions typed in the transient IR so application can fold them
+// without introducing simulation/runtime SDF state.
+// CHECK: obelisk_sdf.delay_file
+// CHECK-SAME: temperature = #obelisk_sdf.delay_value<form = scalar, typ = <"25">>
+// CHECK-SAME: voltage = #obelisk_sdf.delay_value<form = scalar, typ = <"1.0">>
+// CHECK: obelisk_sdf.cell
+// CHECK-SAME: instance = "top/u"
+// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"1.25">>]
+// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = scalar, typ = <"3">>]
+// CHECK-SAME: input = #obelisk_sdf.port<name = "source", hasIndex = false, index = 0, edge = posedge>
+// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = scalar, typ = <"5">>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>]
+// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"7">>, #obelisk_sdf.delay_value<form = scalar, typ = <"8">>, #obelisk_sdf.delay_value<form = scalar, typ = <"9">>, #obelisk_sdf.delay_value<form = scalar, typ = <"10">>, #obelisk_sdf.delay_value<form = scalar, typ = <"11">>, #obelisk_sdf.delay_value<form = scalar, typ = <"12">>]
+// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"13">>, #obelisk_sdf.delay_value<form = scalar, typ = <"14">>, #obelisk_sdf.delay_value<form = scalar, typ = <"15">>, #obelisk_sdf.delay_value<form = scalar, typ = <"16">>, #obelisk_sdf.delay_value<form = scalar, typ = <"17">>, #obelisk_sdf.delay_value<form = scalar, typ = <"18">>, #obelisk_sdf.delay_value<form = scalar, typ = <"19">>, #obelisk_sdf.delay_value<form = scalar, typ = <"20">>, #obelisk_sdf.delay_value<form = scalar, typ = <"21">>, #obelisk_sdf.delay_value<form = scalar, typ = <"22">>, #obelisk_sdf.delay_value<form = scalar, typ = <"23">>, #obelisk_sdf.delay_value<form = scalar, typ = <"24">>]
+// CHECK-SAME: input = #obelisk_sdf.port<name = "source", hasIndex = true, index = 2, edge = none>
+// CHECK-SAME: output = #obelisk_sdf.port<name = "destination", hasIndex = true, index = 1, edge = none>
+// CHECK-SAME: }
+// CHECK-NEXT: }
+
+// CHECK-NOT: obelisk_sim
+// CHECK-NOT: obelisk_rt
