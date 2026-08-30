@@ -211,59 +211,189 @@ static const SDFNode *formHead(const SDFNode &node, StringRef expected) {
 }
 
 struct ExactDecimal {
-  uint64_t numerator = 0;
-  uint64_t denominator = 1;
+  bool negative = false;
+  // The shared typed importer retains the source spelling; canonicalize only
+  // in this production consumer, immediately before target-precision folding.
+  std::string significand = "0";
+  int64_t exponent10 = 0;
 };
 
 static std::optional<ExactDecimal> parseDecimal(StringRef spelling) {
   spelling = spelling.trim();
-  if (spelling.empty() || spelling.front() == '-')
+  if (spelling.empty())
     return std::nullopt;
-  if (spelling.front() == '+')
+  bool negative = spelling.front() == '-';
+  if (negative || spelling.front() == '+')
     spelling = spelling.drop_front();
   StringRef mantissa = spelling;
-  int exponent = 0;
+  int64_t exponent = 0;
   size_t exponentAt = spelling.find_first_of("eE");
   if (exponentAt != StringRef::npos) {
+    if (spelling.drop_front(exponentAt + 1).contains_insensitive("e"))
+      return std::nullopt;
     mantissa = spelling.take_front(exponentAt);
     StringRef exponentText = spelling.drop_front(exponentAt + 1);
-    if (exponentText.empty() || exponentText.getAsInteger(10, exponent))
+    if (exponentText.empty())
       return std::nullopt;
+    bool exponentNegative = exponentText.front() == '-';
+    if (exponentNegative || exponentText.front() == '+')
+      exponentText = exponentText.drop_front();
+    if (exponentText.empty())
+      return std::nullopt;
+    uint64_t magnitude = 0;
+    bool exponentOverflow = false;
+    for (char value : exponentText) {
+      if (!std::isdigit(static_cast<unsigned char>(value)))
+        return std::nullopt;
+      unsigned digit = static_cast<unsigned>(value - '0');
+      if (magnitude >
+          (static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - digit) /
+              10) {
+        exponentOverflow = true;
+      } else if (!exponentOverflow) {
+        magnitude = magnitude * 10 + digit;
+      }
+    }
+    if (exponentOverflow)
+      exponent = exponentNegative ? std::numeric_limits<int64_t>::min()
+                                  : std::numeric_limits<int64_t>::max();
+    else
+      exponent = exponentNegative ? -static_cast<int64_t>(magnitude)
+                                  : static_cast<int64_t>(magnitude);
   }
   size_t dot = mantissa.find('.');
+  if (dot != StringRef::npos && mantissa.drop_front(dot + 1).contains('.'))
+    return std::nullopt;
   StringRef whole =
       dot == StringRef::npos ? mantissa : mantissa.take_front(dot);
   StringRef fraction =
       dot == StringRef::npos ? StringRef{} : mantissa.drop_front(dot + 1);
   if (whole.empty() && fraction.empty())
     return std::nullopt;
-  if (whole.empty())
-    whole = "0";
-  if (whole.size() + fraction.size() > 18 || exponent < -18 || exponent > 18)
-    return std::nullopt;
-  uint64_t numerator = 0;
-  for (char value : (whole + fraction).str()) {
+  std::string digits = (whole + fraction).str();
+  for (char value : digits) {
     if (!std::isdigit(static_cast<unsigned char>(value)))
       return std::nullopt;
-    numerator = numerator * 10 + static_cast<unsigned>(value - '0');
   }
-  uint64_t denominator = 1;
-  for (size_t index = 0; index != fraction.size(); ++index)
-    denominator *= 10;
-  if (exponent > 0) {
-    for (int index = 0; index != exponent; ++index) {
-      if (numerator > std::numeric_limits<uint64_t>::max() / 10)
-        return std::nullopt;
-      numerator *= 10;
-    }
-  } else {
-    for (int index = 0; index != -exponent; ++index) {
-      if (denominator > std::numeric_limits<uint64_t>::max() / 10)
-        return std::nullopt;
-      denominator *= 10;
-    }
+  size_t firstNonzero = digits.find_first_not_of('0');
+  if (firstNonzero == std::string::npos)
+    return ExactDecimal{negative, "0", 0};
+  digits.erase(0, firstNonzero);
+  size_t trailingZeros = 0;
+  while (digits.size() > 1 && digits.back() == '0') {
+    digits.pop_back();
+    ++trailingZeros;
   }
-  return ExactDecimal{numerator, denominator};
+  // Clause 32 decimals remain exact, but work is deterministically bounded.
+  constexpr size_t maxSignificantDecimalDigits = 16 * 1024;
+  if (digits.size() > maxSignificantDecimalDigits)
+    return std::nullopt;
+  int64_t scale = exponent;
+  auto addScale = [&](size_t amount) {
+    if (amount > static_cast<size_t>(std::numeric_limits<int64_t>::max()) ||
+        scale >
+            std::numeric_limits<int64_t>::max() - static_cast<int64_t>(amount))
+      scale = std::numeric_limits<int64_t>::max();
+    else
+      scale += static_cast<int64_t>(amount);
+  };
+  auto subtractScale = [&](size_t amount) {
+    if (amount > static_cast<size_t>(std::numeric_limits<int64_t>::max()) ||
+        scale <
+            std::numeric_limits<int64_t>::min() + static_cast<int64_t>(amount))
+      scale = std::numeric_limits<int64_t>::min();
+    else
+      scale -= static_cast<int64_t>(amount);
+  };
+  subtractScale(fraction.size());
+  addScale(trailingZeros);
+  return ExactDecimal{negative, std::move(digits), scale};
+}
+
+static std::optional<unsigned> powerOfTenOrder(uint64_t value) {
+  unsigned order = 0;
+  while (value > 1 && value % 10 == 0) {
+    value /= 10;
+    ++order;
+  }
+  return value == 1 ? std::optional<unsigned>(order) : std::nullopt;
+}
+
+static int64_t addDecimalOrder(int64_t exponent, int adjustment) {
+  if (adjustment > 0 &&
+      exponent > std::numeric_limits<int64_t>::max() - adjustment)
+    return std::numeric_limits<int64_t>::max();
+  if (adjustment < 0 &&
+      exponent < std::numeric_limits<int64_t>::min() - adjustment)
+    return std::numeric_limits<int64_t>::min();
+  return exponent + adjustment;
+}
+
+static std::optional<uint64_t> parseBoundedDecimal(StringRef digits,
+                                                   uint64_t limit) {
+  uint64_t result = 0;
+  for (char value : digits) {
+    unsigned digit = static_cast<unsigned>(value - '0');
+    if (digit > limit || result > (limit - digit) / 10)
+      return std::nullopt;
+    result = result * 10 + digit;
+  }
+  return result;
+}
+
+/// Round canonical `significand * 10^order` half upward to a bounded integer.
+/// Decimal-order classification makes the residual arithmetic at most 19
+/// digits even for adversarially long exponent spellings.
+static std::optional<uint64_t>
+roundDecimalToLimit(const ExactDecimal &value, int64_t order, uint64_t limit) {
+  StringRef digits = value.significand;
+  if (digits == "0")
+    return 0;
+  size_t limitDigits = std::to_string(limit).size();
+  if (order >= 0) {
+    uint64_t zeroCount = static_cast<uint64_t>(order);
+    if (zeroCount > limitDigits || digits.size() > limitDigits - zeroCount)
+      return std::nullopt;
+    std::optional<uint64_t> result = parseBoundedDecimal(digits, limit);
+    if (!result)
+      return std::nullopt;
+    for (uint64_t index = 0; index < zeroCount; ++index) {
+      if (*result > limit / 10)
+        return std::nullopt;
+      *result *= 10;
+    }
+    return result;
+  }
+  uint64_t discarded = order == std::numeric_limits<int64_t>::min()
+                           ? uint64_t(std::numeric_limits<int64_t>::max()) + 1
+                           : static_cast<uint64_t>(-order);
+  if (discarded > digits.size())
+    return 0;
+  size_t kept = digits.size() - static_cast<size_t>(discarded);
+  if (kept > limitDigits)
+    return std::nullopt;
+  std::optional<uint64_t> result =
+      parseBoundedDecimal(digits.take_front(kept), limit);
+  if (!result)
+    return std::nullopt;
+  if (kept < digits.size() && digits[kept] >= '5') {
+    if (*result == limit)
+      return std::nullopt;
+    ++*result;
+  }
+  return result;
+}
+
+static std::optional<uint64_t>
+scaleDecimalExactlyToLimit(const ExactDecimal &value, int64_t order,
+                           uint64_t limit) {
+  if (value.significand == "0")
+    return 0;
+  // parseDecimal transfers every significand trailing zero to exponent10, so
+  // a remaining negative order is necessarily a non-integral femtosecond.
+  if (order < 0)
+    return std::nullopt;
+  return roundDecimalToLimit(value, order, limit);
 }
 
 static uint64_t timeScaleValueFemtoseconds(slang::TimeScaleValue value) {
@@ -295,18 +425,33 @@ static std::optional<int64_t> roundDelay(const ExactDecimal &delay,
                                          uint64_t targetPrecisionFs) {
   if (targetPrecisionFs == 0)
     return std::nullopt;
-  unsigned __int128 numerator =
-      static_cast<unsigned __int128>(delay.numerator) * sdfUnitFs;
-  unsigned __int128 quantum =
-      static_cast<unsigned __int128>(delay.denominator) * targetPrecisionFs;
+  if (delay.significand == "0")
+    return 0;
+  std::optional<unsigned> unitOrder = powerOfTenOrder(sdfUnitFs);
+  std::optional<unsigned> precisionOrder = powerOfTenOrder(targetPrecisionFs);
+  if (!unitOrder || !precisionOrder)
+    return std::nullopt;
+  int adjustment =
+      static_cast<int>(*unitOrder) - static_cast<int>(*precisionOrder);
+  int64_t order = addDecimalOrder(delay.exponent10, adjustment);
+  uint64_t magnitudeLimit =
+      delay.negative
+          ? static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1
+          : static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  uint64_t stepLimit = magnitudeLimit / targetPrecisionFs;
+  std::optional<uint64_t> steps = roundDecimalToLimit(delay, order, stepLimit);
+  if (!steps)
+    return std::nullopt;
   // IEEE 1800-2017 3.14.1 rounds a time value to the destination scope's
   // precision before simulation. Keep this calculation rational so decimal
   // SDF text cannot pick up binary floating-point error at a half quantum.
-  unsigned __int128 steps = (numerator + quantum / 2) / quantum;
-  unsigned __int128 femtoseconds = steps * targetPrecisionFs;
-  if (femtoseconds > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-    return std::nullopt;
-  return static_cast<int64_t>(femtoseconds);
+  uint64_t femtoseconds = *steps * targetPrecisionFs;
+  if (!delay.negative)
+    return static_cast<int64_t>(femtoseconds);
+  if (femtoseconds ==
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1)
+    return std::numeric_limits<int64_t>::min();
+  return -static_cast<int64_t>(femtoseconds);
 }
 
 struct ParsedIOPath {
@@ -317,6 +462,8 @@ struct ParsedIOPath {
 
   Port input;
   Port output;
+  SDFAnnotationDatabase::DelayAnnotation::Kind kind =
+      SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute;
   std::optional<slang::ast::EdgeKind> edge;
   SmallVector<std::optional<ExactDecimal>, 12> delays;
   unsigned line = 1;
@@ -345,6 +492,25 @@ struct ParsedSDF {
   SmallVector<ParsedCell, 8> cells;
 };
 
+static std::optional<size_t> countParsedSDFEntries(const ParsedSDF &sdf) {
+  size_t count = 1;
+  auto add = [&](size_t amount) {
+    if (amount > std::numeric_limits<size_t>::max() - count)
+      return false;
+    count += amount;
+    return true;
+  };
+  for (const ParsedCell &cell : sdf.cells) {
+    if (!add(1) || !add(cell.paths.size()) ||
+        !add(cell.unsupportedTimingData.size()))
+      return std::nullopt;
+    for (const ParsedIOPath &path : cell.paths)
+      if (!add(path.delays.size()))
+        return std::nullopt;
+  }
+  return count;
+}
+
 struct DesignInventory
     : slang::ast::ASTVisitor<DesignInventory, slang::ast::VisitFlags::AllGood> {
   struct AnnotationCall {
@@ -358,9 +524,13 @@ struct DesignInventory
       instanceByBody;
   SmallVector<AnnotationCall, 2> calls;
   DenseSet<const slang::ast::CallExpression *> startupCalls;
+  SmallVector<const slang::ast::CallExpression *, 2> orderedStartupCalls;
   DenseMap<const slang::ast::CallExpression *,
            const slang::ast::ProceduralBlockSymbol *>
       startupBlock;
+  DenseMap<const slang::ast::CallExpression *,
+           const slang::ast::InstanceSymbol *>
+      callOwner;
   const slang::ast::InstanceSymbol *currentInstance = nullptr;
 
   const slang::ast::CallExpression *
@@ -398,6 +568,7 @@ struct DesignInventory
           statement.as<slang::ast::ExpressionStatement>().expr;
       if (const slang::ast::CallExpression *call = sdfCall(expression)) {
         startupCalls.insert(call);
+        orderedStartupCalls.push_back(call);
         startupBlock[call] = &proceduralBlock;
         return true;
       }
@@ -426,8 +597,10 @@ struct DesignInventory
 
   void handle(const slang::ast::CallExpression &call) {
     if (currentInstance && call.isSystemCall() &&
-        call.getSubroutineName() == "$sdf_annotate")
+        call.getSubroutineName() == "$sdf_annotate") {
       calls.push_back({&call, currentInstance});
+      callOwner[&call] = currentInstance;
+    }
     visitDefault(call);
   }
 
@@ -1449,6 +1622,14 @@ static std::pair<unsigned, unsigned> sourcePosition(mlir::Operation *operation) 
   return {1, 1};
 }
 
+static void sdfIRDiagnostic(sdf::SDFDelayFileOp file,
+                            mlir::Operation *operation,
+                            const Twine &message) {
+  auto [line, column] = sourcePosition(operation);
+  errs() << file.getSource() << ':' << line << ':' << column
+         << ": error: " << message << '\n';
+}
+
 static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
   auto files = module.getOps<sdf::SDFDelayFileOp>();
   if (!llvm::hasSingleElement(files))
@@ -1458,11 +1639,15 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
   if (auto divider = file.getDividerAttr())
     result.divider = divider.getValue().front();
   auto timescale = file.getTimescaleAttr();
-  if (!timescale)
+  if (!timescale) {
+    sdfIRDiagnostic(file, file, "static SDF annotation requires TIMESCALE");
     return std::nullopt;
+  }
   auto amount = parseDecimal(timescale.getAmount().getSpelling().getValue());
-  if (!amount)
+  if (!amount || amount->negative) {
+    sdfIRDiagnostic(file, file, "invalid SDF TIMESCALE amount");
     return std::nullopt;
+  }
   uint64_t unit = 1;
   switch (timescale.getUnit()) {
   case sdf::TimeUnit::Seconds:
@@ -1483,14 +1668,21 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
   case sdf::TimeUnit::Femtoseconds:
     break;
   }
-  unsigned __int128 scaled = static_cast<unsigned __int128>(amount->numerator) *
-                             static_cast<unsigned __int128>(unit);
-  if (scaled % amount->denominator)
+  std::optional<unsigned> unitOrder = powerOfTenOrder(unit);
+  if (!unitOrder) {
+    sdfIRDiagnostic(file, file, "unsupported SDF TIMESCALE unit");
     return std::nullopt;
-  scaled /= amount->denominator;
-  if (!scaled || scaled > std::numeric_limits<uint64_t>::max())
+  }
+  int64_t timeScaleOrder = addDecimalOrder(
+      amount->exponent10, static_cast<int>(*unitOrder));
+  std::optional<uint64_t> scaled = scaleDecimalExactlyToLimit(
+      *amount, timeScaleOrder, std::numeric_limits<uint64_t>::max());
+  if (!scaled || !*scaled) {
+    sdfIRDiagnostic(file, file,
+                    "SDF TIMESCALE is incompatible with static annotation");
     return std::nullopt;
-  result.timeScaleFs = static_cast<uint64_t>(scaled);
+  }
+  result.timeScaleFs = *scaled;
 
   for (sdf::SDFCellOp cellOp : file.getBody().front().getOps<sdf::SDFCellOp>()) {
     ParsedCell cell;
@@ -1501,8 +1693,7 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
     cell.wildcard = static_cast<bool>(cellOp.getWildcardAttr());
     for (mlir::Operation &operation : cellOp.getBody().front()) {
       auto pathOp = dyn_cast<sdf::SDFPathDelayOp>(operation);
-      if (!pathOp || pathOp.getKind() != sdf::PathKind::IOPath ||
-          pathOp.getMode() != sdf::DelayMode::Absolute) {
+      if (!pathOp || pathOp.getKind() != sdf::PathKind::IOPath) {
         auto [line, column] = sourcePosition(&operation);
         StringRef description =
             isa<sdf::SDFTimingCheckOp>(operation) ? "TIMINGCHECK"
@@ -1513,6 +1704,9 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
       }
       ParsedIOPath path;
       std::tie(path.line, path.column) = sourcePosition(pathOp);
+      path.kind = pathOp.getMode() == sdf::DelayMode::Increment
+                      ? SDFAnnotationDatabase::DelayAnnotation::Kind::Increment
+                      : SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute;
       auto copyPort = [](sdf::PortAttr port) {
         ParsedIOPath::Port result{port.getName().getValue().str(), std::nullopt};
         if (port.getHasIndex())
@@ -1532,8 +1726,20 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
           continue;
         }
         auto exact = parseDecimal(value.getTyp().getSpelling().getValue());
-        if (!exact)
+        if (!exact) {
+          sdfIRDiagnostic(file, pathOp, "invalid SDF delay value");
           return std::nullopt;
+        }
+        if (path.kind ==
+                SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute &&
+            exact->negative) {
+          // IEEE 1800-2017 32.5/.6: only INCREMENT is signed. Diagnose the
+          // source record here, while the transient IR still carries its
+          // precise location, rather than silently abandoning annotation.
+          sdfIRDiagnostic(file, pathOp,
+                          "invalid nonnegative SDF delay value");
+          return std::nullopt;
+        }
         path.delays.push_back(*exact);
       }
       cell.paths.push_back(std::move(path));
@@ -1545,11 +1751,11 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
 
 } // namespace
 
-const SDFAnnotationDatabase::DelayVector *
-SDFAnnotationDatabase::getTimingPathDelays(
+const SDFAnnotationDatabase::DelayAnnotations *
+SDFAnnotationDatabase::getTimingPathAnnotations(
     const slang::ast::TimingPathSymbol &path) const {
-  auto found = timingPathDelays.find(&path);
-  return found == timingPathDelays.end() ? nullptr : &found->second;
+  auto found = timingPathAnnotations.find(&path);
+  return found == timingPathAnnotations.end() ? nullptr : &found->second;
 }
 
 bool SDFAnnotationDatabase::isAppliedCall(
@@ -1590,6 +1796,8 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
             annotationScope(*candidate.call, inventory, candidate.owner))
       orderedCandidates.push_back({candidate.call, scope, startup->second});
   }
+  constexpr size_t maxAnnotationApplicationWork = 1 << 22;
+  size_t annotationApplicationWork = 0;
   DenseSet<const slang::ast::CallExpression *> unorderedCalls;
   auto contains = [](StringRef outer, StringRef inner) {
     return inner == outer ||
@@ -1599,6 +1807,13 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
   for (auto [leftIndex, left] : llvm::enumerate(orderedCandidates)) {
     for (const OrderedCandidate &right :
          ArrayRef(orderedCandidates).drop_front(leftIndex + 1)) {
+      if (annotationApplicationWork == maxAnnotationApplicationWork) {
+        callDiagnostic(sourceManager, *right.call, "error",
+                       "static SDF annotation application-work resource "
+                       "limit exceeded");
+        return nullptr;
+      }
+      ++annotationApplicationWork;
       if (left.block == right.block)
         continue;
       StringRef leftPath = left.scope->getHierarchicalPath();
@@ -1615,11 +1830,38 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
   DenseMap<const slang::ast::InstanceSymbol *,
            SmallVector<const slang::ast::TimingPathSymbol *, 4>>
       pathCache;
+  struct CachedSDF {
+    std::shared_ptr<const std::string> filename;
+    std::shared_ptr<const ParsedSDF> contents;
+  };
+  StringMap<CachedSDF> parsedSDFCache;
+  constexpr size_t maxStaticSDFFileBytes = 64 * 1024 * 1024;
+  constexpr size_t maxStaticSDFCacheBytes = 256 * 1024 * 1024;
+  constexpr size_t maxStaticSDFCacheFiles = 256;
+  constexpr size_t maxStaticSDFCacheEntries = 1 << 20;
+  constexpr size_t maxMatchedDelayUpdates = 1 << 20;
+  size_t parsedSDFCacheBytes = 0;
+  size_t parsedSDFCacheEntries = 0;
+  size_t matchedDelayUpdates = 0;
   bool invalid = false;
   mlir::MLIRContext sdfContext;
 
+  SmallVector<DesignInventory::AnnotationCall, 2> annotationCalls;
+  for (const slang::ast::CallExpression *call : inventory.orderedStartupCalls) {
+    auto owner = inventory.callOwner.find(call);
+    if (owner != inventory.callOwner.end())
+      annotationCalls.push_back({call, owner->second});
+  }
+  for (const DesignInventory::AnnotationCall &call : inventory.calls)
+    if (!inventory.startupCalls.contains(call.call))
+      annotationCalls.push_back(call);
+
+  // IEEE 1800-2017 32.5/.6: successive annotations are not commutative.
+  // The startup scanner records sequential-block statement order directly;
+  // calls in distinct overlapping initial processes were rejected above and
+  // calls in disjoint roots commute, so this is the total observable order.
   for (const DesignInventory::AnnotationCall &annotationCall :
-       inventory.calls) {
+       annotationCalls) {
     const slang::ast::CallExpression *call = annotationCall.call;
     // IEEE 1800-2017 32.9 defines `$sdf_annotate` as an executing system
     // task. Baking it into the elaborated timing metadata is equivalent only
@@ -1651,25 +1893,79 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       invalid = true;
       continue;
     }
-    ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
-        MemoryBuffer::getFile(*filename, /*IsText=*/true);
-    if (!buffer) {
-      callDiagnostic(sourceManager, *call, "error",
-                     Twine("could not read SDF file '") + *filename +
-                         "': " + buffer.getError().message());
-      invalid = true;
-      continue;
-    }
-    // IEEE 1800-2017 Clause 32: production and the translation test harness
-    // share one normalized parser/verifier boundary.  Resolution consumes the
-    // transient IR here; no obelisk_sdf operation reaches semantic IR.
-    auto sdfModule =
-        importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
-    std::optional<ParsedSDF> sdf =
-        failed(sdfModule) ? std::nullopt : consumeSDFIR(**sdfModule);
-    if (!sdf) {
-      invalid = true;
-      continue;
+    std::shared_ptr<const ParsedSDF> sdf;
+    std::shared_ptr<const std::string> annotationFilename;
+    auto cachedSDF = parsedSDFCache.find(*filename);
+    if (cachedSDF != parsedSDFCache.end()) {
+      sdf = cachedSDF->second.contents;
+      annotationFilename = cachedSDF->second.filename;
+      if (!sdf) {
+        invalid = true;
+        continue;
+      }
+    } else {
+      if (parsedSDFCache.size() == maxStaticSDFCacheFiles) {
+        callDiagnostic(sourceManager, *call, "error",
+                       "static SDF annotation file-count resource limit "
+                       "exceeded");
+        invalid = true;
+        continue;
+      }
+      annotationFilename = std::make_shared<const std::string>(*filename);
+      // IEEE 1800-2017 32.3 and 32.9 permit repeated annotation files. Cache
+      // failed I/O/import states too: later calls see the same deterministic
+      // failure without reparsing hostile text or multiplying diagnostics.
+      auto [newCacheEntry, inserted] = parsedSDFCache.try_emplace(
+          *annotationFilename, CachedSDF{annotationFilename, nullptr});
+      (void)inserted;
+      ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
+          MemoryBuffer::getFile(*filename, /*IsText=*/true);
+      if (!buffer) {
+        callDiagnostic(sourceManager, *call, "error",
+                       Twine("could not read SDF file '") + *filename +
+                           "': " + buffer.getError().message());
+        invalid = true;
+        continue;
+      }
+      size_t sourceBytes = (*buffer)->getBufferSize();
+      if (sourceBytes > maxStaticSDFFileBytes) {
+        callDiagnostic(sourceManager, *call, "error",
+                       "SDF file exceeds the 64 MiB static annotation "
+                       "resource limit");
+        invalid = true;
+        continue;
+      }
+      if (sourceBytes > maxStaticSDFCacheBytes - parsedSDFCacheBytes) {
+        callDiagnostic(sourceManager, *call, "error",
+                       "static SDF annotation aggregate byte resource limit "
+                       "exceeded");
+        invalid = true;
+        continue;
+      }
+      parsedSDFCacheBytes += sourceBytes;
+      // Production and obelisk-translate share this exact typed Clause 32
+      // normalization boundary. The database consumes that transient IR and
+      // retains no SDF operation or runtime state.
+      auto sdfModule =
+          importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
+      std::optional<ParsedSDF> parsed =
+          failed(sdfModule) ? std::nullopt : consumeSDFIR(**sdfModule);
+      if (!parsed) {
+        invalid = true;
+        continue;
+      }
+      std::optional<size_t> entryCount = countParsedSDFEntries(*parsed);
+      if (!entryCount ||
+          *entryCount > maxStaticSDFCacheEntries - parsedSDFCacheEntries) {
+        callDiagnostic(sourceManager, *call, "error",
+                       "static SDF annotation parsed-entry resource limit "
+                       "exceeded");
+        invalid = true;
+        continue;
+      }
+      parsedSDFCacheEntries += *entryCount;
+      sdf = std::make_shared<const ParsedSDF>(std::move(*parsed));
+      newCacheEntry->second.contents = sdf;
     }
 
     std::string scopePath = scope->getHierarchicalPath();
@@ -1677,6 +1973,13 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       SmallVector<const slang::ast::InstanceSymbol *, 2> targets;
       if (cell.wildcard) {
         for (const auto &entry : inventory.instances) {
+          if (annotationApplicationWork == maxAnnotationApplicationWork) {
+            errs() << *filename << ':' << cell.line << ':' << cell.column
+                   << ": error: static SDF annotation application-work "
+                      "resource limit exceeded\n";
+            return nullptr;
+          }
+          ++annotationApplicationWork;
           StringRef path = entry.getKey();
           bool inScope = path == scopePath ||
                          (path.starts_with(scopePath) &&
@@ -1738,14 +2041,42 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
         for (const ParsedIOPath &annotation : cell.paths) {
           bool matched = false;
           for (const slang::ast::TimingPathSymbol *path : cached->second) {
+            if (annotationApplicationWork == maxAnnotationApplicationWork) {
+              // Clause 32.4 matching is compile-time work. Bound failed and
+              // successful candidates together with earlier call-order and
+              // wildcard probes so no hostile cross product can evade the
+              // design-global application-work budget.
+              errs() << *filename << ':' << annotation.line << ':'
+                     << annotation.column
+                     << ": error: static SDF annotation application-work "
+                        "resource limit exceeded\n";
+              return nullptr;
+            }
+            ++annotationApplicationWork;
             if (!pathMatches(*path, annotation))
               continue;
-            SDFAnnotationDatabase::DelayVector delays;
+            matched = true;
+            if (matchedDelayUpdates == maxMatchedDelayUpdates) {
+              // This Clause 32 annotation-update limit is design-global.
+              // Stop immediately so a hostile wildcard cannot amplify either
+              // work or diagnostics after the permanent bound is reached.
+              errs() << *filename << ':' << annotation.line << ':'
+                     << annotation.column
+                     << ": error: static SDF annotation-update resource "
+                        "limit exceeded\n";
+              return nullptr;
+            }
+            ++matchedDelayUpdates;
+            SDFAnnotationDatabase::DelayAnnotation update;
+            update.kind = annotation.kind;
+            update.filename = annotationFilename;
+            update.line = annotation.line;
+            update.column = annotation.column;
             for (const std::optional<ExactDecimal> &value : annotation.delays) {
               if (!value) {
                 // IEEE 1800-2017 32.3 leaves a preannotation timing value
                 // unchanged when the SDF field is empty.
-                delays.push_back(std::nullopt);
+                update.delays.push_back(std::nullopt);
                 continue;
               }
               std::optional<int64_t> rounded =
@@ -1758,16 +2089,15 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
                 invalid = true;
                 break;
               }
-              delays.push_back(*rounded);
+              update.delays.push_back(*rounded);
             }
-            if (delays.size() != annotation.delays.size())
+            if (update.delays.size() != annotation.delays.size())
               continue;
-            // IEEE 1800-2017 32.4 replaces the matched SystemVerilog timing
-            // values. The frontend therefore emits exactly the same frozen
-            // Clause 30 attribute as an equivalent source path, leaving no
-            // SDF table or lookup in simulation MLIR.
-            result->timingPathDelays[path] = std::move(delays);
-            matched = true;
+            // IEEE 1800-2017 32.5/.6 make ABSOLUTE replacement and INCREMENT
+            // addition observable in annotation order. Retain only this
+            // bounded compile-time sequence; semantic import folds it into
+            // the existing Clause 30 delay attribute.
+            result->timingPathAnnotations[path].push_back(std::move(update));
           }
           if (!matched)
             errs() << *filename << ':' << annotation.line << ':'

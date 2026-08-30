@@ -1,0 +1,7 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1fs)
+  (CELL
+    (CELLTYPE "sdf_order_cell")
+    (INSTANCE)
+    (DELAY (INCREMENT (IOPATH source destination (5))))))

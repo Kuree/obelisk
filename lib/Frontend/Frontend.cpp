@@ -2188,46 +2188,96 @@ private:
         }
         delays.push_back(static_cast<int64_t>(femtoseconds));
       }
-      if (const auto *annotated = sdfAnnotations.getTimingPathDelays(node)) {
-        // IEEE 1800-2017 32.4 replaces a matched path's existing timing
-        // values. Keep the annotation indistinguishable from a directly
-        // declared Clause 30 delay in semantic IR, so no SDF table reaches
-        // any simulation tier.
-        bool hasEmptyField =
-            llvm::any_of(*annotated, [](const std::optional<int64_t> &value) {
-              return !value;
-            });
-        if (!hasEmptyField) {
+      if (const auto *annotations =
+              sdfAnnotations.getTimingPathAnnotations(node)) {
+        using DelayAnnotation = SDFAnnotationDatabase::DelayAnnotation;
+        sdfAnnotated = true;
+        bool singleDenseAbsolute =
+            annotations->size() == 1 &&
+            annotations->front().kind == DelayAnnotation::Kind::Absolute &&
+            llvm::all_of(annotations->front().delays,
+                         [](const std::optional<int64_t> &value) {
+                           return value.has_value();
+                         });
+        if (singleDenseAbsolute) {
+          // IEEE 1800-2017 32.5: keep the common dense ABSOLUTE update in its
+          // compact source arity; no transient SDF state reaches Simulation IR.
           delays.clear();
           llvm::transform(
-              *annotated, std::back_inserter(delays),
+              annotations->front().delays, std::back_inserter(delays),
               [](const std::optional<int64_t> &value) { return *value; });
           staticDelays = true;
-        } else if (staticDelays) {
-          SmallVector<std::optional<int64_t>, 12> source;
-          llvm::transform(delays, std::back_inserter(source),
-                          [](int64_t value) { return value; });
-          source = expandTimingDelays(source);
-          SmallVector<std::optional<int64_t>, 12> replacement =
-              expandTimingDelays(*annotated);
-          if (source.size() == 12 && replacement.size() == 12) {
+        } else {
+          SmallVector<std::optional<int64_t>, 12> current;
+          if (staticDelays) {
+            llvm::transform(delays, std::back_inserter(current),
+                            [](int64_t value) { return value; });
+            current = expandTimingDelays(current);
+          } else {
+            current.assign(12, std::nullopt);
+          }
+
+          bool annotationValid = current.size() == 12;
+          for (const DelayAnnotation &annotation : *annotations) {
+            SmallVector<std::optional<int64_t>, 12> update =
+                expandTimingDelays(annotation.delays);
+            if (update.size() != 12) {
+              annotationValid = false;
+              break;
+            }
+            for (size_t index = 0; index != 12; ++index) {
+              if (!update[index])
+                continue;
+              if (annotation.kind == DelayAnnotation::Kind::Absolute) {
+                current[index] = *update[index];
+                continue;
+              }
+              if (!current[index])
+                continue;
+              int64_t value = *current[index];
+              int64_t increment = *update[index];
+              // IEEE 1800-2017 32.6 applies INCREMENT to the value effective
+              // after preceding annotations. Compute the negative magnitude
+              // in unsigned space so INT64_MIN never incurs signed overflow.
+              uint64_t decrement =
+                  increment < 0 ? uint64_t(0) - uint64_t(increment) : 0;
+              bool overflow =
+                  (increment > 0 &&
+                   value > std::numeric_limits<int64_t>::max() - increment) ||
+                  (increment < 0 && static_cast<uint64_t>(value) < decrement);
+              if (overflow) {
+                llvm::errs() << *annotation.filename << ':' << annotation.line
+                             << ':' << annotation.column
+                             << ": error: SDF INCREMENT produces a negative "
+                                "or overflowing path delay\n";
+                annotationValid = false;
+                break;
+              }
+              current[index] = value + increment;
+            }
+            if (!annotationValid)
+              break;
+          }
+
+          bool hasUnknown =
+              llvm::any_of(current, [](const std::optional<int64_t> &value) {
+                return !value;
+              });
+          if (annotationValid && !hasUnknown) {
             delays.clear();
-            for (size_t index = 0; index != 12; ++index)
-              delays.push_back(replacement[index].value_or(*source[index]));
+            llvm::transform(
+                current, std::back_inserter(delays),
+                [](const std::optional<int64_t> &value) { return *value; });
+            staticDelays = true;
           } else {
             staticDelays = false;
+            if (annotationValid)
+              emitError(sourceLocation(node.location))
+                  << "static SDF sparse or incremental delay fields require "
+                     "constant current path delays";
+            sawInvalidNode = true;
           }
         }
-        if (!staticDelays) {
-          // IEEE 1800-2017 32.3 says an empty SDF field preserves the
-          // preannotation value. Reject a nonconstant source value instead of
-          // silently inventing a compile-time replacement for it.
-          emitError(sourceLocation(node.location))
-              << "static SDF empty delay fields require constant "
-                 "preannotation path delays";
-          sawInvalidNode = true;
-        }
-        sdfAnnotated = true;
       }
       attrs.set("timing_delay_count",
                 builder.getI64IntegerAttr(

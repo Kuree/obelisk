@@ -1,0 +1,8 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1fs)
+  (CELL
+    (CELLTYPE "sdf_rounded_negative_overflow_cell")
+    (INSTANCE dut)
+    (DELAY (INCREMENT
+      (IOPATH source destination (-9223372036854775808.5))))))

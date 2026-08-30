@@ -1,0 +1,9 @@
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1fs)
+  (CELL
+    (CELLTYPE "sdf_decimal_cell")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (9223372036854775807.5))))))

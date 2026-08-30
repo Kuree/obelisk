@@ -1,0 +1,7 @@
+// RUN: %python %source_root/test/Support/GenerateSDFResourceLimits.py translation-size %t
+// RUN: not obelisk-translate --import-sdf %t.sdf -o %t.mlir 2>&1 | FileCheck %s
+// RUN: test ! -e %t.mlir
+
+// Clause 32 admits external annotation files, but the test-only translator
+// and production frontend share a deterministic bounded importer.
+// CHECK: error: SDF input exceeds the supported 64 MiB limit

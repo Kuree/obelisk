@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace slang {
 class SourceManager;
@@ -31,8 +32,17 @@ class SDFAnnotationDatabase {
 public:
   using DelayVector = llvm::SmallVector<std::optional<int64_t>, 12>;
 
-  const DelayVector *
-  getTimingPathDelays(const slang::ast::TimingPathSymbol &path) const;
+  struct DelayAnnotation {
+    enum class Kind { Absolute, Increment } kind = Kind::Absolute;
+    DelayVector delays;
+    std::shared_ptr<const std::string> filename;
+    unsigned line = 1;
+    unsigned column = 1;
+  };
+  using DelayAnnotations = llvm::SmallVector<DelayAnnotation, 2>;
+
+  const DelayAnnotations *
+  getTimingPathAnnotations(const slang::ast::TimingPathSymbol &path) const;
   bool isAppliedCall(const slang::ast::CallExpression &call) const;
 
 private:
@@ -40,8 +50,8 @@ private:
   buildSDFAnnotationDatabase(slang::ast::Compilation &,
                              const slang::SourceManager &);
 
-  llvm::DenseMap<const slang::ast::TimingPathSymbol *, DelayVector>
-      timingPathDelays;
+  llvm::DenseMap<const slang::ast::TimingPathSymbol *, DelayAnnotations>
+      timingPathAnnotations;
   llvm::DenseSet<const slang::ast::CallExpression *> appliedCalls;
 };
 

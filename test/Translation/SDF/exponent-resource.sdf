@@ -1,0 +1,13 @@
+// RUN: %python %source_root/test/Support/GenerateSDFResourceLimits.py translation-exponent %t
+// RUN: obelisk-translate --import-sdf %t.sdf -o %t.mlir
+// RUN: FileCheck %s < %t.mlir
+
+// IEEE 1800-2017 32.4/.5 permits exponent spellings. Import must classify
+// their tokens linearly and must not allocate exponent-sized APInt or power
+// temporaries merely to build transient IR.
+// CHECK: obelisk_sdf.delay_file
+// CHECK: typ = <"1e999999
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"1e-999999
+// CHECK-COUNT-126: obelisk_sdf.path_delay
+// CHECK-NOT: obelisk_sim
+// CHECK-NOT: obelisk_rt

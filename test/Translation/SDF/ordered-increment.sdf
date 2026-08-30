@@ -1,0 +1,40 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1fs)
+  (CELL
+    (CELLTYPE "ordered")
+    (INSTANCE top/u)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (1))
+        (IOPATH source destination (1) ())
+        (IOPATH source destination (1) () (3))
+        (IOPATH source destination (1) () (3) () (5) (6))
+        (IOPATH source destination
+          (1) () (3) () (5) (6) (7) () (9) () (11) (12)))
+      (INCREMENT
+        (IOPATH source destination (-9223372036854775808))
+        (IOPATH source destination (1) (-2) ())
+        (IOPATH source destination
+          (1) (-2) (3) (-4) (5) (-6)
+          (7) (-8) (9) (-10) (11) (-12)))
+      (ABSOLUTE
+        (IOPATH source destination (9))))))
+
+// IEEE 1800-2017 32.5 and 32.6 preserve source order, sparse fields, and
+// signed decimal spellings in transient IR. Tuple expansion and arithmetic
+// happen only when the production frontend applies this IR to Clause 30 paths.
+// CHECK: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}mode = 0 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}#obelisk_sdf.delay_value<form = scalar, typ = <"3">>{{.*}}mode = 0 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-9223372036854775808">{{.*}}mode = 1 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-2">{{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}mode = 1 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-12">{{.*}}mode = 1 : i32
+// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"9">{{.*}}mode = 0 : i32
+// CHECK-NOT: obelisk_sim
+// CHECK-NOT: obelisk_rt

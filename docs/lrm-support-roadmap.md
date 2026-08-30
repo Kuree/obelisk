@@ -1106,6 +1106,21 @@ including multiple pending data occurrences.
 Runtime-selected flags, arbitrary custom transition subsets, and negative
 timing remain later G5 work.
 
+G6's second tranche applies ordered Clause 32.5/.6 ABSOLUTE and signed
+INCREMENT IOPATH records both within one delay file and across repeated static
+`$sdf_annotate` calls. Exact bounded decimal classification and Clause 3.14.1
+rounding preserve long fractional and exponent spellings without binary
+floating point, exponent-sized integers, or unchecked signed arithmetic;
+sparse one/two/three/six/twelve-value records retain the effective prior delay
+banks. Repeated files share one verified transient-IR import, and deterministic
+file, byte, parsed-entry, matched-update, and design-global application-work
+caps bound adversarial compile-time work. Semantic import folds the complete
+sequence into the existing Clause 30 delay attribute, so no SDF operation,
+lookup, table, or ABI state reaches the native, bytecode, or AOT simulation
+tiers. Dynamic invocation and the remaining conditional, timing-check, label,
+interconnect/device, pulse, and argument
+families remain later G6 work.
+
 The lexical-time audit now preserves the enclosing compilation-unit, package,
 class, or module time scope when `$printtimescale`, `$timeunit`, or
 `$timeprecision` appears inside a subroutine. Four upstream `br1003` cases now
@@ -1949,7 +1964,7 @@ primary runtime-unit executable passed.
 | 29 User-defined primitives | Executable for the audited surface | Combinational and sequential UDP declarations preserve their validated port and ordered truth-table metadata and compile to exact four-state matching in both tiers. This includes Z-to-X input normalization, level and edge symbols, explicit transition pairs with wildcards, source-order dominance within each row class, level-over-edge dominance, missing-row X, sequential state hold and initialization, ANSI/non-ANSI declarations, instances and arrays, strengths, and legal static one/two-value inertial delays. Continue differential closure for residual declaration and scheduler corner cases. |
 | 30 Specify blocks | Executable for the audited surface | Specparams and specify blocks are imported. Whole and fixed packed-select parallel/full multi-source paths, including `if`/`ifnone`, edge-sensitive `if`, unknown/positive/negative polarity, all standard static one/two/three/six/twelve transition-delay tuples, and statically disjoint ordinary and complementary `bufif`/`notif` strength-pair destinations execute in both tiers. Overlapping paths arbitrate independently per selected destination bit and four-state transition class, and zero-time derived continuous outputs retain same-time edge qualification. Procedural edge destinations execute for exact and covering direct controls, source event lists, proven implicit sensitivity, computed controls with independently observable source dependencies, and static delayed dependencies. Pulse rejection/error limits, pulse-style directives, and cancellation display controls execute for ordinary continuous, procedural, and complementary strength-pair paths without changing the compact default-path ABI. Unsupported dynamic selections, nested waits, or unobservable sources receive targeted Clause 30 diagnostics instead of being silently erased. |
 | 31 Timing checks | Partial | All twelve timing-check shapes retain ordered semantic arguments, holes, event-local conditions, edges/descriptors, and time scope. Direct `$setup`, `$hold`, `$setuphold`, `$recovery`, `$removal`, `$recrem`, `$skew`, static event- and timer-mode `$timeskew`/`$fullskew`, `$period`, canonical posedge/negedge `$width`, and signed-offset `$nochange` execute with exact endpoint/cohort, dormancy/restart/expiry, and strict-window rules; optional notifier toggling, whole-vector Clause 31.8 occurrences, standard or canonically equivalent data edges, and bare direct Clause 31.7 `&&&` conditions execute across native, bytecode, and actor-local hybrid AOT. G5 continues with computed/comparison conditions, noncanonical custom transitions, runtime-selected flags, and negative timing. |
-| 32 SDF backannotation | Partial | Statically named `$sdf_annotate` calls implement default and explicit scopes, SDF headers, `CELL`/`DELAY`/`ABSOLUTE`/`IOPATH`, edge and fixed-index endpoint matching, and exact one/two/three/six/twelve-value path-delay replacement. Decimal times are rounded exactly to the annotated module's precision; unmatched timing data warns. Annotation is folded into the existing Clause 30 attributes before semantic import, so no SDF operation, runtime table, parser, or hierarchical lookup reaches native, bytecode, or AOT compilation. Dynamic filenames, configuration/log/MTM/scale arguments, timing checks, labels/specparams, interconnect/device delays, pulse limits, conditions, and the remaining multiple-annotation policy remain G6 work. |
+| 32 SDF backannotation | Partial | Statically named `$sdf_annotate` calls implement default and explicit scopes, typed transient import, SDF headers, `CELL`/`DELAY`/ordered `ABSOLUTE` and signed `INCREMENT`/`IOPATH`, edge and fixed-index endpoint matching, repeated-file caching, and exact sparse one/two/three/six/twelve-value path updates within and across files. Decimal times use bounded exact destination-precision rounding; deterministic file, byte, parsed-entry, matched-update, and application-work limits bound compile-time work. Unmatched timing data warns. Annotation is folded into existing Clause 30 attributes before semantic import, so no SDF operation, runtime table, parser, or hierarchical lookup reaches native, bytecode, or AOT compilation. Dynamic filenames/invocation, configuration/log/MTM/scale arguments, timing checks, labels/specparams, conditional/interconnect/device delays, and pulse limits remain G6 work. |
 | 33 Configuring a design | Executable for the audited surface | Module-library discovery accepts ordered `-y` directories, `-Y` and `+libext+` extension lists, conventional `-v` files (with `-l` retained as an alias), and ordered `--libmap` files. Library maps implement declarations, recursive relative includes, wildcard specificity, per-library include directories, duplicate mapping diagnostics, declaration-order binding, and optional primary-unit macro inheritance through the frontend's single-pass precompile model. Directory discovery stays lazy and does not parse unrelated files; explicit library files and arbitrary library-map patterns are syntax-parsed up front as permitted by 33.5.1. Configurations execute ordered default library lists; cell and exact-instance `use`, `liblist`, and parameter rules; multiple roots; nested configuration selection; arrays; and bind interaction. `-emit-bindings` deterministically reports the effective selected cell, config/root/liblist, bind provenance, and retained rule location. The boundary is intentionally effective elaboration: Slang does not expose the configuration declaration source AST to semantic visitors, so Obelisk does not reconstruct a source-rule tree. |
 | 34 Protected envelopes | Excluded | Encrypted/protected IP is deliberately unsupported. Any Clause 34 protected envelope is rejected at compile time with a fixed diagnostic; production performs no decryption, plaintext emission, or silent skip. |
 | 35 DPI | Partial | Imported functions/tasks and scope-specific exported functions/suspending tasks execute through generated C thunks in native, hybrid, and bytecode-only tiers. Legal scalar and fixed-packed types, strings, chandles, open arrays, and sized unpacked aggregates have MLIR/runtime native-bytecode parity; generated headers expose exact C layouts. Pristine Slang v11 still rejects legal queue and mixed fixed/dynamic open-array source bindings, which remain source-level `XFAIL`s. Sized aggregate calls use exact boundary packing; the Annex H.12.1 direct-reference/no-marshalling optimization remains a performance residual. Context scope/caller/userdata services, exported-task disable/acknowledgement, canonical packed-data helpers, Annex J library loading, and signature diagnostics execute. The optional pre-standard `"DPI"` compatibility layer is rejected, `ref` is not legal on an import, open arrays are not legal on an export, and wasm32 rejects DPI explicitly because it has no host C ABI. |
@@ -2300,17 +2315,19 @@ one commit.
 40. **G5 — System timing checks (31).** Implement every standard timing check,
     conditioned/edge events, notifiers, vector expansion, negative checks, and
     violation scheduling.
-41. **G6 — SDF backannotation (32), first tranche complete.** Statically named
+41. **G6 — SDF backannotation (32), second tranche complete.** Statically named
     `$sdf_annotate` files are parsed and resolved against the elaborated AST
     before semantic import. Default/explicit scopes, ordinary headers,
-    `CELL`/`DELAY`/`ABSOLUTE`/`IOPATH`, edge and fixed-index endpoints, and
-    one/two/three/six/twelve-value path replacement execute with exact decimal
-    scaling and destination-precision rounding. Unmatched timing data warns as
-    required by 32.3. Production and parser tests share a typed, transient
+    `CELL`/`DELAY`/ordered `ABSOLUTE` and signed `INCREMENT`/`IOPATH`, edge and
+    fixed-index endpoints, repeated files, and sparse one/two/three/six/twelve-
+    value path updates execute with exact bounded decimal scaling and
+    destination-precision rounding. Unmatched timing data warns as required by
+    32.3, and aggregate static resource limits bound hostile annotation sets.
+    Production and parser tests share a typed, transient
     `obelisk_sdf` Clause 32 import boundary; production consumes and erases it
     before semantic import. The result reuses the compact Clause 30 timing
     attributes, so there is no runtime table, parser, SDF operation, or name
-    lookup in any simulation tier. Complete repeated/multiple annotation policy,
+    lookup in any simulation tier. Complete dynamic invocation policy,
     configuration/log/MTM/scale arguments, conditional/device/interconnect
     delays, timing checks, labels/specparams, and pulse limits.
 42. **G7 — Protected envelopes (34), excluded.** Reject encrypted/protected IP

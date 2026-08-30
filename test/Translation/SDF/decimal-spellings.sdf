@@ -1,0 +1,27 @@
+// RUN: obelisk-translate --import-sdf %s | FileCheck %s
+// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1e0 fs)
+  (CELL
+    (CELLTYPE "decimal_spellings")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH source destination (9223372036854775807.49999999999999999999))
+        (IOPATH source destination (9223372036854775807.5))
+        (IOPATH source destination (1e+0000000000000000000000000000000000019)))
+      (INCREMENT
+        (IOPATH source destination (-9223372036854775808.5))))))
+
+// IEEE 1800-2017 32.4/.5 and 3.14 require exact decimal spellings. The
+// transient importer must neither use binary floating point nor decide a
+// destination precision; production application performs exact rounding.
+// CHECK: timescale = #obelisk_sdf.timescale<amount = <"1e0">, unit = fs>
+// CHECK: typ = <"9223372036854775807.49999999999999999999">
+// CHECK: typ = <"9223372036854775807.5">
+// CHECK: typ = <"1e+0000000000000000000000000000000000019">
+// CHECK: typ = <"-9223372036854775808.5">
+// CHECK-NOT: obelisk_sim
+// CHECK-NOT: obelisk_rt
