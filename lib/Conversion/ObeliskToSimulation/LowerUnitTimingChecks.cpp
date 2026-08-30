@@ -17,6 +17,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       "timing_check_arg_expression_children");
   auto conditionChildren = function->getAttrOfType<DenseI64ArrayAttr>(
       "timing_check_arg_condition_children");
+  auto frozenConditionPredicates = function->getAttrOfType<DenseI32ArrayAttr>(
+      "timing_check_arg_condition_predicates");
   auto edges = function->getAttrOfType<DenseI32ArrayAttr>(
       "timing_check_arg_effective_edges");
   auto ticks = function->getAttrOfType<DenseI64ArrayAttr>(
@@ -25,6 +27,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       !ticks || expressionChildren.size() != conditionChildren.size() ||
       static_cast<size_t>(expressionChildren.size()) !=
           static_cast<size_t>(edges.size()) ||
+      (frozenConditionPredicates &&
+       frozenConditionPredicates.size() != conditionChildren.size()) ||
       expressionChildren.size() != ticks.size())
     return function.emitError("basic timing check has a malformed frozen ABI");
 
@@ -78,6 +82,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
 
   SmallVector<Value, 2> handles;
   SmallVector<Value, 2> conditions;
+  SmallVector<int32_t, 2> conditionPredicates;
   SmallVector<int32_t, 2> eventEdges;
   size_t sourceEventCount = period || width ? 1 : 2;
   SmallVector<int32_t, 2> conditionIndices(sourceEventCount, -1);
@@ -91,8 +96,10 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       return function.emitError(
           "basic timing-check event is not a direct signal handle");
     int32_t edge = edges[index];
-    if (edge < static_cast<int32_t>(sim::EdgeKind::Change) ||
-        edge > static_cast<int32_t>(sim::EdgeKind::Both))
+    bool standardEdge = edge >= static_cast<int32_t>(sim::EdgeKind::Change) &&
+                        edge <= static_cast<int32_t>(sim::EdgeKind::Both);
+    bool customEdge = (edge & ~0x3f) == 0x100 && (edge & 0x3f) != 0;
+    if (!standardEdge && !customEdge)
       return function.emitError("basic timing-check event has an invalid edge");
     // IEEE 1800-2017 31.8 defines one timing check when one or more bits of
     // a vector transition change. Preserve the whole direct handle: the
@@ -107,7 +114,22 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     if (static_cast<size_t>(conditionChild) >= roots.size())
       return function.emitError(
           "basic timing-check condition has an invalid child");
-    FailureOr<Value> condition = lowerExpression(roots[conditionChild], true);
+    int32_t predicate =
+        frozenConditionPredicates ? frozenConditionPredicates[index] : 0;
+    Operation *conditionRoot = roots[conditionChild];
+    Operation *conditionSource = nullptr;
+    bool multipleSources = false;
+    conditionRoot->walk([&](semantic::SVNamedValueExpressionOp named) {
+      if (!conditionSource)
+        conditionSource = named;
+      else if (conditionSource != named.getOperation())
+        multipleSources = true;
+    });
+    if (!conditionSource || multipleSources)
+      return function.emitError(
+          "Clause 31.7 timing-check condition is not a single direct signal "
+          "predicate");
+    FailureOr<Value> condition = lowerExpression(conditionSource, true);
     if (failed(condition) ||
         !isa<sim::RefType, sim::NetType, sim::DriverType>(
             succeeded(condition) ? (*condition).getType() : Type{}))
@@ -126,7 +148,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     if (!conditionWidth || *conditionWidth == 0)
       return function.emitError(
           "basic timing-check condition has no packed LSB");
-    if (*conditionWidth != 1) {
+    if ((predicate == 0 || predicate == 1) && *conditionWidth != 1) {
       Type scalar = sim::getPackedScalarType(elementType);
       Type bitType = isa<sim::LogicType>(scalar)
                          ? Type(sim::LogicType::get(function.getContext(), 1))
@@ -151,11 +173,12 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
                 .getResult();
       }
     }
-    // IEEE 1800-2017 31.7 samples only the condition's LSB at the event.
-    // A bare condition enables only on a known one, exactly matching the
-    // existing publication-time clock-condition handle semantics.
+    // IEEE 1800-2017 31.7 samples a bare/~ condition's LSB, while an equality
+    // condition first forms its scalar comparison. Retain the packed handle
+    // only for the latter; its frozen predicate is sampled in publication.
     conditionIndices[index] = static_cast<int32_t>(conditions.size());
     conditions.push_back(*condition);
+    conditionPredicates.push_back(predicate);
     eventConditions[index] = *condition;
   }
 
@@ -195,6 +218,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       // handle.
       conditionIndices.back() = static_cast<int32_t>(conditions.size());
       conditions.push_back(eventConditions.front());
+      conditionPredicates.push_back(conditionPredicates.front());
     }
   }
 
@@ -350,11 +374,16 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   SmallVector<Value, 4> waitValues;
   llvm::append_range(waitValues, handles);
   llvm::append_range(waitValues, conditions);
+  bool needsConditionPredicates = llvm::any_of(
+      conditionPredicates, [](int32_t predicate) { return predicate != 0; });
   sim::SimSuspendClockSetOp::create(
       builder, location, waitValues,
       builder.getI32IntegerAttr(conditions.size()),
       builder.getDenseI32ArrayAttr(eventEdges),
       builder.getDenseI32ArrayAttr(conditionIndices),
+      !needsConditionPredicates
+          ? DenseI32ArrayAttr{}
+          : builder.getDenseI32ArrayAttr(conditionPredicates),
       builder.getI64IntegerAttr(occurrenceSite),
       slotFinal ? builder.getUnitAttr() : UnitAttr{},
       sim::ContinuationSiteAttr{},

@@ -329,6 +329,15 @@ sim::ComputeTriggerKind getTriggerKind(sim::EdgeKind edge) {
   llvm_unreachable("unknown sensitivity edge");
 }
 
+sim::ComputeTriggerKind getClockTriggerKind(int32_t edge) {
+  // IEEE 1800-2017 31.5 custom descriptors name exact four-state transition
+  // classes. The AOT graph must conservatively publish every value change;
+  // the feature-local clock subscription classifies old/new values exactly.
+  if ((edge & ~0x3f) == 0x100 && (edge & 0x3f) != 0)
+    return sim::ComputeTriggerKind::Change;
+  return getTriggerKind(static_cast<sim::EdgeKind>(edge));
+}
+
 void appendEffect(
     const FunctionInfo &info, sim::ComputeEffectKind kind, Value handle,
     SmallVectorImpl<ComputeEffect> &effects,
@@ -403,7 +412,7 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           for (auto [watched, edge] :
                llvm::zip(op.getPrimaries(), op.getEdges()))
             appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
-                         getTriggerKind(static_cast<sim::EdgeKind>(edge)));
+                         getClockTriggerKind(edge));
           for (Value condition : op.getConditions())
             appendEffect(info, sim::ComputeEffectKind::Read, condition,
                          effects);

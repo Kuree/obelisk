@@ -5604,6 +5604,17 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF && index == 1;
           if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE)
             iffCondition = index >= occurrencePrimaries;
+          bool validClockPrimary =
+              validEdge || ((waitEntries[index].edge &
+                             ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+                                OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+                            (waitEntries[index].edge &
+                             OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0);
+          bool validClockCondition =
+              waitEntries[index].edge == OBELISK_RT_WAIT_EDGE_NONE ||
+              (waitEntries[index].edge >= OBELISK_RT_WAIT_CONDITION_KNOWN_ONE &&
+               waitEntries[index].edge <=
+                   OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE);
           bool managed =
               signalWait && !iffCondition &&
               waitEntries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED;
@@ -5617,8 +5628,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                   ? (!validSignalHandle ||
                      (managed &&
                       waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_CHANGE) ||
-                     (!validEdge && !iffCondition) ||
-                     (iffCondition &&
+                     (!(behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE
+                            ? iffCondition ? validClockCondition
+                                           : validClockPrimary
+                            : validEdge || iffCondition)) ||
+                     (behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
+                      iffCondition &&
                       waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE) ||
                      (!managed && waitEntries[index].reserved == 0))
                   : (waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||

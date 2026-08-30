@@ -64,7 +64,7 @@ bool appendSignalSubscriptionUnlocked(
   subscriptions.push_back(std::move(subscription));
   SignalSubscription &stored = *subscriptions.back();
   if (target == SignalSubscription::NativeComputedWait)
-    ++context->nativeComputedSignalSubscriptions;
+    ++context->nativeDynamicSignalSubscriptions;
   if (context->signalDiagnosticsEnabled) {
     ++context->signalDiagnostics.subscriptionsCurrent;
     context->signalDiagnostics.subscriptionsHighWater =
@@ -129,10 +129,43 @@ bool appendClockOccurrenceSubscriptionUnlocked(
   subscription->waiterToken = waiterToken;
   subscription->occurrenceBit = occurrenceBit;
   subscription->native = native;
+  bool customEdge = (edge & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+                        OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+                    (edge & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
+  if (customEdge) {
+    if (bitWidth > UINT64_MAX - 7 ||
+        (bitWidth + 7) / 8 > std::numeric_limits<size_t>::max()) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return false;
+    }
+    size_t bytes = static_cast<size_t>((bitWidth + 7) / 8);
+    subscription->previousValue.assign(bytes, 0);
+    subscription->previousUnknown.assign(bytes, 0);
+    subscription->previousInitialized.assign(bytes, 0);
+    for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+      bool value = false;
+      bool unknown = false;
+      if (!obelisk_rt_read_signal_bit_unlocked(context, stableID, bit, value,
+                                               unknown))
+        // Native timing coordinators can register before the root initializer
+        // has imported its generated plane. Defer only that feature-local
+        // snapshot to the first real publication, before its state commit.
+        continue;
+      setByteBit(subscription->previousValue.data(), bit, value);
+      setByteBit(subscription->previousUnknown.data(), bit, unknown);
+      setByteBit(subscription->previousInitialized.data(), bit, true);
+    }
+  }
   subscription->bucketSlots.reserve(wide ? 1 : static_cast<size_t>(pageCount));
   auto &owned = feature.subscriptions[logicalToken];
   owned.push_back(std::move(subscription));
   ClockOccurrenceSubscription &stored = *owned.back();
+  // A custom native descriptor is not present in the frozen AOT fanout.
+  // Reuse its existing dynamic-subscription guard so ordinary publications
+  // gain no feature lookup or branch; unregister and failed registration
+  // roll this pay-for-play marker back with the subscription.
+  if (customEdge && native)
+    ++context->nativeDynamicSignalSubscriptions;
   if (context->signalDiagnosticsEnabled) {
     ++context->signalDiagnostics.subscriptionsCurrent;
     context->signalDiagnostics.subscriptionsHighWater =
@@ -181,6 +214,10 @@ void eraseClockOccurrenceSubscriptionsUnlocked(obelisk_rt_context *context,
     if (!pointer)
       continue;
     ClockOccurrenceSubscription &subscription = *pointer;
+    bool customEdge =
+        (subscription.edge & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+            OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+        (subscription.edge & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
     for (const SignalSubscriptionBucketSlot &slot : subscription.bucketSlots) {
       auto bucket = feature.subscriptionBuckets.find(slot.key);
       if (bucket == feature.subscriptionBuckets.end())
@@ -203,6 +240,9 @@ void eraseClockOccurrenceSubscriptionsUnlocked(obelisk_rt_context *context,
     if (context->signalDiagnosticsEnabled &&
         context->signalDiagnostics.subscriptionsCurrent != 0)
       --context->signalDiagnostics.subscriptionsCurrent;
+    if (customEdge && subscription.native &&
+        context->nativeDynamicSignalSubscriptions != 0)
+      --context->nativeDynamicSignalSubscriptions;
   }
   feature.subscriptions.erase(owned);
 }
@@ -397,8 +437,8 @@ void obelisk_rt_unregister_signal_wait_unlocked(
       }
     }
     if (subscription.target == SignalSubscription::NativeComputedWait &&
-        context->nativeComputedSignalSubscriptions != 0)
-      --context->nativeComputedSignalSubscriptions;
+        context->nativeDynamicSignalSubscriptions != 0)
+      --context->nativeDynamicSignalSubscriptions;
     for (const SignalSubscriptionBucketSlot &slot : subscription.bucketSlots) {
       auto bucket = context->signalSubscriptionBuckets.find(slot.key);
       if (bucket == context->signalSubscriptionBuckets.end())
@@ -473,7 +513,12 @@ bool obelisk_rt_register_signal_wait_unlocked(
         if ((wait->auxiliary & (uint64_t{1} << index)) == 0)
           continue;
         const obelisk_rt_wait_entry_v1 &condition = entries[conditionEntry++];
-        state.conditions[index] = {condition.stable_id, condition.reserved};
+        uint32_t predicate =
+            condition.edge == OBELISK_RT_WAIT_EDGE_NONE
+                ? static_cast<uint32_t>(OBELISK_RT_WAIT_CONDITION_KNOWN_ONE)
+                : condition.edge;
+        state.conditions[index] = {condition.stable_id, condition.reserved,
+                                   predicate};
       }
       feature.waits.insert_or_assign(logicalToken, std::move(state));
       if (conditionCount != 0)
@@ -615,12 +660,17 @@ bool obelisk_rt_same_clock_occurrence_wait_unlocked(
       return false;
     ClockOccurrenceCondition expected;
     if ((wait->auxiliary & (uint64_t{1} << index)) != 0) {
-      expected = {entries[conditionEntry].stable_id,
-                  entries[conditionEntry].reserved};
+      expected = {
+          entries[conditionEntry].stable_id, entries[conditionEntry].reserved,
+          entries[conditionEntry].edge == OBELISK_RT_WAIT_EDGE_NONE
+              ? static_cast<uint32_t>(OBELISK_RT_WAIT_CONDITION_KNOWN_ONE)
+              : entries[conditionEntry].edge};
       ++conditionEntry;
     }
     ClockOccurrenceCondition actual = state->second.conditions[index];
-    if (actual.stableID != expected.stableID || actual.width != expected.width)
+    if (actual.stableID != expected.stableID ||
+        actual.width != expected.width ||
+        actual.predicate != expected.predicate)
       return false;
   }
   return conditionEntry == wait->count;

@@ -46,9 +46,19 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
       })
       .Case<sim::SimSuspendClockSetOp>([&](auto op) {
         llvm::append_range(watched, op.getPrimaries());
-        for (int32_t edge : op.getEdges())
-          scalarEdge.push_back(edge !=
-                               static_cast<int32_t>(sim::EdgeKind::Change));
+        for (int32_t edge : op.getEdges()) {
+          uint32_t encoded = static_cast<uint32_t>(edge);
+          bool customTransition =
+              (encoded & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+                  OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+              (encoded & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
+          // IEEE 1800-2017 31.8 applies an edge-control descriptor to every
+          // bit of a timing-check vector and coalesces one packed publication.
+          // Canonical pos/negedge remains the historical scalar-LSB wait.
+          scalarEdge.push_back(
+              encoded != static_cast<uint32_t>(sim::EdgeKind::Change) &&
+              !customTransition);
+        }
         llvm::append_range(watched, op.getConditions());
         scalarEdge.append(op.getConditions().size(), false);
       })

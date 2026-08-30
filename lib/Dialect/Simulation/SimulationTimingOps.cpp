@@ -311,6 +311,11 @@ LogicalResult SimSuspendClockSetOp::verify() {
     return emitOpError("requires between one and 64 clock primaries");
   if (getConditions().size() != static_cast<uint64_t>(getConditionCount()))
     return emitOpError("condition count exceeds the operand inventory");
+  auto conditionPredicates =
+      (*this)->getAttrOfType<DenseI32ArrayAttr>("condition_predicates");
+  if (conditionPredicates &&
+      static_cast<size_t>(conditionPredicates.size()) != getConditions().size())
+    return emitOpError("requires one predicate per clock condition");
   if (getEdges().size() != getPrimaries().size() ||
       getConditionIndices().size() != getPrimaries().size())
     return emitOpError("requires one edge and condition index per primary");
@@ -323,8 +328,10 @@ LogicalResult SimSuspendClockSetOp::verify() {
        llvm::zip_equal(getPrimaries(), getEdges(), getConditionIndices())) {
     if (!isa<RefType, NetType, DriverType>(primary.getType()))
       return emitOpError("clock primaries must be direct signal handles");
-    if (edge < static_cast<int32_t>(EdgeKind::Change) ||
-        edge > static_cast<int32_t>(EdgeKind::Both))
+    bool standardEdge = edge >= static_cast<int32_t>(EdgeKind::Change) &&
+                        edge <= static_cast<int32_t>(EdgeKind::Both);
+    bool customEdge = (edge & ~0x3f) == 0x100 && (edge & 0x3f) != 0;
+    if (!standardEdge && !customEdge)
       return emitOpError("contains an invalid edge kind");
     if (conditionIndex < -1 ||
         (conditionIndex >= 0 && static_cast<uint64_t>(conditionIndex) >=
@@ -342,6 +349,10 @@ LogicalResult SimSuspendClockSetOp::verify() {
   for (Value condition : getConditions())
     if (!isa<RefType, NetType, DriverType>(condition.getType()))
       return emitOpError("clock iff conditions must be direct signal handles");
+  if (conditionPredicates)
+    for (int32_t predicate : conditionPredicates.asArrayRef())
+      if (predicate < 0 || predicate > 9)
+        return emitOpError("contains an invalid clock condition predicate");
   if (llvm::is_contained(usedConditions, false))
     return emitOpError("contains an unreferenced condition handle");
   auto function = (*this)->getParentOfType<SimFuncOp>();

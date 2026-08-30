@@ -4149,6 +4149,7 @@ def SimSuspendClockSetOp : SimOp<"suspend.clock_set", [
                        I32Attr:$condition_count,
                        DenseI32ArrayAttr:$edges,
                        DenseI32ArrayAttr:$condition_indices,
+                       OptionalAttr<DenseI32ArrayAttr>:$condition_predicates,
                        I64Attr:$occurrence_site,
                        OptionalAttr<UnitAttr>:$slot_final,
                        OptionalAttr<SimContinuationSiteAttr>:$site,

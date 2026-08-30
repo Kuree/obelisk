@@ -312,6 +312,17 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
     return edge >= OBELISK_RT_WAIT_EDGE_CHANGE &&
            edge <= OBELISK_RT_WAIT_EDGE_BOTH;
   };
+  auto validClockEdge = [&](uint32_t edge) {
+    return validEdge(static_cast<obelisk_rt_wait_edge_kind>(edge)) ||
+           ((edge & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+                OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+            (edge & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0);
+  };
+  auto validClockCondition = [](uint32_t predicate) {
+    return predicate == OBELISK_RT_WAIT_EDGE_NONE ||
+           (predicate >= OBELISK_RT_WAIT_CONDITION_KNOWN_ONE &&
+            predicate <= OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE);
+  };
   auto validSignalHandle = [](uint64_t stableID) {
     obelisk_rt_stable_handle_v1 decoded;
     return obelisk_rt_stable_handle_decode(stableID, &decoded);
@@ -371,8 +382,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
         bool condition = index >= primaries;
         valid = validSignalHandle(entries[index].stable_id) &&
                 entries[index].reserved != 0 &&
-                (condition ? entries[index].edge == OBELISK_RT_WAIT_EDGE_NONE
-                           : validEdge(entries[index].edge));
+                (condition ? validClockCondition(entries[index].edge)
+                           : validClockEdge(entries[index].edge));
       }
     } else if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&

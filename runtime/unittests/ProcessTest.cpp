@@ -2088,6 +2088,129 @@ TEST(RuntimeInternals, ClockOccurrenceIffSamplesCommittedPublicationValue) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals,
+     ClockOccurrenceCustomDescriptorUsesOnlyLazyFeatureStateAndCoalesces) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->stateValue.assign(1, 0);
+  context->stateUnknown.assign(1, 0);
+
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } record{
+      {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+       OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 1, 74, 0},
+      {16, OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | (1u << 0) | (1u << 3), 4}};
+  ScheduledDesignTask task;
+  task.id = 14;
+  task.started = true;
+  task.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+  context->scheduledDesignTaskIndices[task.id] = 0;
+  context->scheduledDesignTasks.push_back(std::move(task));
+  context->activeLogicalProcessToken = 14;
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &record.wait,
+      context->scheduledDesignTasks.front().signalSubscriptions,
+      context->scheduledDesignTasks.front().signalLatch, 14, true));
+  ASSERT_TRUE(context->clockOccurrences);
+  EXPECT_EQ(context->nativeDynamicSignalSubscriptions, 0u);
+
+  // Four matching 01 bit transitions are one Clause 31.8 vector occurrence.
+  uint8_t changed = 0xf;
+  uint8_t posedge = 0xf;
+  uint8_t negedge = 0;
+  context->stateValue[0] |= uint64_t{0xf} << 16;
+  ASSERT_TRUE(obelisk_rt_publish_signal_transition_batch_unlocked(
+      context, 16, 4, &changed, &posedge, &negedge, 0, nullptr));
+  ++context->schedulerSlotProgress;
+  EXPECT_EQ(obelisk_rt_v1_clock_occurrence_consume(context, 74), 1u);
+
+  // 1x is the other selected Clause 31.5 class.
+  context->stateUnknown[0] |= uint64_t{0xf} << 16;
+  posedge = 0;
+  ASSERT_TRUE(obelisk_rt_publish_signal_transition_batch_unlocked(
+      context, 16, 4, &changed, &posedge, &negedge, 0, nullptr));
+  ++context->schedulerSlotProgress;
+  EXPECT_EQ(obelisk_rt_v1_clock_occurrence_consume(context, 74), 1u);
+
+  obelisk_rt_unregister_signal_wait_unlocked(
+      context, context->scheduledDesignTasks.front().signalSubscriptions, 14,
+      true);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ClockOccurrenceCustomDescriptorRollsBackPartialRegistration) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->stateValue.assign(1, 0);
+  context->stateUnknown.assign(1, 0);
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entries[2];
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+            OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 2, 75, 0},
+           {{16, OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1u, 4},
+            {UINT64_MAX, OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1u, 4}}};
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  std::unique_ptr<SignalWaitLatch> latch;
+  EXPECT_FALSE(obelisk_rt_register_signal_wait_unlocked(
+      context, &record.wait, subscriptions, latch, 15, false));
+  EXPECT_TRUE(subscriptions.empty());
+  EXPECT_EQ(context->nativeDynamicSignalSubscriptions, 0u);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ClockOccurrenceWideCustomDescriptorCoalescesPartialPageOverlapAndCleans) {
+  constexpr uint64_t width = 65 * kSignalSubscriptionPageBits;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->stateValue.assign((width + 63) / 64, 0);
+  context->stateUnknown.assign((width + 63) / 64, 0);
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+            OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 1, 76, 0},
+           {0, OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1u,
+            static_cast<uint32_t>(width)}};
+  ScheduledDesignTask task;
+  task.id = 16;
+  task.started = true;
+  task.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+  context->scheduledDesignTaskIndices[task.id] = 0;
+  context->scheduledDesignTasks.push_back(std::move(task));
+  context->activeLogicalProcessToken = 16;
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &record.wait,
+      context->scheduledDesignTasks.front().signalSubscriptions,
+      context->scheduledDesignTasks.front().signalLatch, 16, true));
+  ASSERT_TRUE(context->clockOccurrences);
+  EXPECT_EQ(context->clockOccurrences->subscriptionBuckets.size(), 1u);
+
+  // This three-bit publication straddles the indexed page boundary. Two 01
+  // bits still form one Clause 31.8 occurrence for the wide subscription.
+  uint8_t changed = 0x5;
+  uint8_t posedge = 0x5;
+  uint8_t negedge = 0;
+  context->stateValue[255 / 64] |= uint64_t{1} << (255 % 64);
+  context->stateValue[257 / 64] |= uint64_t{1} << (257 % 64);
+  ASSERT_TRUE(obelisk_rt_publish_signal_transition_batch_unlocked(
+      context, 255, 3, &changed, &posedge, &negedge, 0, nullptr));
+  ++context->schedulerSlotProgress;
+  EXPECT_EQ(obelisk_rt_v1_clock_occurrence_consume(context, 76), 1u);
+
+  obelisk_rt_unregister_signal_wait_unlocked(
+      context, context->scheduledDesignTasks.front().signalSubscriptions, 16,
+      true);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeInternals, DirectSignalWaitCanSuppressActiveSelfPublication) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -7866,6 +7989,31 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   expectInvalidOccurrence(2, 1, 1, OBELISK_RT_WAIT_EDGE_POSEDGE, 1);
   expectInvalidOccurrence(2, 1, 1, OBELISK_RT_WAIT_EDGE_NONE, 0);
 
+  auto expectInvalidOccurrenceEncoding = [&](uint32_t primaryEdge,
+                                             uint32_t conditionEdge) {
+    std::memset(wait, 0, 64);
+    *wait = {OBELISK_RT_VERSION,
+             OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+             2,
+             1,
+             1};
+    entries[0] = {17, primaryEdge, 1};
+    entries[1] = {18, conditionEdge, 1};
+    EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                  instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
+              OBELISK_RT_INVALID_FRAME);
+  };
+  expectInvalidOccurrenceEncoding(OBELISK_RT_WAIT_EDGE_TRANSITION_MASK,
+                                  OBELISK_RT_WAIT_EDGE_NONE);
+  expectInvalidOccurrenceEncoding(OBELISK_RT_WAIT_EDGE_TRANSITION_MASK |
+                                      UINT32_C(0x41),
+                                  OBELISK_RT_WAIT_EDGE_NONE);
+  expectInvalidOccurrenceEncoding(OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1,
+                                  OBELISK_RT_WAIT_CONDITION_PREDICATE - 1);
+  expectInvalidOccurrenceEncoding(OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1,
+                                  OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE + 1);
+
   std::memset(wait, 0, 64);
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
   entries[0] = {UINT64_MAX, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
@@ -7891,7 +8039,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
             OBELISK_RT_OK);
 
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  EXPECT_EQ(nativeDestroyCount, 16);
+  EXPECT_EQ(nativeDestroyCount, 20);
 }
 
 TEST(SampledValues, CapturesCanonicalPreponedPlane) {

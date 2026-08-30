@@ -8551,7 +8551,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (invalid)
         continue;
       for (StringRef name :
-           {"timing_check_event_based", "timing_check_remain_active"})
+           {"timing_check_arg_condition_predicates",
+            "timing_check_event_based", "timing_check_remain_active"})
         if (Attribute value = unit.source->getAttr(name))
           functionAttrs.push_back(builder.getNamedAttr(name, value));
       auto timingKind =

@@ -1877,7 +1877,29 @@ enum {
   OBELISK_RT_WAIT_EDGE_POSEDGE = 1,
   OBELISK_RT_WAIT_EDGE_NEGEDGE = 2,
   OBELISK_RT_WAIT_EDGE_BOTH = 3,
+  // Clock-occurrence waits alone may encode an IEEE 1800-2017 31.5
+  // transition-descriptor mask in the otherwise ordinary edge word. Bits
+  // 0--5 are 01, 0x, 10, 1x, x0, and x1 respectively. The marker keeps every
+  // existing wait record and ordinary direct-wait edge value unchanged.
+  OBELISK_RT_WAIT_EDGE_TRANSITION_MASK = UINT32_C(0x100),
+  OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES = UINT32_C(0x3f),
   OBELISK_RT_WAIT_EDGE_NONE = UINT32_MAX
+};
+
+enum {
+  // A clock condition entry uses its otherwise-unused edge word to freeze the
+  // small Clause 31.7 predicate. NONE remains the legacy known-one spelling.
+  OBELISK_RT_WAIT_CONDITION_PREDICATE = UINT32_C(0x200),
+  OBELISK_RT_WAIT_CONDITION_KNOWN_ONE = UINT32_C(0x200),
+  OBELISK_RT_WAIT_CONDITION_KNOWN_ZERO = UINT32_C(0x201),
+  OBELISK_RT_WAIT_CONDITION_LOGICAL_EQ_ZERO = UINT32_C(0x202),
+  OBELISK_RT_WAIT_CONDITION_LOGICAL_EQ_ONE = UINT32_C(0x203),
+  OBELISK_RT_WAIT_CONDITION_LOGICAL_NE_ZERO = UINT32_C(0x204),
+  OBELISK_RT_WAIT_CONDITION_LOGICAL_NE_ONE = UINT32_C(0x205),
+  OBELISK_RT_WAIT_CONDITION_CASE_EQ_ZERO = UINT32_C(0x206),
+  OBELISK_RT_WAIT_CONDITION_CASE_EQ_ONE = UINT32_C(0x207),
+  OBELISK_RT_WAIT_CONDITION_CASE_NE_ZERO = UINT32_C(0x208),
+  OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE = UINT32_C(0x209)
 };
 
 typedef struct obelisk_rt_wait_record_v1 {

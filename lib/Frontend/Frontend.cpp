@@ -2325,6 +2325,7 @@ private:
       SmallVector<Attribute> edges;
       SmallVector<Attribute> descriptors;
       SmallVector<int32_t> effectiveEdges;
+      SmallVector<int32_t> conditionPredicates;
       SmallVector<int64_t> isTime;
       SmallVector<int64_t> timeFs;
       hasExpression.reserve(arguments.size());
@@ -2334,6 +2335,7 @@ private:
       edges.reserve(arguments.size());
       descriptors.reserve(arguments.size());
       effectiveEdges.reserve(arguments.size());
+      conditionPredicates.reserve(arguments.size());
       isTime.reserve(arguments.size());
       timeFs.reserve(arguments.size());
       slang::TimeScale scale;
@@ -2404,6 +2406,65 @@ private:
           return std::nullopt;
         return static_cast<int64_t>(femtoseconds);
       };
+      auto unwrapImplicitConversions = [](const slang::ast::Expression *expr) {
+        while (const auto *conversion =
+                   expr ? expr->as_if<slang::ast::ConversionExpression>()
+                        : nullptr) {
+          if (!conversion->isImplicit())
+            break;
+          expr = &conversion->operand();
+        }
+        return expr;
+      };
+      auto directConditionSource = [&](const slang::ast::Expression *expr) {
+        expr = unwrapImplicitConversions(expr);
+        return expr && expr->as_if<slang::ast::NamedValueExpression>();
+      };
+      auto classifyCondition = [&](const slang::ast::Expression *condition) {
+        // The compact predicate is interpreted against one already-existing
+        // packed signal handle. Clause 31.7 directs designs needing multiple
+        // conditioning signals to combine them outside the specify block.
+        if (!condition)
+          return int32_t{-1};
+        const slang::ast::Expression *expression =
+            unwrapImplicitConversions(condition);
+        if (directConditionSource(expression))
+          return int32_t{0}; // known one
+        if (const auto *unary =
+                expression->as_if<slang::ast::UnaryExpression>()) {
+          if (unary->op == slang::ast::UnaryOperator::BitwiseNot &&
+              directConditionSource(&unary->operand()))
+            return int32_t{1}; // known zero
+          return int32_t{-1};
+        }
+        const auto *binary = expression->as_if<slang::ast::BinaryExpression>();
+        if (!binary || !directConditionSource(&binary->left()))
+          return int32_t{-1};
+        slang::ConstantValue constant = binary->right().eval(evalContext);
+        if (!constant.isInteger() || constant.integer().hasUnknown())
+          return int32_t{-1};
+        std::optional<uint64_t> value = constant.integer().as<uint64_t>();
+        if (!value || *value > 1)
+          return int32_t{-1};
+        int32_t base = -1;
+        switch (binary->op) {
+        case slang::ast::BinaryOperator::Equality:
+          base = 2;
+          break;
+        case slang::ast::BinaryOperator::Inequality:
+          base = 4;
+          break;
+        case slang::ast::BinaryOperator::CaseEquality:
+          base = 6;
+          break;
+        case slang::ast::BinaryOperator::CaseInequality:
+          base = 8;
+          break;
+        default:
+          return int32_t{-1};
+        }
+        return base + static_cast<int32_t>(*value);
+      };
       for (auto [index, argument] : llvm::enumerate(arguments)) {
         hasExpression.push_back(argument.expr != nullptr);
         hasCondition.push_back(argument.condition != nullptr);
@@ -2440,9 +2501,8 @@ private:
             static_cast<int32_t>(convertEnum(argument.edge));
         if (!argument.edgeDescriptors.empty()) {
           // IEEE 1800-2017 31.5 treats Z as X in transition descriptors.
-          // Canonical descriptor sets use the existing standard-edge ABI;
-          // every proper subset remains semantic-only until exact transition
-          // classes survive scheduler publication.
+          // Canonical sets keep their standard-edge spelling; proper subsets
+          // freeze their six classes into the existing clock-entry edge word.
           effectiveEdge =
               descriptorMask == 0x23
                   ? static_cast<int32_t>(slangir::EdgeKind::PosEdge)
@@ -2450,9 +2510,10 @@ private:
                   ? static_cast<int32_t>(slangir::EdgeKind::NegEdge)
               : descriptorMask == 0x3f
                   ? static_cast<int32_t>(slangir::EdgeKind::BothEdges)
-                  : -1;
+                  : static_cast<int32_t>(0x100 | descriptorMask);
         }
         effectiveEdges.push_back(effectiveEdge);
+        conditionPredicates.push_back(classifyCondition(argument.condition));
         bool time = isTimeSlot(index);
         isTime.push_back(time);
         std::optional<int64_t> frozen =
@@ -2478,6 +2539,13 @@ private:
                 builder.getArrayAttr(descriptors));
       attrs.set("timing_check_arg_effective_edges",
                 builder.getDenseI32ArrayAttr(effectiveEdges));
+      // IEEE 1800-2017 31.7 samples the conditioned expression at the timing
+      // event. Freeze only its small deterministic/nondeterministic predicate;
+      // the existing direct handle remains the publication-time operand.
+      if (llvm::any_of(conditionPredicates,
+                       [](int32_t predicate) { return predicate > 0; }))
+        attrs.set("timing_check_arg_condition_predicates",
+                  builder.getDenseI32ArrayAttr(conditionPredicates));
       attrs.set("timing_check_arg_is_time",
                 builder.getDenseI64ArrayAttr(isTime));
       if (staticTimes)
@@ -2513,25 +2581,32 @@ private:
                                        arguments[index].condition != nullptr;
       }
       bool hasRequiredArguments = arguments.size() >= requiredArguments;
-      bool directConditions =
+      bool representableConditions =
           hasRequiredArguments &&
-          (!arguments[0].condition ||
-           arguments[0]
-               .condition
-               ->template as_if<slang::ast::NamedValueExpression>()) &&
+          (!arguments[0].condition || conditionPredicates[0] >= 0) &&
           (period || width || !arguments[1].condition ||
-           arguments[1]
-               .condition->template as_if<slang::ast::NamedValueExpression>());
-      bool canonicalEvents = hasRequiredArguments && effectiveEdges[0] >= 0 &&
-                             (period || width || effectiveEdges[1] >= 0);
+           conditionPredicates[1] >= 0);
+      if (hasRequiredArguments &&
+          ((arguments[0].condition && conditionPredicates[0] < 0) ||
+           (!(period || width) && arguments[1].condition &&
+            conditionPredicates[1] < 0)))
+        attrs.set("obelisk.unsupported_timing_condition",
+                  builder.getUnitAttr());
+      bool representableEvents = hasRequiredArguments &&
+                                 effectiveEdges[0] >= 0 &&
+                                 (period || width || effectiveEdges[1] >= 0);
+      bool customControlledEdge = hasRequiredArguments &&
+                                  (effectiveEdges[0] & ~0x3f) == 0x100 &&
+                                  (effectiveEdges[0] & 0x3f) != 0;
       bool controlledEdge =
           hasRequiredArguments &&
           (effectiveEdges[0] ==
                static_cast<int32_t>(slangir::EdgeKind::PosEdge) ||
            effectiveEdges[0] ==
                static_cast<int32_t>(slangir::EdgeKind::NegEdge) ||
-           (period && effectiveEdges[0] ==
-                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)));
+           (period && (effectiveEdges[0] ==
+                           static_cast<int32_t>(slangir::EdgeKind::BothEdges) ||
+                       customControlledEdge)));
       bool nonnegativeTimes =
           llvm::all_of(llvm::zip_equal(timeFs, isTime), [](auto valueAndTime) {
             auto [value, time] = valueAndTime;
@@ -2572,8 +2647,9 @@ private:
            width || noChange) &&
           staticTimes && (noChange || nonnegativeTimes) &&
           hasRequiredArguments && arguments[0].expr &&
-          ((period || width) || arguments[1].expr) && directConditions &&
-          canonicalEvents && noChangeReference &&
+          ((period || width) || arguments[1].expr) &&
+          representableConditions && representableEvents &&
+          noChangeReference &&
           (!(period || width) || controlledEdge) &&
           (!width || effectiveEdges[0] !=
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&

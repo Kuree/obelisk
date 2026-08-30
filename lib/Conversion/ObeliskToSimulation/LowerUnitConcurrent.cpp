@@ -8699,6 +8699,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder.getI32IntegerAttr(conditionHandles.size()),
         builder.getDenseI32ArrayAttr(edges),
         builder.getDenseI32ArrayAttr(conditionIndices),
+        DenseI32ArrayAttr{},
         builder.getI64IntegerAttr(occurrenceSite), UnitAttr{},
         sim::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),

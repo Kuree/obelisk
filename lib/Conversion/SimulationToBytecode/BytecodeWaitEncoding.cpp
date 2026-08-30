@@ -324,8 +324,15 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
       if (!width)
         return operation->emitOpError(
             "signal wait handle has no fixed-width element");
+      bool customTransition =
+          (edge & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+              OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
+          (edge & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
+      // IEEE 1800-2017 31.8 applies a noncanonical edge descriptor across the
+      // full timing-check vector; its one packed publication still coalesces
+      // to one event. Canonical edge waits retain their scalar-LSB ABI.
       if (edge != static_cast<uint32_t>(sim::EdgeKind::Change) &&
-          edge != OBELISK_RT_WAIT_EDGE_NONE)
+          edge != OBELISK_RT_WAIT_EDGE_NONE && !customTransition)
         *width = 1;
       write32(bytes, 32 + index * 16 + 12, *width);
     }

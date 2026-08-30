@@ -146,7 +146,14 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
       edges.push_back(static_cast<uint32_t>(edge));
     SmallVector<Value> watched(suspend.getPrimaries());
     llvm::append_range(watched, suspend.getConditions());
-    edges.append(suspend.getConditions().size(), OBELISK_RT_WAIT_EDGE_NONE);
+    auto predicates =
+        suspend->getAttrOfType<DenseI32ArrayAttr>("condition_predicates");
+    if (predicates)
+      for (int32_t predicate : predicates.asArrayRef())
+        edges.push_back(OBELISK_RT_WAIT_CONDITION_PREDICATE +
+                        static_cast<uint32_t>(predicate));
+    else
+      edges.append(suspend.getConditions().size(), OBELISK_RT_WAIT_EDGE_NONE);
     uint64_t conditionMask = 0;
     for (auto [index, condition] :
          llvm::enumerate(suspend.getConditionIndices()))

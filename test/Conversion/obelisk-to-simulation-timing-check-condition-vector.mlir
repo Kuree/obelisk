@@ -1,8 +1,9 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// IEEE 1800-2017 31.7 samples a bare condition's LSB at its event, while
-// 31.8 treats a whole vector as one timing-check signal. Keep both policies
-// on the existing exact clock-set wait without scalar actors or observers.
+// IEEE 1800-2017 31.7 forms a scalar equality from the packed conditioning
+// expression at its event, while 31.5 freezes custom transition classes and
+// 31.8 treats a whole vector publication as one timing-check event. Keep all
+// three policies on the existing exact clock-set wait.
 
 !logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
@@ -41,9 +42,10 @@ module {
             timing_check_arg_has_condition = array<i64: 1, 0, 0>,
             timing_check_arg_expression_children = array<i64: 0, 2, 3>,
             timing_check_arg_condition_children = array<i64: 1, -1, -1>,
+            timing_check_arg_condition_predicates = array<i32: 2, -1, -1>,
             timing_check_arg_edges = [0 : i32, 3 : i32, 0 : i32],
             timing_check_arg_edge_descriptors = [[], [], []],
-            timing_check_arg_effective_edges = array<i32: 0, 3, 0>,
+            timing_check_arg_effective_edges = array<i32: 258, 3, 0>,
             timing_check_arg_is_time = array<i64: 0, 0, 1>,
             timing_check_arg_time_fs = array<i64: 0, 0, 3000000>} {
           obelisk.sv.expression.named_value attributes {
@@ -70,9 +72,9 @@ module {
 // CHECK: obelisk_sim.func private
 // CHECK-SAME: !obelisk_sim.ref<!obelisk_sim.logic<4>>
 // CHECK-SAME: obelisk_sim.timing_check_coordinator
-// CHECK: obelisk_sim.ref.extract {{.*}} from 0
-// CHECK-SAME: -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
 // CHECK-COUNT-1: obelisk_sim.suspend.clock_set
-// CHECK-SAME: conditions 1 edges [0, 3] indices [0, -1]
+// CHECK-SAME: conditions 1 edges [258, 3] indices [0, -1]
+// CHECK-SAME: condition_predicates = array<i32: 2>
+// CHECK-NOT: obelisk_sim.ref.extract
 // CHECK-NOT: obelisk_sim.suspend.observe
 // CHECK-NOT: timing_check_table

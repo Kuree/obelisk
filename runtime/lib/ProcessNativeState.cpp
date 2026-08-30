@@ -377,9 +377,9 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
       context->schedulerEpoch = 1;
     return context->schedulerStatus == OBELISK_RT_OK;
   }
-  return publishNativeSignalTransitionUnlocked(context, stableID, bitWidth,
-                                               changed, posedge, negedge,
-                                               newValue, newUnknown);
+  return publishNativeSignalTransitionUnlocked(
+      context, stableID, bitWidth, changed, posedge, negedge, nullptr, nullptr,
+      newValue, newUnknown);
 }
 
 static obelisk_rt_status

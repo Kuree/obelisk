@@ -49,7 +49,7 @@ bool nativeStaticSpecializationEnvironmentClean(
   return context &&
          (!context->execution || context->execution->observer_count == 0) &&
          context->scheduledDesignTasks.empty() &&
-         context->nativeComputedSignalSubscriptions == 0 &&
+         context->nativeDynamicSignalSubscriptions == 0 &&
          context->nativeConditionalSignalWaiters.empty() &&
          context->designConditionalSignalWaiters.empty();
 }

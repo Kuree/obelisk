@@ -97,7 +97,14 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
         for (int32_t edge : op.getEdges())
           watchedEdges.push_back(static_cast<uint32_t>(edge));
         llvm::append_range(watched, op.getConditions());
-        watchedEdges.append(op.getConditions().size(), noEdge);
+        auto predicates = op->template getAttrOfType<DenseI32ArrayAttr>(
+            "condition_predicates");
+        if (predicates)
+          for (int32_t predicate : predicates.asArrayRef())
+            watchedEdges.push_back(OBELISK_RT_WAIT_CONDITION_PREDICATE +
+                                   static_cast<uint32_t>(predicate));
+        else
+          watchedEdges.append(op.getConditions().size(), noEdge);
       })
       .Case<sim::SimSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());

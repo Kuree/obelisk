@@ -935,6 +935,7 @@ static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72,
 struct ClockOccurrenceCondition {
   uint64_t stableID = UINT64_MAX;
   uint32_t width = 0;
+  uint32_t predicate = OBELISK_RT_WAIT_CONDITION_KNOWN_ONE;
 };
 
 struct ClockOccurrenceWaveKey {
@@ -968,6 +969,13 @@ struct ClockOccurrenceSubscription {
   uint32_t edge = 0;
   uint8_t occurrenceBit = 0;
   bool native = false;
+  // Clause 31.5 state exists only for a noncanonical descriptor subscription.
+  // Six standard transition classes fit in the frozen edge word; three packed
+  // feature-local planes retain value, unknown, and initialization without
+  // changing the ordinary wait ABI.
+  std::vector<uint8_t> previousValue;
+  std::vector<uint8_t> previousUnknown;
+  std::vector<uint8_t> previousInitialized;
   std::vector<SignalSubscriptionBucketSlot> bucketSlots;
 };
 
@@ -1513,7 +1521,10 @@ struct obelisk_rt_context {
                      std::vector<SignalSubscriptionBucketEntry>,
                      SignalSubscriptionBucketKeyHash>
       signalSubscriptionBuckets;
-  uint64_t nativeComputedSignalSubscriptions = 0;
+  // Dynamic native subscriptions are omitted from the frozen AOT fanout.
+  // Computed waits and custom Clause 31.5 descriptors share this already-hot
+  // specialization guard instead of adding a transition-path feature probe.
+  uint64_t nativeDynamicSignalSubscriptions = 0;
   std::vector<uint64_t> pendingNativeComputedWaiters;
   std::vector<uint64_t> pendingDesignComputedWaiters;
   std::unordered_set<uint64_t> nativeConditionalSignalWaiters;
@@ -2430,13 +2441,19 @@ bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
 bool obelisk_rt_publish_signal_occurrence_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     uint32_t edges, uint64_t *outSequence = nullptr);
+bool obelisk_rt_read_signal_bit_unlocked(obelisk_rt_context *context,
+                                         uint64_t stableID, uint64_t bit,
+                                         bool &value, bool &unknown,
+                                         bool useSnapshot = true);
 // Publish one packed transition mask for a committed signal range. The three
 // planes retain per-bit edge identity so a batched NBA cannot spuriously wake
 // a posedge waiter because another bit in the range had a posedge.
 bool obelisk_rt_publish_signal_transition_batch_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    uint64_t edgeBitOffset = 0, uint64_t *outSequence = nullptr);
+    uint64_t edgeBitOffset = 0, uint64_t *outSequence = nullptr,
+    const uint8_t *oldValue = nullptr, const uint8_t *oldUnknown = nullptr,
+    const uint8_t *newValue = nullptr, const uint8_t *newUnknown = nullptr);
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,

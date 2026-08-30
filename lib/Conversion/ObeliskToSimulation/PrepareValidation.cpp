@@ -209,6 +209,15 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
     if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {
       if (op->hasAttr("obelisk.basic_timing_check"))
         return;
+      if (op->hasAttr("obelisk.unsupported_timing_condition")) {
+        emitError(getSemanticLocation(op))
+            << "IEEE 1800-2017 31.7 timing-check condition must be one "
+               "direct packed signal with an optional ~ or ==/!=/===/!== "
+               "comparison to 0 or 1; combine multiple conditioning "
+               "signals outside the specify block";
+        invalid = true;
+        return;
+      }
       emitError(getSemanticLocation(op))
           << "IEEE 1800-2017 Clause 31 system timing checks are retained in "
              "semantic IR but are not executable yet";
