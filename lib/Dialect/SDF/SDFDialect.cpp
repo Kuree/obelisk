@@ -255,7 +255,7 @@ LogicalResult SDFTimingCheckOp::verify() {
   size_t expectedLimits =
       (getKind() == TimingCheckKind::SetupHold ||
        getKind() == TimingCheckKind::Recrem ||
-       getKind() == TimingCheckKind::FullSkew ||
+       getKind() == TimingCheckKind::BidirectSkew ||
        getKind() == TimingCheckKind::NoChange)
           ? 2
           : 1;

@@ -53,7 +53,8 @@ def SDFTimingCheckOp : SDFOp<"timing_check", [HasParent<"SDFCellOp">]> {
 }
 
 def SDFLabelOp : SDFOp<"label", [HasParent<"SDFCellOp">]> {
-  let arguments = (ins StrAttr:$name, SDFDelayValueAttr:$value);
+  let arguments = (ins SDFDelayMode:$mode, StrAttr:$name,
+      SDFDelayValueAttr:$value);
   let assemblyFormat = "attr-dict";
   let hasVerifier = 1;
 }

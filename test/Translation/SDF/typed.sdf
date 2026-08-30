@@ -36,10 +36,11 @@
       (SETUPHOLD data clk (1) (2))
       (PERIOD (posedge clk) (3))
       (WIDTH (negedge clk) (4))
-      (FULLSKEW a b (5) (6))
+      (BIDIRECTSKEW a b (5) (6))
       (NOCHANGE data clk (-1) (2)))
     (LABEL
-      (LATENCY (1:2:3)))))
+      (ABSOLUTE (LATENCY (1:2:3)))
+      (INCREMENT (LATENCY (4))))))
 
 // CHECK: obelisk_sdf.delay_file
 // CHECK-SAME: sdf_version = "4.0"
@@ -52,7 +53,11 @@
 // CHECK: obelisk_sdf.terminal_delay
 // CHECK: obelisk_sdf.pulse
 // CHECK: obelisk_sdf.timing_check
+// CHECK: kind = 7 : i32
 // CHECK: obelisk_sdf.label
+// CHECK-SAME: mode = 0 : i32
+// CHECK: obelisk_sdf.label
+// CHECK-SAME: mode = 1 : i32
 // CHECK-NOT: obelisk_sim
 // CHECK-NOT: obelisk_rt
 

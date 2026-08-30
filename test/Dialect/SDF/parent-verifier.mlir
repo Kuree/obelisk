@@ -44,7 +44,8 @@ module {
 module {
   // expected-error@+1 {{'obelisk_sdf.label' op expects parent op 'obelisk_sdf.cell'}}
   obelisk_sdf.label {
-    name = "L", value = #obelisk_sdf.delay_value<form = scalar, typ = #obelisk_sdf.decimal<"1">>
+    mode = 0 : i32, name = "L",
+    value = #obelisk_sdf.delay_value<form = scalar, typ = #obelisk_sdf.decimal<"1">>
   }
 }
 

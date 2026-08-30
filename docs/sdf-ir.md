@@ -12,6 +12,11 @@ Delay modes, record subtypes, edges, ports, conditions, units, and delay forms
 are enums or dialect attributes rather than strings. Conditions use a bounded
 postfix token stream with verifier-enforced stack arity.
 
+The normalized schema retains the Clause 32.4 source vocabulary instead of
+the target SystemVerilog spelling: SDF `BIDIRECTSKEW` is the record that later
+maps to `$fullskew`, and each LABEL value carries its enclosing ABSOLUTE or
+INCREMENT mode for ordered specparam application.
+
 Decimal attributes preserve exact source spelling. The SDF annotation
 consumer—not the parser—performs unit conversion and checked rounding to the
 annotated design scope's precision. Empty and sparse min:typ:max fields remain

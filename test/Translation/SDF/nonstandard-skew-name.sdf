@@ -1,0 +1,17 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (TIMINGCHECK
+      (TIMESKEW a b (1))
+      (FULLSKEW a b (1) (2)))))
+
+// IEEE 1800-2017 32.4.2 Table 32-2 maps SDF BIDIRECTSKEW to the
+// SystemVerilog $fullskew check and SDF SKEW to $skew/$timeskew; neither
+// SystemVerilog task name is an SDF record spelling.
+// CHECK: nonstandard-skew-name.sdf:10:7: error: unsupported TIMINGCHECK record
+// CHECK: nonstandard-skew-name.sdf:11:7: error: unsupported TIMINGCHECK record

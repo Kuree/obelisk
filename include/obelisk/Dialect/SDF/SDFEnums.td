@@ -39,16 +39,16 @@ def SDFTCRecovery : I32EnumAttrCase<"Recovery", 3, "recovery">;
 def SDFTCRemoval : I32EnumAttrCase<"Removal", 4, "removal">;
 def SDFTCRecrem : I32EnumAttrCase<"Recrem", 5, "recrem">;
 def SDFTCSkew : I32EnumAttrCase<"Skew", 6, "skew">;
-def SDFTCTimeSkew : I32EnumAttrCase<"TimeSkew", 7, "timeskew">;
-def SDFTCFullSkew : I32EnumAttrCase<"FullSkew", 8, "fullskew">;
-def SDFTCPeriod : I32EnumAttrCase<"Period", 9, "period">;
-def SDFTCWidth : I32EnumAttrCase<"Width", 10, "width">;
-def SDFTCNoChange : I32EnumAttrCase<"NoChange", 11, "nochange">;
+def SDFTCBidirectSkew
+    : I32EnumAttrCase<"BidirectSkew", 7, "bidirectskew">;
+def SDFTCPeriod : I32EnumAttrCase<"Period", 8, "period">;
+def SDFTCWidth : I32EnumAttrCase<"Width", 9, "width">;
+def SDFTCNoChange : I32EnumAttrCase<"NoChange", 10, "nochange">;
 def SDFTimingCheckKind
     : I32EnumAttr<"TimingCheckKind", "SDF timing-check record kind", [
         SDFTCSetup, SDFTCHold, SDFTCSetupHold, SDFTCRecovery, SDFTCRemoval,
-        SDFTCRecrem, SDFTCSkew, SDFTCTimeSkew, SDFTCFullSkew, SDFTCPeriod,
-        SDFTCWidth, SDFTCNoChange
+        SDFTCRecrem, SDFTCSkew, SDFTCBidirectSkew, SDFTCPeriod, SDFTCWidth,
+        SDFTCNoChange
       ]> { let cppNamespace = "::obelisk::sdf"; }
 
 def SDFEdgeNone : I32EnumAttrCase<"None", 0, "none">;

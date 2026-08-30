@@ -1,0 +1,13 @@
+// RUN: not obelisk-translate --import-sdf %s 2>&1 | FileCheck %s
+
+(DELAYFILE
+  (SDFVERSION "4.0")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dut")
+    (INSTANCE)
+    (LABEL (LATENCY (1)))))
+
+// IEEE 1800-2017 32.4.3 specifies LABEL values inside an ABSOLUTE group;
+// retain the mode explicitly rather than accepting a lossy flat shorthand.
+// CHECK: invalid-label-mode.sdf:9:12: error: LABEL requires ABSOLUTE or INCREMENT records

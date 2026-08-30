@@ -1347,8 +1347,8 @@ private:
                       .Case("removal", sdf::TimingCheckKind::Removal)
                       .Case("recrem", sdf::TimingCheckKind::Recrem)
                       .Case("skew", sdf::TimingCheckKind::Skew)
-                      .Case("timeskew", sdf::TimingCheckKind::TimeSkew)
-                      .Case("fullskew", sdf::TimingCheckKind::FullSkew)
+                      .Case("bidirectskew",
+                            sdf::TimingCheckKind::BidirectSkew)
                       .Case("period", sdf::TimingCheckKind::Period)
                       .Case("width", sdf::TimingCheckKind::Width)
                       .Case("nochange", sdf::TimingCheckKind::NoChange)
@@ -1363,7 +1363,7 @@ private:
                               : 2;
       size_t limitCount = (*kind == sdf::TimingCheckKind::SetupHold ||
                            *kind == sdf::TimingCheckKind::Recrem ||
-                           *kind == sdf::TimingCheckKind::FullSkew ||
+                           *kind == sdf::TimingCheckKind::BidirectSkew ||
                            *kind == sdf::TimingCheckKind::NoChange)
                               ? 2
                               : 1;
@@ -1387,15 +1387,34 @@ private:
   }
 
   void parseLabels(const SDFNode &section) {
-    for (const SDFNode &record : ArrayRef(section.children).drop_front()) {
-      if (record.kind != SDFNode::Kind::List || record.children.size() != 2 ||
-          record.children.front().kind != SDFNode::Kind::Atom) {
-        error(record, "LABEL entry requires a name and value");
+    for (const SDFNode &modeNode : ArrayRef(section.children).drop_front()) {
+      sdf::DelayMode mode;
+      if (formHead(modeNode, "ABSOLUTE"))
+        mode = sdf::DelayMode::Absolute;
+      else if (formHead(modeNode, "INCREMENT"))
+        mode = sdf::DelayMode::Increment;
+      else {
+        // IEEE 1800-2017 32.4.3: LABEL changes specparams using the SDF
+        // ABSOLUTE/INCREMENT grouping. Keep the mode explicit in transient IR
+        // so ordered application never has to reconstruct source structure.
+        error(modeNode, "LABEL requires ABSOLUTE or INCREMENT records");
         continue;
       }
-      createOp<sdf::SDFLabelOp>(
-          record, {named("name", builder.getStringAttr(record.children[0].text)),
-                   named("value", parseDelayValue(record.children[1]))});
+      for (const SDFNode &record :
+           ArrayRef(modeNode.children).drop_front()) {
+        if (record.kind != SDFNode::Kind::List ||
+            record.children.size() != 2 ||
+            record.children.front().kind != SDFNode::Kind::Atom) {
+          error(record, "LABEL entry requires a name and value");
+          continue;
+        }
+        createOp<sdf::SDFLabelOp>(
+            record,
+            {named("mode",
+                   builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
+             named("name", builder.getStringAttr(record.children[0].text)),
+             named("value", parseDelayValue(record.children[1]))});
+      }
     }
   }
 
