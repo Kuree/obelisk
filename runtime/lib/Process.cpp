@@ -1146,21 +1146,34 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) == 0 ||
        (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA)) != 0);
-  constexpr uint32_t cleanSuperstepRequirements =
-      OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+  constexpr uint32_t staticExecutionRequirements =
       OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
       OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS;
+  bool exactFanout =
+      (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+                      OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0;
+  bool cleanSuperstep =
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0;
+  bool staticEvalIsland =
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0;
   bool cleanSuperstepValid =
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) == 0 ||
-      ((plan->flags & cleanSuperstepRequirements) ==
-           cleanSuperstepRequirements &&
-       (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
-                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0);
+      !cleanSuperstep ||
+      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0 &&
+       (plan->flags & staticExecutionRequirements) ==
+           staticExecutionRequirements &&
+       exactFanout && !staticEvalIsland);
+  bool staticEvalIslandValid =
+      !staticEvalIsland ||
+      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) == 0 &&
+       (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0 &&
+       (plan->flags & staticExecutionRequirements) ==
+           staticExecutionRequirements &&
+       exactFanout && !cleanSuperstep);
   bool evalSchedulerValid =
       (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0 ||
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
-       plan->clock_kernel_count != 0 && plan->timeslot_coordinator &&
-       plan->promotion_invalidate && plan->promotion_ready);
+      ((cleanSuperstep || staticEvalIsland) && plan->clock_kernel_count != 0 &&
+       plan->timeslot_coordinator && plan->promotion_invalidate &&
+       plan->promotion_ready);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -1169,7 +1182,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
       !clockKernelTableValid || !nbaCommitValid || !nbaDirtyRootsValid ||
-      !specializationFastValid || !cleanSuperstepValid || !evalSchedulerValid ||
+      !specializationFastValid || !cleanSuperstepValid ||
+      !staticEvalIslandValid || !evalSchedulerValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -1180,7 +1194,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT |
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
                        OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
-                       OBELISK_RT_NATIVE_SCHEDULE_EVAL)) != 0 ||
+                       OBELISK_RT_NATIVE_SCHEDULE_EVAL |
+                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;
@@ -1267,7 +1282,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         !merged.execute ||
         (merged.kernel < clockKernelCount && merged.continuation != 0 &&
          (merged.flags & OBELISK_RT_MERGED_FRAGMENT_FALLBACK) == 0 &&
-         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0);
+         (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0);
     if (merged.actor_slot >= plan->actor_capacity ||
         merged.compute_node == UINT32_MAX || !directFragmentValid ||
         (merged.flags & ~(OBELISK_RT_MERGED_FRAGMENT_SHARED |
@@ -2438,7 +2454,8 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_FRAME;
   bool directSignalSuspend = action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
                              action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
-  if (!directSignalSuspend && !scheduled.signalSubscriptions.empty())
+  if (scheduled.computedObserverWaitRegistered ||
+      (!directSignalSuspend && !scheduled.signalSubscriptions.empty()))
     obelisk_rt_unregister_signal_wait_unlocked(
         context, scheduled.signalSubscriptions, scheduled.token, false);
   uint64_t delayPayload =
@@ -3759,8 +3776,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (pending == context->inertialPathPending.end() ||
               update.inertialPathBit >= pending->second.width ||
               update.inertialPathGeneration !=
-                  pending->second.generation[static_cast<size_t>(
-                      update.inertialPathBit)])
+                  pending->second
+                      .generation[static_cast<size_t>(update.inertialPathBit)])
             return false;
           size_t index = static_cast<size_t>(update.inertialPathBit);
           if (!pending->second.pulseControlled)
@@ -3790,9 +3807,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 size_t index = static_cast<size_t>(update.inertialPathBit);
                 if (pending->second.pulseControlled) {
                   auto &live = pending->second.liveSequences[index];
-                  live.erase(std::remove(live.begin(), live.end(),
-                                         update.sequence),
-                             live.end());
+                  live.erase(
+                      std::remove(live.begin(), live.end(), update.sequence),
+                      live.end());
                 }
                 if (update.inertialPathStrengthFinal &&
                     pending->second.highSequence[index] == update.sequence) {
@@ -3815,8 +3832,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                     std::remove(live.begin(), live.end(), update.sequence),
                     live.end());
               }
-              if (pending->second.scheduledSequence[index] ==
-                  update.sequence) {
+              if (pending->second.scheduledSequence[index] == update.sequence) {
                 pending->second.valid[index] = 0;
                 pending->second.delayed[index] = 0;
                 pending->second.scheduledDueTime[index] = 0;
@@ -4477,8 +4493,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (dpiDisabled) {
         killRequested = true;
         status = OBELISK_RT_OK;
-        action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0,
-                  0, 0};
+        action = {
+            OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
       } else if (!terminationRequested) {
         return status;
       }
@@ -4518,7 +4534,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         return OBELISK_RT_INVALID_LIFECYCLE;
       ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
       if (action.kind == OBELISK_RT_FRAGMENT_TERMINATE) {
-        if (!scheduled.signalSubscriptions.empty())
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         if (!scheduled.callers.empty() && !context->schedulerFinishRequested &&
@@ -4569,7 +4586,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (status != OBELISK_RT_OK)
           return status;
       } else if (action.kind == OBELISK_RT_FRAGMENT_PROCESS_SUSPEND) {
-        if (!scheduled.signalSubscriptions.empty())
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -4589,7 +4607,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         scheduled.callers.reserve(scheduled.callers.size() + 1);
         scheduled.callerControlDepths.reserve(
             scheduled.callerControlDepths.size() + 1);
-        if (!scheduled.signalSubscriptions.empty())
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.callers.push_back(selected);
@@ -4604,7 +4623,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         scheduled.queuedRegion = scheduled.homeRegion;
         pendingCallee.release();
       } else {
-        if (!scheduled.signalSubscriptions.empty())
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;

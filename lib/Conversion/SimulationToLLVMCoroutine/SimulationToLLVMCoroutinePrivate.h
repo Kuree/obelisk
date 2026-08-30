@@ -192,8 +192,8 @@ void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              mlir::Value base, ProcessInstanceField field, mlir::Value value,
              unsigned alignment);
 mlir::Value loadAt(mlir::OpBuilder &builder, mlir::Location location,
-                   mlir::Value base, FragmentActionField field,
-                   mlir::Type type, unsigned alignment);
+                   mlir::Value base, FragmentActionField field, mlir::Type type,
+                   unsigned alignment);
 void storeAt(mlir::OpBuilder &builder, mlir::Location location,
              mlir::Value base, FragmentActionField field, mlir::Value value,
              unsigned alignment);
@@ -365,14 +365,20 @@ mlir::LogicalResult
 materializeManagedMethodThunks(mlir::ModuleOp module,
                                const llvm::DataLayout &dataLayout);
 mlir::LogicalResult materializeNativeObserverThunks(mlir::ModuleOp module);
+mlir::Operation *getConvertedObserverBinding(mlir::Value value);
+uint32_t getConvertedObserverCaptureCount(mlir::Operation *binding);
+mlir::Operation::operand_range
+getConvertedObserverCaptures(mlir::Operation *binding);
+mlir::Operation::operand_range
+getConvertedObserverDependencies(mlir::Operation *binding);
 mlir::LogicalResult serializeComputedObserverWait(
     mlir::Operation *operation, mlir::Value wait, uint64_t waitSize,
     mlir::OpBuilder &builder,
     mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
-mlir::LogicalResult serializeRuntimeWait(mlir::Operation *operation,
-                                         mlir::Value wait, uint32_t kind,
-                                         uint32_t count,
-                                         mlir::OpBuilder &builder);
+mlir::LogicalResult serializeRuntimeWait(
+    mlir::Operation *operation, mlir::Value wait, uint32_t kind, uint32_t count,
+    mlir::OpBuilder &builder,
+    mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 uint64_t stableProcessID(llvm::StringRef name);
 mlir::LogicalResult
 makeProcessDescriptor(mlir::ModuleOp module, mlir::Location location,

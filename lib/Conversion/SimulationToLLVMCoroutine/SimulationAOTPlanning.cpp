@@ -31,9 +31,8 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
   bool dumping = false;
   module.walk([&](Operation *operation) {
     if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpVarsOp,
-            sim::SimDumpAllOp,
-            sim::SimDumpControlOp, sim::SimDumpFlushOp, sim::SimDumpPortsOp,
-            sim::SimDumpPortsControlOp>(operation))
+            sim::SimDumpAllOp, sim::SimDumpControlOp, sim::SimDumpFlushOp,
+            sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>(operation))
       dumping = true;
   });
   if (dumping)
@@ -693,9 +692,11 @@ buildNativeStaticActorRootPlan(
   return plan;
 }
 
-FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
-    ModuleOp module, const NativeStateLayout &stateLayout,
-    const DenseMap<Operation *, uint32_t> &actorSlots, bool enabled) {
+FailureOr<NativeStaticFanoutPlan>
+buildNativeStaticFanoutPlan(ModuleOp module,
+                            const NativeStateLayout &stateLayout,
+                            const DenseMap<Operation *, uint32_t> &actorSlots,
+                            bool enabled, bool certifiedStaticIsland) {
   NativeStaticFanoutPlan plan;
   plan.exact = enabled;
   if (!enabled)
@@ -706,6 +707,20 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   if (!graph)
     return module.emitError("static fanout plan requires a compute graph"),
            failure();
+  auto isCertifiedColdCoordinator = [](sim::SimFuncOp function) {
+    if (!function ||
+        SymbolTable::getSymbolVisibility(function) !=
+            SymbolTable::Visibility::Private ||
+        function.getEntryKind() != sim::EntryKind::Always ||
+        function.getHomeRegion() != sim::EventRegion::Observed ||
+        function.getDomain() != sim::ExecutionDomain::Design ||
+        (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+         !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
+      return false;
+    unsigned clockWaits = 0;
+    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
+    return clockWaits == 1;
+  };
   auto disableExactFanout = [&] {
     plan.entries.clear();
     plan.fragments.clear();
@@ -759,10 +774,22 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
             : nullptr;
     auto actor =
         function ? actorSlots.find(function.getOperation()) : actorSlots.end();
-    if (!function || !block || actor == actorSlots.end())
+    if (!function || !block)
       return module.emitError(
                  "static fanout references a stale compute fragment"),
              failure();
+    // IEEE 1800-2017 Clause 31.7 clock-set coordinators retain occurrence
+    // ordering in the runtime and are deliberately outside the certified
+    // native island. An arbitrary absent actor must instead invalidate exact
+    // fanout; silently omitting it would make the generated dependency table
+    // incomplete.
+    if (actor == actorSlots.end() && certifiedStaticIsland &&
+        isCertifiedColdCoordinator(function))
+      continue;
+    if (actor == actorSlots.end()) {
+      disableExactFanout();
+      continue;
+    }
     Operation *terminator = block->getTerminator();
     sim::ContinuationSiteAttr site;
     if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(terminator))
@@ -771,7 +798,12 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       site = suspend.getSiteAttr();
     else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(terminator))
       site = suspend.getSiteAttr();
-    else {
+    else if (auto suspend = dyn_cast<sim::SimSuspendClockSetOp>(terminator)) {
+      // IEEE 1800-2017 31.7 samples `&&&` only after a primary timing event.
+      // The compute graph therefore exposes only primary Watch effects here;
+      // a compiled condition read must not become a fanout dependency.
+      site = suspend.getSiteAttr();
+    } else {
       disableExactFanout();
       continue;
     }
@@ -1019,9 +1051,8 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
     }
     std::optional<unsigned> direct;
     for (auto [index, candidate] : llvm::enumerate(directFragments)) {
-      bool exactPhysicalOwner =
-          candidate.actorSlot == entry.actor_slot &&
-          candidate.continuation == entry.continuation;
+      bool exactPhysicalOwner = candidate.actorSlot == entry.actor_slot &&
+                                candidate.continuation == entry.continuation;
       bool graphCertificate =
           llvm::all_of(plannedFragments, [&](uint32_t fragment) {
             return ownsFragment(candidate, fragment);

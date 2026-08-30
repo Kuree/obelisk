@@ -284,22 +284,21 @@ Operation::operand_range SimSuspendClockSetOp::getConditions() {
 
 Operation::operand_range SimSuspendClockSetOp::getContinuationOperands() {
   size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
-  size_t conditionCount = getConditionCountAttr().getValue().isNegative()
-                              ? 0
-                              : std::min<uint64_t>(
-                                    getConditionCount(),
-                                    getNumOperands() - primaryCount);
+  size_t conditionCount =
+      getConditionCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getConditionCount(),
+                               getNumOperands() - primaryCount);
   return getValues().drop_front(primaryCount + conditionCount);
 }
 
-MutableOperandRange
-SimSuspendClockSetOp::getContinuationOperandsMutable() {
+MutableOperandRange SimSuspendClockSetOp::getContinuationOperandsMutable() {
   size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
-  size_t conditionCount = getConditionCountAttr().getValue().isNegative()
-                              ? 0
-                              : std::min<uint64_t>(
-                                    getConditionCount(),
-                                    getNumOperands() - primaryCount);
+  size_t conditionCount =
+      getConditionCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getConditionCount(),
+                               getNumOperands() - primaryCount);
   size_t begin = primaryCount + conditionCount;
   return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
 }
@@ -334,8 +333,8 @@ LogicalResult SimSuspendClockSetOp::verify() {
     if (!standardEdge && !customEdge)
       return emitOpError("contains an invalid edge kind");
     if (conditionIndex < -1 ||
-        (conditionIndex >= 0 && static_cast<uint64_t>(conditionIndex) >=
-                                    getConditions().size()))
+        (conditionIndex >= 0 &&
+         static_cast<uint64_t>(conditionIndex) >= getConditions().size()))
       return emitOpError("contains an invalid condition index");
     if (conditionIndex >= 0) {
       if (conditionIndex != nextCondition++)
@@ -346,9 +345,18 @@ LogicalResult SimSuspendClockSetOp::verify() {
       usedConditions[conditionIndex] = true;
     }
   }
-  for (Value condition : getConditions())
-    if (!isa<RefType, NetType, DriverType>(condition.getType()))
-      return emitOpError("clock iff conditions must be direct signal handles");
+  for (Value condition : getConditions()) {
+    if (isa<RefType, NetType, DriverType>(condition.getType()))
+      continue;
+    auto observer = dyn_cast<ObserverType>(condition.getType());
+    if (!observer || getPackedWidth(observer.getResultType()) != 1)
+      return emitOpError(
+          "clock conditions must be direct signal handles or one-bit "
+          "observer tokens");
+    if (!condition.getDefiningOp<SimObserverBindOp>())
+      return emitOpError("clock condition observer must be produced by "
+                         "observer.bind");
+  }
   if (conditionPredicates)
     for (int32_t predicate : conditionPredicates.asArrayRef())
       if (predicate < 0 || predicate > 9)
@@ -365,8 +373,7 @@ LogicalResult SimSuspendClockSetOp::verify() {
       function.getHomeRegion() == EventRegion::Observed;
   if (getSlotFinalAttr() && !timingCheckCoordinator)
     return emitOpError("slot_final is reserved for a timing-check coordinator");
-  if (!function ||
-      (!assertionCoordinator && !timingCheckCoordinator) ||
+  if (!function || (!assertionCoordinator && !timingCheckCoordinator) ||
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
       function.getEntryKind() != EntryKind::Always ||

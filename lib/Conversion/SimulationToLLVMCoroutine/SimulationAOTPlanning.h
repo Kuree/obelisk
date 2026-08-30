@@ -199,8 +199,8 @@ buildNativeStaticActorRootPlan(
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots);
 mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
-    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
-    bool enabled);
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots, bool enabled,
+    bool certifiedStaticIsland);
 mlir::FailureOr<NativeThreeTierPlan>
 buildNativeThreeTierPlan(mlir::ModuleOp module,
                          const NativeStateLayout &stateLayout);
@@ -258,9 +258,9 @@ mlir::LogicalResult makeNativeEvalPlan(
     const NativeEvalOwnershipPlan &evalOwnership,
     sim::ComputeGraphAttr computeGraph,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
-    mlir::ArrayRef<NativePeriodicAlias> periodicAliases,
-    bool enableDirectState, bool enableStaticNBA, bool enableStaticControl,
-    bool enableStaticFanout, bool enableCleanSuperstep, bool fullyStatic,
+    mlir::ArrayRef<NativePeriodicAlias> periodicAliases, bool enableDirectState,
+    bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
+    bool enableCleanSuperstep, bool fullyStatic, bool staticEvalIsland,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);
 
 } // namespace obelisk::detail

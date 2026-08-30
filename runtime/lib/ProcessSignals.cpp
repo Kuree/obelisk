@@ -1,6 +1,7 @@
 //===- ProcessSignals.cpp - Signal subscription indexing ----------------===//
 
 #include "ProcessSignals.h"
+#include "ProcessObservers.h"
 #include "ProcessShared.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
@@ -304,8 +305,8 @@ bool appendManagedSubscriptionUnlocked(
       bool suppressActiveSelf;
       SignalWaitLatch *latch;
       std::vector<std::unique_ptr<SignalSubscription>> *subscriptions;
-    } environment{context, target, waiterToken, suppressActiveSelf, latch,
-                  &subscriptions};
+    } environment{context, target,        waiterToken, suppressActiveSelf,
+                  latch,   &subscriptions};
     auto append = [](void *opaque, uint64_t member) {
       auto &environment = *static_cast<Environment *>(opaque);
       return appendManagedSubscriptionUnlocked(
@@ -389,6 +390,32 @@ void obelisk_rt_unregister_signal_wait_unlocked(
       context->designConditionalSignalWaiters.erase(waiterToken);
     else
       context->nativeConditionalSignalWaiters.erase(waiterToken);
+    bool *computedRegistered = nullptr;
+    if (designWaiter) {
+      // Generic computed waits may depend only on events or managed objects.
+      // Such a wait has no signal subscription, and a dequeued design task is
+      // owner-addressable only through the active-task slot until finalization
+      // reindexes it.
+      if (context->activeDesignTaskID == waiterToken &&
+          context->activeDesignTask)
+        computedRegistered =
+            &context->activeDesignTask->computedObserverWaitRegistered;
+      else {
+        auto indexed = context->scheduledDesignTaskIndices.find(waiterToken);
+        if (indexed != context->scheduledDesignTaskIndices.end() &&
+            indexed->second < context->scheduledDesignTasks.size())
+          computedRegistered = &context->scheduledDesignTasks[indexed->second]
+                                    .computedObserverWaitRegistered;
+      }
+    } else if (ScheduledProcess *process =
+                   findScheduledProcess(context, waiterToken)) {
+      computedRegistered = &process->computedObserverWaitRegistered;
+    }
+    if (computedRegistered && *computedRegistered) {
+      *computedRegistered = false;
+      if (context->activeComputedObserverWaiterCount != 0)
+        --context->activeComputedObserverWaiterCount;
+    }
     uint64_t logicalToken =
         designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
     if (context->noChangeChecks) {
@@ -483,7 +510,8 @@ bool obelisk_rt_register_signal_wait_unlocked(
     return true;
   uint32_t behaviorFlags =
       wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
-                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS);
   if (behaviorFlags == OBELISK_RT_WAIT_CLOCK_OCCURRENCE) {
     if (waiterToken == 0 || wait->payload == 0 || wait->count == 0 ||
         wait->count > 128)
@@ -509,16 +537,37 @@ bool obelisk_rt_register_signal_wait_unlocked(
       state.conditionMask = wait->auxiliary;
       state.conditions.resize(primaryCount);
       uint32_t conditionEntry = primaryCount;
+      const auto *captures =
+          reinterpret_cast<const obelisk_rt_computed_capture_v1 *>(entries +
+                                                                   wait->count);
+      uint64_t captureCursor = 0;
       for (uint32_t index = 0; index != primaryCount; ++index) {
         if ((wait->auxiliary & (uint64_t{1} << index)) == 0)
           continue;
         const obelisk_rt_wait_entry_v1 &condition = entries[conditionEntry++];
-        uint32_t predicate =
+        ClockOccurrenceCondition &stored = state.conditions[index];
+        bool observer =
+            condition.edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+            condition.edge <= OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST;
+        stored.predicate =
             condition.edge == OBELISK_RT_WAIT_EDGE_NONE
                 ? static_cast<uint32_t>(OBELISK_RT_WAIT_CONDITION_KNOWN_ONE)
+            : observer
+                ? OBELISK_RT_WAIT_CONDITION_PREDICATE +
+                      (condition.edge - OBELISK_RT_WAIT_CONDITION_OBSERVER)
                 : condition.edge;
-        state.conditions[index] = {condition.stable_id, condition.reserved,
-                                   predicate};
+        if (observer) {
+          if (condition.reserved > UINT64_MAX - captureCursor)
+            return false;
+          stored.observerCodeUnitID = condition.stable_id;
+          stored.observerCaptures.assign(captures + captureCursor,
+                                         captures + captureCursor +
+                                             condition.reserved);
+          captureCursor += condition.reserved;
+        } else {
+          stored.stableID = condition.stable_id;
+          stored.width = condition.reserved;
+        }
       }
       feature.waits.insert_or_assign(logicalToken, std::move(state));
       if (conditionCount != 0)
@@ -648,6 +697,10 @@ bool obelisk_rt_same_clock_occurrence_wait_unlocked(
       subscriptions->second.size() != primaryCount)
     return false;
   const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const auto *captures =
+      reinterpret_cast<const obelisk_rt_computed_capture_v1 *>(entries +
+                                                               wait->count);
+  uint64_t captureCursor = 0;
   uint32_t conditionEntry = primaryCount;
   for (uint32_t index = 0; index != primaryCount; ++index) {
     const ClockOccurrenceSubscription *subscription =
@@ -659,19 +712,50 @@ bool obelisk_rt_same_clock_occurrence_wait_unlocked(
         subscription->native == designWaiter)
       return false;
     ClockOccurrenceCondition expected;
+    uint32_t expectedCaptureCount = 0;
     if ((wait->auxiliary & (uint64_t{1} << index)) != 0) {
-      expected = {
-          entries[conditionEntry].stable_id, entries[conditionEntry].reserved,
-          entries[conditionEntry].edge == OBELISK_RT_WAIT_EDGE_NONE
+      const obelisk_rt_wait_entry_v1 &entry = entries[conditionEntry];
+      bool observer = entry.edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+                      entry.edge <= OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST;
+      expected.predicate =
+          entry.edge == OBELISK_RT_WAIT_EDGE_NONE
               ? static_cast<uint32_t>(OBELISK_RT_WAIT_CONDITION_KNOWN_ONE)
-              : entries[conditionEntry].edge};
+          : observer ? OBELISK_RT_WAIT_CONDITION_PREDICATE +
+                           (entry.edge - OBELISK_RT_WAIT_CONDITION_OBSERVER)
+                     : entry.edge;
+      if (observer) {
+        expected.observerCodeUnitID = entry.stable_id;
+        expectedCaptureCount = entry.reserved;
+      } else {
+        expected.stableID = entry.stable_id;
+        expected.width = entry.reserved;
+      }
       ++conditionEntry;
     }
-    ClockOccurrenceCondition actual = state->second.conditions[index];
+    const ClockOccurrenceCondition &actual = state->second.conditions[index];
     if (actual.stableID != expected.stableID ||
         actual.width != expected.width ||
-        actual.predicate != expected.predicate)
+        actual.predicate != expected.predicate ||
+        actual.observerCodeUnitID != expected.observerCodeUnitID ||
+        (actual.isObserver() &&
+         actual.observerCaptures.size() != expectedCaptureCount))
       return false;
+    if (!actual.isObserver())
+      continue;
+    if (expectedCaptureCount > UINT64_MAX - captureCursor)
+      return false;
+    for (uint32_t capture = 0; capture != expectedCaptureCount; ++capture) {
+      const obelisk_rt_computed_capture_v1 &expectedCapture =
+          captures[captureCursor + capture];
+      const obelisk_rt_computed_capture_v1 &actualCapture =
+          actual.observerCaptures[capture];
+      if (actualCapture.stable_id != expectedCapture.stable_id ||
+          actualCapture.payload0 != expectedCapture.payload0 ||
+          actualCapture.payload1 != expectedCapture.payload1 ||
+          actualCapture.payload2 != expectedCapture.payload2)
+        return false;
+    }
+    captureCursor += expectedCaptureCount;
   }
   return conditionEntry == wait->count;
 }
@@ -755,6 +839,33 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
                                                    waiterToken, designWaiter);
         return false;
       }
+    }
+    bool *computedRegistered = nullptr;
+    if (designWaiter) {
+      if (context->activeDesignTaskID == waiterToken &&
+          context->activeDesignTask)
+        computedRegistered =
+            &context->activeDesignTask->computedObserverWaitRegistered;
+      else {
+        auto indexed = context->scheduledDesignTaskIndices.find(waiterToken);
+        if (indexed != context->scheduledDesignTaskIndices.end() &&
+            indexed->second < context->scheduledDesignTasks.size())
+          computedRegistered = &context->scheduledDesignTasks[indexed->second]
+                                    .computedObserverWaitRegistered;
+      }
+    } else if (ScheduledProcess *process =
+                   findScheduledProcess(context, waiterToken)) {
+      computedRegistered = &process->computedObserverWaitRegistered;
+    }
+    if (computedRegistered && !*computedRegistered) {
+      if (context->activeComputedObserverWaiterCount == UINT64_MAX) {
+        context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+        obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions,
+                                                   waiterToken, designWaiter);
+        return false;
+      }
+      *computedRegistered = true;
+      ++context->activeComputedObserverWaiterCount;
     }
     return true;
   }

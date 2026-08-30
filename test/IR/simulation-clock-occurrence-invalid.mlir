@@ -181,6 +181,64 @@ module {
 // -----
 
 module {
+  obelisk_sim.func @bad_condition_type(
+      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+      %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 1 : i32},
+      %condition: i1 {obelisk_sim.capture_kind = 1 : i32})
+      attributes {entry_kind = 1 : i32} {
+    // expected-error @+1 {{clock conditions must be direct signal handles or one-bit observer tokens}}
+    obelisk_sim.suspend.clock_set %clock, %condition conditions 1 edges [1]
+        indices [0] site 1 to ^done :
+        !obelisk_sim.ref<!obelisk_sim.logic<1>>, i1
+  ^done:
+    obelisk_sim.return
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.func @unbound_observer_condition(
+      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+      %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 1 : i32})
+      attributes {entry_kind = 1 : i32} {
+    %false = arith.constant false
+    %condition = builtin.unrealized_conversion_cast %false :
+        i1 to !obelisk_sim.observer<i1>
+    // expected-error @+1 {{clock condition observer must be produced by observer.bind}}
+    obelisk_sim.suspend.clock_set %clock, %condition conditions 1 edges [1]
+        indices [0] site 1 to ^done :
+        !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.observer<i1>
+  ^done:
+    obelisk_sim.return
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.func @wide_observer_condition(
+      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+      %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 1 : i32})
+      attributes {entry_kind = 1 : i32} {
+    %zero = arith.constant 0 : i2
+    %condition = builtin.unrealized_conversion_cast %zero :
+        i2 to !obelisk_sim.observer<i2>
+    // expected-error @+1 {{clock conditions must be direct signal handles or one-bit observer tokens}}
+    obelisk_sim.suspend.clock_set %clock, %condition conditions 1 edges [1]
+        indices [0] site 1 to ^done :
+        !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.observer<i2>
+  ^done:
+    obelisk_sim.return
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.func @public_marked_coordinator(
       %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
       %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>

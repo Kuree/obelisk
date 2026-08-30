@@ -81,8 +81,8 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto type = cast<IntegerType>(op.getType());
-    Value one = arith::ConstantOp::create(
-        rewriter, loc, type, rewriter.getIntegerAttr(type, 1));
+    Value one = arith::ConstantOp::create(rewriter, loc, type,
+                                          rewriter.getIntegerAttr(type, 1));
     SmallVector<Type> loopTypes{type, type, type};
     SmallVector<Value> initial{one, op.getLhs(), op.getRhs()};
     auto loop = scf::WhileOp::create(
@@ -97,21 +97,20 @@ public:
         [&](OpBuilder &nested, Location nestedLoc, ValueRange arguments) {
           Value lowBit = arguments[2];
           if (type.getWidth() != 1)
-            lowBit = arith::TruncIOp::create(
-                nested, nestedLoc, nested.getI1Type(), lowBit);
-          Value multiplied = arith::MulIOp::create(
-              nested, nestedLoc, arguments[0], arguments[1]);
-          Value selected = arith::SelectOp::create(
-              nested, nestedLoc, lowBit, multiplied, arguments[0]);
-          Value squared = arith::MulIOp::create(
-              nested, nestedLoc, arguments[1], arguments[1]);
-          Value one = arith::ConstantOp::create(
-              nested, nestedLoc, type, nested.getIntegerAttr(type, 1));
-          Value remaining = arith::ShRUIOp::create(
-              nested, nestedLoc, arguments[2], one);
-          scf::YieldOp::create(
-              nested, nestedLoc,
-              ValueRange{selected, squared, remaining});
+            lowBit = arith::TruncIOp::create(nested, nestedLoc,
+                                             nested.getI1Type(), lowBit);
+          Value multiplied = arith::MulIOp::create(nested, nestedLoc,
+                                                   arguments[0], arguments[1]);
+          Value selected = arith::SelectOp::create(nested, nestedLoc, lowBit,
+                                                   multiplied, arguments[0]);
+          Value squared = arith::MulIOp::create(nested, nestedLoc, arguments[1],
+                                                arguments[1]);
+          Value one = arith::ConstantOp::create(nested, nestedLoc, type,
+                                                nested.getIntegerAttr(type, 1));
+          Value remaining =
+              arith::ShRUIOp::create(nested, nestedLoc, arguments[2], one);
+          scf::YieldOp::create(nested, nestedLoc,
+                               ValueRange{selected, squared, remaining});
         });
     if (!loop || loop->getNumResults() != loopTypes.size())
       return rewriter.notifyMatchFailure(op,
@@ -150,9 +149,9 @@ using detail::makeSchedulerMain;
 using detail::makeStatePlane;
 using detail::markCleanStaticNBAsInGuardedBodies;
 using detail::materializeDPIThunks;
-using detail::materializeNativeDPIExportThunks;
 using detail::materializeGeneratedNBAAccumulators;
 using detail::materializeManagedMethodThunks;
+using detail::materializeNativeDPIExportThunks;
 using detail::materializeNativeObserverThunks;
 using detail::materializeNativePeriodicClockPlan;
 using detail::materializeNativeSchedulerGlobals;
@@ -343,9 +342,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
       source.walk([&](Operation *operation) {
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp,
-                sim::SimErrorOp, sim::SimTerminationRequestedOp,
-                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation))
+                sim::SimProgramExitOp, sim::SimErrorOp,
+                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+                sim::SimDisplayOp>(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
@@ -356,9 +355,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           return;
         }
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp,
-                sim::SimErrorOp, sim::SimTerminationRequestedOp,
-                sim::SimStatusCheckOp, sim::SimDisplayOp>(operation)) {
+                sim::SimProgramExitOp, sim::SimErrorOp,
+                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+                sim::SimDisplayOp>(operation)) {
           // These operations are cold checkpoint exits.  They do not create
           // or consume persistent four-state data in the generated body, so
           // the surrounding module-instance logic can still have a two-state
@@ -488,9 +487,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               pair.getTransitionValue());
           return;
         }
-        if (auto pair =
-                dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
-                    operation)) {
+        if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+                operation)) {
           auto inspect = [&](Value driver, Value value) {
             auto found = provenance.find(driver);
             if (found != provenance.end() && found->second.descriptor &&
@@ -800,9 +798,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimDisplayOp, sim::SimFinishOp,
               sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimProgramExitOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-              cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimProgramExitOp, sim::SimTerminationRequestedOp,
+              sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation)) {
         supported = false;
@@ -853,9 +850,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     llvm::MapVector<Block *, Location> checkpoints;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
-              sim::SimProgramExitOp,
-              sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
-              sim::SimStatusCheckOp>(operation)) {
+              sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(
+              operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());
       }
@@ -2210,7 +2207,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
   }
   bool cleanSuperstep = false;
-  if (staticSuperstep && useAOT && aotEligibility.isFullyEligible()) {
+  // IEEE 1800-2017 16.14 and Clause 31 coordinators deliberately retain cohort
+  // ordering in a runtime-owned actor. Forced-hybrid eligibility alone also
+  // covers other cold assertion shapes, so only matching static-superstep
+  // metadata certifies a closed native eval island.
+  bool certifiedStaticSuperstep = false;
+  if (staticSuperstep && useAOT &&
+      (aotEligibility.isFullyEligible() ||
+       aotEligibility.isForcedHybridEligible())) {
     ArrayAttr actors = staticSuperstep.getActors();
     if (actors.size() != aotEligibility.getActorSlots().size())
       return module.emitError(
@@ -2229,8 +2233,18 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         return module.emitError(
             "native lowering rejected stale static-superstep actor order");
     }
-    cleanSuperstep = true;
+    certifiedStaticSuperstep = true;
   }
+  // The legacy hybrid AOT scheduler must retain generic fanout for its cold
+  // coordinator. Only eval has the explicit island ABI and periodic overlap
+  // guard needed to execute the residual closure directly. Fully eligible
+  // designs retain independent static capabilities even when a focused
+  // conversion pipeline did not run the optional superstep planner.
+  bool staticEvalIsland = certifiedStaticSuperstep && evalScheduler &&
+                          !aotEligibility.isFullyEligible();
+  bool closedStaticIsland =
+      aotEligibility.isFullyEligible() || staticEvalIsland;
+  cleanSuperstep = certifiedStaticSuperstep && closedStaticIsland;
   if (aotEligibility.isEligible() &&
       failed(specializeNativeAOTCaptures(module, aotEligibility)))
     return failure();
@@ -2260,7 +2274,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                       !hasLanguageOverride &&
                       (!stateLayout->directHandles.empty() ||
                        !stateLayout->guardedHandles.empty());
-  if (useAOT && aotEligibility.isFullyEligible()) {
+  if (useAOT && closedStaticIsland) {
     staticControl = vpi.hasComputeGraph();
     staticFanoutMetadata = vpi.hasComputeGraph();
     // Read-only VPI observes the same canonical planes but cannot mutate
@@ -2304,7 +2318,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
-        module, *stateLayout, aotEligibility.getActorSlots(), true);
+        module, *stateLayout, aotEligibility.getActorSlots(), true,
+        staticEvalIsland);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);
@@ -3035,12 +3050,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (evalScheduler) {
       if (failed(makeNativeEvalPlan(
               module, dataLayout, aotEligibility.getActorSlots().size(),
-              executableNodes,
-              *stateLayout, staticNBAPlan, staticFanoutPlan, staticActorRoots,
-              *directFragments, evalOwnership, threeTierPlan.sourceGraph,
-              periodicClocks, periodicAliases, directStaticState, staticNBA,
-              staticControl, staticFanout, cleanSuperstep,
-              aotEligibility.isFullyEligible(), rootSlotZero, vpi)))
+              executableNodes, *stateLayout, staticNBAPlan, staticFanoutPlan,
+              staticActorRoots, *directFragments, evalOwnership,
+              threeTierPlan.sourceGraph, periodicClocks, periodicAliases,
+              directStaticState, staticNBA, staticControl, staticFanout,
+              cleanSuperstep, aotEligibility.isFullyEligible(),
+              staticEvalIsland, rootSlotZero, vpi)))
         return failure();
     } else if (failed(makeNativeAOTPlanLegacy(
                    module, dataLayout, aotEligibility.getActorSlots().size(),
@@ -4432,8 +4447,7 @@ public:
       return signalPassFailure();
     }
     unsigned pointerBits = parsed->getPointerSizeInBits();
-    if (!parsed->isLittleEndian() ||
-        (pointerBits != 32 && pointerBits != 64)) {
+    if (!parsed->isLittleEndian() || (pointerBits != 32 && pointerBits != 64)) {
       module.emitError("coroutine lowering requires a little-endian target "
                        "with 32-bit or 64-bit pointers");
       return signalPassFailure();
@@ -4496,8 +4510,7 @@ public:
     RewritePatternSet integerPowerPatterns(&getContext());
     integerPowerPatterns.add<ExpandIntegerPower>(&getContext());
     GreedyRewriteConfig integerPowerConfig;
-    integerPowerConfig
-        .setStrictness(GreedyRewriteStrictness::ExistingOps)
+    integerPowerConfig.setStrictness(GreedyRewriteStrictness::ExistingOps)
         .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled)
         .enableFolding(false)
         .enableConstantCSE(false);
@@ -4527,8 +4540,7 @@ public:
     // module-wide conversion driver otherwise walks thousands of cold UVM
     // methods serially and dominates -O3 compile time.
     SmallVector<SmallVector<Operation *>> functionBodies;
-    Dialect *llvmDialect =
-        getContext().getLoadedDialect<LLVM::LLVMDialect>();
+    Dialect *llvmDialect = getContext().getLoadedDialect<LLVM::LLVMDialect>();
     module.walk([&](FunctionOpInterface function) {
       if (function.isExternal())
         return;
@@ -4596,6 +4608,17 @@ public:
       return;
     }
     markTiming("serial wrapper conversion");
+    // IEEE 1800-2017 31.7 condition descriptors have no process-visible
+    // value. Fragment extraction may discard the suspension after packed
+    // conversion; remove only its now-dead tagged bridge before the standard
+    // conversion-cast reconciliation below.
+    SmallVector<UnrealizedConversionCastOp> deadObserverBridges;
+    module.walk([&](UnrealizedConversionCastOp cast) {
+      if (cast->hasAttr("obelisk.coro.observer_id") && cast->use_empty())
+        deadObserverBridges.push_back(cast);
+    });
+    for (UnrealizedConversionCastOp cast : deadObserverBridges)
+      cast.erase();
     SmallVector<UnrealizedConversionCastOp> unrealizedCasts;
     module.walk([&](UnrealizedConversionCastOp cast) {
       unrealizedCasts.push_back(cast);

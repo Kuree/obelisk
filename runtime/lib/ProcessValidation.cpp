@@ -321,7 +321,9 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
   auto validClockCondition = [](uint32_t predicate) {
     return predicate == OBELISK_RT_WAIT_EDGE_NONE ||
            (predicate >= OBELISK_RT_WAIT_CONDITION_KNOWN_ONE &&
-            predicate <= OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE);
+            predicate <= OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE) ||
+           (predicate >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+            predicate <= OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST);
   };
   auto validSignalHandle = [](uint64_t stableID) {
     obelisk_rt_stable_handle_v1 decoded;
@@ -353,7 +355,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
       (wait->flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
   uint32_t behaviorFlags =
       wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
-                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS);
   bool suppressActiveSelf =
       (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   switch (wait->kind) {
@@ -380,11 +383,33 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
               (primaries == 64 || (wait->auxiliary >> primaries) == 0);
       for (uint32_t index = 0; valid && index != wait->count; ++index) {
         bool condition = index >= primaries;
-        valid = validSignalHandle(entries[index].stable_id) &&
-                entries[index].reserved != 0 &&
+        bool observer =
+            condition &&
+            entries[index].edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+            entries[index].edge <= OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST;
+        valid = (observer || validSignalHandle(entries[index].stable_id)) &&
+                (!condition || observer || entries[index].reserved != 0) &&
                 (condition ? validClockCondition(entries[index].edge)
                            : validClockEdge(entries[index].edge));
+        if (!valid || !observer)
+          continue;
+        const obelisk_rt_observer_descriptor_v1 *descriptor =
+            findObserverDescriptor(instance.descriptor->execution,
+                                   entries[index].stable_id);
+        valid = descriptor && descriptor->result_width == 1 &&
+                descriptor->capture_count == entries[index].reserved;
+        uint64_t bytes = uint64_t{entries[index].reserved} *
+                         sizeof(obelisk_rt_computed_capture_v1);
+        valid &= !addOverflow(required, bytes, required) &&
+                 required <= action.auxiliary;
       }
+      bool hasObserver = false;
+      for (uint32_t index = primaries; index != wait->count; ++index)
+        hasObserver |=
+            entries[index].edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+            entries[index].edge <= OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST;
+      valid &= ((wait->flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS) !=
+                0) == hasObserver;
     } else if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
               !suppressActiveSelf && wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&

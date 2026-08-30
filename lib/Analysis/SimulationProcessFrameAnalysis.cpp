@@ -91,6 +91,26 @@ FailureOr<uint64_t> getComputedWaitSize(sim::SimSuspendObserveOp operation) {
   return size;
 }
 
+FailureOr<uint64_t> getClockWaitSize(sim::SimSuspendClockSetOp operation) {
+  uint64_t entries =
+      operation.getPrimaries().size() + operation.getConditions().size();
+  if (entries >
+      (std::numeric_limits<uint64_t>::max() - kWaitHeaderSize) / kWaitEntrySize)
+    return failure();
+  uint64_t size = kWaitHeaderSize + entries * kWaitEntrySize;
+  for (Value condition : operation.getConditions()) {
+    auto binding = condition.getDefiningOp<sim::SimObserverBindOp>();
+    if (!binding)
+      continue;
+    uint64_t captures = binding.getCaptures().size();
+    if (captures > (std::numeric_limits<uint64_t>::max() - size) /
+                       sizeof(obelisk_rt_computed_capture_v1))
+      return failure();
+    size += captures * sizeof(obelisk_rt_computed_capture_v1);
+  }
+  return size;
+}
+
 } // namespace
 
 FailureOr<std::unique_ptr<SimulationProcessFrameAnalysis>>
@@ -154,8 +174,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
       // The transferred plane contains only the value's store bytes, but a
       // following typed LLVM load/store still requires its ABI alignment.
       if (!alignUp(end, storage->alignment, unknownOffset) ||
-          unknownOffset >
-              std::numeric_limits<uint64_t>::max() - storage->size)
+          unknownOffset > std::numeric_limits<uint64_t>::max() - storage->size)
         return function.emitError("canonical process frame size overflow");
       end = unknownOffset + storage->size;
       result->fields.push_back({kind, ProcessFrameFieldFlags::FourStateUnknown,
@@ -271,8 +290,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
              root.conditional ? ProcessFrameFieldFlags::CandidateRoot
                               : ProcessFrameFieldFlags::ManagedRoot,
              lane.valueOffset + root.bitOffset, lane.managedRootSize,
-             lane.managedRootAlignment,
-             root.conditional ? root.kindMask : 0});
+             lane.managedRootAlignment, root.conditional ? root.kindMask : 0});
     }
     if (lane.managedReference) {
       lane.auxiliaryOffset = end;
@@ -347,6 +365,11 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
       if (failed(computed))
         return operation->emitError(
             "cannot size the computed observer wait record");
+      waitSize = *computed;
+    } else if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation)) {
+      FailureOr<uint64_t> computed = getClockWaitSize(clocks);
+      if (failed(computed))
+        return operation->emitError("cannot size the clock wait record");
       waitSize = *computed;
     } else {
       uint64_t entries = sim::getWaitEntryCount(operation);

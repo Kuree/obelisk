@@ -10,7 +10,8 @@
 // RUN: diff -u %t.generic.out %t.auto.out
 // RUN: diff -u %t.generic.out %t.eval.out
 // RUN: FileCheck %s < %t.auto.out
-// RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
+// RUN: FileCheck %s --check-prefix=DIAG \
+// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.eval.diag
 
 // Periods 4 and 12 produce coincident edges at time 6, 18, and 30. Both source
 // bits share one packed physical root and cross separate port projections;
@@ -23,7 +24,6 @@ module clock_sink(input bit clock2, input bit clock3, input bit clock2n);
   int count2n;
   int shared;
   int either;
-
   always @(posedge clock2) begin
     count2 <= count2 + 1;
     shared <= shared + 1;
@@ -51,7 +51,6 @@ module native_periodic_multiclock;
   bit clock2n = 1'b1;
   clock_sink sink(.clock2(clocks[0]), .clock3(clocks[1]),
                   .clock2n(clock2n));
-
   always #2 clocks[0] = ~clocks[0];
   always #6 clocks[1] = ~clocks[1];
   always #2 clock2n = ~clock2n;
@@ -85,7 +84,9 @@ endmodule
 // CHECK: coincident preedge shared=100
 // CHECK: multiclock count2=8 count3=3 count2n=8 shared=35 either=8
 
-// DIAG: obelisk-signal-diagnostics {{.*}}aot_fallbacks=0
+// DIAG: obelisk-signal-diagnostics
+// DIAG-SAME: aot_node_executions={{[1-9][0-9]*}}
+// DIAG-SAME: aot_fallbacks=0
 
 // Each outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.

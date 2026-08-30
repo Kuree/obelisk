@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -170,22 +171,26 @@ public:
       dependencyWidths.push_back(static_cast<int32_t>(*width));
     }
 
-    OperationState state(operation.getLoc(), operation->getName());
-    state.addOperands(flatten(adaptor.getOperands()));
-    state.addTypes(results);
-    state.addAttributes(operation->getAttrs());
-    state.addAttribute("obelisk.coro.observer_id",
-                       rewriter.getI64IntegerAttr(
-                           static_cast<uint64_t>(*evaluator.getCodeUnitId())));
-    state.addAttribute("obelisk.coro.observer_width",
-                       rewriter.getI32IntegerAttr(*resultWidth));
-    state.addAttribute("obelisk.coro.observer_four_state",
-                       rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
-    state.addAttribute("obelisk.coro.dependency_kinds",
-                       rewriter.getDenseI32ArrayAttr(dependencyKinds));
-    state.addAttribute("obelisk.coro.dependency_widths",
-                       rewriter.getDenseI32ArrayAttr(dependencyWidths));
-    rewriter.replaceOp(operation, rewriter.create(state)->getResults());
+    // IEEE 1800-2017 31.7 makes this a zero-time condition descriptor, not a
+    // process value. End its semantic lifetime at the type-conversion
+    // boundary and retain only a standard conversion bridge until the
+    // suspension serializer consumes the descriptor and its captures. This
+    // avoids manufacturing an integer-typed sim.observer.bind operation.
+    auto bridge = UnrealizedConversionCastOp::create(
+        rewriter, operation.getLoc(), results, flatten(adaptor.getOperands()));
+    bridge->setAttrs(operation->getAttrs());
+    bridge->setAttr("obelisk.coro.observer_id",
+                    rewriter.getI64IntegerAttr(
+                        static_cast<uint64_t>(*evaluator.getCodeUnitId())));
+    bridge->setAttr("obelisk.coro.observer_width",
+                    rewriter.getI32IntegerAttr(*resultWidth));
+    bridge->setAttr("obelisk.coro.observer_four_state",
+                    rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
+    bridge->setAttr("obelisk.coro.dependency_kinds",
+                    rewriter.getDenseI32ArrayAttr(dependencyKinds));
+    bridge->setAttr("obelisk.coro.dependency_widths",
+                    rewriter.getDenseI32ArrayAttr(dependencyWidths));
+    rewriter.replaceOp(operation, bridge.getResults());
     return success();
   }
 };

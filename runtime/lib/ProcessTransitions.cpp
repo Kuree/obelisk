@@ -20,6 +20,7 @@
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -209,15 +210,7 @@ bool finalizeNoChangeOpenWindow(obelisk_rt_context *context,
   return true;
 }
 
-struct ClockPublicationSample {
-  uint64_t stableID = UINT64_MAX;
-  uint64_t bitWidth = 0;
-  uint64_t planeBitOffset = 0;
-  const uint8_t *newValue = nullptr;
-  const uint8_t *newUnknown = nullptr;
-};
-
-bool locateClockPublicationBit(const ClockPublicationSample *sample,
+bool locateClockPublicationBit(const ClockConditionPublicationView *sample,
                                uint64_t stableID, uint64_t &planeBit) {
   if (!sample || sample->bitWidth == 0)
     return false;
@@ -238,13 +231,48 @@ bool locateClockPublicationBit(const ClockPublicationSample *sample,
   return true;
 }
 
+class ClockConditionPublicationOverlay {
+public:
+  ClockConditionPublicationOverlay(obelisk_rt_context *context,
+                                   const ClockConditionPublicationView *sample)
+      : context(context), feature(context->clockOccurrences.get()),
+        previousCanonicalPlane(context->observerForcesCanonicalPlane),
+        previousPublication(feature ? feature->conditionPublication : nullptr) {
+    context->observerForcesCanonicalPlane = true;
+    if (feature)
+      feature->conditionPublication = sample;
+  }
+
+  ClockConditionPublicationOverlay(const ClockConditionPublicationOverlay &) =
+      delete;
+  ClockConditionPublicationOverlay &
+  operator=(const ClockConditionPublicationOverlay &) = delete;
+
+  ~ClockConditionPublicationOverlay() {
+    if (feature)
+      feature->conditionPublication = previousPublication;
+    context->observerForcesCanonicalPlane = previousCanonicalPlane;
+  }
+
+private:
+  obelisk_rt_context *context = nullptr;
+  ClockOccurrenceFeatureState *feature = nullptr;
+  bool previousCanonicalPlane = false;
+  const ClockConditionPublicationView *previousPublication = nullptr;
+};
+
 bool readClockOccurrenceCondition(obelisk_rt_context *context,
-                                  ClockOccurrenceCondition condition,
-                                  const ClockPublicationSample *sample) {
-  if (!context || condition.stableID == UINT64_MAX || condition.width == 0)
+                                  const ClockOccurrenceCondition &condition,
+                                  const ClockConditionPublicationView *sample,
+                                  uint64_t waiterToken, bool native) {
+  if (!context)
+    return false;
+  if (!condition.isObserver() &&
+      (condition.stableID == UINT64_MAX || condition.width == 0))
     return condition.stableID == UINT64_MAX;
-  bool value = false;
-  bool unknown = false;
+  uint32_t predicate = condition.predicate;
+  uint64_t value = 0;
+  uint64_t unknown = 0;
   // IEEE 1800-2017 31.7 uses only the LSB when the conditioning net or
   // expression is multibit. Sampling one bit also keeps this event hot path
   // independent of the declared vector width.
@@ -254,23 +282,48 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
   // publication's transient post-transition plane when the condition aliases
   // it; otherwise retain the ordinary live read. This state is pay-for-play
   // and never enters an ABI record or a persistent lookup table.
-  uint64_t publicationBit = 0;
-  bool aliasesPublication =
-      locateClockPublicationBit(sample, condition.stableID, publicationBit);
-  if (aliasesPublication && sample->newValue) {
-    value = byteBit(sample->newValue, publicationBit);
-    unknown =
-        sample->newUnknown && byteBit(sample->newUnknown, publicationBit);
-  } else if (!obelisk_rt_read_signal_bit_unlocked(
-                 context, condition.stableID, 0, value, unknown,
-                 /*useSnapshot=*/!aliasesPublication)) {
-    return false;
+  if (condition.isObserver()) {
+    // IEEE 1800-2017 31.7 samples the complete expression in the controlled
+    // event. Native publication intentionally trails generated stores, so the
+    // compiled observer gets a scoped post-transition canonical overlay. It
+    // exists only on this computed-condition path and is restored by RAII even
+    // when an evaluator reports or throws; ordinary signal loads and direct
+    // timing conditions retain their allocation-free ABI and hot path.
+    ClockConditionPublicationOverlay overlay(context, sample);
+    bool evaluated =
+        native ? obelisk_rt_evaluate_native_clock_condition_unlocked(
+                     context, waiterToken, condition.observerCodeUnitID,
+                     condition.observerCaptures.data(),
+                     condition.observerCaptures.size(), value, unknown)
+               : obelisk_rt_evaluate_design_clock_condition_unlocked(
+                     context, waiterToken, condition.observerCodeUnitID,
+                     condition.observerCaptures.data(),
+                     condition.observerCaptures.size(), value, unknown);
+    if (!evaluated)
+      return false;
+  } else {
+    uint64_t publicationBit = 0;
+    bool aliasesPublication =
+        locateClockPublicationBit(sample, condition.stableID, publicationBit);
+    bool bitValue = false;
+    bool bitUnknown = false;
+    if (aliasesPublication && sample->newValue) {
+      bitValue = byteBit(sample->newValue, publicationBit);
+      bitUnknown =
+          sample->newUnknown && byteBit(sample->newUnknown, publicationBit);
+    } else if (!obelisk_rt_read_signal_bit_unlocked(
+                   context, condition.stableID, 0, bitValue, bitUnknown,
+                   /*useSnapshot=*/!aliasesPublication)) {
+      return false;
+    }
+    value = bitValue;
+    unknown = bitUnknown;
   }
   // IEEE 1800-2017 31.7 explicitly distinguishes nondeterministic ==/!=
   // from deterministic forms: any X enables the former and disables the
   // latter. The direct packed handle is sampled in this publication, never
   // reconstructed later from an Observed-region live value.
-  switch (condition.predicate) {
+  switch (predicate) {
   case OBELISK_RT_WAIT_CONDITION_KNOWN_ONE:
     return !unknown && value;
   case OBELISK_RT_WAIT_CONDITION_KNOWN_ZERO:
@@ -296,9 +349,9 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
   }
 }
 
-bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
-                                   ClockOccurrenceSubscription &subscription,
-                                   const ClockPublicationSample *sample) {
+bool recordClockOccurrenceUnlocked(
+    obelisk_rt_context *context, ClockOccurrenceSubscription &subscription,
+    const ClockConditionPublicationView *sample) {
   bool native = subscription.native;
   uint64_t logicalToken =
       native ? kNativeLogicalProcessTag | subscription.waiterToken
@@ -315,7 +368,8 @@ bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
   }
   ClockOccurrenceWaitState &state = found->second;
   if (!readClockOccurrenceCondition(
-          context, state.conditions[subscription.occurrenceBit], sample))
+          context, state.conditions[subscription.occurrenceBit], sample,
+          subscription.waiterToken, native))
     return true;
   ClockOccurrenceWaveKey key{context->schedulerTime,
                              context->schedulerSlotProgress,
@@ -373,6 +427,40 @@ bool recordClockOccurrenceUnlocked(obelisk_rt_context *context,
 
 } // namespace
 
+bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
+    const obelisk_rt_context *context, uint64_t stableID, uint64_t bit,
+    bool &value, bool &unknown) {
+  if (!context || !context->observerForcesCanonicalPlane ||
+      !context->clockOccurrences || bit > uint64_t{INT64_MAX})
+    return false;
+  const ClockConditionPublicationView *publication =
+      context->clockOccurrences->conditionPublication;
+  if (!publication || !publication->newValue || publication->bitWidth == 0)
+    return false;
+  obelisk_rt_stable_handle_v1 published;
+  obelisk_rt_stable_handle_v1 loaded;
+  if (!obelisk_rt_stable_handle_decode(publication->stableID, &published) ||
+      !obelisk_rt_stable_handle_decode(stableID, &loaded) ||
+      published.offset < 0 || loaded.offset < 0 ||
+      (published.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
+       published.kind != OBELISK_RT_STABLE_HANDLE_STATIC) ||
+      published.kind != loaded.kind ||
+      (published.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+       published.id != loaded.id))
+    return false;
+  __int128 relative = static_cast<__int128>(loaded.offset) + bit -
+                      static_cast<__int128>(published.offset);
+  if (relative < 0 || relative >= publication->bitWidth ||
+      static_cast<uint64_t>(relative) >
+          UINT64_MAX - publication->planeBitOffset)
+    return false;
+  uint64_t source =
+      publication->planeBitOffset + static_cast<uint64_t>(relative);
+  value = byteBit(publication->newValue, source);
+  unknown = publication->newUnknown && byteBit(publication->newUnknown, source);
+  return true;
+}
+
 void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
                                 uint64_t logicalToken) {
   if (!logicalToken)
@@ -414,7 +502,7 @@ static bool
 publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
                                 uint64_t bitWidth, Matches &&matches,
                                 ClockMatches &&clockMatches,
-                                const ClockPublicationSample *sample,
+                                const ClockConditionPublicationView *sample,
                                 uint64_t *outSequence = nullptr) {
   if (context->nextSchedulerSequence == 0) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
@@ -971,8 +1059,8 @@ static bool publishSignalTransitionBatchImpl(
   if (!anyChanged)
     return true;
   uint64_t sequence = 0;
-  ClockPublicationSample sample{stableID, bitWidth, edgeBitOffset, newValue,
-                                newUnknown};
+  ClockConditionPublicationView sample{stableID, bitWidth, edgeBitOffset,
+                                       newValue, newUnknown};
   return publishSignalOccurrenceUnlocked(
       context, stableID, bitWidth,
       [&](const SignalSubscription &subscription) {
@@ -1021,7 +1109,7 @@ bool obelisk_rt_publish_signal_occurrence_unlocked(obelisk_rt_context *context,
   if (!context || bitWidth == 0 || edges == 0)
     return context != nullptr;
   uint64_t sequence = 0;
-  ClockPublicationSample sample{stableID, bitWidth, 0, nullptr, nullptr};
+  ClockConditionPublicationView sample{stableID, bitWidth, 0, nullptr, nullptr};
   return publishSignalOccurrenceUnlocked(
       context, stableID, bitWidth,
       [&](const SignalSubscription &subscription) {
@@ -1565,7 +1653,8 @@ obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
       (!canUseStaticAOTFanout(context) &&
        !canUseIndexedExternalAOTFanout(context)) ||
       (context->nativeSchedulePlan->flags &
-       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) == 0 ||
+       (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+        OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) == 0 ||
       context->nativeScheduleReadyNodes.empty()) {
     context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
     return;

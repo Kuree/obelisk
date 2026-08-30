@@ -148,12 +148,17 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     llvm::append_range(watched, suspend.getConditions());
     auto predicates =
         suspend->getAttrOfType<DenseI32ArrayAttr>("condition_predicates");
-    if (predicates)
-      for (int32_t predicate : predicates.asArrayRef())
-        edges.push_back(OBELISK_RT_WAIT_CONDITION_PREDICATE +
-                        static_cast<uint32_t>(predicate));
-    else
-      edges.append(suspend.getConditions().size(), OBELISK_RT_WAIT_EDGE_NONE);
+    bool hasObserverCondition = false;
+    for (auto [index, condition] : llvm::enumerate(suspend.getConditions())) {
+      uint32_t predicate = predicates ? predicates[index] : 0;
+      bool observer = isa<sim::ObserverType>(condition.getType());
+      hasObserverCondition |= observer;
+      edges.push_back(
+          observer
+              ? OBELISK_RT_WAIT_CONDITION_OBSERVER + predicate
+              : (predicates ? OBELISK_RT_WAIT_CONDITION_PREDICATE + predicate
+                            : OBELISK_RT_WAIT_EDGE_NONE));
+    }
     uint64_t conditionMask = 0;
     for (auto [index, condition] :
          llvm::enumerate(suspend.getConditionIndices()))
@@ -162,6 +167,8 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     uint32_t flags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
     if (suspend->hasAttr("slot_final"))
       flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+    if (hasObserverCondition)
+      flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
                       OBELISK_RT_SUSPEND_EDGE, flags, edges, watched, Value{},

@@ -30,11 +30,10 @@ LogicalResult makeNativeEvalPlan(
     const NativeEvalOwnershipPlan &evalOwnership,
     sim::ComputeGraphAttr computeGraph,
     ArrayRef<NativePeriodicClock> periodicClocks,
-    ArrayRef<NativePeriodicAlias> periodicAliases,
-    bool enableDirectState, bool enableStaticNBA, bool enableStaticControl,
-    bool enableStaticFanout, bool enableCleanSuperstep, bool fullyStatic,
-    bool rootSlotZero,
-    const analysis::SimulationVPIAnalysis &vpi) {
+    ArrayRef<NativePeriodicAlias> periodicAliases, bool enableDirectState,
+    bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
+    bool enableCleanSuperstep, bool fullyStatic, bool staticEvalIsland,
+    bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi) {
   if (actorCount == 0 || executableNodes.empty())
     return module.emitError("AOT schedule has no executable actor nodes");
   module->setAttr("obelisk.eval.generated", UnitAttr::get(module.getContext()));
@@ -44,10 +43,10 @@ LogicalResult makeNativeEvalPlan(
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  FailureOr<ResolvedNativeEvalPlan> resolved = resolveNativeEvalPlan(
-      module, executableNodes, stateLayout, staticNBAPlan, staticFanoutPlan,
-      directFragments, evalOwnership, computeGraph, periodicClocks,
-      periodicAliases);
+  FailureOr<ResolvedNativeEvalPlan> resolved =
+      resolveNativeEvalPlan(module, executableNodes, stateLayout, staticNBAPlan,
+                            staticFanoutPlan, directFragments, evalOwnership,
+                            computeGraph, periodicClocks, periodicAliases);
   if (failed(resolved))
     return failure();
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
@@ -124,19 +123,20 @@ LogicalResult makeNativeEvalPlan(
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
   // valid and can continue to wake native actors without subscriptions.
+  bool closedEvalSchedule = fullyStatic || staticEvalIsland;
   bool staticControlEnabled =
-      enableStaticControl && fullyStatic && vpi.hasComputeGraph();
+      enableStaticControl && closedEvalSchedule && vpi.hasComputeGraph();
   bool staticFanoutEnabled = enableStaticFanout && staticFanoutPlan.exact &&
-                             fullyStatic && vpi.hasComputeGraph();
+                             closedEvalSchedule && vpi.hasComputeGraph();
   bool guardedFanoutEnabled = !staticFanoutEnabled && staticFanoutPlan.exact &&
-                              fullyStatic && vpi.hasComputeGraph();
+                              closedEvalSchedule && vpi.hasComputeGraph();
   bool guardedSpecializationEnabled =
       vpi.allowsWrite() && (enableDirectState || enableStaticNBA);
   bool cleanSuperstepEnabled = enableCleanSuperstep && staticControlEnabled &&
-                               staticFanoutPlan.exact && fullyStatic;
-  // The coordinator is selected only for a certified clean superstep. Hybrid
-  // or guarded schedules keep the same static fanout table but use its exact
-  // compute-node fallback identities transactionally.
+                               staticFanoutPlan.exact && closedEvalSchedule;
+  // Retain direct kernels only for a certified complete schedule or a closed
+  // eval island. Other hybrid/guarded schedules keep the same fanout metadata
+  // but use its exact compute-node fallback identities transactionally.
   if (!cleanSuperstepEnabled) {
     clockKernels.clear();
     mergedFragments.clear();
@@ -228,13 +228,13 @@ LogicalResult makeNativeEvalPlan(
   // before returning AOT_GENERATED_CHECKPOINT. The periodic handoff consumes
   // this tuple only after leaving the coordinator call graph.
   builder.setInsertionPointToStart(module.getBody());
-  LLVM::GlobalOp::create(builder, location, i32, false,
-                         LLVM::Linkage::Internal, evalCheckpointActorName,
+  LLVM::GlobalOp::create(builder, location, i32, false, LLVM::Linkage::Internal,
+                         evalCheckpointActorName,
                          builder.getI32IntegerAttr(UINT32_MAX), 4);
   builder.setInsertionPointToStart(module.getBody());
-  LLVM::GlobalOp::create(
-      builder, location, i32, false, LLVM::Linkage::Internal,
-      evalCheckpointContinuationName, builder.getI32IntegerAttr(0), 4);
+  LLVM::GlobalOp::create(builder, location, i32, false, LLVM::Linkage::Internal,
+                         evalCheckpointContinuationName,
+                         builder.getI32IntegerAttr(0), 4);
   builder.setInsertionPointToStart(module.getBody());
   auto checkpointCallback = LLVM::GlobalOp::create(
       builder, location, pointer, false, LLVM::Linkage::Internal,
@@ -243,8 +243,8 @@ LogicalResult makeNativeEvalPlan(
   checkpointCallback.getInitializerRegion().push_back(
       checkpointCallbackInitializer);
   builder.setInsertionPointToStart(checkpointCallbackInitializer);
-  LLVM::ReturnOp::create(
-      builder, location, LLVM::ZeroOp::create(builder, location, pointer));
+  LLVM::ReturnOp::create(builder, location,
+                         LLVM::ZeroOp::create(builder, location, pointer));
   builder.setInsertionPointToStart(module.getBody());
   auto checkpointMutableState = LLVM::GlobalOp::create(
       builder, location, pointer, false, LLVM::Linkage::Internal,
@@ -253,8 +253,8 @@ LogicalResult makeNativeEvalPlan(
   checkpointMutableState.getInitializerRegion().push_back(
       checkpointMutableStateInitializer);
   builder.setInsertionPointToStart(checkpointMutableStateInitializer);
-  LLVM::ReturnOp::create(
-      builder, location, LLVM::ZeroOp::create(builder, location, pointer));
+  LLVM::ReturnOp::create(builder, location,
+                         LLVM::ZeroOp::create(builder, location, pointer));
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -478,11 +478,9 @@ LogicalResult makeNativeEvalPlan(
       // The checkpoint-path probe alone proves control flow, not the data
       // unknown plane. Only a known-preserving owner with an explicit range
       // scan may contribute to the guard-free whole-closure certificate.
-      if (!executor->hasAttr(
-              sim::metadata::evalPathGuardedKnownPreserving))
+      if (!executor->hasAttr(sim::metadata::evalPathGuardedKnownPreserving))
         periodicPromotionComplete = false;
-      pathGuardedOwnerMask |=
-          uint64_t{1} << mergedFragments[recordIndex].bit;
+      pathGuardedOwnerMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
       periodicPromotionMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
       continue;
     }
@@ -497,8 +495,8 @@ LogicalResult makeNativeEvalPlan(
       periodicEntryPromotionComplete = false;
       break;
     }
-    periodicEntryPromotionMask |=
-        uint64_t{1} << mergedFragments[recordIndex].bit;
+    periodicEntryPromotionMask |= uint64_t{1}
+                                  << mergedFragments[recordIndex].bit;
   }
   builder.setInsertionPointToEnd(module.getBody());
   auto periodicPromotionReady = LLVM::LLVMFuncOp::create(
@@ -592,8 +590,7 @@ LogicalResult makeNativeEvalPlan(
         arith::AndIOp::create(
             builder, location, periodicPending,
             llvmConstant(builder, location, i64,
-                         periodicEntryPromotionMask &
-                             ~pathGuardedOwnerMask)),
+                         periodicEntryPromotionMask & ~pathGuardedOwnerMask)),
         llvmConstant(builder, location, i64, 0));
     periodicEntryKnown = arith::AndIOp::create(
         builder, location, periodicEntryKnown, noEntryPending);
@@ -1634,9 +1631,8 @@ LogicalResult makeNativeEvalPlan(
       // table is traversed once, so one outlined module-instance body still
       // executes exactly once in a multi-clock slot.
       bool directStatus =
-          executor &&
-          (executor->hasAttr(sim::metadata::evalInfallible) ||
-           executor->hasAttr(sim::metadata::evalCheckpointSafe));
+          executor && (executor->hasAttr(sim::metadata::evalInfallible) ||
+                       executor->hasAttr(sim::metadata::evalCheckpointSafe));
       return directStatus &&
              !executor->hasAttr(sim::metadata::evalTier2Convergence);
     };
@@ -1800,8 +1796,7 @@ LogicalResult makeNativeEvalPlan(
         LLVM::LLVMFuncOp executor =
             symbol.empty() ? LLVM::LLVMFuncOp{}
                            : module.lookupSymbol<LLVM::LLVMFuncOp>(symbol);
-        return executor &&
-               executor->hasAttr(sim::metadata::evalMayTerminate);
+        return executor && executor->hasAttr(sim::metadata::evalMayTerminate);
       };
       return mayTerminate(mergedExecutors[recordIndex]) ||
              mayTerminate(mergedTwoStateExecutors[recordIndex]);
@@ -1877,8 +1872,7 @@ LogicalResult makeNativeEvalPlan(
       auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
         return candidate.wrapper == executor &&
                candidate.actorSlot == mergedFragments[index].actor_slot &&
-               candidate.continuation ==
-                   mergedFragments[index].continuation;
+               candidate.continuation == mergedFragments[index].continuation;
       });
       if (mergedFragments[index].bit < 64 && direct != directFragments.end() &&
           direct->initialActivation)
@@ -2131,8 +2125,7 @@ LogicalResult makeNativeEvalPlan(
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(
-                  context,
-                  "obelisk_rt_v1_scheduler_priority_signal_pending"),
+                  context, "obelisk_rt_v1_scheduler_priority_signal_pending"),
               ValueRange{runEntry->getArgument(1)})
               .getResult();
       Value mustHandoff = arith::CmpIOp::create(
@@ -2140,8 +2133,8 @@ LogicalResult makeNativeEvalPlan(
           llvmConstant(builder, location, i32, 0));
       cf::CondBranchOp::create(
           builder, location, mustHandoff, afterStep,
-          ValueRange{llvmConstant(builder, location, i32,
-                                  OBELISK_RT_AOT_CHECKPOINT)},
+          ValueRange{
+              llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT)},
           executeOwner, ValueRange{});
       builder.setInsertionPointToStart(executeOwner);
     };
@@ -2240,8 +2233,7 @@ LogicalResult makeNativeEvalPlan(
               builder, location, arith::CmpIPredicate::eq, status,
               llvmConstant(builder, location, i32, OBELISK_RT_OK));
           cf::CondBranchOp::create(builder, location, ok, nextOwner,
-                                   ValueRange{}, afterStep,
-                                   ValueRange{status});
+                                   ValueRange{}, afterStep, ValueRange{status});
           builder.setInsertionPointToStart(nextOwner);
         }
       }
@@ -2375,10 +2367,9 @@ LogicalResult makeNativeEvalPlan(
           // the single-clock direct prefix. Bypass the per-owner scanner once
           // that proof is latched; only transient slots consult local closure
           // readiness.
-          cf::CondBranchOp::create(builder, location,
-                                   dispatchTrustedTwoState, executeTwoState,
-                                   ValueRange{}, selectTransientVariant,
-                                   ValueRange{});
+          cf::CondBranchOp::create(builder, location, dispatchTrustedTwoState,
+                                   executeTwoState, ValueRange{},
+                                   selectTransientVariant, ValueRange{});
           builder.setInsertionPointToStart(selectTransientVariant);
           Value kernelReady =
               LLVM::CallOp::create(
@@ -2726,17 +2717,16 @@ LogicalResult makeNativeEvalPlan(
         builder, location, arith::CmpIPredicate::eq, handoffStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
     Value isCheckpoint = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq,
-        handoff->getArgument(0),
+        builder, location, arith::CmpIPredicate::eq, handoff->getArgument(0),
         llvmConstant(builder, location, i32,
                      OBELISK_RT_AOT_GENERATED_CHECKPOINT));
-    Value runCheckpoint = arith::AndIOp::create(builder, location, handoffOK,
-                                                isCheckpoint);
+    Value runCheckpoint =
+        arith::AndIOp::create(builder, location, handoffOK, isCheckpoint);
     Value ordinaryStatus = arith::SelectOp::create(
         builder, location, handoffOK, handoff->getArgument(0), handoffStatus);
     cf::CondBranchOp::create(builder, location, runCheckpoint,
-                             executeCheckpoint, ValueRange{},
-                             returnFromHandoff, ValueRange{ordinaryStatus});
+                             executeCheckpoint, ValueRange{}, returnFromHandoff,
+                             ValueRange{ordinaryStatus});
 
     builder.setInsertionPointToStart(executeCheckpoint);
     Value checkpointActor = LLVM::LoadOp::create(
@@ -2757,8 +2747,8 @@ LogicalResult makeNativeEvalPlan(
     Value checkpointStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(
-                context, "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
             ValueRange{runEntry->getArgument(1), checkpointActor,
                        checkpointContinuation, checkpointCallback})
             .getResult();
@@ -2805,8 +2795,8 @@ LogicalResult makeNativeEvalPlan(
     Value prepareCheckpointStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(
-                context, "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
             ValueRange{runEntry->getArgument(1), prepareCheckpointActor,
                        prepareCheckpointContinuation,
                        prepareCheckpointCallback})
@@ -2864,8 +2854,7 @@ LogicalResult makeNativeEvalPlan(
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator, bool hybridCoordinator = false,
           uint64_t allowedOwnerMask = UINT64_MAX,
-          uint64_t pendingGuardMask = UINT64_MAX,
-          bool trustedTwoState = false,
+          uint64_t pendingGuardMask = UINT64_MAX, bool trustedTwoState = false,
           bool guardPendingOwners = false, bool observePathFallback = false) {
         return materializeNativeEvalCoordinator(
             module, coordinatorPlan, functionName, executors,
@@ -3902,11 +3891,10 @@ LogicalResult makeNativeEvalPlan(
       [&](OpBuilder &initializerBuilder) {
         Value value =
             LLVM::ZeroOp::create(initializerBuilder, location, planType);
-        value =
-            insertValue(initializerBuilder, location, value,
-                        llvmConstant(initializerBuilder, location, i32,
-                                     getNativeSchedulePlanSize(dataLayout)),
-                        NativeSchedulePlanField::Size);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i32,
+                                         getNativeSchedulePlanSize(dataLayout)),
+                            NativeSchedulePlanField::Size);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          graphLayoutChecksum),
@@ -3916,11 +3904,11 @@ LogicalResult makeNativeEvalPlan(
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, stateName),
                         NativeSchedulePlanField::MutableState);
-        value = insertValue(initializerBuilder, location, value,
-                            llvmConstant(initializerBuilder, location, i64,
-                                         uint64_t{actorCount} *
-                                             dataLayout.getPointerSize()),
-                            NativeSchedulePlanField::MutableStateSize);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i64,
+                         uint64_t{actorCount} * dataLayout.getPointerSize()),
+            NativeSchedulePlanField::MutableStateSize);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i32, actorCount),
@@ -3942,16 +3930,20 @@ LogicalResult makeNativeEvalPlan(
                                        : 0) |
                     (enableStaticNBA ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA
                                      : 0) |
-                    (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
-                                 : 0) |
+                    (closedEvalSchedule
+                         ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
+                         : 0) |
                     (guardedFanoutEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT
                          : 0) |
                     (guardedSpecializationEnabled
                          ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION
                          : 0) |
-                    (cleanSuperstepEnabled
+                    (cleanSuperstepEnabled && fullyStatic
                          ? OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP
+                         : 0) |
+                    (cleanSuperstepEnabled && staticEvalIsland
+                         ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND
                          : 0) |
                     OBELISK_RT_NATIVE_SCHEDULE_EVAL),
             NativeSchedulePlanField::Flags);
@@ -4169,12 +4161,12 @@ LogicalResult makeNativeEvalPlan(
                            {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_execute_aot_actor",
                            i32, {pointer, i32});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_priority_signal_pending", i32,
-      {pointer});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_queue_aot_checkpoint", i32,
-      {pointer, i32, i32, pointer});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_scheduler_priority_signal_pending",
+                           i32, {pointer});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_scheduler_queue_aot_checkpoint", i32,
+                           {pointer, i32, i32, pointer});
   return success();
 }
 

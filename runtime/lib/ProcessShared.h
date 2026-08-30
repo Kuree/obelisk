@@ -80,16 +80,15 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
 // Native state planes and dirty-root tracking (ProcessNativeState.cpp)
 //===----------------------------------------------------------------------===//
 
-const NativeStaticState *findNativeStaticState(const obelisk_rt_context *context,
-                                               uint32_t id);
+const NativeStaticState *
+findNativeStaticState(const obelisk_rt_context *context, uint32_t id);
 bool byteBit(const uint8_t *bytes, uint64_t bit);
 void setByteBit(uint8_t *bytes, uint64_t bit, bool value);
 bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
                                uint64_t bitOffset, uint64_t bitWidth);
 bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
                                      const uint8_t *value,
-                                     const uint8_t *unknown,
-                                     uint64_t bitCount);
+                                     const uint8_t *unknown, uint64_t bitCount);
 bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context);
 bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                      uint8_t *value, uint8_t *unknown,
@@ -104,6 +103,7 @@ bool nativeStaticRootDirty(const obelisk_rt_context *context,
                            uint32_t staticState);
 bool nativeStaticSpecializationEnvironmentClean(
     const obelisk_rt_context *context);
+bool nativePeriodicAOTEnvironmentClean(const obelisk_rt_context *context);
 void markNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
                                  bool persistent);
 void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
@@ -111,8 +111,7 @@ void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
 void invalidateNativeStaticSpecializationFastUnlocked(
     obelisk_rt_context *context);
 void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context);
-void refreshNativeStaticSpecializationFastUnlocked(
-    obelisk_rt_context *context);
+void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,
                                       uint64_t value, uint64_t unknown);
@@ -167,9 +166,8 @@ bool publishStaticAOTSignalTransitionUnlocked(
 bool publishNativeSignalTransitionUnlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *oldValue, const uint8_t *oldUnknown,
-    const uint8_t *newValue, const uint8_t *newUnknown,
-    bool establishesOverride = false);
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown, bool establishesOverride = false);
 void publishOverrideEstablishmentTransition(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
@@ -181,8 +179,7 @@ void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
 // AOT deadline heap and readiness (ProcessAOT.cpp)
 //===----------------------------------------------------------------------===//
 
-bool nativeAOTActorDirty(const obelisk_rt_context *context,
-                         uint32_t actorSlot);
+bool nativeAOTActorDirty(const obelisk_rt_context *context, uint32_t actorSlot);
 bool nativeAOTNeedsSpecializationHandoverUnlocked(
     const obelisk_rt_context *context, uint32_t actorSlot);
 bool markNativeAOTActorReadyUnlocked(obelisk_rt_context *context,
@@ -202,6 +199,9 @@ obelisk_rt_status
 initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
                                  const obelisk_rt_native_schedule_node *nodes,
                                  uint32_t nodeCount);
+bool nativeClockOccurrencePrimaryReadsGeneratedState(
+    const obelisk_rt_context *context,
+    const std::unordered_set<uint32_t> &generatedWritableStates);
 
 //===----------------------------------------------------------------------===//
 // Non-blocking assignment staging and commit (ProcessNBA.cpp)
@@ -226,9 +226,7 @@ bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
 obelisk_rt_status
 commitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
                                      uint32_t barrierRegion, bool &changed);
-obelisk_rt_status
-materializeGeneratedNBAAccumulatorUnlocked(obelisk_rt_context *context,
-                                           uint32_t rootIndex,
-                                           uint32_t execRegion);
+obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
+    obelisk_rt_context *context, uint32_t rootIndex, uint32_t execRegion);
 
 #endif // OBELISK_RUNTIME_LIB_PROCESSSHARED_H

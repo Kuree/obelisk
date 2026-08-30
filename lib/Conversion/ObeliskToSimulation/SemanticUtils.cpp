@@ -217,6 +217,33 @@ bool isAddressableExpression(Operation *operation) {
       [](Operation *index) { return getConstantSpelling(index).has_value(); });
 }
 
+Operation *getTimingConditionOperand(Operation *operation, int32_t predicate) {
+  auto peelImplicitConversions = [](Operation *operand) {
+    while (auto conversion =
+               dyn_cast_or_null<semantic::SVConversionExpressionOp>(operand)) {
+      BoolAttr isImplicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
+      if (isImplicit && !isImplicit.getValue())
+        break;
+      SmallVector<Operation *> children = getChildren(conversion);
+      if (children.size() != 1)
+        break;
+      operand = children.front();
+    }
+    return operand;
+  };
+
+  operation = peelImplicitConversions(operation);
+  if (!operation || predicate == 0 || isAddressableExpression(operation))
+    return operation;
+  SmallVector<Operation *> children = getChildren(operation);
+  if (children.empty())
+    return operation;
+  // IEEE 1800-2017 31.7 restricts the frozen outer forms to `~` and a
+  // comparison with scalar 0/1. Their first child is the expression whose
+  // LSB is sampled; the outer operator is represented by `predicate`.
+  return peelImplicitConversions(children.front());
+}
+
 bool isUnboundedEndpoint(Operation *operation) {
   while (isa<semantic::SVConversionExpressionOp>(operation)) {
     SmallVector<Operation *> children = getChildren(operation);
@@ -958,16 +985,14 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     if (auto array = dyn_cast<semantic::OpenArrayType>(current)) {
       current = array.getElementType();
       while (true) {
-        Type next = llvm::TypeSwitch<Type, Type>(current)
-                        .Case<semantic::RangedPackedArrayType,
-                              semantic::RangedUnpackedArrayType,
-                              semantic::PackedArrayType,
-                              semantic::UnpackedArrayType,
-                              semantic::OpenArrayType>(
-                            [](auto nested) {
-                              return nested.getElementType();
-                            })
-                        .Default([](Type) { return Type{}; });
+        Type next =
+            llvm::TypeSwitch<Type, Type>(current)
+                .Case<semantic::RangedPackedArrayType,
+                      semantic::RangedUnpackedArrayType,
+                      semantic::PackedArrayType, semantic::UnpackedArrayType,
+                      semantic::OpenArrayType>(
+                    [](auto nested) { return nested.getElementType(); })
+                .Default([](Type) { return Type{}; });
         if (!next)
           return current;
         current = next;
@@ -990,8 +1015,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     return {};
   };
   if (Type element = findOpenElement(type)) {
-    FailureOr<DPIABIType> classified =
-        classifyDPIABIType(element, location);
+    FailureOr<DPIABIType> classified = classifyDPIABIType(element, location);
     if (failed(classified))
       return failure();
     return DPIABIType{DPIABIKind::OpenArray, classified->width,
@@ -1279,8 +1303,7 @@ simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
       FailureOr<Shape> element = shape(current->element);
       if (failed(element) || element->size > UINT64_MAX / current->count)
         return failure();
-      return finish(
-          Shape{element->size * current->count, element->alignment});
+      return finish(Shape{element->size * current->count, element->alignment});
     }
     if (current->fields.empty()) {
       FailureOr<Shape> leaf = leafShape(type);
@@ -1308,8 +1331,7 @@ simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
   DenseMap<Type, std::optional<uint64_t>> compactWidthCache;
   std::function<std::optional<uint64_t>(Type)> compactWidth =
       [&](Type type) -> std::optional<uint64_t> {
-    auto [cached, inserted] =
-        compactWidthCache.try_emplace(type, std::nullopt);
+    auto [cached, inserted] = compactWidthCache.try_emplace(type, std::nullopt);
     if (!inserted)
       return cached->second;
     auto finish = [&](uint64_t result) -> std::optional<uint64_t> {

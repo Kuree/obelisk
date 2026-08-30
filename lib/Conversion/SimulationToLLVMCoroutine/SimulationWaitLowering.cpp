@@ -14,9 +14,10 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
-LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
-                                   uint32_t kind, uint32_t count,
-                                   OpBuilder &builder) {
+LogicalResult
+serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
+                     uint32_t count, OpBuilder &builder,
+                     SmallVectorImpl<Operation *> &observerBindings) {
   constexpr uint64_t waitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
   constexpr uint64_t waitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
   constexpr uint32_t noEdge = std::numeric_limits<uint32_t>::max();
@@ -39,6 +40,11 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
     waitFlags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
     if (operation->hasAttr("slot_final"))
       waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+    auto clocks = cast<sim::SimSuspendClockSetOp>(operation);
+    if (llvm::any_of(clocks.getConditions(), [](Value condition) {
+          return getConvertedObserverBinding(condition) != nullptr;
+        }))
+      waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
   } else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
   if (operation->hasAttr(sim::metadata::topLevelWildcardWait) &&
@@ -54,13 +60,12 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
   else if (auto semaphore = dyn_cast<sim::SimSuspendSemaphoreOp>(operation))
     payload = asI64(builder, location, semaphore.getKeys());
   else if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
-    payload = llvmConstant(builder, location, i64,
-                           clocks.getOccurrenceSite());
+    payload = llvmConstant(builder, location, i64, clocks.getOccurrenceSite());
   storeAt(builder, location, wait, 16, payload, 8);
   uint64_t auxiliary = 0;
   if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
-    for (auto [index, condition] : llvm::enumerate(
-             clocks.getConditionIndices()))
+    for (auto [index, condition] :
+         llvm::enumerate(clocks.getConditionIndices()))
       if (condition >= 0)
         auxiliary |= uint64_t{1} << index;
   storeAt(builder, location, wait, 24,
@@ -99,12 +104,15 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
         llvm::append_range(watched, op.getConditions());
         auto predicates = op->template getAttrOfType<DenseI32ArrayAttr>(
             "condition_predicates");
-        if (predicates)
-          for (int32_t predicate : predicates.asArrayRef())
-            watchedEdges.push_back(OBELISK_RT_WAIT_CONDITION_PREDICATE +
-                                   static_cast<uint32_t>(predicate));
-        else
-          watchedEdges.append(op.getConditions().size(), noEdge);
+        for (auto [index, condition] : llvm::enumerate(op.getConditions())) {
+          uint32_t predicate = predicates ? predicates[index] : 0;
+          watchedEdges.push_back(
+              getConvertedObserverBinding(condition)
+                  ? OBELISK_RT_WAIT_CONDITION_OBSERVER + predicate
+                  : (predicates
+                         ? OBELISK_RT_WAIT_CONDITION_PREDICATE + predicate
+                         : noEdge));
+        }
       })
       .Case<sim::SimSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());
@@ -137,16 +145,47 @@ LogicalResult serializeRuntimeWait(Operation *operation, Value wait,
   if (!watched.empty() &&
       (!waitWidths || static_cast<size_t>(waitWidths.size()) != watched.size()))
     return operation->emitError("wait handle and width inventories disagree");
+  uint64_t captureCursor = 0;
+  uint64_t capturesOffset = waitHeaderSize + uint64_t{count} * waitEntrySize;
   for (auto [index, value] : llvm::enumerate(watched)) {
     uint64_t entryOffset = waitHeaderSize + index * waitEntrySize;
-    storeAt(builder, location, wait, entryOffset,
-            asI64(builder, location, value), 8);
+    Operation *binding = getConvertedObserverBinding(value);
+    if (binding) {
+      auto observerID =
+          binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id");
+      auto captures = getConvertedObserverCaptures(binding);
+      if (!observerID || captures.size() > UINT32_MAX)
+        return binding->emitOpError("has malformed clock-condition metadata");
+      storeAt(builder, location, wait, entryOffset,
+              llvmConstant(builder, location, i64,
+                           observerID.getValue().getZExtValue()),
+              8);
+      storeAt(builder, location, wait, entryOffset + 12,
+              llvmConstant(builder, location, i32,
+                           static_cast<uint32_t>(captures.size())),
+              4);
+      for (Value capture : captures) {
+        uint64_t offset =
+            capturesOffset +
+            captureCursor++ * sizeof(obelisk_rt_computed_capture_v1);
+        storeAt(builder, location, wait, offset,
+                asI64(builder, location, capture), 8);
+        for (uint64_t word = 1; word != 4; ++word)
+          storeAt(builder, location, wait, offset + word * 8,
+                  llvmConstant(builder, location, i64, 0), 8);
+      }
+      if (!llvm::is_contained(observerBindings, binding))
+        observerBindings.push_back(binding);
+    } else {
+      storeAt(builder, location, wait, entryOffset,
+              asI64(builder, location, value), 8);
+      storeAt(builder, location, wait, entryOffset + 12,
+              llvmConstant(builder, location, i32,
+                           static_cast<uint32_t>(waitWidths[index])),
+              4);
+    }
     storeAt(builder, location, wait, entryOffset + 8,
             llvmConstant(builder, location, i32, watchedEdges[index]), 4);
-    storeAt(builder, location, wait, entryOffset + 12,
-            llvmConstant(builder, location, i32,
-                         static_cast<uint32_t>(waitWidths[index])),
-            4);
   }
   return success();
 }

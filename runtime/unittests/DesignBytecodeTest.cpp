@@ -1,5 +1,6 @@
 //===- DesignBytecodeTest.cpp - Design bytecode/reflection tests ----------===//
 
+#include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -1731,6 +1732,98 @@ std::vector<uint8_t> makeSignalWaitSpawnBytecode() {
   return bytes;
 }
 
+struct DesignEventOnlyComputedWait {
+  obelisk_rt_computed_wait_record_v1 wait{};
+  obelisk_rt_computed_observer_v1 observer{};
+  obelisk_rt_computed_dependency_v1 dependency{};
+  obelisk_rt_computed_clause_v1 clause{};
+  uint64_t previousValue = 0;
+  uint64_t previousUnknown = 0;
+};
+
+constexpr uint64_t designEventOnlyObserverID = 7;
+constexpr uint64_t designEventOnlyDependencyID = 0x7d02;
+
+std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
+  std::vector<uint8_t> bytes = makeObserverBytecode(OBELISK_RT_DBREG_BITS);
+  size_t functionOffset = get64(bytes, 40);
+  size_t layoutOffset = get64(bytes, 56);
+  size_t codeOffset = get64(bytes, 72);
+  size_t operandOffset = get64(bytes, 88);
+  size_t constantOffset = get64(bytes, 104);
+  size_t continuationOffset = get64(bytes, 120);
+
+  bytes.insert(bytes.begin() + layoutOffset, 96, 0);
+  layoutOffset += 96;
+  codeOffset += 96;
+  operandOffset += 96;
+  constantOffset += 96;
+  continuationOffset += 96;
+  bytes.insert(bytes.begin() + codeOffset, 40, 0);
+  codeOffset += 40;
+  operandOffset += 40;
+  constantOffset += 40;
+  continuationOffset += 40;
+  bytes.insert(bytes.begin() + operandOffset, 3 * 32, 0);
+  operandOffset += 3 * 32;
+  constantOffset += 3 * 32;
+  continuationOffset += 3 * 32;
+  bytes.resize(bytes.size() + 2 * 24, 0);
+
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 48, 2);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, 3);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, 5);
+  put64(bytes, 88, operandOffset);
+  put64(bytes, 104, constantOffset);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 3);
+  put64(bytes, 136, bytes.size());
+  put64(bytes, 152, bytes.size());
+  put64(bytes, 168, bytes.size());
+  put64(bytes, 184, bytes.size());
+
+  size_t processFunction = functionOffset + 96;
+  put64(bytes, processFunction, 8);
+  put64(bytes, processFunction + 8, 0);
+  put64(bytes, processFunction + 16, 2);
+  put64(bytes, processFunction + 24, 3);
+  put64(bytes, processFunction + 32, 2);
+  put64(bytes, processFunction + 40, 1);
+  put64(bytes, processFunction + 56, 8);
+  put64(bytes, processFunction + 64, 8);
+  put64(bytes, processFunction + 72, 1);
+  put64(bytes, processFunction + 80, 2);
+  // Process-function flags encode the canonical-frame byte count in two-byte
+  // units alongside the process bit.
+  put64(bytes, processFunction + 88,
+        sizeof(DesignEventOnlyComputedWait) * 2 + 1);
+
+  size_t processLayout = layoutOffset + 2 * 40;
+  bytes[processLayout] = OBELISK_RT_DBREG_BITS;
+  put32(bytes, processLayout + 4, 64);
+  put64(bytes, processLayout + 8, 0);
+  put64(bytes, processLayout + 16, 8);
+  // The observer result is scalar for this event-primary wait.
+  put32(bytes, layoutOffset + 40 + 4, 1);
+  put64(bytes, layoutOffset + 40 + 16, 8);
+
+  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 0);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_SUSPEND,
+              OBELISK_RT_SUSPEND_OBSERVER, 0, 0, 0, 0, 0, 1);
+  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_TERMINATE);
+  put32(bytes, continuationOffset + 24, 1);
+  put32(bytes, continuationOffset + 24 + 4, 0);
+  put64(bytes, continuationOffset + 24 + 8, 2);
+  put32(bytes, continuationOffset + 48, 1);
+  put32(bytes, continuationOffset + 48 + 4, 1);
+  put64(bytes, continuationOffset + 48 + 8, 4);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeDatabase(bool writable = true) {
   constexpr uint64_t scopeOffset = 128;
   constexpr uint64_t objectOffset = 192;
@@ -3183,8 +3276,7 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   plan.bind = planBind;
   plan.run = planRun;
   plan.fallback_snapshot = planSnapshot;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
@@ -3201,8 +3293,7 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   setState(65, true, true);
   setState(130, false, true);
   setState(195, true, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 1, 1u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
   EXPECT_EQ(planValue[0] & 1, 1u);
@@ -3212,8 +3303,7 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   setState(65, false, false);
   setState(130, true, true);
   setState(195, true, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 1, 0u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
   EXPECT_EQ(planValue[0] & 1, 0u);
@@ -3294,8 +3384,7 @@ TEST(DesignBytecode, WiredResolutionPreservesStrongerDriveDominance) {
 TEST(DesignBytecode, ResolvesImplicitPullAndSupplyNetDrives) {
   // IEEE 1800-2017 6.6.5, 6.6.6, and 28.15: tri0/tri1 contribute an
   // implicit pull drive, while supply0/supply1 contribute a supply drive.
-  for (uint8_t resolution :
-       {uint8_t{5}, uint8_t{6}, uint8_t{7}, uint8_t{8}}) {
+  for (uint8_t resolution : {uint8_t{5}, uint8_t{6}, uint8_t{7}, uint8_t{8}}) {
     SCOPED_TRACE(static_cast<unsigned>(resolution));
     Fixture fixture;
     fixture.bytecode = makeStrengthDriverBytecode(resolution);
@@ -3444,8 +3533,7 @@ TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
   size_t stateOffset = get64(fixture.bytecode, 168);
   size_t connectivity = get64(fixture.bytecode, 184);
   put32(fixture.bytecode, stateOffset + 4, 1);
-  put32(fixture.bytecode, stateOffset + 32 + 4,
-        1u | resolutionFlags(9, false));
+  put32(fixture.bytecode, stateOffset + 32 + 4, 1u | resolutionFlags(9, false));
   put32(fixture.bytecode, stateOffset + 64 + 4,
         driverFlags(6, 6) | resolutionFlags(9, true));
   fixture.bytecode[connectivity + 24] = 0;
@@ -3733,8 +3821,7 @@ TEST(DesignBytecode, UsesOnlyDominatingCollapsedNetImplicitDrive) {
   fixture.bytecode = makeConnectedDriverBytecode();
   size_t state = get64(fixture.bytecode, 168);
   size_t connectivity = get64(fixture.bytecode, 184);
-  put32(fixture.bytecode, state + 4,
-        1u | resolutionFlags(5, false)); // tri0
+  put32(fixture.bytecode, state + 4, 1u | resolutionFlags(5, false)); // tri0
   put32(fixture.bytecode, state + 32 + 4,
         1u | resolutionFlags(3, false)); // wand
   put32(fixture.bytecode, state + 64 + 4,
@@ -3767,8 +3854,7 @@ TEST(DesignBytecode, SupplyDominanceDisablesCollapsedUWireDriverLimit) {
   size_t state = get64(fixture.bytecode, 168);
   size_t connectivity = get64(fixture.bytecode, 184);
   put32(fixture.bytecode, state + 4, 1u | resolutionFlags(2, false));
-  put32(fixture.bytecode, state + 32 + 4,
-        1u | resolutionFlags(7, false));
+  put32(fixture.bytecode, state + 32 + 4, 1u | resolutionFlags(7, false));
   put32(fixture.bytecode, state + 64 + 4,
         driverFlags(6, 6) | resolutionFlags(7, true));
   put32(fixture.bytecode, connectivity - 32 + 4,
@@ -4506,6 +4592,94 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignBytecode,
+     ScheduledEventOnlyComputedWaitUnregistersAndRejectsPeriodicAOT) {
+  std::vector<uint8_t> bytecode = makeEventOnlyComputedWaitBytecode();
+  obelisk_rt_observer_descriptor_v1 observer{
+      designEventOnlyObserverID, nullptr, 0, 1, 0, 0, nullptr, 0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  execution.bytecode = bytecode.data();
+  execution.bytecode_size = bytecode.size();
+  execution.checksum = imageChecksum(bytecode);
+  execution.observers = &observer;
+  execution.observer_count = 1;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+
+  ScheduledDesignTask task;
+  task.id = 0x7d03;
+  task.function = 1;
+  task.frame.resize(sizeof(DesignEventOnlyComputedWait) + 8);
+  task.scratchOffset = sizeof(DesignEventOnlyComputedWait);
+  task.scratchSize = 8;
+  task.urgent = true;
+  task.homeRegion = OBELISK_RT_REGION_ACTIVE;
+  task.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  task.insertionSequence = context->nextSchedulerSequence++;
+  auto &record =
+      *reinterpret_cast<DesignEventOnlyComputedWait *>(task.frame.data());
+  record = {};
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_OBSERVER,
+                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+                 1,
+                 1,
+                 0,
+                 1,
+                 1,
+                 offsetof(DesignEventOnlyComputedWait, observer),
+                 offsetof(DesignEventOnlyComputedWait, dependency),
+                 offsetof(DesignEventOnlyComputedWait, dependency),
+                 offsetof(DesignEventOnlyComputedWait, clause),
+                 offsetof(DesignEventOnlyComputedWait, previousValue),
+                 0,
+                 sizeof(DesignEventOnlyComputedWait),
+                 0};
+  record.observer = {designEventOnlyObserverID,
+                     0,
+                     0,
+                     0,
+                     1,
+                     static_cast<uint32_t>(
+                         offsetof(DesignEventOnlyComputedWait, previousValue)),
+                     0};
+  // Generic computed waits may be driven only by an event, so lifecycle
+  // accounting cannot rely on a signal subscription being present.
+  record.dependency = {designEventOnlyDependencyID,
+                       OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
+  record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                   OBELISK_RT_WAIT_EDGE_POSEDGE,
+                   OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY};
+  context->scheduledDesignTaskIndices.emplace(task.id, 0);
+  context->designPollCandidates.insert(task.id);
+  context->scheduledDesignTasks.push_back(std::move(task));
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
+  EXPECT_TRUE(
+      context->scheduledDesignTasks.front().signalSubscriptions.empty());
+  EXPECT_TRUE(
+      context->scheduledDesignTasks.front().computedObserverWaitRegistered);
+  EXPECT_EQ(context->scheduledDesignTasks.front().continuation, 1u);
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 1u);
+  // This is the exact cold predicate used by periodic AOT preparation; unlike
+  // the ordinary specialization predicate it deliberately permits the
+  // scheduled design task itself and rejects its live computed waiter.
+  EXPECT_FALSE(nativePeriodicAOTEnvironmentClean(context));
+
+  obelisk_rt_v1_scheduler_event(context, designEventOnlyDependencyID, 0);
+  EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledDesignTasks.empty());
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
+  EXPECT_TRUE(nativePeriodicAOTEnvironmentClean(context));
+  obelisk_rt_v1_context_destroy(context);
+}
+
 void addBlockedForeverDesignTasks(obelisk_rt_context *context,
                                   uint64_t slowCount) {
   context->scheduledDesignTasks.reserve(context->scheduledDesignTasks.size() +
@@ -4689,8 +4863,7 @@ TEST(DesignBytecode, SmallDirectSignalSetDoesNotAllocateCohort) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(DesignBytecode,
-     ClockOccurrenceCacheSeparatesOrdinaryFromSlotFinalWaits) {
+TEST(DesignBytecode, ClockOccurrenceCacheSeparatesOrdinaryFromSlotFinalWaits) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
@@ -4701,13 +4874,17 @@ TEST(DesignBytecode,
   for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
     task.suspendKind = OBELISK_RT_SUSPEND_EDGE;
     task.waitOffset = 0;
-    task.waitSize = sizeof(obelisk_rt_wait_record_v1) +
-                    sizeof(obelisk_rt_wait_entry_v1);
+    task.waitSize =
+        sizeof(obelisk_rt_wait_record_v1) + sizeof(obelisk_rt_wait_entry_v1);
     auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
     auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 1, 91, 0};
+    *wait = {OBELISK_RT_VERSION,
+             OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+             1,
+             91,
+             0};
     *entry = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
   }
   ScheduledDesignTask &slotFinal = context->scheduledDesignTasks.front();
@@ -5278,11 +5455,15 @@ TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
     ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
                   2 * sizeof(obelisk_rt_wait_entry_v1),
               task.scratchOffset);
-    auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
-        task.frame.data() + 8);
+    auto *wait =
+        reinterpret_cast<obelisk_rt_wait_record_v1 *>(task.frame.data() + 8);
     auto *entries = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, count, payload, conditionMask};
+    *wait = {OBELISK_RT_VERSION,
+             OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+             count,
+             payload,
+             conditionMask};
     entries[0] = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
     entries[1] = {17, conditionEdge, conditionWidth};
     EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_FRAME);

@@ -158,6 +158,31 @@ public:
     if (suspensions.empty())
       return;
 
+    // IEEE 1800-2017 31.7 samples a computed condition only after its
+    // controlled event matches. Keep the compiled descriptor next to the
+    // existing clock suspension on every loop iteration; it is planning-only
+    // state and must not become a continuation value or a proxy observer wait.
+    for (Operation *suspension : suspensions) {
+      auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(suspension);
+      if (!clocks)
+        continue;
+      IRRewriter rewriter(function.getContext());
+      rewriter.setInsertionPoint(suspension);
+      DenseMap<Operation *, sim::SimObserverBindOp> clones;
+      for (OpOperand &operand : suspension->getOpOperands()) {
+        auto binding = operand.get().getDefiningOp<sim::SimObserverBindOp>();
+        if (!binding || binding->getBlock() == suspension->getBlock())
+          continue;
+        auto [entry, inserted] = clones.try_emplace(binding.getOperation());
+        if (inserted)
+          entry->second =
+              cast<sim::SimObserverBindOp>(rewriter.clone(*binding));
+        operand.set(entry->second.getResult());
+        if (binding.getResult().use_empty())
+          rewriter.eraseOp(binding);
+      }
+    }
+
     // Observer callbacks retain captured automatic references while the
     // process is suspended even when the controlled statement never reads
     // them after resumption. Route only the suspension edge through a private
@@ -318,6 +343,12 @@ public:
       for (Value value : orderedValues) {
         if (!liveOut.contains(value) || alreadyForwarded.contains(value) ||
             !dominance.dominates(value, suspension))
+          continue;
+        // IEEE 1800-2017 31.7 condition evaluators are sampled only as part
+        // of the matching clock occurrence. Their observer token is a static
+        // planning descriptor, never resumed process state; its captures are
+        // serialized by the clock suspension itself.
+        if (isa<sim::ObserverType>(value.getType()))
           continue;
         // Entry arguments are the process captures, which the scheduler
         // re-supplies on every activation.

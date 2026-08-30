@@ -6,7 +6,10 @@
 
 #include "mlir/IR/Builders.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+
+#include <functional>
 
 using namespace mlir;
 
@@ -45,6 +48,132 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
   if (graph.getWorkers() != 1)
     reject("static supersteps require one worker");
 
+  auto isRuntimeClockCoordinator = [&](sim::SimFuncOp function) {
+    if (!function ||
+        SymbolTable::getSymbolVisibility(function) !=
+            SymbolTable::Visibility::Private ||
+        function.getEntryKind() != sim::EntryKind::Always ||
+        function.getHomeRegion() != sim::EventRegion::Observed ||
+        function.getDomain() != sim::ExecutionDomain::Design ||
+        (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+         !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
+      return false;
+    unsigned clockWaits = 0;
+    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
+    return clockWaits == 1;
+  };
+  auto isolatesRuntimeClockCoordinators = [&](sim::ComputeGroupAttr group) {
+    llvm::DenseSet<uint32_t> nativeMembers;
+    bool hasRuntimeClockCoordinator = false;
+    for (int64_t member : group.getFragments().asArrayRef()) {
+      if (member < 0 ||
+          static_cast<uint64_t>(member) >= graph.getNodes().size())
+        continue;
+      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+          graph.getNodes()[static_cast<size_t>(member)]);
+      sim::SimFuncOp function = fragment
+                                    ? design.lookupSymbol<sim::SimFuncOp>(
+                                          fragment.getFunction().getValue())
+                                    : nullptr;
+      if (isRuntimeClockCoordinator(function))
+        hasRuntimeClockCoordinator = true;
+      else if (fragment)
+        nativeMembers.insert(static_cast<uint32_t>(member));
+    }
+    if (!hasRuntimeClockCoordinator)
+      return false;
+
+    // Recompute scheduling SCCs after removing the runtime-owned actors. This
+    // matches the graph's definition of a scheduling edge: resume leaves the
+    // region and spawn starts another actor, so neither closes an SCC here.
+    llvm::DenseMap<uint32_t, SmallVector<uint32_t>> successors;
+    for (Attribute edgeAttribute : graph.getEdges()) {
+      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() == sim::ComputeEdgeKind::Resume ||
+          edge.getKind() == sim::ComputeEdgeKind::Spawn ||
+          !nativeMembers.contains(edge.getSource()) ||
+          !nativeMembers.contains(edge.getTarget()))
+        continue;
+      auto &targets = successors[edge.getSource()];
+      if (!llvm::is_contained(targets, edge.getTarget()))
+        targets.push_back(edge.getTarget());
+    }
+
+    llvm::DenseMap<uint32_t, unsigned> discovery;
+    llvm::DenseMap<uint32_t, unsigned> lowlink;
+    llvm::DenseSet<uint32_t> onStack;
+    SmallVector<uint32_t> stack;
+    SmallVector<SmallVector<uint32_t>> components;
+    unsigned nextIndex = 0;
+    std::function<void(uint32_t)> visit = [&](uint32_t member) {
+      discovery[member] = nextIndex;
+      lowlink[member] = nextIndex++;
+      stack.push_back(member);
+      onStack.insert(member);
+      for (uint32_t successor : successors[member]) {
+        if (!discovery.count(successor)) {
+          visit(successor);
+          lowlink[member] = std::min(lowlink[member], lowlink[successor]);
+        } else if (onStack.contains(successor)) {
+          lowlink[member] = std::min(lowlink[member], discovery[successor]);
+        }
+      }
+      if (lowlink[member] != discovery[member])
+        return;
+      SmallVector<uint32_t> component;
+      while (true) {
+        uint32_t node = stack.pop_back_val();
+        onStack.erase(node);
+        component.push_back(node);
+        if (node == member)
+          break;
+      }
+      components.push_back(std::move(component));
+    };
+    for (uint32_t member : nativeMembers)
+      if (!discovery.count(member))
+        visit(member);
+
+    llvm::DenseMap<uint32_t, unsigned> componentOf;
+    for (auto [index, component] : llvm::enumerate(components))
+      for (uint32_t member : component)
+        componentOf[member] = index;
+
+    // A residual ProcessOrder cycle is procedural control, not a native
+    // ready-node convergence loop. It cannot inherit the coordinator's cold
+    // runtime boundary.
+    llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
+    llvm::DenseMap<uint32_t, unsigned> indegree;
+    for (uint32_t member : nativeMembers)
+      indegree.try_emplace(member, 0);
+    for (Attribute edgeAttribute : graph.getEdges()) {
+      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+          !nativeMembers.contains(edge.getSource()) ||
+          !nativeMembers.contains(edge.getTarget()) ||
+          componentOf[edge.getSource()] != componentOf[edge.getTarget()])
+        continue;
+      auto &targets = processSuccessors[edge.getSource()];
+      if (llvm::is_contained(targets, edge.getTarget()))
+        continue;
+      targets.push_back(edge.getTarget());
+      ++indegree[edge.getTarget()];
+    }
+    SmallVector<uint32_t> ready;
+    for (uint32_t member : nativeMembers)
+      if (indegree[member] == 0)
+        ready.push_back(member);
+    size_t visited = 0;
+    while (!ready.empty()) {
+      uint32_t member = ready.pop_back_val();
+      ++visited;
+      for (uint32_t successor : processSuccessors[member])
+        if (--indegree[successor] == 0)
+          ready.push_back(successor);
+    }
+    return visited == nativeMembers.size();
+  };
+
   for (Attribute attribute : graph.getNodes()) {
     if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
       if (fragment.getTier() != sim::ComputeTierKind::Native) {
@@ -55,11 +184,10 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
         if (effect.getEffect() != sim::ComputeEffectKind::Watch)
           continue;
-        bool exact =
-            effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
-            !effect.getDynamic() && !effect.getDeferred() &&
-            effect.getWidth() != 0 &&
-            effect.getTrigger() != sim::ComputeTriggerKind::None;
+        bool exact = effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
+                     !effect.getDynamic() && !effect.getDeferred() &&
+                     effect.getWidth() != 0 &&
+                     effect.getTrigger() != sim::ComputeTriggerKind::None;
         if (!exact)
           reject("dynamic or unsupported sensitivity");
       }
@@ -87,7 +215,11 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
       // externally mutable event queue. Only a control-loop group has a
       // scheduler-dependent boundary that the clean transaction cannot
       // certify.
-      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop)
+      // IEEE 1800-2017 16.14 and Clause 31 coordinator loops retain their
+      // exact cohort ordering in the runtime. They are a cold hybrid island,
+      // not a reason to discard an otherwise closed native superstep.
+      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop &&
+          !isolatesRuntimeClockCoordinators(group))
         reject("control-loop compute group");
     }
   }
@@ -117,7 +249,11 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         reject("spawn outside the root initializer");
         return;
       }
-      appendActor(design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()));
+      sim::SimFuncOp actor =
+          design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+      if (isRuntimeClockCoordinator(actor))
+        return;
+      appendActor(actor);
     });
   }
 

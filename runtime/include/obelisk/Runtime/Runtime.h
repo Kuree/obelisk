@@ -1869,7 +1869,12 @@ enum {
   // numeric simulation time is quiescent, but before Postponed or time
   // advance. This modifier is legal only with WAIT_CLOCK_OCCURRENCE and uses
   // the existing wait-record flags word and occurrence queue.
-  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL = UINT32_C(1) << 4
+  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL = UINT32_C(1) << 4,
+  // At least one clock condition is a compiled observer. Its ordinary
+  // condition entry carries the evaluator ID and capture count; existing
+  // computed-capture records follow all wait entries. Direct-only waits never
+  // set this bit and retain their byte-for-byte frame representation.
+  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS = UINT32_C(1) << 5
 };
 typedef uint32_t obelisk_rt_wait_edge_kind;
 enum {
@@ -1899,7 +1904,9 @@ enum {
   OBELISK_RT_WAIT_CONDITION_CASE_EQ_ZERO = UINT32_C(0x206),
   OBELISK_RT_WAIT_CONDITION_CASE_EQ_ONE = UINT32_C(0x207),
   OBELISK_RT_WAIT_CONDITION_CASE_NE_ZERO = UINT32_C(0x208),
-  OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE = UINT32_C(0x209)
+  OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE = UINT32_C(0x209),
+  OBELISK_RT_WAIT_CONDITION_OBSERVER = UINT32_C(0x400),
+  OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST = UINT32_C(0x409)
 };
 
 typedef struct obelisk_rt_wait_record_v1 {
@@ -2935,6 +2942,11 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // Experimental closed-world eval loop: exact static transitions feed the
 // generated trigger masks instead of re-entering the actor worklist.
 #define OBELISK_RT_NATIVE_SCHEDULE_EVAL UINT32_C(1024)
+// The generated eval closure is a certified static island, but runtime-owned
+// actors remain outside it. Unlike FULLY_STATIC, this never suppresses their
+// subscriptions or enables whole-design inline NBA assumptions; it only lets
+// exact generated fanout and control execute between runtime handoff points.
+#define OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND UINT32_C(2048)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;

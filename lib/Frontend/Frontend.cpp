@@ -2416,36 +2416,29 @@ private:
         }
         return expr;
       };
-      auto directConditionSource = [&](const slang::ast::Expression *expr) {
-        expr = unwrapImplicitConversions(expr);
-        return expr && expr->as_if<slang::ast::NamedValueExpression>();
-      };
       auto classifyCondition = [&](const slang::ast::Expression *condition) {
-        // The compact predicate is interpreted against one already-existing
-        // packed signal handle. Clause 31.7 directs designs needing multiple
-        // conditioning signals to combine them outside the specify block.
         if (!condition)
           return int32_t{-1};
         const slang::ast::Expression *expression =
             unwrapImplicitConversions(condition);
-        if (directConditionSource(expression))
-          return int32_t{0}; // known one
         if (const auto *unary =
                 expression->as_if<slang::ast::UnaryExpression>()) {
-          if (unary->op == slang::ast::UnaryOperator::BitwiseNot &&
-              directConditionSource(&unary->operand()))
+          // IEEE 1800-2017 31.7 applies this outer operator after reducing
+          // the conditioning expression to its LSB. Freeze the operator even
+          // when its operand needs a compiled observer later.
+          if (unary->op == slang::ast::UnaryOperator::BitwiseNot)
             return int32_t{1}; // known zero
-          return int32_t{-1};
+          return int32_t{0};
         }
         const auto *binary = expression->as_if<slang::ast::BinaryExpression>();
-        if (!binary || !directConditionSource(&binary->left()))
-          return int32_t{-1};
+        if (!binary)
+          return int32_t{0};
         slang::ConstantValue constant = binary->right().eval(evalContext);
         if (!constant.isInteger() || constant.integer().hasUnknown())
-          return int32_t{-1};
+          return int32_t{0};
         std::optional<uint64_t> value = constant.integer().as<uint64_t>();
         if (!value || *value > 1)
-          return int32_t{-1};
+          return int32_t{0};
         int32_t base = -1;
         switch (binary->op) {
         case slang::ast::BinaryOperator::Equality:
@@ -2461,7 +2454,7 @@ private:
           base = 8;
           break;
         default:
-          return int32_t{-1};
+          return int32_t{0};
         }
         return base + static_cast<int32_t>(*value);
       };
@@ -2581,17 +2574,7 @@ private:
                                        arguments[index].condition != nullptr;
       }
       bool hasRequiredArguments = arguments.size() >= requiredArguments;
-      bool representableConditions =
-          hasRequiredArguments &&
-          (!arguments[0].condition || conditionPredicates[0] >= 0) &&
-          (period || width || !arguments[1].condition ||
-           conditionPredicates[1] >= 0);
-      if (hasRequiredArguments &&
-          ((arguments[0].condition && conditionPredicates[0] < 0) ||
-           (!(period || width) && arguments[1].condition &&
-            conditionPredicates[1] < 0)))
-        attrs.set("obelisk.unsupported_timing_condition",
-                  builder.getUnitAttr());
+      bool representableConditions = hasRequiredArguments;
       bool representableEvents = hasRequiredArguments &&
                                  effectiveEdges[0] >= 0 &&
                                  (period || width || effectiveEdges[1] >= 0);
@@ -2647,9 +2630,8 @@ private:
            width || noChange) &&
           staticTimes && (noChange || nonnegativeTimes) &&
           hasRequiredArguments && arguments[0].expr &&
-          ((period || width) || arguments[1].expr) &&
-          representableConditions && representableEvents &&
-          noChangeReference &&
+          ((period || width) || arguments[1].expr) && representableConditions &&
+          representableEvents && noChangeReference &&
           (!(period || width) || controlledEdge) &&
           (!width || effectiveEdges[0] !=
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&

@@ -413,9 +413,17 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
                llvm::zip(op.getPrimaries(), op.getEdges()))
             appendEffect(info, sim::ComputeEffectKind::Watch, watched, effects,
                          getClockTriggerKind(edge));
-          for (Value condition : op.getConditions())
+          for (Value condition : op.getConditions()) {
+            if (auto binding =
+                    condition.getDefiningOp<sim::SimObserverBindOp>()) {
+              for (Value dependency : binding.getDependencies())
+                appendEffect(info, sim::ComputeEffectKind::Read, dependency,
+                             effects);
+              continue;
+            }
             appendEffect(info, sim::ComputeEffectKind::Read, condition,
                          effects);
+          }
         })
         .Case<sim::SimSuspendObserveOp>([&](auto op) {
           for (Value observerValue : op.getPrimaries()) {
@@ -618,6 +626,11 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
           bindings.insert(binding);
       for (Operation *binding : bindings)
         info.observerBindings.push_back(cast<sim::SimObserverBindOp>(binding));
+    });
+    function.walk([&](sim::SimSuspendClockSetOp clocks) {
+      for (Value condition : clocks.getConditions())
+        if (auto binding = condition.getDefiningOp<sim::SimObserverBindOp>())
+          info.observerBindings.push_back(binding);
     });
   }
 

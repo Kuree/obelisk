@@ -306,6 +306,18 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
     write32(bytes, 32 + index * 16 + 8, edge);
     if (signalWait) {
       Type type = watched[index].getType();
+      if (isa<sim::ObserverType>(type)) {
+        auto binding = watched[index].getDefiningOp<sim::SimObserverBindOp>();
+        auto found =
+            binding ? indices.find(binding.getEvaluator()) : indices.end();
+        if (!binding || found == indices.end() ||
+            binding.getCaptures().size() > UINT32_MAX)
+          return operation->emitOpError(
+              "clock condition observer has malformed bytecode metadata");
+        write64(bytes, 32 + index * 16, plans[found->second].stableID);
+        write32(bytes, 32 + index * 16 + 12, binding.getCaptures().size());
+        continue;
+      }
       if (isa<sim::ManagedWatchType>(type)) {
         if (edge != static_cast<uint32_t>(sim::EdgeKind::Change))
           return operation->emitOpError(
@@ -341,7 +353,24 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   llvm::append_range(constants, bytes);
   emit({Constant, 0, recordRegister, 0, 0, 0, 0, constantOffset});
   emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0, suspension->waitOffset});
+  uint64_t captureCursor = 0;
+  uint64_t capturesOffset =
+      sizeof(obelisk_rt_wait_record_v1) +
+      uint64_t{edges.size()} * sizeof(obelisk_rt_wait_entry_v1);
   for (auto [index, handle] : llvm::enumerate(watched)) {
+    if (auto binding = handle.getDefiningOp<sim::SimObserverBindOp>()) {
+      for (Value capture : binding.getCaptures()) {
+        emitFrameTransfer(plan, StoreFrame, capture,
+                          suspension->waitOffset + capturesOffset +
+                              captureCursor++ *
+                                  sizeof(obelisk_rt_computed_capture_v1),
+                          sim::isManagedHandleType(capture.getType())
+                              ? static_cast<uint32_t>(sizeof(uint64_t))
+                              : static_cast<uint32_t>(
+                                    sizeof(obelisk_rt_computed_capture_v1)));
+      }
+      continue;
+    }
     // Process and mailbox waits carry runtime handles directly. Other wait
     // operands are design handles and must be converted to stable IDs.
     if (isa<sim::ProcessType, sim::MailboxType, sim::SemaphoreType,

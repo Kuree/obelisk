@@ -810,6 +810,71 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     });
   }
 
+  // System timing checks are static actors rather than procedural expression
+  // owners. Outline only a computed Clause 31.7 operand; direct handles keep
+  // the compact clock-wait predicate path and its ordinary AOT fanout.
+  semanticRoot->walk([&](semantic::SVSystemTimingCheckSymbolOp check) {
+    if (!check->hasAttr("obelisk.basic_timing_check"))
+      return;
+    auto conditionChildren = check->getAttrOfType<DenseI64ArrayAttr>(
+        "timing_check_arg_condition_children");
+    auto predicates = check->getAttrOfType<DenseI32ArrayAttr>(
+        "timing_check_arg_condition_predicates");
+    if (!conditionChildren)
+      return;
+    SmallVector<Operation *> roots = getChildren(check);
+    for (auto [index, child] :
+         llvm::enumerate(conditionChildren.asArrayRef())) {
+      if (child < 0 || static_cast<size_t>(child) >= roots.size())
+        continue;
+      int32_t predicate = predicates ? predicates[index] : 0;
+      Operation *operand = getTimingConditionOperand(roots[child], predicate);
+      if (!operand) {
+        emitError(getSemanticLocation(roots[child]))
+            << "timing-check condition has no normalized operand";
+        invalid = true;
+        continue;
+      }
+      SmallVector<StringRef, 2> sources;
+      operand->walk([&](semantic::SVNamedValueExpressionOp named) {
+        StringRef path = named.getReferencedPath();
+        if (!llvm::is_contained(sources, path))
+          sources.push_back(path);
+      });
+      if (sources.size() > 1) {
+        emitError(getSemanticLocation(operand))
+            << "IEEE 1800-2017 31.7 timing-check condition must use at most "
+               "one packed signal; combine multiple conditioning signals "
+               "outside the specify block";
+        invalid = true;
+        continue;
+      }
+      if (isAddressableTimingExpression(operand))
+        continue;
+      FailureOr<Type> normalized = getNormalizedSemanticType(operand);
+      Type scalar = succeeded(normalized)
+                        ? sim::getPackedScalarType(*normalized)
+                        : Type{};
+      if (!scalar) {
+        emitError(getSemanticLocation(operand))
+            << "timing-check condition operand is not packed";
+        invalid = true;
+        continue;
+      }
+      Type resultType = isa<sim::LogicType>(scalar)
+                            ? Type(sim::LogicType::get(context, 1))
+                            : Type(IntegerType::get(context, 1));
+      operand->setAttr(observerCoercedTypeAttrName, TypeAttr::get(resultType));
+      uint64_t nodeID = check.getNodeId();
+      std::string hierarchy =
+          (getHierarchyName(check) + ".$timing_condition." + Twine(index))
+              .str();
+      observerCandidates.push_back({operand, ObserverResult::Value,
+                                    "timing_condition", nodeID,
+                                    std::move(hierarchy)});
+    }
+  });
+
   // A specify condition is not part of an executable driver actor in the
   // semantic tree, but it is evaluated synchronously when that path's source
   // changes. Outline it with the same compact truth-evaluator ABI used by

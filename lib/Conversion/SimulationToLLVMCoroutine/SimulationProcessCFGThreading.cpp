@@ -33,6 +33,31 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     return success();
   Block *entry = &function.getBody().front();
 
+  // IEEE 1800-2017 31.7 condition observers are static descriptors consumed
+  // by their clock suspension. Native/AOT fragment extraction can hoist a
+  // descriptor back to an entry block after front-end suspension threading;
+  // rematerialize it at each clock_set so CFG threading never gives it a
+  // canonical-frame lane.
+  SmallVector<sim::SimSuspendClockSetOp> clockSets;
+  function.walk(
+      [&](sim::SimSuspendClockSetOp clocks) { clockSets.push_back(clocks); });
+  for (sim::SimSuspendClockSetOp clocks : clockSets) {
+    IRRewriter rewriter(function.getContext());
+    rewriter.setInsertionPoint(clocks);
+    DenseMap<Operation *, sim::SimObserverBindOp> clones;
+    for (OpOperand &operand : clocks->getOpOperands()) {
+      auto binding = operand.get().getDefiningOp<sim::SimObserverBindOp>();
+      if (!binding || binding->getBlock() == clocks->getBlock())
+        continue;
+      auto [entry, inserted] = clones.try_emplace(binding.getOperation());
+      if (inserted)
+        entry->second = cast<sim::SimObserverBindOp>(rewriter.clone(*binding));
+      operand.set(entry->second.getResult());
+      if (binding.getResult().use_empty())
+        rewriter.eraseOp(binding);
+    }
+  }
+
   // Front-end suspension threading is deliberately conservative and may
   // forward literal constants into continuation arguments. Recreate those
   // constants in the continuation instead: immutable byte spans contain a

@@ -46,8 +46,7 @@ using namespace obelisk::runtime;
 
 bool nativeStaticSpecializationEnvironmentClean(
     const obelisk_rt_context *context) {
-  return context &&
-         (!context->execution || context->execution->observer_count == 0) &&
+  return context && context->activeComputedObserverWaiterCount == 0 &&
          context->scheduledDesignTasks.empty() &&
          context->nativeDynamicSignalSubscriptions == 0 &&
          context->nativeConditionalSignalWaiters.empty() &&
@@ -65,6 +64,13 @@ bool nativeAOTTransientBoundaryClean(const obelisk_rt_context *context) {
   return !anyOverride(context->forceMask) && !anyOverride(context->assignMask);
 }
 
+bool nativePeriodicAOTEnvironmentClean(const obelisk_rt_context *context) {
+  return nativeAOTTransientBoundaryClean(context) &&
+         context->activeComputedObserverWaiterCount == 0 &&
+         context->nativeConditionalSignalWaiters.empty() &&
+         context->designConditionalSignalWaiters.empty();
+}
+
 bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
@@ -72,6 +78,13 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT) == 0 &&
        !context->nativeScheduleGuardedFanoutActive) ||
       context->nativeScheduleDeoptimized || !context->execution)
+    return false;
+  // IEEE 1800-2017 Clause 31.7 requires a timing condition to be sampled only
+  // after its primary publication. Before periodic preparation proves that no
+  // generated write can reach a runtime-owned primary, an eval island must use
+  // the publishing fallback. FULLY_STATIC plans retain their existing path.
+  if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0 &&
+      !context->nativeStaticEvalIslandCertified)
     return false;
   // The activation guard's fast flag already represents this same clean
   // environment and is invalidated synchronously on every writable-VPI
@@ -81,10 +94,34 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
          nativeStaticSpecializationEnvironmentClean(context);
 }
 
+bool nativeClockOccurrencePrimaryReadsGeneratedState(
+    const obelisk_rt_context *context,
+    const std::unordered_set<uint32_t> &generatedWritableStates) {
+  if (!context || !context->clockOccurrences || generatedWritableStates.empty())
+    return false;
+  for (const auto &[logicalToken, subscriptions] :
+       context->clockOccurrences->subscriptions) {
+    (void)logicalToken;
+    for (const auto &subscription : subscriptions) {
+      uint32_t staticID = 0;
+      int64_t offset = 0;
+      if (subscription &&
+          decodeNativeStatic(subscription->stableID, staticID, offset) &&
+          offset >= 0 &&
+          generatedWritableStates.find(staticID) !=
+              generatedWritableStates.end())
+        return true;
+    }
+  }
+  return false;
+}
+
 bool canUseIndexedExternalAOTFanout(const obelisk_rt_context *context) {
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
   return plan &&
+         ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) == 0 ||
+          context->nativeStaticEvalIslandCertified) &&
          (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
                          OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0 &&
          !context->nativeScheduleDeoptimized &&
@@ -652,6 +689,9 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
       requestFallback = true;
       break;
     }
+    if (scheduled.computedObserverWaitRegistered)
+      obelisk_rt_unregister_signal_wait_unlocked(
+          context, scheduled.signalSubscriptions, scheduled.token, false);
     if (!scheduled.signalSubscriptions.empty() ||
         !scheduled.waitGenerations.empty())
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -683,6 +723,10 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     break;
   }
   case OBELISK_RT_FRAGMENT_CONTINUE:
+    if (!scheduled.signalSubscriptions.empty() ||
+        scheduled.computedObserverWaitRegistered)
+      obelisk_rt_unregister_signal_wait_unlocked(
+          context, scheduled.signalSubscriptions, scheduled.token, false);
     scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
     scheduled.waitOffset = 0;
     scheduled.waitSize = 0;
@@ -693,6 +737,10 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
       return OBELISK_RT_INVALID_CONTINUATION;
     break;
   case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
+    if (!scheduled.signalSubscriptions.empty() ||
+        scheduled.computedObserverWaitRegistered)
+      obelisk_rt_unregister_signal_wait_unlocked(
+          context, scheduled.signalSubscriptions, scheduled.token, false);
     scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
     scheduled.waitOffset = 0;
     scheduled.waitSize = 0;
@@ -722,7 +770,8 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
     obelisk_rt_reparent_process_children_unlocked(
         context, kNativeLogicalProcessTag | token, scheduled.parent);
     context->terminatedNativeProcesses.insert(token, scheduled.random);
-    if (!scheduled.signalSubscriptions.empty())
+    if (!scheduled.signalSubscriptions.empty() ||
+        scheduled.computedObserverWaitRegistered)
       obelisk_rt_unregister_signal_wait_unlocked(
           context, scheduled.signalSubscriptions, token, false);
     scheduled.instance = nullptr;
@@ -967,6 +1016,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (delay != 0 && canUseStaticAOTFanout(context) &&
           !context->nativeScheduleExternalWritePending &&
           scheduled.signalSubscriptions.empty() &&
+          !scheduled.computedObserverWaitRegistered &&
           scheduled.waitGenerations.empty()) {
         scheduled.suspendKind = action.suspend_kind;
         scheduled.waitOffset = action.payload;
@@ -1051,6 +1101,10 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           return status;
         scheduled.callers.pop_back();
         scheduled.callerControlDepths.pop_back();
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
+          obelisk_rt_unregister_signal_wait_unlocked(
+              context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.instance = caller;
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
@@ -1110,6 +1164,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         requestFallback = true;
         break;
       }
+      if (scheduled.computedObserverWaitRegistered)
+        obelisk_rt_unregister_signal_wait_unlocked(
+            context, scheduled.signalSubscriptions, scheduled.token, false);
       scheduled.suspendKind = action.suspend_kind;
       scheduled.waitOffset = action.payload;
       scheduled.waitSize = action.auxiliary;
@@ -1128,7 +1185,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
                                          action.flags, scheduled.queuedRegion))
         return OBELISK_RT_INVALID_ARGUMENT;
       if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
-        if (!scheduled.signalSubscriptions.empty())
+        if (!scheduled.signalSubscriptions.empty() ||
+            scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         scheduled.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
@@ -1143,7 +1201,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         requestFallback = wait->payload == 0;
       } else {
         if (checkpointHandoff || canUseStaticAOTFanout(context)) {
-          if (!scheduled.signalSubscriptions.empty())
+          if (!scheduled.signalSubscriptions.empty() ||
+              scheduled.computedObserverWaitRegistered)
             obelisk_rt_unregister_signal_wait_unlocked(
                 context, scheduled.signalSubscriptions, scheduled.token, false);
           scheduled.signalLatch.reset();
@@ -1167,7 +1226,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       break;
     }
     case OBELISK_RT_FRAGMENT_CONTINUE:
-      if (!scheduled.signalSubscriptions.empty())
+      if (!scheduled.signalSubscriptions.empty() ||
+          scheduled.computedObserverWaitRegistered)
         obelisk_rt_unregister_signal_wait_unlocked(
             context, scheduled.signalSubscriptions, scheduled.token, false);
       scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -1179,7 +1239,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.queuedRegion = scheduled.homeRegion;
       break;
     case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
-      if (!scheduled.signalSubscriptions.empty())
+      if (!scheduled.signalSubscriptions.empty() ||
+          scheduled.computedObserverWaitRegistered)
         obelisk_rt_unregister_signal_wait_unlocked(
             context, scheduled.signalSubscriptions, scheduled.token, false);
       scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -1201,7 +1262,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.callers.reserve(scheduled.callers.size() + 1);
       scheduled.callerControlDepths.reserve(
           scheduled.callerControlDepths.size() + 1);
-      if (!scheduled.signalSubscriptions.empty())
+      if (!scheduled.signalSubscriptions.empty() ||
+          scheduled.computedObserverWaitRegistered)
         obelisk_rt_unregister_signal_wait_unlocked(
             context, scheduled.signalSubscriptions, scheduled.token, false);
       status = context->nativeSchedulePlan->bind(
@@ -1754,6 +1816,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       (aliasCount != 0 && !aliases) || !nextEdges || !outControl ||
       activeNativeAOTContext != context || lockedNativeAOTContext != context)
     return OBELISK_RT_INVALID_ARGUMENT;
+  bool staticEvalIsland = context->nativeSchedulePlan &&
+                          (context->nativeSchedulePlan->flags &
+                           OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0;
+  if (staticEvalIsland)
+    context->nativeStaticEvalIslandCertified = false;
   // Generated run_until owns `schedulerTime` directly, so time slots complete
   // without re-entering the runtime and the waveform difference would never
   // run. Decline the tier while a dump is open rather than silently dropping
@@ -2176,10 +2243,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         return status;
     }
 
-    auto anyOverride = [](const std::vector<uint64_t> &mask) {
-      return std::any_of(mask.begin(), mask.end(),
-                         [](uint64_t word) { return word != 0; });
-    };
     // Check cleanliness only after the finite Tier-3/bootstrap prefix has
     // drained. Initialization and transient deposits legitimately enter with
     // dirty roots and reconcile above; persistent force/assign state must keep
@@ -2229,18 +2292,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       return generatedWritableStates.find(staticState) !=
              generatedWritableStates.end();
     };
+    // IEEE 1800-2017 Clause 31.7 samples `&&&` only after its primary event.
+    // A generated write to that primary must retain runtime ownership so the
+    // coordinator observes the publication. Condition handles and compiled
+    // observer captures are deliberately absent from this primary-only index:
+    // reading generated state cannot create a wakeup or invalidate the eval
+    // closure by itself.
+    if (nativeClockOccurrencePrimaryReadsGeneratedState(
+            context, generatedWritableStates)) {
+      if (context->signalDiagnosticsEnabled)
+        std::fprintf(stderr,
+                     "obelisk-periodic-reject=clock-occurrence-primary\n");
+      return OBELISK_RT_TIER_UNAVAILABLE;
+    }
     // Delayed Tier-3 work is compatible with run_until: the earliest runtime
     // deadline below becomes a branch-only checkpoint.  Reject only state
     // that invalidates direct access, callback inventories that require a
     // runtime publication, or a live runtime subscription that can actually
     // be reached by the generated closure.  Requiring scheduledDesignTasks to
     // be empty here incorrectly rejects ordinary timeout processes.
-    if (context->nativeScheduleExternalWritePending ||
-        context->nativeScheduleDirtyRootsPresent ||
-        anyOverride(context->forceMask) || anyOverride(context->assignMask) ||
-        (context->execution && context->execution->observer_count != 0) ||
-        !context->nativeConditionalSignalWaiters.empty() ||
-        !context->designConditionalSignalWaiters.empty()) {
+    if (!nativePeriodicAOTEnvironmentClean(context)) {
       if (context->signalDiagnosticsEnabled)
         std::fprintf(stderr, "obelisk-periodic-reject=dirty-environment\n");
       return OBELISK_RT_TIER_UNAVAILABLE;
@@ -2376,6 +2447,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
     outControl->next_runtime_deadline = nextRuntimeDeadline;
     context->nativePeriodicRuntimeDeadline = nextRuntimeDeadline;
+    if (staticEvalIsland)
+      context->nativeStaticEvalIslandCertified = true;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -2474,7 +2547,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
       return status;
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     trustedSuperstep =
-        (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
+        (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 &&
         activeNativeAOTContext == context &&
         lockedNativeAOTContext == context && canUseStaticAOTFanout(context) &&
         !context->nativeScheduleExternalWritePending &&
@@ -2945,6 +3019,8 @@ retryNativeSchedule:;
     if (plan->specialization_fast)
       *plan->specialization_fast = 0;
     context->nativeScheduleGuardedFanoutActive = false;
+    if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0)
+      context->nativeStaticEvalIslandCertified = false;
     if (specializationFast && status != OBELISK_RT_TIER_UNAVAILABLE &&
         plan->state_bit_count != 0) {
       bool synchronized =
@@ -3387,6 +3463,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleDirtyRootsPresent = false;
   context->nativeScheduleAVX2 = false;
   context->nativeScheduleGuardedFanoutActive = false;
+  context->nativeStaticEvalIslandCertified = false;
   context->nativeScheduleForcedSlot = UINT32_MAX;
   context->nativeScheduleSingleStep = false;
   context->nativeScheduleForcedExecuted = false;

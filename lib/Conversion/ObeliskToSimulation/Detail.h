@@ -515,6 +515,13 @@ std::optional<bool> foldConstantTruth(::mlir::Value value);
 /// directly, without a computed observer.
 bool isAddressableExpression(::mlir::Operation *operation);
 
+/// Return the expression whose LSB is sampled for a frozen Clause 31.7
+/// predicate. Implicit context conversions are semantic scaffolding rather
+/// than part of the condition grammar and are peeled here so direct handles
+/// retain the compact clock-wait path.
+::mlir::Operation *getTimingConditionOperand(::mlir::Operation *operation,
+                                             int32_t predicate);
+
 /// Whether a semantic endpoint is the unbounded `$` literal, ignoring
 /// source-level conversion wrappers.
 bool isUnboundedEndpoint(::mlir::Operation *operation);

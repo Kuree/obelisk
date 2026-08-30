@@ -787,9 +787,8 @@ static obelisk_rt_status schedulerInertialPath(
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
     uint64_t turnoffDelay, uint64_t pulseReject, uint64_t pulseError,
-    const uint8_t *value, const uint8_t *unknown,
-    const uint8_t *writeMask, const uint8_t *activeMask,
-    const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *value, const uint8_t *unknown, const uint8_t *writeMask,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks,
     bool nonblocking) {
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
@@ -1067,14 +1066,13 @@ static obelisk_rt_status schedulerInertialPath(
         // the published destination here would collapse a real trailing edge
         // into a non-transition and select the wrong pulse policy.
         uint8_t from = pending.candidateFromSymbol[static_cast<size_t>(bit)];
-        uint8_t to = targetUnknown ? (targetValue ? 3 : 2)
-                                   : (targetValue ? 1 : 0);
+        uint8_t to =
+            targetUnknown ? (targetValue ? 3 : 2) : (targetValue ? 1 : 0);
         constexpr uint8_t noTransition = UINT8_MAX;
-        constexpr uint8_t transition[4][4] = {
-            {noTransition, 0, 6, 2},
-            {1, noTransition, 8, 4},
-            {9, 7, noTransition, 10},
-            {5, 3, 11, noTransition}};
+        constexpr uint8_t transition[4][4] = {{noTransition, 0, 6, 2},
+                                              {1, noTransition, 8, 4},
+                                              {9, 7, noTransition, 10},
+                                              {5, 3, 11, noTransition}};
         uint8_t index = transition[from][to];
         if (index != noTransition &&
             byteBit(pulseTransitionMasks,
@@ -1152,8 +1150,8 @@ static obelisk_rt_status schedulerInertialPath(
             return OBELISK_RT_OUT_OF_RESOURCES;
         } else {
           bool negative = dueTime < leadingDue;
-          uint64_t width = negative ? leadingDue - dueTime
-                                    : dueTime - leadingDue;
+          uint64_t width =
+              negative ? leadingDue - dueTime : dueTime - leadingDue;
           bool showCancelled =
               (pulseFlags & OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
           bool onDetect =
@@ -1174,8 +1172,8 @@ static obelisk_rt_status schedulerInertialPath(
             cancelScheduled(bit);
             uint64_t xDue = onDetect ? context->schedulerTime
                                      : std::min(leadingDue, dueTime);
-            uint64_t finalDue = negative ? std::max(leadingDue, dueTime)
-                                         : dueTime;
+            uint64_t finalDue =
+                negative ? std::max(leadingDue, dueTime) : dueTime;
             if (!enqueueAt(bit, xDue, false, true) ||
                 !enqueueAt(bit, finalDue, targetValue, targetUnknown))
               return OBELISK_RT_OUT_OF_RESOURCES;
@@ -1205,15 +1203,14 @@ static obelisk_rt_status schedulerInertialPath(
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
     obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
     uint64_t turnoffDelay, uint64_t pulseReject, uint64_t pulseError,
-    const uint8_t *value, const uint8_t *unknown,
-    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
+    const uint8_t *value, const uint8_t *unknown, const uint8_t *activeMask,
+    const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
   return schedulerInertialPath<false>(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
@@ -1505,11 +1502,10 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint32_t pulseFlags, uint64_t riseDelay,
     uint64_t fallDelay, uint64_t turnoffDelay, uint64_t pulseReject,
-    uint64_t pulseError, const uint8_t *lowValue,
-    const uint8_t *lowUnknown, const uint8_t *highValue,
-    const uint8_t *highUnknown, const uint8_t *transitionValue,
-    const uint8_t *transitionUnknown, const uint8_t *activeMask,
-    const uint8_t *riseMask, const uint8_t *fallMask,
+    uint64_t pulseError, const uint8_t *lowValue, const uint8_t *lowUnknown,
+    const uint8_t *highValue, const uint8_t *highUnknown,
+    const uint8_t *transitionValue, const uint8_t *transitionUnknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
   if (!context || !context->execution || !valuePlane || !unknownPlane ||
       bitWidth == 0 || codeUnit == UINT64_MAX || groupCount == 0 ||
@@ -1595,12 +1591,12 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           {pending.scheduledDueTime[index], pending.highSequence[index]});
       if constexpr (PulseControlled) {
         auto &live = pending.liveSequences[index];
-        live.erase(std::remove(live.begin(), live.end(),
-                               pending.lowSequence[index]),
-                   live.end());
-        live.erase(std::remove(live.begin(), live.end(),
-                               pending.highSequence[index]),
-                   live.end());
+        live.erase(
+            std::remove(live.begin(), live.end(), pending.lowSequence[index]),
+            live.end());
+        live.erase(
+            std::remove(live.begin(), live.end(), pending.highSequence[index]),
+            live.end());
       }
       pending.scheduledDueTime[index] = 0;
       pending.lowSequence[index] = 0;
@@ -1719,8 +1715,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         update.unknownPlane = unknownPlane;
         update.planeBitCount = planeBitCount;
         update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
-            selection.staticID,
-            selection.offset + static_cast<int64_t>(bit));
+            selection.staticID, selection.offset + static_cast<int64_t>(bit));
         if (update.bitOffset == UINT64_MAX)
           return std::nullopt;
         update.bitWidth = 1;
@@ -1769,11 +1764,10 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
       uint64_t due = delay > UINT64_MAX - context->schedulerTime
                          ? UINT64_MAX
                          : context->schedulerTime + delay;
-      return enqueuePairAt(
-          bit, due, byteBit(pending.lowValue.data(), bit),
-          byteBit(pending.lowUnknown.data(), bit),
-          byteBit(pending.highValue.data(), bit),
-          byteBit(pending.highUnknown.data(), bit));
+      return enqueuePairAt(bit, due, byteBit(pending.lowValue.data(), bit),
+                           byteBit(pending.lowUnknown.data(), bit),
+                           byteBit(pending.highValue.data(), bit),
+                           byteBit(pending.highUnknown.data(), bit));
     };
 
     if (group == 0) {
@@ -1804,9 +1798,9 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
               pending.highSequence[index] != 0
                   ? (byteBit(pending.transitionUnknown.data(), bit)
                          ? (byteBit(pending.transitionValue.data(), bit) ? 3
-                                                                        : 2)
+                                                                         : 2)
                          : (byteBit(pending.transitionValue.data(), bit) ? 1
-                                                                        : 0))
+                                                                         : 0))
                   : currentSymbol(bit);
         bool changed = currentBit(*low, false, bit) != nextLowValue ||
                        currentBit(*low, true, bit) != nextLowUnknown ||
@@ -1847,14 +1841,13 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
       uint64_t candidate = UINT64_MAX;
       if constexpr (PulseControlled) {
         uint8_t from = pending.candidateFromSymbol[index];
-        uint8_t to = targetUnknown ? (targetValue ? 3 : 2)
-                                   : (targetValue ? 1 : 0);
+        uint8_t to =
+            targetUnknown ? (targetValue ? 3 : 2) : (targetValue ? 1 : 0);
         constexpr uint8_t noTransition = UINT8_MAX;
-        constexpr uint8_t transition[4][4] = {
-            {noTransition, 0, 6, 2},
-            {1, noTransition, 8, 4},
-            {9, 7, noTransition, 10},
-            {5, 3, 11, noTransition}};
+        constexpr uint8_t transition[4][4] = {{noTransition, 0, 6, 2},
+                                              {1, noTransition, 8, 4},
+                                              {9, 7, noTransition, 10},
+                                              {5, 3, 11, noTransition}};
         uint8_t transitionIndex = transition[from][to];
         // IEEE 1800-2017 30.5.1 keeps twelve independent transition-class
         // masks. A clipped native view therefore preserves the original
@@ -1910,27 +1903,24 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         // pulse edge: replace an already pending pair at its original due time
         // or publish the strength-only change immediately when none is pending.
         if (delay == UINT64_MAX && PulseControlled) {
-          bool differs =
-              currentBit(*low, false, bit) !=
-                  byteBit(pending.lowValue.data(), bit) ||
-              currentBit(*low, true, bit) !=
-                  byteBit(pending.lowUnknown.data(), bit) ||
-              currentBit(*high, false, bit) !=
-                  byteBit(pending.highValue.data(), bit) ||
-              currentBit(*high, true, bit) !=
-                  byteBit(pending.highUnknown.data(), bit);
+          bool differs = currentBit(*low, false, bit) !=
+                             byteBit(pending.lowValue.data(), bit) ||
+                         currentBit(*low, true, bit) !=
+                             byteBit(pending.lowUnknown.data(), bit) ||
+                         currentBit(*high, false, bit) !=
+                             byteBit(pending.highValue.data(), bit) ||
+                         currentBit(*high, true, bit) !=
+                             byteBit(pending.highUnknown.data(), bit);
           bool hadPending = pending.highSequence[index] != 0;
-          uint64_t replacementDue = hadPending
-                                        ? pending.scheduledDueTime[index]
-                                        : context->schedulerTime;
+          uint64_t replacementDue = hadPending ? pending.scheduledDueTime[index]
+                                               : context->schedulerTime;
           cancelScheduled(bit, false);
           if (differs &&
-              !enqueuePairAt(
-                  bit, replacementDue,
-                  byteBit(pending.lowValue.data(), bit),
-                  byteBit(pending.lowUnknown.data(), bit),
-                  byteBit(pending.highValue.data(), bit),
-                  byteBit(pending.highUnknown.data(), bit)))
+              !enqueuePairAt(bit, replacementDue,
+                             byteBit(pending.lowValue.data(), bit),
+                             byteBit(pending.lowUnknown.data(), bit),
+                             byteBit(pending.highValue.data(), bit),
+                             byteBit(pending.highUnknown.data(), bit)))
             return OBELISK_RT_OUT_OF_RESOURCES;
           pending.needsSchedule[index] = 0;
           continue;
@@ -1949,22 +1939,21 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           uint64_t leadingSequence = pending.highSequence[index];
           uint64_t leadingDue = pending.scheduledDueTime[index];
           auto enqueueTargetAt = [&](uint64_t due) {
-            return enqueuePairAt(
-                bit, due, byteBit(pending.lowValue.data(), bit),
-                byteBit(pending.lowUnknown.data(), bit),
-                byteBit(pending.highValue.data(), bit),
-                byteBit(pending.highUnknown.data(), bit));
+            return enqueuePairAt(bit, due,
+                                 byteBit(pending.lowValue.data(), bit),
+                                 byteBit(pending.lowUnknown.data(), bit),
+                                 byteBit(pending.highValue.data(), bit),
+                                 byteBit(pending.highUnknown.data(), bit));
           };
           auto scheduleFinalIfNeeded = [&](uint64_t due) {
-            bool differs =
-                currentBit(*low, false, bit) !=
-                    byteBit(pending.lowValue.data(), bit) ||
-                currentBit(*low, true, bit) !=
-                    byteBit(pending.lowUnknown.data(), bit) ||
-                currentBit(*high, false, bit) !=
-                    byteBit(pending.highValue.data(), bit) ||
-                currentBit(*high, true, bit) !=
-                    byteBit(pending.highUnknown.data(), bit);
+            bool differs = currentBit(*low, false, bit) !=
+                               byteBit(pending.lowValue.data(), bit) ||
+                           currentBit(*low, true, bit) !=
+                               byteBit(pending.lowUnknown.data(), bit) ||
+                           currentBit(*high, false, bit) !=
+                               byteBit(pending.highValue.data(), bit) ||
+                           currentBit(*high, true, bit) !=
+                               byteBit(pending.highUnknown.data(), bit);
             return !differs || enqueueTargetAt(due);
           };
           if (leadingSequence == 0) {
@@ -1972,12 +1961,11 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
               return OBELISK_RT_OUT_OF_RESOURCES;
           } else {
             bool negative = dueTime < leadingDue;
-            uint64_t pulseWidth = negative ? leadingDue - dueTime
-                                           : dueTime - leadingDue;
+            uint64_t pulseWidth =
+                negative ? leadingDue - dueTime : dueTime - leadingDue;
             bool showCancelled =
                 (flags & OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
-            bool onDetect =
-                (flags & OBELISK_RT_INERTIAL_PATH_ON_DETECT) != 0;
+            bool onDetect = (flags & OBELISK_RT_INERTIAL_PATH_ON_DETECT) != 0;
             // IEEE 1800-2017 30.7 applies the trailing transition's pulse
             // limits to the one logical strength-pair destination. Clauses
             // 30.7.4.1 and 30.7.4.2 place an inserted X at detection/event
@@ -1994,8 +1982,8 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
               cancelScheduled(bit, false);
               uint64_t xDue = onDetect ? context->schedulerTime
                                        : std::min(leadingDue, dueTime);
-              uint64_t finalDue = negative ? std::max(leadingDue, dueTime)
-                                           : dueTime;
+              uint64_t finalDue =
+                  negative ? std::max(leadingDue, dueTime) : dueTime;
               if (!enqueuePairAt(bit, xDue, false, true, false, true) ||
                   !enqueueTargetAt(finalDue))
                 return OBELISK_RT_OUT_OF_RESOURCES;
@@ -2009,9 +1997,9 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           continue;
         }
         // IEEE 1800-2017 28.12.2 strength ranges are one logical primitive
-        // output, while 30.5.1 delays its destination transition. Queue the low bank
-        // first with deferred resolution and force resolution only after the
-        // matching high-bank event matures at the same time.
+        // output, while 30.5.1 delays its destination transition. Queue the low
+        // bank first with deferred resolution and force resolution only after
+        // the matching high-bank event matures at the same time.
         if (!enqueuePair(bit, delay))
           return OBELISK_RT_OUT_OF_RESOURCES;
         pending.needsSchedule[index] = 0;
@@ -2037,11 +2025,10 @@ obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint32_t pulseFlags, uint64_t riseDelay,
     uint64_t fallDelay, uint64_t turnoffDelay, uint64_t pulseReject,
-    uint64_t pulseError, const uint8_t *lowValue,
-    const uint8_t *lowUnknown, const uint8_t *highValue,
-    const uint8_t *highUnknown, const uint8_t *transitionValue,
-    const uint8_t *transitionUnknown, const uint8_t *activeMask,
-    const uint8_t *riseMask, const uint8_t *fallMask,
+    uint64_t pulseError, const uint8_t *lowValue, const uint8_t *lowUnknown,
+    const uint8_t *highValue, const uint8_t *highUnknown,
+    const uint8_t *transitionValue, const uint8_t *transitionUnknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
   return schedulerInertialPathStrengthPair<true>(
       context, valuePlane, unknownPlane, planeBitCount, lowBitOffset,
@@ -2058,11 +2045,10 @@ obelisk_rt_v1_scheduler_inertial_path_strength_pair(
     uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint64_t riseDelay, uint64_t fallDelay,
-    uint64_t turnoffDelay, const uint8_t *lowValue,
-    const uint8_t *lowUnknown, const uint8_t *highValue,
-    const uint8_t *highUnknown, const uint8_t *transitionValue,
-    const uint8_t *transitionUnknown, const uint8_t *activeMask,
-    const uint8_t *riseMask, const uint8_t *fallMask,
+    uint64_t turnoffDelay, const uint8_t *lowValue, const uint8_t *lowUnknown,
+    const uint8_t *highValue, const uint8_t *highUnknown,
+    const uint8_t *transitionValue, const uint8_t *transitionUnknown,
+    const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask) {
   return schedulerInertialPathStrengthPair<false>(
       context, valuePlane, unknownPlane, planeBitCount, lowBitOffset,
@@ -3160,7 +3146,8 @@ obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context) {
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return 0;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  return (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0 &&
+  return (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 &&
          canUseStaticAOTFanout(context) &&
          !context->nativeScheduleExternalWritePending &&
          !context->nativeScheduleDirtyRootsPresent &&

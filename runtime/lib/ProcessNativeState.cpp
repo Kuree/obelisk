@@ -675,6 +675,51 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
+static void applyClockConditionPublicationView(obelisk_rt_context *context,
+                                               uint64_t handle,
+                                               uint64_t bitWidth,
+                                               bool unknownPlane,
+                                               uint8_t *outValue) {
+  // IEEE 1800-2017 31.7 samples a computed condition in the controlled
+  // event. Merge only the bits that its captured load actually requests from
+  // this publication's post-transition plane. This is constant-storage and
+  // O(capture width), rather than copying a potentially huge primary vector
+  // for every timing check; ordinary loads leave on the first branch above.
+  const ClockConditionPublicationView *publication =
+      context->clockOccurrences->conditionPublication;
+  obelisk_rt_stable_handle_v1 published;
+  obelisk_rt_stable_handle_v1 loaded;
+  if (!publication->newValue || publication->bitWidth == 0 ||
+      !obelisk_rt_stable_handle_decode(publication->stableID, &published) ||
+      !obelisk_rt_stable_handle_decode(handle, &loaded) ||
+      published.offset < 0 || loaded.offset < 0 ||
+      (published.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
+       published.kind != OBELISK_RT_STABLE_HANDLE_STATIC) ||
+      published.kind != loaded.kind ||
+      (published.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+       published.id != loaded.id))
+    return;
+  __int128 relativeBegin =
+      static_cast<__int128>(loaded.offset) - published.offset;
+  __int128 first = std::max<__int128>(0, -relativeBegin);
+  __int128 last =
+      std::min<__int128>(bitWidth, publication->bitWidth - relativeBegin);
+  if (first >= last)
+    return;
+  for (__int128 bit = first; bit != last; ++bit) {
+    __int128 relative = relativeBegin + bit;
+    if (relative < 0 || relative > UINT64_MAX - publication->planeBitOffset)
+      continue;
+    uint64_t source =
+        publication->planeBitOffset + static_cast<uint64_t>(relative);
+    bool value = byteBit(publication->newValue, source);
+    bool unknown =
+        publication->newUnknown && byteBit(publication->newUnknown, source);
+    setByteBit(outValue, static_cast<uint64_t>(bit),
+               unknownPlane ? unknown : value);
+  }
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     obelisk_rt_context *context, const uint8_t *globalPlane,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
@@ -763,6 +808,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
                                         (globalValue & overrideMask);
       for (uint64_t byte = 0; byte != byteCount; ++byte)
         outValue[byte] = static_cast<uint8_t>(value >> (byte * 8));
+      if (context->observerForcesCanonicalPlane && context->clockOccurrences &&
+          context->clockOccurrences->conditionPublication)
+        applyClockConditionPublicationView(context, handle, bitWidth,
+                                           unknownPlane != 0, outValue);
       maskPadding();
       return OBELISK_RT_OK;
     }
@@ -787,6 +836,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
                 : (((*canonicalPlane)[source / 64] >> (source % 64)) & 1) != 0);
       }
     }
+    if (context->observerForcesCanonicalPlane && context->clockOccurrences &&
+        context->clockOccurrences->conditionPublication)
+      applyClockConditionPublicationView(context, handle, bitWidth,
+                                         unknownPlane != 0, outValue);
     maskPadding();
     return OBELISK_RT_OK;
   }

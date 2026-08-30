@@ -10,5 +10,5 @@ module system_timing_check_event_expression_invalid(
   endspecify
 endmodule
 
-// CHECK: error: IEEE 1800-2017 31.7 timing-check condition must be one direct packed signal
+// CHECK: error: IEEE 1800-2017 31.7 timing-check condition must use at most one packed signal
 // CHECK-SAME: combine multiple conditioning signals outside the specify block

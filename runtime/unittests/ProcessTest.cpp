@@ -6,6 +6,7 @@
 #include "../lib/DesignBytecodeExecution.h"
 #include "../lib/DesignBytecodeImage.h"
 #include "../lib/DesignBytecodeNets.h"
+#include "../lib/ProcessShared.h"
 #include "../lib/ProcessSignals.h"
 #include "../lib/RuntimeInternal.h"
 
@@ -974,12 +975,15 @@ clockOccurrenceLifecycleExecute(obelisk_rt_process_instance_v1 *instance) {
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
   auto *entries = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
   if (instance->continuation == 0 ||
-      (instance->continuation == 1 &&
-       !clockOccurrenceLifecycleChangesWait)) {
+      (instance->continuation == 1 && !clockOccurrenceLifecycleChangesWait)) {
     if (instance->continuation != 0)
       ++clockOccurrenceLifecycleResumes;
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 2, 91, 0};
+    *wait = {OBELISK_RT_VERSION,
+             OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+             2,
+             91,
+             0};
     entries[0] = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
     entries[1] = {32, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
     *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
@@ -993,8 +997,12 @@ clockOccurrenceLifecycleExecute(obelisk_rt_process_instance_v1 *instance) {
   }
   ++clockOccurrenceLifecycleResumes;
   if (instance->continuation == 1 && clockOccurrenceLifecycleChangesWait) {
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_FLAGS_NONE, 1, 0, 0};
+    *wait = {OBELISK_RT_VERSION,
+             OBELISK_RT_SUSPEND_EDGE,
+             OBELISK_RT_WAIT_FLAGS_NONE,
+             1,
+             0,
+             0};
     entries[0] = {48, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
     *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
                          OBELISK_RT_SUSPEND_EDGE,
@@ -1036,6 +1044,117 @@ struct ClockOccurrenceLifecycleFixture {
                   &layout,
                   schedulerRequirements,
                   clockOccurrenceLifecycleExecute,
+                  schedulerDestroy,
+                  nullptr};
+  }
+};
+
+constexpr uint64_t eventOnlyComputedObserverID = 0x7e01;
+constexpr uint64_t eventOnlyComputedDependencyID = 0x7e02;
+unsigned eventOnlyComputedResumeCount;
+
+struct EventOnlyComputedWait {
+  obelisk_rt_computed_wait_record_v1 wait{};
+  obelisk_rt_computed_observer_v1 observer{};
+  obelisk_rt_computed_dependency_v1 dependency{};
+  obelisk_rt_computed_clause_v1 clause{};
+  uint64_t previousValue = 0;
+  uint64_t previousUnknown = 0;
+};
+
+obelisk_rt_status eventOnlyComputedEvaluator(obelisk_rt_context *context,
+                                             const uint64_t *,
+                                             uint32_t captureCount,
+                                             uint64_t *value, uint64_t *unknown,
+                                             uint32_t limbCount) {
+  if (!context || captureCount != 0 || !value || !unknown || limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  value[0] = 1;
+  unknown[0] = 0;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+eventOnlyComputedExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action || !instance->frame ||
+      instance->frame_size < sizeof(EventOnlyComputedWait))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  if (instance->continuation != 0) {
+    ++eventOnlyComputedResumeCount;
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  auto &record = *static_cast<EventOnlyComputedWait *>(instance->frame);
+  record = {};
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_OBSERVER,
+                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+                 1,
+                 1,
+                 0,
+                 1,
+                 1,
+                 offsetof(EventOnlyComputedWait, observer),
+                 offsetof(EventOnlyComputedWait, dependency),
+                 offsetof(EventOnlyComputedWait, dependency),
+                 offsetof(EventOnlyComputedWait, clause),
+                 offsetof(EventOnlyComputedWait, previousValue),
+                 0,
+                 sizeof(EventOnlyComputedWait),
+                 0};
+  record.observer = {
+      eventOnlyComputedObserverID,
+      0,
+      0,
+      0,
+      1,
+      static_cast<uint32_t>(offsetof(EventOnlyComputedWait, previousValue)),
+      0};
+  // IEEE 1800-2017 Clause 31.7 permits timing-check expressions whose only
+  // live dependency is a named event; such a waiter has no signal bucket.
+  record.dependency = {eventOnlyComputedDependencyID,
+                       OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
+  record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
+                   OBELISK_RT_WAIT_EDGE_POSEDGE, 0};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_OBSERVER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       sizeof(EventOnlyComputedWait)};
+  return OBELISK_RT_OK;
+}
+
+struct EventOnlyComputedFixture {
+  std::array<obelisk_rt_frame_field_v1, 1> fields{{
+      {OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0,
+       sizeof(EventOnlyComputedWait), alignof(EventOnlyComputedWait), 0},
+  }};
+  std::array<uint32_t, 2> continuations{{0, 1}};
+  obelisk_rt_frame_layout_v1 layout{};
+  obelisk_rt_process_descriptor_v1 descriptor{};
+
+  explicit EventOnlyComputedFixture(uint64_t id) {
+    layout = {OBELISK_RT_VERSION,
+              0,
+              sizeof(EventOnlyComputedWait),
+              alignof(EventOnlyComputedWait),
+              fields.data(),
+              static_cast<uint32_t>(fields.size()),
+              static_cast<uint32_t>(continuations.size()),
+              continuations.data(),
+              0};
+    layout.checksum = checksum(layout);
+    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
+                  OBELISK_RT_VERSION,
+                  0,
+                  OBELISK_RT_TIER_MASK_NATIVE,
+                  0,
+                  &layout,
+                  schedulerRequirements,
+                  eventOnlyComputedExecute,
                   schedulerDestroy,
                   nullptr};
   }
@@ -1489,6 +1608,7 @@ TEST(RuntimeInternals, SignalSubscriptionsAreRangeIndexedStableAndBounded) {
   ASSERT_TRUE(obelisk_rt_register_computed_signal_wait_unlocked(
       context, &computed.wait, 42, false, computedSubscriptions,
       computedLatch));
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
   examinedBefore = context->signalDiagnostics.subscribersExamined;
   ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
       context, 16, 1, OBELISK_RT_SIGNAL_CHANGE));
@@ -1498,7 +1618,9 @@ TEST(RuntimeInternals, SignalSubscriptionsAreRangeIndexedStableAndBounded) {
   EXPECT_TRUE(context->pendingDesignComputedWaiters.empty());
   EXPECT_EQ(context->signalDiagnostics.subscribersExamined - examinedBefore,
             2u);
-  obelisk_rt_unregister_signal_wait_unlocked(context, computedSubscriptions);
+  obelisk_rt_unregister_signal_wait_unlocked(context, computedSubscriptions, 42,
+                                             false);
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
   context->pendingNativeComputedWaiters.clear();
 
   struct {
@@ -1739,8 +1861,8 @@ TEST(RuntimeInternals, NoChangeUsesPayForPlaySignedOpenWindows) {
 TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
   static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
-  static_assert(sizeof(void *) != 8 || sizeof(ClockOccurrenceFeatureState) ==
-                                                184);
+  static_assert(sizeof(void *) != 8 ||
+                sizeof(ClockOccurrenceFeatureState) == 192);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -1769,8 +1891,7 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
       context, 16, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
   EXPECT_FALSE(context->clockOccurrences);
-  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 9,
-                                             false);
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 9, false);
   EXPECT_FALSE(context->clockOccurrences);
 
   struct {
@@ -1980,8 +2101,7 @@ TEST(RuntimeInternals,
         context, &record.wait, token, design));
     EXPECT_FALSE(context->clockOccurrences);
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
-        context, 16, 1,
-        OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
+        context, 16, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
     EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
     EXPECT_FALSE(context->clockOccurrences);
     ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
@@ -2004,8 +2124,12 @@ TEST(RuntimeInternals, ClockOccurrenceWaitAccepts64AndRejects65Clocks) {
     obelisk_rt_wait_record_v1 wait;
     std::array<obelisk_rt_wait_entry_v1, 65> entries;
   } record{};
-  record.wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-                 OBELISK_RT_WAIT_CLOCK_OCCURRENCE, 64, 82, 0};
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_EDGE,
+                 OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+                 64,
+                 82,
+                 0};
   for (auto &entry : record.entries)
     entry = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
 
@@ -2015,11 +2139,11 @@ TEST(RuntimeInternals, ClockOccurrenceWaitAccepts64AndRejects65Clocks) {
     ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
         context, &record.wait, subscriptions, latch, token, design));
     ASSERT_TRUE(context->clockOccurrences);
-    EXPECT_EQ(context->clockOccurrences->subscriptions.at(
-                  design ? token
-                         : OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | token)
-                  .size(),
-              64u);
+    EXPECT_EQ(
+        context->clockOccurrences->subscriptions
+            .at(design ? token : OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | token)
+            .size(),
+        64u);
     obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, token,
                                                design);
     EXPECT_FALSE(context->clockOccurrences);
@@ -2072,8 +2196,8 @@ TEST(RuntimeInternals, ClockOccurrenceIffSamplesCommittedPublicationValue) {
   EXPECT_EQ(obelisk_rt_v1_clock_occurrence_consume(context, 73), 2u);
 
   context->stateValue[1] |= uint64_t{1} << 16;
-  ASSERT_TRUE(obelisk_rt_append_signal_event_unlocked(
-      context, 80, false, false, true, false));
+  ASSERT_TRUE(obelisk_rt_append_signal_event_unlocked(context, 80, false, false,
+                                                      true, false));
   ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
       context, 16, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
   ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
@@ -2085,6 +2209,134 @@ TEST(RuntimeInternals, ClockOccurrenceIffSamplesCommittedPublicationValue) {
       context, context->scheduledDesignTasks.front().signalSubscriptions, 13,
       true);
   EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ClockOccurrenceObserverConditionIsActorLocalAndCaptureExact) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+
+  struct ObserverClockWait {
+    obelisk_rt_wait_record_v1 wait;
+    std::array<obelisk_rt_wait_entry_v1, 2> entries;
+    obelisk_rt_computed_capture_v1 capture;
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+            OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
+                OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS,
+            2, 97, 1},
+           {{{16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1},
+             {71, OBELISK_RT_WAIT_CONDITION_OBSERVER, 1}}},
+           {32, 3, 5, 7}};
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  std::unique_ptr<SignalWaitLatch> latch;
+  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+      context, &record.wait, subscriptions, latch, 19, false));
+  ASSERT_TRUE(context->clockOccurrences);
+  EXPECT_TRUE(context->signalSubscriptionBuckets.empty());
+  EXPECT_EQ(context->nativeDynamicSignalSubscriptions, 0u);
+  EXPECT_TRUE(context->pendingNativeComputedWaiters.empty());
+  EXPECT_TRUE(context->nativeConditionalSignalWaiters.empty());
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
+  EXPECT_TRUE(obelisk_rt_same_clock_occurrence_wait_unlocked(
+      context, &record.wait, 19, false));
+
+  // IEEE 1800-2017 31.7 samples the compiled condition only after the
+  // controlled event matches. Its captures therefore belong to this exact
+  // actor-local clock wait: they are neither subscriptions nor a reusable
+  // wait when any ABI word differs.
+  const obelisk_rt_computed_capture_v1 original = record.capture;
+  auto differs = [&](uint64_t &word) {
+    ++word;
+    EXPECT_FALSE(obelisk_rt_same_clock_occurrence_wait_unlocked(
+        context, &record.wait, 19, false));
+    record.capture = original;
+  };
+  differs(record.capture.stable_id);
+  differs(record.capture.payload0);
+  differs(record.capture.payload1);
+  differs(record.capture.payload2);
+
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 19, false);
+  EXPECT_FALSE(context->clockOccurrences);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     StaticEvalIslandRejectsOnlyGeneratedClockOccurrencePrimaries) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+
+  constexpr uint64_t token = 29;
+  constexpr uint32_t generatedState = 7;
+  constexpr uint32_t dormantState = 8;
+  auto &wait = context->clockOccurrences->waits[token];
+  wait.conditions.resize(1);
+  wait.conditions[0].stableID = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_STATIC, generatedState, 0);
+  auto primary = std::make_unique<ClockOccurrenceSubscription>();
+  primary->stableID = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_STATIC, dormantState, 0);
+  primary->bitWidth = 1;
+  context->clockOccurrences->subscriptions[token].push_back(std::move(primary));
+
+  std::unordered_set<uint32_t> generatedWritableStates{generatedState};
+  // Clause 31.7 condition reads do not wake the coordinator. A condition-only
+  // overlap with generated state therefore leaves the dormant primary safe.
+  EXPECT_FALSE(nativeClockOccurrencePrimaryReadsGeneratedState(
+      context, generatedWritableStates));
+
+  context->clockOccurrences->subscriptions[token].front()->stableID =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC,
+                                      generatedState, 0);
+  EXPECT_TRUE(nativeClockOccurrencePrimaryReadsGeneratedState(
+      context, generatedWritableStates));
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, ClockConditionPublicationViewMergesOnlyCapturedOverlap) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 64;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+  context->observerForcesCanonicalPlane = true;
+
+  uint8_t publishedValue = 0xa5;
+  uint8_t publishedUnknown = 0x03;
+  ClockConditionPublicationView publication{32, uint64_t{1} << 40, 0,
+                                            &publishedValue, &publishedUnknown};
+  context->clockOccurrences->conditionPublication = &publication;
+  uint8_t globalPlane[8] = {};
+  uint8_t value = 0xff;
+  uint8_t unknown = 0xff;
+  // A huge unrelated publication must not be copied, walked, or even require
+  // storage proportional to its declared width. The captured one-bit load is
+  // resolved wholly outside the publication interval.
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, globalPlane, 64, 16,
+                                                  1, 0, 0, &value),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 0);
+
+  // IEEE 1800-2017 31.7 instead exposes the post-transition value and X plane
+  // when the condition capture aliases the controlled publication.
+  publication = {16, 8, 0, &publishedValue, &publishedUnknown};
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, globalPlane, 64, 16,
+                                                  8, 0, 0, &value),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, globalPlane, 64, 16,
+                                                  8, 1, 0, &unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, publishedValue);
+  EXPECT_EQ(unknown, publishedUnknown);
+
+  context->clockOccurrences->conditionPublication = nullptr;
+  context->observerForcesCanonicalPlane = false;
+  context->clockOccurrences.reset();
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -2156,6 +2408,7 @@ TEST(RuntimeInternals,
             {UINT64_MAX, OBELISK_RT_WAIT_EDGE_TRANSITION_MASK | 1u, 4}}};
   std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
   std::unique_ptr<SignalWaitLatch> latch;
+
   EXPECT_FALSE(obelisk_rt_register_signal_wait_unlocked(
       context, &record.wait, subscriptions, latch, 15, false));
   EXPECT_TRUE(subscriptions.empty());
@@ -2346,19 +2599,17 @@ TEST(Scheduler, ClockOccurrenceWaitExitReclaimsFeatureState) {
               1u);
 
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
-        context, 16, 1,
-        OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
+        context, 16, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
-        context, 32, 1,
-        OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
+        context, 32, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
     ++context->schedulerSlotProgress;
     ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
     EXPECT_EQ(clockOccurrenceLifecycleResumes, 1u);
     if (!changesWait) {
       // Re-entering the identical wait reuses the exact token/site record.
       ASSERT_TRUE(context->clockOccurrences);
-      ASSERT_EQ(
-          context->scheduledProcesses.front().signalSubscriptions.size(), 1u);
+      ASSERT_EQ(context->scheduledProcesses.front().signalSubscriptions.size(),
+                1u);
       ASSERT_FALSE(
           context->scheduledProcesses.front().signalSubscriptions.front());
       ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
@@ -2377,11 +2628,9 @@ TEST(Scheduler, ClockOccurrenceWaitExitReclaimsFeatureState) {
     // change to an ordinary direct wait. Publishing them again is inert and
     // cannot resurrect a stale feature record.
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
-        context, 16, 1,
-        OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
+        context, 16, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
     ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
-        context, 32, 1,
-        OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
+        context, 32, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE));
     ++context->schedulerSlotProgress;
     ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
     EXPECT_FALSE(context->clockOccurrences);
@@ -3055,13 +3304,13 @@ TEST(Scheduler, DynamicNativeChildrenInheritPhaseThroughIndexedParent) {
   // must use the token index rather than rescanning that cohort per child.
   constexpr uint32_t cohortSize = 4096;
   for (uint32_t index = 0; index != cohortSize; ++index)
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, makeSchedulerInstance(fixture), 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+        OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *parent = makeSchedulerInstance(fixture);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                context, parent, OBELISK_RT_SCHEDULE_FINAL),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, parent, OBELISK_RT_SCHEDULE_FINAL),
+      OBELISK_RT_OK);
   uint64_t parentToken = context->scheduledProcesses.back().token;
   context->activeNativeProcess = parent;
   context->activeLogicalProcessToken =
@@ -3069,9 +3318,9 @@ TEST(Scheduler, DynamicNativeChildrenInheritPhaseThroughIndexedParent) {
 
   size_t firstChild = context->scheduledProcesses.size();
   for (uint32_t index = 0; index != cohortSize; ++index)
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
-                  context, makeSchedulerInstance(fixture), 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+        OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledProcessIndices.size(),
             context->scheduledProcesses.size());
   for (size_t index = firstChild; index != context->scheduledProcesses.size();
@@ -3336,8 +3585,11 @@ TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
   plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
   obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
             OBELISK_RT_INVALID_ARGUMENT);
 
@@ -3347,6 +3599,64 @@ TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
                OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
   EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  EXPECT_TRUE(canUseStaticAOTFanout(context));
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTStaticEvalIslandIsDistinctFromFullyStatic) {
+  AOTTestState state;
+  uint64_t ingress = 0;
+  uint64_t active = 1;
+  const obelisk_rt_native_clock_kernel clocks[] = {
+      {1, OBELISK_RT_WAIT_EDGE_POSEDGE, 0, 1, &ingress, 1, 0, &active},
+  };
+  const obelisk_rt_native_merged_fragment merged[] = {
+      {0, 1, 0, 0, 0, 0, generatedCheckpointCallback},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.clock_kernels = clocks;
+  plan.clock_kernel_count = std::size(clocks);
+  plan.merged_fragments = merged;
+  plan.merged_fragment_count = std::size(merged);
+  plan.timeslot_coordinator = clockCoordinator;
+  plan.promotion_invalidate = schedulerInvalidatePromotion;
+  plan.promotion_ready = schedulerPromotionReady;
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_EVAL |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+
+  plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  // The bootstrap may enter scheduler_run_aot_nodes from inside periodic
+  // preparation. It must retain publication until the primary-overlap audit
+  // has certified this island; a full static plan above remains unaffected.
+  EXPECT_FALSE(context->nativeStaticEvalIslandCertified);
+  EXPECT_FALSE(canUseStaticAOTFanout(context));
+  context->nativeStaticEvalIslandCertified = true;
+  EXPECT_TRUE(canUseStaticAOTFanout(context));
+  obelisk_rt_v1_context_destroy(context);
+
+  // The island certifies only its residual eval closure. Claiming the
+  // whole-design FULLY_STATIC invariant at the same time is rejected.
+  plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -3715,6 +4025,106 @@ TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {
     obelisk_rt_aot_external_write_unlocked(context);
   }
   EXPECT_EQ(specializationFast, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTObserverInventoryTracksLiveComputedWaitsOnly) {
+  constexpr uint64_t observerID = 101;
+  obelisk_rt_observer_descriptor_v1 observer{observerID,
+                                             nullptr,
+                                             0,
+                                             1,
+                                             0,
+                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             collapsedAliasObserverEvaluator,
+                                             0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+
+  // A descriptor is immutable evaluator inventory. Clause 31.7 invokes its
+  // timing evaluator synchronously from an already-matched clock occurrence,
+  // so the mere descriptor must not poison unrelated static AOT closure.
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+
+  struct ComputedWait {
+    obelisk_rt_computed_wait_record_v1 wait{};
+    obelisk_rt_computed_dependency_v1 dependency{};
+  } computed;
+  computed.wait.dependency_count = 1;
+  computed.wait.dependencies_offset = sizeof(computed.wait);
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
+  std::unique_ptr<SignalWaitLatch> latch;
+
+  context->scheduledProcesses.emplace_back();
+  context->scheduledProcesses.back().token = 43;
+  context->scheduledProcessIndices[43] = 0;
+
+  // Live event-only and managed-only computed waits have no signal
+  // subscription counter. The lazy waiter inventory must still keep both off
+  // the static fast path until exact unregister.
+  computed.dependency = {37, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
+  ASSERT_TRUE(obelisk_rt_register_computed_signal_wait_unlocked(
+      context, &computed.wait, 43, false, subscriptions, latch));
+  EXPECT_FALSE(nativeStaticSpecializationEnvironmentClean(context));
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 43, false);
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+
+  computed.dependency = {41, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, 64};
+  ASSERT_TRUE(obelisk_rt_register_computed_signal_wait_unlocked(
+      context, &computed.wait, 43, false, subscriptions, latch));
+  EXPECT_FALSE(nativeStaticSpecializationEnvironmentClean(context));
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions, 43, false);
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+
+  context->scheduledProcessIndices.clear();
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, EventOnlyComputedWaitUnregistersWhenNativeProcessTerminates) {
+  obelisk_rt_observer_descriptor_v1 observer{eventOnlyComputedObserverID,
+                                             nullptr,
+                                             0,
+                                             1,
+                                             0,
+                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             eventOnlyComputedEvaluator,
+                                             0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+
+  EventOnlyComputedFixture fixture(0x7e03);
+  fixture.descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  eventOnlyComputedResumeCount = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_TRUE(context->scheduledProcesses.front().signalSubscriptions.empty());
+  EXPECT_TRUE(
+      context->scheduledProcesses.front().computedObserverWaitRegistered);
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 1u);
+  EXPECT_FALSE(nativeStaticSpecializationEnvironmentClean(context));
+
+  obelisk_rt_v1_scheduler_event(context, eventOnlyComputedDependencyID, 0);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(eventOnlyComputedResumeCount, 1u);
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+  EXPECT_TRUE(context->scheduledProcesses.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -7970,19 +8380,22 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
   expectInvalid(OBELISK_RT_SUSPEND_JOIN, 2, 1, OBELISK_RT_WAIT_EDGE_NONE);
   expectInvalid(OBELISK_RT_SUSPEND_FRONTIER, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE);
 
-  auto expectInvalidOccurrence = [&](uint32_t count, uint64_t payload,
-                                     uint64_t conditionMask,
-                                     obelisk_rt_wait_edge_kind conditionEdge,
-                                     uint32_t conditionWidth) {
-    std::memset(wait, 0, 64);
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE, count, payload, conditionMask};
-    entries[0] = {17, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
-    entries[1] = {18, conditionEdge, conditionWidth};
-    EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
-              OBELISK_RT_INVALID_FRAME);
-  };
+  auto expectInvalidOccurrence =
+      [&](uint32_t count, uint64_t payload, uint64_t conditionMask,
+          obelisk_rt_wait_edge_kind conditionEdge, uint32_t conditionWidth) {
+        std::memset(wait, 0, 64);
+        *wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_EDGE,
+                 OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+                 count,
+                 payload,
+                 conditionMask};
+        entries[0] = {17, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
+        entries[1] = {18, conditionEdge, conditionWidth};
+        EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
+                      instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
+                  OBELISK_RT_INVALID_FRAME);
+      };
   expectInvalidOccurrence(1, 0, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
   expectInvalidOccurrence(0, 1, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
   expectInvalidOccurrence(2, 1, 2, OBELISK_RT_WAIT_EDGE_NONE, 1);

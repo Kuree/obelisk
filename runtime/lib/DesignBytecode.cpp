@@ -6,6 +6,7 @@
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeRoots.h"
 #include "ProcessSignals.h"
+#include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -1818,8 +1819,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       sizeof(managed));
         else if (previous != managed) {
           uint64_t changedHandle =
-              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                    static_cast<uint32_t>(start)
+              automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                              static_cast<uint32_t>(start)
               : boundedStatic ? encodeStaticHandle(staticID, start)
                               : static_cast<uint64_t>(start);
           if (changedHandle == UINT64_MAX)
@@ -2097,11 +2098,55 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
                   {bitIndex,
-                   automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                         static_cast<uint32_t>(absolute)
+                   automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                   static_cast<uint32_t>(absolute)
                    : boundedStatic ? encodeStaticHandle(staticID, coordinate)
                                    : absolute,
                    oldValue, oldUnknown, newValue, newUnknown});
+          }
+        }
+        if (isLoad && !eventValue && !local && !automatic &&
+            context->observerForcesCanonicalPlane &&
+            context->clockOccurrences &&
+            context->clockOccurrences->conditionPublication) {
+          uint64_t stable = UINT64_MAX;
+          if (!encodeCanonicalHandle(frame.data + handleLayout.offset, stable))
+            return OBELISK_RT_INVALID_HANDLE;
+          const ClockConditionPublicationView *publication =
+              context->clockOccurrences->conditionPublication;
+          obelisk_rt_stable_handle_v1 published;
+          obelisk_rt_stable_handle_v1 loaded;
+          if (publication->newValue && publication->bitWidth != 0 &&
+              obelisk_rt_stable_handle_decode(publication->stableID,
+                                              &published) &&
+              obelisk_rt_stable_handle_decode(stable, &loaded) &&
+              published.offset >= 0 && loaded.offset >= 0 &&
+              (published.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL ||
+               published.kind == OBELISK_RT_STABLE_HANDLE_STATIC) &&
+              published.kind == loaded.kind &&
+              (published.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+               published.id == loaded.id)) {
+            __int128 relativeBegin =
+                static_cast<__int128>(loaded.offset) - published.offset;
+            __int128 first = std::max<__int128>(0, -relativeBegin);
+            __int128 last = std::min<__int128>(
+                value.width, publication->bitWidth - relativeBegin);
+            for (__int128 bitIndex = first; bitIndex < last; ++bitIndex) {
+              __int128 relative = relativeBegin + bitIndex;
+              if (relative < 0 ||
+                  relative > UINT64_MAX - publication->planeBitOffset)
+                continue;
+              uint64_t source =
+                  publication->planeBitOffset + static_cast<uint64_t>(relative);
+              setBit(value.value, static_cast<uint64_t>(bitIndex),
+                     ((publication->newValue[source / 8] >> (source % 8)) &
+                      1u) != 0);
+              setBit(
+                  value.unknown, static_cast<uint64_t>(bitIndex),
+                  publication->newUnknown &&
+                      ((publication->newUnknown[source / 8] >> (source % 8)) &
+                       1u) != 0);
+            }
           }
         }
         bool realNotified = false;
@@ -2121,8 +2166,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (changed) {
             uint64_t realHandle =
-                automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
-                                      static_cast<uint32_t>(start)
+                automatic ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                static_cast<uint32_t>(start)
                 : boundedStatic ? encodeStaticHandle(staticID, start)
                                 : static_cast<uint64_t>(start);
             if (!obelisk_rt_publish_signal_occurrence_unlocked(
@@ -3149,8 +3194,7 @@ obelisk_rt_status obelisk_rt_execute_design_export(
                              const obelisk_rt_import_input_v1 &input) {
       if (!matches(layout, input.kind, input.flags, input.bit_width) ||
           input.limb_count != limbCount(input.bit_width) || !input.value ||
-          (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
-              (input.unknown != nullptr))
+          (layout.kind == OBELISK_RT_DBREG_LOGIC) != (input.unknown != nullptr))
         return false;
       uint64_t bytes = input.limb_count * sizeof(uint64_t);
       if (input.kind == OBELISK_RT_DBREG_REAL32 ||
@@ -4884,8 +4928,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         readyCohortBuild->ready.reserve(context->designPollCandidates.size());
       }
       bool directExactScan = !selectedFromReadyCohort && !collectReadyCohort;
-      auto scanExactDesignCandidates =
-          [&]() __attribute__((always_inline)) -> obelisk_rt_status {
+      auto scanExactDesignCandidates = [&]() __attribute__((always_inline))
+                                           ->obelisk_rt_status {
         // Keep the ordinary and negative-admission path in the original scan
         // body. This is the dominant generic-scheduler path and must not pay
         // an outlined feature-scanner call or its altered register layout.
@@ -5435,18 +5479,6 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       task.controls = std::move(context->activeControls);
-      context->activeDesignTaskID = 0;
-      context->activeDesignTask = nullptr;
-      context->activeRandom = nullptr;
-      context->activeDesignTaskPhase = 0;
-      context->activeHomeRegion = UINT32_MAX;
-      context->activeExecRegion = UINT32_MAX;
-      context->activeLogicalProcessToken = 0;
-      context->activeProgramOwner = 0;
-      context->controlEscapePending = false;
-      context->activeLogicalProcessParent = 0;
-      context->activeWaitOrderFailed = false;
-      context->designTaskExecuting = false;
       task.started = true;
       task.continuation = action.continuation;
       // A direct task activation is the same logical process. Preserve its
@@ -5458,7 +5490,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
       task.observedEpoch = context->schedulerEpoch;
       switch (action.kind) {
       case OBELISK_RT_FRAGMENT_CONTINUE:
-        if (!task.signalSubscriptions.empty())
+        if (!task.signalSubscriptions.empty() ||
+            task.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         task.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -5505,7 +5538,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
             break;
           }
-          if (!task.signalSubscriptions.empty())
+          if (!task.signalSubscriptions.empty() ||
+              task.computedObserverWaitRegistered)
             obelisk_rt_unregister_signal_wait_unlocked(
                 context, task.signalSubscriptions, task.id, true);
           if (!obelisk_rt_register_computed_signal_wait_unlocked(
@@ -5537,7 +5571,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(wait + 1);
         uint32_t behaviorFlags =
             wait->flags & ~(OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
-                            OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL);
+                            OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                            OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS);
         bool suppressActiveSelf =
             (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
         bool slotFinal =
@@ -5554,7 +5589,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                    ~(OBELISK_RT_WAIT_LEVEL_TRUE | OBELISK_RT_WAIT_EDGE_IFF |
                      OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF |
                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
-                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL)) == 0 &&
+                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                     OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS)) == 0 &&
                       (!suppressActiveSelf ||
                        (signalWait && behaviorFlags == 0)) &&
                       (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
@@ -5596,6 +5632,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           finalizeStatus = OBELISK_RT_INVALID_FRAME;
           break;
         }
+        uint64_t waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
+        bool hasObserverCondition = false;
         for (uint32_t index = 0; index != wait->count; ++index) {
           bool validEdge =
               waitEntries[index].edge >= OBELISK_RT_WAIT_EDGE_CHANGE &&
@@ -5614,16 +5652,40 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               waitEntries[index].edge == OBELISK_RT_WAIT_EDGE_NONE ||
               (waitEntries[index].edge >= OBELISK_RT_WAIT_CONDITION_KNOWN_ONE &&
                waitEntries[index].edge <=
-                   OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE);
+                   OBELISK_RT_WAIT_CONDITION_CASE_NE_ONE) ||
+              (waitEntries[index].edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+               waitEntries[index].edge <=
+                   OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST);
+          bool observerCondition =
+              iffCondition &&
+              waitEntries[index].edge >= OBELISK_RT_WAIT_CONDITION_OBSERVER &&
+              waitEntries[index].edge <=
+                  OBELISK_RT_WAIT_CONDITION_OBSERVER_LAST;
+          if (observerCondition) {
+            const obelisk_rt_observer_descriptor_v1 *descriptor =
+                obelisk::process::findObserverDescriptor(
+                    context->execution, waitEntries[index].stable_id);
+            uint64_t captureBytes = uint64_t{waitEntries[index].reserved} *
+                                    sizeof(obelisk_rt_computed_capture_v1);
+            if (!descriptor || descriptor->result_width != 1 ||
+                descriptor->capture_count != waitEntries[index].reserved ||
+                captureBytes > task.scratchOffset - action.payload - waitSize) {
+              finalizeStatus = OBELISK_RT_INVALID_FRAME;
+              break;
+            }
+            waitSize += captureBytes;
+            hasObserverCondition = true;
+          }
           bool managed =
               signalWait && !iffCondition &&
               waitEntries[index].reserved == OBELISK_RT_WAIT_WIDTH_MANAGED;
           obelisk_rt_stable_handle_v1 decodedSignal;
           bool validSignalHandle =
               !signalWait ||
-              (managed ? true
-                       : obelisk_rt_stable_handle_decode(
-                             waitEntries[index].stable_id, &decodedSignal));
+              (observerCondition || managed
+                   ? true
+                   : obelisk_rt_stable_handle_decode(
+                         waitEntries[index].stable_id, &decodedSignal));
           if (signalWait
                   ? (!validSignalHandle ||
                      (managed &&
@@ -5635,13 +5697,18 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                      (behaviorFlags != OBELISK_RT_WAIT_CLOCK_OCCURRENCE &&
                       iffCondition &&
                       waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE) ||
-                     (!managed && waitEntries[index].reserved == 0))
+                     (!managed && !observerCondition &&
+                      waitEntries[index].reserved == 0))
                   : (waitEntries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||
                      waitEntries[index].reserved != 0)) {
             finalizeStatus = OBELISK_RT_INVALID_FRAME;
             break;
           }
         }
+        if (finalizeStatus == OBELISK_RT_OK &&
+            (((wait->flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS) !=
+              0) != hasObserverCondition))
+          finalizeStatus = OBELISK_RT_INVALID_FRAME;
         if (finalizeStatus != OBELISK_RT_OK)
           break;
         bool sameSignalWait =
@@ -5649,12 +5716,13 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                                ? obelisk_rt_same_clock_occurrence_wait_unlocked(
                                      context, wait, task.id, true)
                                : hasSameDirectSignalWait(task, wait));
-        if (!signalWait && !task.signalSubscriptions.empty())
+        if (!signalWait && (!task.signalSubscriptions.empty() ||
+                            task.computedObserverWaitRegistered))
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         task.suspendKind = action.suspend_kind;
         task.waitOffset = action.payload;
-        task.waitSize = sizeof(obelisk_rt_wait_record_v1) + entries;
+        task.waitSize = waitSize;
         if (action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE) {
           if (context->nextWaitSequence == 0) {
             finalizeStatus = OBELISK_RT_OUT_OF_RESOURCES;
@@ -5704,7 +5772,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         break;
       }
       case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:
-        if (!task.signalSubscriptions.empty())
+        if (!task.signalSubscriptions.empty() ||
+            task.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         task.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -5722,7 +5791,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           break;
         }
         task.callers.reserve(checkedSizeSum(task.callers.size(), 1));
-        if (!task.signalSubscriptions.empty())
+        if (!task.signalSubscriptions.empty() ||
+            task.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         task.callers.push_back({task.function, task.continuation,
@@ -5747,7 +5817,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         break;
       }
       case OBELISK_RT_FRAGMENT_TERMINATE:
-        if (!task.signalSubscriptions.empty())
+        if (!task.signalSubscriptions.empty() ||
+            task.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         if (!task.callers.empty()) {
@@ -5811,6 +5882,22 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             OBELISK_RT_RETHROW;
           }
         }
+        // Keep the dequeued task addressable through finalization and requeue
+        // so a computed wait with only event/managed dependencies can attach
+        // its owner-local registration bit. On allocation failure,
+        // abandonTask still sees the owner and removes that registration.
+        context->activeDesignTaskID = 0;
+        context->activeDesignTask = nullptr;
+        context->activeRandom = nullptr;
+        context->activeDesignTaskPhase = 0;
+        context->activeHomeRegion = UINT32_MAX;
+        context->activeExecRegion = UINT32_MAX;
+        context->activeLogicalProcessToken = 0;
+        context->activeProgramOwner = 0;
+        context->controlEscapePending = false;
+        context->activeLogicalProcessParent = 0;
+        context->activeWaitOrderFailed = false;
+        context->designTaskExecuting = false;
         taskDequeued = false;
       }
     }

@@ -540,6 +540,7 @@ struct ScheduledProcess {
   bool startupProcess = false;
   bool rootProcess = false;
   bool explicitlySuspended = false;
+  bool computedObserverWaitRegistered = false;
 };
 
 obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
@@ -849,6 +850,7 @@ struct ScheduledDesignTask {
   bool startupProcess = false;
   bool prioritySignal = false;
   bool explicitlySuspended = false;
+  bool computedObserverWaitRegistered = false;
 };
 
 // Cold, bytecode-only scheduler state for a large direct-signal publication
@@ -936,6 +938,10 @@ struct ClockOccurrenceCondition {
   uint64_t stableID = UINT64_MAX;
   uint32_t width = 0;
   uint32_t predicate = OBELISK_RT_WAIT_CONDITION_KNOWN_ONE;
+  uint64_t observerCodeUnitID = 0;
+  std::vector<obelisk_rt_computed_capture_v1> observerCaptures;
+
+  bool isObserver() const { return observerCodeUnitID != 0; }
 };
 
 struct ClockOccurrenceWaveKey {
@@ -982,6 +988,18 @@ struct ClockOccurrenceSubscription {
 struct ClockOccurrenceBucketEntry {
   ClockOccurrenceSubscription *subscription = nullptr;
   size_t slotIndex = 0;
+};
+
+// One stack-owned publication view exposed only while a compiled Clause 31.7
+// condition is evaluated. The lazy clock-occurrence feature retains the
+// pointer; observer loads merge overlapping bits without copying or walking
+// the publication. Ordinary state loads see a null pointer.
+struct ClockConditionPublicationView {
+  uint64_t stableID = UINT64_MAX;
+  uint64_t bitWidth = 0;
+  uint64_t planeBitOffset = 0;
+  const uint8_t *newValue = nullptr;
+  const uint8_t *newUnknown = nullptr;
 };
 
 using ReplaceableEventCalendar =
@@ -1063,6 +1081,7 @@ struct ClockOccurrenceFeatureState {
                      std::vector<std::unique_ptr<ClockOccurrenceSubscription>>>
       subscriptions;
   uint64_t conditionalWaitCount = 0;
+  const ClockConditionPublicationView *conditionPublication = nullptr;
   // Timer-mode Clause 31.4.2/.3 checks are the only users of replaceable
   // named-event deadlines. Keep their indexed calendar behind the already
   // cold clock-occurrence feature and one further null pointer so ordinary
@@ -1076,6 +1095,8 @@ static_assert(
             sizeof(decltype(ClockOccurrenceFeatureState::subscriptionBuckets)) +
             sizeof(decltype(ClockOccurrenceFeatureState::subscriptions)) +
             sizeof(uint64_t) +
+            sizeof(
+                decltype(ClockOccurrenceFeatureState::conditionPublication)) +
             sizeof(decltype(ClockOccurrenceFeatureState::replaceableEvents)),
     "$nochange must not add storage to the ordinary clock feature");
 
@@ -1499,6 +1520,9 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleForcedProcessToken = 0;
   bool nativeScheduleStopAtCleanBoundary = false;
   bool nativeScheduleCleanBoundaryReached = false;
+  // A static eval island may use exact fanout only after periodic preparation
+  // has proved that no runtime Clause 31 primary is generated-writable.
+  bool nativeStaticEvalIslandCertified = false;
   bool nativeScheduleDesignTaskFilterActive = false;
   // A rejected slow-dominant bytecode shape stays on the exact scanner until
   // a structural invalidation. Keep this beside the native filter booleans so
@@ -1525,6 +1549,11 @@ struct obelisk_rt_context {
   // Computed waits and custom Clause 31.5 descriptors share this already-hot
   // specialization guard instead of adding a transition-path feature probe.
   uint64_t nativeDynamicSignalSubscriptions = 0;
+  // Immutable observer descriptors are executable code inventory, not live
+  // wakeups. Only a registered suspend.observe wait invalidates generated AOT
+  // closure. Owner-local registration bits make this an allocation-free O(1)
+  // count; synchronous timing-condition evaluators never increment it.
+  uint64_t activeComputedObserverWaiterCount = 0;
   std::vector<uint64_t> pendingNativeComputedWaiters;
   std::vector<uint64_t> pendingDesignComputedWaiters;
   std::unordered_set<uint64_t> nativeConditionalSignalWaiters;
@@ -1996,7 +2025,8 @@ obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {
 }
 
 inline bool obelisk_rt_is_clock_occurrence_wait_flags(uint32_t flags) {
-  return (flags & ~OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) ==
+  return (flags & ~(OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                    OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS)) ==
          OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
 }
 
@@ -2459,6 +2489,9 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *newValue, const uint8_t *newUnknown,
     bool indexedExternalDeposit = false);
+bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
+    const obelisk_rt_context *context, uint64_t stableID, uint64_t bit,
+    bool &value, bool &unknown);
 bool obelisk_rt_latch_conditional_signal_waiters_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint32_t edges);
 bool obelisk_rt_latch_conditional_signal_range_unlocked(
@@ -2499,6 +2532,10 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint32_t dependencyKind,
                                                    uint64_t publishedHandle,
                                                    uint64_t publishedWidth);
+bool obelisk_rt_evaluate_design_clock_condition_unlocked(
+    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t &value, uint64_t &unknown);
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
 obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(

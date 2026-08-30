@@ -5,6 +5,7 @@
 #include "RuntimeInternal.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -48,42 +49,50 @@ currentComputedWait(ScheduledDesignTask &task) {
              : nullptr;
 }
 
-bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
-                      uint32_t observerIndex, std::vector<uint64_t> &value,
-                      std::vector<uint64_t> &unknown) {
+bool evaluateBoundObserver(obelisk_rt_context *context, uint64_t taskID,
+                           uint64_t codeUnitID,
+                           const obelisk_rt_computed_capture_v1 *captures,
+                           uint32_t captureCount, uint64_t *value,
+                           uint64_t *unknown, uint32_t limbCapacity) {
   ScheduledDesignTask *task = findDesignTask(context, taskID);
-  obelisk_rt_computed_wait_record_v1 *wait =
-      task ? currentComputedWait(*task) : nullptr;
-  if (!task || !wait || observerIndex >= wait->observer_count)
+  if (!task || (!captures && captureCount != 0) || !value || !unknown)
     return false;
-  auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
-      wait, wait->observers_offset, wait->observer_count);
-  auto *captures = computedWaitSpan<obelisk_rt_computed_capture_v1>(
-      wait, wait->captures_offset, wait->capture_count);
-  if (!observers || !captures)
-    return false;
-  obelisk_rt_computed_observer_v1 binding = observers[observerIndex];
   const obelisk_rt_observer_descriptor_v1 *descriptor =
-      findObserverDescriptor(context->execution, binding.code_unit_id);
-  if (!descriptor || descriptor->capture_count != binding.capture_count ||
+      findObserverDescriptor(context->execution, codeUnitID);
+  if (!descriptor || descriptor->capture_count != captureCount ||
       descriptor->bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
     return false;
   if (context->observerDepth >= kMaximumObserverDepth) {
     context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
     return false;
   }
-  std::vector<obelisk_rt_computed_capture_v1> copiedCaptures(
-      captures + binding.capture_begin,
-      captures + binding.capture_begin + binding.capture_count);
   uint32_t limbs =
       static_cast<uint32_t>((uint64_t{descriptor->result_width} + 63) / 64);
-  value.assign(limbs, 0);
-  unknown.assign(limbs, 0);
+  if (limbs == 0 || limbs > limbCapacity)
+    return false;
+  std::fill(value, value + limbs, 0);
+  std::fill(unknown, unknown + limbs, 0);
 
-  std::vector<uint64_t> retainedCaptures;
-  retainedCaptures.reserve(binding.capture_count);
+  constexpr uint32_t kInlineCaptures = 4;
+  std::array<obelisk_rt_computed_capture_v1, kInlineCaptures> inlineCaptures{};
+  std::vector<obelisk_rt_computed_capture_v1> spilledCaptures;
+  obelisk_rt_computed_capture_v1 *copiedCaptures = inlineCaptures.data();
+  if (captureCount > kInlineCaptures) {
+    spilledCaptures.resize(captureCount);
+    copiedCaptures = spilledCaptures.data();
+  }
+  std::copy(captures, captures + captureCount, copiedCaptures);
+
+  std::array<uint64_t, kInlineCaptures> inlineRetainedCaptures{};
+  std::vector<uint64_t> spilledRetainedCaptures;
+  uint64_t *retainedCaptures = inlineRetainedCaptures.data();
+  if (captureCount > kInlineCaptures) {
+    spilledRetainedCaptures.resize(captureCount);
+    retainedCaptures = spilledRetainedCaptures.data();
+  }
+  uint32_t retainedCaptureCount = 0;
   obelisk_rt_status status = OBELISK_RT_OK;
-  for (uint32_t index = 0; index != binding.capture_count; ++index) {
+  for (uint32_t index = 0; index != captureCount; ++index) {
     if (descriptor->capture_abi[index].kind !=
         OBELISK_RT_OBSERVER_CAPTURE_STORAGE)
       continue;
@@ -91,12 +100,12 @@ bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
                                                copiedCaptures[index].stable_id);
     if (status != OBELISK_RT_OK)
       break;
-    retainedCaptures.push_back(copiedCaptures[index].stable_id);
+    retainedCaptures[retainedCaptureCount++] = copiedCaptures[index].stable_id;
   }
   if (status != OBELISK_RT_OK) {
-    for (auto capture = retainedCaptures.rbegin();
-         capture != retainedCaptures.rend(); ++capture)
-      (void)obelisk_rt_v1_native_state_release(context, *capture, 0);
+    while (retainedCaptureCount != 0)
+      (void)obelisk_rt_v1_native_state_release(
+          context, retainedCaptures[--retainedCaptureCount], 0);
     context->schedulerStatus = status;
     return false;
   }
@@ -119,8 +128,7 @@ bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
     ContextCallbackUnlock unlock(context);
     status = obelisk_rt_execute_design_observer(
         *context->execution, context, descriptor->bytecode_function,
-        copiedCaptures.data(), binding.capture_count, value.data(),
-        unknown.data(), limbs);
+        copiedCaptures, captureCount, value, unknown, limbs);
   }
   --context->observerDepth;
   waiterControls = std::move(context->activeControls);
@@ -133,10 +141,9 @@ bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
   context->activeDesignTaskID = producerTask;
   context->activeWaitOrderFailed = producerWaitOrderFailed;
   context->designTaskExecuting = producerExecuting;
-  for (auto capture = retainedCaptures.rbegin();
-       capture != retainedCaptures.rend(); ++capture) {
-    obelisk_rt_status releaseStatus =
-        obelisk_rt_v1_native_state_release(context, *capture, 0);
+  while (retainedCaptureCount != 0) {
+    obelisk_rt_status releaseStatus = obelisk_rt_v1_native_state_release(
+        context, retainedCaptures[--retainedCaptureCount], 0);
     if (status == OBELISK_RT_OK && releaseStatus != OBELISK_RT_OK)
       status = releaseStatus;
   }
@@ -146,15 +153,60 @@ bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
   }
   if (descriptor->result_width % 64 != 0) {
     uint64_t mask = (uint64_t{1} << (descriptor->result_width % 64)) - 1;
-    value.back() &= mask;
-    unknown.back() &= mask;
+    value[limbs - 1] &= mask;
+    unknown[limbs - 1] &= mask;
   }
   if ((descriptor->flags & OBELISK_RT_OBSERVER_FOUR_STATE) == 0)
-    std::fill(unknown.begin(), unknown.end(), 0);
+    std::fill(unknown, unknown + limbs, 0);
   return true;
 }
 
+bool evaluateObserver(obelisk_rt_context *context, uint64_t taskID,
+                      uint32_t observerIndex, std::vector<uint64_t> &value,
+                      std::vector<uint64_t> &unknown) {
+  ScheduledDesignTask *task = findDesignTask(context, taskID);
+  obelisk_rt_computed_wait_record_v1 *wait =
+      task ? currentComputedWait(*task) : nullptr;
+  if (!task || !wait || observerIndex >= wait->observer_count)
+    return false;
+  auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+      wait, wait->observers_offset, wait->observer_count);
+  auto *captures = computedWaitSpan<obelisk_rt_computed_capture_v1>(
+      wait, wait->captures_offset, wait->capture_count);
+  if (!observers || !captures)
+    return false;
+  obelisk_rt_computed_observer_v1 binding = observers[observerIndex];
+  if (binding.capture_begin > wait->capture_count ||
+      binding.capture_count > wait->capture_count - binding.capture_begin)
+    return false;
+  const obelisk_rt_observer_descriptor_v1 *descriptor =
+      findObserverDescriptor(context->execution, binding.code_unit_id);
+  if (!descriptor)
+    return false;
+  uint32_t limbs =
+      static_cast<uint32_t>((uint64_t{descriptor->result_width} + 63) / 64);
+  value.assign(limbs, 0);
+  unknown.assign(limbs, 0);
+  return evaluateBoundObserver(
+      context, taskID, binding.code_unit_id, captures + binding.capture_begin,
+      binding.capture_count, value.data(), unknown.data(), limbs);
+}
+
 } // namespace
+
+bool obelisk_rt_evaluate_design_clock_condition_unlocked(
+    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t &value, uint64_t &unknown) {
+  uint64_t values = 0;
+  uint64_t unknowns = 0;
+  if (!evaluateBoundObserver(context, taskID, codeUnitID, captures,
+                             captureCount, &values, &unknowns, 1))
+    return false;
+  value = values & 1;
+  unknown = unknowns & 1;
+  return true;
+}
 
 bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint32_t dependencyKind,

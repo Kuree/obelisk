@@ -117,24 +117,41 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     int32_t predicate =
         frozenConditionPredicates ? frozenConditionPredicates[index] : 0;
     Operation *conditionRoot = roots[conditionChild];
-    Operation *conditionSource = nullptr;
-    bool multipleSources = false;
-    conditionRoot->walk([&](semantic::SVNamedValueExpressionOp named) {
-      if (!conditionSource)
-        conditionSource = named;
-      else if (conditionSource != named.getOperation())
-        multipleSources = true;
-    });
-    if (!conditionSource || multipleSources)
+    Operation *conditionOperand =
+        getTimingConditionOperand(conditionRoot, predicate);
+    if (!conditionOperand)
       return function.emitError(
-          "Clause 31.7 timing-check condition is not a single direct signal "
-          "predicate");
-    FailureOr<Value> condition = lowerExpression(conditionSource, true);
-    if (failed(condition) ||
-        !isa<sim::RefType, sim::NetType, sim::DriverType>(
-            succeeded(condition) ? (*condition).getType() : Type{}))
+          "basic timing-check condition has no normalized operand");
+    FailureOr<Value> condition = failure();
+    if (conditionOperand->hasAttr("obelisk_sim.observer"))
+      condition = bindObserver(conditionOperand);
+    else
+      condition = lowerExpression(conditionOperand, true);
+    if (failed(condition))
+      return failure();
+
+    if (isa<sim::ObserverType>((*condition).getType())) {
+      auto observed = cast<sim::ObserverType>((*condition).getType());
+      std::optional<unsigned> width =
+          sim::getPackedWidth(observed.getResultType());
+      if (!width || *width != 1)
+        return function.emitError(
+            "computed timing-check condition must return one packed bit");
+      // IEEE 1800-2017 31.7 samples the condition only after its primary
+      // event matches. The observer token carries compiled code and frozen
+      // handles into that existing clock wait; its dependencies never become
+      // independent wakeups.
+      conditionIndices[index] = static_cast<int32_t>(conditions.size());
+      conditions.push_back(*condition);
+      conditionPredicates.push_back(predicate);
+      eventConditions[index] = *condition;
+      continue;
+    }
+    if (!isa<sim::RefType, sim::NetType, sim::DriverType>(
+            (*condition).getType()))
       return function.emitError(
-          "basic timing-check condition is not a direct signal handle");
+          "basic timing-check condition is neither a direct handle nor a "
+          "compiled observer");
 
     Type elementType;
     if (auto ref = dyn_cast<sim::RefType>((*condition).getType()))
@@ -173,9 +190,9 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
                 .getResult();
       }
     }
-    // IEEE 1800-2017 31.7 samples a bare/~ condition's LSB, while an equality
-    // condition first forms its scalar comparison. Retain the packed handle
-    // only for the latter; its frozen predicate is sampled in publication.
+    // IEEE 1800-2017 31.7 samples the operand's LSB before applying the
+    // frozen predicate. Direct equality forms retain the packed handle; the
+    // runtime reads precisely bit zero rather than constructing an SSA compare.
     conditionIndices[index] = static_cast<int32_t>(conditions.size());
     conditions.push_back(*condition);
     conditionPredicates.push_back(predicate);

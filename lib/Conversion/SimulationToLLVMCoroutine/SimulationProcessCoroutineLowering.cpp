@@ -36,10 +36,8 @@ uint32_t suspensionKind(Operation *operation) {
       .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp>(
           [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
       .Case<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-            sim::SimSuspendAnyOp,
-            sim::SimSuspendClockSetOp>([](auto) {
-        return OBELISK_RT_SUSPEND_EDGE;
-      })
+            sim::SimSuspendAnyOp, sim::SimSuspendClockSetOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_EDGE; })
       .Case<sim::SimSuspendEventOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
       .Case<sim::SimSuspendEventOrderOp>(
@@ -544,7 +542,8 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                                              observerBindings)))
       return failure();
   } else {
-    if (failed(serializeRuntimeWait(operation, wait, kind, count, builder)))
+    if (failed(serializeRuntimeWait(operation, wait, kind, count, builder,
+                                    observerBindings)))
       return failure();
   }
 
