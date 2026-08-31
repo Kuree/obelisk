@@ -4807,45 +4807,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                           semanticObjectType.getClassName().getLeafReference())
                     : semanticClasses.end();
             SmallVector<semantic::SVClassTypeOp> concreteClasses;
-            if (declaredClass != semanticClasses.end())
-              for (semantic::SVClassTypeOp candidate : classSources) {
-                if (candidate.getIsAbstract() || candidate.getIsInterface())
-                  continue;
-                SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
-                if (failed(
-                        collectClassHierarchy(candidate, candidateHierarchy,
-                                              "nested object randomization"))) {
-                  invalid = true;
-                  continue;
-                }
-                bool compatible = llvm::is_contained(candidateHierarchy,
-                                                     declaredClass->second);
-                if (!compatible && declaredClass->second.getIsInterface()) {
-                  StringRef targetInterface =
-                      semanticObjectType.getClassName().getLeafReference();
-                  for (semantic::SVClassTypeOp hierarchyClass :
-                       candidateHierarchy) {
-                    for (Attribute attribute :
-                         hierarchyClass.getImplementedInterfaces()) {
-                      auto type = dyn_cast<TypeAttr>(attribute);
-                      auto interface =
-                          type ? dyn_cast<semantic::ClassHandleType>(
-                                     type.getValue())
-                               : semantic::ClassHandleType{};
-                      if (interface &&
-                          interface.getClassName().getLeafReference() ==
-                              targetInterface) {
-                        compatible = true;
-                        break;
-                      }
-                    }
-                    if (compatible)
-                      break;
-                  }
-                }
-                if (compatible)
-                  concreteClasses.push_back(candidate);
+            if (declaredClass != semanticClasses.end()) {
+              FailureOr<SmallVector<CompatibleConcreteClass>> candidates =
+                  getCompatibleConcreteClasses(declaredClass->second,
+                                               "nested object randomization");
+              if (failed(candidates)) {
+                invalid = true;
+                return true;
               }
+              for (const CompatibleConcreteClass &candidate : *candidates)
+                concreteClasses.push_back(candidate.classType);
+            }
             size_t unfilteredConcreteClassCount = concreteClasses.size();
             llvm::erase_if(concreteClasses,
                            [&](semantic::SVClassTypeOp candidate) {
@@ -5032,43 +5004,16 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                  .getLeafReference())
                       : semanticClasses.end();
               SmallVector<semantic::SVClassTypeOp> candidates;
-              if (declaredClass != semanticClasses.end())
-                for (semantic::SVClassTypeOp candidate : classSources) {
-                  if (candidate.getIsAbstract() || candidate.getIsInterface())
-                    continue;
-                  SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
-                  if (failed(collectClassHierarchy(
-                          candidate, candidateHierarchy,
-                          "recursive nested object randomization")))
-                    return failure();
-                  bool compatible = llvm::is_contained(candidateHierarchy,
-                                                       declaredClass->second);
-                  if (!compatible && declaredClass->second.getIsInterface()) {
-                    StringRef target =
-                        semanticObjectType.getClassName().getLeafReference();
-                    for (semantic::SVClassTypeOp hierarchyClass :
-                         candidateHierarchy) {
-                      for (Attribute attribute :
-                           hierarchyClass.getImplementedInterfaces()) {
-                        auto type = dyn_cast<TypeAttr>(attribute);
-                        auto interface =
-                            type ? dyn_cast<semantic::ClassHandleType>(
-                                       type.getValue())
-                                 : semantic::ClassHandleType{};
-                        if (interface &&
-                            interface.getClassName().getLeafReference() ==
-                                target) {
-                          compatible = true;
-                          break;
-                        }
-                      }
-                      if (compatible)
-                        break;
-                    }
-                  }
-                  if (compatible)
-                    candidates.push_back(candidate);
-                }
+              if (declaredClass != semanticClasses.end()) {
+                FailureOr<SmallVector<CompatibleConcreteClass>> compatible =
+                    getCompatibleConcreteClasses(
+                        declaredClass->second,
+                        "recursive nested object randomization");
+                if (failed(compatible))
+                  return failure();
+                for (const CompatibleConcreteClass &candidate : *compatible)
+                  candidates.push_back(candidate.classType);
+              }
               SmallVector<Attribute> selectionPath{Attribute(field)};
               for (const RandomObjectPathElement &element : path)
                 selectionPath.push_back(element.field);
@@ -7558,52 +7503,25 @@ void ObeliskSimPreparePass::runOnOperation() {
         !foundClass->second.getIsInterface())
       return false;
 
-    struct DynamicClass {
-      semantic::SVClassTypeOp type;
-      unsigned depth;
-    };
-    SmallVector<DynamicClass> compatible;
-    StringRef target = receiverType.getClassName().getLeafReference();
-    for (semantic::SVClassTypeOp candidate : classSources) {
-      if (candidate.getIsAbstract() || candidate.getIsInterface())
-        continue;
-      SmallVector<semantic::SVClassTypeOp> hierarchy;
-      if (failed(collectClassHierarchy(candidate, hierarchy,
-                                       "object random-stream dispatch"))) {
-        invalid = true;
-        return true;
-      }
-      bool matches = false;
-      for (semantic::SVClassTypeOp current : hierarchy) {
-        for (Attribute attribute : current.getImplementedInterfaces()) {
-          auto interfaceType = dyn_cast<TypeAttr>(attribute);
-          auto interface = interfaceType ? dyn_cast<semantic::ClassHandleType>(
-                                               interfaceType.getValue())
-                                         : semantic::ClassHandleType{};
-          if (interface &&
-              interface.getClassName().getLeafReference() == target) {
-            matches = true;
-            break;
-          }
-        }
-        if (matches)
-          break;
-      }
-      if (matches)
-        compatible.push_back(
-            {candidate, static_cast<unsigned>(hierarchy.size())});
+    FailureOr<SmallVector<CompatibleConcreteClass>> compatible =
+        getCompatibleConcreteClasses(foundClass->second,
+                                     "object random-stream dispatch");
+    if (failed(compatible)) {
+      invalid = true;
+      return true;
     }
-    llvm::sort(compatible,
-               [&](const DynamicClass &lhs, const DynamicClass &rhs) {
+    llvm::sort(*compatible,
+               [&](const CompatibleConcreteClass &lhs,
+                   const CompatibleConcreteClass &rhs) {
                  if (lhs.depth != rhs.depth)
                    return lhs.depth > rhs.depth;
-                 return classSymbols.lookup(lhs.type).getValue() <
-                        classSymbols.lookup(rhs.type).getValue();
+                 return classSymbols.lookup(lhs.classType).getValue() <
+                        classSymbols.lookup(rhs.classType).getValue();
                });
     SmallVector<Attribute> classes;
-    for (const DynamicClass &entry : compatible)
+    for (const CompatibleConcreteClass &entry : *compatible)
       classes.push_back(FlatSymbolRefAttr::get(
-          context, classSymbols.lookup(entry.type).getValue()));
+          context, classSymbols.lookup(entry.classType).getValue()));
     call->setAttr(objectRandomDispatchClassesAttrName,
                   builder.getArrayAttr(classes));
     return true;
