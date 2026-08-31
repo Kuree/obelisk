@@ -425,6 +425,11 @@ VERILATOR_ASSERTIONS_DISABLED = Exclusion(
     "a static concurrent assertion starts checking at every leading clock "
     "event; the test expects zero action-block executions only because its "
     "descriptor asks Verilator's `--no-assert` option to remove assertions")
+TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY = Exclusion(
+    "IEEE 1800-2017 12.5.3.1",
+    "the implementation must report a unique-case violation but the clause "
+    "leaves the report mechanism tool-specific; Obelisk emits the required "
+    "warning, while this test expects Verilator's `--assert` fatal policy")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -432,6 +437,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_disabled": VERILATOR_ASSERTIONS_DISABLED,
     "t_assert_future": TWO_STATE_INITIALIZATION,
     "t_assert_pre": USE_BEFORE_DECLARATION,
+    "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
