@@ -765,6 +765,48 @@ def detect_run_args(descriptor: Path) -> list[str]:
     return []
 
 
+def detect_compile_defines(descriptor: Path) -> list[str]:
+    """Return literal preprocessor definitions requested by the descriptor.
+
+    ``v_flags2`` and ``verilator_flags2`` mix portable source configuration
+    with Verilator-only optimization and code-generation switches.  Forward
+    only literal ``+define+``, ``-D``, and ``-U`` tokens; expressions involving
+    driver state are deliberately ignored instead of being evaluated.
+    """
+    if not descriptor.exists():
+        return []
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    result: list[str] = []
+
+    def literal_strings(node: ast.AST) -> list[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [value for element in node.elts
+                    for value in literal_strings(element)]
+        return []
+
+    for method in ("compile", "lint"):
+        for arguments in descriptor_calls(text, method):
+            try:
+                call = ast.parse(f"_{method}({arguments})", mode="eval").body
+            except SyntaxError:
+                continue
+            for keyword in call.keywords:
+                if keyword.arg not in ("v_flags2", "verilator_flags2"):
+                    continue
+                for fragment in literal_strings(keyword.value):
+                    for token in shlex.split(fragment):
+                        if token.startswith("+define+"):
+                            definitions = token.removeprefix("+define+")
+                            result.extend("-D" + definition
+                                          for definition in definitions.split("+")
+                                          if definition)
+                        elif token.startswith(("-D", "-U")) and len(token) > 2:
+                            result.append(token)
+    return result
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top") -> str:
@@ -877,6 +919,7 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
             "-I", str(top.parent),
         ]
+        extra.extend(detect_compile_defines(top.with_suffix(".py")))
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,

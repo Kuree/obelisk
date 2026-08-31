@@ -181,6 +181,38 @@ class RunArgsDescriptorTest(unittest.TestCase):
                 verilator.detect_run_args(Path(tmp) / "absent.py"), [])
 
 
+class CompileDefinesDescriptorTest(unittest.TestCase):
+    def defines(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_compile_defines(path)
+
+    def test_literal_defines_from_both_flag_lists_are_forwarded(self):
+        self.assertEqual(
+            self.defines(
+                "test.compile(v_flags2=['+define+FIRST=1'], "
+                "verilator_flags2=['--assert +define+SECOND'])\n"),
+            ["-DFIRST=1", "-DSECOND"],
+        )
+
+    def test_tool_switches_and_dynamic_expressions_are_not_forwarded(self):
+        self.assertEqual(
+            self.defines(
+                "test.compile(v_flags2=['--cc', '+define+STATIC', "
+                "'+define+DYNAMIC=' + str(test.cycles)])\n"),
+            ["-DSTATIC"],
+        )
+
+    def test_undefines_and_grouped_plus_defines_preserve_order(self):
+        self.assertEqual(
+            self.defines(
+                "test.lint(verilator_flags2=["
+                "'+define+ONE+TWO=2 -UOLD -DNEW'])\n"),
+            ["-DONE", "-DTWO=2", "-UOLD", "-DNEW"],
+        )
+
+
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
