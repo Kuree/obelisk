@@ -423,11 +423,29 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   bool invalid = false;
 
-  // `$dumpports` selections are arbitrary-symbol expressions whose semantic
-  // type is void, so their module-instance kind is otherwise lost when code
-  // units are isolated from the semantic symbol table. Freeze just that fact
-  // while the whole elaborated inventory is still available.
+  // Freeze call-specific frontend facts while the whole elaborated inventory
+  // is still available. This walk already visits every system call for
+  // `$dumpports`, so repairing an affected expression chain below adds no
+  // additional whole-design traversal.
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+    // IEEE 1800-2017 20.7 expands intermediate typedefs before numbering
+    // dimensions. Slang's cached value currently uses the flattened storage
+    // order, and enclosing expressions can therefore carry stale folds too.
+    // Keep all unaffected frontend folds, but recompute this short expression
+    // chain from the corrected compile-time query constants.
+    if (call->hasAttr(arrayQueryDimensionsAttrName)) {
+      for (Operation *expression = call; expression;
+           expression = expression->getParentOp()) {
+        if (!expression->getName().getStringRef().starts_with(
+                "obelisk.sv.expression."))
+          break;
+        expression->removeAttr(foldedConstantAttrName);
+      }
+    }
+
+    // `$dumpports` selections are arbitrary-symbol expressions whose semantic
+    // type is void, so their module-instance kind is otherwise lost when code
+    // units are isolated from the semantic symbol table.
     if (!call.getIsSystemCall() || call.getCalleeName() != "$dumpports")
       return;
     for (Operation *child : getChildren(call)) {

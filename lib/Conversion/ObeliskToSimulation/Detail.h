@@ -170,6 +170,10 @@ inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
     "folded_constant";
+/// Source array-query order when typedef expansion differs from storage
+/// nesting (IEEE 1800-2017 20.7).
+inline constexpr ::mlir::StringLiteral arrayQueryDimensionsAttrName =
+    "obelisk.array_query_dimensions";
 /// A fixed unpacked `interconnect` can acquire a distinct data/net type for
 /// every leaf (IEEE 1800-2017 6.6.8). Prepare represents those typeless
 /// structural aggregates as independent typed descriptors and freezes the

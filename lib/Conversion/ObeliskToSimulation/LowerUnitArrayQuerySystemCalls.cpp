@@ -77,6 +77,61 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
 
     SmallVector<SemanticDimension> dimensions =
         getSemanticDimensions(semanticType.getValue());
+    if (ArrayAttr frozen =
+            op->getAttrOfType<ArrayAttr>(arrayQueryDimensionsAttrName)) {
+      dimensions.clear();
+      dimensions.reserve(frozen.size());
+      for (Attribute attribute : frozen) {
+        auto descriptor = dyn_cast<DictionaryAttr>(attribute);
+        auto kindName =
+            descriptor ? descriptor.getAs<StringAttr>("kind") : StringAttr{};
+        auto unpacked =
+            descriptor ? descriptor.getAs<BoolAttr>("unpacked") : BoolAttr{};
+        std::optional<SemanticDimensionKind> kind =
+            kindName ? llvm::StringSwitch<std::optional<SemanticDimensionKind>>(
+                           kindName.getValue())
+                           .Case("fixed", SemanticDimensionKind::Fixed)
+                           .Case("string", SemanticDimensionKind::String)
+                           .Case("dynamic", SemanticDimensionKind::DynamicArray)
+                           .Case("queue", SemanticDimensionKind::Queue)
+                           .Case("associative",
+                                 SemanticDimensionKind::AssociativeArray)
+                           .Case("open", SemanticDimensionKind::OpenArray)
+                           .Default(std::nullopt)
+                     : std::nullopt;
+        if (!descriptor || !kind || !unpacked) {
+          op.emitOpError("has malformed typedef-expanded array-query "
+                         "dimension metadata");
+          return failure();
+        }
+
+        SemanticDimension dimension;
+        dimension.kind = *kind;
+        dimension.unpacked = unpacked.getValue();
+        if (*kind == SemanticDimensionKind::Fixed) {
+          auto left = descriptor.getAs<IntegerAttr>("left");
+          auto right = descriptor.getAs<IntegerAttr>("right");
+          if (!left || !right || !left.getValue().isSignedIntN(64) ||
+              !right.getValue().isSignedIntN(64)) {
+            op.emitOpError("has malformed fixed typedef-expanded array-query "
+                           "dimension metadata");
+            return failure();
+          }
+          dimension.left = left.getInt();
+          dimension.right = right.getInt();
+        }
+        if (*kind == SemanticDimensionKind::AssociativeArray) {
+          auto indexType = descriptor.getAs<TypeAttr>("index_type");
+          if (!indexType) {
+            op.emitOpError("has associative typedef-expanded array-query "
+                           "dimension metadata without an index type");
+            return failure();
+          }
+          dimension.indexType = indexType.getValue();
+        }
+        dimensions.push_back(dimension);
+      }
+    }
     if (isDimensionCount) {
       uint64_t count = dimensions.size();
       if (query == ArrayQueryKind::UnpackedDimensions) {

@@ -201,6 +201,10 @@ template <typename Value> std::string formatConstant(const Value &value) {
 /// it; what it buys is not having to fold that tree a second time. Read back
 /// under the same name by the simulation lowering.
 constexpr llvm::StringLiteral foldedConstantAttrName = "folded_constant";
+// IEEE 1800-2017 20.7 query order cannot be reconstructed from a canonical
+// storage type after unpacked-array typedef boundaries have been erased.
+constexpr llvm::StringLiteral arrayQueryDimensionsAttrName =
+    "obelisk.array_query_dimensions";
 // Identity a type reference shares with every other reference to a matching
 // type (IEEE 1800-2017 6.22.1), so that the comparisons 6.23 allows can be
 // settled without re-implementing the matching rules downstream.
@@ -1388,6 +1392,177 @@ private:
       location = sourceManager.getExpansionLoc(location);
     }
     return builder.getArrayAttr(frames);
+  }
+
+  struct ArrayQueryDimension {
+    StringRef kind;
+    bool unpacked;
+    int64_t left = 0;
+    int64_t right = 0;
+    const slang::ast::Type *indexType = nullptr;
+  };
+
+  struct ArrayQueryDimensionInventory {
+    SmallVector<ArrayQueryDimension, 4> unpacked;
+    SmallVector<ArrayQueryDimension, 2> packed;
+    bool sawAlias = false;
+  };
+
+  bool collectArrayQueryDimensions(
+      const slang::ast::Type &type, ArrayQueryDimensionInventory &inventory,
+      llvm::SmallPtrSetImpl<const slang::ast::Type *> &activeAliases) {
+    using SK = slang::ast::SymbolKind;
+    if (type.kind == SK::TypeAlias) {
+      inventory.sawAlias = true;
+      if (!activeAliases.insert(&type).second)
+        return false;
+      const auto &alias = type.as<slang::ast::TypeAliasType>();
+      bool complete = collectArrayQueryDimensions(alias.targetType.getType(),
+                                                  inventory, activeAliases);
+      activeAliases.erase(&type);
+      return complete;
+    }
+
+    // A run of dimensions written on one declaration keeps its outer-to-inner
+    // order. The type named by that declaration is expanded first, however,
+    // so recurse through a trailing alias before appending the whole run.
+    SmallVector<ArrayQueryDimension, 4> localUnpacked;
+    const slang::ast::Type *element = &type;
+    while (true) {
+      switch (element->kind) {
+      case SK::FixedSizeUnpackedArrayType: {
+        const auto &array =
+            element->as<slang::ast::FixedSizeUnpackedArrayType>();
+        localUnpacked.push_back(
+            {"fixed", true, array.range.left, array.range.right});
+        element = &array.elementType;
+        continue;
+      }
+      case SK::DynamicArrayType: {
+        const auto &array = element->as<slang::ast::DynamicArrayType>();
+        localUnpacked.push_back({"dynamic", true});
+        element = &array.elementType;
+        continue;
+      }
+      case SK::AssociativeArrayType: {
+        const auto &array = element->as<slang::ast::AssociativeArrayType>();
+        if (!array.indexType)
+          return false;
+        localUnpacked.push_back({"associative", true, 0, 0, array.indexType});
+        element = &array.elementType;
+        continue;
+      }
+      case SK::QueueType: {
+        const auto &array = element->as<slang::ast::QueueType>();
+        localUnpacked.push_back({"queue", true});
+        element = &array.elementType;
+        continue;
+      }
+      case SK::DPIOpenArrayType: {
+        const auto &array = element->as<slang::ast::DPIOpenArrayType>();
+        if (array.isPacked)
+          break;
+        localUnpacked.push_back({"open", true});
+        element = &array.elementType;
+        continue;
+      }
+      default:
+        break;
+      }
+      break;
+    }
+    if (!localUnpacked.empty()) {
+      if (!collectArrayQueryDimensions(*element, inventory, activeAliases))
+        return false;
+      inventory.unpacked.append(localUnpacked);
+      return true;
+    }
+
+    SmallVector<ArrayQueryDimension, 2> localPacked;
+    element = &type;
+    while (element->kind == SK::PackedArrayType ||
+           (element->kind == SK::DPIOpenArrayType &&
+            element->as<slang::ast::DPIOpenArrayType>().isPacked)) {
+      if (element->kind == SK::PackedArrayType) {
+        const auto &array = element->as<slang::ast::PackedArrayType>();
+        localPacked.push_back(
+            {"fixed", false, array.range.left, array.range.right});
+        element = &array.elementType;
+      } else {
+        const auto &array = element->as<slang::ast::DPIOpenArrayType>();
+        localPacked.push_back({"open", false});
+        element = &array.elementType;
+      }
+    }
+    if (!localPacked.empty()) {
+      if (!collectArrayQueryDimensions(*element, inventory, activeAliases))
+        return false;
+      inventory.packed.append(localPacked);
+      return true;
+    }
+
+    if (type.kind == SK::StringType) {
+      inventory.packed.push_back({"string", false});
+      return true;
+    }
+    if (type.kind == SK::EnumType) {
+      uint64_t width = type.getBitWidth();
+      if (width)
+        inventory.packed.push_back(
+            {"fixed", false, static_cast<int64_t>(width - 1), 0});
+      return true;
+    }
+    if (type.kind == SK::PredefinedIntegerType) {
+      slang::ConstantRange range = type.getFixedRange();
+      inventory.packed.push_back({"fixed", false, range.left, range.right});
+      return true;
+    }
+    if (type.kind == SK::PackedStructType || type.kind == SK::PackedUnionType) {
+      uint64_t width = type.getBitWidth();
+      if (width)
+        inventory.packed.push_back(
+            {"fixed", false, static_cast<int64_t>(width - 1), 0});
+      return true;
+    }
+    // A scalar bit / logic / reg and every nonarray unpacked type contribute
+    // no query dimension. Any alias layers above them have still been fully
+    // inventoried.
+    return !type.isArray();
+  }
+
+  ArrayAttr getArrayQueryDimensions(const slang::ast::Type &type) {
+    if (auto found = arrayQueryDimensionCache.find(&type);
+        found != arrayQueryDimensionCache.end())
+      return found->second;
+
+    ArrayQueryDimensionInventory inventory;
+    llvm::SmallPtrSet<const slang::ast::Type *, 4> activeAliases;
+    if (!collectArrayQueryDimensions(type, inventory, activeAliases) ||
+        !inventory.sawAlias) {
+      arrayQueryDimensionCache.try_emplace(&type, ArrayAttr{});
+      return {};
+    }
+
+    SmallVector<Attribute> dimensions;
+    dimensions.reserve(inventory.unpacked.size() + inventory.packed.size());
+    auto append = [&](const ArrayQueryDimension &dimension) {
+      NamedAttrList descriptor;
+      descriptor.set("kind", builder.getStringAttr(dimension.kind));
+      descriptor.set("unpacked", builder.getBoolAttr(dimension.unpacked));
+      if (dimension.kind == "fixed") {
+        descriptor.set("left", builder.getI64IntegerAttr(dimension.left));
+        descriptor.set("right", builder.getI64IntegerAttr(dimension.right));
+      }
+      if (dimension.indexType)
+        descriptor.set("index_type", TypeAttr::get(typeConverter.convert(
+                                         *dimension.indexType)));
+      dimensions.push_back(builder.getDictionaryAttr(descriptor));
+    };
+    llvm::for_each(inventory.unpacked, append);
+    llvm::for_each(inventory.packed, append);
+    ArrayAttr result = builder.getArrayAttr(dimensions);
+    arrayQueryDimensionCache.try_emplace(&type, result);
+    return result;
   }
 
   template <typename Node>
@@ -3222,6 +3397,17 @@ private:
       SET_OP_ATTR(HasIteratorExpression, builder.getBoolAttr(false));
       SET_OP_ATTR(HasInlineConstraints, builder.getBoolAttr(false));
       SET_OP_ATTR(ConstraintRestrictions, builder.getArrayAttr({}));
+      bool isArrayQuery =
+          node.isSystemCall() &&
+          llvm::StringSwitch<bool>(node.getSubroutineName())
+              .Cases({"$dimensions", "$unpacked_dimensions", "$left", "$right",
+                      "$low", "$high", "$increment", "$size"},
+                     true)
+              .Default(false);
+      if (isArrayQuery && !node.arguments().empty() && node.arguments().front())
+        if (ArrayAttr dimensions =
+                getArrayQueryDimensions(*node.arguments().front()->type))
+          attrs.set(arrayQueryDimensionsAttrName, dimensions);
       if (const slang::ast::ClockingBlockSymbol *clocking =
               getGlobalClocking(node))
         addStaticClockingEvent(attrs, *clocking);
@@ -5191,6 +5377,7 @@ private:
   const slang::analysis::AnalysisManager &analysisManager;
   const SDFAnnotationDatabase &sdfAnnotations;
   SlangTypeConverter typeConverter;
+  llvm::DenseMap<const slang::ast::Type *, ArrayAttr> arrayQueryDimensionCache;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
   llvm::StringMap<const slang::ast::Symbol *> claimedVariablePaths;
