@@ -1,4 +1,4 @@
-//===- NativeBackend.h - Hermetic x86-64 ELF backend ------------*- C++ -*-===//
+//===- NativeBackend.h - Host-native Linux ELF backend ----------*- C++ -*-===//
 
 #ifndef OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
 #define OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
@@ -9,8 +9,7 @@
 
 namespace obelisk::driver {
 
-/// Builds the x86-64 backend. Only available when the LLVM distribution this
-/// was built against includes the X86 target and LLD's ELF driver.
+/// Builds the host-native backend registered for this platform by CMake.
 std::unique_ptr<TargetBackend> createNativeBackend();
 
 } // namespace obelisk::driver

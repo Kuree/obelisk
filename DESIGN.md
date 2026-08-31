@@ -16,9 +16,9 @@ Simulation MLIR (`obelisk_sim.*`, `arith.*`, `cf.*`)
     │  design-wide bytecode encoding or serial native lowering
     ▼
 LLVM dialect plus embedded design database
-    │  LLVM IR/object emission and hermetic static-runtime linking
+    │  LLVM IR/object emission and in-process platform linking
     ▼
-Standalone x86-64 Linux simulator
+Standalone host-native Linux simulator
 ```
 
 The frontend walks slang's semantic AST directly. It does not serialize the
@@ -158,10 +158,11 @@ The current compiler reaches verified `obelisk_sim` SSA plus the standard MLIR
 `arith` and `cf` dialects for the supported simulation subset. It derives and
 prints deterministic schedule metadata, can encode the complete supported
 design into checked runtime bytecode, and can fully lower the same boundary to
-the MLIR LLVM dialect. The driver translates that dialect to LLVM IR, emits an
-x86-64 ELF object, or links a standalone PIE simulator against the in-tree
-runtime and a pinned hermetic sysroot. Native execution is currently serial and
-requires `--threads=1`; all three VPI capability profiles are linkable.
+the MLIR LLVM dialect. The driver translates that dialect to LLVM IR, emits a
+native ELF object, or links a standalone PIE simulator against the in-tree
+runtime and the host C runtime discovered in-process through clang's driver.
+Native execution is currently serial and requires `--threads=1`; all three VPI
+capability profiles are linkable.
 
 The `obelisk_sim` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
@@ -1180,7 +1181,7 @@ The implementation roadmap is:
   timing, and design-domain Active/Inactive ordering.~~
 - ~~Lower the supported zero-time DPI-C function and synchronous-task subset
   through shared native and bytecode thunks, with generated headers and
-  hermetic object, archive, and shared-library linking.~~
+  in-process object, archive, and shared-library linking.~~
 - ~~Complete procedural concurrency with `fork...join`, `join_any`,
   `join_none`, `wait fork`, `disable fork`, and resolved named-block disable,
   plus direct static and automatic suspendable tasks with recursion and
@@ -1239,7 +1240,7 @@ The implementation roadmap is:
   constant rematerialization excluded from persistent graph cost.~~
 - ~~Fully convert the supported serial simulation boundary to the MLIR LLVM
   dialect with deterministic switched-resume process frames, translate it to
-  LLVM IR, emit x86-64 ELF objects, and hermetically link standalone PIE
+  LLVM IR, emit native ELF objects, and link standalone PIE
   simulators with `libobelisk_rt.a`.~~
 - Materialize optimized continuation frames, timing slots, NBA storage and
   ordered commit code, and the genuinely unbounded dynamic frontier.
@@ -1313,8 +1314,7 @@ command files, library paths/extensions/files, single compilation units,
 library macro inheritance, selected tops, parameter overrides, language
 revision, timescale, warning control, direct advanced slang arguments,
 optimization levels, native or bytecode execution, automatic native link
-inputs, a pinned or
-user-supplied native sysroot, VPI capability profiles for inspection, and
+inputs, wasm32 sysroot selection, VPI capability profiles for inspection, and
 independent compiler and generated-worker counts. Native executable emission
 currently accepts only one worker.
 
@@ -1349,8 +1349,8 @@ The test suites cover:
   execution at `-O0` and `-O3` for the supported timing, event-region,
   fork/task, class/GC, string/container, immediate-assertion, random-number,
   I/O, DPI, VPI-backdoor, and RTL connection slices; and
-- LLVM IR, ELF object, and hermetically linked PIE emission for the pinned
-  x86-64 Linux target.
+- LLVM IR, ELF object, and in-process PIE emission for the configured
+  host-native Linux target.
 
 Run the aggregate Ninja target; CTest is intentionally not part of the test
 flow:

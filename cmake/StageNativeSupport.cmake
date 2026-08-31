@@ -1,49 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
-foreach(required STAMP DESTINATION SYSROOT RUNTIME_ARCHIVE RUNTIME_LTO_ARCHIVE
+foreach(required STAMP DESTINATION RUNTIME_ARCHIVE RUNTIME_LTO_ARCHIVE
                  RUNTIME_PRELINKED_ARCHIVE LLVM_DIST SOURCE_DIR STAGE_KEY
-                 TARGET_TRIPLE)
+                 TARGET_TRIPLE LLVM_VERSION_MAJOR)
   if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
     message(FATAL_ERROR "StageNativeSupport.cmake: ${required} is required")
   endif()
 endforeach()
 
-set(required_sysroot_files
-  usr/lib/x86_64-linux-gnu/Scrt1.o
-  usr/lib/x86_64-linux-gnu/crti.o
-  usr/lib/x86_64-linux-gnu/crtn.o
-  usr/lib/x86_64-linux-gnu/libc.so
-  usr/lib/x86_64-linux-gnu/libc_nonshared.a
-  usr/lib/x86_64-linux-gnu/libm.so
-  usr/lib/x86_64-linux-gnu/libmvec_nonshared.a
-  usr/lib/x86_64-linux-gnu/libpthread.so
-  usr/lib/x86_64-linux-gnu/libdl.so
-  usr/lib/x86_64-linux-gnu/librt.so
-  lib/x86_64-linux-gnu/libc.so.6
-  lib/x86_64-linux-gnu/libc-2.28.so
-  lib/x86_64-linux-gnu/libm.so.6
-  lib/x86_64-linux-gnu/libm-2.28.so
-  lib/x86_64-linux-gnu/libmvec.so.1
-  lib/x86_64-linux-gnu/libmvec-2.28.so
-  lib/x86_64-linux-gnu/libpthread.so.0
-  lib/x86_64-linux-gnu/libpthread-2.28.so
-  lib/x86_64-linux-gnu/libdl.so.2
-  lib/x86_64-linux-gnu/libdl-2.28.so
-  lib/x86_64-linux-gnu/librt.so.1
-  lib/x86_64-linux-gnu/librt-2.28.so
-  lib/x86_64-linux-gnu/ld-2.28.so
-  lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
-  lib64/ld-linux-x86-64.so.2
-  usr/share/doc/libc6/copyright
-  usr/share/doc/libc6-dev/copyright
-  usr/share/doc/linux-libc-dev/copyright)
-foreach(path IN LISTS required_sysroot_files)
-  if(NOT EXISTS "${SYSROOT}/${path}" AND NOT IS_SYMLINK "${SYSROOT}/${path}")
-    message(FATAL_ERROR "cannot stage missing target support file: ${path}")
-  endif()
-endforeach()
-
-set(clang_runtime "${LLVM_DIST}/lib/clang/22/lib/${TARGET_TRIPLE}")
+set(clang_runtime "${LLVM_DIST}/lib/clang/${LLVM_VERSION_MAJOR}/lib/${TARGET_TRIPLE}")
 set(cxx_runtime "${LLVM_DIST}/lib/${TARGET_TRIPLE}")
 set(required_llvm_files
   "${clang_runtime}/clang_rt.crtbegin.o"
@@ -67,8 +32,6 @@ foreach(path IN ITEMS
     ${required_llvm_files}
     "${SOURCE_DIR}/cmake/StageNativeSupport.cmake"
     "${SOURCE_DIR}/LICENSE"
-    "${SOURCE_DIR}/docs/third-party/licenses/LGPL-2.1.txt"
-    "${SOURCE_DIR}/docs/third-party/licenses/GPL-2.0.txt"
     "${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
     "${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt")
   file(SHA256 "${path}" digest)
@@ -82,57 +45,8 @@ set(published "${version_root}/${STAGE_KEY}-${stage_content_key}")
 set(stage "${published}.tmp-${nonce}")
 file(REMOVE_RECURSE "${stage}")
 file(MAKE_DIRECTORY
-  "${stage}/glibc/usr/lib/x86_64-linux-gnu"
-  "${stage}/glibc/lib/x86_64-linux-gnu"
-  "${stage}/glibc/lib64"
-  "${stage}/licenses/glibc"
   "${stage}/licenses/obelisk"
   "${stage}/licenses/llvm")
-
-foreach(path IN LISTS required_sysroot_files)
-  if(path STREQUAL "usr/share/doc/libc6/copyright")
-    configure_file("${SYSROOT}/${path}"
-                   "${stage}/licenses/glibc/libc6-copyright" COPYONLY)
-  elseif(path STREQUAL "usr/share/doc/libc6-dev/copyright")
-    configure_file("${SYSROOT}/${path}"
-                   "${stage}/licenses/glibc/libc6-dev-copyright" COPYONLY)
-  elseif(path STREQUAL "usr/share/doc/linux-libc-dev/copyright")
-    configure_file("${SYSROOT}/${path}"
-                   "${stage}/licenses/glibc/linux-libc-dev-copyright" COPYONLY)
-  else()
-    get_filename_component(parent "${path}" DIRECTORY)
-    file(MAKE_DIRECTORY "${stage}/glibc/${parent}")
-    file(COPY "${SYSROOT}/${path}" DESTINATION "${stage}/glibc/${parent}")
-  endif()
-endforeach()
-
-# Make target-root absolute links relocatable inside the staged tree. This is
-# equivalent to sysroot-relative resolution, but also keeps build tools from
-# treating the curated link byproducts as dangling host links.
-file(GLOB_RECURSE staged_glibc_entries LIST_DIRECTORIES TRUE
-  "${stage}/glibc/*")
-foreach(path IN LISTS staged_glibc_entries)
-  if(NOT IS_SYMLINK "${path}")
-    continue()
-  endif()
-  file(READ_SYMLINK "${path}" target)
-  if(NOT IS_ABSOLUTE "${target}")
-    continue()
-  endif()
-  set(target_path "${stage}/glibc${target}")
-  if(NOT EXISTS "${target_path}" AND NOT IS_SYMLINK "${target_path}")
-    message(FATAL_ERROR "staged target link is dangling: ${path} -> ${target}")
-  endif()
-  get_filename_component(parent "${path}" DIRECTORY)
-  file(RELATIVE_PATH relative_target "${parent}" "${target_path}")
-  file(REMOVE "${path}")
-  file(CREATE_LINK "${relative_target}" "${path}" SYMBOLIC
-    RESULT relative_link_result)
-  if(NOT relative_link_result STREQUAL "0")
-    message(FATAL_ERROR
-      "failed to make staged target link relocatable: ${relative_link_result}")
-  endif()
-endforeach()
 
 file(COPY "${RUNTIME_ARCHIVE}" "${RUNTIME_LTO_ARCHIVE}"
           "${RUNTIME_PRELINKED_ARCHIVE}"
@@ -149,10 +63,6 @@ file(COPY "${LLVM_DIST}/include/llvm/Support/LICENSE.TXT"
   DESTINATION "${stage}/licenses/llvm")
 configure_file("${SOURCE_DIR}/LICENSE"
                "${stage}/licenses/obelisk/LICENSE" COPYONLY)
-configure_file("${SOURCE_DIR}/docs/third-party/licenses/LGPL-2.1.txt"
-               "${stage}/licenses/glibc/LGPL-2.1.txt" COPYONLY)
-configure_file("${SOURCE_DIR}/docs/third-party/licenses/GPL-2.0.txt"
-               "${stage}/licenses/glibc/GPL-2.0.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
                "${stage}/licenses/llvm/Apache-2.0.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt"
@@ -188,9 +98,9 @@ file(WRITE "${stage}/README.txt"
   "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
   "libobelisk_rt_lto.a contains unified LLVM bitcode for Full-LTO links.\n"
   "libobelisk_rt_prelinked.a contains a Full-LTO-optimized ELF runtime for ThinLTO links.\n"
-  "This tree includes glibc inputs from Debian 10 under their own licenses.\n"
-  "See licenses/glibc; redistribution also requires corresponding source compliance.\n"
-  "Generated executables dynamically depend on a target glibc compatible with 2.28.\n")
+  "Host C-runtime inputs are discovered in-process when an executable is linked.\n"
+  "Generated executables require the glibc version provided by the build host.\n"
+  "Install libc development files before configuring Obelisk.\n")
 set(complete_contents
   "${TARGET_TRIPLE}\n${STAGE_KEY}\n${stage_content_key}\n")
 file(WRITE "${stage}/.complete" "${complete_contents}")

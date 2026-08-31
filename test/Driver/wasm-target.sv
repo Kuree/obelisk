@@ -51,7 +51,7 @@ endmodule
 
 // HELP-DAG: -c{{ *}}Emit a relocatable object for the selected target
 // HELP-DAG: -emit-llvm{{ *}}Emit textual LLVM IR for the selected target
-// HELP-DAG: --sysroot=<dir>{{ *}}Use <dir> for target C and C++ link inputs
+// HELP-DAG: --sysroot=<dir>{{ *}}Use <dir> for wasm32 C and C++ link inputs
 // HELP-DAG: --target=<native|wasm32>
 // HELP-DAG: Select the code-generation target
 

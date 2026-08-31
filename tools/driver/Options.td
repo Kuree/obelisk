@@ -39,6 +39,9 @@ def emit_dpi_header : Flag<["--"], "emit-dpi-header">, Group<Action_Group>,
   HelpText<"Emit exact C prototypes for DPI imports and exports">;
 def print_resource_dir : Flag<["--"], "print-resource-dir">, Group<Action_Group>,
   HelpText<"Print the Obelisk resource directory and exit">;
+def print_host_c_runtime : Flag<["--"], "print-host-c-runtime">,
+  Group<Action_Group>, Flags<[HelpHidden]>,
+  HelpText<"Print discovered host C-runtime link inputs and exit">;
 
 def o : JoinedOrSeparate<["-"], "o">, Group<Output_Group>,
   MetaVarName<"<file>">,
@@ -51,7 +54,7 @@ def mlir_timing : Flag<["--"], "mlir-timing">, Group<Output_Group>,
   HelpText<"Report per-pass execution times for the MLIR pipeline">;
 def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
-  HelpText<"Use <dir> for target C and C++ link inputs">;
+  HelpText<"Use <dir> for wasm32 C and C++ link inputs">;
 def target_EQ : Joined<["--"], "target=">, Group<Output_Group>,
   MetaVarName<"<native|wasm32>">,
   HelpText<"Select the code-generation target">;

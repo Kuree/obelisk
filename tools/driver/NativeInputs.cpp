@@ -2,9 +2,9 @@
 
 #include "NativeInputs.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/ELF.h"
@@ -15,6 +15,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <cctype>
 #include <filesystem>
@@ -55,9 +56,12 @@ Expected<std::optional<std::string>> readELFSoname(StringRef path) {
       object::ELFFile<object::ELF64LE>::create((*buffer)->getBuffer());
   if (!elf)
     return elf.takeError();
-  if (elf->getHeader().e_machine != ELF::EM_X86_64)
+  Triple targetTriple(OBELISK_NATIVE_TARGET_TRIPLE);
+  // ELF64LE covers every Linux target in the pinned LLVM distribution.
+  if (elf->getHeader().e_machine !=
+      ELF::convertArchNameToEMachine(targetTriple.getArchName()))
     return createStringError(inconvertibleErrorCode(),
-                             "ELF shared object is not x86-64");
+                             "ELF shared object is not for the native target");
   Expected<object::ELFFile<object::ELF64LE>::Elf_Shdr_Range> sections =
       elf->sections();
   if (!sections)
@@ -176,7 +180,7 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, StringRef vpiMode,
     input.suppliedDirectory = ".";
   input.basename = std::move(basename);
   input.loaderName = std::move(loaderName);
-  input.hasSoname = soname->has_value();
+  input.hasEmbeddedLoaderIdentity = soname->has_value();
   input.hasVPIStartup = hasVPIStartup;
   input.suppliedPathWasAbsolute = supplied.is_absolute();
   result.sharedLibraries.push_back(std::move(input));

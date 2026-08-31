@@ -4,7 +4,7 @@
 #ifndef OBELISK_TOOLS_DRIVER_NATIVEINPUTS_H
 #define OBELISK_TOOLS_DRIVER_NATIVEINPUTS_H
 
-#include "NativeBackend.h"
+#include "TargetBackend.h"
 
 #include "mlir/Support/LogicalResult.h"
 

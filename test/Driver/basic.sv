@@ -46,7 +46,7 @@ endmodule
 // HELP-DAG: --native-scheduler=<auto|generic|aot|eval>
 // HELP-DAG: --print-resource-dir
 // HELP-DAG: -c
-// HELP-DAG: --sysroot=<dir>
+// HELP-DAG: --sysroot=<dir>{{ *}}Use <dir> for wasm32 C and C++ link inputs
 // HELP-DAG: -I <dir>
 // HELP-DAG: --std=<1800-2017|1800-2023>
 

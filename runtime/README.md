@@ -6,10 +6,12 @@ See [Randomization support](../docs/randomization-support.md) for the
 process-stream ABI and the boundary between executable random draws and
 pending constraint solving.
 
-The native target build produces two forms of the same support code:
-`libobelisk_rt.a` contains native ELF objects used by `-O0` executable links,
-while `libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by `-O1` through
-`-O3` Full-LTO links. The wasm target instead produces one
+The native target build produces three forms of the same support code for the
+configured host-native Linux triple. `libobelisk_rt.a` contains native ELF
+objects used by `-O0` and `-fno-lto` executable links;
+`libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by unified Full-LTO
+links; and `libobelisk_rt_prelinked.a` contains a Full-LTO-optimized runtime
+for partitioned ThinLTO design links. The wasm target instead produces one
 `libobelisk_rt.a` containing optimized wasm32 objects, used at every
 optimization level so the browser never recompiles runtime bitcode. The host
 CMake `obelisk_rt` target remains a native standalone C++17 archive for runtime

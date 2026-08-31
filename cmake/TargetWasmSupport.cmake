@@ -1,11 +1,8 @@
 # Build-time provisioning for the wasm32 target.
 #
-# The counterpart to TargetNativeSupport.cmake. That file cross-compiles the
-# runtime with clang against a pinned Debian sysroot and stages glibc, the crt
-# objects and libc++ so the driver can link a hermetic ELF. None of that
-# applies here: Emscripten supplies its own sysroot, startup files and C++
-# runtime at link time, so this file only has to produce the precompiled wasm
-# runtime archive where the driver expects to find it.
+# The counterpart to TargetNativeSupport.cmake. Emscripten supplies its own
+# sysroot, startup files and C++ runtime at link time, so this file only has to
+# produce the precompiled wasm runtime archive where the driver expects it.
 #
 # wasm32 rather than wasm64, because no Safari release implements the
 # Memory64 proposal. runtime/lib/ABI.cpp carries literal layout tables for both
@@ -41,16 +38,6 @@ foreach(tool _obelisk_wasm_cxx _obelisk_wasm_ar)
       "em++ and emar are selected")
   endif()
 endforeach()
-
-# There is no sysroot to provision, but the rest of the build refers to these,
-# and the build-graph regression test includes this file expecting the target
-# to exist.
-add_custom_target(obelisk_target_sysroot)
-set(OBELISK_TARGET_SYSROOT "")
-set(OBELISK_TARGET_SYSROOT_KEY "emscripten-${OBELISK_TARGET_TRIPLE}")
-if(OBELISK_TARGET_SYSROOT_ONLY)
-  return()
-endif()
 
 set(_obelisk_target_runtime_dir "${CMAKE_BINARY_DIR}/target-runtime")
 set(OBELISK_TARGET_RUNTIME_ARCHIVE

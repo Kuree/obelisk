@@ -34,7 +34,7 @@ enum class NativeOutputKind { Object, LLVMIR, Executable };
 
 /// Which code-generation target the driver is producing.
 enum class TargetKind {
-  /// Hermetic x86-64 ELF against a pinned glibc sysroot.
+  /// Host-native executable using the registered platform backend.
   Native,
   /// wasm32 modules for a WebAssembly host.
   Wasm,
@@ -48,7 +48,7 @@ struct SharedLibraryInput {
   std::string suppliedDirectory;
   std::string basename;
   std::string loaderName;
-  bool hasSoname = false;
+  bool hasEmbeddedLoaderIdentity = false;
   bool hasVPIStartup = false;
   bool suppliedPathWasAbsolute = false;
 };

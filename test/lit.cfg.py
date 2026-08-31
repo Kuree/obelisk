@@ -31,17 +31,13 @@ config.substitutions.append(
     ("%protect-inline-wipe-test", config.obelisk_protect_inline_wipe_test_executable)
 )
 config.substitutions.append(
+    ("%host-c-runtime-test", config.obelisk_host_c_runtime_test_executable)
+)
+config.substitutions.append(
     ("%resource_dir", '"{}"'.format(config.obelisk_resource_dir))
 )
 config.substitutions.append(
     ("%native_support", config.obelisk_native_support_dir)
-)
-config.substitutions.append(
-    ("%target_package_cache", config.obelisk_target_package_cache)
-)
-config.substitutions.append(("%target_sysroot", config.obelisk_target_sysroot))
-config.substitutions.append(
-    ("%target_provision_script", config.obelisk_target_provision_script)
 )
 config.substitutions.append(("%source_root", config.obelisk_source_root))
 config.substitutions.append(

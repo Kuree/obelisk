@@ -194,6 +194,11 @@ add_lit_testsuite(check-obelisk-runtime-units
 )
 set_target_properties(check-obelisk-runtime-units PROPERTIES FOLDER "Tests")
 
+set(_obelisk_driver_test_dependencies)
+if(TARGET obelisk-host-c-runtime-test)
+  list(APPEND _obelisk_driver_test_dependencies obelisk-host-c-runtime-test)
+endif()
+
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
@@ -205,6 +210,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-opt
   obelisk-translate
   obelisk-sim-standard-api-test
+  ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )
 set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")

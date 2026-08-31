@@ -6,7 +6,9 @@ module by worker count is deliberately not the contract: it makes cache keys
 and object membership change with the host and leaves the expensive lowering
 as one monolithic step.
 
-This contract is initially specific to the native ELF backend. The wasm32
+This contract is currently specific to the Linux ELF platform backend. A
+future Mach-O or COFF backend can define its own partition/link contract behind
+the same native platform registration boundary. The wasm32
 backend continues to lower and optimize one module and links the prebuilt
 wasm-object runtime. Native partition metadata is neither planned nor consumed
 for wasm32 until WebAssembly partitioning has its own linkage and performance
@@ -62,7 +64,7 @@ in parallel. The runtime is separately prelinked with Full LTO so its own
 whole-program optimization is preserved without adding all runtime bitcode to
 each design's ThinLTO index. ThinLTO replaces unified Full LTO for large native
 designs; small designs may retain the single-module path when it is faster.
-Wasm64 retains its existing per-module optimization and object link.
+Wasm32 retains its existing per-module optimization and object link.
 
 Partitioned native executables use a persistent LLD ThinLTO cache. By default
 it is stored beside the output as `<output>.thinlto-cache`; builds can select a

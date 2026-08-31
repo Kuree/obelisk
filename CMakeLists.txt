@@ -231,12 +231,20 @@ if(EMSCRIPTEN)
     endif()
   endforeach()
   include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
-elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
-       CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  set(OBELISK_NATIVE_PLATFORM "linux")
   include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
+elseif(APPLE)
+  message(FATAL_ERROR
+    "no macOS native backend is registered; configure with emcmake to target "
+    "wasm32")
+elseif(WIN32)
+  message(FATAL_ERROR
+    "no Windows native backend is registered; configure with emcmake to "
+    "target wasm32")
 else()
   message(FATAL_ERROR
-    "native executable generation requires an x86-64 Linux host, or "
+    "native executable generation requires a Linux host, or "
     "configure with emcmake to target wasm32")
 endif()
 

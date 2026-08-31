@@ -58,8 +58,8 @@ obelisk --emit-dpi-header design.sv -o design_dpi.h
 The resource include directory is `$RESOURCE_DIR/include` and contains the
 pinned `svdpi.h`.
 
-Compile C or C++ for Obelisk's x86-64 Linux target, then pass the resulting
-object to the final link:
+Compile C or C++ for the same host-native Linux architecture and ABI as
+Obelisk, then pass the resulting object to the final link:
 
 ```sh
 cc -c dpi.c -I"$RESOURCE_DIR/include" -o dpi.o
@@ -92,6 +92,11 @@ objects, archives, LLVM bitcode, and ELF shared objects are passed to the
 native link; text remains SystemVerilog input. Native inputs are rejected for
 `-c`, textual LLVM output, and non-link actions because those artifacts can be
 linked by the caller.
+
+These container and loader rules belong to the registered Linux platform
+source set. A future macOS or Windows backend will provide the corresponding
+Mach-O or COFF classification and loader rules while preserving this shared
+DPI input flow.
 
 Every shared object is retained as a normal `DT_NEEDED` dependency under
 `--no-as-needed`. Obelisk never copies it. The supplied directory is added to

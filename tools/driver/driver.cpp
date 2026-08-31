@@ -7,6 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeInputs.h"
+#if OBELISK_HAS_NATIVE_BACKEND
+#include "HostCRuntime.h"
+#endif
 #include "Options.h"
 #include "TargetBackend.h"
 #include "DriverMain.h"
@@ -885,12 +888,16 @@ static int executeCompilation(
     valid = false;
   }
   // The default is whichever target this build can produce; a wasm build of
-  // the compiler has no x86-64 backend linked in.
+  // the compiler has no native ELF backend linked in.
   StringRef targetName =
       args.getLastArgValue(OPT_target_EQ, OBELISK_DEFAULT_TARGET);
   if (targetName != "native" && targetName != "wasm32") {
     emitDriverError(Twine("unsupported target '") + targetName +
                     "'; expected native or wasm32");
+    valid = false;
+  }
+  if (targetName != "wasm32" && args.hasArg(OPT_sysroot_EQ)) {
+    emitDriverError("--sysroot is only valid with --target=wasm32");
     valid = false;
   }
   StringRef executionTier =
@@ -1265,6 +1272,25 @@ int obelisk::driver::runObeliskDriver(
   if (args.hasArg(OPT_print_resource_dir)) {
     outs() << OBELISK_RESOURCE_DIR << '\n';
     return 0;
+  }
+  if (args.hasArg(OPT_print_host_c_runtime)) {
+#if OBELISK_HAS_NATIVE_BACKEND
+    FailureOr<obelisk::driver::HostCRuntimeInputs> inputs =
+        obelisk::driver::discoverHostCRuntime(OBELISK_NATIVE_TARGET_TRIPLE,
+                                              driverExecutablePath);
+    if (failed(inputs))
+      return 1;
+    outs() << "dynamic-linker=" << inputs->dynamicLinker << '\n'
+           << "crt1=" << inputs->crt1 << '\n'
+           << "crti=" << inputs->crti << '\n'
+           << "crtn=" << inputs->crtn << '\n'
+           << "libc=" << inputs->libc << '\n'
+           << "libm=" << inputs->libm << '\n';
+    return 0;
+#else
+    emitDriverError("host C-runtime discovery is unavailable in this build");
+    return 1;
+#endif
   }
 
   int status = executeCompilation(args, protectConfig);

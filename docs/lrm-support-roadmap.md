@@ -2000,8 +2000,8 @@ mutates a value it also reads, so 10.3.2 requires reevaluation and Verilator
 reports a nonconvergent settle cycle rather than Icarus's one-shot result. The
 four immediate-check partial NBA cases retain the standard Active/NBA race
 instead of changing NBA into a blocking update to match one scheduler
-ordering. The final full hermetic regression discovered 1,641 tests: 1,622
-passed and 19 explicit source-level XFAILs remained. All 348 tests in the
+ordering. The latest full regression discovered 1,780 tests: 1,761 passed and
+19 explicit source-level XFAILs remained. All 348 tests in the
 primary runtime-unit executable passed.
 
 ## Clause ledger
