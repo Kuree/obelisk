@@ -41,7 +41,7 @@ struct ContainerElementDescriptor {
 ::mlir::FailureOr<ContainerElementDescriptor>
 describeContainerElement(::mlir::Type type, ::mlir::Location location);
 
-uint64_t getStableTypeID(::mlir::Type type);
+uint64_t getStableTypeID(::mlir::Type type, uint32_t descriptorFlags = 0);
 
 ::mlir::FailureOr<::mlir::Value>
 lowerStringLiteralValue(::mlir::OpBuilder &builder,

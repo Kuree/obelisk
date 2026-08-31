@@ -111,12 +111,19 @@ static_assert(
                                 sim::EventRegion::Postponed),
     "Obelisk and simulation event-region enums must stay in lockstep");
 
-static uint64_t stableTypeID(Type type) {
+static uint64_t stableTypeID(Type type, uint32_t descriptorFlags = 0) {
   std::string spelling;
   llvm::raw_string_ostream stream(spelling);
   type.print(stream);
   stream.flush();
   uint64_t hash = obelisk_stable_hash(spelling.data(), spelling.size());
+  // Keep the established IDs for ordinary type descriptors, but distinguish
+  // context-dependent ABI flags such as signed wildcard keys. Type spellings
+  // cannot contain NUL, so the sentinel keeps this suffix unambiguous.
+  if (descriptorFlags != 0) {
+    hash = obelisk_stable_hash_append_byte(hash, 0);
+    hash = obelisk_stable_hash_append_uint_le(hash, descriptorFlags, 4);
+  }
   return hash ? hash : 1;
 }
 
@@ -240,7 +247,9 @@ describeContainerElementImpl(Type type, Location location) {
 
 namespace simlowering {
 
-uint64_t getStableTypeID(Type type) { return stableTypeID(type); }
+uint64_t getStableTypeID(Type type, uint32_t descriptorFlags) {
+  return stableTypeID(type, descriptorFlags);
+}
 
 FailureOr<ContainerElementDescriptor>
 describeContainerElement(Type type, Location location) {
@@ -1580,8 +1589,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
         describeContainerElement(value.getType(), location);
     if (failed(descriptor))
       return failure();
-    if (sourceSigned)
+    if (sourceSigned) {
       descriptor->flags |= OBELISK_RT_ELEMENT_SIGNED;
+      descriptor->typeID =
+          getStableTypeID(value.getType(), descriptor->flags);
+    }
     Type arrayType =
         sim::DynamicArrayType::get(function.getContext(), value.getType());
     Value one = arith::ConstantIntOp::create(builder, location, 1, 64);
