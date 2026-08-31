@@ -435,16 +435,11 @@ prepareManagedClassInventory(ModuleOp module,
   });
 
   // Base descriptors must exist before derived initializers take their
-  // addresses. Repeatedly materialize classes whose base is ready.
-  llvm::StringSet<> materialized;
-  while (materialized.size() != classes.size()) {
-    bool progress = false;
-    for (sim::SimClassDeclOp declaration : classes) {
-      if (materialized.count(declaration.getSymName()))
-        continue;
-      if (auto base = declaration.getBase(); base && !materialized.count(*base))
-        continue;
-      progress = true;
+  // addresses. The validated inventory order above already provides that
+  // topological order, so materialize each class exactly once.
+  for (SharedClass *shared : orderedClasses) {
+    if (failed([&]() -> LogicalResult {
+      sim::SimClassDeclOp declaration = shared->declaration;
       ManagedClassLayout &layout = layouts[declaration.getSymName()];
       std::string prefix = declaration.getSymName().str();
       std::string entriesName = prefix + ".__obelisk_trace_entries";
@@ -815,11 +810,9 @@ prepareManagedClassInventory(ModuleOp module,
                               13);
             return descriptor;
           });
-      materialized.insert(declaration.getSymName());
-    }
-    if (!progress)
-      return module.emitError(
-          "could not topologically materialize managed class descriptors");
+      return success();
+    }()))
+      return failure();
   }
   return success();
 }
