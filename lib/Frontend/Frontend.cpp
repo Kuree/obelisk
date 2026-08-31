@@ -5378,12 +5378,19 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   if (!sdfAnnotations)
     return failure();
 
-  slang::analysis::AnalysisManager analysisManager;
-  analysisManager.analyze(*compilation);
+  // Slang's value-driver checks are part of semantic analysis rather than
+  // AST construction. Run them through the driver so their diagnostics cross
+  // the frontend boundary as well; otherwise illegal mixed procedural /
+  // continuous assignments and multiple continuous assignments to variables
+  // are silently imported as executable IR.
+  std::unique_ptr<slang::analysis::AnalysisManager> analysisManager =
+      driver.runAnalysis(*compilation);
+  if (!driver.reportDiagnostics(/*quiet=*/true))
+    return failure();
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
   SlangASTImporter importer(*module, driver.sourceManager, *compilation,
-                            analysisManager, *sdfAnnotations);
+                            *analysisManager, *sdfAnnotations);
   // Definitions are kept in Compilation's deterministic definition map and
   // are not children of RootSymbol. Import them explicitly so modules,
   // interfaces, programs, and primitives remain represented even when they
