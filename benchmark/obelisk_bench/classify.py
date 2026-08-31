@@ -261,6 +261,11 @@ def features_in_log(text: str) -> list[str]:
     silently vanishes from the totals.
     """
     text = ANSI.sub("", text)
+    # This marker is only attached after a test and its deciding LRM clause
+    # have been audited. Keep that explicit upstream diagnosis from being
+    # diluted by the generic frontend diagnostic that follows it.
+    if SLANG_BUG_MARKER in text:
+        return [SLANG_BUG_FEATURE]
     seen: list[str] = []
     if any(marker in text for marker in CRASH_MARKERS):
         seen.append(SLANG_BUG_FEATURE

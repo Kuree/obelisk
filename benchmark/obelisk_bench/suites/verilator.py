@@ -45,6 +45,14 @@ STOP_MARKER = "$stop"
 CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
 SCENARIO = "simulator"
 KNOWN_SLANG_BUGS = {
+    "t_array_pattern_default_recursive": (
+        "IEEE 1800-2017 10.9.1 requires a default key that does not directly "
+        "match an unmatched subarray to descend recursively; pinned Slang "
+        "instead leaves an InvalidExpression in the elaborated AST"),
+    "t_array_pattern_enum": (
+        "IEEE 1800-2017 10.9.1 and 10.9.2 permit recursive type and default "
+        "keys through arrays and structures; pinned Slang rejects the enum "
+        "type key and its assignment-compatible unbased unsized value"),
     "t_array_query_with": (
         "IEEE 1800-2017 7.12.1 permits this locator-method use; pinned Slang "
         "v11 crashes during speculative constant evaluation before emitting "

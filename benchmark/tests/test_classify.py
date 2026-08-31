@@ -119,6 +119,13 @@ class FeaturesInLogTest(unittest.TestCase):
         self.assertEqual(classify.features_in_log(log),
                          [classify.SLANG_BUG_FEATURE])
 
+    def test_audited_slang_marker_outranks_generic_frontend_diagnostics(self):
+        log = ("known Slang bug: IEEE 1800-2017 10.9.1 permits this\n"
+               "error: invalid semantic AST node in elaborated code\n"
+               "error: no implicit conversion from 'bit' to 'enum'\n")
+        self.assertEqual(classify.features_in_log(log),
+                         [classify.SLANG_BUG_FEATURE])
+
     def test_error_matching_no_rule_lands_in_the_long_tail(self):
         # "unexpected ';'" must not be read as the parse rule's "expected ';'".
         log = "error: syntax error, unexpected ';'\n"
