@@ -9351,8 +9351,21 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Clocking inputs must be sampled before program-domain Reactive work.
     // Keep the shared event-list monitor in the design domain even when the
     // clocking block is declared lexically inside a program.
-    bool programDomain =
+    bool programCodeUnit =
         !clockingEventMonitor && isProgramCodeUnit(unit.source);
+    bool invariantAssertionMonitor = false;
+    if (programCodeUnit && unit.entryKind == sim::EntryKind::Always)
+      unit.source->walk([&](semantic::SVConcurrentAssertionStatementOp) {
+        invariantAssertionMonitor = true;
+        return WalkResult::interrupt();
+      });
+    // IEEE 1800-2017 24.3.1 gives concurrent assertions invariant scheduling
+    // in program and design code: their monitor samples in Preponed and
+    // evaluates in Observed. The frontend represents a static assertion item
+    // as a synthetic always code unit; it is not a program process and must
+    // not participate in program completion accounting. Its action actor is
+    // separately scheduled in Reactive by concurrent-assertion lowering.
+    bool programDomain = programCodeUnit && !invariantAssertionMonitor;
     bool programProceduralRoot = unit.entryKind == sim::EntryKind::Initial ||
                                  unit.entryKind == sim::EntryKind::Always ||
                                  unit.entryKind == sim::EntryKind::AlwaysComb ||
@@ -9376,6 +9389,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // scheduler admits only after Reactive/Re-Inactive/Re-NBA quiesce.
     sim::EventRegion homeRegion =
         timingCheckCoordinator             ? sim::EventRegion::Observed
+        : invariantAssertionMonitor        ? sim::EventRegion::Observed
         : programDomain && !finalProcedure ? sim::EventRegion::Reactive
                                            : sim::EventRegion::Active;
     functionAttrs.push_back(builder.getNamedAttr(
