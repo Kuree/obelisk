@@ -2401,11 +2401,11 @@ obelisk_rt_status normalizeWildcardAssocObject(obelisk_rt_context *context,
       object, 0, value.data(), unknown.empty() ? nullptr : unknown.data());
   if (status != OBELISK_RT_OK)
     return status;
+  uint8_t finalMask =
+      element->bit_width % 8 == 0
+          ? UINT8_MAX
+          : static_cast<uint8_t>((1u << (element->bit_width % 8)) - 1);
   if (!unknown.empty()) {
-    uint8_t finalMask =
-        element->bit_width % 8 == 0
-            ? UINT8_MAX
-            : static_cast<uint8_t>((1u << (element->bit_width % 8)) - 1);
     for (size_t index = 0; index != unknown.size(); ++index) {
       uint8_t bits = unknown[index];
       if (index + 1 == unknown.size())
@@ -2416,13 +2416,29 @@ obelisk_rt_status normalizeWildcardAssocObject(obelisk_rt_context *context,
       }
     }
   }
-  OBELISK_RT_TRY { normalized.wideIntegral.resize(24 + value.size()); }
+  value.back() &= finalMask;
+  size_t canonicalSize = value.size();
+  while (canonicalSize > 1 && value[canonicalSize - 1] == 0)
+    --canonicalSize;
+  unsigned highBits = 0;
+  for (uint8_t high = value[canonicalSize - 1]; high != 0; high >>= 1)
+    ++highBits;
+  uint64_t canonicalWidth = uint64_t(canonicalSize - 1) * 8 +
+                            std::max(highBits, 1u);
+
+  OBELISK_RT_TRY {
+    normalized.wideIntegral.resize(24 + canonicalSize);
+  }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  uint64_t descriptor[3]{element->type_id, element->bit_width,
-                         uint64_t{element->kind} << 32 | element->flags};
+  // IEEE 1800-2017 7.8.1 treats every wildcard index as unsigned and removes
+  // its leading zeroes. The original boxed type is deliberately absent from
+  // this descriptor so equal numerical values of different widths and types
+  // hash and compare identically.
+  uint64_t descriptor[3]{0, canonicalWidth,
+                         uint64_t{OBELISK_RT_ELEMENT_BITS} << 32};
   std::memcpy(normalized.wideIntegral.data(), descriptor, sizeof(descriptor));
   std::memcpy(normalized.wideIntegral.data() + sizeof(descriptor), value.data(),
-              value.size());
+              canonicalSize);
   normalized.object = object;
   normalized.hash = mixAssocHash(
       hashBytes(reinterpret_cast<const char *>(normalized.wideIntegral.data()),
