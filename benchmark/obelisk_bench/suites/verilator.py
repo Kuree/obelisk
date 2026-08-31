@@ -184,6 +184,12 @@ LOCATOR_RETURN_ELEMENT_TYPE = Exclusion(
     "`int unsigned array[3]` gives min() the type `int unsigned$[$]`; the test "
     "expects Verilator's spelling with the element's unsigned dropped, and its "
     "%p expectations are the hexadecimal ones 21.2.1.7 already rules out")
+PINNED_FRONTEND_EMPTY_LOCATOR_CRASH = Exclusion(
+    "IEEE 1800-2017 7.12.1",
+    "find_index() returns an empty queue when no element matches, but pinned "
+    "Slang v11 crashes while speculatively evaluating a subsequent read from "
+    "that queue before Obelisk receives IR; the dedicated Driver XFAIL keeps "
+    "the frontend quirk visible until the pinned frontend is upgraded")
 STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION = Exclusion(
     "IEEE 1800-2017 5.9",
     "a string literal assigned to an unpacked array of bytes is left "
@@ -417,6 +423,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_mem_multi_io": TWO_STATE_INITIALIZATION,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
     "t_typename_min": LOCATOR_RETURN_ELEMENT_TYPE,
+    "t_array_query_with": PINNED_FRONTEND_EMPTY_LOCATOR_CRASH,
     "t_iface_chained_consumer_struct": HIERARCHICAL_TYPEDEF,
     "t_iface_nested_width2": HIERARCHICAL_TYPEDEF,
     "t_iface_nested_width3": HIERARCHICAL_TYPEDEF,

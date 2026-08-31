@@ -284,6 +284,14 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 7.6", outcome.log)
         self.assertIn("by position", outcome.log)
 
+    def test_pinned_frontend_crash_is_an_explicit_skip(self):
+        outcome = verilator.judge_one(
+            "/nonexistent/obelisk",
+            Path("/nonexistent/t/t_array_query_with.v"), 10)
+        self.assertEqual(outcome.status, model.SKIP)
+        self.assertIn("IEEE 1800-2017 7.12.1", outcome.log)
+        self.assertIn("pinned Slang v11", outcome.log)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):
