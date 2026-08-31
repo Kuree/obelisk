@@ -745,18 +745,18 @@ LogicalResult Encoder::emitContinuationEntries(FunctionPlan &plan) {
   }
   if (failed(emitEntry(0, entry, plan.frame->getEntryCaptureLayout())))
     return failure();
+  DenseMap<uint32_t, Block *> continuationBlocks;
+  for (const ProcessSuspension &suspension : plan.frame->getSuspensions())
+    continuationBlocks.try_emplace(suspension.continuationID,
+                                   suspension.continuation);
   for (uint32_t id : plan.frame->getContinuations()) {
     if (id == 0)
       continue;
-    Block *block = nullptr;
-    for (const ProcessSuspension &suspension : plan.frame->getSuspensions())
-      if (suspension.continuationID == id) {
-        block = suspension.continuation;
-        break;
-      }
-    if (!block)
+    auto continuation = continuationBlocks.find(id);
+    if (continuation == continuationBlocks.end())
       return plan.function.emitOpError("missing continuation block");
-    if (failed(emitEntry(id, block, plan.frame->getContinuationLayout(id))))
+    if (failed(emitEntry(id, continuation->second,
+                         plan.frame->getContinuationLayout(id))))
       return failure();
   }
   llvm::sort(plan.continuations,

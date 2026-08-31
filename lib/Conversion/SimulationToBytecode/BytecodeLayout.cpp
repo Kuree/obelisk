@@ -151,21 +151,23 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   result.driverOffsets = analyzed->driverOffsets;
   result.bits = analyzed->bitCount;
 
-  for (const auto &net : analyzed->netLayouts)
+  llvm::DenseMap<uint64_t, size_t> netLayoutIndices;
+  for (const auto &net : analyzed->netLayouts) {
+    netLayoutIndices.try_emplace(net.id, result.netLayouts.size());
     result.netLayouts.push_back({net.id, net.offset, net.width, net.fourState,
                                  net.resolution, net.chargeStrength,
                                  net.propagationDelays});
+  }
   for (const auto &driver : analyzed->driverLayouts) {
-    auto net = llvm::find_if(analyzed->netLayouts, [&](const auto &candidate) {
-      return candidate.id == driver.netId;
-    });
-    if (net == analyzed->netLayouts.end())
+    auto net = netLayoutIndices.find(driver.netId);
+    if (net == netLayoutIndices.end())
       return module.emitError("analyzed driver references an unknown net"),
              failure();
+    const auto &netLayout = result.netLayouts[net->second];
     result.driverLayouts.push_back(
-        {driver.id, driver.offset, net->offset, driver.width, driver.drivenLow,
-         driver.drivenWidth, net->resolution, driver.strength0,
-         driver.strength1, driver.strengthBank});
+        {driver.id, driver.offset, netLayout.offset, driver.width,
+         driver.drivenLow, driver.drivenWidth, netLayout.resolution,
+         driver.strength0, driver.strength1, driver.strengthBank});
   }
 
   // The net each endpoint belongs to travels with the resolutions: a run may
@@ -188,23 +190,22 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
                                uint32_t passSwitchId, bool passResistive,
                                bool passControlled, bool passDirected = false,
                                bool passDelayed = false) -> LogicalResult {
-    auto lhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
-      return layout.id == connection.getLhsNetId();
-    });
-    auto rhs = llvm::find_if(result.netLayouts, [&](const auto &layout) {
-      return layout.id == connection.getRhsNetId();
-    });
-    if (lhs == result.netLayouts.end() || rhs == result.netLayouts.end())
+    auto lhsIndex = netLayoutIndices.find(connection.getLhsNetId());
+    auto rhsIndex = netLayoutIndices.find(connection.getRhsNetId());
+    if (lhsIndex == netLayoutIndices.end() ||
+        rhsIndex == netLayoutIndices.end())
       return connection.emitOpError("references an unknown bytecode net"),
              failure();
+    const auto &lhs = result.netLayouts[lhsIndex->second];
+    const auto &rhs = result.netLayouts[rhsIndex->second];
     for (uint64_t bit = 0; bit != connection.getWidth(); ++bit) {
-      uint64_t lhsBit = lhs->offset + connection.getLhsOffset() + bit;
-      uint64_t rhsBit = rhs->offset + (connection.getRhsReversed()
-                                           ? connection.getRhsOffset() - bit
-                                           : connection.getRhsOffset() + bit);
-      sim::NetResolutionKind lhsResolution = lhs->resolution;
-      sim::NetResolutionKind rhsResolution = rhs->resolution;
-      uint64_t lhsNet = lhs->id, rhsNet = rhs->id;
+      uint64_t lhsBit = lhs.offset + connection.getLhsOffset() + bit;
+      uint64_t rhsBit = rhs.offset + (connection.getRhsReversed()
+                                          ? connection.getRhsOffset() - bit
+                                          : connection.getRhsOffset() + bit);
+      sim::NetResolutionKind lhsResolution = lhs.resolution;
+      sim::NetResolutionKind rhsResolution = rhs.resolution;
+      uint64_t lhsNet = lhs.id, rhsNet = rhs.id;
       std::optional<bool> rhsDominates;
       // Directed switch declarations use the semantic right terminal as the
       // source and the left terminal as the destination. Preserve that
