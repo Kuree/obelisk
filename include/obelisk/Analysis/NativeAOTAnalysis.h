@@ -12,12 +12,34 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
 
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <cstdint>
 #include <string>
 
 namespace obelisk::analysis {
+
+/// Certify the compiler-generated one-shot transport commit used by Clause
+/// 31.9 delayed timing terminals. The marker is only a provenance gate; the
+/// function's complete CFG and effects are checked structurally.
+bool isNegativeTimingDelayCommit(sim::SimFuncOp function);
+
+/// Certify the unique source-monitor activation allowed to spawn a Clause
+/// 31.9 delayed commit.  Both the complete monitor CFG and the target commit
+/// are checked; arbitrary callers cannot inherit the cold-boundary policy.
+bool isNegativeTimingDelayMonitorSpawn(sim::SimSpawnOp spawn,
+                                       sim::SimFuncOp target);
+
+/// Certify the complete compiler-generated Clause 31.9 delayed-terminal
+/// monitor, including its unique transport-commit activation.
+bool isNegativeTimingDelayMonitor(sim::SimFuncOp function);
+
+/// Certify a compiler-generated Clause 16.14/31 clock-set coordinator whose
+/// occurrence-cohort wait must remain owned by the generic scheduler.
+bool isRuntimeClockCoordinator(sim::SimFuncOp function);
 
 /// Immutable native-scheduler eligibility facts for one module.
 ///
@@ -50,6 +72,17 @@ public:
   getBytecodeFragments() const {
     return bytecodeFragments;
   }
+  const llvm::DenseSet<mlir::Operation *> &
+  getRuntimeObservedWriterActors() const {
+    return runtimeObservedWriterActors;
+  }
+  const llvm::DenseSet<mlir::Operation *> &getRuntimeOwnedFanoutActors() const {
+    return runtimeOwnedFanoutActors;
+  }
+  const llvm::DenseSet<mlir::Operation *> &
+  getNegativeTimingFanoutActors() const {
+    return negativeTimingFanoutActors;
+  }
 
 private:
   bool eligible = false;
@@ -63,6 +96,9 @@ private:
   llvm::DenseMap<mlir::Operation *, uint32_t> actorSlots;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Block *>>
       bytecodeFragments;
+  llvm::DenseSet<mlir::Operation *> runtimeObservedWriterActors;
+  llvm::DenseSet<mlir::Operation *> runtimeOwnedFanoutActors;
+  llvm::DenseSet<mlir::Operation *> negativeTimingFanoutActors;
 };
 
 } // namespace obelisk::analysis

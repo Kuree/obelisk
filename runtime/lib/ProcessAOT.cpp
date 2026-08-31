@@ -1200,7 +1200,14 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         // ordinary deadline heap and committing NBA too early.
         requestFallback = wait->payload == 0;
       } else {
-        if (checkpointHandoff || canUseStaticAOTFanout(context)) {
+        // IEEE 1800-2017 31.9.1 requires every source occurrence to update
+        // the implicit delayed terminal. Before a hybrid eval island has
+        // completed its periodic handoff, static fanout is deliberately
+        // unavailable; a checkpointed writer must therefore retain its
+        // ordinary runtime subscription through the finite bootstrap prefix.
+        // Once exact fanout is active, the generated checkpoint wrapper owns
+        // the same continuation and the duplicate subscription can be removed.
+        if (canUseStaticAOTFanout(context)) {
           if (!scheduled.signalSubscriptions.empty() ||
               scheduled.computedObserverWaitRegistered)
             obelisk_rt_unregister_signal_wait_unlocked(
@@ -1615,6 +1622,16 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return OBELISK_RT_INVALID_LIFECYCLE;
   for (;;) {
+    if (allowBytecode) {
+      // IEEE 1800-2017 31.9.1 transport sources may be published by the
+      // generic finite-bootstrap prefix before static fanout is certified.
+      // Rebuild the generated ready mask at this cold boundary so a runtime
+      // subscription that woke a checkpointed writer enters the same-slot
+      // AOT arbitration. The trusted hot drain never pays this actor scan.
+      obelisk_rt_status status = refreshNativeAOTReadyPhaseUnlocked(context);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
     if (context->nativeScheduleClockIngressPending) {
       auto coordinator = context->nativeSchedulePlan->timeslot_coordinator;
       if (!coordinator)
@@ -1832,7 +1849,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         initializeNativeAOTNodesUnlocked(context, nodes, nodeCount);
     if (status != OBELISK_RT_OK)
       return status;
-    status = drainNativeAOTCurrentSlotUnlocked(context);
+    // IEEE 1800-2017 31.9.1 delayed-terminal monitors are runtime-owned until
+    // the finite bootstrap prefix reaches the exact periodic handoff. Let a
+    // hybrid island arbitrate its certified checkpoint continuations here so
+    // their runtime subscriptions remain live during that prefix. Fully
+    // static plans retain the trusted-only fast drain.
+    status = drainNativeAOTCurrentSlotUnlocked(
+        context, /*allowBytecode=*/staticEvalIsland);
     if (status != OBELISK_RT_OK)
       return status;
     // Tier-3 initialization and finite synchronous stimulus must reach a
@@ -2195,25 +2218,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         if (processIndex >= context->scheduledProcesses.size())
           return OBELISK_RT_INVALID_CONTINUATION;
         context->scheduledProcesses[processIndex].signalTriggered = true;
-        if (context->signalDiagnosticsEnabled)
-          std::fprintf(stderr,
-                       "obelisk-periodic-debug=before-actor time=%llu actor=%u "
-                       "ingress=%u nba=%u\n",
-                       static_cast<unsigned long long>(context->schedulerTime),
-                       activation.actor,
-                       context->nativeScheduleClockIngressPending ? 1u : 0u,
-                       context->staticNBAAccumulatorsPending ? 1u : 0u);
         NativeScheduleStepScope step(context, activation.actor, false);
         status = runScheduler(context);
-        if (context->signalDiagnosticsEnabled)
-          std::fprintf(stderr,
-                       "obelisk-periodic-debug=after-actor time=%llu actor=%u "
-                       "status=%u executed=%u ingress=%u nba=%u\n",
-                       static_cast<unsigned long long>(context->schedulerTime),
-                       activation.actor, static_cast<unsigned>(status),
-                       step.executed() ? 1u : 0u,
-                       context->nativeScheduleClockIngressPending ? 1u : 0u,
-                       context->staticNBAAccumulatorsPending ? 1u : 0u);
         if (status != OBELISK_RT_OK || !step.executed())
           return status != OBELISK_RT_OK ? status
                                          : OBELISK_RT_INVALID_CONTINUATION;
@@ -2223,22 +2229,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       // in the same slot-wide NBA barrier before the next periodic edge.
       if (!activated.empty())
         context->nativeScheduleClockIngressPending = true;
-      if (context->signalDiagnosticsEnabled)
-        std::fprintf(stderr,
-                     "obelisk-periodic-debug=before-drain time=%llu ingress=%u "
-                     "nba=%u\n",
-                     static_cast<unsigned long long>(context->schedulerTime),
-                     context->nativeScheduleClockIngressPending ? 1u : 0u,
-                     context->staticNBAAccumulatorsPending ? 1u : 0u);
-      status = drainNativeAOTCurrentSlotUnlocked(context);
-      if (context->signalDiagnosticsEnabled)
-        std::fprintf(stderr,
-                     "obelisk-periodic-debug=after-drain time=%llu status=%u "
-                     "ingress=%u nba=%u\n",
-                     static_cast<unsigned long long>(context->schedulerTime),
-                     static_cast<unsigned>(status),
-                     context->nativeScheduleClockIngressPending ? 1u : 0u,
-                     context->staticNBAAccumulatorsPending ? 1u : 0u);
+      status = drainNativeAOTCurrentSlotUnlocked(
+          context, /*allowBytecode=*/staticEvalIsland);
       if (status != OBELISK_RT_OK)
         return status;
     }
@@ -2253,17 +2245,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         context->nativeScheduleNBARootCount);
     std::unordered_set<uint32_t> generatedActors;
     generatedActors.reserve(context->nativeSchedulePlan->merged_fragment_count);
-    if (context->signalDiagnosticsEnabled)
-      std::fprintf(stderr,
-                   "obelisk-periodic-debug=ownership-counts merged=%llu "
-                   "actor-roots=%llu nba-roots=%u fanout=%llu\n",
-                   static_cast<unsigned long long>(
-                       context->nativeSchedulePlan->merged_fragment_count),
-                   static_cast<unsigned long long>(
-                       context->nativeScheduleActorRootCount),
-                   context->nativeScheduleNBARootCount,
-                   static_cast<unsigned long long>(
-                       context->nativeScheduleFanoutEntryCount));
     for (uint64_t index = 0;
          index != context->nativeSchedulePlan->merged_fragment_count; ++index) {
       const obelisk_rt_native_merged_fragment &fragment =
@@ -2283,11 +2264,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
          ++index)
       generatedWritableStates.insert(
           context->nativeScheduleNBARoots[index].static_state);
-    if (context->signalDiagnosticsEnabled)
-      std::fprintf(stderr,
-                   "obelisk-periodic-debug=ownership-ready actors=%zu "
-                   "states=%zu\n",
-                   generatedActors.size(), generatedWritableStates.size());
     auto generatedWritesState = [&](uint32_t staticState) {
       return generatedWritableStates.find(staticState) !=
              generatedWritableStates.end();
@@ -2492,7 +2468,11 @@ obelisk_rt_v1_scheduler_execute_aot_actor(obelisk_rt_context *context,
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context)
     return OBELISK_RT_INVALID_LIFECYCLE;
-  return executeTrustedAOTNode(context, actorSlot);
+  // Cold generated checkpoints may deliberately name a continuation that is
+  // certified bytecode-only. Execute through the ordinary per-actor tier
+  // selector so the activation can create its transport child without
+  // admitting allocation or scheduler mutation to the generated hot closure.
+  return executeAOTNode(context, actorSlot);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_queue_aot_checkpoint(
@@ -3118,6 +3098,15 @@ retryNativeSchedule:;
             ContextMutexLock lock(context);
             status = takeGeneratedCheckpointUnlocked();
           } while (status == OBELISK_RT_OK);
+          if (status != OBELISK_RT_OK)
+            goto checkpointDone;
+          // IEEE 1800-2017 Clauses 31.7 and 31.9.1 require work exposed by a
+          // primary publication, and a delayed transport child created by a
+          // source monitor, to enter the same time-slot ordering cohort. The
+          // checkpoint callback is intentionally only one actor activation;
+          // drain the newly enabled runtime work before the generated island
+          // can advance to another periodic edge.
+          status = drainNativeAOTCurrentSlotUnlocked(context, true);
           if (status != OBELISK_RT_OK)
             goto checkpointDone;
           if (finishing) {

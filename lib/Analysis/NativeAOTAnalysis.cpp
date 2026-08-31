@@ -44,6 +44,149 @@ bool isManagedType(Type type) {
 
 } // namespace
 
+bool isNegativeTimingDelayCommit(sim::SimFuncOp function) {
+  if (!function ||
+      !function->hasAttr("obelisk_sim.negative_timing_delay_commit") ||
+      !function->hasAttr("internal") ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      function.getEntryKind() != sim::EntryKind::Fork ||
+      function.getHomeRegion() != sim::EventRegion::Active ||
+      function.getDomain() != sim::ExecutionDomain::Design ||
+      function.getNumArguments() != 2 ||
+      function.getBody().getBlocks().size() != 2)
+    return false;
+  Block &entry = function.getBody().front();
+  Block &publish = function.getBody().back();
+  if (publish.getNumArguments() != 1 ||
+      publish.getArgument(0).getType() != entry.getArgument(1).getType())
+    return false;
+  auto entryIt = entry.begin();
+  auto constant = entryIt == entry.end()
+                      ? sim::SimTimeConstantOp{}
+                      : dyn_cast<sim::SimTimeConstantOp>(&*entryIt++);
+  auto delay = entryIt == entry.end()
+                   ? sim::SimSuspendDelayOp{}
+                   : dyn_cast<sim::SimSuspendDelayOp>(&*entryIt++);
+  if (!constant || !delay || entryIt != entry.end() ||
+      constant.getValue() == 0 || !delay.getTimingAttr() ||
+      delay.getTimingAttr().getKind() != sim::ComputeTimingKind::Calendar ||
+      delay.getResumeRegion() != sim::EventRegion::Active ||
+      delay.getDelay() != constant.getResult() ||
+      delay.getContinuation() != &publish ||
+      delay.getContinuationOperands().size() != 1 ||
+      delay.getContinuationOperands().front() != entry.getArgument(1))
+    return false;
+  auto publishIt = publish.begin();
+  auto storage = publishIt == publish.end()
+                     ? sim::SimContextStorageOp{}
+                     : dyn_cast<sim::SimContextStorageOp>(&*publishIt++);
+  auto store = publishIt == publish.end()
+                   ? sim::SimRefStoreOp{}
+                   : dyn_cast<sim::SimRefStoreOp>(&*publishIt++);
+  auto terminate = publishIt == publish.end()
+                       ? sim::SimReturnOp{}
+                       : dyn_cast<sim::SimReturnOp>(&*publishIt++);
+  return storage && store && terminate && publishIt == publish.end() &&
+         storage.getContext() == entry.getArgument(0) &&
+         store.getReference() == storage.getResult() &&
+         store.getValue() == publish.getArgument(0) &&
+         terminate.getOperands().empty();
+}
+
+bool isNegativeTimingDelayMonitorSpawn(sim::SimSpawnOp spawn,
+                                       sim::SimFuncOp target) {
+  sim::SimFuncOp monitor = spawn->getParentOfType<sim::SimFuncOp>();
+  if (!monitor || !target || !isNegativeTimingDelayCommit(target) ||
+      !spawn->hasAttr("obelisk_sim.negative_timing_transport_activation") ||
+      !monitor->hasAttr("obelisk_sim.negative_timing_delay_monitor") ||
+      !monitor->hasAttr("internal") ||
+      SymbolTable::getSymbolVisibility(monitor) !=
+          SymbolTable::Visibility::Private ||
+      monitor.getEntryKind() != sim::EntryKind::Always ||
+      monitor.getHomeRegion() != sim::EventRegion::Active ||
+      monitor.getDomain() != sim::ExecutionDomain::Design ||
+      monitor.getNumArguments() != 2 ||
+      monitor.getBody().getBlocks().size() != 3 ||
+      spawn.getCallee() != target.getSymName() ||
+      !spawn.getResult().use_empty())
+    return false;
+  Value context = monitor.getBody().front().getArgument(0);
+  Value source = monitor.getBody().front().getArgument(1);
+  auto capture = monitor.getArgAttrOfType<sim::CaptureKindAttr>(
+      1, "obelisk_sim.capture_kind");
+  auto descriptor =
+      monitor.getArgAttrOfType<IntegerAttr>(1, sim::metadata::descriptorId);
+  bool exactSource = (isa<sim::RefType>(source.getType()) && capture &&
+                      capture.getValue() == sim::CaptureKind::Storage) ||
+                     (isa<sim::NetType>(source.getType()) && capture &&
+                      capture.getValue() == sim::CaptureKind::Net);
+  if (!exactSource || !descriptor)
+    return false;
+
+  Block &entry = monitor.getBody().front();
+  Block &wait = *std::next(monitor.getBody().begin());
+  Block &changed = monitor.getBody().back();
+  auto entryBranch = dyn_cast<cf::BranchOp>(entry.getTerminator());
+  auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait.getTerminator());
+  auto back = dyn_cast<cf::BranchOp>(changed.getTerminator());
+  if (entry.getNumArguments() != 2 || wait.getNumArguments() != 0 ||
+      changed.getNumArguments() != 0 ||
+      std::distance(entry.begin(), entry.end()) != 1 ||
+      std::distance(wait.begin(), wait.end()) != 1 ||
+      std::distance(changed.begin(), changed.end()) != 3 || !entryBranch ||
+      entryBranch.getDest() != &wait || !suspend ||
+      suspend.getWatched() != source || suspend.getContinuation() != &changed ||
+      !suspend.getContinuationOperands().empty() || !back ||
+      back.getDest() != &wait || !back.getDestOperands().empty())
+    return false;
+  Operation &readOperation = changed.front();
+  Value current;
+  if (auto read = dyn_cast<sim::SimRefLoadOp>(readOperation)) {
+    if (read.getReference() != source)
+      return false;
+    current = read.getResult();
+  } else if (auto read = dyn_cast<sim::SimNetReadOp>(readOperation)) {
+    if (read.getNet() != source)
+      return false;
+    current = read.getResult();
+  } else {
+    return false;
+  }
+  return &*std::next(changed.begin()) == spawn.getOperation() &&
+         spawn.getNumOperands() == 2 && spawn.getOperand(0) == context &&
+         spawn.getOperand(1) == current;
+}
+
+bool isNegativeTimingDelayMonitor(sim::SimFuncOp function) {
+  if (!function || function.getBody().getBlocks().size() != 3)
+    return false;
+  Block &changed = function.getBody().back();
+  if (std::distance(changed.begin(), changed.end()) != 3)
+    return false;
+  auto spawn = dyn_cast<sim::SimSpawnOp>(&*std::next(changed.begin()));
+  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+  sim::SimFuncOp target =
+      design && spawn ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
+                      : sim::SimFuncOp{};
+  return spawn && isNegativeTimingDelayMonitorSpawn(spawn, target);
+}
+
+bool isRuntimeClockCoordinator(sim::SimFuncOp function) {
+  if (!function ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      function.getEntryKind() != sim::EntryKind::Always ||
+      function.getHomeRegion() != sim::EventRegion::Observed ||
+      function.getDomain() != sim::ExecutionDomain::Design ||
+      (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+       !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
+    return false;
+  unsigned clockWaits = 0;
+  function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
+  return clockWaits == 1;
+}
+
 NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   NativeAOTAnalysis result;
   bool invalidPlan = false;
@@ -56,26 +199,6 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       function = operation->getParentOfType<sim::SimFuncOp>();
     return function;
   };
-  auto isClockCoordinatorActor = [&](Operation *operation) {
-    sim::SimFuncOp function = findContainingFunction(operation);
-    if (!function)
-      return false;
-    bool assertionCoordinator =
-        function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") &&
-        function.getHomeRegion() == sim::EventRegion::Observed;
-    bool timingCheckCoordinator =
-        function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-        function.getHomeRegion() == sim::EventRegion::Observed;
-    if ((!assertionCoordinator && !timingCheckCoordinator) ||
-        SymbolTable::getSymbolVisibility(function) !=
-            SymbolTable::Visibility::Private ||
-        function.getEntryKind() != sim::EntryKind::Always ||
-        function.getDomain() != sim::ExecutionDomain::Design)
-      return false;
-    unsigned clockWaits = 0;
-    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
-    return clockWaits == 1;
-  };
   auto isConcurrentColdActor = [&](Operation *operation) {
     auto function = findContainingFunction(operation);
     if (!function)
@@ -84,7 +207,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     // both require exact event-cohort ordering. Keep only their coordinator
     // actors as feature-local bytecode islands; surrounding ordinary actors
     // retain the generated AOT plan.
-    if (isClockCoordinatorActor(function))
+    if (isRuntimeClockCoordinator(function))
+      return true;
+    if (isNegativeTimingDelayMonitor(function))
+      return true;
+    if (isNegativeTimingDelayCommit(function))
       return true;
     if (function->hasAttr("obelisk_sim.skew_deadline_helper")) {
       unsigned eventWaits = 0;
@@ -145,8 +272,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
   };
-  auto requireBytecodeFragment = [&](Operation *operation, StringRef reason) {
-    if (!isConcurrentColdActor(operation))
+  auto requireBytecodeFragment = [&](Operation *operation, StringRef reason,
+                                     bool certifiedCold = false) {
+    if (!certifiedCold && !isConcurrentColdActor(operation))
       onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
     auto function = operation->getParentOfType<sim::SimFuncOp>();
@@ -311,6 +439,102 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
     rejectPlan("compute graph contains an unknown node kind");
   }
+
+  module.walk([&](sim::SimFuncOp function) {
+    if (isRuntimeClockCoordinator(function)) {
+      result.runtimeOwnedFanoutActors.insert(function.getOperation());
+      if (function->hasAttr("obelisk_sim.negative_timing_adjusted"))
+        result.negativeTimingFanoutActors.insert(function.getOperation());
+    }
+    if (!isNegativeTimingDelayMonitor(function))
+      return;
+    result.runtimeOwnedFanoutActors.insert(function.getOperation());
+    result.negativeTimingFanoutActors.insert(function.getOperation());
+    // IEEE 1800-2017 31.9.1 makes the implicit delayed terminal a transport
+    // copy of the original terminal. Keep this exact generated monitor in the
+    // generic scheduler so its source wait is a real runtime subscription and
+    // every source occurrence can register the positive-delay commit before
+    // generated run-until advances time.
+    result.reasons.emplace_back(
+        "negative timing delay monitor requires runtime ordering");
+    bytecodeActors.insert(function.getOperation());
+  });
+
+  // Clause 31.9.1 accepts only whole direct terminals in this tranche, so a
+  // resource+descriptor key is the complete overlap index. Deduplicating here
+  // makes writer classification linear in graph effects rather than quadratic
+  // in the number of timing checks.
+  DenseSet<uint64_t> runtimeObservedStorage;
+  DenseSet<uint64_t> runtimeObservedNets;
+  for (Attribute attribute : nodes) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    sim::SimFuncOp function =
+        fragment ? lookupFunction(fragment.getFunction().getValue())
+                 : sim::SimFuncOp{};
+    // Only the exact negative component joins the delayed-source publication
+    // cohort. Unrelated Clause 31.7 coordinators in the same design retain
+    // their established AOT plan.
+    if (!fragment || !function ||
+        !result.negativeTimingFanoutActors.contains(function.getOperation()))
+      continue;
+    for (Attribute effectAttribute : fragment.getEffects()) {
+      auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
+      if (effect.getEffect() == sim::ComputeEffectKind::Watch &&
+          effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
+          (effect.getResource() == sim::ComputeResourceKind::Storage ||
+           effect.getResource() == sim::ComputeResourceKind::Net) &&
+          !effect.getDynamic() && !effect.getDeferred() &&
+          effect.getWidth() != 0)
+        (effect.getResource() == sim::ComputeResourceKind::Storage
+             ? runtimeObservedStorage
+             : runtimeObservedNets)
+            .insert(effect.getDescriptor());
+    }
+  }
+  auto overlapsRuntimeObservedSource = [&](sim::ComputeEffectAttr write) {
+    if (write.getEffect() != sim::ComputeEffectKind::Write ||
+        write.getTarget() != sim::ComputeTargetKind::Descriptor ||
+        (write.getResource() != sim::ComputeResourceKind::Storage &&
+         write.getResource() != sim::ComputeResourceKind::Net) ||
+        write.getDynamic() || write.getDeferred() || write.getWidth() == 0)
+      return false;
+    const DenseSet<uint64_t> &descriptors =
+        write.getResource() == sim::ComputeResourceKind::Storage
+            ? runtimeObservedStorage
+            : runtimeObservedNets;
+    return descriptors.contains(write.getDescriptor());
+  };
+  for (Attribute attribute : nodes) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    sim::SimFuncOp function =
+        fragment ? lookupFunction(fragment.getFunction().getValue())
+                 : sim::SimFuncOp{};
+    if (!fragment || !function || isRuntimeClockCoordinator(function) ||
+        isNegativeTimingDelayMonitor(function) ||
+        function.getEntryKind() == sim::EntryKind::RootInitializer)
+      continue;
+    if (!llvm::any_of(fragment.getEffects(), [&](Attribute effect) {
+          return overlapsRuntimeObservedSource(
+              cast<sim::ComputeEffectAttr>(effect));
+        }))
+      continue;
+    Block *block = lookupComputeGraphBlock(function, fragment.getBlock());
+    if (!block)
+      continue;
+    // IEEE 1800-2017 Clause 31.7 primary occurrences and Clause 31.9.1
+    // delayed-terminal source occurrences must reach their runtime-owned
+    // observers in the publication cohort. Keep every non-root overlapping
+    // writer activation behind a generic checkpoint; otherwise a generated
+    // island could publish and advance time without waking the observer.
+    if (!result.runtimeObservedWriterActors.insert(function.getOperation())
+             .second)
+      continue;
+    for (Block &owned : function.getBody())
+      requireBytecodeFragment(owned.getTerminator(),
+                              "runtime-observed source publication",
+                              /*certifiedCold=*/true);
+  }
+
   auto isolatesConcurrentColdActors = [&](sim::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> nonColdMembers;
     bool hasConcurrentColdActor = false;
@@ -479,10 +703,19 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (!owner || owner != root) {
       sim::SimFuncOp target = lookupFunction(spawn.getCallee());
       bool concurrentCold = target && isConcurrentColdActor(target);
-      if (concurrentCold)
+      if (isNegativeTimingDelayMonitorSpawn(spawn, target)) {
+        // IEEE 1800-2017 31.9.1 transport commits must execute their first
+        // calendar suspension before generated run-until may advance time.
+        // Keep the descriptor-bound monitor actor native, but hand this exact
+        // source-activation block to bytecode so the generic scheduler
+        // registers the positive-delay deadline before re-entering AOT.
+        requireBytecodeFragment(spawn, "negative timing transport activation",
+                                /*certifiedCold=*/true);
+      } else if (concurrentCold && !isNegativeTimingDelayCommit(target)) {
         result.reasons.emplace_back("dynamic spawn multiplicity");
-      else
+      } else {
         requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
+      }
       if (target)
         dynamicActors.insert(target.getOperation());
       return;
@@ -583,7 +816,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // Exact occurrence cohorts retain publication-wave state in the generic
       // scheduler. Keep only the feature coordinator in hybrid bytecode; all
       // ordinary assertion and procedural actors remain statically eligible.
-      if (!isClockCoordinatorActor(operation)) {
+      if (!isRuntimeClockCoordinator(findContainingFunction(operation))) {
         rejectPlan("clock cohort wait lacks exact coordinator provenance");
       } else {
         requireBytecodeFragment(operation,

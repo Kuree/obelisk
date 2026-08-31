@@ -2595,6 +2595,18 @@ private:
             auto [value, time] = valueAndTime;
             return !time || value >= 0;
           });
+      bool negativeCombined =
+          combined && timeFs.size() > 3 && (timeFs[2] < 0 || timeFs[3] < 0);
+      __int128 combinedWindow =
+          negativeCombined ? static_cast<__int128>(timeFs[2]) + timeFs[3] : 0;
+      bool validNegativeWindow =
+          negativeCombined &&
+          combinedWindow > static_cast<__int128>(precisionFs);
+      if (negativeCombined)
+        attrs.set("obelisk.negative_timing_check", builder.getUnitAttr());
+      if (negativeCombined && !validNegativeWindow)
+        attrs.set("obelisk.invalid_negative_timing_window",
+                  builder.getUnitAttr());
       auto freezeFlag = [&](size_t index) -> std::optional<bool> {
         if (index >= arguments.size() || !arguments[index].expr)
           return false;
@@ -2628,7 +2640,8 @@ private:
       // canonical edge/change forms and Clause 31.7 condition sampling.
       if ((singleLimit || combined || skew || timeSkew || fullSkew || period ||
            width || noChange) &&
-          staticTimes && (noChange || nonnegativeTimes) &&
+          staticTimes &&
+          (noChange || nonnegativeTimes || validNegativeWindow) &&
           hasRequiredArguments && arguments[0].expr &&
           ((period || width) || arguments[1].expr) && representableConditions &&
           representableEvents && noChangeReference &&

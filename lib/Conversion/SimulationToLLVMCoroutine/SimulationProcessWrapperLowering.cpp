@@ -441,4 +441,72 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   return success();
 }
 
+LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
+                                           sim::SimFuncOp actor,
+                                           StringRef wrapperName,
+                                           uint32_t actorSlot,
+                                           uint32_t continuation) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToEnd(module.getBody());
+  Location location = actor.getLoc();
+  MLIRContext *context = module.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  auto functionType = LLVM::LLVMFunctionType::get(i32, {pointer}, false);
+
+  std::string callbackName = (Twine(wrapperName) + ".checkpoint").str();
+  auto callback =
+      LLVM::LLVMFuncOp::create(builder, location, callbackName, functionType);
+  copyNativePartition(actor, callback);
+  callback.setPrivate();
+  Block *callbackEntry = callback.addEntryBlock(builder);
+  builder.setInsertionPointToStart(callbackEntry);
+  Value callbackStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_scheduler_execute_aot_actor"),
+          ValueRange{callbackEntry->getArgument(0),
+                     llvmConstant(builder, location, i32, actorSlot)})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, callbackStatus);
+
+  builder.setInsertionPointAfter(callback);
+  auto wrapper =
+      LLVM::LLVMFuncOp::create(builder, location, wrapperName, functionType);
+  copyNativePartition(actor, wrapper);
+  wrapper.setPrivate();
+  // IEEE 1800-2017 Clauses 31.7 and 31.9.1 require the generic coordinator to
+  // observe a primary publication and a transport monitor to register its
+  // delayed commit before generated periodic execution can advance time.
+  // Publish an exact cold checkpoint without placing process creation or
+  // scheduler calls in the generated evaluator's hot closure.
+  wrapper->setAttr(sim::metadata::evalMayTerminate, builder.getUnitAttr());
+  wrapper->setAttr(sim::metadata::evalCheckpointSafe, builder.getUnitAttr());
+  wrapper->setAttr("passthrough", builder.getArrayAttr(
+                                      {builder.getStringAttr("alwaysinline")}));
+  Block *entry = wrapper.addEntryBlock(builder);
+  builder.setInsertionPointToStart(entry);
+  LLVM::StoreOp::create(builder, location,
+                        llvmConstant(builder, location, i32, actorSlot),
+                        LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  evalCheckpointActorName),
+                        4);
+  LLVM::StoreOp::create(
+      builder, location, llvmConstant(builder, location, i32, continuation),
+      LLVM::AddressOfOp::create(builder, location, pointer,
+                                evalCheckpointContinuationName),
+      4);
+  LLVM::StoreOp::create(
+      builder, location,
+      LLVM::AddressOfOp::create(builder, location, pointer, callbackName),
+      LLVM::AddressOfOp::create(builder, location, pointer,
+                                evalCheckpointCallbackName),
+      8);
+  LLVM::ReturnOp::create(builder, location,
+                         llvmConstant(builder, location, i32,
+                                      OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+  return success();
+}
+
 } // namespace obelisk::detail

@@ -2,6 +2,7 @@
 
 #include "ComputeFusion.h"
 
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -173,6 +174,16 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     return success();
 
   Block *activation = wait->getSuccessor(0);
+  for (sim::SimSpawnOp spawn : activation->getOps<sim::SimSpawnOp>()) {
+    sim::SimFuncOp target =
+        design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+    // IEEE 1800-2017 31.9.1 transport monitors must hand this activation to
+    // the generic scheduler so the one-shot commit registers its calendar
+    // delay before AOT may advance time.  Cloning the activation as an eval
+    // body would both bypass that boundary and duplicate the certified spawn.
+    if (analysis::isNegativeTimingDelayMonitorSpawn(spawn, target))
+      return success();
+  }
   Block &sourceEntry = function.getBody().front();
   SmallVector<Block *> preambleBlocks;
   llvm::SmallPtrSet<Block *, 8> preambleSeen;

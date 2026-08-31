@@ -1,6 +1,9 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
+// RUN: obelisk-opt %s \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=PUBLICATION
 // RUN: sed -e 's/code_unit.decl 4 in 0 initial/code_unit.decl 4 in 0 always/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32, code_unit_id = 4/attributes {entry_kind = 3 : i32, code_unit_id = 4/' %s \
 // RUN:   | not obelisk-opt - \
@@ -88,6 +91,7 @@ module attributes {
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "scc.loop"
     obelisk_sim.code_unit.decl 3 in 0 always hierarchy "scc.clock"
     obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "scc.reset"
+    obelisk_sim.code_unit.decl 5 in 0 fork hierarchy "scc.negative_commit"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
 
     obelisk_sim.func @root(
@@ -176,6 +180,31 @@ module attributes {
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
       cf.br ^wait
     }
+
+    // IEEE 1800-2017 Clause 31.9.1: this exact compiler-shaped transport
+    // commit writes the same direct root as @clock. Its publication is chosen
+    // statically for the runtime observer; no descriptor flag or hot runtime
+    // branch may distinguish it from the ordinary direct writer.
+    obelisk_sim.func private @negative_commit(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %value: !obelisk_sim.logic<1>
+            {obelisk_sim.capture_kind = 2 : i32})
+        attributes {entry_kind = 13 : i32, code_unit_id = 5 : i64,
+                    domain = 0 : i32, home_region = 2 : i32, internal,
+                    obelisk_sim.negative_timing_delay_commit} {
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^publish(
+          %value : !obelisk_sim.logic<1>)
+          {resume_region = 2 : i32,
+           site = #obelisk_sim.continuation<id = 4>,
+           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+    ^publish(%delayed: !obelisk_sim.logic<1>):
+      %state = obelisk_sim.context.storage %ctx[0] :
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.ref.store %delayed to %state : !obelisk_sim.logic<1>,
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -236,3 +265,17 @@ module attributes {
 // LIVE-ARG: eval exact owner miss: actor=3 continuation=3 function=reset
 // LIVE-ARG-SAME: candidates=
 // UNCERTIFIED-REGION: a Tier-2 SCC has no direct eval owner
+
+// The ordinary writer retains the direct static call.
+// PUBLICATION-LABEL: llvm.func @clock.__obelisk_coro_ramp
+// PUBLICATION-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// PUBLICATION: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// PUBLICATION-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// PUBLICATION: llvm.return
+// The structurally certified cold commit selects generic publication during
+// lowering, without adding any runtime discriminator to ordinary transitions.
+// PUBLICATION-LABEL: llvm.func @negative_commit.__obelisk_coro_ramp
+// PUBLICATION-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// PUBLICATION: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// PUBLICATION-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// PUBLICATION: llvm.return

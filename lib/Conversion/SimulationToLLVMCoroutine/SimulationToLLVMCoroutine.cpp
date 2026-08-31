@@ -145,6 +145,7 @@ using detail::makeNativeEvalPlan;
 using detail::makeProcessActivationHelper;
 using detail::makeProcessDescriptor;
 using detail::makeProcessSpawnHelper;
+using detail::makeRuntimeCheckpointWrapper;
 using detail::makeSchedulerMain;
 using detail::makeStatePlane;
 using detail::markCleanStaticNBAsInGuardedBodies;
@@ -1316,7 +1317,10 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     const llvm::MapVector<
         Operation *, std::unique_ptr<SimulationProcessFrameAnalysis>> &analyses,
     const DenseMap<Operation *, SmallVector<uint32_t>> &bytecodeContinuations,
-    const DenseSet<uint64_t> &generatedRegionCodeUnits, bool enabled) {
+    const DenseSet<uint64_t> &generatedRegionCodeUnits,
+    const DenseSet<std::pair<uint64_t, uint32_t>>
+        &runtimeCheckpointContinuations,
+    bool enabled) {
   SmallVector<NativeDirectFragment> result;
   struct PendingEvalWrapper {
     sim::SimFuncOp body;
@@ -1329,6 +1333,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     const SimulationProcessFrameAnalysis *analysis;
     std::optional<bool> initialActivation;
     SmallVector<uint32_t> fragmentIDs;
+    bool runtimeCheckpoint = false;
   };
   SmallVector<PendingEvalWrapper> pendingEvalWrappers;
   SmallVector<Attribute> checkpointRoutes;
@@ -1467,9 +1472,15 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     IntegerAttr codeUnit = actor.getCodeUnitIdAttr();
     auto analyzed = codeUnit ? analyzedActors.find(codeUnit.getUInt())
                              : analyzedActors.end();
+    bool hasRuntimeCheckpointActivation =
+        codeUnit &&
+        llvm::any_of(runtimeCheckpointContinuations, [&](const auto &entry) {
+          return entry.first == codeUnit.getUInt();
+        });
     if (!actorSlot || analyzed == analyzedActors.end() ||
         (!isGeneratedRegionActor(actor) &&
-         !actor->hasAttr("obelisk.eval.body")))
+         !actor->hasAttr("obelisk.eval.body") &&
+         !hasRuntimeCheckpointActivation))
       continue;
     const SimulationProcessFrameAnalysis &frameAnalysis =
         *analyzed->second.analysis;
@@ -1493,6 +1504,33 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
         continuationID = static_cast<uint32_t>(continuation.getUInt());
       if (continuationID == 0)
         continue;
+      auto bytecode = bytecodeContinuations.find(analyzed->second.operation);
+      bool runtimeCheckpoint =
+          codeUnit && runtimeCheckpointContinuations.contains(
+                          {codeUnit.getUInt(), continuationID});
+      if (bytecode != bytecodeContinuations.end() &&
+          llvm::is_contained(bytecode->second, continuationID)) {
+        if (runtimeCheckpoint) {
+          SmallString<96> wrapperName;
+          (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
+           Twine(continuationID) + ".__obelisk_execute")
+              .toVector(wrapperName);
+          ContinuationFragmentCoverage coverage =
+              fragmentCoverageFor(actor, continuationID);
+          pendingEvalWrappers.push_back({actor,
+                                         {},
+                                         actor,
+                                         wrapperName.str().str(),
+                                         {},
+                                         *actorSlot,
+                                         continuationID,
+                                         &frameAnalysis,
+                                         /*initialActivation=*/false,
+                                         std::move(coverage.members),
+                                         /*runtimeCheckpoint=*/true});
+        }
+        continue;
+      }
       // Keep derived MLIR metadata coherent for the two-state/checkpoint
       // variants cloned from this body later in the conversion.
       evalBody->setAttr(
@@ -1582,9 +1620,35 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       continue;
     for (const CurrentDirectWait &suspension : directWaits) {
       auto bytecode = bytecodeContinuations.find(analyzed->second.operation);
-      if (bytecode != bytecodeContinuations.end() &&
-          llvm::is_contained(bytecode->second, suspension.continuationID))
+      bool runtimeCheckpoint =
+          codeUnit && runtimeCheckpointContinuations.contains(
+                          {codeUnit.getUInt(), suspension.continuationID});
+      bool bytecodeContinuation =
+          bytecode != bytecodeContinuations.end() &&
+          llvm::is_contained(bytecode->second, suspension.continuationID);
+      if (bytecodeContinuation && !runtimeCheckpoint)
         continue;
+
+      if (runtimeCheckpoint) {
+        SmallString<96> wrapperName;
+        (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
+         Twine(suspension.continuationID) + ".__obelisk_execute")
+            .toVector(wrapperName);
+        ContinuationFragmentCoverage coverage =
+            fragmentCoverageFor(actor, suspension.continuationID);
+        pendingEvalWrappers.push_back({actor,
+                                       {},
+                                       actor,
+                                       wrapperName.str().str(),
+                                       {},
+                                       *actorSlot,
+                                       suspension.continuationID,
+                                       &frameAnalysis,
+                                       /*initialActivation=*/false,
+                                       std::move(coverage.members),
+                                       /*runtimeCheckpoint=*/true});
+        continue;
+      }
 
       // A generated region kernel's entry path initializes its snapshot
       // arguments and evaluates the complete local region before reaching
@@ -1749,9 +1813,13 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
   // present.  Materialize them in a second phase after every actor decision is
   // complete.
   for (PendingEvalWrapper &pending : pendingEvalWrappers) {
-    if (failed(makeDirectFragmentWrapper(
-            module, pending.body, pending.actor, pending.wrapper,
-            pending.actorSlot, pending.continuation, *pending.analysis)))
+    if (pending.runtimeCheckpoint
+            ? failed(makeRuntimeCheckpointWrapper(
+                  module, pending.actor, pending.wrapper, pending.actorSlot,
+                  pending.continuation))
+            : failed(makeDirectFragmentWrapper(
+                  module, pending.body, pending.actor, pending.wrapper,
+                  pending.actorSlot, pending.continuation, *pending.analysis)))
       return failure();
     if (pending.twoStateBody && failed(makeDirectFragmentWrapper(
                                     module, pending.twoStateBody, pending.actor,
@@ -2106,6 +2174,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   bool useAOT = false;
   bool evalScheduler = nativeScheduler == sim::NativeSchedulerMode::Eval;
   DenseMap<Operation *, SmallVector<uint32_t>> aotBytecodeContinuations;
+  DenseSet<std::pair<uint64_t, uint32_t>> runtimeCheckpointContinuations;
+  DenseSet<uint64_t> checkpointOnlyActors;
   uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
   // Generated scalar root commits use an unaligned 64-bit window. Keep one
   // zeroed guard word after the canonical packed plane so a final narrow root
@@ -2166,7 +2236,44 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // lookup exposes a constant stable handle to direct-state lowering.  The
   // AOT analysis also records dynamic/duplicate actors, so the same proof is
   // safe for the generic scheduler.
+  constexpr StringLiteral runtimePublicationCertificate =
+      "obelisk.runtime_publication_certified";
+  module.walk([&](sim::SimFuncOp function) {
+    function->removeAttr(runtimePublicationCertificate);
+  });
   aotEligibility = analysis::NativeAOTAnalysis::compute(module);
+  for (const auto &entry : analyses) {
+    auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
+    IntegerAttr codeUnit =
+        function ? function.getCodeUnitIdAttr() : IntegerAttr{};
+    if (!function || !codeUnit)
+      continue;
+    // Preserve the full Clause 31.9.1 structural proof across later CFG and
+    // coroutine rewrites. Input IR cannot forge this internal certificate: it
+    // is cleared above and recreated only after the exact commit audit.
+    if (analysis::isNegativeTimingDelayCommit(function))
+      function->setAttr(runtimePublicationCertificate, UnitAttr::get(context));
+  }
+  for (Operation *operation : aotEligibility.getRuntimeObservedWriterActors()) {
+    auto function = dyn_cast_if_present<sim::SimFuncOp>(operation);
+    IntegerAttr codeUnit =
+        function ? function.getCodeUnitIdAttr() : IntegerAttr{};
+    auto analyzed = analyses.find(operation);
+    if (!function || !codeUnit || analyzed == analyses.end())
+      return module.emitError(
+                 "runtime-observed source writer has no process analysis"),
+             failure();
+    // IEEE 1800-2017 Clauses 31.7 and 31.9.1 require runtime-owned timing
+    // observers to see their primary/source publication in the same scheduler
+    // cohort. Keep every activation of an overlapping writer behind an exact
+    // cold checkpoint so the generic scheduler performs the publication and
+    // wakeup before the generated island is retried.
+    for (const ProcessSuspension &suspension :
+         analyzed->second->getSuspensions())
+      runtimeCheckpointContinuations.insert(
+          {codeUnit.getUInt(), suspension.continuationID});
+    checkpointOnlyActors.insert(codeUnit.getUInt());
+  }
   // SimFunc operations may be rebuilt by two-state specialization and packed
   // lowering. Preserve the analysis actor identity as a stable code-unit join
   // instead of retaining Operation pointers across those rewrite boundaries.
@@ -2318,7 +2425,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   }
   if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
-        module, *stateLayout, aotEligibility.getActorSlots(), true,
+        module, *stateLayout, aotEligibility.getActorSlots(),
+        aotEligibility.getRuntimeOwnedFanoutActors(),
+        aotEligibility.getNegativeTimingFanoutActors(), true,
         staticEvalIsland);
     if (failed(fanout))
       return failure();
@@ -2327,6 +2436,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     staticFanout &= staticFanoutPlan.exact;
     if (staticFanoutPlan.exact) {
       stateLayout->transitionHandlesExact = true;
+      for (uint32_t staticState : staticFanoutPlan.runtimeTransitionStates)
+        stateLayout->transitionHandles.insert(staticState);
       for (const obelisk_rt_static_fanout_entry &entry :
            staticFanoutPlan.entries)
         stateLayout->transitionHandles.insert(entry.static_state);
@@ -2358,7 +2469,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (staticSpecialization && useAOT) {
     FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
         buildNativeStaticActorRootPlan(module, *stateLayout,
-                                       aotEligibility.getActorSlots());
+                                       aotEligibility.getActorSlots(),
+                                       checkpointOnlyActors);
     if (failed(dependencies))
       return failure();
     staticActorRoots = std::move(*dependencies);
@@ -2406,8 +2518,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (activationRequiresBytecode(&function.getBody().front()))
         continuations.push_back(0);
       for (const ProcessSuspension &suspension : entry.second->getSuspensions())
-        if (activationRequiresBytecode(suspension.continuation))
+        if (activationRequiresBytecode(suspension.continuation)) {
           continuations.push_back(suspension.continuationID);
+        }
       llvm::sort(continuations);
       continuations.erase(
           std::unique(continuations.begin(), continuations.end()),
@@ -2537,6 +2650,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       materializeDirectFragments(
           module, metadataDesign, aotActorSlotsByCodeUnit, analyses,
           aotBytecodeContinuations, preLowerGeneratedRegionCodeUnits,
+          runtimeCheckpointContinuations,
           useAOT && cleanSuperstep && staticFanout &&
               !guardedAOTSpecialization);
   if (failed(directFragments))
@@ -2798,7 +2912,38 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         }
       }
       if (!hasDirectOwner) {
-        invalidConvergenceOwnership = "a Tier-2 SCC has no direct eval owner";
+        std::string memberSummary;
+        for (uint32_t member : kernel.memberIDs) {
+          if (!memberSummary.empty())
+            memberSummary += ",";
+          memberSummary += std::to_string(member);
+          if (member < threeTierPlan.sourceGraph.getNodes().size())
+            if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+                    threeTierPlan.sourceGraph.getNodes()[member]))
+              memberSummary +=
+                  (Twine("@") + fragment.getFunction().getValue()).str();
+        }
+        std::string directSummary;
+        for (const NativeDirectFragment &direct : *directFragments) {
+          if (!directSummary.empty())
+            directSummary += ",";
+          directSummary +=
+              (Twine(direct.actorSlot) + "/" + Twine(direct.continuation) + "[")
+                  .str();
+          for (uint32_t fragment : direct.fragmentIDs) {
+            if (directSummary.back() != '[')
+              directSummary += ",";
+            directSummary += std::to_string(fragment);
+          }
+          directSummary += "]";
+        }
+        invalidConvergenceOwnership =
+            (Twine("a Tier-2 SCC has no direct eval owner (kernel=") +
+             Twine(kernel.id) + ", owner=" + Twine(kernel.owner) +
+             ", members=" + memberSummary + ", direct=" + directSummary +
+             ", clean=" + Twine(cleanSuperstep) + ", fanout=" +
+             Twine(staticFanout) + ", island=" + Twine(staticEvalIsland) + ")")
+                .str();
         break;
       }
     }

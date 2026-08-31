@@ -29,6 +29,7 @@ struct NativeStaticFanoutPlan {
   llvm::SmallVector<obelisk_rt_static_fanout_entry> entries;
   llvm::DenseMap<std::pair<uint32_t, uint32_t>, llvm::SmallVector<uint32_t>>
       fragments;
+  llvm::DenseSet<uint32_t> runtimeTransitionStates;
   bool exact = false;
 };
 
@@ -196,11 +197,14 @@ specializeNativeAOTCaptures(mlir::ModuleOp module,
 mlir::FailureOr<llvm::SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
-    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots);
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
+    const llvm::DenseSet<uint64_t> &checkpointOnlyActors);
 mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
-    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots, bool enabled,
-    bool certifiedStaticIsland);
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
+    const llvm::DenseSet<mlir::Operation *> &runtimeOwnedFanoutActors,
+    const llvm::DenseSet<mlir::Operation *> &negativeTimingFanoutActors,
+    bool enabled, bool certifiedStaticIsland);
 mlir::FailureOr<NativeThreeTierPlan>
 buildNativeThreeTierPlan(mlir::ModuleOp module,
                          const NativeStateLayout &stateLayout);

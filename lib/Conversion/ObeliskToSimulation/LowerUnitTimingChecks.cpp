@@ -113,6 +113,12 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   bool dynamicMode = skewWithMode && !eventMode.has_value();
   bool emitEventMode = skewWithMode && (!eventMode || *eventMode);
   bool emitTimerMode = skewWithMode && (!eventMode || !*eventMode);
+  Value context = function.getBody().front().getArgument(0);
+  auto delayedStorageIDs = function->getAttrOfType<DenseI64ArrayAttr>(
+      "obelisk_sim.timing_delayed_storage_ids");
+  if (delayedStorageIDs && delayedStorageIDs.size() != 2)
+    return function.emitError(
+        "negative timing check has a malformed delayed-terminal ABI");
 
   SmallVector<Value, 2> handles;
   SmallVector<Value, 2> conditions;
@@ -129,6 +135,20 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
                               succeeded(handle) ? (*handle).getType() : Type{}))
       return function.emitError(
           "basic timing-check event is not a direct signal handle");
+    if (delayedStorageIDs && index < 2 && delayedStorageIDs[index] >= 0) {
+      Type elementType;
+      if (auto ref = dyn_cast<sim::RefType>((*handle).getType()))
+        elementType = ref.getElementType();
+      else if (auto net = dyn_cast<sim::NetType>((*handle).getType()))
+        elementType = net.getElementType();
+      else
+        elementType =
+            cast<sim::DriverType>((*handle).getType()).getElementType();
+      *handle = sim::SimContextStorageOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), elementType), context,
+          builder.getI64IntegerAttr(delayedStorageIDs[index]));
+    }
     int32_t edge = edges[index];
     bool standardEdge = edge >= static_cast<int32_t>(sim::EdgeKind::Change) &&
                         edge <= static_cast<int32_t>(sim::EdgeKind::Both);
@@ -291,7 +311,6 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
 
   Type i1 = builder.getI1Type();
   Type i64 = builder.getI64Type();
-  Value context = function.getBody().front().getArgument(0);
   Value zero64 = arith::ConstantOp::create(builder, location, i64,
                                            builder.getI64IntegerAttr(0));
   Value one64 = arith::ConstantOp::create(builder, location, i64,
@@ -902,6 +921,9 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     qualified = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, baseReportCount, zero64);
   } else if (combined) {
+    bool negativeAdjusted =
+        function->hasAttr("obelisk_sim.negative_timing_adjusted");
+    bool sharedTimestampIsInterior = ticks[2] > 0 && ticks[3] > 0;
     Value previous1 =
         sim::SimRefLoadOp::create(builder, location, i64, oppositeTimestamp);
     Value valid1 = sim::SimRefLoadOp::create(builder, location, i1,
@@ -921,6 +943,16 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
           builder, location, arith::CmpIPredicate::ne, limit, zero64);
       Value inWindow = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ult, delta, limit);
+      if (negativeAdjusted && !sharedTimestampIsInterior) {
+        // IEEE 1800-2017 31.9.1 excludes both original window endpoints.
+        // Strict delay solving makes a same-tick delayed pair an interior
+        // point only while both adjusted sides remain positive.  A repaired
+        // or clamped zero side instead places delta zero on the endpoint.
+        Value nonzeroDelta = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, delta, zero64);
+        inWindow =
+            arith::AndIOp::create(builder, location, inWindow, nonzeroDelta);
+      }
       Value result = arith::AndIOp::create(builder, location, checkOccurred,
                                            effectiveValid);
       result = arith::AndIOp::create(builder, location, result, positiveLimit);

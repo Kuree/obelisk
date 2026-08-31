@@ -23,6 +23,11 @@ mlir::LogicalResult makeDirectFragmentWrapper(
     mlir::ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
     llvm::StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
     const SimulationProcessFrameAnalysis &analysis);
+mlir::LogicalResult makeRuntimeCheckpointWrapper(mlir::ModuleOp module,
+                                                 sim::SimFuncOp actor,
+                                                 llvm::StringRef wrapperName,
+                                                 uint32_t actorSlot,
+                                                 uint32_t continuation);
 
 } // namespace obelisk::detail
 

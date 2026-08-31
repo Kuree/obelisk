@@ -584,9 +584,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (isCodeUnit(op) ||
         (isa<semantic::SVSystemTimingCheckSymbolOp>(op) &&
          op->hasAttr("obelisk.basic_timing_check")) ||
-        staticInitializer || initializedStaticLocal ||
-        designInitializer || netInitializer ||
-        op->hasAttr(sequenceEndpointEventAttrName) ||
+        staticInitializer || initializedStaticLocal || designInitializer ||
+        netInitializer || op->hasAttr(sequenceEndpointEventAttrName) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
          (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
           op->hasAttr(clockingEventListAttrName))))
@@ -1833,6 +1832,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       nextStorageId = std::max(nextStorageId, entry.second.id + 1);
     }
+  struct NegativeTimingDelayedTerminalPlan {
+    std::string sourcePath;
+    DescriptorInfo source;
+    uint64_t delayedStorage = UINT64_MAX;
+    int64_t delayTicks = 0;
+    std::string monitorSymbol;
+  };
+  SmallVector<NegativeTimingDelayedTerminalPlan> negativeTimingTerminals;
   Type i64 = builder.getI64Type();
   for (semantic::SVClassTypeOp classType : classSources)
     for (Operation *member : getChildren(classType)) {
@@ -1967,8 +1974,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::DenseMap<Operation *, SmallVector<PathPulseLimit, 2>> pathPulseLimits;
   semanticRoot->walk([&](semantic::SVSpecparamSymbolOp specparam) {
     auto name = specparam->getAttrOfType<StringAttr>("path_pulse_name");
-    auto reject =
-        specparam->getAttrOfType<IntegerAttr>("path_pulse_reject_fs");
+    auto reject = specparam->getAttrOfType<IntegerAttr>("path_pulse_reject_fs");
     auto error = specparam->getAttrOfType<IntegerAttr>("path_pulse_error_fs");
     if (!name)
       return;
@@ -1980,7 +1986,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    StringRef suffix = name.getValue().drop_front(StringRef("PATHPULSE$").size());
+    StringRef suffix =
+        name.getValue().drop_front(StringRef("PATHPULSE$").size());
     StringRef source;
     StringRef destination;
     if (!suffix.empty()) {
@@ -2108,9 +2115,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       uint64_t value = percent ? percent.getUInt() : 100;
       for (int64_t delay : normalizedDelays) {
         uint64_t unsignedDelay = static_cast<uint64_t>(delay);
-        result.push_back(static_cast<int64_t>(
-            (unsignedDelay / 100) * value +
-            ((unsignedDelay % 100) * value) / 100));
+        result.push_back(
+            static_cast<int64_t>((unsignedDelay / 100) * value +
+                                 ((unsignedDelay % 100) * value) / 100));
       }
       return result;
     };
@@ -2133,9 +2140,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       rejectLimits.assign(normalizedDelays.size(), selectedPulse->reject);
       errorLimits.assign(normalizedDelays.size(), selectedPulse->error);
     }
-    SmallVector<uint64_t, 6> pulseBoundaries{outputTerminal->low,
-                                             outputTerminal->low +
-                                                 outputTerminal->width};
+    SmallVector<uint64_t, 6> pulseBoundaries{
+        outputTerminal->low, outputTerminal->low + outputTerminal->width};
     ArrayRef<PulseStyleRange> outputStyles;
     if (auto styles = pulseStyles.find(path->getParentOp());
         styles != pulseStyles.end()) {
@@ -2181,8 +2187,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (auto global =
               module->getAttrOfType<BoolAttr>("obelisk.pulse_on_detect"))
         pulseOnDetect = global.getValue();
-      if (auto global = module->getAttrOfType<BoolAttr>(
-              "obelisk.pulse_show_cancelled"))
+      if (auto global =
+              module->getAttrOfType<BoolAttr>("obelisk.pulse_show_cancelled"))
         pulseShowCancelled = global.getValue();
       TimingTerminal segment = *outputTerminal;
       segment.low = segmentLow;
@@ -2210,6 +2216,423 @@ void ObeliskSimPreparePass::runOnOperation() {
            conditional ? children.front() : nullptr, ifnone});
     }
   });
+
+  // Negative combined timing checks need one delayed copy per original
+  // terminal across the complete design instance.  Solve that inventory here,
+  // before isolated timing actors are formed; no runtime timing-check table or
+  // name lookup is needed after these descriptor IDs are frozen.
+  struct NegativeTimingCheckPlan {
+    semantic::SVSystemTimingCheckSymbolOp check;
+    int32_t kind = 0;
+    unsigned reference = 0;
+    unsigned data = 0;
+    int64_t limit0 = 0;
+    int64_t limit1 = 0;
+  };
+  SmallVector<NegativeTimingCheckPlan> negativeChecks;
+  using NegativeTerminalKey = std::pair<unsigned, uint64_t>;
+  llvm::DenseMap<NegativeTerminalKey, unsigned> negativeTerminalIndices;
+  constexpr size_t maxNegativeTimingChecks = 65536;
+  constexpr size_t maxNegativeTimingTerminals = 65536;
+  constexpr uint64_t maxNegativeTimingRelaxations = 16 * 1024 * 1024;
+
+  auto timingEventPath = [&](semantic::SVSystemTimingCheckSymbolOp check,
+                             unsigned argument) -> std::optional<StringRef> {
+    auto children = check->getAttrOfType<DenseI64ArrayAttr>(
+        "timing_check_arg_expression_children");
+    SmallVector<Operation *> roots = getChildren(check);
+    if (!children || argument >= children.size())
+      return std::nullopt;
+    int64_t child = children[argument];
+    if (child < 0 || static_cast<size_t>(child) >= roots.size())
+      return std::nullopt;
+    Operation *expression = roots[child];
+    while (isa<semantic::SVConversionExpressionOp>(expression)) {
+      SmallVector<Operation *> nested = getChildren(expression);
+      if (nested.size() != 1)
+        return std::nullopt;
+      expression = nested.front();
+    }
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+      return named.getReferencedPath();
+    if (auto hierarchical =
+            dyn_cast<semantic::SVHierarchicalValueExpressionOp>(expression))
+      return hierarchical.getReferencedPath();
+    return std::nullopt;
+  };
+  auto terminalIndex = [&](StringRef path,
+                           Location location) -> std::optional<unsigned> {
+    auto descriptor = descriptors.find(path);
+    if (descriptor == descriptors.end() ||
+        (descriptor->second.kind != DescriptorInfo::Kind::Storage &&
+         descriptor->second.kind != DescriptorInfo::Kind::Net) ||
+        !descriptor->second.viewIndices.empty() ||
+        descriptor->second.viewOffset != 0 ||
+        descriptor->second.packedViewOffset != 0 ||
+        (descriptor->second.rootType &&
+         descriptor->second.rootType != descriptor->second.type)) {
+      emitError(location)
+          << "negative timing-check event must name one whole direct packed "
+             "storage or net terminal";
+      invalid = true;
+      return std::nullopt;
+    }
+    NegativeTerminalKey key{static_cast<unsigned>(descriptor->second.kind),
+                            descriptor->second.id};
+    auto existing = negativeTerminalIndices.find(key);
+    if (existing != negativeTerminalIndices.end())
+      return existing->second;
+    if (negativeTimingTerminals.size() == maxNegativeTimingTerminals) {
+      emitError(location)
+          << "negative timing-check delayed-terminal inventory exceeds "
+             "the static planning limit";
+      invalid = true;
+      return std::nullopt;
+    }
+    std::optional<unsigned> width =
+        sim::getPackedWidth(descriptor->second.type);
+    if (!width || *width == 0) {
+      emitError(location)
+          << "negative timing-check event terminal is not packed";
+      invalid = true;
+      return std::nullopt;
+    }
+    unsigned index = negativeTimingTerminals.size();
+    negativeTerminalIndices[key] = index;
+    NegativeTimingDelayedTerminalPlan plan;
+    plan.sourcePath = path.str();
+    plan.source = descriptor->second;
+    negativeTimingTerminals.push_back(std::move(plan));
+    return index;
+  };
+  auto affectedTerminal = [&](StringRef path) {
+    auto descriptor = descriptors.find(path);
+    if (descriptor == descriptors.end())
+      return false;
+    NegativeTerminalKey key{static_cast<unsigned>(descriptor->second.kind),
+                            descriptor->second.id};
+    return negativeTerminalIndices.contains(key);
+  };
+
+  semanticRoot->walk([&](semantic::SVSystemTimingCheckSymbolOp check) {
+    if (!check->hasAttr("obelisk.negative_timing_check") ||
+        check->hasAttr("obelisk.invalid_negative_timing_window"))
+      return;
+    if (!check->hasAttr("obelisk.basic_timing_check"))
+      return; // PrepareValidation owns the optional-argument diagnostic.
+    if (negativeChecks.size() == maxNegativeTimingChecks) {
+      emitError(getSemanticLocation(check))
+          << "negative timing-check inventory exceeds the static planning "
+             "limit";
+      invalid = true;
+      return;
+    }
+    auto kind = check->getAttrOfType<IntegerAttr>("timing_check_kind");
+    auto times =
+        check->getAttrOfType<DenseI64ArrayAttr>("timing_check_arg_time_fs");
+    std::optional<StringRef> referencePath = timingEventPath(check, 0);
+    std::optional<StringRef> dataPath = timingEventPath(check, 1);
+    if (!kind || (kind.getInt() != 3 && kind.getInt() != 6) || !times ||
+        times.size() <= 3 || !referencePath || !dataPath ||
+        designPrecisionFs > static_cast<uint64_t>(INT64_MAX) ||
+        times[2] % static_cast<int64_t>(designPrecisionFs) != 0 ||
+        times[3] % static_cast<int64_t>(designPrecisionFs) != 0) {
+      emitError(getSemanticLocation(check))
+          << "negative timing check has no exact static direct design-"
+             "precision ABI";
+      invalid = true;
+      return;
+    }
+    std::optional<unsigned> reference =
+        terminalIndex(*referencePath, getSemanticLocation(check));
+    std::optional<unsigned> data =
+        terminalIndex(*dataPath, getSemanticLocation(check));
+    if (!reference || !data)
+      return;
+    negativeChecks.push_back(
+        {check, static_cast<int32_t>(kind.getInt()), *reference, *data,
+         times[2] / static_cast<int64_t>(designPrecisionFs),
+         times[3] / static_cast<int64_t>(designPrecisionFs)});
+  });
+
+  if (!negativeChecks.empty() && !invalid) {
+    llvm::DenseSet<Operation *> negativeDeclarations;
+    for (const NegativeTimingCheckPlan &check : negativeChecks)
+      negativeDeclarations.insert(check.check);
+    // IEEE 1800-2017 31.9.1 requires every non-skew timing check sharing a
+    // delayed terminal to be rebound and adjusted.  This first tranche rejects
+    // such a component rather than running the existing actor on an undelayed
+    // approximation.
+    semanticRoot->walk([&](semantic::SVSystemTimingCheckSymbolOp check) {
+      if (negativeDeclarations.contains(check))
+        return;
+      for (unsigned argument : {0u, 1u}) {
+        std::optional<StringRef> path = timingEventPath(check, argument);
+        if (path && affectedTerminal(*path)) {
+          emitError(getSemanticLocation(check))
+              << "IEEE 1800-2017 31.9.1 delayed terminal '" << *path
+              << "' also participates in another timing-check kind; that "
+                 "cross-kind component is not executable yet";
+          invalid = true;
+          return;
+        }
+      }
+    });
+    for (auto &entry : simpleTimingPaths)
+      for (const SimpleTimingPath &path : entry.second)
+        for (const TimingTerminal &input : path.inputs)
+          if (affectedTerminal(input.path)) {
+            emitError(getSemanticLocation(path.declaration))
+                << "IEEE 1800-2017 31.9.1 delayed terminal '" << input.path
+                << "' also sources a Clause 30 propagation path; path-delay "
+                   "flooring for that component is not executable yet";
+            invalid = true;
+          }
+  }
+
+  if (!negativeChecks.empty() && !invalid) {
+    struct ConstraintEdge {
+      unsigned from;
+      unsigned to;
+      int64_t weight;
+    };
+    SmallVector<int64_t> delays(negativeTimingTerminals.size());
+    SmallVector<SmallVector<unsigned>> incidentChecks(delays.size());
+    for (auto [checkIndex, check] : llvm::enumerate(negativeChecks)) {
+      incidentChecks[check.reference].push_back(checkIndex);
+      if (check.data != check.reference)
+        incidentChecks[check.data].push_back(checkIndex);
+    }
+    uint64_t relaxationWork = 0;
+    while (true) {
+      SmallVector<ConstraintEdge> constraints;
+      constraints.reserve(negativeChecks.size() * 2);
+      bool arithmeticInvalid = false;
+      auto checkedI64 = [&](const __int128 value, Location location,
+                            StringRef purpose) -> std::optional<int64_t> {
+        if (value < INT64_MIN || value > INT64_MAX) {
+          emitError(location) << "negative timing-check " << purpose
+                              << " exceeds the signed tick range";
+          arithmeticInvalid = true;
+          return std::nullopt;
+        }
+        return static_cast<int64_t>(value);
+      };
+      for (const NegativeTimingCheckPlan &check : negativeChecks) {
+        if (check.limit0 >= 0 && check.limit1 >= 0)
+          continue;
+        // IEEE 1800-2017 31.9.1 makes both original window endpoints open.
+        // On the integer precision lattice the delayed copies therefore need
+        // a strict one-tick interior:
+        // setuphold: -setup+1 <= dR-dD <= hold-1;
+        // recrem:     1-removal <= dR-dD <= recovery-1.
+        // This is the 0.01 margin that produces the exact 31.9.2 example
+        // delays 10.01, 20.02, and 2.02.
+        __int128 lower = check.kind == 3
+                             ? -static_cast<__int128>(check.limit0) + 1
+                             : 1 - static_cast<__int128>(check.limit1);
+        __int128 upper = check.kind == 3
+                             ? static_cast<__int128>(check.limit1) - 1
+                             : static_cast<__int128>(check.limit0) - 1;
+        std::optional<int64_t> lowerTick = checkedI64(
+            lower, getSemanticLocation(check.check), "lower delay bound");
+        std::optional<int64_t> reverseTick = checkedI64(
+            -upper, getSemanticLocation(check.check), "upper delay bound");
+        if (!lowerTick || !reverseTick)
+          continue;
+        constraints.push_back({check.data, check.reference, *lowerTick});
+        constraints.push_back({check.reference, check.data, *reverseTick});
+      }
+      if (arithmeticInvalid) {
+        invalid = true;
+        break;
+      }
+      llvm::fill(delays, int64_t{0});
+      std::optional<unsigned> infeasibleTerminal;
+      for (size_t iteration = 0; iteration < delays.size(); ++iteration) {
+        bool changed = false;
+        for (const ConstraintEdge &edge : constraints) {
+          if (++relaxationWork > maxNegativeTimingRelaxations) {
+            emitError(getSemanticLocation(negativeChecks.front().check))
+                << "negative timing-check constraint solving exceeds the "
+                   "static planning work limit";
+            invalid = true;
+            break;
+          }
+          __int128 candidate =
+              static_cast<__int128>(delays[edge.from]) + edge.weight;
+          if (candidate > INT64_MAX) {
+            emitError(getSemanticLocation(negativeChecks.front().check))
+                << "negative timing-check delayed signal exceeds the "
+                   "supported simulation-time range";
+            invalid = true;
+            break;
+          }
+          if (candidate > delays[edge.to]) {
+            delays[edge.to] = static_cast<int64_t>(candidate);
+            changed = true;
+            if (iteration + 1 == delays.size() && !infeasibleTerminal)
+              infeasibleTerminal = edge.to;
+          }
+        }
+        if (invalid || !changed)
+          break;
+      }
+      if (invalid || !infeasibleTerminal)
+        break;
+
+      llvm::SmallDenseSet<unsigned> inconsistentTerminals;
+      inconsistentTerminals.insert(*infeasibleTerminal);
+      SmallVector<unsigned> pending{*infeasibleTerminal};
+      while (!pending.empty() && !invalid) {
+        unsigned terminal = pending.pop_back_val();
+        for (unsigned checkIndex : incidentChecks[terminal]) {
+          // Component discovery is part of the same statically bounded solve,
+          // not an uncharged all-edge rescan for every newly reached terminal.
+          if (++relaxationWork > maxNegativeTimingRelaxations) {
+            emitError(getSemanticLocation(negativeChecks.front().check))
+                << "negative timing-check constraint solving exceeds the "
+                   "static planning work limit";
+            invalid = true;
+            break;
+          }
+          const NegativeTimingCheckPlan &check = negativeChecks[checkIndex];
+          if (check.limit0 >= 0 && check.limit1 >= 0)
+            continue;
+          if (inconsistentTerminals.insert(check.reference).second)
+            pending.push_back(check.reference);
+          if (inconsistentTerminals.insert(check.data).second)
+            pending.push_back(check.data);
+        }
+      }
+      if (invalid)
+        break;
+      NegativeTimingCheckPlan *repair = nullptr;
+      bool repairFirst = false;
+      int64_t smallest = 0;
+      for (NegativeTimingCheckPlan &check : negativeChecks) {
+        if (!inconsistentTerminals.contains(check.reference) &&
+            !inconsistentTerminals.contains(check.data))
+          continue;
+        for (bool first : {true, false}) {
+          int64_t value = first ? check.limit0 : check.limit1;
+          if (value < 0 && (!repair || value < smallest)) {
+            repair = &check;
+            repairFirst = first;
+            smallest = value;
+          }
+        }
+      }
+      if (!repair) {
+        emitError(getSemanticLocation(negativeChecks.front().check))
+            << "negative timing-check constraints are inconsistent after "
+               "all negative limits were repaired";
+        invalid = true;
+        break;
+      }
+      emitWarning(getSemanticLocation(repair->check))
+          << "IEEE 1800-2017 31.9.1 mutually inconsistent delayed-signal "
+             "constraints; changing smallest negative limit "
+          << smallest << " ticks to 0 and recalculating";
+      (repairFirst ? repair->limit0 : repair->limit1) = 0;
+    }
+
+    if (!invalid) {
+      for (auto [index, delay] : llvm::enumerate(delays))
+        negativeTimingTerminals[index].delayTicks = delay;
+      for (NegativeTimingCheckPlan &check : negativeChecks) {
+        int64_t referenceDelay = delays[check.reference];
+        int64_t dataDelay = delays[check.data];
+        __int128 difference = static_cast<__int128>(referenceDelay) - dataDelay;
+        __int128 adjusted0 =
+            check.kind == 3 ? static_cast<__int128>(check.limit0) + difference
+                            : static_cast<__int128>(check.limit0) - difference;
+        __int128 adjusted1 =
+            check.kind == 3 ? static_cast<__int128>(check.limit1) - difference
+                            : static_cast<__int128>(check.limit1) + difference;
+        if (adjusted0 > INT64_MAX || adjusted1 > INT64_MAX) {
+          emitError(getSemanticLocation(check.check))
+              << "negative timing-check adjusted limit exceeds the signed "
+                 "tick range";
+          invalid = true;
+          continue;
+        }
+        if (adjusted0 <= 0 || adjusted1 <= 0) {
+          emitWarning(getSemanticLocation(check.check))
+              << "IEEE 1800-2017 31.9.1 adjusted timing-check limit is "
+                 "nonpositive; clamping it to 0";
+          adjusted0 = std::max<__int128>(adjusted0, 0);
+          adjusted1 = std::max<__int128>(adjusted1, 0);
+        }
+        check.check->setAttr(
+            "obelisk_sim.timing_adjusted_ticks",
+            builder.getDenseI64ArrayAttr({static_cast<int64_t>(adjusted0),
+                                          static_cast<int64_t>(adjusted1)}));
+        check.check->setAttr("obelisk_sim.negative_timing_adjusted",
+                             builder.getUnitAttr());
+        check.check->setAttr(
+            "obelisk_sim.timing_delayed_terminal_indices",
+            builder.getDenseI64ArrayAttr({static_cast<int64_t>(check.reference),
+                                          static_cast<int64_t>(check.data)}));
+      }
+    }
+  }
+
+  if (!negativeChecks.empty() && !invalid) {
+    for (auto &terminal : negativeTimingTerminals) {
+      // IEEE 1800-2017 31.9.1 introduces a delayed terminal only when the
+      // solved delay is positive. A zero solution is the original terminal;
+      // mirroring it through another Active publication would create a false
+      // scheduler dependency and an extra delta-cycle occurrence.
+      if (terminal.delayTicks == 0)
+        continue;
+      if (nextStorageId == UINT64_MAX) {
+        emitError(module.getLoc())
+            << "negative timing-check delayed signals exceed the storage "
+               "descriptor space";
+        invalid = true;
+        break;
+      }
+      terminal.delayedStorage = nextStorageId++;
+      std::string path = (Twine("__obelisk_negative_timing_delay_") +
+                          Twine(terminal.delayedStorage))
+                             .str();
+      DescriptorInfo delayed{DescriptorInfo::Kind::Storage,
+                             terminal.delayedStorage, terminal.source.scopeId,
+                             terminal.source.type,
+                             sim::NetResolutionKind::Wire};
+      delayed.rootType = terminal.source.type;
+      descriptors[path] = delayed;
+      sim::SimStorageDeclOp::create(
+          builder, module.getLoc(), terminal.delayedStorage,
+          terminal.source.scopeId, terminal.source.type, sim::Lifetime::Design,
+          builder.getStringAttr(path),
+          builder.getStringAttr(
+              "implicit negative timing-check delayed signal"),
+          sim::ComputeObservabilityKindAttr{});
+    }
+    for (NegativeTimingCheckPlan &check : negativeChecks) {
+      auto indices = check.check->getAttrOfType<DenseI64ArrayAttr>(
+          "obelisk_sim.timing_delayed_terminal_indices");
+      if (!indices || indices.size() != 2)
+        continue;
+      check.check->setAttr(
+          "obelisk_sim.timing_delayed_storage_ids",
+          builder.getDenseI64ArrayAttr(
+              {static_cast<int64_t>(
+                   negativeTimingTerminals[indices[0]].delayedStorage),
+               static_cast<int64_t>(
+                   negativeTimingTerminals[indices[1]].delayedStorage)}));
+      check.check->setAttr(
+          "obelisk_sim.timing_delayed_source_delays",
+          builder.getDenseI64ArrayAttr(
+              {negativeTimingTerminals[indices[0]].delayTicks,
+               negativeTimingTerminals[indices[1]].delayTicks}));
+      check.check->removeAttr("obelisk_sim.timing_delayed_terminal_indices");
+    }
+  }
+  if (invalid)
+    return abort();
 
   auto getDriverDependencyRoots = [&](Operation *unit) {
     SmallVector<Operation *> dependencyRoots;
@@ -2576,11 +2999,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         llvm::any_of(spans, [](const TimingDriverSpan &span) {
           return !span.procedural && span.unit->hasAttr("delay_fs");
         });
-    bool defaultPulsePolicy = llvm::all_of(paths, [](const SimpleTimingPath &p) {
-      return p.pulseRejectLimits == p.delays &&
-             p.pulseErrorLimits == p.delays && !p.pulseOnDetect &&
-             !p.pulseShowCancelled;
-    });
+    bool defaultPulsePolicy =
+        llvm::all_of(paths, [](const SimpleTimingPath &p) {
+          return p.pulseRejectLimits == p.delays &&
+                 p.pulseErrorLimits == p.delays && !p.pulseOnDetect &&
+                 !p.pulseShowCancelled;
+        });
     if (hasExplicitDriverDelay) {
       emitError(getSemanticLocation(path.declaration))
           << "combining a specify path with an explicitly delayed driver is "
@@ -2591,8 +3015,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (spans.size() == 1 && spans.front().low == 0 &&
         spans.front().width == path.output.rootWidth && allWholeTerminals &&
         !hasStateDependent && !hasEdgeSensitive && path.delays.size() <= 3 &&
-        defaultPulsePolicy &&
-        (paths.size() == 1 || identicalDelays) &&
+        defaultPulsePolicy && (paths.size() == 1 || identicalDelays) &&
         hasExactInputs(spans.front().unit,
                        identicalDelays && !hasStateDependent)) {
       spans.front().unit->setAttr("delay_fs",
@@ -2672,9 +3095,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           Operation *primary =
               eventChildren.empty() ? nullptr : eventChildren.front();
           auto directPath =
-              primary
-                  ? primary->getAttrOfType<StringAttr>("referenced_path")
-                  : StringAttr{};
+              primary ? primary->getAttrOfType<StringAttr>("referenced_path")
+                      : StringAttr{};
           bool directNamed =
               isa_and_nonnull<semantic::SVNamedValueExpressionOp,
                               semantic::SVHierarchicalValueExpressionOp>(
@@ -2683,8 +3105,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               event ? static_cast<int32_t>(event.getEdgeKind()) : -1;
           bool edgeMatches = eventCoversPathEdge(eventEdge);
           if (event && candidate.inputs.size() == 1 &&
-              candidate.inputs.front().isWhole() && directNamed &&
-              directPath &&
+              candidate.inputs.front().isWhole() && directNamed && directPath &&
               directPath.getValue() == candidate.inputs.front().path &&
               edgeMatches) {
             // IEEE 1800-2017 30.4 qualifies a module path from the declared
@@ -2699,9 +3120,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             primary->walk([&](Operation *nested) {
               auto referenced =
                   nested->getAttrOfType<StringAttr>("referenced_path");
-              derivedSource |=
-                  referenced && referenced.getValue() ==
-                                    candidate.inputs.front().path;
+              derivedSource |= referenced && referenced.getValue() ==
+                                                 candidate.inputs.front().path;
             });
           if (derivedSource && !isAddressableExpression(primary)) {
             // IEEE 1800-2017 9.4.2 reevaluates a computed primary for each
@@ -2732,9 +3152,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           event && candidate.inputs.size() == 1 &&
           candidate.inputs.front().isWhole() && directNamed && directPath &&
           directPath.getValue() == candidate.inputs.front().path;
-      bool exactWake = sameDirectSource &&
-                       eventExactlyMatchesPathEdge(eventEdge);
-      result.kind = exactWake ? 1
+      bool exactWake =
+          sameDirectSource && eventExactlyMatchesPathEdge(eventEdge);
+      result.kind = exactWake                                            ? 1
                     : sameDirectSource && eventCoversPathEdge(eventEdge) ? 2
                                                                          : 0;
       timedChildren.front()->walk([&](Operation *nested) {
@@ -3063,9 +3483,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getNamedAttr(
                 "pulse_error_fs",
                 builder.getDenseI64ArrayAttr(candidate.pulseErrorLimits)),
-            builder.getNamedAttr(
-                "pulse_on_detect",
-                builder.getBoolAttr(candidate.pulseOnDetect)),
+            builder.getNamedAttr("pulse_on_detect",
+                                 builder.getBoolAttr(candidate.pulseOnDetect)),
             builder.getNamedAttr(
                 "pulse_show_cancelled",
                 builder.getBoolAttr(candidate.pulseShowCancelled)),
@@ -3119,10 +3538,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           NamedAttrList monitor;
           for (StringRef name :
                {"inputs", "snapshots", "input_lows", "input_widths",
-                "input_lsbs", "output_low", "output_width",
-                "output_root_width", "edge_identifier", "edge_pending",
-                "edge_epoch", "condition_kind", "condition_group",
-                "condition_node_id"})
+                "input_lsbs", "output_low", "output_width", "output_root_width",
+                "edge_identifier", "edge_pending", "edge_epoch",
+                "condition_kind", "condition_group", "condition_node_id"})
             if (Attribute value = frozenRule.get(name))
               monitor.set(name, value);
           SmallVector<Attribute> monitorRules;
@@ -7673,11 +8091,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                 ? FlatSymbolRefAttr{}
                 : condition->second->getAttrOfType<FlatSymbolRefAttr>(
                       "obelisk_sim.observer");
-        auto captures =
-            condition == timingConditions.end()
-                ? ArrayAttr{}
-                : condition->second->getAttrOfType<ArrayAttr>(
-                      observerCapturesAttrName);
+        auto captures = condition == timingConditions.end()
+                            ? ArrayAttr{}
+                            : condition->second->getAttrOfType<ArrayAttr>(
+                                  observerCapturesAttrName);
         if (!evaluator || !captures) {
           emitError(getSemanticLocation(unit.source))
               << "derived procedural path condition has no frozen evaluator "
@@ -8515,30 +8932,43 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       }
       SmallVector<int64_t> ticks;
-      ticks.reserve(times.size());
-      for (auto [value, time] :
-           llvm::zip_equal(times.asArrayRef(), isTime.asArrayRef())) {
-        if (time && value % static_cast<int64_t>(designPrecisionFs) != 0) {
+      if (auto adjusted = unit.source->getAttrOfType<DenseI64ArrayAttr>(
+              "obelisk_sim.timing_adjusted_ticks")) {
+        ticks.assign(times.size(), 0);
+        if (adjusted.size() != 2 || ticks.size() <= 3) {
           emitError(getSemanticLocation(unit.source))
-              << "basic timing-check limit is incompatible with design "
-                 "precision";
+              << "negative timing check has a malformed adjusted tick ABI";
           invalid = true;
-          break;
+        } else {
+          ticks[2] = adjusted[0];
+          ticks[3] = adjusted[1];
         }
-        ticks.push_back(time ? value / static_cast<int64_t>(designPrecisionFs)
-                                  : 0);
+      } else {
+        ticks.reserve(times.size());
+        for (auto [value, time] :
+             llvm::zip_equal(times.asArrayRef(), isTime.asArrayRef())) {
+          if (time && value % static_cast<int64_t>(designPrecisionFs) != 0) {
+            emitError(getSemanticLocation(unit.source))
+                << "basic timing-check limit is incompatible with design "
+                   "precision";
+            invalid = true;
+            break;
+          }
+          ticks.push_back(time ? value / static_cast<int64_t>(designPrecisionFs)
+                               : 0);
+        }
       }
       if (invalid)
         continue;
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.timing_check_arg_ticks",
-          builder.getDenseI64ArrayAttr(ticks)));
+      functionAttrs.push_back(
+          builder.getNamedAttr("obelisk_sim.timing_check_arg_ticks",
+                               builder.getDenseI64ArrayAttr(ticks)));
       functionAttrs.push_back(builder.getNamedAttr(
           "obelisk_sim.timing_check_coordinator", builder.getUnitAttr()));
-      for (StringRef name : {"timing_check_kind",
-                             "timing_check_arg_expression_children",
-                             "timing_check_arg_condition_children",
-                             "timing_check_arg_effective_edges"}) {
+      for (StringRef name :
+           {"timing_check_kind", "timing_check_arg_expression_children",
+            "timing_check_arg_condition_children",
+            "timing_check_arg_effective_edges"}) {
         Attribute value = unit.source->getAttr(name);
         if (!value) {
           emitError(getSemanticLocation(unit.source))
@@ -8551,8 +8981,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (invalid)
         continue;
       for (StringRef name :
-           {"timing_check_arg_condition_predicates",
-            "timing_check_event_based", "timing_check_remain_active"})
+           {"timing_check_arg_condition_predicates", "timing_check_event_based",
+            "timing_check_remain_active",
+            "obelisk_sim.timing_delayed_storage_ids",
+            "obelisk_sim.timing_delayed_source_delays",
+            "obelisk_sim.negative_timing_adjusted"})
         if (Attribute value = unit.source->getAttr(name))
           functionAttrs.push_back(builder.getNamedAttr(name, value));
       auto timingKind =
@@ -8671,9 +9104,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto pulseReject =
             rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject_fs")
                  : DenseI64ArrayAttr{};
-        auto pulseError =
-            rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error_fs")
-                 : DenseI64ArrayAttr{};
+        auto pulseError = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error_fs")
+                               : DenseI64ArrayAttr{};
         auto pulseOnDetect =
             rule ? rule.getAs<BoolAttr>("pulse_on_detect") : BoolAttr{};
         auto pulseShowCancelled =
@@ -8693,10 +9125,10 @@ void ObeliskSimPreparePass::runOnOperation() {
              (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
             (edgeSensitiveValue && (!edgePending || !edgeEpoch)) || !delays ||
             (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-             delays.size() != 6 && delays.size() != 12) || !pulseReject ||
-            pulseReject.size() != delays.size() || !pulseError ||
-            pulseError.size() != delays.size() || !pulseOnDetect ||
-            !pulseShowCancelled ||
+             delays.size() != 6 && delays.size() != 12) ||
+            !pulseReject || pulseReject.size() != delays.size() ||
+            !pulseError || pulseError.size() != delays.size() ||
+            !pulseOnDetect || !pulseShowCancelled ||
             (arrayTerminals &&
              (!inputLows || !inputWidths ||
               static_cast<size_t>(inputLows.size()) != inputs.size() ||
@@ -8773,8 +9205,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             fields.push_back(builder.getNamedAttr("procedural_wake_kind",
                                                   proceduralWakeKind));
           if (proceduralMonitor)
-            fields.push_back(builder.getNamedAttr("procedural_monitor",
-                                                  proceduralMonitor));
+            fields.push_back(
+                builder.getNamedAttr("procedural_monitor", proceduralMonitor));
         }
         fields.push_back(builder.getNamedAttr("polarity", polarity));
         fields.push_back(builder.getNamedAttr(
@@ -8795,8 +9227,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             "pulse_error", builder.getDenseI64ArrayAttr(errorTicks)));
         fields.push_back(
             builder.getNamedAttr("pulse_on_detect", pulseOnDetect));
-        fields.push_back(builder.getNamedAttr("pulse_show_cancelled",
-                                              pulseShowCancelled));
+        fields.push_back(
+            builder.getNamedAttr("pulse_show_cancelled", pulseShowCancelled));
         for (StringRef name :
              {"condition_kind", "condition_group", "condition_node_id"})
           if (auto value = rule.getAs<IntegerAttr>(name))
@@ -11142,6 +11574,168 @@ void ObeliskSimPreparePass::runOnOperation() {
           "obelisk_sim.timing_timer_helper",
           FlatSymbolRefAttr::get(context, helper.getSymName()));
     }
+
+    for (auto &terminal : negativeTimingTerminals) {
+      if (terminal.delayTicks == 0)
+        continue;
+      Location location = module.getLoc();
+      std::string identity =
+          (Twine("negative-timing-delay|") +
+           Twine(static_cast<unsigned>(terminal.source.kind)) + "|" +
+           Twine(terminal.source.id) + "|" + Twine(terminal.delayTicks))
+              .str();
+      std::string monitorSymbol = (Twine("__obelisk_negative_timing_monitor_") +
+                                   Twine(terminal.delayedStorage))
+                                      .str();
+      std::string commitSymbol = monitorSymbol + ".$commit";
+      uint64_t monitorID = stableCodeUnitID(identity + "|monitor");
+      uint64_t commitID = stableCodeUnitID(identity + "|commit");
+      if (!functionSymbols.insert(monitorSymbol).second ||
+          !codeUnitIDs.insert(monitorID).second ||
+          (terminal.delayTicks > 0 &&
+           (!functionSymbols.insert(commitSymbol).second ||
+            !codeUnitIDs.insert(commitID).second))) {
+        emitError(location)
+            << "negative timing-check delayed monitor symbol or stable "
+               "code-unit ID collides for '"
+            << terminal.sourcePath << "'";
+        invalid = true;
+        continue;
+      }
+      terminal.monitorSymbol = monitorSymbol;
+      sim::SimCodeUnitDeclOp::create(
+          helperBuilder, location, monitorID, terminal.source.scopeId,
+          sim::EntryKind::Always, helperBuilder.getStringAttr(monitorSymbol),
+          helperBuilder.getStringAttr("negative timing-check delayed monitor"),
+          helperBuilder.getUnitAttr());
+      if (terminal.delayTicks > 0)
+        sim::SimCodeUnitDeclOp::create(
+            helperBuilder, location, commitID, terminal.source.scopeId,
+            sim::EntryKind::Fork, helperBuilder.getStringAttr(commitSymbol),
+            helperBuilder.getStringAttr("negative timing-check delayed commit"),
+            helperBuilder.getUnitAttr());
+
+      Type contextType = sim::ContextType::get(context);
+      Type valueType = terminal.source.type;
+      SmallVector<NamedAttribute> commonAttrs{
+          helperBuilder.getNamedAttr("internal", helperBuilder.getUnitAttr()),
+          helperBuilder.getNamedAttr(
+              "home_region",
+              sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
+          helperBuilder.getNamedAttr(
+              "domain", sim::ExecutionDomainAttr::get(
+                            context, sim::ExecutionDomain::Design))};
+
+      sim::SimFuncOp commit;
+      if (terminal.delayTicks > 0) {
+        SmallVector<NamedAttribute> commitAttrs(commonAttrs);
+        commitAttrs.push_back(helperBuilder.getNamedAttr(
+            "obelisk_sim.negative_timing_delay_commit",
+            helperBuilder.getUnitAttr()));
+        commitAttrs.push_back(helperBuilder.getNamedAttr(
+            "code_unit_id", helperBuilder.getI64IntegerAttr(commitID)));
+        commitAttrs.push_back(helperBuilder.getNamedAttr(
+            sim::metadata::hierarchicalName,
+            helperBuilder.getStringAttr(commitSymbol)));
+        SmallVector<DictionaryAttr> commitArgAttrs{
+            captureMetadata(helperBuilder, sim::CaptureKind::Context),
+            captureMetadata(helperBuilder, sim::CaptureKind::Value)};
+        commit = sim::SimFuncOp::create(
+            helperBuilder, location, commitSymbol,
+            FunctionType::get(context, TypeRange{contextType, valueType},
+                              TypeRange{}),
+            sim::EntryKind::Fork, commitAttrs, commitArgAttrs);
+        SymbolTable::setSymbolVisibility(commit,
+                                         SymbolTable::Visibility::Private);
+        Block &commitEntry = commit.getBody().front();
+        Block *publish = new Block();
+        publish->addArgument(valueType, location);
+        commit.getBody().push_back(publish);
+        OpBuilder commitBuilder = OpBuilder::atBlockEnd(&commitEntry);
+        Value delay = sim::SimTimeConstantOp::create(
+            commitBuilder, location, sim::TimeType::get(context),
+            commitBuilder.getI64IntegerAttr(terminal.delayTicks));
+        sim::SimSuspendDelayOp::create(
+            commitBuilder, location, delay, sim::TimingSiteAttr{},
+            ValueRange{commitEntry.getArgument(1)}, sim::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(context, sim::EventRegion::Active),
+            publish);
+        OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
+        Value delayed = sim::SimContextStorageOp::create(
+            publishBuilder, location, sim::RefType::get(context, valueType),
+            commitEntry.getArgument(0),
+            publishBuilder.getI64IntegerAttr(terminal.delayedStorage));
+        sim::SimRefStoreOp::create(publishBuilder, location,
+                                   publish->getArgument(0), delayed);
+        sim::SimReturnOp::create(publishBuilder, location, ValueRange{});
+        commit->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
+      }
+
+      SmallVector<NamedAttribute> monitorAttrs(commonAttrs);
+      monitorAttrs.push_back(helperBuilder.getNamedAttr(
+          "obelisk_sim.negative_timing_delay_monitor",
+          helperBuilder.getUnitAttr()));
+      monitorAttrs.push_back(helperBuilder.getNamedAttr(
+          "code_unit_id", helperBuilder.getI64IntegerAttr(monitorID)));
+      monitorAttrs.push_back(helperBuilder.getNamedAttr(
+          sim::metadata::hierarchicalName,
+          helperBuilder.getStringAttr(monitorSymbol)));
+      Type sourceHandleType = terminal.source.kind == DescriptorInfo::Kind::Net
+                                  ? Type(sim::NetType::get(context, valueType))
+                                  : Type(sim::RefType::get(context, valueType));
+      SmallVector<DictionaryAttr> monitorArgAttrs{
+          captureMetadata(helperBuilder, sim::CaptureKind::Context),
+          captureMetadata(helperBuilder,
+                          terminal.source.kind == DescriptorInfo::Kind::Net
+                              ? sim::CaptureKind::Net
+                              : sim::CaptureKind::Storage,
+                          terminal.source.id)};
+      sim::SimFuncOp monitor = sim::SimFuncOp::create(
+          helperBuilder, location, monitorSymbol,
+          FunctionType::get(context, TypeRange{contextType, sourceHandleType},
+                            TypeRange{}),
+          sim::EntryKind::Always, monitorAttrs, monitorArgAttrs);
+      SymbolTable::setSymbolVisibility(monitor,
+                                       SymbolTable::Visibility::Private);
+      Block &monitorEntry = monitor.getBody().front();
+      Block *wait = new Block();
+      Block *changed = new Block();
+      monitor.getBody().push_back(wait);
+      monitor.getBody().push_back(changed);
+      OpBuilder monitorBuilder = OpBuilder::atBlockEnd(&monitorEntry);
+      Value source = monitorEntry.getArgument(1);
+      cf::BranchOp::create(monitorBuilder, location, wait);
+      OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+      sim::SimSuspendChangeOp::create(waitBuilder, location, source,
+                                      ValueRange{}, sim::ContinuationSiteAttr{},
+                                      sim::EventRegionAttr{}, changed);
+      OpBuilder changedBuilder = OpBuilder::atBlockEnd(changed);
+      Value current = terminal.source.kind == DescriptorInfo::Kind::Net
+                          ? Value(sim::SimNetReadOp::create(
+                                changedBuilder, location, valueType, source))
+                          : Value(sim::SimRefLoadOp::create(
+                                changedBuilder, location, valueType, source));
+      if (commit) {
+        sim::SimSpawnOp transportSpawn = sim::SimSpawnOp::create(
+            changedBuilder, location, commit.getSymNameAttr(),
+            ValueRange{monitorEntry.getArgument(0), current}, ArrayAttr{},
+            ArrayAttr{});
+        transportSpawn->setAttr(
+            "obelisk_sim.negative_timing_transport_activation",
+            changedBuilder.getUnitAttr());
+      } else {
+        // IEEE 1800-2017 31.9.1: a zero transport delay is part of the same
+        // Active-region fixpoint.  Publishing directly avoids an artificial
+        // zero-delay child and preserves same-slot event cohort ordering.
+        Value delayed = sim::SimContextStorageOp::create(
+            changedBuilder, location, sim::RefType::get(context, valueType),
+            monitorEntry.getArgument(0),
+            changedBuilder.getI64IntegerAttr(terminal.delayedStorage));
+        sim::SimRefStoreOp::create(changedBuilder, location, current, delayed);
+      }
+      cf::BranchOp::create(changedBuilder, location, wait);
+      monitor->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
+    }
   }
   if (invalid)
     return abort();
@@ -11318,6 +11912,40 @@ void ObeliskSimPreparePass::runOnOperation() {
     sim::SimCallOp::create(rootBuilder, unit.function.getLoc(), TypeRange{},
                            FlatSymbolRefAttr::get(context, unit.symbol),
                            *operands, ArrayAttr{}, ArrayAttr{});
+  }
+
+  // Initialize every implicit delayed copy after static variable
+  // initialization but before any timing coordinator can subscribe.  The
+  // once-spawned monitor then transports only real source publications; its
+  // initialization cannot manufacture a Clause 31 timing occurrence.
+  for (const auto &terminal : negativeTimingTerminals) {
+    if (terminal.delayTicks == 0)
+      continue;
+    Type valueType = terminal.source.type;
+    Type sourceHandleType = terminal.source.kind == DescriptorInfo::Kind::Net
+                                ? Type(sim::NetType::get(context, valueType))
+                                : Type(sim::RefType::get(context, valueType));
+    Value source =
+        terminal.source.kind == DescriptorInfo::Kind::Net
+            ? Value(sim::SimContextNetOp::create(
+                  rootBuilder, module.getLoc(), sourceHandleType, simContext,
+                  rootBuilder.getI64IntegerAttr(terminal.source.id)))
+            : Value(sim::SimContextStorageOp::create(
+                  rootBuilder, module.getLoc(), sourceHandleType, simContext,
+                  rootBuilder.getI64IntegerAttr(terminal.source.id)));
+    Value initial = terminal.source.kind == DescriptorInfo::Kind::Net
+                        ? Value(sim::SimNetReadOp::create(
+                              rootBuilder, module.getLoc(), valueType, source))
+                        : Value(sim::SimRefLoadOp::create(
+                              rootBuilder, module.getLoc(), valueType, source));
+    Value delayed = sim::SimContextStorageOp::create(
+        rootBuilder, module.getLoc(), sim::RefType::get(context, valueType),
+        simContext, rootBuilder.getI64IntegerAttr(terminal.delayedStorage));
+    sim::SimRefStoreOp::create(rootBuilder, module.getLoc(), initial, delayed);
+    sim::SimSpawnOp::create(
+        rootBuilder, module.getLoc(),
+        FlatSymbolRefAttr::get(context, terminal.monitorSymbol),
+        ValueRange{simContext, source}, ArrayAttr{}, ArrayAttr{});
   }
 
   auto spawnRootUnit = [&](PreparedUnit &unit) -> LogicalResult {

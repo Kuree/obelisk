@@ -641,7 +641,8 @@ specializeNativeAOTCaptures(ModuleOp module,
 FailureOr<SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
-    const DenseMap<Operation *, uint32_t> &actorSlots) {
+    const DenseMap<Operation *, uint32_t> &actorSlots,
+    const DenseSet<uint64_t> &checkpointOnlyActors) {
   SmallVector<obelisk_rt_static_actor_root> plan;
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
@@ -661,6 +662,13 @@ buildNativeStaticActorRootPlan(
     auto actor =
         function ? actorSlots.find(function.getOperation()) : actorSlots.end();
     if (!function || actor == actorSlots.end())
+      continue;
+    IntegerAttr codeUnit = function.getCodeUnitIdAttr();
+    // IEEE 1800-2017 Clauses 31.7 and 31.9.1 require these exact source
+    // publications to pass through a runtime checkpoint. Do not attribute a
+    // checkpoint-owned write to the runtime-free direct actor when certifying
+    // generated primary reads.
+    if (codeUnit && checkpointOnlyActors.contains(codeUnit.getUInt()))
       continue;
     auto handle = stateLayout.storage.find(dependency.getDescriptor());
     if (handle == stateLayout.storage.end())
@@ -692,11 +700,12 @@ buildNativeStaticActorRootPlan(
   return plan;
 }
 
-FailureOr<NativeStaticFanoutPlan>
-buildNativeStaticFanoutPlan(ModuleOp module,
-                            const NativeStateLayout &stateLayout,
-                            const DenseMap<Operation *, uint32_t> &actorSlots,
-                            bool enabled, bool certifiedStaticIsland) {
+FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
+    ModuleOp module, const NativeStateLayout &stateLayout,
+    const DenseMap<Operation *, uint32_t> &actorSlots,
+    const DenseSet<Operation *> &runtimeOwnedFanoutActors,
+    const DenseSet<Operation *> &negativeTimingFanoutActors, bool enabled,
+    bool certifiedStaticIsland) {
   NativeStaticFanoutPlan plan;
   plan.exact = enabled;
   if (!enabled)
@@ -707,23 +716,17 @@ buildNativeStaticFanoutPlan(ModuleOp module,
   if (!graph)
     return module.emitError("static fanout plan requires a compute graph"),
            failure();
-  auto isCertifiedColdCoordinator = [](sim::SimFuncOp function) {
-    if (!function ||
-        SymbolTable::getSymbolVisibility(function) !=
-            SymbolTable::Visibility::Private ||
-        function.getEntryKind() != sim::EntryKind::Always ||
-        function.getHomeRegion() != sim::EventRegion::Observed ||
-        function.getDomain() != sim::ExecutionDomain::Design ||
-        (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-         !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
-      return false;
-    unsigned clockWaits = 0;
-    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
-    return clockWaits == 1;
-  };
-  auto disableExactFanout = [&] {
+  auto disableExactFanout = [&](StringRef reason,
+                                sim::SimFuncOp function = {}) {
+    if (module->hasAttr("obelisk.debug.native_timing")) {
+      auto diagnostic = module.emitRemark("static fanout disabled: ");
+      diagnostic << reason;
+      if (function)
+        diagnostic << " in " << function.getSymName();
+    }
     plan.entries.clear();
     plan.fragments.clear();
+    plan.runtimeTransitionStates.clear();
     plan.exact = false;
   };
   auto resumeClosure = [&](uint32_t suspension) {
@@ -778,16 +781,63 @@ buildNativeStaticFanoutPlan(ModuleOp module,
       return module.emitError(
                  "static fanout references a stale compute fragment"),
              failure();
-    // IEEE 1800-2017 Clause 31.7 clock-set coordinators retain occurrence
-    // ordering in the runtime and are deliberately outside the certified
-    // native island. An arbitrary absent actor must instead invalidate exact
-    // fanout; silently omitting it would make the generated dependency table
-    // incomplete.
+    // IEEE 1800-2017 Clause 31.7 clock-set coordinators and the exact Clause
+    // 31.9.1 delayed-terminal monitors retain occurrence ordering in the
+    // runtime and are deliberately outside the certified native island. An
+    // arbitrary absent actor must instead invalidate exact fanout; silently
+    // omitting it would make the generated dependency table incomplete.
     if (actor == actorSlots.end() && certifiedStaticIsland &&
-        isCertifiedColdCoordinator(function))
+        runtimeOwnedFanoutActors.contains(function.getOperation())) {
+      // IEEE 1800-2017 31.7 and 31.9.1 keep these exact waits in the runtime,
+      // but their watched roots must still publish transitions. They are not
+      // generated fanout entries and therefore do not acquire an actor slot.
+      for (sim::ComputeEffectAttr effect : watches) {
+        if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+            effect.getDynamic() || effect.getDeferred() ||
+            (effect.getResource() != sim::ComputeResourceKind::Storage &&
+             effect.getResource() != sim::ComputeResourceKind::Net) ||
+            effect.getWidth() == 0) {
+          disableExactFanout("runtime-owned watch is not statically bound",
+                             function);
+          continue;
+        }
+        const auto &handles =
+            effect.getResource() == sim::ComputeResourceKind::Storage
+                ? stateLayout.storage
+                : stateLayout.nets;
+        auto handle = handles.find(effect.getDescriptor());
+        if (handle == handles.end())
+          return block->getTerminator()->emitError(
+                     "runtime-owned fanout references unknown state"),
+                 failure();
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+            decoded.offset != 0)
+          return block->getTerminator()->emitError(
+                     "runtime-owned fanout has an invalid native root"),
+                 failure();
+        auto bound =
+            llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+              return candidate.handleID == decoded.id;
+            });
+        if (bound == stateLayout.bounds.end() ||
+            effect.getLow() > bound->width ||
+            effect.getWidth() > bound->width - effect.getLow())
+          return block->getTerminator()->emitError(
+                     "runtime-owned fanout range is out of bounds"),
+                 failure();
+        // Clause 31.9.1's delayed-source monitor and its zero-delay Clause
+        // 31.7 mate form one occurrence cohort. The pre-rewrite structural
+        // snapshot names only actors in that negative component; unrelated
+        // timing coordinators retain their static publication plan.
+        if (negativeTimingFanoutActors.contains(function.getOperation()))
+          plan.runtimeTransitionStates.insert(decoded.id);
+      }
       continue;
+    }
     if (actor == actorSlots.end()) {
-      disableExactFanout();
+      disableExactFanout("watched actor has no static slot", function);
       continue;
     }
     Operation *terminator = block->getTerminator();
@@ -804,7 +854,7 @@ buildNativeStaticFanoutPlan(ModuleOp module,
       // a compiled condition read must not become a fanout dependency.
       site = suspend.getSiteAttr();
     } else {
-      disableExactFanout();
+      disableExactFanout("watch is not owned by a fixed suspension", function);
       continue;
     }
     if (!site || site.getId() == 0)
@@ -828,7 +878,7 @@ buildNativeStaticFanoutPlan(ModuleOp module,
           effect.getDynamic() || effect.getDeferred() ||
           (effect.getResource() != sim::ComputeResourceKind::Storage &&
            effect.getResource() != sim::ComputeResourceKind::Net)) {
-        disableExactFanout();
+        disableExactFanout("watch has dynamic descriptor provenance", function);
         continue;
       }
       const auto &handles =
@@ -871,7 +921,7 @@ buildNativeStaticFanoutPlan(ModuleOp module,
         edge = OBELISK_RT_WAIT_EDGE_BOTH;
         break;
       default:
-        disableExactFanout();
+        disableExactFanout("watch has unsupported trigger", function);
         continue;
       }
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,

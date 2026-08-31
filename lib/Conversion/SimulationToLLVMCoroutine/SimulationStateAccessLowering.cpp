@@ -118,6 +118,8 @@ public:
     bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
+    bool runtimePublication =
+        function->hasAttr("obelisk.runtime_publication_certified");
     bool continuous = !isa<sim::EventType>(valueType) &&
                       (op->hasAttr(continuousStoreAttrName) ||
                        entryKind == sim::EntryKind::Continuous ||
@@ -254,10 +256,15 @@ public:
                                   *width),
                      save(oldValue), save(notificationValue)});
     } else {
+      // IEEE 1800-2017 Clause 31.9.1 transport commits must wake the
+      // runtime-owned delayed-terminal coordinator. Select the generic
+      // publication call while lowering this structurally certified cold
+      // function; ordinary stores retain the branch-free static AOT call.
       notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
                    *width, oldValue, oldUnknown, notificationValue,
                    notificationUnknown,
-                   directRange && (assumeClean || !directRange->guarded) &&
+                   !runtimePublication && directRange &&
+                           (assumeClean || !directRange->guarded) &&
                            directLayout && directLayout->transitionHandlesExact
                        ? directRange
                        : std::nullopt);

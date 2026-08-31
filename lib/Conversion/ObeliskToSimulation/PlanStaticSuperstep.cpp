@@ -1,5 +1,6 @@
 //===- PlanStaticSuperstep.cpp - Plan guarded native supersteps ----------===//
 
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -48,23 +49,13 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
   if (graph.getWorkers() != 1)
     reject("static supersteps require one worker");
 
-  auto isRuntimeClockCoordinator = [&](sim::SimFuncOp function) {
-    if (!function ||
-        SymbolTable::getSymbolVisibility(function) !=
-            SymbolTable::Visibility::Private ||
-        function.getEntryKind() != sim::EntryKind::Always ||
-        function.getHomeRegion() != sim::EventRegion::Observed ||
-        function.getDomain() != sim::ExecutionDomain::Design ||
-        (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-         !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
-      return false;
-    unsigned clockWaits = 0;
-    function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
-    return clockWaits == 1;
+  auto isRuntimeOwnedColdActor = [&](sim::SimFuncOp function) {
+    return analysis::isRuntimeClockCoordinator(function) ||
+           analysis::isNegativeTimingDelayMonitor(function);
   };
-  auto isolatesRuntimeClockCoordinators = [&](sim::ComputeGroupAttr group) {
+  auto isolatesRuntimeOwnedColdActors = [&](sim::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> nativeMembers;
-    bool hasRuntimeClockCoordinator = false;
+    bool hasRuntimeOwnedActor = false;
     for (int64_t member : group.getFragments().asArrayRef()) {
       if (member < 0 ||
           static_cast<uint64_t>(member) >= graph.getNodes().size())
@@ -75,12 +66,12 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
                                     ? design.lookupSymbol<sim::SimFuncOp>(
                                           fragment.getFunction().getValue())
                                     : nullptr;
-      if (isRuntimeClockCoordinator(function))
-        hasRuntimeClockCoordinator = true;
+      if (isRuntimeOwnedColdActor(function))
+        hasRuntimeOwnedActor = true;
       else if (fragment)
         nativeMembers.insert(static_cast<uint32_t>(member));
     }
-    if (!hasRuntimeClockCoordinator)
+    if (!hasRuntimeOwnedActor)
       return false;
 
     // Recompute scheduling SCCs after removing the runtime-owned actors. This
@@ -215,11 +206,12 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
       // externally mutable event queue. Only a control-loop group has a
       // scheduler-dependent boundary that the clean transaction cannot
       // certify.
-      // IEEE 1800-2017 16.14 and Clause 31 coordinator loops retain their
-      // exact cohort ordering in the runtime. They are a cold hybrid island,
-      // not a reason to discard an otherwise closed native superstep.
+      // IEEE 1800-2017 16.14 and Clause 31 coordinator/transport-monitor
+      // loops retain their exact cohort ordering in the runtime. They are a
+      // cold hybrid island, not a reason to discard an otherwise closed
+      // native superstep.
       if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop &&
-          !isolatesRuntimeClockCoordinators(group))
+          !isolatesRuntimeOwnedColdActors(group))
         reject("control-loop compute group");
     }
   }
@@ -246,12 +238,24 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
     appendActor(root);
     design.walk([&](sim::SimSpawnOp spawn) {
       if (spawn->getParentOfType<sim::SimFuncOp>() != root) {
+        sim::SimFuncOp actor =
+            design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+        // IEEE 1800-2017 31.9.1 requires a transport-delayed copy of each
+        // affected terminal.  Its compiler-generated one-shot commit is the
+        // only non-root spawn admitted here: the shared structural certificate
+        // also used by native AOT proves that the helper cannot introduce an
+        // unplanned watcher or recursively spawn work.
+        if (analysis::isNegativeTimingDelayMonitorSpawn(spawn, actor))
+          return;
         reject("spawn outside the root initializer");
         return;
       }
       sim::SimFuncOp actor =
           design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
-      if (isRuntimeClockCoordinator(actor))
+      // Clause 31.7 coordinators and the exact Clause 31.9.1 transport
+      // monitors keep their waits in the generic scheduler. The latter is
+      // certified by its complete CFG and unique commit-spawn shape.
+      if (isRuntimeOwnedColdActor(actor))
         return;
       appendActor(actor);
     });

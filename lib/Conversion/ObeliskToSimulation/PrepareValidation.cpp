@@ -23,17 +23,15 @@ namespace {
 /// Node kinds whose semantics are declarative but that derive from a shared
 /// generic base, so they cannot carry the SemanticDeclarativeNode trait.
 bool isDeclarativeLeafNode(Operation *op) {
-  return isa<
-      semantic::SVCoverCrossSymbolOp, semantic::SVCoverCrossBodySymbolOp,
-      semantic::SVDPIOpenArrayTypeOp>(op);
+  return isa<semantic::SVCoverCrossSymbolOp, semantic::SVCoverCrossBodySymbolOp,
+             semantic::SVDPIOpenArrayTypeOp>(op);
 }
 
 bool isSupportedRandSequenceNode(Operation *op) {
   return isa<semantic::SVRandSequenceStatementOp,
-             semantic::SVRandSeqProductionSymbolOp,
-             semantic::SVProdItemOp, semantic::SVCodeBlockProdOp,
-             semantic::SVIfElseProdOp, semantic::SVRepeatProdOp,
-             semantic::SVCaseProdOp>(op);
+             semantic::SVRandSeqProductionSymbolOp, semantic::SVProdItemOp,
+             semantic::SVCodeBlockProdOp, semantic::SVIfElseProdOp,
+             semantic::SVRepeatProdOp, semantic::SVCaseProdOp>(op);
 }
 
 bool isCoverageNode(Operation *op) {
@@ -142,34 +140,30 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
     }
   });
 
-  std::function<bool(Operation *)> isCoverageConstant =
-      [&](Operation *expression) {
-        if (isa<semantic::SVIntegerLiteralOp,
-                semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
-          return true;
-        if (isa<semantic::SVConversionExpressionOp,
-                semantic::SVUnaryExpressionOp,
-                semantic::SVBinaryExpressionOp>(expression)) {
-          SmallVector<Operation *> children = getChildren(expression);
-          return !children.empty() &&
-                 llvm::all_of(children, isCoverageConstant);
-        }
-        SymbolRefAttr reference;
-        if (auto named =
-                dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
-          reference = named.getReferencedSymbol();
-        else if (auto hierarchical =
-                     dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
-                         expression))
-          reference = hierarchical.getReferencedSymbol();
-        if (!reference)
-          return false;
-        auto symbol = result.symbols.find(reference.getLeafReference());
-        return symbol != result.symbols.end() &&
-               isa<semantic::SVParameterSymbolOp,
-                   semantic::SVEnumValueSymbolOp,
-                   semantic::SVSpecparamSymbolOp>(symbol->second);
-      };
+  std::function<bool(Operation *)> isCoverageConstant = [&](Operation
+                                                                *expression) {
+    if (isa<semantic::SVIntegerLiteralOp,
+            semantic::SVUnbasedUnsizedIntegerLiteralOp>(expression))
+      return true;
+    if (isa<semantic::SVConversionExpressionOp, semantic::SVUnaryExpressionOp,
+            semantic::SVBinaryExpressionOp>(expression)) {
+      SmallVector<Operation *> children = getChildren(expression);
+      return !children.empty() && llvm::all_of(children, isCoverageConstant);
+    }
+    SymbolRefAttr reference;
+    if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+      reference = named.getReferencedSymbol();
+    else if (auto hierarchical =
+                 dyn_cast<semantic::SVHierarchicalValueExpressionOp>(
+                     expression))
+      reference = hierarchical.getReferencedSymbol();
+    if (!reference)
+      return false;
+    auto symbol = result.symbols.find(reference.getLeafReference());
+    return symbol != result.symbols.end() &&
+           isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
+               semantic::SVSpecparamSymbolOp>(symbol->second);
+  };
 
   // Reject unsupported declarative families and dynamic object types before
   // producing target IR, so constructs never survive as silently dropped
@@ -209,6 +203,21 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
     if (isa<semantic::SVSystemTimingCheckSymbolOp>(op)) {
       if (op->hasAttr("obelisk.basic_timing_check"))
         return;
+      if (op->hasAttr("obelisk.invalid_negative_timing_window")) {
+        emitError(getSemanticLocation(op))
+            << "IEEE 1800-2017 31.9 requires the two negative timing-check "
+               "limits to sum to more than one simulation precision unit";
+        invalid = true;
+        return;
+      }
+      if (op->hasAttr("obelisk.negative_timing_check")) {
+        emitError(getSemanticLocation(op))
+            << "IEEE 1800-2017 31.9.2 timestamp/timecheck conditions and "
+               "explicit delayed_reference/delayed_data are not executable "
+               "in the implicit delayed-signal tranche";
+        invalid = true;
+        return;
+      }
       if (op->hasAttr("obelisk.unsupported_timing_condition")) {
         emitError(getSemanticLocation(op))
             << "IEEE 1800-2017 31.7 timing-check condition must be one "
