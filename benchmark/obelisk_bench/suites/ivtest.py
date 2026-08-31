@@ -308,7 +308,10 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         source = str(desc.source)
         if desc.source.parent == ivtest_dir / "ivltests":
             source = f"./ivltests/{desc.source.name}"
-        sources = [source, *source_args]
+        # vvp_reg.pl appends the named test source after every source operand
+        # carried in the comma-separated argument field. The order is
+        # observable through compilation-unit macros and directives.
+        sources = [*source_args, source]
         compiled = runner.compile_design(
             obelisk, sources, str(binary), compile_flags, std=std,
             single_unit=SINGLE_UNIT and not separate_units,

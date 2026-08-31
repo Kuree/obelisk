@@ -145,10 +145,12 @@ class FixtureDirectoryTest(unittest.TestCase):
             source.parent.mkdir()
             source.write_text("module compile_only; endmodule\n",
                               encoding="ascii")
+            (source.parent / "first.v").write_text(
+                "module first; endmodule\n", encoding="ascii")
             descriptor = ivtest.Descriptor(
                 key="compile_only",
                 test_type="CO",
-                iverilog_args=[],
+                iverilog_args=["-u", "./ivltests/first.v"],
                 source=source,
                 gold=None,
                 artifact_diffs=[],
@@ -161,13 +163,18 @@ class FixtureDirectoryTest(unittest.TestCase):
                 mock.patch.object(ivtest.runner, "build_vpi_inputs",
                                   return_value=mock.Mock(ok=True, inputs=[])),
                 mock.patch.object(ivtest.runner, "compile_design",
-                                  return_value=compile_result),
+                                  return_value=compile_result) as compile_design,
                 mock.patch.object(ivtest.runner, "execute") as execute,
             ):
                 _, outcome = ivtest.judge_one(
                     "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
 
             self.assertEqual(outcome.status, model.PASS)
+            self.assertEqual(
+                compile_design.call_args.args[1],
+                ["./ivltests/first.v", "./ivltests/compile_only.v"],
+            )
+            self.assertFalse(compile_design.call_args.kwargs["single_unit"])
             execute.assert_not_called()
 
 
