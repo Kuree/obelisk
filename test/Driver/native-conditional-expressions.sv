@@ -196,6 +196,12 @@ module native_conditional_expressions;
   end
 endmodule
 
+// IEEE 1800-2017 11.4.11 reaches the Table 7-1 default for a nonintegral
+// result only "if cond_predicate evaluates to an ambiguous value and the
+// expressions are not logically equivalent"; equivalent arms return "either the
+// first or second expression". The string, real, and class arms below are
+// written to agree, so an ambiguous predicate keeps their value. The event arms
+// agree too, but an event-valued conditional still yields the null of Table 7-1.
 // CHECK: known-true value=0011 calls=1 order=1
 // CHECK-NEXT: known-false value=1100 calls=1 order=2
 // CHECK-NEXT: ambiguous value=10xz calls=2 order=12
@@ -207,9 +213,9 @@ endmodule
 // CHECK-NEXT: packed-union value=10xz0x11
 // CHECK-NEXT: unknown-and-false value=1100 calls=2 order=72
 // CHECK-NEXT: unknown-and-true value=xxxx calls=3 order=712
-// CHECK-NEXT: ambiguous-string value='' len=0 calls=2 order=12
-// CHECK-NEXT: ambiguous-real value=0.0
-// CHECK-NEXT: ambiguous-class null=1
+// CHECK-NEXT: ambiguous-string value='same' len=4 calls=2 order=12
+// CHECK-NEXT: ambiguous-real value=1.5
+// CHECK-NEXT: ambiguous-class null=0
 // CHECK-NEXT: ambiguous-event distinct=1
 // CHECK-NEXT: pattern-capture value=0110
 // CHECK-NEXT: pattern-short-circuit value=1001 calls=0

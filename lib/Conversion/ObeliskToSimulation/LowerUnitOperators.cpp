@@ -1903,7 +1903,17 @@ FailureOr<Value> UnitLowering::mergeConditionalValues(Value condition,
                         << type;
     return failure();
   }
-  return defaultValue;
+  // 11.4.11 reaches the type's default only once the arms have been "compared
+  // for logical equivalence as described in 11.4.5"; two arms that already
+  // agree return that value whatever their type. The aggregate paths above
+  // apply the same rule per element.
+  FailureOr<Value> equal = conditionalEqual(trueValue, falseValue, type,
+                                            location);
+  if (failed(equal))
+    return failure();
+  return arith::SelectOp::create(builder, location, *equal, trueValue,
+                                 defaultValue)
+      .getResult();
 }
 
 FailureOr<Value> UnitLowering::lowerConditionalExpression(
