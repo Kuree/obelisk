@@ -101,11 +101,23 @@ class AreaTest(unittest.TestCase):
     def test_fallback_features_report_as_other(self):
         self.assertEqual(classify.area_of("unnamed construct wibble"), "Other")
 
+    def test_slang_bugs_have_an_upstream_area(self):
+        self.assertEqual(classify.area_of(classify.SLANG_BUG_FEATURE),
+                         "Upstream Slang")
+
 
 class FeaturesInLogTest(unittest.TestCase):
     def test_crash_outranks_everything_else(self):
         log = "error: unsupported semantic node: obelisk.sv.statement.rand_case\nStack dump\n"
         self.assertEqual(classify.features_in_log(log)[0], classify.CRASH_FEATURE)
+
+    def test_slang_stack_is_distinct_from_an_obelisk_crash(self):
+        log = ("terminate called after throwing std::out_of_range\n"
+               "Stack dump:\n"
+               "#0 slang::ConstantValue::at(unsigned long)\n"
+               "#1 obelisk::frontend::importSystemVerilog()\n")
+        self.assertEqual(classify.features_in_log(log),
+                         [classify.SLANG_BUG_FEATURE])
 
     def test_error_matching_no_rule_lands_in_the_long_tail(self):
         # "unexpected ';'" must not be read as the parse rule's "expected ';'".

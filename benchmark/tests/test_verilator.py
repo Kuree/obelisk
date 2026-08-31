@@ -274,6 +274,20 @@ class ObjectDirectoryTest(unittest.TestCase):
             )
 
 
+class DependencyFailureTest(unittest.TestCase):
+    def test_known_slang_bug_remains_a_tagged_failure(self):
+        log = verilator.classify_dependency_failure(
+            "t_array_query_with", "Stack dump\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 7.12.1", log)
+        self.assertTrue(log.endswith("Stack dump\n"))
+
+    def test_unlisted_failure_is_unchanged(self):
+        self.assertEqual(
+            verilator.classify_dependency_failure("t_other", "error\n"),
+            "error\n")
+
+
 class ExcludedTest(unittest.TestCase):
     def test_an_excluded_test_is_skipped_without_compiling(self):
         # The skip has to come before the test file is even read, so that
@@ -283,14 +297,6 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(outcome.status, model.SKIP)
         self.assertIn("IEEE 1800-2017 7.6", outcome.log)
         self.assertIn("by position", outcome.log)
-
-    def test_pinned_frontend_crash_is_an_explicit_skip(self):
-        outcome = verilator.judge_one(
-            "/nonexistent/obelisk",
-            Path("/nonexistent/t/t_array_query_with.v"), 10)
-        self.assertEqual(outcome.status, model.SKIP)
-        self.assertIn("IEEE 1800-2017 7.12.1", outcome.log)
-        self.assertIn("pinned Slang v11", outcome.log)
 
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():

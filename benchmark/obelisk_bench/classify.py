@@ -237,6 +237,8 @@ DIAGNOSTIC_MARKERS = ("error:", "unsupported", "exceeded", "rejected image:")
 
 CRASH_MARKERS = ("PLEASE submit a bug report", "Stack dump", "terminate called")
 CRASH_FEATURE = "Compiler crash"
+SLANG_BUG_FEATURE = "Slang bug"
+SLANG_BUG_MARKER = "known Slang bug:"
 UNCLASSIFIED = "Unclassified long tail"
 
 
@@ -261,7 +263,9 @@ def features_in_log(text: str) -> list[str]:
     text = ANSI.sub("", text)
     seen: list[str] = []
     if any(marker in text for marker in CRASH_MARKERS):
-        seen.append(CRASH_FEATURE)
+        seen.append(SLANG_BUG_FEATURE
+                    if SLANG_BUG_MARKER in text or "slang::" in text
+                    else CRASH_FEATURE)
     matched_any = False
     for line in text.splitlines():
         if not any(marker in line for marker in DIAGNOSTIC_MARKERS):
@@ -271,7 +275,8 @@ def features_in_log(text: str) -> list[str]:
             matched_any = True
             if hit[0] not in seen:
                 seen.append(hit[0])
-    if not matched_any and CRASH_FEATURE not in seen:
+    if (not matched_any and CRASH_FEATURE not in seen and
+            SLANG_BUG_FEATURE not in seen):
         # There were errors (the log is a failure) but no rule matched: a
         # long-tail parse/elaboration gap that needs reading individually.
         seen.append(UNCLASSIFIED)
@@ -282,6 +287,8 @@ def area_of(feature: str) -> str:
     """Return the area a feature belongs to (for table grouping)."""
     if feature == CRASH_FEATURE:
         return "Bug"
+    if feature == SLANG_BUG_FEATURE:
+        return "Upstream Slang"
     if feature == UNCLASSIFIED:
         return "Other"
     for _, rule_feature, area in RULES:
