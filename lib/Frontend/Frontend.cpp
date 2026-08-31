@@ -5370,13 +5370,6 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   std::unique_ptr<slang::ast::Compilation> compilation =
       driver.createCompilation();
   driver.reportCompilation(*compilation, /*quiet=*/true);
-  if (!driver.reportDiagnostics(/*quiet=*/true))
-    return failure();
-
-  std::unique_ptr<SDFAnnotationDatabase> sdfAnnotations =
-      buildSDFAnnotationDatabase(*compilation, driver.sourceManager);
-  if (!sdfAnnotations)
-    return failure();
 
   // Slang's value-driver checks are part of semantic analysis rather than
   // AST construction. Run them through the driver so their diagnostics cross
@@ -5386,6 +5379,11 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   std::unique_ptr<slang::analysis::AnalysisManager> analysisManager =
       driver.runAnalysis(*compilation);
   if (!driver.reportDiagnostics(/*quiet=*/true))
+    return failure();
+
+  std::unique_ptr<SDFAnnotationDatabase> sdfAnnotations =
+      buildSDFAnnotationDatabase(*compilation, driver.sourceManager);
+  if (!sdfAnnotations)
     return failure();
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
