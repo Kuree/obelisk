@@ -53,6 +53,29 @@ class ExcludedTest(unittest.TestCase):
 
 
 class FixtureDirectoryTest(unittest.TestCase):
+    def test_continued_list_entry_preserves_sources_and_unit_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ivtest_dir = Path(temporary)
+            list_path = ivtest_dir / "continued.list"
+            list_path.write_text(
+                "multi CE,-g2009,-u,\\\n"
+                "  ./ivltests/part1.v,\\\n"
+                "  ./ivltests/part2.sv ivltests gold=multi.gold\n",
+                encoding="ascii",
+            )
+            descriptor = ivtest.read_items(ivtest_dir, [list_path])[0]
+
+            self.assertEqual(descriptor.key, "multi")
+            self.assertEqual(
+                descriptor.iverilog_args,
+                ["-g2009", "-u", "./ivltests/part1.v",
+                 "./ivltests/part2.sv"],
+            )
+            self.assertEqual(descriptor.source,
+                             ivtest_dir / "ivltests" / "multi.v")
+            self.assertEqual(descriptor.gold,
+                             ivtest_dir / "gold" / "multi.gold")
+
     def test_fixture_paths_are_normalized_only_to_the_upstream_spelling(self):
         ivtest_dir = Path("/checkout/ivtest")
         run_dir = Path("/tmp/run")

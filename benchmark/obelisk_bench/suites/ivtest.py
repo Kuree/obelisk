@@ -226,7 +226,19 @@ def read_items(ivtest_dir: Path, lists: list[Path]) -> list[Descriptor]:
     """
     entries: dict[str, list[str]] = {}
     for path in lists:
-        for raw in path.read_text(encoding="utf-8").splitlines():
+        logical_lines: list[str] = []
+        continued = ""
+        for physical in path.read_text(encoding="utf-8").splitlines():
+            raw = physical.lstrip() if continued else physical
+            continued += raw
+            if continued.endswith("\\"):
+                continued = continued[:-1]
+                continue
+            logical_lines.append(continued)
+            continued = ""
+        if continued:
+            logical_lines.append(continued)
+        for raw in logical_lines:
             line = raw.split("#", 1)[0].strip()
             if not line:
                 continue
@@ -247,7 +259,17 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
     if not desc.source.exists():
         return (desc.key, model.Outcome(model.SKIP))
 
-    flags, std, plusargs = icarus.translate_args(desc.iverilog_args)
+    source_suffixes = {".v", ".sv"}
+    source_args = [
+        argument for argument in desc.iverilog_args
+        if Path(argument).suffix.lower() in source_suffixes
+    ]
+    compile_args = [
+        argument for argument in desc.iverilog_args
+        if Path(argument).suffix.lower() not in source_suffixes
+    ]
+    separate_units = "-u" in compile_args
+    flags, std, plusargs = icarus.translate_args(compile_args)
     # ivtest defines this for non-strict runs; harmless to Obelisk, faithful to
     # how the sources expect to be compiled.
     flags += ["-D", "__ICARUS_UNSIZED__"]
@@ -280,9 +302,10 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         source = str(desc.source)
         if desc.source.parent == ivtest_dir / "ivltests":
             source = f"./ivltests/{desc.source.name}"
+        sources = [source, *source_args]
         compiled = runner.compile_design(
-            obelisk, [source], str(binary), compile_flags, std=std,
-            single_unit=SINGLE_UNIT,
+            obelisk, sources, str(binary), compile_flags, std=std,
+            single_unit=SINGLE_UNIT and not separate_units,
             native_inputs=native.inputs, vpi=selected_vpi, cwd=tmp,
         )
 
