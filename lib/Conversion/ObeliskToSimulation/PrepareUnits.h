@@ -39,6 +39,10 @@ struct PreparedVirtualInterfaceCallee {
 };
 
 struct PreparedUnits {
+  using VirtualInterfaceCalleeIndex =
+      llvm::StringMap<llvm::StringMap<llvm::DenseMap<
+          mlir::SymbolRefAttr, mlir::SmallVector<unsigned>>>>;
+
   mlir::SmallVector<PreparedUnit> units;
   llvm::StringMap<mlir::Operation *> directCalleeSources;
   llvm::DenseMap<mlir::Operation *, std::string> directCalleeNames;
@@ -47,6 +51,7 @@ struct PreparedUnits {
       externForkJoinTargets;
   llvm::DenseMap<mlir::Operation *, sim::SimCodeUnitDeclOp> declarations;
   mlir::SmallVector<PreparedVirtualInterfaceCallee> virtualInterfaceCallees;
+  VirtualInterfaceCalleeIndex virtualInterfaceCalleeIndex;
   uint64_t rootID;
 
   /// Resolve a direct call by semantic symbol identity, falling back to its

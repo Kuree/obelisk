@@ -183,12 +183,19 @@ PreparedUnits::resolveVirtualInterfaceCallees(
   if (!callerDesign)
     return {};
   StringRef design = getHierarchyName(callerDesign);
+  auto methodCandidates = virtualInterfaceCalleeIndex.find(call.getCalleeName());
+  if (methodCandidates == virtualInterfaceCalleeIndex.end())
+    return {};
+  auto designCandidates = methodCandidates->second.find(design);
+  if (designCandidates == methodCandidates->second.end())
+    return {};
+  auto identityCandidates = designCandidates->second.find(identity);
+  if (identityCandidates == designCandidates->second.end())
+    return {};
   SmallVector<const PreparedVirtualInterfaceCallee *> result;
-  for (const PreparedVirtualInterfaceCallee &candidate :
-       virtualInterfaceCallees) {
-    if (candidate.method != call.getCalleeName() ||
-        candidate.interfaceIdentity != identity || candidate.design != design)
-      continue;
+  for (unsigned index : identityCandidates->second) {
+    const PreparedVirtualInterfaceCallee &candidate =
+        virtualInterfaceCallees[index];
     // An import modport consumes either an ordinary interface method or an
     // extern implemented by a provider's export modport. An export access can
     // only name the latter.
@@ -537,17 +544,22 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     if (failed(addExternVirtualCandidate(stub, *target, prototype)))
       invalid = true;
   }
+  for (auto [index, candidate] :
+       llvm::enumerate(result.virtualInterfaceCallees))
+    result.virtualInterfaceCalleeIndex[candidate.method][candidate.design]
+                                         [candidate.interfaceIdentity]
+                                             .push_back(index);
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
     auto lhs = cast<semantic::SVSubroutineSymbolOp>(lhsRecord.source);
-    for (const PreparedVirtualInterfaceCallee &rhsRecord :
-         ArrayRef<PreparedVirtualInterfaceCallee>(
-             result.virtualInterfaceCallees)
-             .drop_front(index + 1)) {
-      if (lhsRecord.interfaceIdentity != rhsRecord.interfaceIdentity ||
-          lhsRecord.method != rhsRecord.method ||
-          lhsRecord.design != rhsRecord.design)
+    const SmallVector<unsigned> &candidateIndices =
+        result.virtualInterfaceCalleeIndex[lhsRecord.method][lhsRecord.design]
+                                          [lhsRecord.interfaceIdentity];
+    for (unsigned rhsIndex : candidateIndices) {
+      if (rhsIndex <= index)
         continue;
+      const PreparedVirtualInterfaceCallee &rhsRecord =
+          result.virtualInterfaceCallees[rhsIndex];
       auto rhs = cast<semantic::SVSubroutineSymbolOp>(rhsRecord.source);
       if (!compatibleABI(lhs, rhs)) {
         emitError(getSemanticLocation(rhs))
