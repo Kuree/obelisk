@@ -880,15 +880,95 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
            isContextResolvableStorage(capture.second);
   };
 
-  bool changed;
-  do {
-    changed = false;
-    auto mergeCaptures = [&](Operation *destination, Operation *source) {
+  // A caller depends on each callee's capture contract. Propagate changes
+  // backwards through that graph with a worklist instead of rescanning every
+  // edge until a global fixed point. UVM has long virtual call chains; the
+  // global scan revisited the entire library for every level in those chains.
+  struct CaptureDependency {
+    Operation *destination;
+    size_t descriptorCursor = 0;
+    size_t readCursor = 0;
+    size_t writtenCursor = 0;
+  };
+  llvm::DenseMap<Operation *, SmallVector<CaptureDependency>> dependents;
+  auto addDependency = [&](Operation *destination, Operation *source) {
+    if (destination == source)
+      return;
+    auto &destinations = dependents[source];
+    if (llvm::none_of(destinations, [&](const CaptureDependency &dependency) {
+          return dependency.destination == destination;
+        }))
+      destinations.push_back({destination});
+  };
+  // Every declaration in a virtual family shares one capture ABI.
+  for (auto [method, overridden] : virtualOverrideEdges) {
+    addDependency(method, overridden);
+    addDependency(overridden, method);
+  }
+  for (const auto &edge : callEdges)
+    for (Operation *target : edge.second)
+      addDependency(edge.first, target);
+
+  // Keep membership inventories alive across edge visits. Reconstructing one
+  // from the full destination vector for every visit was quadratic in the
+  // size of generic class libraries.
+  llvm::DenseMap<Operation *, llvm::StringSet<>> capturedPaths;
+  for (const auto &entry : result.descriptors)
+    for (const auto &capture : entry.second)
+      capturedPaths[entry.first].insert(capture.first);
+
+  // StringSet provides fast membership but no insertion-order delta. Mirror
+  // its initial entries in vectors so each dependency edge can consume only
+  // paths added since its previous visit.
+  llvm::DenseMap<Operation *, SmallVector<StringRef>> orderedReads;
+  for (const auto &entry : result.readDescriptors)
+    for (const auto &read : entry.second)
+      orderedReads[entry.first].push_back(read.getKey());
+  llvm::DenseMap<Operation *, SmallVector<StringRef>> orderedWrites;
+  for (const auto &entry : writtenDescriptors)
+    for (const auto &written : entry.second)
+      orderedWrites[entry.first].push_back(written.getKey());
+
+  // Populate every node before taking references to DenseMap values in the
+  // propagation loop; inserting a previously empty destination there could
+  // rehash a map and invalidate the active source vector.
+  auto prepareNode = [&](Operation *node) {
+    (void)result.descriptors[node];
+    (void)result.readDescriptors[node];
+    (void)writtenDescriptors[node];
+    (void)capturedPaths[node];
+    (void)orderedReads[node];
+    (void)orderedWrites[node];
+  };
+  for (const auto &entry : dependents) {
+    prepareNode(entry.first);
+    for (const CaptureDependency &dependency : entry.second)
+      prepareNode(dependency.destination);
+  }
+
+  SmallVector<Operation *> worklist;
+  llvm::DenseSet<Operation *> queued;
+  auto enqueue = [&](Operation *source) {
+    if (dependents.contains(source) && queued.insert(source).second)
+      worklist.push_back(source);
+  };
+  for (const auto &entry : dependents)
+    enqueue(entry.first);
+
+  for (size_t next = 0; next < worklist.size(); ++next) {
+    Operation *source = worklist[next];
+    queued.erase(source);
+    auto &sourceDescriptors = result.descriptors[source];
+    auto &sourceReads = orderedReads[source];
+    auto &sourceWrites = orderedWrites[source];
+    for (CaptureDependency &dependency : dependents[source]) {
+      Operation *destination = dependency.destination;
+      bool changed = false;
       auto &captures = result.descriptors[destination];
-      llvm::StringSet<> seen;
-      for (auto &capture : captures)
-        seen.insert(capture.first);
-      for (auto &capture : result.descriptors[source]) {
+      auto &seen = capturedPaths[destination];
+      for (; dependency.descriptorCursor < sourceDescriptors.size();
+           ++dependency.descriptorCursor) {
+        const auto &capture = sourceDescriptors[dependency.descriptorCursor];
         // Functions and tasks resolve ordinary design storage from their
         // context. Keeping callee-only storage in the caller made large class
         // libraries grow a quadratic capture ABI even though no reference is
@@ -900,23 +980,28 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           changed = true;
         }
       }
-      for (const auto &read : result.readDescriptors[source])
-        changed |=
-            result.readDescriptors[destination].insert(read.getKey()).second;
-      for (const auto &written : writtenDescriptors[source])
-        changed |= writtenDescriptors[destination]
-                       .insert(written.getKey())
-                       .second;
-    };
-    // Every declaration in a virtual family shares one capture ABI.
-    for (auto [method, overridden] : virtualOverrideEdges) {
-      mergeCaptures(method, overridden);
-      mergeCaptures(overridden, method);
+      for (; dependency.readCursor < sourceReads.size();
+           ++dependency.readCursor) {
+        StringRef read = sourceReads[dependency.readCursor];
+        auto inserted = result.readDescriptors[destination].insert(read);
+        if (inserted.second) {
+          orderedReads[destination].push_back(inserted.first->getKey());
+          changed = true;
+        }
+      }
+      for (; dependency.writtenCursor < sourceWrites.size();
+           ++dependency.writtenCursor) {
+        StringRef written = sourceWrites[dependency.writtenCursor];
+        auto inserted = writtenDescriptors[destination].insert(written);
+        if (inserted.second) {
+          orderedWrites[destination].push_back(inserted.first->getKey());
+          changed = true;
+        }
+      }
+      if (changed)
+        enqueue(destination);
     }
-    for (const auto &edge : callEdges)
-      for (Operation *target : edge.second)
-        mergeCaptures(edge.first, target);
-  } while (changed);
+  }
 
   // IEEE 1800-2017 9.2.2.2.1 excludes variables written anywhere in an
   // always_comb procedure, including through called functions, from its
