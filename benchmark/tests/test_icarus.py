@@ -18,9 +18,22 @@ class TranslateArgsTest(unittest.TestCase):
             (["-Tmax"], "--timing=max"),
         ):
             with self.subTest(source=source):
-                flags, standard = icarus.translate_args(source)
+                flags, standard, plusargs = icarus.translate_args(source)
                 self.assertEqual(flags, [expected])
                 self.assertEqual(standard, "1800-2017")
+                self.assertEqual(plusargs, [])
+
+    def test_plusargs_are_runtime_arguments_not_compile_flags(self):
+        # IEEE 1800-2017 21.6 plusargs are standard simulation arguments, not
+        # Icarus flags, so they pass through untranslated -- but ivtest packs
+        # them into the same field as the compile flags. Dropping them silently
+        # made every $test$plusargs and $value$plusargs test read an absent
+        # option.
+        flags, standard, plusargs = icarus.translate_args(
+            ["-Tmin", "+option", "+hex=123_x_z", "-D", "FOO"])
+        self.assertEqual(flags, ["--timing=min", "-D", "FOO"])
+        self.assertEqual(standard, "1800-2017")
+        self.assertEqual(plusargs, ["+option", "+hex=123_x_z"])
 
 
 if __name__ == "__main__":

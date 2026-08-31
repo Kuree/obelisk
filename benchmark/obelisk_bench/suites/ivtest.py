@@ -232,7 +232,7 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
     if not desc.source.exists():
         return (desc.key, model.Outcome(model.SKIP))
 
-    flags, std = icarus.translate_args(desc.iverilog_args)
+    flags, std, plusargs = icarus.translate_args(desc.iverilog_args)
     # ivtest defines this for non-strict runs; harmless to Obelisk, faithful to
     # how the sources expect to be compiled.
     flags += ["-D", "__ICARUS_UNSIZED__"]
@@ -277,7 +277,7 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         if not compiled.ok:
             return (desc.key, model.Outcome(model.COMPILE_FAIL, compiled.stderr))
 
-        result = runner.execute(str(binary), timeout, cwd=tmp)
+        result = runner.execute(str(binary), timeout, args=plusargs, cwd=tmp)
         if desc.artifact_diffs:
             if not result.ok:
                 return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))

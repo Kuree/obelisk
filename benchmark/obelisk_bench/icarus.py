@@ -10,14 +10,24 @@ constructs Obelisk flags directly and does not use this path.
 from __future__ import annotations
 
 
-def translate_args(icarus_args: list[str]) -> tuple[list[str], str]:
-    """Translate Icarus compile args to `(obelisk_flags, language_std)`.
+def translate_args(
+        icarus_args: list[str]) -> tuple[list[str], str, list[str]]:
+    """Translate Icarus args to `(obelisk_flags, language_std, plusargs)`.
 
     Only the subset ivtest actually uses is handled; output paths and source
     files are supplied by the caller and never appear here. Flags with no Obelisk
     analogue (`-Wall`, unsupported generation toggles) are dropped.
+
+    A `+arg` is not an Icarus flag and needs no translation: IEEE 1800-2017
+    21.6 makes plusargs the standard way to pass information to a simulation,
+    "visually distinguished from other simulator arguments by their starting
+    with the plus (+) character" and read back with $test$plusargs and
+    $value$plusargs. ivtest packs them into the same comma-separated field as
+    the compile flags, so they are separated out here and returned verbatim for
+    the caller to give to the simulation rather than to the compiler.
     """
     flags: list[str] = []
+    plusargs: list[str] = []
     std = "1800-2017"
     index = 0
     while index < len(icarus_args):
@@ -73,8 +83,13 @@ def translate_args(icarus_args: list[str]) -> tuple[list[str], str]:
                 flags.append("--timing=" + value)
             index += 2
             continue
+        # A standard plusarg (21.6), passed through untranslated.
+        if arg.startswith("+") and len(arg) > 1:
+            plusargs.append(arg)
+            index += 1
+            continue
         # Everything else (other -g generations, -Wall, -gstrict-expr-width,
         # and similar Icarus-specific switches) has no Obelisk analogue and is
         # dropped.
         index += 1
-    return flags, std
+    return flags, std, plusargs
