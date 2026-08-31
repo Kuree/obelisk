@@ -158,28 +158,35 @@ public:
     if (suspensions.empty())
       return;
 
-    // IEEE 1800-2017 31.7 samples a computed condition only after its
-    // controlled event matches. Keep the compiled descriptor next to the
-    // existing clock suspension on every loop iteration; it is planning-only
-    // state and must not become a continuation value or a proxy observer wait.
-    for (Operation *suspension : suspensions) {
-      auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(suspension);
-      if (!clocks)
-        continue;
-      IRRewriter rewriter(function.getContext());
-      rewriter.setInsertionPoint(suspension);
-      DenseMap<Operation *, sim::SimObserverBindOp> clones;
-      for (OpOperand &operand : suspension->getOpOperands()) {
-        auto binding = operand.get().getDefiningOp<sim::SimObserverBindOp>();
-        if (!binding || binding->getBlock() == suspension->getBlock())
+    bool timingCheckCoordinator =
+        function->hasAttr("obelisk_sim.timing_check_coordinator");
+    if (timingCheckCoordinator) {
+      // IEEE 1800-2017 31.7 samples a computed condition only after its
+      // controlled event matches. Keep the compiled descriptor next to the
+      // existing clock suspension on every loop iteration; it is
+      // planning-only state and must not become a continuation value or a
+      // proxy observer wait. Ordinary clocked processes can carry observer
+      // values as live process state and must retain the general threading
+      // path below.
+      for (Operation *suspension : suspensions) {
+        auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(suspension);
+        if (!clocks)
           continue;
-        auto [entry, inserted] = clones.try_emplace(binding.getOperation());
-        if (inserted)
-          entry->second =
-              cast<sim::SimObserverBindOp>(rewriter.clone(*binding));
-        operand.set(entry->second.getResult());
-        if (binding.getResult().use_empty())
-          rewriter.eraseOp(binding);
+        IRRewriter rewriter(function.getContext());
+        rewriter.setInsertionPoint(suspension);
+        DenseMap<Operation *, sim::SimObserverBindOp> clones;
+        for (OpOperand &operand : suspension->getOpOperands()) {
+          auto binding = operand.get().getDefiningOp<sim::SimObserverBindOp>();
+          if (!binding || binding->getBlock() == suspension->getBlock())
+            continue;
+          auto [entry, inserted] = clones.try_emplace(binding.getOperation());
+          if (inserted)
+            entry->second =
+                cast<sim::SimObserverBindOp>(rewriter.clone(*binding));
+          operand.set(entry->second.getResult());
+          if (binding.getResult().use_empty())
+            rewriter.eraseOp(binding);
+        }
       }
     }
 
@@ -348,7 +355,8 @@ public:
         // of the matching clock occurrence. Their observer token is a static
         // planning descriptor, never resumed process state; its captures are
         // serialized by the clock suspension itself.
-        if (isa<sim::ObserverType>(value.getType()))
+        if (timingCheckCoordinator &&
+            isa<sim::ObserverType>(value.getType()))
           continue;
         // Entry arguments are the process captures, which the scheduler
         // re-supplies on every activation.

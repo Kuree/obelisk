@@ -18,6 +18,7 @@ module {
     obelisk_sim.code_unit.decl 9000014 in 0 always hierarchy "test.threading.self_loop_next.9000014"
     obelisk_sim.code_unit.decl 9000015 in 0 always hierarchy "test.threading.self_loop_side_next.9000015"
     obelisk_sim.code_unit.decl 9000016 in 0 initial hierarchy "test.threading.control_body_restored.9000016"
+    obelisk_sim.code_unit.decl 9000017 in 0 initial hierarchy "test.threading.observer_state.9000017"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>> design
@@ -26,6 +27,33 @@ module {
       %value = obelisk_sim.ref.load %ref : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %truth = obelisk_sim.logic.is_true %value : !obelisk_sim.logic<1>
       obelisk_sim.return %truth : i1
+    }
+
+    // Observer descriptors are planning-only clock operands only in Clause 31
+    // timing-check coordinators. An ordinary process may keep one live across
+    // a suspension and must receive it in its canonical continuation frame
+    // like any other SSA value.
+    // CHECK-LABEL: obelisk_sim.func @observer_state
+    // CHECK: %[[LIVE_OBSERVER:.*]] = obelisk_sim.observer.bind @observer
+    // CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[OBSERVER_RESUME:.*]](%[[LIVE_OBSERVER]] : !obelisk_sim.observer<i1>)
+    // CHECK: ^[[OBSERVER_RESUME]](%[[RESTORED_OBSERVER:.*]]: !obelisk_sim.observer<i1>):
+    // CHECK: obelisk_sim.suspend.observe %[[RESTORED_OBSERVER]]
+    obelisk_sim.func @observer_state(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %source: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000017 : i64} {
+      %bound = obelisk_sim.observer.bind @observer
+          values(%source, %source : !obelisk_sim.ref<!obelisk_sim.logic<1>>,
+                 !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 1 :
+          !obelisk_sim.observer<i1>
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume
+    ^resume:
+      %false = arith.constant false
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [0]
+          indices [-1] to ^done : !obelisk_sim.observer<i1>, i1
+    ^done:
+      obelisk_sim.return
     }
 
     // Automatic observer captures stay private to the suspended edge. A
