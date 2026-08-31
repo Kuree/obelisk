@@ -425,6 +425,12 @@ VERILATOR_ASSERTIONS_DISABLED = Exclusion(
     "a static concurrent assertion starts checking at every leading clock "
     "event; the test expects zero action-block executions only because its "
     "descriptor asks Verilator's `--no-assert` option to remove assertions")
+DEFAULT_ASSERT_FAILURE_ACTION = Exclusion(
+    "IEEE 1800-2017 16.14.1",
+    "an assert property with no else statement executes an implicit $error "
+    "when it fails, even if it has an explicit pass statement; 20.12 also "
+    "identifies this as the default fail action, but the test deliberately "
+    "fails two such assertions and expects a clean run")
 TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY = Exclusion(
     "IEEE 1800-2017 12.5.3.1",
     "the implementation must report a unique-case violation but the clause "
@@ -437,6 +443,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_disabled": VERILATOR_ASSERTIONS_DISABLED,
     "t_assert_future": TWO_STATE_INITIALIZATION,
     "t_assert_pre": USE_BEFORE_DECLARATION,
+    "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
     "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
