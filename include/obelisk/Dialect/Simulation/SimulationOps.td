@@ -2755,6 +2755,22 @@ def SimAssertionControlOp : SimOp<"assert.control", [
   let hasVerifier = 1;
 }
 
+def SimAssertionControlDynamicOp : SimOp<"assert.control.dynamic", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "dynamically change one assertion identity's control state";
+  let description = [{
+    Apply an IEEE assertion control action selected at execution time to one
+    compiler-resolved assertion identity. The action has already been checked
+    to be in the range 1 through 11.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$action,
+                       I64Attr:$assertion_id);
+  let assemblyFormat = "$context `action` $action `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimAssertionEnabledOp : SimOp<"assert.enabled", [
     MemoryEffects<[MemRead<SimSchedulerResource>]>
   ]> {

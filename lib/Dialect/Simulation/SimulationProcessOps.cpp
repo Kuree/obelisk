@@ -1049,6 +1049,11 @@ LogicalResult SimAssertionControlOp::verify() {
                         "assertion control target ID");
 }
 
+LogicalResult SimAssertionControlDynamicOp::verify() {
+  return verifyPositive(*this, getAssertionIdAttr(),
+                        "assertion control target ID");
+}
+
 LogicalResult SimAssertionEnabledOp::verify() {
   return verifyPositive(*this, getAssertionIdAttr(),
                         "assertion control target ID");

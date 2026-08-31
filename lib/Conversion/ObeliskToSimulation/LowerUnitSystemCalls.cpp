@@ -455,9 +455,12 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       name == "$assertcontrol") {
     auto action =
         op->getAttrOfType<IntegerAttr>("obelisk_sim.assertion_control_action");
+    auto actionArgument = op->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_action_argument");
     auto targets = op->getAttrOfType<DenseI64ArrayAttr>(
         "obelisk_sim.assertion_control_ids");
-    if (!action || !targets) {
+    if (static_cast<bool>(action) == static_cast<bool>(actionArgument) ||
+        !targets) {
       emitError(location) << name
                           << " has no prepared assertion-control selection";
       return failure();
@@ -531,6 +534,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       levels = *lowered;
     }
+    Value dynamicAction;
+    if (actionArgument) {
+      FailureOr<Value> lowered =
+          lowerControlInteger(actionArgument, "control type");
+      if (failed(lowered))
+        return failure();
+      dynamicAction = *lowered;
+    }
 
     Value zero;
     if (depths || assertionTypes || directiveTypes)
@@ -564,6 +575,32 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
               "priority, or directive kinds")))
         return failure();
       setCurrent(valid);
+    }
+
+    Block *dynamicActionResume = nullptr;
+    if (dynamicAction) {
+      Value belowRange = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, dynamicAction,
+          constant(i64, 1));
+      Value aboveRange = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ugt, dynamicAction,
+          constant(i64, 11));
+      Value invalidAction = arith::OrIOp::create(builder, location, belowRange,
+                                                 aboveRange);
+      Block *invalid = addBlock();
+      Block *valid = addBlock();
+      dynamicActionResume = addBlock();
+      cf::CondBranchOp::create(builder, location, invalidAction, invalid,
+                               valid);
+      setCurrent(invalid);
+      emitRuntimeWarning(
+          location,
+          "$assertcontrol control type is outside the valid range 1 through "
+          "11; the task has no effect");
+      emitBranch(dynamicActionResume);
+      setCurrent(valid);
+      dynamicAction = arith::TruncIOp::create(builder, location, i32,
+                                              dynamicAction);
     }
 
     ArrayRef<int64_t> targetValues = targets.asArrayRef();
@@ -605,10 +642,16 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
             builder, location, arith::CmpIPredicate::ne, matched, zero));
       }
       if (!selected) {
-        sim::SimAssertionControlOp::create(
-            builder, location, context,
-            builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
-            builder.getI64IntegerAttr(target));
+        if (dynamicAction)
+          sim::SimAssertionControlDynamicOp::create(
+              builder, location, context, dynamicAction,
+              builder.getI64IntegerAttr(target));
+        else
+          sim::SimAssertionControlOp::create(
+              builder, location, context,
+              builder.getI32IntegerAttr(
+                  static_cast<int32_t>(action.getInt())),
+              builder.getI64IntegerAttr(target));
         continue;
       }
 
@@ -616,12 +659,21 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       Block *resume = addBlock();
       cf::CondBranchOp::create(builder, location, selected, apply, resume);
       setCurrent(apply);
-      sim::SimAssertionControlOp::create(
-          builder, location, context,
-          builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
-          builder.getI64IntegerAttr(target));
+      if (dynamicAction)
+        sim::SimAssertionControlDynamicOp::create(
+            builder, location, context, dynamicAction,
+            builder.getI64IntegerAttr(target));
+      else
+        sim::SimAssertionControlOp::create(
+            builder, location, context,
+            builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
+            builder.getI64IntegerAttr(target));
       emitBranch(resume);
       setCurrent(resume);
+    }
+    if (dynamicActionResume) {
+      emitBranch(dynamicActionResume);
+      setCurrent(dynamicActionResume);
     }
     return dummyTaskResult();
   }

@@ -973,6 +973,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, kIntrinsicAssertionControl,
         {emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))}, {},
         static_cast<uint32_t>(op.getAction()));
+  if (auto op = dyn_cast<sim::SimAssertionControlDynamicOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAssertionControl,
+        {reg(plan, op.getAction()),
+         emitU64Constant(plan, static_cast<uint64_t>(op.getAssertionId()))},
+        {});
   if (auto op = dyn_cast<sim::SimAssertionEnabledOp>(operation))
     return emitIntrinsicRegisters(
         plan, kIntrinsicAssertionEnabled,

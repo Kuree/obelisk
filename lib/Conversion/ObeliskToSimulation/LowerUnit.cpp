@@ -2402,6 +2402,36 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
   return success();
 }
 
+void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
+  std::string file = "<unknown>";
+  unsigned line = 0;
+  if (auto source = location->findInstanceOf<FileLineColLoc>()) {
+    file = source.getFilename().str();
+    line = source.getLine();
+  }
+  std::string message =
+      (Twine("WARNING: ") + file + ":" + Twine(line) + ": " + detail).str();
+  for (size_t position = 0;
+       (position = message.find('%', position)) != std::string::npos;
+       position += 2)
+    message.insert(position, 1, '%');
+
+  Value context = function.getBody().front().getArgument(0);
+  Value descriptor = arith::ConstantOp::create(
+      builder, location, builder.getI32Type(),
+      builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+  Value item =
+      sim::SimBytesConstantOp::create(builder, location, message).getResult();
+  auto timeMultiplier =
+      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr scope =
+      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  sim::SimDisplayOp::create(builder, location, context, descriptor,
+                            ValueRange{item}, true, 10,
+                            builder.getDenseI32ArrayAttr({0}), scope,
+                            StringAttr{}, timeMultiplier, IntegerAttr{});
+}
+
 // Unsized numeric literals whose most-significant four-state bit is unknown
 // fill that bit through a wider context. Slang retains the declared-unsized
 // fact separately from the normalized 32-bit constant value.

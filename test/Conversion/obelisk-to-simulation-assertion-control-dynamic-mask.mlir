@@ -1,10 +1,10 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' --emit-bytecode -o /dev/null
 
-// IEEE 1800-2017 20.12: assertion-type and directive-type masks are integer
-// expressions. They are read at execution time, checked for unsupported kind
-// bits, and tested against each compiler-resolved target without a runtime
-// hierarchy scan.
+// IEEE 1800-2017 20.12: the control type, assertion-type mask, and
+// directive-type mask are integer expressions. They are read at execution
+// time, checked, and tested against each compiler-resolved target without a
+// runtime hierarchy scan.
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
   }
@@ -40,6 +40,18 @@ module {
                   }
                 }
               }
+              obelisk.sv.statement.expression_statement attributes {node_id = 20 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "$assertcontrol", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 21 : i64, semantic_type = !obelisk.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                  obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 22 : i64, referenced_path = "top.mask", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.mask, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 23 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 24 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 25 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
             }
           }
         }
@@ -52,6 +64,7 @@ module {
 // CHECK-DAG: arith.constant -8 : i64
 // CHECK-DAG: arith.constant 2 : i64
 // CHECK-DAG: arith.constant 1 : i64
+// CHECK-DAG: obelisk_sim.bytes.constant "WARNING:{{.*}}$assertcontrol control type is outside the valid range 1 through 11; the task has no effect"
 // CHECK: %[[MASK32:.*]] = obelisk_sim.ref.load
 // CHECK: %[[MASK:.*]] = arith.extsi %[[MASK32]] : i32 to i64
 // CHECK: %[[BAD_ASSERT:.*]] = arith.andi %[[MASK]],
@@ -66,3 +79,8 @@ module {
 // CHECK: %[[DIRECTIVE_MATCH:.*]] = arith.cmpi ne, %[[DIRECTIVE_TYPE]],
 // CHECK: arith.andi %[[ASSERT_MATCH]], %[[DIRECTIVE_MATCH]] : i1
 // CHECK: obelisk_sim.assert.control {{.*}} action 4 assertion
+// CHECK: %[[ACTION32:.*]] = obelisk_sim.ref.load
+// CHECK: %[[ACTION:.*]] = arith.extsi %[[ACTION32]] : i32 to i64
+// CHECK: arith.cmpi ult, %[[ACTION]],
+// CHECK: arith.cmpi ugt, %[[ACTION]],
+// CHECK: obelisk_sim.assert.control.dynamic {{.*}} action %[[ACTION32]] assertion

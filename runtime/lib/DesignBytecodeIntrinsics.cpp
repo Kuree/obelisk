@@ -3325,11 +3325,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL: {
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
-    std::optional<uint64_t> assertionID = scalar(0);
+    uint32_t action = signature.flags;
+    size_t assertionIDIndex = 0;
+    if (action == 0) {
+      std::optional<uint64_t> dynamicAction = scalar(0);
+      if (!dynamicAction || *dynamicAction > UINT32_MAX)
+        return OBELISK_RT_INVALID_BYTECODE;
+      action = static_cast<uint32_t>(*dynamicAction);
+      assertionIDIndex = 1;
+    }
+    std::optional<uint64_t> assertionID = scalar(assertionIDIndex);
     if (!assertionID || *assertionID == 0)
       return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_assertion_control(context, signature.flags,
-                                           *assertionID);
+    return obelisk_rt_v1_assertion_control(context, action, *assertionID);
   }
   case OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED: {
     if (!context)

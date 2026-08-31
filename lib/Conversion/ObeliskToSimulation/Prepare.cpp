@@ -1034,6 +1034,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       return;
     SmallVector<Operation *> arguments = getChildren(call);
     uint32_t action = shorthandAction;
+    bool dynamicAction = false;
+    size_t actionArgument = 0;
     uint64_t assertionTypes = attemptShorthand ? 15 : 31;
     uint64_t directiveTypes = 7;
     bool dynamicAssertionTypes = false;
@@ -1067,18 +1069,23 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return;
       }
-      std::optional<uint64_t> value =
-          literalControlValue(arguments[0], "control type");
-      if (!value)
-        return;
-      if (*value < 1 || *value > 11) {
-        emitError(getSemanticLocation(arguments[0]))
-            << "$assertcontrol control type must be in the range 1 through "
-               "11";
-        invalid = true;
-        return;
+      std::optional<uint64_t> value;
+      if (arguments[0]->hasAttr("constant_value")) {
+        value = literalControlValue(arguments[0], "control type");
+        if (!value)
+          return;
+        if (*value < 1 || *value > 11) {
+          emitError(getSemanticLocation(arguments[0]))
+              << "$assertcontrol control type must be in the range 1 through "
+                 "11";
+          invalid = true;
+          return;
+        }
+        action = static_cast<uint32_t>(*value);
+      } else {
+        dynamicAction = true;
+        actionArgument = 0;
       }
-      action = static_cast<uint32_t>(*value);
       if (arguments.size() >= 2 &&
           !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[1])) {
         if (arguments[1]->hasAttr("constant_value")) {
@@ -1138,7 +1145,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // On, Off, and Kill do not affect expect statements. The remaining
     // controls do, so selecting an expect statement is rejected below until
     // executable expect support lands.
-    if (action >= 3 && action <= 5)
+    if (!dynamicAction && action >= 3 && action <= 5)
       assertionTypes &= ~UINT64_C(16);
 
     SmallVector<StringRef> selectors;
@@ -1271,8 +1278,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       for (auto [id, depth] : selectedTargets)
         appendTarget(id, depth, 0, 0);
     }
-    call->setAttr("obelisk_sim.assertion_control_action",
-                  IntegerAttr::get(IntegerType::get(context, 32), action));
+    if (dynamicAction)
+      call->setAttr("obelisk_sim.assertion_control_action_argument",
+                    IntegerAttr::get(IntegerType::get(context, 64),
+                                     actionArgument));
+    else
+      call->setAttr("obelisk_sim.assertion_control_action",
+                    IntegerAttr::get(IntegerType::get(context, 32), action));
     call->setAttr("obelisk_sim.assertion_control_ids",
                   DenseI64ArrayAttr::get(context, selectedIDs));
     if (dynamicLevels) {
@@ -1299,13 +1311,13 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (auto [target, id] : selectedAssertions) {
       target->setAttr("obelisk_sim.assertion_control_target_id",
                       IntegerAttr::get(IntegerType::get(context, 64), id));
-      if (action >= 3 && action <= 5)
+      if (dynamicAction || (action >= 3 && action <= 5))
         target->setAttr("obelisk_sim.assertion_controlled",
                         UnitAttr::get(context));
-      if (action == 5)
+      if (dynamicAction || action == 5)
         target->setAttr("obelisk_sim.assertion_kill_controlled",
                         UnitAttr::get(context));
-      if (action >= 6 && action <= 11)
+      if (dynamicAction || (action >= 6 && action <= 11))
         target->setAttr("obelisk_sim.assertion_action_controlled",
                         UnitAttr::get(context));
     }
