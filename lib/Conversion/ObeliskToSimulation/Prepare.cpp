@@ -3680,6 +3680,59 @@ void ObeliskSimPreparePass::runOnOperation() {
         return collect(leaf, hierarchy);
       };
 
+  struct CompatibleConcreteClass {
+    semantic::SVClassTypeOp classType;
+    unsigned depth;
+  };
+  llvm::DenseMap<Operation *, SmallVector<CompatibleConcreteClass>>
+      compatibleConcreteClassCache;
+  auto getCompatibleConcreteClasses =
+      [&](semantic::SVClassTypeOp declaredClass,
+          StringRef purpose)
+      -> FailureOr<SmallVector<CompatibleConcreteClass>> {
+    auto cached = compatibleConcreteClassCache.find(declaredClass);
+    if (cached != compatibleConcreteClassCache.end())
+      return cached->second;
+    SmallVector<CompatibleConcreteClass> compatibleClasses;
+    StringRef targetInterface;
+    if (declaredClass.getIsInterface())
+      targetInterface = cast<semantic::ClassHandleType>(
+                            declaredClass.getSemanticType())
+                            .getClassName()
+                            .getLeafReference();
+    for (semantic::SVClassTypeOp candidate : classSources) {
+      if (candidate.getIsAbstract() || candidate.getIsInterface())
+        continue;
+      SmallVector<semantic::SVClassTypeOp> hierarchy;
+      if (failed(collectClassHierarchy(candidate, hierarchy, purpose)))
+        return failure();
+      bool compatible = llvm::is_contained(hierarchy, declaredClass);
+      if (!compatible && !targetInterface.empty())
+        for (semantic::SVClassTypeOp hierarchyClass : hierarchy) {
+          for (Attribute attribute :
+               hierarchyClass.getImplementedInterfaces()) {
+            auto type = dyn_cast<TypeAttr>(attribute);
+            auto interface =
+                type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
+                     : semantic::ClassHandleType{};
+            if (interface && interface.getClassName().getLeafReference() ==
+                                 targetInterface) {
+              compatible = true;
+              break;
+            }
+          }
+          if (compatible)
+            break;
+        }
+      if (compatible)
+        compatibleClasses.push_back(
+            {candidate, static_cast<unsigned>(hierarchy.size())});
+    }
+    compatibleConcreteClassCache.try_emplace(declaredClass,
+                                             compatibleClasses);
+    return compatibleClasses;
+  };
+
   using EffectiveConstraintGroup =
       SmallVector<semantic::SVConstraintBlockSymbolOp, 2>;
   auto collectEffectiveConstraints =
@@ -4420,55 +4473,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     // A randomize call uses the dynamic object's complete property and
     // constraint set even though randomize itself is a builtin.
     if (!call->hasAttr(randomizePlanClassAttrName)) {
-      struct DynamicPlan {
-        semantic::SVClassTypeOp classType;
-        unsigned depth;
-      };
-      SmallVector<DynamicPlan> dynamicPlans;
-      for (semantic::SVClassTypeOp candidate : classSources) {
-        if (candidate.getIsAbstract() || candidate.getIsInterface())
-          continue;
-        SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
-        if (failed(collectClassHierarchy(candidate, candidateHierarchy,
-                                         "randomization dispatch"))) {
-          invalid = true;
-          return true;
-        }
-        bool compatible =
-            llvm::is_contained(candidateHierarchy, foundClass->second);
-        if (!compatible && foundClass->second.getIsInterface()) {
-          StringRef targetInterface = cast<semantic::ClassHandleType>(
-                                          foundClass->second.getSemanticType())
-                                          .getClassName()
-                                          .getLeafReference();
-          // Slang records the transitive interface closure on the class that
-          // declares `implements`, but a derived class has an empty local
-          // interface list. Search its base hierarchy as well so an
-          // interface-typed handle can select plans for inherited
-          // implementations.
-          for (semantic::SVClassTypeOp hierarchyClass : candidateHierarchy) {
-            for (Attribute attribute :
-                 hierarchyClass.getImplementedInterfaces()) {
-              auto type = dyn_cast<TypeAttr>(attribute);
-              auto interface =
-                  type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
-                       : semantic::ClassHandleType{};
-              if (interface && interface.getClassName().getLeafReference() ==
-                                   targetInterface) {
-                compatible = true;
-                break;
-              }
-            }
-            if (compatible)
-              break;
-          }
-        }
-        if (compatible)
-          dynamicPlans.push_back(
-              {candidate, static_cast<unsigned>(candidateHierarchy.size())});
+      FailureOr<SmallVector<CompatibleConcreteClass>> dynamicPlans =
+          getCompatibleConcreteClasses(foundClass->second,
+                                       "randomization dispatch");
+      if (failed(dynamicPlans)) {
+        invalid = true;
+        return true;
       }
-      llvm::sort(dynamicPlans,
-                 [&](const DynamicPlan &lhs, const DynamicPlan &rhs) {
+      llvm::sort(*dynamicPlans,
+                 [&](const CompatibleConcreteClass &lhs,
+                     const CompatibleConcreteClass &rhs) {
                    if (lhs.depth != rhs.depth)
                      return lhs.depth > rhs.depth;
                    return classSymbols.lookup(lhs.classType).getValue() <
@@ -4476,10 +4490,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                  });
       {
         SmallVector<semantic::SVCallExpressionOp> alternatives;
-        alternatives.reserve(dynamicPlans.size());
+        alternatives.reserve(dynamicPlans->size());
         // Clone every raw call before inserting any clone into the source call;
         // otherwise later clones would recursively contain earlier plans.
-        for (const DynamicPlan &plan : dynamicPlans) {
+        for (const CompatibleConcreteClass &plan : *dynamicPlans) {
           auto alternative = cast<semantic::SVCallExpressionOp>(call->clone());
           if (checkerOnly) {
             SmallVector<Operation *> alternativeChildren =
@@ -4613,38 +4627,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           semanticClasses.find(handleType.getClassName().getLeafReference());
       if (declaredClass == semanticClasses.end())
         return failure();
-      for (semantic::SVClassTypeOp candidate : classSources) {
-        if (candidate.getIsAbstract() || candidate.getIsInterface())
-          continue;
-        SmallVector<semantic::SVClassTypeOp> candidateHierarchy;
-        if (failed(collectClassHierarchy(candidate, candidateHierarchy,
-                                         "class-handle container analysis")))
-          return failure();
-        bool compatible =
-            llvm::is_contained(candidateHierarchy, declaredClass->second);
-        if (!compatible && declaredClass->second.getIsInterface()) {
-          StringRef target = handleType.getClassName().getLeafReference();
-          for (semantic::SVClassTypeOp hierarchyClass : candidateHierarchy) {
-            for (Attribute attribute :
-                 hierarchyClass.getImplementedInterfaces()) {
-              auto type = dyn_cast<TypeAttr>(attribute);
-              auto interface =
-                  type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
-                       : semantic::ClassHandleType{};
-              if (interface &&
-                  interface.getClassName().getLeafReference() == target) {
-                compatible = true;
-                break;
-              }
-            }
-            if (compatible)
-              break;
-          }
-        }
-        if (compatible)
-          return true;
-      }
-      return false;
+      FailureOr<SmallVector<CompatibleConcreteClass>> candidates =
+          getCompatibleConcreteClasses(declaredClass->second,
+                                       "class-handle container analysis");
+      if (failed(candidates))
+        return failure();
+      return !candidates->empty();
     };
     auto isInertClassHandleContainer =
         [&](Type semanticContainerType,
