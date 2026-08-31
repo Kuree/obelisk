@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 using namespace mlir;
@@ -496,16 +497,25 @@ void ObeliskSimSCCPPass::runOnOperation() {
     return functions[lhs].irOrder < functions[rhs].irOrder;
   });
 
-  SmallVector<char> dirty(functions.size(), true);
+  SmallVector<unsigned> deterministicRanks(functions.size());
+  for (auto [rank, index] : llvm::enumerate(deterministicOrder))
+    deterministicRanks[index] = static_cast<unsigned>(rank);
+  std::set<std::pair<unsigned, unsigned>> dirty;
+  auto markDirty = [&](unsigned index) {
+    dirty.emplace(deterministicRanks[index], index);
+  };
+  for (unsigned index : deterministicOrder)
+    markDirty(index);
   std::vector<std::unique_ptr<DataFlowSolver>> finalSolvers(functions.size());
   auto runBoundaryFixedPoint = [&]() -> LogicalResult {
-    while (llvm::is_contained(dirty, true)) {
+    while (!dirty.empty()) {
       SmallVector<unsigned> wave;
-      for (unsigned index : deterministicOrder)
-        if (dirty[index]) {
-          dirty[index] = false;
-          wave.push_back(index);
-        }
+      wave.reserve(dirty.size());
+      for (auto [rank, index] : dirty) {
+        (void)rank;
+        wave.push_back(index);
+      }
+      dirty.clear();
 
       std::vector<std::unique_ptr<FunctionObservation>> observations(
           functions.size());
@@ -539,7 +549,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
               changed |= mergeFact(result, contribution);
             if (changed)
               for (unsigned caller : info.callers)
-                dirty[caller] = true;
+                markDirty(caller);
             continue;
           }
           if (!site.callee)
@@ -550,7 +560,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
                llvm::zip_equal(callee.arguments, observation.operands))
             changed |= mergeFact(argument, contribution);
           if (changed)
-            dirty[*site.callee] = true;
+            markDirty(*site.callee);
         }
         finalSolvers[functionIndex] =
             std::move(observations[functionIndex]->solver);
@@ -570,14 +580,14 @@ void ObeliskSimSCCPPass::runOnOperation() {
       if (argument.isUninitialized()) {
         initializedBoundary = true;
         argument = getUnknownFact();
-        dirty[index] = true;
+        markDirty(index);
       }
     for (BoundaryFact &result : info.results)
       if (result.isUninitialized()) {
         initializedBoundary = true;
         result = getUnknownFact();
         for (unsigned caller : info.callers)
-          dirty[caller] = true;
+          markDirty(caller);
       }
   }
   if (initializedBoundary) {
