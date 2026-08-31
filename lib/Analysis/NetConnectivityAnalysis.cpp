@@ -2,6 +2,10 @@
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
+
+#include "llvm/ADT/DenseSet.h"
+
 #include <algorithm>
 
 using namespace mlir;
@@ -9,28 +13,34 @@ using namespace mlir;
 namespace obelisk::analysis {
 
 NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
+  DenseSet<uint64_t> connectedNets;
+  for (Operation &operation : design.getBody().front())
+    if (auto connection = dyn_cast<sim::SimNetConnectDeclOp>(operation)) {
+      connectedNets.insert(connection.getLhsNetId());
+      connectedNets.insert(connection.getRhsNetId());
+    }
+
   uint64_t total = 0;
   for (Operation &operation : design.getBody().front()) {
     auto net = dyn_cast<sim::SimNetDeclOp>(operation);
     if (!net)
       continue;
-    std::optional<unsigned> width = sim::getPackedWidth(net.getType());
-    if (!width || total > UINT64_MAX - *width)
+    std::optional<unsigned> width = getSimulationStorageBitWidth(net.getType());
+    if (!width)
+      continue;
+    netWidths[net.getId()] = *width;
+    if (!connectedNets.contains(net.getId()) || total > UINT64_MAX - *width)
       continue;
     netBases[net.getId()] = total;
-    netWidths[net.getId()] = *width;
     total += *width;
   }
-  parents.resize(total);
-  for (uint64_t index = 0; index != total; ++index)
-    parents[index] = index;
-
   auto find = [&](uint64_t value) {
+    parents.try_emplace(value, value);
     uint64_t root = value;
-    while (parents[root] != root)
-      root = parents[root];
-    while (parents[value] != value) {
-      uint64_t next = parents[value];
+    while (parents.lookup(root) != root)
+      root = parents.lookup(root);
+    while (parents.lookup(value) != value) {
+      uint64_t next = parents.lookup(value);
       parents[value] = root;
       value = next;
     }
@@ -42,6 +52,7 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
     std::optional<bool> rhsDominates;
   };
   SmallVector<DirectedConnection> directedConnections;
+  DenseMap<uint64_t, NetBit> connectedByFlat;
   for (Operation &operation : design.getBody().front()) {
     auto connection = dyn_cast<sim::SimNetConnectDeclOp>(operation);
     if (!connection || !netBases.count(connection.getLhsNetId()) ||
@@ -54,6 +65,11 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
                                ? connection.getRhsOffset() - index
                                : connection.getRhsOffset() + index;
       uint64_t rhs = netBases.lookup(connection.getRhsNetId()) + rhsOffset;
+      connectedByFlat.try_emplace(
+          lhs,
+          NetBit{connection.getLhsNetId(), connection.getLhsOffset() + index});
+      connectedByFlat.try_emplace(rhs,
+                                  NetBit{connection.getRhsNetId(), rhsOffset});
       directedConnections.push_back({lhs, rhs, connection.getRhsDominates()});
       uint64_t lhsRoot = find(lhs);
       uint64_t rhsRoot = find(rhs);
@@ -61,9 +77,11 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
         parents[std::max(lhsRoot, rhsRoot)] = std::min(lhsRoot, rhsRoot);
     }
   }
-  for (auto [net, base] : netBases)
-    for (uint64_t offset = 0; offset != netWidths.lookup(net); ++offset)
-      components[find(base + offset)].push_back({net, offset});
+  for (const auto &[flat, bit] : connectedByFlat) {
+    components[find(flat)].push_back(bit);
+    connectedBits.push_back(bit);
+  }
+  llvm::sort(connectedBits);
   for (auto &[root, members] : components)
     llvm::sort(members);
 
@@ -145,8 +163,13 @@ ArrayRef<NetBit> NetConnectivityAnalysis::getComponent(NetBit bit) const {
       bit.offset >= width->second)
     return {};
   uint64_t root = base->second + bit.offset;
-  while (parents[root] != root)
-    root = parents[root];
+  auto parent = parents.find(root);
+  if (parent == parents.end())
+    return {};
+  while (parent->second != root) {
+    root = parent->second;
+    parent = parents.find(root);
+  }
   auto found = components.find(root);
   return found == components.end() ? ArrayRef<NetBit>()
                                    : ArrayRef<NetBit>(found->second);
@@ -160,12 +183,18 @@ NetBit NetConnectivityAnalysis::getCanonical(NetBit bit) const {
 NetDominance NetConnectivityAnalysis::getDominance(NetBit bit) const {
   auto base = netBases.find(bit.net);
   auto width = netWidths.find(bit.net);
-  if (base == netBases.end() || width == netWidths.end() ||
-      bit.offset >= width->second)
+  if (width == netWidths.end() || bit.offset >= width->second)
     return {NetDominanceKind::Incomplete, bit};
+  if (base == netBases.end())
+    return {NetDominanceKind::Isolated, bit};
   uint64_t root = base->second + bit.offset;
-  while (parents[root] != root)
-    root = parents[root];
+  auto parent = parents.find(root);
+  if (parent == parents.end())
+    return {NetDominanceKind::Isolated, bit};
+  while (parent->second != root) {
+    root = parent->second;
+    parent = parents.find(root);
+  }
   auto found = dominance.find(root);
   return found == dominance.end()
              ? NetDominance{NetDominanceKind::Incomplete, bit}
@@ -179,8 +208,13 @@ ArrayRef<NetBit> NetConnectivityAnalysis::getDominatingBits(NetBit bit) const {
       bit.offset >= width->second)
     return {};
   uint64_t root = base->second + bit.offset;
-  while (parents[root] != root)
-    root = parents[root];
+  auto parent = parents.find(root);
+  if (parent == parents.end())
+    return {};
+  while (parent->second != root) {
+    root = parent->second;
+    parent = parents.find(root);
+  }
   auto found = dominatingBits.find(root);
   return found == dominatingBits.end() ? ArrayRef<NetBit>()
                                        : ArrayRef<NetBit>(found->second);

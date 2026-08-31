@@ -65,13 +65,18 @@ public:
   /// the same resolution category.
   mlir::ArrayRef<NetBit> getDominatingBits(NetBit bit) const;
 
-  /// Fixed packed width of a logical net descriptor, when known.
+  /// Logical bits named by at least one static connection, sorted by net and
+  /// offset. Isolated bits remain implicit in the sparse topology.
+  mlir::ArrayRef<NetBit> getConnectedBits() const { return connectedBits; }
+
+  /// Fixed simulation-storage width of a logical net descriptor, when known.
   std::optional<uint64_t> getNetWidth(uint64_t net) const;
 
 private:
   llvm::DenseMap<uint64_t, uint64_t> netBases;
   llvm::DenseMap<uint64_t, uint64_t> netWidths;
-  mlir::SmallVector<uint64_t> parents;
+  llvm::DenseMap<uint64_t, uint64_t> parents;
+  mlir::SmallVector<NetBit> connectedBits;
   llvm::DenseMap<uint64_t, mlir::SmallVector<NetBit>> components;
   llvm::DenseMap<uint64_t, NetDominance> dominance;
   llvm::DenseMap<uint64_t, mlir::SmallVector<NetBit>> dominatingBits;
