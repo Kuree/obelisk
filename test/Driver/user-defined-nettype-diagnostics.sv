@@ -78,6 +78,6 @@ endmodule
 // MUTATE-SAME: writes or resizes its driver-value input array
 // RANDOM: error: user-defined net resolution function
 // RANDOM-SAME: has a stateful or externally visible side effect
-// UNRESOLVED: error: unresolved user-defined net has multiple drivers
+// UNRESOLVED: error: net 'unresolved_value' with user-defined nettype 'unresolved_int' cannot have multiple drivers because it does not specify a resolution function
 // STATIC: error: user-defined net resolution function
 // STATIC-SAME: must be automatic

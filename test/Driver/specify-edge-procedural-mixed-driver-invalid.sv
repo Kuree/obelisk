@@ -7,4 +7,4 @@ module mixed_driver(input wire clock, data, output logic q);
     (posedge clock => (q +: data)) = 2;
   endspecify
 endmodule
-// CHECK: error: edge-sensitive specify path destination mixes continuous and procedural writers
+// CHECK: error: cannot mix continuous and procedural assignments to variable 'q'
