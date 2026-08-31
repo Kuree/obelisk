@@ -140,13 +140,17 @@ TWO_STATE_INITIALIZATION = Exclusion(
     "IEEE 1800-2017 6.8",
     "a four-state variable starts at x, and the design reads one before "
     "anything assigns it; the test needs the zero a two-state simulator starts "
-    "it with (4.9.2 also leaves the time-zero order of initial and always "
-    "blocks arbitrary)")
+    "it with (4.4.2.2 also leaves the time-zero order of initial and always "
+    "blocks arbitrary, since the Active region's events \"can be processed "
+    "in any order\")")
 STATIC_SUBROUTINE_RECURSION = Exclusion(
-    "IEEE 1800-2017 13.4.2",
-    "recursion is reserved for an automatic subroutine, and the test recurses "
-    "through a static task; one set of formals shared across the invocations "
-    "is what a static lifetime means")
+    "IEEE 1800-2017 13.3.2",
+    "\"all variables of a static task shall be static in that there shall be "
+    "a single variable corresponding to each declared local variable in a "
+    "module instance, regardless of the number of concurrent activations\", "
+    "and the test recurses through one (13.4.2 says the same of the static "
+    "function beside it); one set of formals shared across the invocations is "
+    "what a static lifetime means")
 ARRAY_ASSIGNMENT_ORDER = Exclusion(
     "IEEE 1800-2017 7.6",
     "an unpacked array assignment pairs the elements by position, and the test "
@@ -155,14 +159,14 @@ ARRAY_ASSIGNMENT_ORDER = Exclusion(
 OUT_OF_RANGE_FIXED_ARRAY_INDEX = Exclusion(
     "IEEE 1800-2017 7.4.6",
     "an invalid fixed-array index reads the default uninitialized value of "
-    "the element type; the test indexes the seven-element `int A[7]` with 7 "
+    "the element type; the test indexes the seven-element `int A[7][1]` with 7 "
     "and expects Verilator's storage-padding alias to `A[0]` instead of the "
     "required default value")
 BOUNDED_QUEUE_CAPACITY = Exclusion(
     "IEEE 1800-2017 7.10",
-    "a queue's bound is its maximum index, so `int q[$:5]` holds six elements "
-    "(the clause's own `byte q1[$:255]` is \"a queue whose maximum size is 256 "
-    "elements\"); the test expects Verilator's bound-as-size and reads five")
+    "a queue's bound is its \"optional right bound (last index)\", so `int "
+    "q[$:5]` holds six elements; the test expects Verilator's bound-as-size "
+    "and reads five")
 READMEM_HASH_COMMENT = Exclusion(
     "IEEE 1800-2017 21.4",
     "a memory file admits only // and /* */ comments, and the test's data file "
@@ -180,7 +184,7 @@ OUT_OF_RANGE_PART_SELECT_READ = Exclusion(
 CONTEXT_DETERMINED_POWER_BASE = Exclusion(
     "IEEE 1800-2017 11.8.1",
     "an unsigned operand anywhere in an expression makes the whole expression "
-    "unsigned, and 11.4.4 self-determines only the power's exponent, so "
+    "unsigned, and 11.4.3 self-determines only the power's exponent, so "
     "`(-8'sh1 ** -8'sh2) === 8'h1` reads the base as 255 and Table 11-4 gives "
     "0 for a base above 1 with a negative exponent; the test's own guards "
     "already excuse Icarus, Questa, and VCS from these two lines")
@@ -214,12 +218,12 @@ THROUGHOUT_TEMPORAL_AND = Exclusion(
     "test expects 25 where its own comment records \"All other sims: 36\" and "
     "names the undercount a known limitation of Verilator's SAnd combiner")
 MIXED_VARIABLE_DRIVERS = Exclusion(
-    "IEEE 1800-2017 10.3",
-    "it is an error for a variable driven by a continuous assignment to also "
-    "have a procedural assignment, and the test drives every bit of `tsb.id` "
-    "with `assign` while an initial block writes the same bits; 6.5 splits "
-    "that rule per element, which Obelisk honors for genuinely disjoint "
-    "fields")
+    "IEEE 1800-2017 10.3.2",
+    "\"it shall be an error for a variable driven by a continuous assignment "
+    "or output to have an initializer in the declaration or any procedural "
+    "assignment\", and the test writes bits from an initial block that an "
+    "`assign` or a module output already drives; 6.5 splits that rule per "
+    "element, which Obelisk honors for genuinely disjoint fields")
 SHORTREAL_COMPARISON_PRECISION = Exclusion(
     "IEEE 1800-2017 11.3.1",
     "an expression is real whenever either operand is, so a shortreal holding "
@@ -280,10 +284,13 @@ HIERARCHICAL_CONSTANT_OPERAND = Exclusion(
     "sizes a declaration with $bits of a hierarchical reference to a variable, "
     "which is none of those")
 AUTOMATIC_HIERARCHICAL_NAME = Exclusion(
-    "IEEE 1800-2017 23.6",
-    "\"objects declared in automatic tasks and functions are exceptions and "
-    "cannot be accessed by hierarchical name references\", and the test reads "
-    "an automatic variable of a named block through one")
+    "IEEE 1800-2017 6.21",
+    "a variable explicitly declared automatic within a static block has "
+    "\"the lifetime of the call or block\" and is reinitialized on each entry, "
+    "so no one instance of it is there for a name to denote -- 23.6 draws "
+    "that conclusion for the same declaration in an automatic task or "
+    "function, which \"cannot be accessed by hierarchical name references\"; "
+    "the test reads an automatic variable of a named block through one")
 TYPE_REFERENCE_HIERARCHICAL_OPERAND = Exclusion(
     "IEEE 1800-2017 A.2.2.1",
     "footnote 17 says \"an expression that is used as the argument in a "
@@ -336,8 +343,8 @@ UNRECOGNIZED_KEYWORD_VERSION = Exclusion(
     "\"implementations and other standards are permitted to extend the "
     "`begin_keywords directive with custom version specifiers\", \"it shall "
     "be an error if an implementation does not recognize the "
-    "version_specifier used\"; the test opens with Verilog-AMS's "
-    "\"1800+VAMS\"")
+    "version_specifier used\"; the test opens with a Verilog-AMS specifier "
+    "(\"VAMS-2.3\", or t_dpi_vams's \"1800+VAMS\")")
 TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "IEEE 1800-2017 5.6.3",
     "\"software implementations can also specify additional system tasks and "
@@ -346,7 +353,7 @@ TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
     "it uses to hide a value from constant folding")
 NON_STANDARD_REWIND_SPELLING = Exclusion(
-    "IEEE 1800-2017 21.3.4.4",
+    "IEEE 1800-2017 21.3.5",
     "the standard spells the seek-to-start file function $rewind, which "
     "Obelisk provides; the test calls it $frewind, a tool-specific name 5.6.3 "
     "puts outside the standard")
@@ -420,7 +427,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_type5": UNNAMED_TYPE_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
     "t_string_byte": STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION,
-    "t_mem_multi_io": TWO_STATE_INITIALIZATION,
+    "t_mem_multi_io": MIXED_VARIABLE_DRIVERS,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
     "t_typename_min": LOCATOR_RETURN_ELEMENT_TYPE,
     "t_iface_chained_consumer_struct": HIERARCHICAL_TYPEDEF,
