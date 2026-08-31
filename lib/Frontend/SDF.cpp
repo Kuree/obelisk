@@ -465,7 +465,13 @@ struct ParsedIOPath {
   SDFAnnotationDatabase::DelayAnnotation::Kind kind =
       SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute;
   std::optional<slang::ast::EdgeKind> edge;
-  SmallVector<std::optional<ExactDecimal>, 12> delays;
+  struct DelayValue {
+    sdf::DelayValueForm form = sdf::DelayValueForm::Empty;
+    std::optional<ExactDecimal> min;
+    std::optional<ExactDecimal> typ;
+    std::optional<ExactDecimal> max;
+  };
+  SmallVector<DelayValue, 12> delays;
   unsigned line = 1;
   unsigned column = 1;
 };
@@ -654,6 +660,85 @@ constantFilename(const slang::ast::CallExpression &call) {
   if (!stringValue || !stringValue.isString())
     return std::nullopt;
   return stringValue.str();
+}
+
+struct OptionalStringArgument {
+  bool valid = true;
+  std::optional<std::string> value;
+};
+
+static void callDiagnostic(const slang::SourceManager &sourceManager,
+                           const slang::ast::CallExpression &call,
+                           StringRef severity, const Twine &message);
+
+static OptionalStringArgument
+constantOptionalString(const slang::ast::CallExpression &call, size_t index) {
+  if (index >= call.arguments().size() || !call.arguments()[index] ||
+      call.arguments()[index]->kind ==
+          slang::ast::ExpressionKind::EmptyArgument)
+    return {};
+  slang::ast::EvalContext context(
+      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine)
+          .scope->asSymbol());
+  slang::ConstantValue value = call.arguments()[index]->eval(context);
+  if (!value)
+    return {false, std::nullopt};
+  slang::ConstantValue stringValue = value.convertToStr();
+  if (!stringValue || !stringValue.isString())
+    return {false, std::nullopt};
+  return {true, stringValue.str()};
+}
+
+enum class SDFMTMSelection { Minimum, Typical, Maximum };
+
+static std::optional<SDFMTMSelection>
+annotationMTMSelection(const slang::ast::CallExpression &call,
+                       const slang::SourceManager &sourceManager) {
+  OptionalStringArgument config = constantOptionalString(call, 2);
+  OptionalStringArgument log = constantOptionalString(call, 3);
+  OptionalStringArgument mtm = constantOptionalString(call, 4);
+  OptionalStringArgument factors = constantOptionalString(call, 5);
+  OptionalStringArgument scale = constantOptionalString(call, 6);
+  if (!config.valid || !log.valid || !mtm.valid || !factors.valid ||
+      !scale.valid) {
+    callDiagnostic(sourceManager, call, "error",
+                   "$sdf_annotate control arguments must be constant strings");
+    return std::nullopt;
+  }
+  if ((config.value && !config.value->empty()) ||
+      (log.value && !log.value->empty())) {
+    callDiagnostic(sourceManager, call, "error",
+                   "static $sdf_annotate does not support nonempty config_file "
+                   "or log_file arguments");
+    return std::nullopt;
+  }
+  if ((factors.value && !factors.value->empty()) ||
+      (scale.value && !scale.value->empty())) {
+    callDiagnostic(sourceManager, call, "error",
+                   "static $sdf_annotate does not support scale_factors or "
+                   "scale_type arguments");
+    return std::nullopt;
+  }
+
+  // IEEE 1800-2017 32.9, Table 32-5: mtm_spec selects one member of every
+  // min:typ:max triple. Only an omitted argument defaults to TOOL_CONTROL;
+  // an explicitly supplied string must be one of the four table keywords.
+  // TOOL_CONTROL is intentionally the existing typical policy, and selection
+  // stays compile-time so no SDF state reaches AOT.
+  if (!mtm.value)
+    return SDFMTMSelection::Typical;
+  StringRef spelling = *mtm.value;
+  auto selection =
+      StringSwitch<std::optional<SDFMTMSelection>>(spelling)
+          .Cases({"TOOL_CONTROL", "TYPICAL"}, SDFMTMSelection::Typical)
+          .Case("MINIMUM", SDFMTMSelection::Minimum)
+          .Case("MAXIMUM", SDFMTMSelection::Maximum)
+          .Default(std::nullopt);
+  if (!selection)
+    callDiagnostic(sourceManager, call, "error",
+                   "invalid $sdf_annotate mtm_spec; expected MINIMUM, "
+                   "TYPICAL, MAXIMUM, or TOOL_CONTROL");
+  return selection;
 }
 
 static const slang::ast::InstanceSymbol *
@@ -1721,26 +1806,33 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
         path.edge = slang::ast::EdgeKind::NegEdge;
       for (mlir::Attribute attribute : pathOp.getDelays()) {
         auto value = cast<sdf::DelayValueAttr>(attribute);
-        if (value.getForm() == sdf::DelayValueForm::Empty || !value.getTyp()) {
-          path.delays.push_back(std::nullopt);
-          continue;
-        }
-        auto exact = parseDecimal(value.getTyp().getSpelling().getValue());
-        if (!exact) {
-          sdfIRDiagnostic(file, pathOp, "invalid SDF delay value");
+        ParsedIOPath::DelayValue parsedValue;
+        parsedValue.form = value.getForm();
+        auto parseMember = [&](sdf::DecimalAttr member,
+                               std::optional<ExactDecimal> &destination) {
+          if (!member)
+            return true;
+          destination = parseDecimal(member.getSpelling().getValue());
+          if (!destination) {
+            sdfIRDiagnostic(file, pathOp, "invalid SDF delay value");
+            return false;
+          }
+          if (path.kind ==
+                  SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute &&
+              destination->negative) {
+            // IEEE 1800-2017 32.5/.6: only INCREMENT is signed. Check every
+            // preserved MTM member while precise transient-IR location remains.
+            sdfIRDiagnostic(file, pathOp,
+                            "invalid nonnegative SDF delay value");
+            return false;
+          }
+          return true;
+        };
+        if (!parseMember(value.getMin(), parsedValue.min) ||
+            !parseMember(value.getTyp(), parsedValue.typ) ||
+            !parseMember(value.getMax(), parsedValue.max))
           return std::nullopt;
-        }
-        if (path.kind ==
-                SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute &&
-            exact->negative) {
-          // IEEE 1800-2017 32.5/.6: only INCREMENT is signed. Diagnose the
-          // source record here, while the transient IR still carries its
-          // precise location, rather than silently abandoning annotation.
-          sdfIRDiagnostic(file, pathOp,
-                          "invalid nonnegative SDF delay value");
-          return std::nullopt;
-        }
-        path.delays.push_back(*exact);
+        path.delays.push_back(std::move(parsedValue));
       }
       cell.paths.push_back(std::move(path));
     }
@@ -1876,10 +1968,9 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       invalid = true;
       continue;
     }
-    if (call->arguments().size() > 2) {
+    if (call->arguments().size() > 7) {
       callDiagnostic(sourceManager, *call, "error",
-                     "this static SDF tranche supports only filename and "
-                     "optional module scope arguments");
+                     "$sdf_annotate accepts at most seven arguments");
       invalid = true;
       continue;
     }
@@ -1890,6 +1981,12 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       callDiagnostic(sourceManager, *call, "error",
                      "$sdf_annotate requires a constant string filename and "
                      "an elaborated module scope");
+      invalid = true;
+      continue;
+    }
+    std::optional<SDFMTMSelection> mtm =
+        annotationMTMSelection(*call, sourceManager);
+    if (!mtm) {
       invalid = true;
       continue;
     }
@@ -2072,15 +2169,22 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
             update.filename = annotationFilename;
             update.line = annotation.line;
             update.column = annotation.column;
-            for (const std::optional<ExactDecimal> &value : annotation.delays) {
-              if (!value) {
+            for (const ParsedIOPath::DelayValue &value : annotation.delays) {
+              const std::optional<ExactDecimal> *selected = &value.typ;
+              if (value.form == sdf::DelayValueForm::Triple) {
+                if (*mtm == SDFMTMSelection::Minimum)
+                  selected = &value.min;
+                else if (*mtm == SDFMTMSelection::Maximum)
+                  selected = &value.max;
+              }
+              if (!*selected) {
                 // IEEE 1800-2017 32.3 leaves a preannotation timing value
                 // unchanged when the SDF field is empty.
                 update.delays.push_back(std::nullopt);
                 continue;
               }
               std::optional<int64_t> rounded =
-                  roundDelay(*value, sdf->timeScaleFs, precisionFs);
+                  roundDelay(**selected, sdf->timeScaleFs, precisionFs);
               if (!rounded) {
                 errs() << *filename << ':' << annotation.line << ':'
                        << annotation.column

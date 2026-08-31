@@ -4,4 +4,4 @@
   (CELL
     (CELLTYPE "sdf_negative_absolute_cell")
     (INSTANCE)
-    (DELAY (ABSOLUTE (IOPATH source destination (-1))))))
+    (DELAY (ABSOLUTE (IOPATH source destination (-1:2:3))))))
