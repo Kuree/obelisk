@@ -39,6 +39,7 @@ SOURCE = model.GitSource(
 SINGLE_UNIT = True
 FINISHED_MARKER = "*-* All Finished *-*"
 STOP_MARKER = "$stop"
+RUNTIME_ERROR = re.compile(r"(?m)^(?:ERROR:|%Error:)")
 # A small number of upstream self-checks call $finish after their checks and
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
@@ -825,6 +826,11 @@ def detect_compile_defines(descriptor: Path) -> list[str]:
     return result
 
 
+def contains_runtime_error(stdout: str, stderr: str) -> bool:
+    """Whether simulation emitted an error despite returning success."""
+    return bool(RUNTIME_ERROR.search(stdout) or RUNTIME_ERROR.search(stderr))
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top") -> str:
@@ -969,22 +975,27 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         result = runner.execute(
             str(binary), timeout,
             args=detect_run_args(top.with_suffix(".py")), cwd=tmp)
+        runtime_log = result.stdout + result.stderr
+        runtime_error = contains_runtime_error(result.stdout, result.stderr)
         if expectation.run_error:
             # The design builds and the run is what has to fail. A timeout is
             # not that failure: it means the run never reached a verdict.
-            if not result.ok and not result.timed_out:
+            # IEEE severity task `$error` may let simulation continue, so its
+            # diagnostic is also a failure even when the process exits zero.
+            if not result.timed_out and (not result.ok or runtime_error):
                 return model.Outcome(model.XFAIL_PASS)
-            return model.Outcome(model.RUN_FAIL, result.stdout)
-        if result.ok and (FINISHED_MARKER in result.stdout or
-                          top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER):
+            return model.Outcome(model.RUN_FAIL, runtime_log)
+        if (result.ok and not runtime_error and
+                (FINISHED_MARKER in result.stdout or
+                 top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER)):
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:
             # Test has the marker but didn't print it — genuine runtime bug.
-            return model.Outcome(model.RUN_FAIL, result.stdout)
+            return model.Outcome(model.RUN_FAIL, runtime_log)
         # Test doesn't use the marker at all. Treat clean exit as pass.
-        if result.ok:
+        if result.ok and not runtime_error:
             return model.Outcome(model.PASS)
-        return model.Outcome(model.RUN_FAIL, result.stdout)
+        return model.Outcome(model.RUN_FAIL, runtime_log)
 
 
 def run(root: Path, args) -> dict[str, model.Outcome]:

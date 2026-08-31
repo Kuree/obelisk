@@ -213,6 +213,20 @@ class CompileDefinesDescriptorTest(unittest.TestCase):
         )
 
 
+class RuntimeErrorTest(unittest.TestCase):
+    def test_error_on_stderr_is_a_runtime_failure(self):
+        self.assertTrue(verilator.contains_runtime_error(
+            "*-* All Finished *-*\n", "ERROR: concurrent assertion failed\n"))
+
+    def test_verilator_style_error_on_stdout_is_a_runtime_failure(self):
+        self.assertTrue(verilator.contains_runtime_error(
+            "%Error: assertion failed\n", ""))
+
+    def test_warning_and_clean_marker_are_not_a_runtime_failure(self):
+        self.assertFalse(verilator.contains_runtime_error(
+            "*-* All Finished *-*\n", "warning: ignored key\n"))
+
+
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
