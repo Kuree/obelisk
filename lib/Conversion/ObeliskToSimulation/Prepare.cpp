@@ -10888,7 +10888,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type functionType = typedImplementation
                               ? Type(typedImplementation.getFunctionType())
                               : Type(FunctionType::get(context, {}, {}));
-      sim::SimClassMethodDeclOp::create(
+      sim::SimClassMethodDeclOp declaration = sim::SimClassMethodDeclOp::create(
           builder, getSemanticLocation(method),
           builder.getStringAttr(methodSymbol.getValue()),
           FlatSymbolRefAttr::get(context,
@@ -10901,6 +10901,14 @@ void ObeliskSimPreparePass::runOnOperation() {
                               semantic::SVSubroutineKind::Task),
           builder.getBoolAttr(method.getIsFinal().value_or(false)),
           builder.getStringAttr(getDebugName(method)));
+      // A non-virtual method has no runtime dispatch-table role. Its direct
+      // call sites carry an explicit symbol reference, so ordinary symbol
+      // reachability can discard the declaration and implementation when no
+      // executable root calls it. Virtual methods remain externally visible
+      // roots because every concrete class must retain a complete vtable.
+      if (!isVirtual)
+        SymbolTable::setSymbolVisibility(declaration,
+                                         SymbolTable::Visibility::Private);
     }
   }
   if (invalid)

@@ -201,6 +201,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef staticSpecialization) {
   manager.addPass(createObeliskSimPreparePass());
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
+  // Preparation freezes dynamic class dispatch, factory initialization, and
+  // external entry points into explicit symbol references. Prune unreachable
+  // private code units before paying the per-function lowering cost.
+  designManager.addPass(createSymbolDCEPass());
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createObeliskSimLowerUnitPass());
