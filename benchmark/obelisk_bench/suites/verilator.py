@@ -199,6 +199,12 @@ POST_2017_ARRAY_MAP = Exclusion(
     "the exhaustive 2017 list of array manipulation methods contains locator, "
     "ordering, and reduction methods but no `map()` method; these 2024 tests "
     "require a later SystemVerilog language version")
+ARRAY_PATTERN_DOES_NOT_FLATTEN = Exclusion(
+    "IEEE 1800-2017 10.10.1",
+    "every assignment-pattern item must have the target array's element type, "
+    "and the clause explicitly marks `A9 = '{A3, 4, 5, 6, 7, 8, 9}` illegal; "
+    "only an unpacked array concatenation without the apostrophe flattens array "
+    "items")
 STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION = Exclusion(
     "IEEE 1800-2017 5.9",
     "a string literal assigned to an unpacked array of bytes is left "
@@ -398,6 +404,7 @@ NARROW_STREAM_TARGET = Exclusion(
     "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
+    "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
