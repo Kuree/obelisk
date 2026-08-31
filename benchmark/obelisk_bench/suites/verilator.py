@@ -44,12 +44,24 @@ RUNTIME_ERROR = re.compile(r"(?m)^(?:ERROR:|%Error:)")
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
 CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
+# Verilator defines `verilator` while compiling this test, and its source uses
+# that exact macro to exclude a covergroup section marked "Unsupported". Do
+# not define the macro suite-wide: other portable scenarios use it to select
+# Verilator-only `$c` calls and implementation-specific behavior.
+COMPATIBILITY_DEFINES: dict[str, tuple[str, ...]] = {
+    "t_assert_cover": ("verilator",),
+}
 SCENARIO = "simulator"
 KNOWN_SLANG_BUGS = {
     "t_assert_assert": (
         "IEEE 1800-2017 16.14.1 explicitly permits immediate assertion "
         "statements in a concurrent assertion action block; pinned Slang "
         "rejects both action-block assertions as nonprocedural"),
+    "t_assert_cover": (
+        "IEEE 1800-2017 16.4 permits observed-deferred and final-deferred "
+        "immediate assertions; pinned Slang analyzes their four synthetic "
+        "assertion procedures as user-written time-free always loops and "
+        "rejects them as simulation deadlocks"),
     "t_array_pattern_default_recursive": (
         "IEEE 1800-2017 10.9.1 requires a default key that does not directly "
         "match an unmatched subarray to descend recursively; pinned Slang "
@@ -957,6 +969,8 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             "-I", str(top.parent),
         ]
         extra.extend(detect_compile_defines(top.with_suffix(".py")))
+        extra.extend("-D" + definition
+                     for definition in COMPATIBILITY_DEFINES.get(name, ()))
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,
