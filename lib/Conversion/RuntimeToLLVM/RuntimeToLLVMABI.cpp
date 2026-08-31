@@ -17,8 +17,7 @@ namespace obelisk::runtimelowering {
 FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                                            const llvm::DataLayout &layout) {
   unsigned pointerBits = layout.getPointerSizeInBits();
-  if (!layout.isLittleEndian() ||
-      (pointerBits != 32 && pointerBits != 64)) {
+  if (!layout.isLittleEndian() || (pointerBits != 32 && pointerBits != 64)) {
     module.emitError() << "runtime lowering requires a little-endian target "
                           "with 32-bit or 64-bit pointers";
     return failure();

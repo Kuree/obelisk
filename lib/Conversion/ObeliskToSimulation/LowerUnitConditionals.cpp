@@ -725,8 +725,7 @@ UnitLowering::lowerConditional(semantic::SVConditionalStatementOp op) {
     Operation *expression = conditions.front();
     std::optional<StringRef> spelling = getConstantSpelling(expression);
     if (spelling) {
-      auto semanticType =
-          expression->getAttrOfType<TypeAttr>("semantic_type");
+      auto semanticType = expression->getAttrOfType<TypeAttr>("semantic_type");
       std::optional<uint64_t> width =
           semanticType ? getSemanticPackedWidth(semanticType.getValue())
                        : std::nullopt;

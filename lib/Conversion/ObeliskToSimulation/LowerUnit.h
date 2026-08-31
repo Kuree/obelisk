@@ -373,8 +373,7 @@ private:
       ::llvm::StringRef description = "immediate assertion");
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,
                                          ::mlir::StringRef message);
-  void emitRuntimeWarning(::mlir::Location location,
-                          ::mlir::StringRef message);
+  void emitRuntimeWarning(::mlir::Location location, ::mlir::StringRef message);
   ::mlir::LogicalResult lowerConditional(semantic::SVConditionalStatementOp op);
   ::mlir::LogicalResult
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);

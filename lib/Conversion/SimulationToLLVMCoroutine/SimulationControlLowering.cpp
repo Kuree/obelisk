@@ -199,13 +199,13 @@ public:
     LLVM::StoreOp::create(rewriter, location,
                           llvmConstant(rewriter, location, i32, 0), outState,
                           4);
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{i32},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_process_status"),
-                       ValueRange{context, adaptor.getProcess().front(),
-                                  outState})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_process_status"),
+            ValueRange{context, adaptor.getProcess().front(), outState})
+            .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.replaceOpWithNewOp<LLVM::LoadOp>(operation, i32, outState, 4);
     return success();
@@ -231,13 +231,13 @@ public:
     LLVM::StoreOp::create(rewriter, location, zero, outState, 8);
     Value incrementAddress = byteGEP(rewriter, location, outState, 8);
     LLVM::StoreOp::create(rewriter, location, zero, incrementAddress, 8);
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_process_random_get"),
-                       ValueRange{context, adaptor.getProcess().front(),
-                                  outState})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_process_random_get"),
+            ValueRange{context, adaptor.getProcess().front(), outState})
+            .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     Value state = LLVM::LoadOp::create(rewriter, location, i64, outState, 8);
     Value increment =
@@ -454,9 +454,9 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location location = operation.getLoc();
     Value context = loadCurrentRuntimeContext(rewriter, location);
-    SmallVector<Value> arguments{
-        context, llvmConstant(rewriter, location, rewriter.getI64Type(),
-                              operation.getId())};
+    SmallVector<Value> arguments{context, llvmConstant(rewriter, location,
+                                                       rewriter.getI64Type(),
+                                                       operation.getId())};
     StringRef runtimeFunction = "obelisk_rt_v1_deferred_enqueue";
     if (auto assertionID = operation->getAttrOfType<IntegerAttr>(
             "obelisk_sim.assertion_control_target_id")) {
@@ -527,8 +527,7 @@ public:
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
-  matchAndRewrite(sim::SimAssertionControlDynamicOp operation,
-                  OneToNOpAdaptor,
+  matchAndRewrite(sim::SimAssertionControlDynamicOp operation, OneToNOpAdaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location location = operation.getLoc();
     Value context = loadCurrentRuntimeContext(rewriter, location);
@@ -632,12 +631,13 @@ public:
       return failure();
     Location location = operation.getLoc();
     Value context = loadCurrentRuntimeContext(rewriter, location);
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{rewriter.getI32Type()},
-                       SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_monitor_register_logical"),
-                       ValueRange{context, adaptor.getProcess().front()})
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_monitor_register_logical"),
+            ValueRange{context, adaptor.getProcess().front()})
+            .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);
     return success();
@@ -713,9 +713,8 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_deferred_once");
   patterns.add<DeferredEnqueueConversion, DeferredMatureConversion,
                AssertionControlConversion, AssertionControlDynamicConversion,
-               AssertionEnabledConversion,
-               AssertionActionStateConversion, AssertionKillEpochConversion>(
-      converter, context);
+               AssertionEnabledConversion, AssertionActionStateConversion,
+               AssertionKillEpochConversion>(converter, context);
 }
 
 } // namespace obelisk::detail

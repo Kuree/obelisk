@@ -20,9 +20,8 @@ static inline uint64_t obelisk_stable_hash_append_byte(uint64_t hash,
   return (hash ^ byte) * OBELISK_STABLE_HASH_PRIME;
 }
 
-static inline uint64_t obelisk_stable_hash_append(uint64_t hash,
-                                                  const void *data,
-                                                  size_t size) {
+static inline uint64_t
+obelisk_stable_hash_append(uint64_t hash, const void *data, size_t size) {
   const uint8_t *bytes = (const uint8_t *)data;
   for (size_t index = 0; index != size; ++index)
     hash = obelisk_stable_hash_append_byte(hash, bytes[index]);
@@ -30,11 +29,12 @@ static inline uint64_t obelisk_stable_hash_append(uint64_t hash,
 }
 
 /// Append the low `byte_count` bytes of an integer in little-endian order.
-static inline uint64_t obelisk_stable_hash_append_uint_le(
-    uint64_t hash, uint64_t value, unsigned byte_count) {
+static inline uint64_t obelisk_stable_hash_append_uint_le(uint64_t hash,
+                                                          uint64_t value,
+                                                          unsigned byte_count) {
   for (unsigned index = 0; index != byte_count; ++index)
-    hash = obelisk_stable_hash_append_byte(
-        hash, (uint8_t)(value >> (index * 8)));
+    hash =
+        obelisk_stable_hash_append_byte(hash, (uint8_t)(value >> (index * 8)));
   return hash;
 }
 

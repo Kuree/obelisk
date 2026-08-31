@@ -632,8 +632,8 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
         llvmConstant(builder, location, i32,
                      OBELISK_RT_DPI_DISABLE_UNSUPPORTED),
         llvmConstant(builder, location, i32, OBELISK_RT_FATAL));
-    Value taskStatus = arith::SelectOp::create(
-        builder, location, succeeded, zero, failureStatus);
+    Value taskStatus = arith::SelectOp::create(builder, location, succeeded,
+                                               zero, failureStatus);
     mergeStatus(taskStatus);
   }
   if (stringOutputCount != 0) {

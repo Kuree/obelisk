@@ -324,8 +324,7 @@ Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count) {
   // single-bit replication and byte/short/int-sized fields.
   if (input.width <= 64 && 64 % input.width == 0) {
     uint64_t valuePattern = input.value.front() & finalMask(input.width);
-    uint64_t unknownPattern =
-        input.unknown.front() & finalMask(input.width);
+    uint64_t unknownPattern = input.unknown.front() & finalMask(input.width);
     for (uint64_t offset = input.width; offset < 64; offset += input.width) {
       valuePattern |= input.value.front() << offset;
       unknownPattern |= input.unknown.front() << offset;

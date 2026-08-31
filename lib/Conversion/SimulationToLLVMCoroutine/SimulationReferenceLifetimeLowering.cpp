@@ -145,26 +145,23 @@ public:
     StringRef allocation = "obelisk_rt_v1_native_state_alloc";
     if (!rootSlots.empty()) {
       Value count = llvmConstant(rewriter, location, i64, rootSlots.size());
-      Type slotType = LLVM::LLVMStructType::getLiteral(
-          rewriter.getContext(), {i64, i32, i32});
-      Value slots = entryAlloca(rewriter, location, slotType, rootSlots.size(),
-                                8);
+      Type slotType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
+                                                       {i64, i32, i32});
+      Value slots =
+          entryAlloca(rewriter, location, slotType, rootSlots.size(), 8);
       for (auto [index, root] : llvm::enumerate(rootSlots)) {
         Value encoded = LLVM::ZeroOp::create(rewriter, location, slotType);
-        encoded = insertValue(rewriter, location, encoded,
-                              llvmConstant(rewriter, location, i64,
-                                           root.bitOffset),
-                              0);
-        encoded = insertValue(rewriter, location, encoded,
-                              llvmConstant(rewriter, location, i32,
-                                           root.kindMask),
-                              1);
         encoded = insertValue(
             rewriter, location, encoded,
-            llvmConstant(rewriter, location, i32,
-                         root.conditional
-                             ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE
-                             : 0),
+            llvmConstant(rewriter, location, i64, root.bitOffset), 0);
+        encoded = insertValue(
+            rewriter, location, encoded,
+            llvmConstant(rewriter, location, i32, root.kindMask), 1);
+        encoded = insertValue(
+            rewriter, location, encoded,
+            llvmConstant(
+                rewriter, location, i32,
+                root.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0),
             2);
         LLVM::StoreOp::create(
             rewriter, location, encoded,

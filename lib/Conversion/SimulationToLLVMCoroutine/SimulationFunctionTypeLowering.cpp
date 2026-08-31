@@ -297,9 +297,10 @@ void populateFunctionTypeConversionPatterns(
   MLIRContext *context = patterns.getContext();
   patterns.add<FuncSignatureConversion, CallTypeConversion>(converter, context,
                                                             twoStateValues);
-  patterns.add<ReturnTypeConversion, SelectTypeConversion,
-               TaskCallTypeConversion, ClassVirtualTaskCallTypeConversion,
-               DPICallTypeConversion>(converter, context);
+  patterns
+      .add<ReturnTypeConversion, SelectTypeConversion, TaskCallTypeConversion,
+           ClassVirtualTaskCallTypeConversion, DPICallTypeConversion>(converter,
+                                                                      context);
 }
 
 void populateContextRuntimeToLLVMConversionPattern(

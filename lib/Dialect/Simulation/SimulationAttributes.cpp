@@ -226,10 +226,10 @@ LogicalResult DPIOpenArrayABIAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, uint32_t storage,
     DPIABIKind elementKind, uint32_t elementWidth, uint64_t transportWidth,
     bool transportFourState, bool fourState, uint64_t elementCSize,
-    uint32_t elementCAlignment,
-    uint64_t elementStringCount, DenseI64ArrayAttr elementLeaves,
-    int64_t packedLeft, int64_t packedRight, DenseI64ArrayAttr ranges,
-    DenseI64ArrayAttr sourceRanges, DenseI64ArrayAttr shapePlan) {
+    uint32_t elementCAlignment, uint64_t elementStringCount,
+    DenseI64ArrayAttr elementLeaves, int64_t packedLeft, int64_t packedRight,
+    DenseI64ArrayAttr ranges, DenseI64ArrayAttr sourceRanges,
+    DenseI64ArrayAttr shapePlan) {
   if (storage > 2)
     return emitError() << "DPI open-array storage kind is invalid";
   if (elementWidth == 0)
@@ -247,7 +247,8 @@ LogicalResult DPIOpenArrayABIAttr::verify(
   if (storage == 1 && transportFourState)
     return emitError() << "dynamic DPI open-array handle cannot be four-state";
   if (!shapePlan || shapePlan.size() % 8 != 0)
-    return emitError() << "DPI open-array shape plan must use eight-word records";
+    return emitError()
+           << "DPI open-array shape plan must use eight-word records";
   if (storage == 2 && shapePlan.size() / 8 != ranges.size() / 2)
     return emitError() << "recursive DPI open-array shape is incomplete";
   if (storage != 2 && !shapePlan.empty())

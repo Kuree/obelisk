@@ -47,12 +47,11 @@ namespace obelisk::sim {
 bool isSuspensionOp(Operation *operation) {
   return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
              SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-             SimSuspendClockSetOp,
-             SimSuspendEventOp, SimSuspendEventOrderOp, SimSuspendMailboxOp,
-             SimSuspendSemaphoreOp, SimSuspendForeverOp, SimSuspendAwaitOp,
-             SimSuspendJoinOp, SimSuspendChildrenOp, SimSuspendObserveOp,
-             SimTaskCallOp, SimClassVirtualTaskCallOp, SimProcessControlOp,
-             SimControlBoundaryOp>(operation);
+             SimSuspendClockSetOp, SimSuspendEventOp, SimSuspendEventOrderOp,
+             SimSuspendMailboxOp, SimSuspendSemaphoreOp, SimSuspendForeverOp,
+             SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp,
+             SimSuspendObserveOp, SimTaskCallOp, SimClassVirtualTaskCallOp,
+             SimProcessControlOp, SimControlBoundaryOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {
@@ -197,13 +196,12 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
       if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
               SimRefStoreOp, SimDriverDriveOp, SimDriverDriveInertialOp,
-              SimDriverDriveInertialPathOp,
-              SimRefStoreInertialPathOp,
+              SimDriverDriveInertialPathOp, SimRefStoreInertialPathOp,
               SimDriverDriveInertialStrengthPairOp,
               SimDriverDriveInertialPathStrengthPairOp,
-              SimDriverDriveDelayedNetOp,
-              SimDriverDriveChangedOp, SimMosDriveDelayedOp, SimNBAEnqueueOp,
-              SimSpawnOp, SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,
+              SimDriverDriveDelayedNetOp, SimDriverDriveChangedOp,
+              SimMosDriveDelayedOp, SimNBAEnqueueOp, SimSpawnOp,
+              SimEventTriggerOp, SimSuspendDelayOp, SimTaskCallOp,
               SimClassVirtualTaskCallOp, SimProcessControlOp,
               SimProcessSetRandomStateOp, SimRandomSetStateOp>(operation)) {
         operation->emitOpError(
@@ -537,7 +535,7 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
 
 OpFoldResult SimBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
 
-#define OBELISK_NULL_FOLD(OP)                                                \
+#define OBELISK_NULL_FOLD(OP)                                                  \
   OpFoldResult OP::fold(FoldAdaptor) { return UnitAttr::get(getContext()); }
 
 OBELISK_NULL_FOLD(SimCovergroupNullOp)

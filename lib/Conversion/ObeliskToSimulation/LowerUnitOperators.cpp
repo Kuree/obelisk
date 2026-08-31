@@ -275,8 +275,8 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
         builder, location, *input,
         arith::ConstantOp::create(
             builder, location, integerType,
-            builder.getIntegerAttr(
-                integerType, APInt::getAllOnes(integerType.getWidth()))));
+            builder.getIntegerAttr(integerType,
+                                   APInt::getAllOnes(integerType.getWidth()))));
     break;
   }
   case semantic::SVUnaryOperator::LogicalNot: {
@@ -467,8 +467,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         lhs = sim::SimEventNullOp::create(builder, location, (*rhs).getType())
                   .getResult();
       else if (isa<sim::VirtualInterfaceType>((*rhs).getType()))
-        lhs = sim::SimVirtualInterfaceNullOp::create(
-                  builder, location, (*rhs).getType())
+        lhs = sim::SimVirtualInterfaceNullOp::create(builder, location,
+                                                     (*rhs).getType())
                   .getResult();
       else if (isa<sim::ChandleType>((*rhs).getType()))
         lhs = sim::SimChandleNullOp::create(builder, location).getResult();
@@ -485,8 +485,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         rhs = sim::SimEventNullOp::create(builder, location, (*lhs).getType())
                   .getResult();
       else if (isa<sim::VirtualInterfaceType>((*lhs).getType()))
-        rhs = sim::SimVirtualInterfaceNullOp::create(
-                  builder, location, (*lhs).getType())
+        rhs = sim::SimVirtualInterfaceNullOp::create(builder, location,
+                                                     (*lhs).getType())
                   .getResult();
       else if (isa<sim::ChandleType>((*lhs).getType()))
         rhs = sim::SimChandleNullOp::create(builder, location).getResult();
@@ -556,11 +556,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     // and `bit signed [31:0]` are equivalent by that rule, so two queues over
     // them compare even though the normalized element types are spelled
     // differently.
-    bool sameContainerKind =
-        (isa<sim::QueueType>((*lhs).getType()) &&
-         isa<sim::QueueType>((*rhs).getType())) ||
-        (isa<sim::DynamicArrayType>((*lhs).getType()) &&
-         isa<sim::DynamicArrayType>((*rhs).getType()));
+    bool sameContainerKind = (isa<sim::QueueType>((*lhs).getType()) &&
+                              isa<sim::QueueType>((*rhs).getType())) ||
+                             (isa<sim::DynamicArrayType>((*lhs).getType()) &&
+                              isa<sim::DynamicArrayType>((*rhs).getType()));
     if (((*lhs).getType() != (*rhs).getType() && !sameContainerKind) ||
         (kind != Binary::Equality && kind != Binary::Inequality &&
          kind != Binary::CaseEquality && kind != Binary::CaseInequality)) {
@@ -660,9 +659,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         sim::SimClassIdOp::create(builder, location, *lhs).getResult();
     Value rhsID =
         sim::SimClassIdOp::create(builder, location, *rhs).getResult();
-    arith::CmpIPredicate predicate = handleEquality()
-                                        ? arith::CmpIPredicate::eq
-                                        : arith::CmpIPredicate::ne;
+    arith::CmpIPredicate predicate =
+        handleEquality() ? arith::CmpIPredicate::eq : arith::CmpIPredicate::ne;
     Value compared =
         arith::CmpIOp::create(builder, location, predicate, lhsID, rhsID);
     return convert(compared, *resultType, false, location);
@@ -698,8 +696,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           << "cannot compare different virtual-interface specializations";
       return failure();
     }
-    Value equal = sim::SimVirtualInterfaceEqualOp::create(builder, location,
-                                                           *lhs, *rhs);
+    Value equal =
+        sim::SimVirtualInterfaceEqualOp::create(builder, location, *lhs, *rhs);
     if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
@@ -878,9 +876,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       bool caseComparison = *compare == sim::CompareKind::CaseEq ||
                             *compare == sim::CompareKind::CaseNe;
       Type comparedType =
-          caseComparison ? builder.getI1Type()
-                         : cast<Type>(sim::LogicType::get(
-                               function.getContext(), 1));
+          caseComparison
+              ? builder.getI1Type()
+              : cast<Type>(sim::LogicType::get(function.getContext(), 1));
       Value compared = sim::SimLogicCompareOp::create(
           builder, location, comparedType, *compare, *lhs, *rhs);
       return convert(compared, *resultType, false, location);
@@ -935,21 +933,21 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           Value amount = arith::ConstantOp::create(
               builder, location, integerType,
               builder.getIntegerAttr(integerType, bit));
-          bitValue = arith::ShRUIOp::create(builder, location, bitValue,
-                                            amount);
+          bitValue =
+              arith::ShRUIOp::create(builder, location, bitValue, amount);
         }
         if (integerType.getWidth() != 1)
           bitValue = arith::TruncIOp::create(builder, location,
                                              builder.getI1Type(), bitValue);
-        return sim::SimLogicFromBitsOp::create(builder, location,
-                                               predicateType, bitValue);
+        return sim::SimLogicFromBitsOp::create(builder, location, predicateType,
+                                               bitValue);
       };
       Value exponent = *rhs;
       if (!isa<sim::LogicType>(exponent.getType())) {
         auto exponentLogicType =
             sim::LogicType::get(function.getContext(), *exponentWidth);
-        exponent = sim::SimLogicFromBitsOp::create(
-            builder, location, exponentLogicType, exponent);
+        exponent = sim::SimLogicFromBitsOp::create(builder, location,
+                                                   exponentLogicType, exponent);
       }
       Value exponentSign;
       if (isSignedNode(children[1])) {
@@ -957,20 +955,19 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         auto exponentPlaneType =
             builder.getIntegerType(exponentLogicType.getWidth());
         exponentSign = sim::SimLogicExtractOp::create(
-            builder, location, predicateType, exponent,
-            *exponentWidth - 1);
+            builder, location, predicateType, exponent, *exponentWidth - 1);
         Value zeroExponent = sim::SimLogicConstantOp::create(
             builder, location, exponentLogicType,
-            builder.getIntegerAttr(
-                exponentPlaneType, APInt::getZero(*exponentWidth)),
-            builder.getIntegerAttr(
-                exponentPlaneType, APInt::getZero(*exponentWidth)));
+            builder.getIntegerAttr(exponentPlaneType,
+                                   APInt::getZero(*exponentWidth)),
+            builder.getIntegerAttr(exponentPlaneType,
+                                   APInt::getZero(*exponentWidth)));
         // The negative-exponent result is selected from Table 11-4 below.
         // Avoid evaluating its two's-complement bit pattern as a huge
         // unsigned magnitude first.
-        exponent = sim::SimLogicMuxOp::create(
-            builder, location, exponentLogicType, exponentSign, zeroExponent,
-            exponent);
+        exponent =
+            sim::SimLogicMuxOp::create(builder, location, exponentLogicType,
+                                       exponentSign, zeroExponent, exponent);
       }
       // Keep exponentiation as one pure operation. Expanding a squaring stage
       // per exponent bit made native compilation quadratic in the packed
@@ -1004,13 +1001,12 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         unsigned width = logicType.getWidth();
         Value zero = logicConstant(APInt(width, 0), APInt(width, 0));
         Value one = logicConstant(APInt(width, 1), APInt(width, 0));
-        Value minusOne = logicConstant(APInt::getAllOnes(width),
-                                       APInt(width, 0));
+        Value minusOne =
+            logicConstant(APInt::getAllOnes(width), APInt(width, 0));
         auto equals = [&](Value candidate) -> Value {
-          return sim::SimLogicCompareOp::create(builder, location,
-                                                predicateType,
-                                                sim::CompareKind::Eq, *lhs,
-                                                candidate);
+          return sim::SimLogicCompareOp::create(
+              builder, location, predicateType, sim::CompareKind::Eq, *lhs,
+              candidate);
         };
         // Table 11-4's remaining bases -- negative below -1 and positive above
         // 1 -- both give zero, so they need no test of their own.
@@ -1020,15 +1016,14 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           // even in two's complement.
           Value alternating = sim::SimLogicMuxOp::create(
               builder, location, logicType, exponentBit(0), minusOne, one);
-          negative = sim::SimLogicMuxOp::create(
-              builder, location, logicType, equals(minusOne), alternating,
-              negative);
+          negative = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                                equals(minusOne), alternating,
+                                                negative);
         }
         negative = sim::SimLogicMuxOp::create(builder, location, logicType,
                                               equals(one), one, negative);
-        negative = sim::SimLogicMuxOp::create(builder, location, logicType,
-                                              equals(zero), allUnknown,
-                                              negative);
+        negative = sim::SimLogicMuxOp::create(
+            builder, location, logicType, equals(zero), allUnknown, negative);
         value = sim::SimLogicMuxOp::create(builder, location, logicType,
                                            exponentSign, negative, value);
       }
@@ -1146,35 +1141,33 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
           arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, *lhs,
               constant(APInt::getSignedMinValue(type.getWidth()))),
-          arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, *rhs,
-              constant(APInt::getAllOnes(type.getWidth()))));
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                *rhs,
+                                constant(APInt::getAllOnes(type.getWidth()))));
       undefined = arith::OrIOp::create(builder, location, undefined, overflow);
     }
-    Value divisor = arith::SelectOp::create(
-        builder, location, undefined, constant(APInt(type.getWidth(), 1)),
-        *rhs);
+    Value divisor =
+        arith::SelectOp::create(builder, location, undefined,
+                                constant(APInt(type.getWidth(), 1)), *rhs);
     if (kind == Binary::Divide) {
-      value = signedOp
-                  ? Value(arith::DivSIOp::create(builder, location, *lhs,
-                                                 divisor))
-                  : Value(arith::DivUIOp::create(builder, location, *lhs,
-                                                 divisor));
+      value =
+          signedOp
+              ? Value(arith::DivSIOp::create(builder, location, *lhs, divisor))
+              : Value(arith::DivUIOp::create(builder, location, *lhs, divisor));
       // The wrapped quotient of the signed overflow is the dividend itself.
       if (overflow)
-        value = arith::SelectOp::create(builder, location, overflow, *lhs,
-                                        value);
+        value =
+            arith::SelectOp::create(builder, location, overflow, *lhs, value);
       value = arith::SelectOp::create(
           builder, location,
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                                 *rhs, zero),
           zero, value);
     } else {
-      value = signedOp
-                  ? Value(arith::RemSIOp::create(builder, location, *lhs,
-                                                 divisor))
-                  : Value(arith::RemUIOp::create(builder, location, *lhs,
-                                                 divisor));
+      value =
+          signedOp
+              ? Value(arith::RemSIOp::create(builder, location, *lhs, divisor))
+              : Value(arith::RemUIOp::create(builder, location, *lhs, divisor));
       value =
           arith::SelectOp::create(builder, location, undefined, zero, value);
     }
@@ -1907,8 +1900,8 @@ FailureOr<Value> UnitLowering::mergeConditionalValues(Value condition,
   // for logical equivalence as described in 11.4.5"; two arms that already
   // agree return that value whatever their type. The aggregate paths above
   // apply the same rule per element.
-  FailureOr<Value> equal = conditionalEqual(trueValue, falseValue, type,
-                                            location);
+  FailureOr<Value> equal =
+      conditionalEqual(trueValue, falseValue, type, location);
   if (failed(equal))
     return failure();
   return arith::SelectOp::create(builder, location, *equal, trueValue,
@@ -1973,8 +1966,8 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   Value unusedArm = createDefaultValue(builder, location, *resultType);
   if (!unusedArm)
     return failure();
-  Value notAmbiguous = arith::ConstantOp::create(
-      builder, location, i1Type, builder.getBoolAttr(false));
+  Value notAmbiguous = arith::ConstantOp::create(builder, location, i1Type,
+                                                 builder.getBoolAttr(false));
   size_t childIndex = 0;
   for (size_t conditionIndex = 0; conditionIndex < op.getConditionCount();
        ++conditionIndex) {
@@ -2066,10 +2059,10 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   FailureOr<Value> falseResult = lowerArm(falseExpression);
   if (failed(falseResult))
     return failure();
-  cf::CondBranchOp::create(
-      builder, getSemanticLocation(falseExpression), falseBlock->getArgument(1),
-      ambiguousBlock, ValueRange{falseBlock->getArgument(0), *falseResult},
-      mergeBlock, ValueRange{*falseResult});
+  cf::CondBranchOp::create(builder, getSemanticLocation(falseExpression),
+                           falseBlock->getArgument(1), ambiguousBlock,
+                           ValueRange{falseBlock->getArgument(0), *falseResult},
+                           mergeBlock, ValueRange{*falseResult});
 
   setCurrent(ambiguousBlock);
   Type i1 = builder.getI1Type();
@@ -2190,9 +2183,9 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
       Value comparison = sim::SimStringCompareOp::create(
           builder, itemLocation, builder.getI32Type(), selector, *normalized,
           builder.getBoolAttr(false));
-      Value zero = arith::ConstantOp::create(
-          builder, itemLocation, builder.getI32Type(),
-          builder.getI32IntegerAttr(0));
+      Value zero =
+          arith::ConstantOp::create(builder, itemLocation, builder.getI32Type(),
+                                    builder.getI32IntegerAttr(0));
       return arith::CmpIOp::create(builder, itemLocation, integerKind,
                                    comparison, zero)
           .getResult();
@@ -2256,9 +2249,8 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
       setCurrent(header);
       Value index = header->getArgument(0);
       Value accumulator = header->getArgument(1);
-      Value more = arith::CmpIOp::create(builder, itemLocation,
-                                         arith::CmpIPredicate::ult, index,
-                                         size);
+      Value more = arith::CmpIOp::create(
+          builder, itemLocation, arith::CmpIPredicate::ult, index, size);
       cf::CondBranchOp::create(builder, itemLocation, more, body, ValueRange{},
                                exit, ValueRange{accumulator});
       setCurrent(body);

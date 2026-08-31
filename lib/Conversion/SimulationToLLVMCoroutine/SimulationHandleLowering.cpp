@@ -310,18 +310,17 @@ void populateNativeHandleConversionPatterns(
       converter, context, netHandles);
   patterns.add<ContextHandleConversion<sim::SimContextDriverOp>>(
       converter, context, driverHandles);
-  patterns.add<
-      EventHandleConversion,
-      StaticHandleExtractConversion<sim::SimRefExtractOp>,
-      StaticHandleExtractConversion<sim::SimNetExtractOp>,
-      StaticHandleExtractConversion<sim::SimDriverExtractOp>,
-      DynamicHandleExtractConversion<sim::SimRefDynExtractOp>,
-      DynamicHandleExtractConversion<sim::SimDriverDynExtractOp>,
-      SubelementHandleConversion<sim::SimRefSubelementOp>,
-      SubelementHandleConversion<sim::SimDriverSubelementOp>,
-      ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
-      ArrayElementHandleConversion<sim::SimDriverArrayElementOp>>(converter,
-                                                                  context);
+  patterns.add<EventHandleConversion,
+               StaticHandleExtractConversion<sim::SimRefExtractOp>,
+               StaticHandleExtractConversion<sim::SimNetExtractOp>,
+               StaticHandleExtractConversion<sim::SimDriverExtractOp>,
+               DynamicHandleExtractConversion<sim::SimRefDynExtractOp>,
+               DynamicHandleExtractConversion<sim::SimDriverDynExtractOp>,
+               SubelementHandleConversion<sim::SimRefSubelementOp>,
+               SubelementHandleConversion<sim::SimDriverSubelementOp>,
+               ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
+               ArrayElementHandleConversion<sim::SimDriverArrayElementOp>>(
+      converter, context);
 }
 
 } // namespace obelisk::detail

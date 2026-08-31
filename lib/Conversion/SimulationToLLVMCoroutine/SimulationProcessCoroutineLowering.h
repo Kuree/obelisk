@@ -16,16 +16,16 @@ struct PreparedSuspendableProcess {
   const SimulationProcessFrameAnalysis *analysis;
 };
 
-mlir::FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
-    sim::SimFuncOp function,
-    const SimulationProcessFrameAnalysis &analysis);
+mlir::FailureOr<PreparedSuspendableProcess>
+prepareSuspendableProcess(sim::SimFuncOp function,
+                          const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult
 lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process);
 mlir::LogicalResult
 finishPreparedSuspendableProcess(PreparedSuspendableProcess &process);
-mlir::LogicalResult lowerSuspendableProcess(
-    sim::SimFuncOp function,
-    const SimulationProcessFrameAnalysis &analysis);
+mlir::LogicalResult
+lowerSuspendableProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis);
 
 } // namespace obelisk::detail
 

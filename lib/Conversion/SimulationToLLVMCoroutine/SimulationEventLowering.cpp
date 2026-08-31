@@ -69,9 +69,8 @@ public:
     if (operation.getReplaceable()) {
       LLVM::CallOp::create(
           rewriter, location, TypeRange{},
-          SymbolRefAttr::get(
-              rewriter.getContext(),
-              "obelisk_rt_v1_scheduler_event_replace_after"),
+          SymbolRefAttr::get(rewriter.getContext(),
+                             "obelisk_rt_v1_scheduler_event_replace_after"),
           ValueRange{loadCurrentRuntimeContext(rewriter, location),
                      adaptor.getEvent().front(),
                      llvmConstant(rewriter, location, rewriter.getI32Type(),
@@ -150,9 +149,9 @@ public:
   matchAndRewrite(sim::SimClockOccurrenceConsumeOp operation, OneToNOpAdaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location location = operation.getLoc();
-    Value site = LLVM::ConstantOp::create(
-        rewriter, location, rewriter.getI64Type(),
-        operation.getOccurrenceSiteAttr());
+    Value site =
+        LLVM::ConstantOp::create(rewriter, location, rewriter.getI64Type(),
+                                 operation.getOccurrenceSiteAttr());
     rewriter.replaceOpWithNewOp<LLVM::CallOp>(
         operation, TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),

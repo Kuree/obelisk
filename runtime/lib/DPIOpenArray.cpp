@@ -1,7 +1,7 @@
 //===- DPIOpenArray.cpp - IEEE DPI open-array access layer --------------===//
 
-#include "obelisk/Runtime/Runtime.h"
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/Runtime.h"
 #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
 #define DPI_DLLISPEC __declspec(dllexport)
 #elif defined(__GNUC__) || defined(__clang__)
@@ -10,10 +10,10 @@
 #include "svdpi.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdarg>
-#include <cstring>
+#include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -104,8 +104,8 @@ const obelisk_rt_dpi_open_array_v1 *descriptor(svOpenArrayHandle handle) {
   return value;
 }
 
-const obelisk_rt_dpi_dimension_v1 *dimensionRecord(
-    const obelisk_rt_dpi_open_array_v1 &array, int dimension) {
+const obelisk_rt_dpi_dimension_v1 *
+dimensionRecord(const obelisk_rt_dpi_open_array_v1 &array, int dimension) {
   return dimension >= 1 && static_cast<uint32_t>(dimension) <= array.dimensions
              ? &array.ranges[dimension - 1]
              : nullptr;
@@ -250,8 +250,7 @@ extern "C" void obelisk_rt_v1_dpi_import_bytecode_link_anchor(void) {
   designBytecodeDpiAggregateUnpack = &obelisk_rt_v1_dpi_aggregate_unpack;
   designBytecodeDpiOpenAggregateRootsPush =
       &obelisk_rt_v1_dpi_open_array_aggregate_roots_push;
-  designBytecodeDpiAggregateRootsPop =
-      &obelisk_rt_v1_dpi_aggregate_roots_pop;
+  designBytecodeDpiAggregateRootsPop = &obelisk_rt_v1_dpi_aggregate_roots_pop;
   designBytecodeDpiOpenPrepareRecursive =
       &obelisk_rt_v1_dpi_open_array_prepare_recursive;
   designBytecodeDpiOpenFinishRecursive =
@@ -400,27 +399,26 @@ extern "C" void obelisk_rt_v1_dpi_open_array_release_recursive(
   std::memset(storage, 0, sizeof(*storage));
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dpi_open_array_prepare_recursive(
+extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_prepare_recursive(
     const void *value, const void *unknown, uint64_t planeSize,
-    uint64_t transportWidth, uint32_t transportFourState,
-    uint32_t writable, uint32_t elementCategory, uint32_t elementWidth,
-    uint32_t elementFourState, int32_t packedLeft, int32_t packedRight,
-    uint64_t elementCSize, uint32_t elementCAlignment,
-    uint64_t elementStringCount, const int64_t *elementPlan,
-    uint64_t elementPlanWords, const int64_t *shapePlan, uint32_t dimensions,
+    uint64_t transportWidth, uint32_t transportFourState, uint32_t writable,
+    uint32_t elementCategory, uint32_t elementWidth, uint32_t elementFourState,
+    int32_t packedLeft, int32_t packedRight, uint64_t elementCSize,
+    uint32_t elementCAlignment, uint64_t elementStringCount,
+    const int64_t *elementPlan, uint64_t elementPlanWords,
+    const int64_t *shapePlan, uint32_t dimensions,
     obelisk_rt_dpi_open_array_storage_v1 *outStorage) {
   constexpr uint64_t shapeWords = 8;
   if (!outStorage)
     return OBELISK_RT_INVALID_ARGUMENT;
   std::memset(outStorage, 0, sizeof(*outStorage));
   if (!value || !shapePlan || !elementPlan || dimensions == 0 ||
-      elementPlanWords == 0 ||
-      elementPlanWords % 8 != 0 || transportWidth == 0 || elementWidth == 0 ||
-      transportFourState > 1 || writable > 1 || elementFourState > 1 ||
+      elementPlanWords == 0 || elementPlanWords % 8 != 0 ||
+      transportWidth == 0 || elementWidth == 0 || transportFourState > 1 ||
+      writable > 1 || elementFourState > 1 ||
       (transportFourState && !unknown) ||
-      planeSize < (transportWidth + 7) / 8 ||
-      elementCSize == 0 || elementCAlignment == 0 ||
+      planeSize < (transportWidth + 7) / 8 || elementCSize == 0 ||
+      elementCAlignment == 0 ||
       (elementCAlignment & (elementCAlignment - 1)) != 0 ||
       elementCAlignment > alignof(std::max_align_t) ||
       elementStringCount > (UINT64_MAX - elementCSize) / 8)
@@ -452,13 +450,11 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
     for (uint64_t bit = 0; bit != width; ++bit)
       setBit(destination, destinationBit + bit, bitAt(source, sourceBit + bit));
   };
-  auto checkedExtent = [](int64_t left, int64_t right,
-                          uint64_t &result) {
-    uint64_t distance = left >= right
-                            ? static_cast<uint64_t>(left) -
-                                  static_cast<uint64_t>(right)
-                            : static_cast<uint64_t>(right) -
-                                  static_cast<uint64_t>(left);
+  auto checkedExtent = [](int64_t left, int64_t right, uint64_t &result) {
+    uint64_t distance =
+        left >= right
+            ? static_cast<uint64_t>(left) - static_cast<uint64_t>(right)
+            : static_cast<uint64_t>(right) - static_cast<uint64_t>(left);
     if (distance == UINT64_MAX)
       return false;
     result = distance + 1;
@@ -468,7 +464,10 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
   View root{static_cast<const uint8_t *>(value),
             transportFourState ? static_cast<const uint8_t *>(unknown)
                                : nullptr,
-            planeSize, transportWidth, 0, transportFourState != 0};
+            planeSize,
+            transportWidth,
+            0,
+            transportFourState != 0};
   OBELISK_RT_TRY {
     struct Frame {
       uint32_t depth = 0;
@@ -512,8 +511,7 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
         continue;
       }
       if (!frame.initialized) {
-        const int64_t *record =
-            shapePlan + uint64_t{frame.depth} * shapeWords;
+        const int64_t *record = shapePlan + uint64_t{frame.depth} * shapeWords;
         int64_t descriptorLeft = record[1];
         int64_t descriptorRight = record[2];
         int64_t childSpanWord = record[5];
@@ -522,10 +520,10 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
         frame.kind = record[0];
         frame.sourceStart = record[3];
         frame.sourceStride = record[4];
-        if (frame.kind < 0 || frame.kind > 2 ||
-            descriptorLeft < INT32_MIN || descriptorLeft > INT32_MAX ||
-            descriptorRight < INT32_MIN || descriptorRight > INT32_MAX ||
-            frame.sourceStart < 0 || childSpanWord <= 0 ||
+        if (frame.kind < 0 || frame.kind > 2 || descriptorLeft < INT32_MIN ||
+            descriptorLeft > INT32_MAX || descriptorRight < INT32_MIN ||
+            descriptorRight > INT32_MAX || frame.sourceStart < 0 ||
+            childSpanWord <= 0 ||
             (childFourStateWord != 0 && childFourStateWord != 1) ||
             (record[7] != 0 && record[7] != 1))
           return OBELISK_RT_INVALID_ARGUMENT;
@@ -559,17 +557,15 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
           if (!sizedFormal) {
             if (frame.count > static_cast<uint64_t>(INT32_MAX) + 1)
               return OBELISK_RT_INVALID_ARGUMENT;
-            int32_t right = frame.count == 0
-                                ? -1
-                                : static_cast<int32_t>(frame.count - 1);
+            int32_t right =
+                frame.count == 0 ? -1 : static_cast<int32_t>(frame.count - 1);
             if (runtimeKnown[frame.depth] && range.right != right)
               return OBELISK_RT_ARGUMENT_MISMATCH;
             range.left = 0;
             range.right = right;
-            range.flags = OBELISK_RT_DPI_DIMENSION_RUNTIME |
-                          (frame.count == 0
-                               ? OBELISK_RT_DPI_DIMENSION_EMPTY
-                               : 0);
+            range.flags =
+                OBELISK_RT_DPI_DIMENSION_RUNTIME |
+                (frame.count == 0 ? OBELISK_RT_DPI_DIMENSION_EMPTY : 0);
             runtimeKnown[frame.depth] = 1;
           } else {
             range = {static_cast<int32_t>(descriptorLeft),
@@ -608,11 +604,12 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
                           static_cast<__int128>(ordinal) * frame.sourceStride;
         if (offset < 0 || offset > UINT64_MAX ||
             static_cast<uint64_t>(offset) > frame.view.span ||
-            frame.childSpan >
-                frame.view.span - static_cast<uint64_t>(offset) ||
+            frame.childSpan > frame.view.span - static_cast<uint64_t>(offset) ||
             static_cast<uint64_t>(offset) > UINT64_MAX - frame.view.base)
           return OBELISK_RT_INVALID_ARGUMENT;
-        child = {frame.view.value, frame.view.unknown, frame.view.planeSize,
+        child = {frame.view.value,
+                 frame.view.unknown,
+                 frame.view.planeSize,
                  frame.childSpan,
                  frame.view.base + static_cast<uint64_t>(offset),
                  frame.childFourState};
@@ -620,22 +617,21 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
         child = {frame.childValue.data(),
                  frame.childUnknown.empty() ? nullptr
                                             : frame.childUnknown.data(),
-                 frame.childValue.size(), frame.childSpan,
-                 ordinal * frame.childSpan, frame.childFourState};
+                 frame.childValue.size(),
+                 frame.childSpan,
+                 ordinal * frame.childSpan,
+                 frame.childFourState};
       }
       stack.push_back({frame.depth + 1, child});
     }
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   for (uint32_t depth = 0; depth != dimensions; ++depth) {
     const int64_t *record = shapePlan + uint64_t{depth} * shapeWords;
     if (record[0] != 0 && record[7] == 0 && !runtimeKnown[depth])
-      ranges[depth] = {0, -1, 0,
-                       OBELISK_RT_DPI_DIMENSION_RUNTIME |
-                           OBELISK_RT_DPI_DIMENSION_EMPTY,
-                       0};
+      ranges[depth] = {
+          0, -1, 0,
+          OBELISK_RT_DPI_DIMENSION_RUNTIME | OBELISK_RT_DPI_DIMENSION_EMPTY, 0};
   }
 
   uint64_t elementSize = canonicalElementSize(elementCategory, elementWidth);
@@ -662,7 +658,8 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
     stride *= count;
   }
   uint64_t rangeBytes = uint64_t{dimensions} * sizeof(ranges[0]);
-  if (rangeBytes > SIZE_MAX || elementCAlignment - 1 > UINT64_MAX - rangeBytes ||
+  if (rangeBytes > SIZE_MAX ||
+      elementCAlignment - 1 > UINT64_MAX - rangeBytes ||
       capacity > UINT64_MAX - rangeBytes - (elementCAlignment - 1))
     return OBELISK_RT_OUT_OF_RESOURCES;
   uint64_t allocationSize = rangeBytes + (elementCAlignment - 1) + capacity;
@@ -678,10 +675,10 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
   if (elementCount != 0) {
     status = obelisk_rt_v1_dpi_open_array_aggregate_pack(
         flatValue.data(), flatUnknown.empty() ? nullptr : flatUnknown.data(),
-        (elementCount * elementWidth + 7) / 8,
-        elementCount * elementWidth, elementFourState, elementWidth,
-        elementCount, 0, nullptr, 0, data, dataSize, capacity, elementCSize,
-        elementStringCount, elementPlan, elementPlanWords);
+        (elementCount * elementWidth + 7) / 8, elementCount * elementWidth,
+        elementFourState, elementWidth, elementCount, 0, nullptr, 0, data,
+        dataSize, capacity, elementCSize, elementStringCount, elementPlan,
+        elementPlanWords);
     if (status != OBELISK_RT_OK) {
       std::free(allocation);
       return status;
@@ -696,15 +693,22 @@ obelisk_rt_v1_dpi_open_array_prepare_recursive(
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE;
   if (elementCount == 0)
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_EMPTY;
-  outStorage->descriptor = {
-      OBELISK_RT_DPI_OPEN_ARRAY_MAGIC, flags, dimensions, elementWidth,
-      packedLeft, packedRight, elementSize, data, dataSize, storedRanges, 0};
+  outStorage->descriptor = {OBELISK_RT_DPI_OPEN_ARRAY_MAGIC,
+                            flags,
+                            dimensions,
+                            elementWidth,
+                            packedLeft,
+                            packedRight,
+                            elementSize,
+                            data,
+                            dataSize,
+                            storedRanges,
+                            0};
   outStorage->allocation = allocation;
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dpi_open_array_finish_recursive(
+extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_finish_recursive(
     obelisk_rt_status callStatus, obelisk_rt_context *context,
     const obelisk_rt_dpi_open_array_storage_v1 *storage, void *value,
     void *unknown, uint64_t planeSize, uint64_t transportWidth,
@@ -717,9 +721,8 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
     return callStatus;
   if (!context || !storage || !value || !shapePlan || !elementPlan ||
       dimensions == 0 || storage->descriptor.dimensions != dimensions ||
-      transportWidth == 0 || elementWidth == 0 ||
-      transportFourState > 1 || elementFourState > 1 ||
-      (transportFourState && !unknown) ||
+      transportWidth == 0 || elementWidth == 0 || transportFourState > 1 ||
+      elementFourState > 1 || (transportFourState && !unknown) ||
       planeSize < (transportWidth + 7) / 8 || elementCSize == 0 ||
       elementPlanWords == 0 || elementPlanWords % 8 != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -751,9 +754,8 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
     obelisk_rt_status status = obelisk_rt_v1_dpi_open_array_aggregate_unpack(
         context, storage->descriptor.data, storage->descriptor.data_size,
         elementCSize, elementPlan, elementPlanWords, elementCount, 0, nullptr,
-        0, flatValue.data(),
-        flatUnknown.empty() ? nullptr : flatUnknown.data(), flatBytes,
-        flatWidth, elementFourState, elementWidth);
+        0, flatValue.data(), flatUnknown.empty() ? nullptr : flatUnknown.data(),
+        flatBytes, flatWidth, elementFourState, elementWidth);
     if (status != OBELISK_RT_OK)
       return status;
   }
@@ -809,7 +811,9 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
     MutableView root{static_cast<uint8_t *>(value),
                      transportFourState ? static_cast<uint8_t *>(unknown)
                                         : nullptr,
-                     planeSize, transportWidth, 0,
+                     planeSize,
+                     transportWidth,
+                     0,
                      transportFourState != 0};
     struct Frame {
       uint32_t depth = 0;
@@ -847,8 +851,7 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
         continue;
       }
       if (!frame.initialized) {
-        const int64_t *record =
-            shapePlan + uint64_t{frame.depth} * shapeWords;
+        const int64_t *record = shapePlan + uint64_t{frame.depth} * shapeWords;
         frame.kind = record[0];
         frame.sourceStart = record[3];
         frame.sourceStride = record[4];
@@ -881,8 +884,7 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
           frame.container = obelisk_rt_object_from_managed_word(word);
           if (word != obelisk_rt_managed_word_from_object(frame.container) ||
               obelisk_rt_v1_container_size(frame.container) != frame.count ||
-              (frame.count != 0 &&
-               frame.childSpan > UINT64_MAX / frame.count))
+              (frame.count != 0 && frame.childSpan > UINT64_MAX / frame.count))
             return OBELISK_RT_INVALID_ARGUMENT;
           if (frame.count != 0) {
             uint64_t bits = frame.childSpan * frame.count;
@@ -909,10 +911,9 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
           uint64_t bits = frame.childSpan * frame.count;
           status = obelisk_rt_v1_container_import_fixed(
               lane, frame.container, frame.childValue.data(),
-              frame.childUnknown.empty() ? nullptr
-                                         : frame.childUnknown.data(),
-              frame.childValue.size(), bits,
-              frame.childFourState ? 1 : 0, frame.childSpan, frame.count);
+              frame.childUnknown.empty() ? nullptr : frame.childUnknown.data(),
+              frame.childValue.size(), bits, frame.childFourState ? 1 : 0,
+              frame.childSpan, frame.count);
           if (status != OBELISK_RT_OK)
             return status;
         }
@@ -926,11 +927,12 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
                           static_cast<__int128>(ordinal) * frame.sourceStride;
         if (offset < 0 || offset > UINT64_MAX ||
             static_cast<uint64_t>(offset) > frame.view.span ||
-            frame.childSpan >
-                frame.view.span - static_cast<uint64_t>(offset) ||
+            frame.childSpan > frame.view.span - static_cast<uint64_t>(offset) ||
             static_cast<uint64_t>(offset) > UINT64_MAX - frame.view.base)
           return OBELISK_RT_INVALID_ARGUMENT;
-        child = {frame.view.value, frame.view.unknown, frame.view.planeSize,
+        child = {frame.view.value,
+                 frame.view.unknown,
+                 frame.view.planeSize,
                  frame.childSpan,
                  frame.view.base + static_cast<uint64_t>(offset),
                  frame.childFourState};
@@ -938,17 +940,17 @@ obelisk_rt_v1_dpi_open_array_finish_recursive(
         child = {frame.childValue.data(),
                  frame.childUnknown.empty() ? nullptr
                                             : frame.childUnknown.data(),
-                 frame.childValue.size(), frame.childSpan,
-                 ordinal * frame.childSpan, frame.childFourState};
+                 frame.childValue.size(),
+                 frame.childSpan,
+                 ordinal * frame.childSpan,
+                 frame.childFourState};
       }
       stack.push_back({frame.depth + 1, child});
     }
     if (leaf != elementCount)
       return OBELISK_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   return rootGuard.pop();
 }
 

@@ -34,8 +34,8 @@ TEST(DPIOpenArray, RecursivePreparationHasNoDimensionDepthCap) {
 }
 
 TEST(DPIOpenArray, RecursiveWritableDescriptorAcceptsCanonicalWrites) {
-  const std::array<int64_t, 16> shapePlan{
-      0, 0, 0, 0, 8, 8, 0, 1, 0, 0, 0, 0, 8, 8, 0, 1};
+  const std::array<int64_t, 16> shapePlan{0, 0, 0, 0, 8, 8, 0, 1,
+                                          0, 0, 0, 0, 8, 8, 0, 1};
   const std::array<int64_t, 8> elementPlan{0, 0, 0, 6, 8, 0, 0, 0};
   uint8_t value = 0x12;
   obelisk_rt_dpi_open_array_storage_v1 storage{};
@@ -75,8 +75,8 @@ protected:
 TEST_F(DPIOpenArrayManagedTest,
        RecursiveFinishImportsCanonicalWritesIntoDynamicArray) {
   const obelisk_rt_element_type_v1 elementType{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0, 0,
-      sizeof(uint8_t), alignof(uint8_t), 8, nullptr};
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,      0,
+      sizeof(uint8_t),    alignof(uint8_t),        8,  nullptr};
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &elementType, 2, &array),
             OBELISK_RT_OK);
@@ -96,8 +96,8 @@ TEST_F(DPIOpenArrayManagedTest,
           reinterpret_cast<uintptr_t>(array));
   obelisk_rt_dpi_open_array_storage_v1 storage{};
   ASSERT_EQ(obelisk_rt_v1_dpi_open_array_prepare_recursive(
-                &transport, nullptr, sizeof(transport), 64, 0, 1, 6, 8, 0, 7,
-                0, sizeof(svBitVecVal), alignof(svBitVecVal), 0,
+                &transport, nullptr, sizeof(transport), 64, 0, 1, 6, 8, 0, 7, 0,
+                sizeof(svBitVecVal), alignof(svBitVecVal), 0,
                 elementPlan.data(), elementPlan.size(), shapePlan.data(), 1,
                 &storage),
             OBELISK_RT_OK);

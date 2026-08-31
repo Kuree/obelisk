@@ -74,8 +74,7 @@ inline bool containsLogic(mlir::Type type) {
 }
 
 inline std::optional<uint32_t> simulationWidth(mlir::Type type) {
-  std::optional<unsigned> width =
-      analysis::getSimulationStorageBitWidth(type);
+  std::optional<unsigned> width = analysis::getSimulationStorageBitWidth(type);
   return width ? std::optional<uint32_t>(*width) : std::nullopt;
 }
 

@@ -327,7 +327,6 @@ resolveNativeEvalPlan(ModuleOp module,
     } while (changed);
     result.periodicClosureRecords.assign(closure.begin(), closure.end());
     llvm::sort(result.periodicClosureRecords);
-
   }
 
   // Project graph-level NBA reachability onto exclusive generated owners.

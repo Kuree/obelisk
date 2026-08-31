@@ -12,8 +12,8 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/Support/LogicalResult.h"
 
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 

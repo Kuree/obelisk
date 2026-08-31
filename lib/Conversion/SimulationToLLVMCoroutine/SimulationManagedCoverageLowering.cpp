@@ -264,15 +264,15 @@ public:
 void populateManagedCoverageToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<
-      CovergroupNullConversion, CovergroupCreateConversion,
-      CovergroupEnabledConversion, CovergroupBinHitConversion,
-      CovergroupSampleConversion,
-      CovergroupControlConversion<sim::SimCovergroupStartOp, true>,
-      CovergroupControlConversion<sim::SimCovergroupStopOp, false>,
-      CovergroupQueryConversion<sim::SimCovergroupInstanceQueryOp, false>,
-      CovergroupQueryConversion<sim::SimCovergroupTypeQueryOp, true>>(
-      converter, context);
+  patterns
+      .add<CovergroupNullConversion, CovergroupCreateConversion,
+           CovergroupEnabledConversion, CovergroupBinHitConversion,
+           CovergroupSampleConversion,
+           CovergroupControlConversion<sim::SimCovergroupStartOp, true>,
+           CovergroupControlConversion<sim::SimCovergroupStopOp, false>,
+           CovergroupQueryConversion<sim::SimCovergroupInstanceQueryOp, false>,
+           CovergroupQueryConversion<sim::SimCovergroupTypeQueryOp, true>>(
+          converter, context);
 }
 
 } // namespace obelisk::detail

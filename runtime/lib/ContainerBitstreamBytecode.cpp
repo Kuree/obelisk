@@ -14,9 +14,9 @@ obelisk_rt_v1_recursive_export_bitstream(
     obelisk_rt_context *context, const void *inputValue,
     const void *inputUnknown, uint64_t inputPlaneSize, uint64_t inputBitWidth,
     uint32_t inputFourState, void *outValue, void *outUnknown,
-    uint64_t outputPlaneSize, uint64_t outputBitWidth,
-    uint32_t outputFourState, const void *plan, uint64_t planSize,
-    uint32_t observe, uint32_t *outMatched, uint64_t *outWatch);
+    uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
+    const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
+    uint64_t *outWatch);
 #endif
 
 namespace obelisk::designbytecode {
@@ -101,19 +101,17 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
   if (container && (signature.flags == 3 || signature.flags == 4)) {
     if (!invokeClassBitstreamIntrinsic)
       return OBELISK_RT_INVALID_BYTECODE;
-    return invokeClassBitstreamIntrinsic(image, frame, context, site,
-                                         siteIndex, intrinsicId);
+    return invokeClassBitstreamIntrinsic(image, frame, context, site, siteIndex,
+                                         intrinsicId);
   }
-  bool recursive =
-      container && (signature.flags == 1 || signature.flags == 2);
+  bool recursive = container && (signature.flags == 1 || signature.flags == 2);
   bool observeRecursive = recursive && signature.flags == 2;
   if (signature.id != intrinsicId ||
       (!container && !aggregate && !aggregateImport) ||
       (!recursive && signature.flags != 0) ||
       (recursive && (site.inputCount != 2 || site.outputCount != 3)) ||
       (!recursive &&
-       (site.outputCount != 1 ||
-        site.inputCount != (container ? 8u : 2u))))
+       (site.outputCount != 1 || site.inputCount != (container ? 8u : 2u))))
     return OBELISK_RT_INVALID_BYTECODE;
   auto inputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + index).second;
@@ -166,8 +164,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     uint64_t watchValue = 0;
     obelisk_rt_status status = obelisk_rt_v1_recursive_export_bitstream(
         context, inputValue,
-        inputFourState ? inputValue + inputPlaneSize : nullptr,
-        inputPlaneSize, inputWidth, inputFourState, outputValue,
+        inputFourState ? inputValue + inputPlaneSize : nullptr, inputPlaneSize,
+        inputWidth, inputFourState, outputValue,
         outputFourState ? outputValue + outputPlaneSize : nullptr,
         outputPlaneSize, output.width, outputFourState, plan->data, plan->size,
         observeRecursive, &matchedValue, &watchValue);
@@ -197,15 +195,13 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     uint64_t outputPlaneSize = outputFourState ? output.size / 2 : output.size;
     uint8_t *inputValue = frame.data + input.offset;
     uint8_t *outputValue = frame.data + output.offset;
-    auto transfer = aggregateImport
-                        ? obelisk_rt_v1_aggregate_import_bitstream
-                        : obelisk_rt_v1_aggregate_export_bitstream;
-    return transfer(inputValue,
-                    inputFourState ? inputValue + inputPlaneSize : nullptr,
-                    inputPlaneSize, input.width, inputFourState, outputValue,
-                    outputFourState ? outputValue + outputPlaneSize : nullptr,
-                    outputPlaneSize, output.width, outputFourState, plan->data,
-                    plan->size);
+    auto transfer = aggregateImport ? obelisk_rt_v1_aggregate_import_bitstream
+                                    : obelisk_rt_v1_aggregate_export_bitstream;
+    return transfer(
+        inputValue, inputFourState ? inputValue + inputPlaneSize : nullptr,
+        inputPlaneSize, input.width, inputFourState, outputValue,
+        outputFourState ? outputValue + outputPlaneSize : nullptr,
+        outputPlaneSize, output.width, outputFourState, plan->data, plan->size);
   }
   obelisk_rt_object_v1 *containerValue =
       readManaged(image, frame, inputRegister(0));

@@ -472,8 +472,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         if (next >= children.size())
           break;
         Operation *child = children[next++];
-        auto semanticSource =
-            child->getAttrOfType<TypeAttr>("semantic_type");
+        auto semanticSource = child->getAttrOfType<TypeAttr>("semantic_type");
         if (semanticSource &&
             isa<semantic::VoidType>(semanticSource.getValue())) {
           if (withFlag != 0)
@@ -505,10 +504,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     // function result. This inventory walk only detects class bit-stream
     // casts, so a void target is unrelated and must not be normalized as a
     // simulation value type.
-    auto semanticTarget =
-        conversion->getAttrOfType<TypeAttr>("semantic_type");
-    if (semanticTarget &&
-        isa<semantic::VoidType>(semanticTarget.getValue()))
+    auto semanticTarget = conversion->getAttrOfType<TypeAttr>("semantic_type");
+    if (semanticTarget && isa<semantic::VoidType>(semanticTarget.getValue()))
       return WalkResult::advance();
     FailureOr<Type> target = getNormalizedSemanticType(conversion);
     if (failed(target) ||
@@ -518,8 +515,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       return WalkResult::advance();
     auto semanticSource =
         children.front()->getAttrOfType<TypeAttr>("semantic_type");
-    if (semanticSource &&
-        isa<semantic::VoidType>(semanticSource.getValue()))
+    if (semanticSource && isa<semantic::VoidType>(semanticSource.getValue()))
       return WalkResult::advance();
     FailureOr<Type> source = getNormalizedSemanticType(children.front());
     bool containsClass =

@@ -21,8 +21,8 @@ void addSimulationToRuntimeTypeConversions(mlir::TypeConverter &converter);
 /// Populate patterns for precise display and packed file operations. Patterns
 /// use 1:N adaptors so a composing converter may represent four-state values
 /// as separate value and unknown planes.
-void populateSimulationToRuntimePatterns(
-    const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns);
+void populateSimulationToRuntimePatterns(const mlir::TypeConverter &converter,
+                                         mlir::RewritePatternSet &patterns);
 
 } // namespace obelisk
 

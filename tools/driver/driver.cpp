@@ -10,9 +10,9 @@
 #if OBELISK_HAS_NATIVE_BACKEND
 #include "HostCRuntime.h"
 #endif
+#include "DriverMain.h"
 #include "Options.h"
 #include "TargetBackend.h"
-#include "DriverMain.h"
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
@@ -490,8 +490,8 @@ public:
       std::string base = cName;
       for (uint64_t suffix = 1; !fieldNames.insert(cName).second; ++suffix)
         cName = (base + "_" + Twine(suffix)).str();
-      definition += "  " + cField->spelling + " " + cName + cField->suffix +
-                    ";\n";
+      definition +=
+          "  " + cField->spelling + " " + cName + cField->suffix + ";\n";
     }
     definition += "} " + name + ";";
     definitions.push_back(std::move(definition));
@@ -510,37 +510,123 @@ private:
     }
     if (!result.empty() && llvm::isDigit(result.front()))
       result.insert(result.begin(), '_');
-    static constexpr StringLiteral keywords[] = {
-        "alignas",       "alignof",        "and",           "and_eq",
-        "asm",           "atomic_cancel",  "atomic_commit", "atomic_noexcept",
-        "auto",          "bitand",         "bitor",         "bool",
-        "break",         "case",           "catch",         "char",
-        "char8_t",       "char16_t",       "char32_t",      "class",
-        "co_await",      "co_return",      "co_yield",      "compl",
-        "concept",       "const",          "consteval",     "constexpr",
-        "constinit",     "const_cast",     "continue",      "contract_assert",
-        "decltype",      "default",        "delete",        "do",
-        "double",        "dynamic_cast",   "else",          "enum",
-        "explicit",      "export",         "extern",        "false",
-        "float",         "for",            "friend",        "goto",
-        "if",            "import",         "inline",        "int",
-        "long",          "module",         "mutable",       "namespace",
-        "new",           "noexcept",       "not",           "not_eq",
-        "nullptr",       "operator",       "or",            "or_eq",
-        "private",       "protected",      "public",        "reflexpr",
-        "register",      "reinterpret_cast", "requires",    "restrict",
-        "return",        "short",          "signed",        "sizeof",
-        "static",        "static_assert",  "static_cast",   "struct",
-        "switch",        "synchronized",   "template",      "this",
-        "thread_local",  "throw",          "true",          "try",
-        "typedef",       "typeid",          "typename",      "typeof",
-        "typeof_unqual", "union",          "unsigned",      "using",
-        "virtual",       "void",           "volatile",      "wchar_t",
-        "while",         "xor",            "xor_eq",        "_Alignas",
-        "_Alignof",      "_Atomic",        "_BitInt",       "_Bool",
-        "_Complex",      "_Decimal128",    "_Decimal32",    "_Decimal64",
-        "_Generic",      "_Imaginary",     "_Noreturn",     "_Static_assert",
-        "_Thread_local"};
+    static constexpr StringLiteral keywords[] = {"alignas",
+                                                 "alignof",
+                                                 "and",
+                                                 "and_eq",
+                                                 "asm",
+                                                 "atomic_cancel",
+                                                 "atomic_commit",
+                                                 "atomic_noexcept",
+                                                 "auto",
+                                                 "bitand",
+                                                 "bitor",
+                                                 "bool",
+                                                 "break",
+                                                 "case",
+                                                 "catch",
+                                                 "char",
+                                                 "char8_t",
+                                                 "char16_t",
+                                                 "char32_t",
+                                                 "class",
+                                                 "co_await",
+                                                 "co_return",
+                                                 "co_yield",
+                                                 "compl",
+                                                 "concept",
+                                                 "const",
+                                                 "consteval",
+                                                 "constexpr",
+                                                 "constinit",
+                                                 "const_cast",
+                                                 "continue",
+                                                 "contract_assert",
+                                                 "decltype",
+                                                 "default",
+                                                 "delete",
+                                                 "do",
+                                                 "double",
+                                                 "dynamic_cast",
+                                                 "else",
+                                                 "enum",
+                                                 "explicit",
+                                                 "export",
+                                                 "extern",
+                                                 "false",
+                                                 "float",
+                                                 "for",
+                                                 "friend",
+                                                 "goto",
+                                                 "if",
+                                                 "import",
+                                                 "inline",
+                                                 "int",
+                                                 "long",
+                                                 "module",
+                                                 "mutable",
+                                                 "namespace",
+                                                 "new",
+                                                 "noexcept",
+                                                 "not",
+                                                 "not_eq",
+                                                 "nullptr",
+                                                 "operator",
+                                                 "or",
+                                                 "or_eq",
+                                                 "private",
+                                                 "protected",
+                                                 "public",
+                                                 "reflexpr",
+                                                 "register",
+                                                 "reinterpret_cast",
+                                                 "requires",
+                                                 "restrict",
+                                                 "return",
+                                                 "short",
+                                                 "signed",
+                                                 "sizeof",
+                                                 "static",
+                                                 "static_assert",
+                                                 "static_cast",
+                                                 "struct",
+                                                 "switch",
+                                                 "synchronized",
+                                                 "template",
+                                                 "this",
+                                                 "thread_local",
+                                                 "throw",
+                                                 "true",
+                                                 "try",
+                                                 "typedef",
+                                                 "typeid",
+                                                 "typename",
+                                                 "typeof",
+                                                 "typeof_unqual",
+                                                 "union",
+                                                 "unsigned",
+                                                 "using",
+                                                 "virtual",
+                                                 "void",
+                                                 "volatile",
+                                                 "wchar_t",
+                                                 "while",
+                                                 "xor",
+                                                 "xor_eq",
+                                                 "_Alignas",
+                                                 "_Alignof",
+                                                 "_Atomic",
+                                                 "_BitInt",
+                                                 "_Bool",
+                                                 "_Complex",
+                                                 "_Decimal128",
+                                                 "_Decimal32",
+                                                 "_Decimal64",
+                                                 "_Generic",
+                                                 "_Imaginary",
+                                                 "_Noreturn",
+                                                 "_Static_assert",
+                                                 "_Thread_local"};
     if (llvm::is_contained(keywords, result))
       result.insert(0, "obelisk_");
     return result;
@@ -925,8 +1011,7 @@ static int executeCompilation(
   std::optional<uint32_t> pulseRejectPercent;
   std::optional<uint32_t> pulseErrorPercent;
   valid &= parseUnsignedOption(args, OPT_pulse_reject_percent_EQ,
-                               "--pulse-reject-percent",
-                               pulseRejectPercent);
+                               "--pulse-reject-percent", pulseRejectPercent);
   valid &= parseUnsignedOption(args, OPT_pulse_error_percent_EQ,
                                "--pulse-error-percent", pulseErrorPercent);
   if ((pulseRejectPercent && *pulseRejectPercent > 100) ||
@@ -945,8 +1030,7 @@ static int executeCompilation(
         "--pulse-error-percent cannot be less than --pulse-reject-percent");
     valid = false;
   }
-  StringRef globalPulseStyle =
-      args.getLastArgValue(OPT_pulse_style_EQ, "");
+  StringRef globalPulseStyle = args.getLastArgValue(OPT_pulse_style_EQ, "");
   StringRef globalCancelledPulses =
       args.getLastArgValue(OPT_cancelled_pulses_EQ, "");
   uint32_t optLevel = 3;
@@ -1098,21 +1182,20 @@ static int executeCompilation(
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
   if (pulseRejectPercent || pulseErrorPercent) {
-    (*module)->setAttr("obelisk.pulse_reject_percent",
-                       IntegerAttr::get(IntegerType::get(&context, 32),
-                                        effectivePulseReject));
-    (*module)->setAttr("obelisk.pulse_error_percent",
-                       IntegerAttr::get(IntegerType::get(&context, 32),
-                                        effectivePulseError));
+    (*module)->setAttr(
+        "obelisk.pulse_reject_percent",
+        IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseReject));
+    (*module)->setAttr(
+        "obelisk.pulse_error_percent",
+        IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseError));
   }
   if (!globalPulseStyle.empty())
     (*module)->setAttr("obelisk.pulse_on_detect",
-                       BoolAttr::get(&context,
-                                     globalPulseStyle == "ondetect"));
+                       BoolAttr::get(&context, globalPulseStyle == "ondetect"));
   if (!globalCancelledPulses.empty())
-    (*module)->setAttr("obelisk.pulse_show_cancelled",
-                       BoolAttr::get(&context,
-                                     globalCancelledPulses == "show"));
+    (*module)->setAttr(
+        "obelisk.pulse_show_cancelled",
+        BoolAttr::get(&context, globalCancelledPulses == "show"));
 
   if (native) {
     obelisk::sim::NativeSchedulerMode pipelineScheduler =
@@ -1234,9 +1317,8 @@ static int executeCompilation(
 int obelisk::driver::runObeliskDriver(
     int argc, char **argv,
     const ProtectedEnvelopeConfiguration &protectConfig) {
-  driverExecutablePath =
-      sys::fs::getMainExecutable(
-          argv[0], reinterpret_cast<void *>(&runObeliskDriver));
+  driverExecutablePath = sys::fs::getMainExecutable(
+      argv[0], reinterpret_cast<void *>(&runObeliskDriver));
   const OptTable &optionTable = obelisk::driver::getDriverOptTable();
 
   BumpPtrAllocator allocator;

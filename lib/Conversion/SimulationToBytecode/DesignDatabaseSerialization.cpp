@@ -118,8 +118,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (sim::SimPortDeclOp port :
        design.getBody().front().getOps<sim::SimPortDeclOp>()) {
-    const auto &sources =
-        port.getSourceIsNet() ? netSources : storageSources;
+    const auto &sources = port.getSourceIsNet() ? netSources : storageSources;
     auto source = sources.find(port.getSourceId());
     if (port.getSourceLow() != 0 || source == sources.end() ||
         source->second.name != port.getHierarchicalName() ||
@@ -140,8 +139,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({2, caps,
-                         storage.getId(), storage.getScopeId(),
+      objects.push_back({2, caps, storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
                              .value_or(storage.getDebugName().value_or(
                                  fallbackName("storage", storage.getId())))
@@ -155,8 +153,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({3, caps,
-                         net.getId(), net.getScopeId(),
+      objects.push_back({3, caps, net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
                              .value_or(net.getDebugName().value_or(
                                  fallbackName("net", net.getId())))
@@ -185,9 +182,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
       caps = addPortMetadata(port, caps);
-      uint64_t sourceOffset =
-          port.getSourceIsNet() ? netOffsets.lookup(port.getSourceId())
-                                : storageOffsets.lookup(port.getSourceId());
+      uint64_t sourceOffset = port.getSourceIsNet()
+                                  ? netOffsets.lookup(port.getSourceId())
+                                  : storageOffsets.lookup(port.getSourceId());
       objects.push_back({OBELISK_RT_DESIGN_RECORD_PORT, caps, port.getId(),
                          port.getScopeId(), port.getHierarchicalName().str(),
                          port.getType(), sourceOffset + port.getSourceLow(),

@@ -44,8 +44,8 @@ SimulationToStandardTypeConverter::SimulationToStandardTypeConverter() {
       });
 }
 
-static LogicalResult convertPackedAggregateType(
-    Type type, SmallVectorImpl<Type> &results) {
+static LogicalResult
+convertPackedAggregateType(Type type, SmallVectorImpl<Type> &results) {
   Type scalar = sim::getPackedScalarType(type);
   if (auto logic = dyn_cast_or_null<sim::LogicType>(scalar)) {
     Type plane = IntegerType::get(type.getContext(), logic.getWidth());
@@ -179,8 +179,7 @@ static void replaceLogicResult(Operation *op, LogicValue result,
   // a compile-time zero, so downstream LLVM optimization can erase X/Z
   // propagation through the two-state island.
   if (provenTwoState)
-    result.unknown =
-        zero(rewriter, op->getLoc(), integerType(result.value));
+    result.unknown = zero(rewriter, op->getLoc(), integerType(result.value));
   SmallVector<SmallVector<Value>> replacements;
   replacements.push_back({result.value, result.unknown});
   rewriter.replaceOpWithMultiple(op, std::move(replacements));
@@ -328,10 +327,11 @@ static FailureOr<LogicValue> dynamicExtract(OpBuilder &builder, Location loc,
 /// a padded integer so every overlapping replacement has a nonnegative,
 /// in-range shift amount. Unknown and nonoverlapping indices select the
 /// original input unchanged.
-static FailureOr<LogicValue>
-dynamicInsert(OpBuilder &builder, Location loc, Value input,
-              Value inputUnknown, Value replacement, Value replacementUnknown,
-              Value low, Value lowUnknown) {
+static FailureOr<LogicValue> dynamicInsert(OpBuilder &builder, Location loc,
+                                           Value input, Value inputUnknown,
+                                           Value replacement,
+                                           Value replacementUnknown, Value low,
+                                           Value lowUnknown) {
   auto inputType = integerType(input);
   auto replacementType = integerType(replacement);
   auto lowType = integerType(low);
@@ -344,10 +344,10 @@ dynamicInsert(OpBuilder &builder, Location loc, Value input,
       builder.getIntegerType(static_cast<unsigned>(paddedWidth64));
 
   unsigned boundBits =
-      std::max(2u, llvm::Log2_64_Ceil(static_cast<uint64_t>(std::max(
-                                          inputType.getWidth(),
-                                          replacementType.getWidth())) +
-                                      1) +
+      std::max(2u, llvm::Log2_64_Ceil(
+                       static_cast<uint64_t>(std::max(
+                           inputType.getWidth(), replacementType.getWidth())) +
+                       1) +
                        2);
   uint64_t checkWidth64 =
       std::max(static_cast<uint64_t>(lowType.getWidth()) + 1,
@@ -397,8 +397,7 @@ dynamicInsert(OpBuilder &builder, Location loc, Value input,
         resizeInteger(builder, loc, piece, paddedType.getWidth(), false);
     Value shiftedPiece =
         arith::ShLIOp::create(builder, loc, widePiece, safeAmount);
-    Value updated =
-        arith::OrIOp::create(builder, loc, kept, shiftedPiece);
+    Value updated = arith::OrIOp::create(builder, loc, kept, shiftedPiece);
     if (padding != 0)
       updated = arith::ShRUIOp::create(
           builder, loc, updated,
@@ -703,9 +702,8 @@ class LogicOpConversion : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
 
-  LogicOpConversion(
-      const TypeConverter &converter, MLIRContext *context,
-      const llvm::DenseSet<Operation *> *provenTwoStateOperations)
+  LogicOpConversion(const TypeConverter &converter, MLIRContext *context,
+                    const llvm::DenseSet<Operation *> *provenTwoStateOperations)
       : OpConversionPattern<Op>(converter, context),
         provenTwoStateOperations(provenTwoStateOperations) {}
 
@@ -801,29 +799,28 @@ public:
     LogicValue trueValue = getLogic(operands, 1);
     LogicValue falseValue = getLogic(operands, 2);
 
-    Value valueMismatch = arith::XOrIOp::create(
-        rewriter, loc, trueValue.value, falseValue.value);
+    Value valueMismatch =
+        arith::XOrIOp::create(rewriter, loc, trueValue.value, falseValue.value);
     Value unknownMismatch = arith::XOrIOp::create(
         rewriter, loc, trueValue.unknown, falseValue.unknown);
-    Value mismatch = arith::OrIOp::create(rewriter, loc, valueMismatch,
-                                          unknownMismatch);
+    Value mismatch =
+        arith::OrIOp::create(rewriter, loc, valueMismatch, unknownMismatch);
     LogicValue merged{
         arith::AndIOp::create(rewriter, loc, trueValue.value,
                               bitNot(rewriter, loc, mismatch)),
         arith::OrIOp::create(rewriter, loc, trueValue.unknown, mismatch)};
 
     Value conditionKnown = boolNot(rewriter, loc, condition.unknown);
-    LogicValue selected{
-        select(rewriter, loc, condition.value, trueValue.value,
-               falseValue.value),
-        select(rewriter, loc, condition.value, trueValue.unknown,
-               falseValue.unknown)};
-    replaceLogic(op,
-                 {select(rewriter, loc, conditionKnown, selected.value,
-                         merged.value),
-                  select(rewriter, loc, conditionKnown, selected.unknown,
-                         merged.unknown)},
-                 rewriter);
+    LogicValue selected{select(rewriter, loc, condition.value, trueValue.value,
+                               falseValue.value),
+                        select(rewriter, loc, condition.value,
+                               trueValue.unknown, falseValue.unknown)};
+    replaceLogic(
+        op,
+        {select(rewriter, loc, conditionKnown, selected.value, merged.value),
+         select(rewriter, loc, conditionKnown, selected.unknown,
+                merged.unknown)},
+        rewriter);
     return success();
   }
 };
@@ -1182,13 +1179,12 @@ public:
     LogicValue exponent = getLogic(operands, 1);
     auto baseType = integerType(base.value);
     auto exponentType = integerType(exponent.value);
-    Value anyUnknown = boolOr(
-        rewriter, loc, isNonZero(rewriter, loc, base.unknown),
-        isNonZero(rewriter, loc, exponent.unknown));
+    Value anyUnknown =
+        boolOr(rewriter, loc, isNonZero(rewriter, loc, base.unknown),
+               isNonZero(rewriter, loc, exponent.unknown));
     Value zeroBase = zero(rewriter, loc, baseType);
     Value zeroExponent = zero(rewriter, loc, exponentType);
-    Value safeBase =
-        select(rewriter, loc, anyUnknown, zeroBase, base.value);
+    Value safeBase = select(rewriter, loc, anyUnknown, zeroBase, base.value);
     Value safeExponent =
         select(rewriter, loc, anyUnknown, zeroExponent, exponent.value);
     unsigned commonWidth =
@@ -1197,11 +1193,10 @@ public:
         resizeInteger(rewriter, loc, safeBase, commonWidth, false);
     Value commonExponent =
         resizeInteger(rewriter, loc, safeExponent, commonWidth, false);
-    Value powered = math::IPowIOp::create(rewriter, loc, commonBase,
-                                          commonExponent);
+    Value powered =
+        math::IPowIOp::create(rewriter, loc, commonBase, commonExponent);
     powered = resizeInteger(rewriter, loc, powered, baseType.getWidth(), false);
-    Value resultValue =
-        select(rewriter, loc, anyUnknown, zeroBase, powered);
+    Value resultValue = select(rewriter, loc, anyUnknown, zeroBase, powered);
     Value resultUnknown = select(rewriter, loc, anyUnknown,
                                  ones(rewriter, loc, baseType), zeroBase);
     replaceLogic(op, {resultValue, resultUnknown}, rewriter);
@@ -1366,16 +1361,14 @@ public:
       Value valueMismatch =
           arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value);
       Value mismatch;
-      Value relevantUnknown =
-          zero(rewriter, loc, integerType(lhs.unknown));
+      Value relevantUnknown = zero(rewriter, loc, integerType(lhs.unknown));
       if (op.getKind() == sim::CompareKind::WildEq ||
           op.getKind() == sim::CompareKind::WildNe) {
         Value compared = bitNot(rewriter, loc, rhs.unknown);
         mismatch = arith::AndIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(
-                rewriter, loc, valueMismatch,
-                bitNot(rewriter, loc, lhs.unknown)),
+            arith::AndIOp::create(rewriter, loc, valueMismatch,
+                                  bitNot(rewriter, loc, lhs.unknown)),
             compared);
         relevantUnknown =
             arith::AndIOp::create(rewriter, loc, lhs.unknown, compared);
@@ -1384,15 +1377,13 @@ public:
             arith::XOrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
         mismatch = arith::AndIOp::create(
             rewriter, loc,
-            arith::OrIOp::create(rewriter, loc, valueMismatch,
-                                 unknownMismatch),
+            arith::OrIOp::create(rewriter, loc, valueMismatch, unknownMismatch),
             bitNot(rewriter, loc, wildcard));
       }
       Value equal = isZero(rewriter, loc, mismatch);
       Value unknown = boolAnd(rewriter, loc, equal,
                               isNonZero(rewriter, loc, relevantUnknown));
-      equal = boolAnd(rewriter, loc, equal,
-                      boolNot(rewriter, loc, unknown));
+      equal = boolAnd(rewriter, loc, equal, boolNot(rewriter, loc, unknown));
       if (op.getKind() == sim::CompareKind::WildNe)
         equal = select(rewriter, loc, unknown, equal,
                        boolNot(rewriter, loc, equal));
@@ -1413,13 +1404,12 @@ public:
           arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value),
           bitNot(rewriter, loc, unknownBits));
       Value knownMismatch = isNonZero(rewriter, loc, mismatchBits);
-      Value unknown = boolAnd(
-          rewriter, loc, isNonZero(rewriter, loc, unknownBits),
-          boolNot(rewriter, loc, knownMismatch));
+      Value unknown =
+          boolAnd(rewriter, loc, isNonZero(rewriter, loc, unknownBits),
+                  boolNot(rewriter, loc, knownMismatch));
       Value value =
           op.getKind() == sim::CompareKind::Eq
-              ? boolAnd(rewriter, loc,
-                        boolNot(rewriter, loc, knownMismatch),
+              ? boolAnd(rewriter, loc, boolNot(rewriter, loc, knownMismatch),
                         boolNot(rewriter, loc, unknown))
               : knownMismatch;
       replaceLogic(op, {value, unknown}, rewriter);
@@ -1676,7 +1666,8 @@ public:
         rewriter, op.getLoc(), input.value, input.unknown, replacement.value,
         replacement.unknown, operands[2][0], lowUnknown);
     if (failed(result))
-      return rewriter.notifyMatchFailure(op, "padded replacement width overflow");
+      return rewriter.notifyMatchFailure(op,
+                                         "padded replacement width overflow");
     replaceLogic(op, *result, rewriter);
     return success();
   }
@@ -1696,7 +1687,8 @@ public:
         dynamicInsert(rewriter, op.getLoc(), operands[0][0], Value(),
                       operands[1][0], Value(), operands[2][0], lowUnknown);
     if (failed(result))
-      return rewriter.notifyMatchFailure(op, "padded replacement width overflow");
+      return rewriter.notifyMatchFailure(op,
+                                         "padded replacement width overflow");
     replaceInteger(op, result->value, rewriter);
     return success();
   }
@@ -1777,14 +1769,14 @@ public:
     target.addIllegalOp<
         sim::SimLogicConstantOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
         sim::SimLogicIsTrueOp, sim::SimLogicMuxOp, sim::SimLogicCountBitsOp,
-        sim::SimLogicClog2Op,
-        sim::SimLogicResizeOp, sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
-        sim::SimLogicBinaryOp, sim::SimLogicPowerOp, sim::SimLogicLogicalOp,
-        sim::SimLogicShiftOp,
-        sim::SimLogicCompareOp, sim::SimLogicCaseDifferenceMaskOp, sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
-        sim::SimLogicExtractOp, sim::SimLogicDynExtractOp,
-        sim::SimBitsDynExtractOp, sim::SimLogicDynInsertOp,
-        sim::SimBitsDynInsertOp, sim::SimLogicInsertOp>();
+        sim::SimLogicClog2Op, sim::SimLogicResizeOp, sim::SimLogicUnaryOp,
+        sim::SimLogicReductionOp, sim::SimLogicBinaryOp, sim::SimLogicPowerOp,
+        sim::SimLogicLogicalOp, sim::SimLogicShiftOp, sim::SimLogicCompareOp,
+        sim::SimLogicCaseDifferenceMaskOp, sim::SimLogicConcatOp,
+        sim::SimLogicReplicateOp, sim::SimLogicExtractOp,
+        sim::SimLogicDynExtractOp, sim::SimBitsDynExtractOp,
+        sim::SimLogicDynInsertOp, sim::SimBitsDynInsertOp,
+        sim::SimLogicInsertOp>();
     target.addDynamicallyLegalDialect<arith::ArithDialect, func::FuncDialect,
                                       cf::ControlFlowDialect, scf::SCFDialect,
                                       sim::ObeliskSimulationDialect>(
@@ -1810,17 +1802,14 @@ void populateSimulationPackedAggregateViewPatterns(
 static void populateSimulationToStandardPatternsImpl(
     const TypeConverter &converter, RewritePatternSet &patterns,
     const llvm::DenseSet<Operation *> *provenTwoStateOperations) {
-  patterns.add<ConstantConversion, FromBitsConversion, ToBitsConversion,
-               IsTrueConversion, MuxConversion, CountBitsConversion,
-               Clog2Conversion,
-               ResizeConversion, UnaryConversion, ReductionConversion,
-               BinaryConversion, PowerConversion, LogicalConversion,
-               ShiftConversion,
-               CompareConversion,
+  patterns.add<
+      ConstantConversion, FromBitsConversion, ToBitsConversion,
+      IsTrueConversion, MuxConversion, CountBitsConversion, Clog2Conversion,
+      ResizeConversion, UnaryConversion, ReductionConversion, BinaryConversion,
+      PowerConversion, LogicalConversion, ShiftConversion, CompareConversion,
       CaseDifferenceMaskConversion, ConcatConversion, ReplicateConversion,
-               ExtractConversion, DynamicExtractConversion,
-               BitsDynamicExtractConversion, DynamicInsertConversion,
-               BitsDynamicInsertConversion, InsertConversion>(
+      ExtractConversion, DynamicExtractConversion, BitsDynamicExtractConversion,
+      DynamicInsertConversion, BitsDynamicInsertConversion, InsertConversion>(
       converter, patterns.getContext(), provenTwoStateOperations);
   patterns.add<BranchConversion, CondBranchConversion, SwitchConversion>(
       converter, patterns.getContext());

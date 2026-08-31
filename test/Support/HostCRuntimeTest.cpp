@@ -56,15 +56,13 @@ int main() {
     return 1;
   }
   auto noDynamicLinker = makeTree(
-      {"/usr/lib/x86_64-linux-gnu/Scrt1.o",
-       "/usr/lib/x86_64-linux-gnu/crti.o",
-       "/usr/lib/x86_64-linux-gnu/crtn.o",
-       "/usr/lib/x86_64-linux-gnu/libc.so",
+      {"/usr/lib/x86_64-linux-gnu/Scrt1.o", "/usr/lib/x86_64-linux-gnu/crti.o",
+       "/usr/lib/x86_64-linux-gnu/crtn.o", "/usr/lib/x86_64-linux-gnu/libc.so",
        "/usr/lib/x86_64-linux-gnu/libm.so"},
       /*addDynamicLinker=*/false);
   if (succeeded(discoverHostCRuntime("x86_64-unknown-linux-gnu",
-                                    "/opt/obelisk/bin/obelisk",
-                                    noDynamicLinker))) {
+                                     "/opt/obelisk/bin/obelisk",
+                                     noDynamicLinker))) {
     errs() << "missing dynamic linker was accepted\n";
     return 1;
   }

@@ -1134,10 +1134,10 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-obelisk_rt_status observeNoncontextDpi(
-    obelisk_rt_context *, uint32_t,
-    const obelisk_rt_import_input_v1 *, uint32_t,
-    obelisk_rt_import_output_v1 *, uint32_t, void *userData) {
+obelisk_rt_status observeNoncontextDpi(obelisk_rt_context *, uint32_t,
+                                       const obelisk_rt_import_input_v1 *,
+                                       uint32_t, obelisk_rt_import_output_v1 *,
+                                       uint32_t, void *userData) {
   auto &calls = *static_cast<uint32_t *>(userData);
   ++calls;
   EXPECT_EQ(obelisk_rt_v1_dpi_current_context(), nullptr);
@@ -1157,18 +1157,18 @@ TEST(RuntimeDPI, NoncontextBoundaryHasNoActiveCallState) {
   uint32_t importID = obelisk_rt_v1_import_id(
       reinterpret_cast<const uint8_t *>(name.data()), name.size());
   uint32_t calls = 0;
-  ASSERT_EQ(obelisk_rt_v1_context_register_import(
-                context, importID, observeNoncontextDpi, &calls),
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(context, importID,
+                                                  observeNoncontextDpi, &calls),
             OBELISK_RT_OK);
-  obelisk_rt_import_site_v1 site{OBELISK_RT_VERSION, 0, importID, 0,
-                                 UINT64_MAX, nullptr, 0, 0, 0, 0};
-  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(
-                context, &site, nullptr, 0, nullptr, 0),
+  obelisk_rt_import_site_v1 site{
+      OBELISK_RT_VERSION, 0, importID, 0, UINT64_MAX, nullptr, 0, 0, 0, 0};
+  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(context, &site, nullptr, 0,
+                                                 nullptr, 0),
             OBELISK_RT_OK);
   EXPECT_EQ(calls, 1u);
   site.flags = OBELISK_RT_IMPORT_CONTEXT;
-  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(
-                context, &site, nullptr, 0, nullptr, 0),
+  EXPECT_EQ(obelisk_rt_v1_import_call_noncontext(context, &site, nullptr, 0,
+                                                 nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
   EXPECT_EQ(calls, 1u);
   obelisk_rt_v1_context_destroy(context);
@@ -1180,14 +1180,12 @@ TEST(RuntimeDPI, AggregatePlanSupportsDeepLegalNesting) {
   plan.reserve((depth + 1) * 8);
   for (uint64_t level = 0; level != depth; ++level)
     plan.insert(plan.end(),
-                {1, 0, 0, 1, 1, 1, 0,
-                 static_cast<int64_t>(depth - level)});
+                {1, 0, 0, 1, 1, 1, 0, static_cast<int64_t>(depth - level)});
   plan.insert(plan.end(), {0, 0, 0, 2, 8, 0, 0, 0});
   uint8_t value = 0x5a;
   uint8_t result = 0;
-  ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_pack(
-                &value, nullptr, 1, 8, 0, &result, 1, 1, plan.data(),
-                plan.size()),
+  ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_pack(&value, nullptr, 1, 8, 0, &result,
+                                             1, 1, plan.data(), plan.size()),
             OBELISK_RT_OK);
   EXPECT_EQ(result, value);
 }
@@ -1879,9 +1877,7 @@ TEST_F(RuntimeTest, ReadsWritesAndPositionsBinaryFiles) {
 TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("hierarchy-scan.bin");
-  {
-    std::ofstream(path, std::ios::binary) << "tag=Q";
-  }
+  { std::ofstream(path, std::ios::binary) << "tag=Q"; }
   uint32_t descriptor = open(path, "rb");
 
   obelisk_rt_gc_lane_v1 *lane = nullptr;
@@ -1907,9 +1903,7 @@ TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 
   std::filesystem::path emptyPath = temporary.file("empty-hierarchy-scan.bin");
-  {
-    std::ofstream(emptyPath, std::ios::binary);
-  }
+  { std::ofstream(emptyPath, std::ios::binary); }
   descriptor = open(emptyPath, "rb");
   field = 1;
   ok = 0;
@@ -1933,9 +1927,7 @@ TEST_F(RuntimeTest, HierarchyScanMatchesPrefixWithoutConsumingAField) {
 TEST_F(RuntimeTest, FileScanAcceptsFourStateNumericFieldsExactly) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("four-state-scan.txt");
-  {
-    std::ofstream(path, std::ios::binary) << "1x?zQ ?R +7";
-  }
+  { std::ofstream(path, std::ios::binary) << "1x?zQ ?R +7"; }
   uint32_t descriptor = open(path, "rb");
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
@@ -2297,9 +2289,7 @@ TEST_F(RuntimeTest, DynamicScanRejectsCrossContextLanesAndHeapStrings) {
 TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("dynamic-scan.txt");
-  {
-    std::ofstream(path, std::ios::binary) << "A=12 SKIP 7f!";
-  }
+  { std::ofstream(path, std::ios::binary) << "A=12 SKIP 7f!"; }
   uint32_t descriptor = open(path, "rb");
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
@@ -2353,9 +2343,7 @@ TEST_F(RuntimeTest, DynamicFileScanPreservesPositionAndEOF) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 
   std::filesystem::path empty = temporary.file("dynamic-empty.txt");
-  {
-    std::ofstream(empty, std::ios::binary);
-  }
+  { std::ofstream(empty, std::ios::binary); }
   descriptor = open(empty, "rb");
   format = string("%d");
   planCursor = 0;
@@ -2412,9 +2400,7 @@ TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
 TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("bad.hex");
-  {
-    std::ofstream(path) << "@";
-  }
+  { std::ofstream(path) << "@"; }
   uint32_t descriptor = open(path, "r");
   uint8_t value = 0, unknown = 0;
   uint32_t kind = 0;

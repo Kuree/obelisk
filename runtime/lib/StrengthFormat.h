@@ -59,8 +59,7 @@ inline bool obelisk_rt_parse_strength_field(const char *data, uint64_t size,
 
   bool firstDigit = first >= '1' && first <= '7';
   bool secondDigit = second >= '1' && second <= '7';
-  if ((first >= '0' && first <= '9') ||
-      (second >= '0' && second <= '9')) {
+  if ((first >= '0' && first <= '9') || (second >= '0' && second <= '9')) {
     if (!firstDigit || !secondDigit)
       return false;
     unsigned firstLevel = static_cast<unsigned>(first - '0');

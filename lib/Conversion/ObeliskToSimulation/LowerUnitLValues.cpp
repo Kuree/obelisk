@@ -988,26 +988,26 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             APInt replicate = APInt::getZero(packedType.getWidth());
             for (unsigned transition = 0; transition != 12; ++transition)
               replicate.setBit(transition * *width);
-            Value extended = arith::ExtUIOp::create(
-                builder, location, packedType, masks.front());
+            Value extended = arith::ExtUIOp::create(builder, location,
+                                                    packedType, masks.front());
             Value factor = arith::ConstantOp::create(
                 builder, location, packedType,
                 builder.getIntegerAttr(packedType, replicate));
-            return Value(arith::MulIOp::create(builder, location, extended,
-                                               factor));
+            return Value(
+                arith::MulIOp::create(builder, location, extended, factor));
           }
-          Value packed = arith::ConstantOp::create(
-              builder, location, packedType,
-              builder.getIntegerAttr(packedType, 0));
+          Value packed =
+              arith::ConstantOp::create(builder, location, packedType,
+                                        builder.getIntegerAttr(packedType, 0));
           for (auto [transition, mask] : llvm::enumerate(masks)) {
-            Value extended = arith::ExtUIOp::create(builder, location,
-                                                    packedType, mask);
+            Value extended =
+                arith::ExtUIOp::create(builder, location, packedType, mask);
             if (transition != 0) {
               Value shift = arith::ConstantOp::create(
                   builder, location, packedType,
                   builder.getIntegerAttr(packedType, transition * *width));
-              extended = arith::ShLIOp::create(builder, location, extended,
-                                               shift);
+              extended =
+                  arith::ShLIOp::create(builder, location, extended, shift);
             }
             packed = arith::OrIOp::create(builder, location, packed, extended);
           }
@@ -1019,19 +1019,18 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           Value now = sim::SimTimeNowOp::create(
               builder, location, builder.getI64Type(),
               function.getBody().front().getArgument(0));
-          Value elapsed = arith::SubIOp::create(
-              builder, location, now, storagePlan->qualificationTime);
+          Value elapsed = arith::SubIOp::create(builder, location, now,
+                                                storagePlan->qualificationTime);
           Value declared = arith::ConstantOp::create(
               builder, location, builder.getI64Type(),
               builder.getI64IntegerAttr(group.delayTicks));
           Value expired = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::uge, elapsed, declared);
-          Value remaining = arith::SubIOp::create(builder, location, declared,
-                                                  elapsed);
+          Value remaining =
+              arith::SubIOp::create(builder, location, declared, elapsed);
           remaining = arith::SelectOp::create(
               builder, location, expired,
-              arith::ConstantOp::create(builder, location,
-                                        builder.getI64Type(),
+              arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                         builder.getI64IntegerAttr(0)),
               remaining);
           // IEEE 1800-2017 30.4 and 30.5 measure a module-path delay from
@@ -1077,12 +1076,10 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
                 builder.getI32IntegerAttr(groupCount),
                 builder.getBoolAttr(nonblocking),
-                builder.getI64IntegerAttr(group.pulseControlled
-                                              ? group.pulseReject
-                                              : -1),
-                builder.getI64IntegerAttr(group.pulseControlled
-                                              ? group.pulseError
-                                              : -1),
+                builder.getI64IntegerAttr(
+                    group.pulseControlled ? group.pulseReject : -1),
+                builder.getI64IntegerAttr(
+                    group.pulseControlled ? group.pulseError : -1),
                 builder.getBoolAttr(group.pulseControlled &&
                                     group.pulseOnDetect),
                 builder.getBoolAttr(group.pulseControlled &&
@@ -1161,14 +1158,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
               builder.getI32IntegerAttr(groupCount),
               builder.getBoolAttr(nonblocking),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseReject
-                                            : -1),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseError
-                                            : -1),
-              builder.getBoolAttr(group.pulseControlled &&
-                                  group.pulseOnDetect),
+              builder.getI64IntegerAttr(
+                  group.pulseControlled ? group.pulseReject : -1),
+              builder.getI64IntegerAttr(group.pulseControlled ? group.pulseError
+                                                              : -1),
+              builder.getBoolAttr(group.pulseControlled && group.pulseOnDetect),
               builder.getBoolAttr(group.pulseControlled &&
                                   group.pulseShowCancelled));
         }
@@ -1286,25 +1280,25 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 Value factor = arith::ConstantOp::create(
                     builder, location, packedType,
                     builder.getIntegerAttr(packedType, replicate));
-                return Value(arith::MulIOp::create(builder, location,
-                                                   extended, factor));
+                return Value(
+                    arith::MulIOp::create(builder, location, extended, factor));
               }
               Value packed = arith::ConstantOp::create(
                   builder, location, packedType,
                   builder.getIntegerAttr(packedType, 0));
               for (auto [transition, mask] : llvm::enumerate(masks)) {
-                Value extended = arith::ExtUIOp::create(builder, location,
-                                                        packedType, mask);
+                Value extended =
+                    arith::ExtUIOp::create(builder, location, packedType, mask);
                 if (transition != 0) {
                   Value shift = arith::ConstantOp::create(
                       builder, location, packedType,
                       builder.getIntegerAttr(packedType,
                                              transition * *drivenWidth));
-                  extended = arith::ShLIOp::create(builder, location, extended,
-                                                   shift);
+                  extended =
+                      arith::ShLIOp::create(builder, location, extended, shift);
                 }
-                packed = arith::OrIOp::create(builder, location, packed,
-                                              extended);
+                packed =
+                    arith::OrIOp::create(builder, location, packed, extended);
               }
               return packed;
             };
@@ -1328,9 +1322,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
             Value mask = group.masks.front();
             Value pulseTransitions =
-                group.pulseControlled
-                    ? packDriverPulseTransitions(group.masks)
-                    : Value{};
+                group.pulseControlled ? packDriverPulseTransitions(group.masks)
+                                      : Value{};
             auto drive = sim::SimDriverDriveInertialPathOp::create(
                 builder, location, destination.reference, published,
                 maskedPlan->coverageMask, mask, mask, mask, pulseTransitions,
@@ -1339,12 +1332,10 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
                 builder.getI32IntegerAttr(groupCount),
                 builder.getBoolAttr(deferDriverResolution || userRaw),
-                builder.getI64IntegerAttr(group.pulseControlled
-                                              ? group.pulseReject
-                                              : -1),
-                builder.getI64IntegerAttr(group.pulseControlled
-                                              ? group.pulseError
-                                              : -1),
+                builder.getI64IntegerAttr(
+                    group.pulseControlled ? group.pulseReject : -1),
+                builder.getI64IntegerAttr(
+                    group.pulseControlled ? group.pulseError : -1),
                 builder.getBoolAttr(group.pulseControlled &&
                                     group.pulseOnDetect),
                 builder.getBoolAttr(group.pulseControlled &&
@@ -1381,35 +1372,34 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             publishedSymbols[symbol] = symbolMask(*publishedLogic);
           }
           auto remainingSymbol = [&](const std::array<Value, 4> &symbols) {
-            Value used = arith::OrIOp::create(builder, location, symbols[0],
-                                              symbols[1]);
+            Value used =
+                arith::OrIOp::create(builder, location, symbols[0], symbols[1]);
             used = arith::OrIOp::create(builder, location, used, symbols[2]);
             return Value(
                 arith::XOrIOp::create(builder, location, used, onesMask));
           };
           previousSymbols[3] = remainingSymbol(previousSymbols);
           publishedSymbols[3] = remainingSymbol(publishedSymbols);
-          constexpr std::array<unsigned, 12> fromSymbols = {
-              0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
-          constexpr std::array<unsigned, 12> toSymbols = {
-              1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+          constexpr std::array<unsigned, 12> fromSymbols = {0, 1, 0, 3, 1, 3,
+                                                            0, 2, 1, 2, 2, 3};
+          constexpr std::array<unsigned, 12> toSymbols = {1, 0, 3, 1, 3, 0,
+                                                          2, 1, 2, 0, 3, 2};
           Value consumed = zeroMask;
           for (unsigned transition = 0; transition != 12; ++transition) {
             transitionMasks[transition] = arith::AndIOp::create(
-                builder, location,
-                previousSymbols[fromSymbols[transition]],
+                builder, location, previousSymbols[fromSymbols[transition]],
                 publishedSymbols[toSymbols[transition]]);
-            consumed = arith::OrIOp::create(
-                builder, location, consumed, transitionMasks[transition]);
+            consumed = arith::OrIOp::create(builder, location, consumed,
+                                            transitionMasks[transition]);
           }
           consumeEdgePending(consumed);
         }
         for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
           auto addTransition = [&](unsigned bank, unsigned transition) {
-            Value selected = arith::AndIOp::create(
-                builder, location, group.masks[transition],
-                transitionMasks[transition]);
+            Value selected = arith::AndIOp::create(builder, location,
+                                                   group.masks[transition],
+                                                   transitionMasks[transition]);
             runtimeMasks[bank] = arith::OrIOp::create(
                 builder, location, runtimeMasks[bank], selected);
           };
@@ -1424,10 +1414,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           // bank because this group already represents one distinct delay.
           for (unsigned transition : {6u, 8u, 11u})
             addTransition(0, transition);
-          Value pulseTransitions =
-              group.pulseControlled
-                  ? packDriverPulseTransitions(group.masks)
-                  : Value{};
+          Value pulseTransitions = group.pulseControlled
+                                       ? packDriverPulseTransitions(group.masks)
+                                       : Value{};
           auto drive = sim::SimDriverDriveInertialPathOp::create(
               builder, location, destination.reference, published,
               maskedPlan->coverageMask, runtimeMasks[0], runtimeMasks[1],
@@ -1436,14 +1425,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder.getI32IntegerAttr(static_cast<uint32_t>(index)),
               builder.getI32IntegerAttr(groupCount),
               builder.getBoolAttr(deferDriverResolution || userRaw),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseReject
-                                            : -1),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseError
-                                            : -1),
-              builder.getBoolAttr(group.pulseControlled &&
-                                  group.pulseOnDetect),
+              builder.getI64IntegerAttr(
+                  group.pulseControlled ? group.pulseReject : -1),
+              builder.getI64IntegerAttr(group.pulseControlled ? group.pulseError
+                                                              : -1),
+              builder.getBoolAttr(group.pulseControlled && group.pulseOnDetect),
               builder.getBoolAttr(group.pulseControlled &&
                                   group.pulseShowCancelled));
           if (userRaw)

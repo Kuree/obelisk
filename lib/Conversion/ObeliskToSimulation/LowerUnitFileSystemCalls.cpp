@@ -113,9 +113,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           << name << " requires an unpacked array";
       return failure();
     }
-    if (associative &&
-        (!sim::getPackedWidth(associative.getKeyType()) ||
-         associative.getWildcardIndex())) {
+    if (associative && (!sim::getPackedWidth(associative.getKeyType()) ||
+                        associative.getWildcardIndex())) {
       emitError(getSemanticLocation(actual))
           << name << " associative array indices must be integral";
       return failure();
@@ -130,9 +129,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         elementType = dimension.getElementType();
       }
     } else {
-      elementType = dynamicArray   ? dynamicArray.getElementType()
-                    : queue        ? queue.getElementType()
-                                   : associative.getElementType();
+      elementType = dynamicArray ? dynamicArray.getElementType()
+                    : queue      ? queue.getElementType()
+                                 : associative.getElementType();
     }
     std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
     if (!elementWidth || *elementWidth == 0) {
@@ -169,8 +168,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                   : FailureOr<Value>(failure());
       if (failed(path))
         return failure();
-      Value modeBits = arith::ConstantOp::create(
-          builder, location, builder.getI8Type(), builder.getI8IntegerAttr('w'));
+      Value modeBits =
+          arith::ConstantOp::create(builder, location, builder.getI8Type(),
+                                    builder.getI8IntegerAttr('w'));
       Value mode = sim::SimStringFromPackedOp::create(builder, location,
                                                       stringType, modeBits);
       return sim::SimFileOpenStringOp::create(builder, location, i32, context,
@@ -182,10 +182,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       Value item = sim::SimBytesConstantOp::create(
           builder, location,
           (Twine(severity) + ": " + name + ": " + detail).str());
-      sim::SimDisplayOp::create(
-          builder, location, context, standardError, ValueRange{item}, true,
-          10, builder.getDenseI32ArrayAttr({0}), lexicalScope, StringAttr{},
-          timeMultiplier, IntegerAttr{});
+      sim::SimDisplayOp::create(builder, location, context, standardError,
+                                ValueRange{item}, true, 10,
+                                builder.getDenseI32ArrayAttr({0}), lexicalScope,
+                                StringAttr{}, timeMultiplier, IntegerAttr{});
     };
     auto emitWord = [&](Value descriptor, Value word) {
       sim::SimDisplayOp::create(
@@ -209,13 +209,12 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     if (associative) {
       Type keyType = associative.getKeyType();
-      auto compareKeys = [&](Value lhs, Value rhs,
-                             arith::CmpIPredicate integerPredicate,
-                             sim::CompareKind logicPredicate)
-          -> FailureOr<Value> {
+      auto compareKeys =
+          [&](Value lhs, Value rhs, arith::CmpIPredicate integerPredicate,
+              sim::CompareKind logicPredicate) -> FailureOr<Value> {
         if (!isa<sim::LogicType>(keyType))
-          return arith::CmpIOp::create(builder, location, integerPredicate,
-                                       lhs, rhs)
+          return arith::CmpIOp::create(builder, location, integerPredicate, lhs,
+                                       rhs)
               .getResult();
         Value compared = sim::SimLogicCompareOp::create(
             builder, location, sim::LogicType::get(function.getContext(), 1),
@@ -226,8 +225,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         FailureOr<Value> value = lowerExpression(children[index]);
         if (failed(value))
           return failure();
-        return convert(*value, keyType, isSignedNode(children[index]),
-                       location, associative.getSignedKey());
+        return convert(*value, keyType, isSignedNode(children[index]), location,
+                       associative.getSignedKey());
       };
       FailureOr<Value> start;
       FailureOr<Value> finish;
@@ -272,9 +271,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       if (failed(openedDescriptor))
         return failure();
       Value descriptor = *openedDescriptor;
-      Value isOpen = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, descriptor,
-          constant(i32, 0));
+      Value isOpen =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                descriptor, constant(i32, 0));
       cf::CondBranchOp::create(builder, location, isOpen, opened, ValueRange{},
                                openError, ValueRange{});
 
@@ -288,8 +287,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           traverseAssoc(*memory, initialKey, -1, true, location);
       if (failed(first) || failed(last))
         return failure();
-      Value endpointKey = arith::SelectOp::create(
-          builder, location, descending, last->first, first->first);
+      Value endpointKey = arith::SelectOp::create(builder, location, descending,
+                                                  last->first, first->first);
       Value endpointValid = arith::SelectOp::create(
           builder, location, descending, last->second, first->second);
       cf::BranchOp::create(builder, location, header,
@@ -320,43 +319,42 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                           ? Value(arith::SelectOp::create(
                                 builder, location, descending, *finish, *start))
                           : *start;
-        FailureOr<Value> compared = compareKeys(
-            key, lower, lowerPredicate, lowerLogicPredicate);
+        FailureOr<Value> compared =
+            compareKeys(key, lower, lowerPredicate, lowerLogicPredicate);
         if (failed(compared))
           return failure();
-        selected = arith::AndIOp::create(builder, location, selected,
-                                         *compared);
+        selected =
+            arith::AndIOp::create(builder, location, selected, *compared);
       }
       if (hasFinish) {
         Value upper = hasStart
                           ? Value(arith::SelectOp::create(
                                 builder, location, descending, *start, *finish))
                           : *finish;
-        FailureOr<Value> compared = compareKeys(
-            key, upper, upperPredicate, upperLogicPredicate);
+        FailureOr<Value> compared =
+            compareKeys(key, upper, upperPredicate, upperLogicPredicate);
         if (failed(compared))
           return failure();
-        selected = arith::AndIOp::create(builder, location, selected,
-                                         *compared);
+        selected =
+            arith::AndIOp::create(builder, location, selected, *compared);
       }
-      cf::CondBranchOp::create(builder, location, selected, write,
-                               ValueRange{}, step, ValueRange{key});
+      cf::CondBranchOp::create(builder, location, selected, write, ValueRange{},
+                               step, ValueRange{key});
 
       setCurrent(write);
       FailureOr<Value> keyScalar = toPackedScalar(key, location);
-      Value element = sim::SimAssocReadOp::create(
-          builder, location, elementType, *memory, key);
+      Value element = sim::SimAssocReadOp::create(builder, location,
+                                                  elementType, *memory, key);
       FailureOr<Value> scalar = toPackedScalar(element, location);
       if (failed(keyScalar) || failed(scalar))
         return failure();
       Value addressFormat =
           sim::SimBytesConstantOp::create(builder, location, "@%h");
-      sim::SimDisplayOp::create(
-          builder, location, context, descriptor,
-          ValueRange{addressFormat, *keyScalar}, true, 16,
-          ArrayRef<int32_t>{0, 0}, lexicalScope,
-          op.getSystemLibraryCellAttr(), timeMultiplier,
-          designTimePrecisionExponent());
+      sim::SimDisplayOp::create(builder, location, context, descriptor,
+                                ValueRange{addressFormat, *keyScalar}, true, 16,
+                                ArrayRef<int32_t>{0, 0}, lexicalScope,
+                                op.getSystemLibraryCellAttr(), timeMultiplier,
+                                designTimePrecisionExponent());
       emitWord(descriptor, *scalar);
       cf::BranchOp::create(builder, location, step, ValueRange{key});
 
@@ -392,29 +390,28 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       return arith::ConstantOp::create(builder, location, i64,
                                        builder.getI64IntegerAttr(value));
     };
-    Value low = indexConstant(
-        array ? std::min(dimensions.front().getLeft(),
-                         dimensions.front().getRight())
-              : 0);
+    Value low = indexConstant(array ? std::min(dimensions.front().getLeft(),
+                                               dimensions.front().getRight())
+                                    : 0);
     Value high;
     Value emptyDefault = constant(builder.getI1Type(), 0);
     if (array)
       high = indexConstant(std::max(dimensions.front().getLeft(),
                                     dimensions.front().getRight()));
     else {
-      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                                   *memory);
+      Value size =
+          sim::SimContainerSizeOp::create(builder, location, i64, *memory);
       high = arith::SubIOp::create(builder, location, size, indexConstant(1));
-      bool explicitStart = children.size() >= 3 &&
-                           !isa<semantic::SVEmptyArgumentExpressionOp>(
-                               children[2]);
-      bool explicitFinish = children.size() >= 4 &&
-                            !isa<semantic::SVEmptyArgumentExpressionOp>(
-                                children[3]);
+      bool explicitStart =
+          children.size() >= 3 &&
+          !isa<semantic::SVEmptyArgumentExpressionOp>(children[2]);
+      bool explicitFinish =
+          children.size() >= 4 &&
+          !isa<semantic::SVEmptyArgumentExpressionOp>(children[3]);
       if (!explicitStart && !explicitFinish)
-        emptyDefault = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, size,
-            indexConstant(0));
+        emptyDefault =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  size, indexConstant(0));
     }
     auto addressArgument = [&](size_t index,
                                Value fallback) -> FailureOr<Value> {
@@ -432,10 +429,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     for (sim::UnpackedArrayType dimension :
          array ? ArrayRef<sim::UnpackedArrayType>(dimensions).drop_front()
                : ArrayRef<sim::UnpackedArrayType>{}) {
-      uint64_t extent = static_cast<uint64_t>(
-          std::max(dimension.getLeft(), dimension.getRight()) -
-          std::min(dimension.getLeft(), dimension.getRight())) +
-                        1;
+      uint64_t extent =
+          static_cast<uint64_t>(
+              std::max(dimension.getLeft(), dimension.getRight()) -
+              std::min(dimension.getLeft(), dimension.getRight())) +
+          1;
       if (extent != 0 &&
           rowSizeValue > static_cast<uint64_t>(INT64_MAX) / extent) {
         emitError(getSemanticLocation(actual))
@@ -456,8 +454,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     };
     Value validBounds = arith::AndIOp::create(
         builder, location, withinMemory(*start), withinMemory(*finish));
-    validBounds = arith::OrIOp::create(builder, location, validBounds,
-                                       emptyDefault);
+    validBounds =
+        arith::OrIOp::create(builder, location, validBounds, emptyDefault);
 
     Block *openFile = addBlock();
     Block *beginFile = addBlock();
@@ -478,11 +476,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     if (failed(openedDescriptor))
       return failure();
     Value descriptor = *openedDescriptor;
-    Value opened = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, descriptor,
-        constant(i32, 0));
-    cf::CondBranchOp::create(builder, location, opened, beginFile,
-                             ValueRange{}, openError, ValueRange{});
+    Value opened =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                              descriptor, constant(i32, 0));
+    cf::CondBranchOp::create(builder, location, opened, beginFile, ValueRange{},
+                             openError, ValueRange{});
 
     setCurrent(beginFile);
     cf::CondBranchOp::create(builder, location, emptyDefault, closeFile,
@@ -502,10 +500,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       for (auto [position, dimension] : llvm::enumerate(dimensions)) {
         Value index = address;
         if (position != 0) {
-          uint64_t extent = static_cast<uint64_t>(
-              std::max(dimension.getLeft(), dimension.getRight()) -
-              std::min(dimension.getLeft(), dimension.getRight())) +
-                            1;
+          uint64_t extent =
+              static_cast<uint64_t>(
+                  std::max(dimension.getLeft(), dimension.getRight()) -
+                  std::min(dimension.getLeft(), dimension.getRight())) +
+              1;
           stride /= extent;
           Value ordinal = subword;
           if (stride != 1)
@@ -532,8 +531,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       element = *loaded;
     } else {
-      element = sim::SimContainerReadOp::create(
-          builder, location, elementType, *memory, address);
+      element = sim::SimContainerReadOp::create(builder, location, elementType,
+                                                *memory, address);
     }
     FailureOr<Value> scalar = toPackedScalar(element, location);
     if (failed(scalar))
@@ -544,19 +543,19 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     setCurrent(advance);
     Value incrementedSubword =
         arith::AddIOp::create(builder, location, subword, indexConstant(1));
-    Value rowComplete = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, incrementedSubword,
-        rowSize);
+    Value rowComplete =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              incrementedSubword, rowSize);
     Value atFinish = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, address, *finish);
-    Value complete = arith::AndIOp::create(builder, location, rowComplete,
-                                           atFinish);
+    Value complete =
+        arith::AndIOp::create(builder, location, rowComplete, atFinish);
     Value step = arith::SelectOp::create(builder, location, descending,
                                          indexConstant(-1), indexConstant(1));
     Value steppedAddress =
         arith::AddIOp::create(builder, location, address, step);
-    Value nextAddress = arith::SelectOp::create(
-        builder, location, rowComplete, steppedAddress, address);
+    Value nextAddress = arith::SelectOp::create(builder, location, rowComplete,
+                                                steppedAddress, address);
     Value nextSubword = arith::SelectOp::create(
         builder, location, rowComplete, indexConstant(0), incrementedSubword);
     cf::CondBranchOp::create(builder, location, complete, closeFile,
@@ -612,9 +611,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           << name << " requires an unpacked array";
       return failure();
     }
-    if (associative &&
-        (!sim::getPackedWidth(associative.getKeyType()) ||
-         associative.getWildcardIndex())) {
+    if (associative && (!sim::getPackedWidth(associative.getKeyType()) ||
+                        associative.getWildcardIndex())) {
       emitError(getSemanticLocation(actual))
           << name << " associative array indices must be integral";
       return failure();
@@ -632,9 +630,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         elementType = dimension.getElementType();
       }
     } else {
-      elementType = dynamicArray   ? dynamicArray.getElementType()
-                    : queue        ? queue.getElementType()
-                                   : associative.getElementType();
+      elementType = dynamicArray ? dynamicArray.getElementType()
+                    : queue      ? queue.getElementType()
+                                 : associative.getElementType();
     }
     std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
     if (!elementWidth || *elementWidth == 0) {
@@ -667,7 +665,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     SmallVector<Value> sliceReferences;
     if (isa<semantic::SVRangeSelectExpressionOp>(actual)) {
       FailureOr<CapturedLValue> slice = captureLValue(actual, location);
-      if (failed(slice) || slice->kind != CapturedLValue::Kind::AggregateSlice ||
+      if (failed(slice) ||
+          slice->kind != CapturedLValue::Kind::AggregateSlice ||
           slice->children.empty()) {
         emitError(getSemanticLocation(actual))
             << name << " memory slice must be writable";
@@ -759,17 +758,15 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     if (associative) {
       unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
       if (associative.getSignedKey()) {
-        associativeLow = keyWidth >= 64
-                             ? INT64_MIN
-                             : -(int64_t{1} << (keyWidth - 1));
-        associativeHigh = keyWidth >= 64
-                              ? INT64_MAX
-                              : (int64_t{1} << (keyWidth - 1)) - 1;
+        associativeLow =
+            keyWidth >= 64 ? INT64_MIN : -(int64_t{1} << (keyWidth - 1));
+        associativeHigh =
+            keyWidth >= 64 ? INT64_MAX : (int64_t{1} << (keyWidth - 1)) - 1;
       } else {
-        associativeHigh = keyWidth >= 64
-                              ? static_cast<int64_t>(UINT64_MAX)
-                              : static_cast<int64_t>((uint64_t{1} << keyWidth) -
-                                                     1);
+        associativeHigh =
+            keyWidth >= 64
+                ? static_cast<int64_t>(UINT64_MAX)
+                : static_cast<int64_t>((uint64_t{1} << keyWidth) - 1);
       }
       if (enumKeyValues) {
         for (Attribute attribute : enumKeyValues) {
@@ -783,10 +780,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                 << name << " has malformed enum index metadata";
             return failure();
           }
-          int64_t value = associative.getSignedKey()
-                              ? parsed->value.getSExtValue()
-                              : static_cast<int64_t>(
-                                    parsed->value.getZExtValue());
+          int64_t value =
+              associative.getSignedKey()
+                  ? parsed->value.getSExtValue()
+                  : static_cast<int64_t>(parsed->value.getZExtValue());
           if (!llvm::is_contained(parsedKeyEnums, value))
             parsedKeyEnums.push_back(value);
         }
@@ -802,10 +799,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           auto unsignedLess = [](int64_t lhs, int64_t rhs) {
             return static_cast<uint64_t>(lhs) < static_cast<uint64_t>(rhs);
           };
-          associativeLow =
-              *llvm::min_element(parsedKeyEnums, unsignedLess);
-          associativeHigh =
-              *llvm::max_element(parsedKeyEnums, unsignedLess);
+          associativeLow = *llvm::min_element(parsedKeyEnums, unsignedLess);
+          associativeHigh = *llvm::max_element(parsedKeyEnums, unsignedLess);
         }
       }
     }
@@ -824,23 +819,24 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       high = indexConstant(std::max(dimensions.front().getLeft(),
                                     dimensions.front().getRight()));
     else if (!associative) {
-      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                                   memory);
+      Value size =
+          sim::SimContainerSizeOp::create(builder, location, i64, memory);
       high = arith::SubIOp::create(builder, location, size, indexConstant(1));
       if (!hasExplicitStart && !hasExplicitFinish)
-        emptyDefault = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, size,
-            indexConstant(0));
+        emptyDefault =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  size, indexConstant(0));
     } else
       high = indexConstant(associativeHigh);
     uint64_t rowSizeValue = 1;
     for (sim::UnpackedArrayType dimension :
          array ? ArrayRef<sim::UnpackedArrayType>(dimensions).drop_front()
                : ArrayRef<sim::UnpackedArrayType>{}) {
-      uint64_t extent = static_cast<uint64_t>(
-          std::max(dimension.getLeft(), dimension.getRight()) -
-          std::min(dimension.getLeft(), dimension.getRight())) +
-                        1;
+      uint64_t extent =
+          static_cast<uint64_t>(
+              std::max(dimension.getLeft(), dimension.getRight()) -
+              std::min(dimension.getLeft(), dimension.getRight())) +
+          1;
       if (extent != 0 &&
           rowSizeValue > static_cast<uint64_t>(INT64_MAX) / extent) {
         emitError(getSemanticLocation(actual))
@@ -863,14 +859,14 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     bool hasExplicitRange = hasExplicitStart && hasExplicitFinish;
     bool unsignedAddress = associative && !associative.getSignedKey();
-    auto greaterThan = unsignedAddress ? arith::CmpIPredicate::ugt
-                                       : arith::CmpIPredicate::sgt;
-    auto lessEqual = unsignedAddress ? arith::CmpIPredicate::ule
-                                     : arith::CmpIPredicate::sle;
-    auto greaterEqual = unsignedAddress ? arith::CmpIPredicate::uge
-                                        : arith::CmpIPredicate::sge;
-    Value descending = arith::CmpIOp::create(builder, location, greaterThan,
-                                             *start, *finish);
+    auto greaterThan =
+        unsignedAddress ? arith::CmpIPredicate::ugt : arith::CmpIPredicate::sgt;
+    auto lessEqual =
+        unsignedAddress ? arith::CmpIPredicate::ule : arith::CmpIPredicate::sle;
+    auto greaterEqual =
+        unsignedAddress ? arith::CmpIPredicate::uge : arith::CmpIPredicate::sge;
+    Value descending =
+        arith::CmpIOp::create(builder, location, greaterThan, *start, *finish);
     auto emitMessage = [&](StringRef severity, StringRef detail) {
       Value standardError = constant(i32, static_cast<int32_t>(0x80000002u));
       Value item = sim::SimBytesConstantOp::create(
@@ -911,14 +907,14 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     Block *done = addBlock();
 
     auto withinInclusiveRange = [&](Value value) -> Value {
-      Value atOrBelowStart = arith::CmpIOp::create(
-          builder, location, lessEqual, value, *start);
-      Value atOrAboveStart = arith::CmpIOp::create(
-          builder, location, greaterEqual, value, *start);
+      Value atOrBelowStart =
+          arith::CmpIOp::create(builder, location, lessEqual, value, *start);
+      Value atOrAboveStart =
+          arith::CmpIOp::create(builder, location, greaterEqual, value, *start);
       Value atOrAboveFinish = arith::CmpIOp::create(
           builder, location, greaterEqual, value, *finish);
-      Value atOrBelowFinish = arith::CmpIOp::create(
-          builder, location, lessEqual, value, *finish);
+      Value atOrBelowFinish =
+          arith::CmpIOp::create(builder, location, lessEqual, value, *finish);
       Value withinDescending = arith::AndIOp::create(
           builder, location, atOrBelowStart, atOrAboveFinish);
       Value withinAscending = arith::AndIOp::create(
@@ -946,12 +942,12 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     Value validBounds = arith::AndIOp::create(
         builder, location, withinMemory(*start), withinMemory(*finish));
-    SmallVector<Value> initialState{
-        *start, constant(builder.getI1Type(), 0), indexConstant(0),
-        indexConstant(0), constant(builder.getI1Type(), 0)};
+    SmallVector<Value> initialState{*start, constant(builder.getI1Type(), 0),
+                                    indexConstant(0), indexConstant(0),
+                                    constant(builder.getI1Type(), 0)};
     if (!array && !associative) {
-      validBounds = arith::OrIOp::create(builder, location, validBounds,
-                                         emptyDefault);
+      validBounds =
+          arith::OrIOp::create(builder, location, validBounds, emptyDefault);
       cf::CondBranchOp::create(builder, location, validBounds, beginFile,
                                ValueRange{}, addressError, ValueRange{});
 
@@ -994,34 +990,34 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     if (associative) {
       unsigned keyWidth = *sim::getPackedWidth(associative.getKeyType());
       if (keyWidth < 64) {
-        Value keyMaximum = indexConstant(
-            static_cast<int64_t>((uint64_t{1} << keyWidth) - 1));
-        fileAddressFits = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ule, fileAddress,
-            keyMaximum);
+        Value keyMaximum =
+            indexConstant(static_cast<int64_t>((uint64_t{1} << keyWidth) - 1));
+        fileAddressFits =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ule,
+                                  fileAddress, keyMaximum);
         Type keyBits = IntegerType::get(function.getContext(), keyWidth);
-        Value truncated = arith::TruncIOp::create(builder, location, keyBits,
-                                                  fileAddress);
+        Value truncated =
+            arith::TruncIOp::create(builder, location, keyBits, fileAddress);
         fileAddress = associative.getSignedKey()
                           ? Value(arith::ExtSIOp::create(builder, location, i64,
-                                                       truncated))
+                                                         truncated))
                           : Value(arith::ExtUIOp::create(builder, location, i64,
-                                                       truncated));
+                                                         truncated));
       }
     }
     Value validFileAddress = arith::AndIOp::create(
         builder, location, withinInclusiveRange(fileAddress),
         withinMemory(fileAddress));
-    validFileAddress = arith::AndIOp::create(
-        builder, location, validFileAddress, fileAddressFits);
+    validFileAddress = arith::AndIOp::create(builder, location,
+                                             validFileAddress, fileAddressFits);
     if (!parsedKeyEnums.empty()) {
       Value validEnumAddress = constant(builder.getI1Type(), 0);
       for (int64_t member : parsedKeyEnums) {
-        Value equal = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, fileAddress,
-            indexConstant(member));
-        validEnumAddress = arith::OrIOp::create(builder, location,
-                                                validEnumAddress, equal);
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  fileAddress, indexConstant(member));
+        validEnumAddress =
+            arith::OrIOp::create(builder, location, validEnumAddress, equal);
       }
       validFileAddress = arith::AndIOp::create(
           builder, location, validFileAddress, validEnumAddress);
@@ -1030,28 +1026,27 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                              ValueRange{}, addressError, ValueRange{});
 
     setCurrent(acceptAddress);
-    cf::BranchOp::create(builder, location, header,
-                         ValueRange{fileAddress,
-                                    constant(builder.getI1Type(), 1),
-                                    wordCount, indexConstant(0),
-                                    constant(builder.getI1Type(), 0)});
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{fileAddress, constant(builder.getI1Type(), 1), wordCount,
+                   indexConstant(0), constant(builder.getI1Type(), 0)});
 
     setCurrent(storeData);
     Value validDataAddress =
         arith::AndIOp::create(builder, location, withinInclusiveRange(address),
                               withinMemory(address));
-    Value hasCapacity = arith::XOrIOp::create(
-        builder, location, rangeExhausted, constant(builder.getI1Type(), 1));
-    validDataAddress = arith::AndIOp::create(builder, location,
-                                             validDataAddress, hasCapacity);
+    Value hasCapacity = arith::XOrIOp::create(builder, location, rangeExhausted,
+                                              constant(builder.getI1Type(), 1));
+    validDataAddress =
+        arith::AndIOp::create(builder, location, validDataAddress, hasCapacity);
     if (!parsedKeyEnums.empty()) {
       Value validEnumAddress = constant(builder.getI1Type(), 0);
       for (int64_t member : parsedKeyEnums) {
-        Value equal = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::eq, address,
-            indexConstant(member));
-        validEnumAddress = arith::OrIOp::create(builder, location,
-                                                validEnumAddress, equal);
+        Value equal =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  address, indexConstant(member));
+        validEnumAddress =
+            arith::OrIOp::create(builder, location, validEnumAddress, equal);
       }
       validDataAddress = arith::AndIOp::create(
           builder, location, validDataAddress, validEnumAddress);
@@ -1081,13 +1076,13 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
             builder, location, tokenType,
             builder.getIntegerAttr(planeType, member.value),
             builder.getIntegerAttr(planeType, member.unknown));
-        FailureOr<Value> equal = conditionalEqual(
-            token.getData(), memberValue, tokenType, location,
-            /*caseEquality=*/true);
+        FailureOr<Value> equal =
+            conditionalEqual(token.getData(), memberValue, tokenType, location,
+                             /*caseEquality=*/true);
         if (failed(equal))
           return failure();
-        validEnumData = arith::OrIOp::create(builder, location, validEnumData,
-                                             *equal);
+        validEnumData =
+            arith::OrIOp::create(builder, location, validEnumData, *equal);
       }
     }
     cf::CondBranchOp::create(builder, location, validEnumData, writeData,
@@ -1109,14 +1104,12 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       if (!sliceReferences.empty()) {
         elementReference = sliceReferences.front();
         int64_t sliceLeft = dimensions.front().getLeft();
-        int64_t sliceStep =
-            sliceLeft <= dimensions.front().getRight() ? 1 : -1;
+        int64_t sliceStep = sliceLeft <= dimensions.front().getRight() ? 1 : -1;
         for (auto [ordinal, reference] : llvm::enumerate(sliceReferences)) {
           Value sliceIndex = indexConstant(
               sliceLeft + sliceStep * static_cast<int64_t>(ordinal));
           Value matches = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, address,
-              sliceIndex);
+              builder, location, arith::CmpIPredicate::eq, address, sliceIndex);
           elementReference = arith::SelectOp::create(
               builder, location, matches, reference, elementReference);
         }
@@ -1128,10 +1121,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           continue;
         Value index = address;
         if (position != 0) {
-          uint64_t extent = static_cast<uint64_t>(
-              std::max(dimension.getLeft(), dimension.getRight()) -
-              std::min(dimension.getLeft(), dimension.getRight())) +
-                            1;
+          uint64_t extent =
+              static_cast<uint64_t>(
+                  std::max(dimension.getLeft(), dimension.getRight()) -
+                  std::min(dimension.getLeft(), dimension.getRight())) +
+              1;
           stride /= extent;
           Value ordinal = subword;
           if (stride != 1)
@@ -1159,9 +1153,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       sim::SimContainerWriteOp::create(builder, location, memory, address,
                                        element);
     } else {
-      FailureOr<Value> key =
-          convert(address, associative.getKeyType(), false, location,
-                  associative.getSignedKey());
+      FailureOr<Value> key = convert(address, associative.getKeyType(), false,
+                                     location, associative.getSignedKey());
       if (failed(key))
         return failure();
       sim::SimAssocWriteOp::create(builder, location, memory, *key, element);
@@ -1170,25 +1163,24 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                          indexConstant(-1), indexConstant(1));
     Value incrementedSubword =
         arith::AddIOp::create(builder, location, subword, indexConstant(1));
-    Value rowComplete = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, incrementedSubword,
-        rowSize);
+    Value rowComplete =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              incrementedSubword, rowSize);
     Value steppedAddress =
         arith::AddIOp::create(builder, location, address, step);
-    Value nextAddress = arith::SelectOp::create(
-        builder, location, rowComplete, steppedAddress, address);
+    Value nextAddress = arith::SelectOp::create(builder, location, rowComplete,
+                                                steppedAddress, address);
     Value nextSubword = arith::SelectOp::create(
         builder, location, rowComplete, indexConstant(0), incrementedSubword);
     Value atFinish = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, address, *finish);
-    Value nextRangeExhausted = arith::AndIOp::create(
-        builder, location, rowComplete, atFinish);
+    Value nextRangeExhausted =
+        arith::AndIOp::create(builder, location, rowComplete, atFinish);
     Value nextWordCount =
         arith::AddIOp::create(builder, location, wordCount, indexConstant(1));
-    cf::BranchOp::create(
-        builder, location, header,
-        ValueRange{nextAddress, sawFileAddress, nextWordCount, nextSubword,
-                   nextRangeExhausted});
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{nextAddress, sawFileAddress, nextWordCount,
+                                    nextSubword, nextRangeExhausted});
 
     setCurrent(checkWordCount);
     Value difference =
@@ -1203,8 +1195,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         arith::MulIOp::create(builder, location, expectedWords, rowSize);
     Value countMatches = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, wordCount, expectedWords);
-    Value suppressWarning = arith::OrIOp::create(
-        builder, location, sawFileAddress, countMatches);
+    Value suppressWarning =
+        arith::OrIOp::create(builder, location, sawFileAddress, countMatches);
     if (!hasExplicitRange)
       suppressWarning = constant(builder.getI1Type(), 1);
     cf::CondBranchOp::create(builder, location, suppressWarning, exit,
@@ -1463,9 +1455,9 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
   }
 
   if (name == "$fgets" || name == "$fread") {
-    bool validArity = name == "$fgets" ? children.size() == 2
-                                       : children.size() >= 2 &&
-                                             children.size() <= 4;
+    bool validArity = name == "$fgets"
+                          ? children.size() == 2
+                          : children.size() >= 2 && children.size() <= 4;
     if (!validArity) {
       emitError(location) << name
                           << (name == "$fgets"
@@ -1506,8 +1498,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       if (dynamicArray || queue) {
         Type elementType = dynamicArray ? dynamicArray.getElementType()
                                         : queue.getElementType();
-        std::optional<unsigned> elementWidth =
-            sim::getPackedWidth(elementType);
+        std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
         if (!elementWidth || *elementWidth == 0) {
           emitError(getSemanticLocation(actual))
               << "$fread memory elements must be packed values";
@@ -1536,15 +1527,14 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
             return failure();
           sim::SimArgumentRefStoreOp::create(builder, location, memory,
                                              *argument);
-        }
-        else {
+        } else {
           emitError(getSemanticLocation(actual))
               << "$fread variable-size memory must be directly writable";
           return failure();
         }
 
-        Value size = sim::SimContainerSizeOp::create(builder, location, i64,
-                                                     memory);
+        Value size =
+            sim::SimContainerSizeOp::create(builder, location, i64, memory);
         auto optionalInteger = [&](size_t index,
                                    Value fallback) -> FailureOr<Value> {
           if (index >= children.size() ||
@@ -1574,31 +1564,31 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         Value index = header->getArgument(0);
         Value remaining = header->getArgument(1);
         Value total = header->getArgument(2);
-        Value withinLow = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::sge, index,
-            constant(i64, 0));
+        Value withinLow =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
+                                  index, constant(i64, 0));
         Value withinHigh = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::slt, index, size);
         Value within =
             arith::AndIOp::create(builder, location, withinLow, withinHigh);
-        Value hasRemaining = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::sgt, remaining,
-            constant(i64, 0));
-        Value shouldRead = arith::AndIOp::create(builder, location, within,
-                                                 hasRemaining);
+        Value hasRemaining =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sgt,
+                                  remaining, constant(i64, 0));
+        Value shouldRead =
+            arith::AndIOp::create(builder, location, within, hasRemaining);
         cf::CondBranchOp::create(builder, location, shouldRead, readElement,
                                  ValueRange{}, done, ValueRange{total});
 
         setCurrent(readElement);
         IntegerType packedType = builder.getIntegerType(*elementWidth);
-        auto read = sim::SimFileReadPackedOp::create(
-            builder, location, TypeRange{packedType, i32}, context,
-            *descriptor);
-        Value count64 = arith::ExtUIOp::create(builder, location, i64,
-                                               read.getCount());
-        Value readAny = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, read.getCount(),
-            constant(i32, 0));
+        auto read = sim::SimFileReadPackedOp::create(builder, location,
+                                                     TypeRange{packedType, i32},
+                                                     context, *descriptor);
+        Value count64 =
+            arith::ExtUIOp::create(builder, location, i64, read.getCount());
+        Value readAny =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  read.getCount(), constant(i32, 0));
         cf::CondBranchOp::create(builder, location, readAny, storeElement,
                                  ValueRange{}, done, ValueRange{total});
 
@@ -1611,8 +1601,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                          *converted);
         Value nextTotal =
             arith::AddIOp::create(builder, location, total, count64);
-        uint64_t elementBytes =
-            (static_cast<uint64_t>(*elementWidth) + 7) / 8;
+        uint64_t elementBytes = (static_cast<uint64_t>(*elementWidth) + 7) / 8;
         Value complete = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::eq, count64,
             constant(i64, static_cast<int64_t>(elementBytes)));
@@ -1620,13 +1609,12 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                  ValueRange{}, done, ValueRange{nextTotal});
 
         setCurrent(continueRead);
-        Value nextIndex = arith::AddIOp::create(builder, location, index,
-                                                constant(i64, 1));
+        Value nextIndex =
+            arith::AddIOp::create(builder, location, index, constant(i64, 1));
         Value nextRemaining = arith::SubIOp::create(
             builder, location, remaining, constant(i64, 1));
-        cf::BranchOp::create(
-            builder, location, header,
-            ValueRange{nextIndex, nextRemaining, nextTotal});
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{nextIndex, nextRemaining, nextTotal});
 
         setCurrent(done);
         Value result = arith::TruncIOp::create(builder, location, i32,
@@ -1635,8 +1623,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       }
       if (auto memory = dyn_cast<sim::UnpackedArrayType>(destinationType)) {
         Type elementType = memory.getElementType();
-        std::optional<unsigned> elementWidth =
-            sim::getPackedWidth(elementType);
+        std::optional<unsigned> elementWidth = sim::getPackedWidth(elementType);
         if (!elementWidth || *elementWidth == 0 ||
             isa<sim::UnpackedArrayType>(elementType)) {
           emitError(getSemanticLocation(actual))
@@ -1646,9 +1633,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
         uint64_t left = static_cast<uint64_t>(memory.getLeft());
         uint64_t right = static_cast<uint64_t>(memory.getRight());
-        uint64_t distance = memory.getLeft() >= memory.getRight()
-                                ? left - right
-                                : right - left;
+        uint64_t distance =
+            memory.getLeft() >= memory.getRight() ? left - right : right - left;
         if (distance == std::numeric_limits<uint64_t>::max() ||
             distance + 1 >
                 static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
@@ -1666,8 +1652,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         };
         // The memory form advances from the lowest numeric address, not from
         // the declaration's left bound when the range is descending.
-        FailureOr<Value> start = optionalInteger(
-            2, std::min(memory.getLeft(), memory.getRight()));
+        FailureOr<Value> start =
+            optionalInteger(2, std::min(memory.getLeft(), memory.getRight()));
         FailureOr<Value> count = optionalInteger(3, extent);
         if (failed(start) || failed(count))
           return failure();
@@ -1697,24 +1683,24 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
             constant(i64, std::max(memory.getLeft(), memory.getRight())));
         Value within =
             arith::AndIOp::create(builder, location, withinLow, withinHigh);
-        Value hasRemaining = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::sgt, remaining,
-            constant(i64, 0));
-        Value shouldRead = arith::AndIOp::create(builder, location, within,
-                                                  hasRemaining);
+        Value hasRemaining =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sgt,
+                                  remaining, constant(i64, 0));
+        Value shouldRead =
+            arith::AndIOp::create(builder, location, within, hasRemaining);
         cf::CondBranchOp::create(builder, location, shouldRead, readElement,
                                  ValueRange{}, done, ValueRange{total});
 
         setCurrent(readElement);
         IntegerType packedType = builder.getIntegerType(*elementWidth);
-        auto read = sim::SimFileReadPackedOp::create(
-            builder, location, TypeRange{packedType, i32}, context,
-            *descriptor);
-        Value count64 = arith::ExtUIOp::create(builder, location, i64,
-                                               read.getCount());
-        Value readAny = arith::CmpIOp::create(
-            builder, location, arith::CmpIPredicate::ne, read.getCount(),
-            constant(i32, 0));
+        auto read = sim::SimFileReadPackedOp::create(builder, location,
+                                                     TypeRange{packedType, i32},
+                                                     context, *descriptor);
+        Value count64 =
+            arith::ExtUIOp::create(builder, location, i64, read.getCount());
+        Value readAny =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  read.getCount(), constant(i32, 0));
         cf::CondBranchOp::create(builder, location, readAny, storeElement,
                                  ValueRange{}, done, ValueRange{total});
 
@@ -1725,8 +1711,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           return failure();
         Value elementReference = sim::SimRefArrayElementOp::create(
             builder, location,
-            sim::RefType::get(function.getContext(), elementType),
-            *destination, index);
+            sim::RefType::get(function.getContext(), elementType), *destination,
+            index);
         sim::SimRefStoreOp::create(builder, location, *converted,
                                    elementReference);
         Value nextTotal =
@@ -1740,13 +1726,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
         setCurrent(continueRead);
         Value step = constant(i64, 1);
-        Value nextIndex =
-            arith::AddIOp::create(builder, location, index, step);
+        Value nextIndex = arith::AddIOp::create(builder, location, index, step);
         Value nextRemaining = arith::SubIOp::create(
             builder, location, remaining, constant(i64, 1));
-        cf::BranchOp::create(
-            builder, location, header,
-            ValueRange{nextIndex, nextRemaining, nextTotal});
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{nextIndex, nextRemaining, nextTotal});
 
         setCurrent(done);
         Value result = arith::TruncIOp::create(builder, location, i32,

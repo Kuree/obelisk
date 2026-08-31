@@ -5236,8 +5236,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       FailureOr<Value> aggregate = loadReference(*input, location);
       if (failed(aggregate))
         return failure();
-      return sim::SimArrayDynExtractOp::create(
-                 builder, location, *resultType, *aggregate, *widened)
+      return sim::SimArrayDynExtractOp::create(builder, location, *resultType,
+                                               *aggregate, *widened)
           .getResult();
     }
     if (isa<sim::RefType>((*input).getType())) {

@@ -219,8 +219,8 @@ LogicalResult materializeNativeEvalCoordinator(
         llvmConstant(builder, location, i32, 0));
     cf::CondBranchOp::create(
         builder, location, mustHandoff, complete,
-        ValueRange{llvmConstant(builder, location, i32,
-                                OBELISK_RT_AOT_CHECKPOINT)},
+        ValueRange{
+            llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT)},
         scanReady, ValueRange{});
   } else {
     cf::BranchOp::create(builder, location, scanReady);

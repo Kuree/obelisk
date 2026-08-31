@@ -163,28 +163,26 @@ public:
     if (op.getPulseTransitionMasks())
       flags |= OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS;
     SmallVector<Value, 23> arguments{
-                runtimeContext,
-                LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_value"),
-                unknownPlane,
-                llvmConstant(rewriter, location, i64, stateBitCount),
-                adaptor.getDriver().front(),
-                llvmConstant(rewriter, location, i64, *width),
-                llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
-                llvmConstant(rewriter, location, i32, op.getComponent()),
-                llvmConstant(rewriter, location, i32, op.getGroup()),
-                llvmConstant(rewriter, location, i32, op.getGroupCount()),
-                llvmConstant(rewriter, location, i32, flags),
-                adaptor.getRiseDelay().front(),
-                adaptor.getFallDelay().front(),
-                adaptor.getTurnoffDelay().front()};
+        runtimeContext,
+        LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                  "__obelisk_state_value"),
+        unknownPlane,
+        llvmConstant(rewriter, location, i64, stateBitCount),
+        adaptor.getDriver().front(),
+        llvmConstant(rewriter, location, i64, *width),
+        llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
+        llvmConstant(rewriter, location, i32, op.getComponent()),
+        llvmConstant(rewriter, location, i32, op.getGroup()),
+        llvmConstant(rewriter, location, i32, op.getGroupCount()),
+        llvmConstant(rewriter, location, i32, flags),
+        adaptor.getRiseDelay().front(),
+        adaptor.getFallDelay().front(),
+        adaptor.getTurnoffDelay().front()};
     if (pulseControlled) {
       arguments.push_back(llvmConstant(
-          rewriter, location, i64,
-          static_cast<uint64_t>(op.getPulseReject())));
+          rewriter, location, i64, static_cast<uint64_t>(op.getPulseReject())));
       arguments.push_back(llvmConstant(
-          rewriter, location, i64,
-          static_cast<uint64_t>(op.getPulseError())));
+          rewriter, location, i64, static_cast<uint64_t>(op.getPulseError())));
     }
     arguments.push_back(value);
     arguments.push_back(unknown);
@@ -193,8 +191,7 @@ public:
     arguments.push_back(savePlane(adaptor.getFallMask().front()));
     arguments.push_back(savePlane(adaptor.getTurnoffMask().front()));
     if (pulseControlled)
-      arguments.push_back(
-          savePlane(adaptor.getPulseTransitionMasks().front()));
+      arguments.push_back(savePlane(adaptor.getPulseTransitionMasks().front()));
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
@@ -264,41 +261,37 @@ public:
     }
     bool pulseControlled = !adaptor.getPulseTransitionMasks().empty();
     SmallVector<Value, 24> arguments{
-                runtimeContext,
-                LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_value"),
-                unknownPlane,
-                llvmConstant(rewriter, location, i64, stateBitCount),
-                adaptor.getReference().front(),
-                llvmConstant(rewriter, location, i64, *width),
-                llvmConstant(rewriter, location, i64, op.getSiteId()),
-                llvmConstant(rewriter, location, i32, op.getComponent()),
-                llvmConstant(rewriter, location, i32, op.getGroup()),
-                llvmConstant(rewriter, location, i32, op.getGroupCount()),
-                llvmConstant(rewriter, location, i32, op.getNonblocking())};
+        runtimeContext,
+        LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                  "__obelisk_state_value"),
+        unknownPlane,
+        llvmConstant(rewriter, location, i64, stateBitCount),
+        adaptor.getReference().front(),
+        llvmConstant(rewriter, location, i64, *width),
+        llvmConstant(rewriter, location, i64, op.getSiteId()),
+        llvmConstant(rewriter, location, i32, op.getComponent()),
+        llvmConstant(rewriter, location, i32, op.getGroup()),
+        llvmConstant(rewriter, location, i32, op.getGroupCount()),
+        llvmConstant(rewriter, location, i32, op.getNonblocking())};
     if (pulseControlled) {
       arguments.push_back(llvmConstant(
-                    rewriter, location, i32,
-                    (op.getPulseOnDetect()
-                         ? OBELISK_RT_INERTIAL_PATH_ON_DETECT
-                         : 0) |
-                        (op.getPulseShowCancelled()
-                             ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
-                             : 0) |
-                        (op.getPulseTransitionMasks()
-                             ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
-                             : 0)));
+          rewriter, location, i32,
+          (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+              (op.getPulseShowCancelled()
+                   ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                   : 0) |
+              (op.getPulseTransitionMasks()
+                   ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
+                   : 0)));
     }
     arguments.push_back(adaptor.getRiseDelay().front());
     arguments.push_back(adaptor.getFallDelay().front());
     arguments.push_back(adaptor.getTurnoffDelay().front());
     if (pulseControlled) {
       arguments.push_back(llvmConstant(
-          rewriter, location, i64,
-          static_cast<uint64_t>(op.getPulseReject())));
+          rewriter, location, i64, static_cast<uint64_t>(op.getPulseReject())));
       arguments.push_back(llvmConstant(
-          rewriter, location, i64,
-          static_cast<uint64_t>(op.getPulseError())));
+          rewriter, location, i64, static_cast<uint64_t>(op.getPulseError())));
     }
     arguments.push_back(value);
     arguments.push_back(unknown);
@@ -308,8 +301,7 @@ public:
     arguments.push_back(savePlane(adaptor.getFallMask().front()));
     arguments.push_back(savePlane(adaptor.getTurnoffMask().front()));
     if (pulseControlled)
-      arguments.push_back(
-          savePlane(adaptor.getPulseTransitionMasks().front()));
+      arguments.push_back(savePlane(adaptor.getPulseTransitionMasks().front()));
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
@@ -459,7 +451,8 @@ public:
         LLVM::AddressOfOp::create(rewriter, location, pointer,
                                   "__obelisk_state_unknown"),
         llvmConstant(rewriter, location, i64, stateBitCount),
-        adaptor.getLowDriver().front(), adaptor.getHighDriver().front(),
+        adaptor.getLowDriver().front(),
+        adaptor.getHighDriver().front(),
         llvmConstant(rewriter, location, i64, *width),
         llvmConstant(rewriter, location, i64, op.getCodeUnitId()),
         llvmConstant(rewriter, location, i32, op.getComponent()),
@@ -467,13 +460,11 @@ public:
         llvmConstant(rewriter, location, i32, op.getGroupCount())};
     bool pulseControlled = !adaptor.getPulseTransitionMasks().empty();
     if (pulseControlled) {
-      uint32_t flags = OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
-                       (op.getPulseOnDetect()
-                            ? OBELISK_RT_INERTIAL_PATH_ON_DETECT
-                            : 0) |
-                       (op.getPulseShowCancelled()
-                            ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
-                            : 0);
+      uint32_t flags =
+          OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
+          (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+          (op.getPulseShowCancelled() ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                                      : 0);
       arguments.push_back(llvmConstant(rewriter, location, i32, flags));
     }
     llvm::append_range(arguments,
@@ -486,30 +477,28 @@ public:
       arguments.push_back(
           llvmConstant(rewriter, location, i64, op.getPulseError()));
     }
-    llvm::append_range(
-        arguments,
-        ValueRange{savePlane(adaptor.getLowValue()[0]),
-                   savePlane(adaptor.getLowValue()[1]),
-                   savePlane(adaptor.getHighValue()[0]),
-                   savePlane(adaptor.getHighValue()[1]),
-                   savePlane(adaptor.getTransitionValue()[0]),
-                   savePlane(adaptor.getTransitionValue()[1]),
-                   savePlane(adaptor.getActiveMask().front()),
-                   savePlane(adaptor.getRiseMask().front()),
-                   savePlane(adaptor.getFallMask().front()),
-                   savePlane(adaptor.getTurnoffMask().front())});
+    llvm::append_range(arguments,
+                       ValueRange{savePlane(adaptor.getLowValue()[0]),
+                                  savePlane(adaptor.getLowValue()[1]),
+                                  savePlane(adaptor.getHighValue()[0]),
+                                  savePlane(adaptor.getHighValue()[1]),
+                                  savePlane(adaptor.getTransitionValue()[0]),
+                                  savePlane(adaptor.getTransitionValue()[1]),
+                                  savePlane(adaptor.getActiveMask().front()),
+                                  savePlane(adaptor.getRiseMask().front()),
+                                  savePlane(adaptor.getFallMask().front()),
+                                  savePlane(adaptor.getTurnoffMask().front())});
     if (pulseControlled)
-      arguments.push_back(
-          savePlane(adaptor.getPulseTransitionMasks().front()));
+      arguments.push_back(savePlane(adaptor.getPulseTransitionMasks().front()));
     StringRef function =
         pulseControlled
             ? "obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse"
             : "obelisk_rt_v1_scheduler_inertial_path_strength_pair";
-    Value status = LLVM::CallOp::create(
-                       rewriter, location, TypeRange{i32},
-                       SymbolRefAttr::get(rewriter.getContext(), function),
-                       arguments)
-                       .getResult();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(), function), arguments)
+            .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
                                             "obelisk_rt_v1_scheduler_fail"),

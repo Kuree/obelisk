@@ -56,9 +56,8 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
     return convert(value, *type, true, location);
   };
 
-  bool isDimensionCount =
-      query == ArrayQueryKind::Dimensions ||
-      query == ArrayQueryKind::UnpackedDimensions;
+  bool isDimensionCount = query == ArrayQueryKind::Dimensions ||
+                          query == ArrayQueryKind::UnpackedDimensions;
   bool isRangeQuery = query && !isDimensionCount;
   if (isDimensionCount || isRangeQuery) {
     size_t maximumArguments = isDimensionCount ? 1 : 2;

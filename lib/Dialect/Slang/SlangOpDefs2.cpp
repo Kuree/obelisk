@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Slang/SlangOps.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/Slang/SlangOps.h"
 
 #include "mlir/IR/Diagnostics.h"
 

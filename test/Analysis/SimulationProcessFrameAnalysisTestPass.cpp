@@ -70,8 +70,7 @@ void printValueLayout(StringRef prefix, unsigned index,
     llvm::errs() << " roots=";
     llvm::interleaveComma(value.managedRootOffsets, llvm::errs());
     bool first = true;
-    for (const obelisk::sim::ManagedHandleSlot &slot :
-         value.managedRootSlots) {
+    for (const obelisk::sim::ManagedHandleSlot &slot : value.managedRootSlots) {
       if (!slot.conditional)
         continue;
       llvm::errs() << (first ? " candidate-roots=" : ",") << slot.bitOffset

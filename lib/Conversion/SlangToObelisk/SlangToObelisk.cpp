@@ -370,8 +370,7 @@ public:
       return rewriter.notifyMatchFailure(
           op, "invalid semantic sentinels have no Obelisk representation");
 
-    if constexpr (std::is_same_v<SourceOp,
-                                 slangir::GenerateBlockSymbolOp>) {
+    if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp>) {
       if (auto inactive =
               op->template getAttrOfType<BoolAttr>("is_uninstantiated");
           inactive && inactive.getValue()) {

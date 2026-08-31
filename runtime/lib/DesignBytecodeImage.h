@@ -82,8 +82,7 @@ inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
   std::memcpy(&start, address + 16, sizeof(start));
   if ((kind & kLocalHandleKind) != 0)
     return false;
-  uint32_t descriptorKind =
-      kind & ~(kLocalHandleKind | kAutomaticHandleKind);
+  uint32_t descriptorKind = kind & ~(kLocalHandleKind | kAutomaticHandleKind);
   // Event null uses an all-ones descriptor coordinate rather than the
   // out-of-range state-view sentinel. Preserve it as the canonical all-ones
   // stable handle when an event crosses a frame or state-storage boundary.

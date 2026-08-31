@@ -192,11 +192,12 @@ obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
   return sawRoot ? OBELISK_RT_OK : OBELISK_RT_INVALID_DESIGN;
 }
 
-static obelisk_rt_status importCallImpl(
-    obelisk_rt_context *context, const obelisk_rt_import_site_v1 *site,
-    const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
-    obelisk_rt_import_output_v1 *outputs, uint32_t outputCount,
-    bool exposeContext) {
+static obelisk_rt_status
+importCallImpl(obelisk_rt_context *context,
+               const obelisk_rt_import_site_v1 *site,
+               const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
+               obelisk_rt_import_output_v1 *outputs, uint32_t outputCount,
+               bool exposeContext) {
   if (!context || !site || (inputs == nullptr && inputCount != 0) ||
       (outputs == nullptr && outputCount != 0))
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -208,8 +209,7 @@ static obelisk_rt_status importCallImpl(
       ((site->flags & OBELISK_RT_IMPORT_PURE) != 0 &&
        (site->flags & (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK)) !=
            0) ||
-      exposeContext !=
-          ((site->flags & OBELISK_RT_IMPORT_CONTEXT) != 0) ||
+      exposeContext != ((site->flags & OBELISK_RT_IMPORT_CONTEXT) != 0) ||
       !validBytes(site->source_file, site->source_file_size))
     return OBELISK_RT_INVALID_ARGUMENT;
   for (uint32_t index = 0; index != inputCount; ++index)
@@ -341,16 +341,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_import_call_guarded(
                                    outputCount);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_import_call_noncontext_guarded(
+extern "C" obelisk_rt_status obelisk_rt_v1_import_call_noncontext_guarded(
     obelisk_rt_status priorStatus, obelisk_rt_context *context,
     const obelisk_rt_import_site_v1 *site,
     const obelisk_rt_import_input_v1 *inputs, uint32_t inputCount,
     obelisk_rt_import_output_v1 *outputs, uint32_t outputCount) {
   if (priorStatus != OBELISK_RT_OK)
     return priorStatus;
-  return obelisk_rt_v1_import_call_noncontext(
-      context, site, inputs, inputCount, outputs, outputCount);
+  return obelisk_rt_v1_import_call_noncontext(context, site, inputs, inputCount,
+                                              outputs, outputCount);
 }
 
 extern "C" obelisk_rt_status

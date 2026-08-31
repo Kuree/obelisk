@@ -128,9 +128,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeDynamicScanIntrinsic(
     if (!readString(image, frame, context, inputRegister(0), input) ||
         !readString(image, frame, context, inputRegister(2), format) ||
         !cursor || !planCursor || !enabled || !finalize || !allowed ||
-        !rawTwoState || !rawFourState ||
-        *cursor > UINT32_MAX || *planCursor > UINT32_MAX || *enabled > 1 ||
-        *finalize > 1)
+        !rawTwoState || !rawFourState || *cursor > UINT32_MAX ||
+        *planCursor > UINT32_MAX || *enabled > 1 || *finalize > 1)
       return OBELISK_RT_INVALID_BYTECODE;
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -139,8 +138,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeDynamicScanIntrinsic(
     obelisk_rt_status status = obelisk_rt_v1_string_scan_dynamic(
         context, lane, input, static_cast<uint32_t>(*cursor), format,
         static_cast<uint32_t>(*planCursor), static_cast<uint32_t>(*enabled),
-        static_cast<uint32_t>(*finalize), *allowed, *rawTwoState,
-        *rawFourState, &field, &nextCursor, &nextPlanCursor, &specifier, &ok);
+        static_cast<uint32_t>(*finalize), *allowed, *rawTwoState, *rawFourState,
+        &field, &nextCursor, &nextPlanCursor, &specifier, &ok);
     if (status != OBELISK_RT_OK)
       return status;
     if (!writeString(image, frame, outputRegister(0), field))
@@ -160,9 +159,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeDynamicScanIntrinsic(
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!readString(image, frame, context, inputRegister(1), format) ||
         !descriptor || !planCursor || !enabled || !finalize || !allowed ||
-        !rawTwoState || !rawFourState ||
-        *descriptor > UINT32_MAX || *planCursor > UINT32_MAX || *enabled > 1 ||
-        *finalize > 1)
+        !rawTwoState || !rawFourState || *descriptor > UINT32_MAX ||
+        *planCursor > UINT32_MAX || *enabled > 1 || *finalize > 1)
       return OBELISK_RT_INVALID_BYTECODE;
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -171,8 +169,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeDynamicScanIntrinsic(
     obelisk_rt_status status = obelisk_rt_v1_file_scan_dynamic(
         context, lane, static_cast<uint32_t>(*descriptor), format,
         static_cast<uint32_t>(*planCursor), static_cast<uint32_t>(*enabled),
-        static_cast<uint32_t>(*finalize), *allowed, *rawTwoState,
-        *rawFourState, &field, &nextPlanCursor, &specifier, &ok, &eof);
+        static_cast<uint32_t>(*finalize), *allowed, *rawTwoState, *rawFourState,
+        &field, &nextPlanCursor, &specifier, &ok, &eof);
     if (status != OBELISK_RT_OK)
       return status;
     if (!writeString(image, frame, outputRegister(0), field))

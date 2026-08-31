@@ -63,8 +63,7 @@ FailureOr<SmallString<256>> findWasmSysroot(StringRef explicitSysroot) {
   } else if (std::optional<std::string> emsdk =
                  sys::Process::GetEnv("EM_SYSROOT")) {
     sysroot = *emsdk;
-  } else if (std::optional<std::string> emsdk =
-                 sys::Process::GetEnv("EMSDK")) {
+  } else if (std::optional<std::string> emsdk = sys::Process::GetEnv("EMSDK")) {
     sysroot = *emsdk;
     sys::path::append(sysroot, "upstream", "emscripten", "cache", "sysroot");
   } else {
@@ -116,9 +115,9 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
     return failure();
   }
 
-  for (StringRef filename : {"libstubs.a", "libnoexit.a", "libc.a",
-                             "libdlmalloc.a", "libcompiler_rt.a", "libc++.a",
-                             "libc++abi.a", "libunwind.a"}) {
+  for (StringRef filename :
+       {"libstubs.a", "libnoexit.a", "libc.a", "libdlmalloc.a",
+        "libcompiler_rt.a", "libc++.a", "libc++abi.a", "libunwind.a"}) {
     SmallString<256> path(libraryDirectory);
     sys::path::append(path, filename);
     if (!sys::fs::exists(path)) {
@@ -159,8 +158,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   // These stable names are aliases for the ABI-suffixed archives selected by
   // Emscripten for wasm exceptions.
   for (StringRef library : {"-lstubs", "-lnoexit", "-lc", "-ldlmalloc",
-                            "-lcompiler_rt", "-lc++", "-lc++abi",
-                            "-lunwind"})
+                            "-lcompiler_rt", "-lc++", "-lc++abi", "-lunwind"})
     owned.push_back(library.str());
 
   SmallVector<const char *> arguments;
@@ -226,13 +224,13 @@ public:
   }
 
   LogicalResult linkExecutable(ArrayRef<std::string> modulePaths,
-                               StringRef outputPath,
-                               StringRef supportRoot,
+                               StringRef outputPath, StringRef supportRoot,
                                const NativeOutputOptions &options,
                                bool thinLTO) override {
     if (thinLTO || modulePaths.size() != 1)
       return failure();
-    return linkWasmModule(modulePaths.front(), outputPath, supportRoot, options);
+    return linkWasmModule(modulePaths.front(), outputPath, supportRoot,
+                          options);
   }
 };
 

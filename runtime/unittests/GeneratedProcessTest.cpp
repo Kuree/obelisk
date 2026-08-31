@@ -21,12 +21,12 @@ extern "C" const obelisk_rt_process_descriptor_v1
     generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1
     failingDescriptor asm("failing_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1 orchestrationDescriptor
-    asm("orchestration_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1 automaticDescriptor
-    asm("automatic_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor
-    asm("automatic_loop_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 orchestrationDescriptor asm(
+    "orchestration_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1
+    automaticDescriptor asm("automatic_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor asm(
+    "automatic_loop_process.__obelisk_process_descriptor");
 
 namespace {
 
@@ -73,8 +73,7 @@ void initializeDelayWait(void *frame) {
   ASSERT_NE(field, nullptr);
   auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
       static_cast<uint8_t *>(frame) + field->offset);
-  *wait = {
-      OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 3, 0};
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 3, 0};
 }
 
 struct DualTierDescriptor {
@@ -186,12 +185,12 @@ TEST(GeneratedProcess, EmittedDesignBytecodeMatchesNativeLifecycle) {
             OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *native = nullptr;
   obelisk_rt_process_instance_v1 *bytecode = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&generatedDescriptor,
-                                                   &native),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&generatedDescriptor,
-                                                   &bytecode),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&generatedDescriptor, &native),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&generatedDescriptor, &bytecode),
+      OBELISK_RT_OK);
 
   for (unsigned step = 0; step != 3; ++step) {
     obelisk_rt_fragment_action_v1 nativeAction{}, bytecodeAction{};
@@ -199,8 +198,7 @@ TEST(GeneratedProcess, EmittedDesignBytecodeMatchesNativeLifecycle) {
                   native, context, OBELISK_RT_TIER_NATIVE, &nativeAction),
               OBELISK_RT_OK);
     ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  bytecode, context, OBELISK_RT_TIER_BYTECODE,
-                  &bytecodeAction),
+                  bytecode, context, OBELISK_RT_TIER_BYTECODE, &bytecodeAction),
               OBELISK_RT_OK);
     EXPECT_EQ(bytecodeAction.kind, nativeAction.kind);
     EXPECT_EQ(bytecodeAction.suspend_kind, nativeAction.suspend_kind);
@@ -224,7 +222,7 @@ TEST(GeneratedProcess, SchedulerRunsEventSpawnJoinAndAwait) {
             OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(obelisk_rt_v1_process_instance_create(&orchestrationDescriptor,
-                                                   &instance),
+                                                  &instance),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   testing::internal::CaptureStdout();
@@ -241,9 +239,9 @@ TEST(GeneratedProcess, DynamicAutomaticSurvivesCallSpawnAndDelayedNBA) {
                 automaticDescriptor.execution, &context),
             OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&automaticDescriptor,
-                                                   &instance),
-            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&automaticDescriptor, &instance),
+      OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
@@ -257,7 +255,7 @@ TEST(GeneratedProcess, CrossBlockAutomaticLoopReleasesEveryIteration) {
             OBELISK_RT_OK);
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(obelisk_rt_v1_process_instance_create(&automaticLoopDescriptor,
-                                                   &instance),
+                                                  &instance),
             OBELISK_RT_OK);
   obelisk_rt_fragment_action_v1 action{};
   ASSERT_EQ(obelisk_rt_v1_process_instance_execute(

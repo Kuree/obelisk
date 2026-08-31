@@ -1279,9 +1279,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         appendTarget(id, depth, 0, 0);
     }
     if (dynamicAction)
-      call->setAttr("obelisk_sim.assertion_control_action_argument",
-                    IntegerAttr::get(IntegerType::get(context, 64),
-                                     actionArgument));
+      call->setAttr(
+          "obelisk_sim.assertion_control_action_argument",
+          IntegerAttr::get(IntegerType::get(context, 64), actionArgument));
     else
       call->setAttr("obelisk_sim.assertion_control_action",
                     IntegerAttr::get(IntegerType::get(context, 32), action));
@@ -3650,47 +3650,44 @@ void ObeliskSimPreparePass::runOnOperation() {
       [&](semantic::SVClassTypeOp leaf,
           SmallVectorImpl<semantic::SVClassTypeOp> &hierarchy,
           StringRef purpose) -> LogicalResult {
-        llvm::SmallPtrSet<Operation *, 8> visiting;
-        std::function<LogicalResult(
-            semantic::SVClassTypeOp,
-            SmallVectorImpl<semantic::SVClassTypeOp> &)>
-            collect = [&](semantic::SVClassTypeOp classType,
-                          SmallVectorImpl<semantic::SVClassTypeOp> &result)
-            -> LogicalResult {
-          auto cached = classHierarchyCache.find(classType);
-          if (cached != classHierarchyCache.end()) {
-            llvm::append_range(result, cached->second);
-            return success();
-          }
-          if (!visiting.insert(classType).second)
-            return classType.emitError(
-                "randomization class hierarchy is cyclic");
-          SmallVector<semantic::SVClassTypeOp> resolved;
-          if (std::optional<Type> baseType = classType.getBaseClass()) {
-            auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-            auto base =
-                baseHandle
-                    ? semanticClasses.find(
-                          baseHandle.getClassName().getLeafReference())
-                    : semanticClasses.end();
-            if (base == semanticClasses.end()) {
-              emitError(getSemanticLocation(classType))
-                  << purpose << " cannot resolve the base class";
-              return failure();
-            }
-            if (failed(collect(base->second, resolved)))
-              return failure();
-          }
-          resolved.push_back(classType);
-          visiting.erase(classType);
-          auto [entry, inserted] =
-              classHierarchyCache.try_emplace(classType, std::move(resolved));
-          (void)inserted;
-          llvm::append_range(result, entry->second);
-          return success();
-        };
-        return collect(leaf, hierarchy);
-      };
+    llvm::SmallPtrSet<Operation *, 8> visiting;
+    std::function<LogicalResult(semantic::SVClassTypeOp,
+                                SmallVectorImpl<semantic::SVClassTypeOp> &)>
+        collect = [&](semantic::SVClassTypeOp classType,
+                      SmallVectorImpl<semantic::SVClassTypeOp> &result)
+        -> LogicalResult {
+      auto cached = classHierarchyCache.find(classType);
+      if (cached != classHierarchyCache.end()) {
+        llvm::append_range(result, cached->second);
+        return success();
+      }
+      if (!visiting.insert(classType).second)
+        return classType.emitError("randomization class hierarchy is cyclic");
+      SmallVector<semantic::SVClassTypeOp> resolved;
+      if (std::optional<Type> baseType = classType.getBaseClass()) {
+        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+        auto base = baseHandle
+                        ? semanticClasses.find(
+                              baseHandle.getClassName().getLeafReference())
+                        : semanticClasses.end();
+        if (base == semanticClasses.end()) {
+          emitError(getSemanticLocation(classType))
+              << purpose << " cannot resolve the base class";
+          return failure();
+        }
+        if (failed(collect(base->second, resolved)))
+          return failure();
+      }
+      resolved.push_back(classType);
+      visiting.erase(classType);
+      auto [entry, inserted] =
+          classHierarchyCache.try_emplace(classType, std::move(resolved));
+      (void)inserted;
+      llvm::append_range(result, entry->second);
+      return success();
+    };
+    return collect(leaf, hierarchy);
+  };
 
   struct CompatibleConcreteClass {
     semantic::SVClassTypeOp classType;
@@ -3698,9 +3695,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
   llvm::DenseMap<Operation *, SmallVector<CompatibleConcreteClass>>
       compatibleConcreteClassCache;
-  auto getCompatibleConcreteClasses =
-      [&](semantic::SVClassTypeOp declaredClass,
-          StringRef purpose)
+  auto getCompatibleConcreteClasses = [&](semantic::SVClassTypeOp declaredClass,
+                                          StringRef purpose)
       -> FailureOr<SmallVector<CompatibleConcreteClass>> {
     auto cached = compatibleConcreteClassCache.find(declaredClass);
     if (cached != compatibleConcreteClassCache.end())
@@ -3708,10 +3704,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<CompatibleConcreteClass> compatibleClasses;
     StringRef targetInterface;
     if (declaredClass.getIsInterface())
-      targetInterface = cast<semantic::ClassHandleType>(
-                            declaredClass.getSemanticType())
-                            .getClassName()
-                            .getLeafReference();
+      targetInterface =
+          cast<semantic::ClassHandleType>(declaredClass.getSemanticType())
+              .getClassName()
+              .getLeafReference();
     for (semantic::SVClassTypeOp candidate : classSources) {
       if (candidate.getIsAbstract() || candidate.getIsInterface())
         continue;
@@ -3740,8 +3736,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         compatibleClasses.push_back(
             {candidate, static_cast<unsigned>(hierarchy.size())});
     }
-    compatibleConcreteClassCache.try_emplace(declaredClass,
-                                             compatibleClasses);
+    compatibleConcreteClassCache.try_emplace(declaredClass, compatibleClasses);
     return compatibleClasses;
   };
 
@@ -4492,14 +4487,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      llvm::sort(*dynamicPlans,
-                 [&](const CompatibleConcreteClass &lhs,
-                     const CompatibleConcreteClass &rhs) {
-                   if (lhs.depth != rhs.depth)
-                     return lhs.depth > rhs.depth;
-                   return classSymbols.lookup(lhs.classType).getValue() <
-                          classSymbols.lookup(rhs.classType).getValue();
-                 });
+      llvm::sort(*dynamicPlans, [&](const CompatibleConcreteClass &lhs,
+                                    const CompatibleConcreteClass &rhs) {
+        if (lhs.depth != rhs.depth)
+          return lhs.depth > rhs.depth;
+        return classSymbols.lookup(lhs.classType).getValue() <
+               classSymbols.lookup(rhs.classType).getValue();
+      });
       {
         SmallVector<semantic::SVCallExpressionOp> alternatives;
         alternatives.reserve(dynamicPlans->size());
@@ -7522,14 +7516,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return true;
     }
-    llvm::sort(*compatible,
-               [&](const CompatibleConcreteClass &lhs,
-                   const CompatibleConcreteClass &rhs) {
-                 if (lhs.depth != rhs.depth)
-                   return lhs.depth > rhs.depth;
-                 return classSymbols.lookup(lhs.classType).getValue() <
-                        classSymbols.lookup(rhs.classType).getValue();
-               });
+    llvm::sort(*compatible, [&](const CompatibleConcreteClass &lhs,
+                                const CompatibleConcreteClass &rhs) {
+      if (lhs.depth != rhs.depth)
+        return lhs.depth > rhs.depth;
+      return classSymbols.lookup(lhs.classType).getValue() <
+             classSymbols.lookup(rhs.classType).getValue();
+    });
     SmallVector<Attribute> classes;
     for (const CompatibleConcreteClass &entry : *compatible)
       classes.push_back(FlatSymbolRefAttr::get(

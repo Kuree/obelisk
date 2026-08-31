@@ -341,9 +341,8 @@ UnitLowering::formatUnpackedAggregateRaw(Value value, Location location,
                designTimePrecisionExponent())
         .getResult();
   };
-  return std::pair<Value, Value>{
-      mode == 'z' ? Value{} : formatLeaves('u'),
-      mode == 'u' ? Value{} : formatLeaves('z')};
+  return std::pair<Value, Value>{mode == 'z' ? Value{} : formatLeaves('u'),
+                                 mode == 'u' ? Value{} : formatLeaves('z')};
 }
 
 FailureOr<Value> UnitLowering::lowerEnumFormatName(Value receiver,
@@ -486,11 +485,11 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       bool integer = spec == 'b' || spec == 'o' || spec == 'd' || spec == 'h' ||
                      spec == 'x';
       bool floating = spec == 'e' || spec == 'f' || spec == 'g';
-      bool widthAllowed =
-          integer || floating || spec == 's' || spec == 't';
+      bool widthAllowed = integer || floating || spec == 's' || spec == 't';
       bool nonConsuming = spec == 'm' || spec == 'l';
       bool recognized = widthAllowed || nonConsuming || spec == 'c' ||
-                        spec == 'v' || spec == 'u' || spec == 'z' || spec == 'p';
+                        spec == 'v' || spec == 'u' || spec == 'z' ||
+                        spec == 'p';
       if (!recognized || ((width || left) && !widthAllowed && spec != 'p') ||
           (precision && !floating))
         return false;

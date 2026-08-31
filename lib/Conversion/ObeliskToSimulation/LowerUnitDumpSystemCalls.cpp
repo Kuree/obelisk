@@ -175,7 +175,7 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
         name == "$dumpportsoff"   ? sim::DumpPortsAction::Off
         : name == "$dumpportson"  ? sim::DumpPortsAction::On
         : name == "$dumpportsall" ? sim::DumpPortsAction::All
-                                    : sim::DumpPortsAction::Flush;
+                                  : sim::DumpPortsAction::Flush;
     sim::SimDumpPortsControlOp::create(builder, location, context, *path,
                                        action, constant(i64, 0));
     return dummyTaskResult();

@@ -165,8 +165,7 @@ ClassDispatchAnalysis::resolve(sim::SimClassDeclOp dynamicClass, uint64_t slot,
   return selected;
 }
 
-ArrayRef<sim::SimClassDeclOp>
-ClassDispatchAnalysis::compatibleConcreteClasses(
+ArrayRef<sim::SimClassDeclOp> ClassDispatchAnalysis::compatibleConcreteClasses(
     sim::SimClassDeclOp staticClass) const {
   if (!staticClass)
     return {};

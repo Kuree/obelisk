@@ -860,11 +860,10 @@ LogicalResult makeNativeAOTPlanLegacy(
       [&](OpBuilder &initializerBuilder) {
         Value value =
             LLVM::ZeroOp::create(initializerBuilder, location, planType);
-        value =
-            insertValue(initializerBuilder, location, value,
-                        llvmConstant(initializerBuilder, location, i32,
-                                     getNativeSchedulePlanSize(dataLayout)),
-                        NativeSchedulePlanField::Size);
+        value = insertValue(initializerBuilder, location, value,
+                            llvmConstant(initializerBuilder, location, i32,
+                                         getNativeSchedulePlanSize(dataLayout)),
+                            NativeSchedulePlanField::Size);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
                                          graphLayoutChecksum),
@@ -874,11 +873,11 @@ LogicalResult makeNativeAOTPlanLegacy(
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, stateName),
                         NativeSchedulePlanField::MutableState);
-        value = insertValue(initializerBuilder, location, value,
-                            llvmConstant(initializerBuilder, location, i64,
-                                         uint64_t{actorCount} *
-                                             dataLayout.getPointerSize()),
-                            NativeSchedulePlanField::MutableStateSize);
+        value = insertValue(
+            initializerBuilder, location, value,
+            llvmConstant(initializerBuilder, location, i64,
+                         uint64_t{actorCount} * dataLayout.getPointerSize()),
+            NativeSchedulePlanField::MutableStateSize);
         value = insertValue(
             initializerBuilder, location, value,
             llvmConstant(initializerBuilder, location, i32, actorCount),

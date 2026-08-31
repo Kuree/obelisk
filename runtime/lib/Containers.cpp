@@ -2423,12 +2423,10 @@ obelisk_rt_status normalizeWildcardAssocObject(obelisk_rt_context *context,
   unsigned highBits = 0;
   for (uint8_t high = value[canonicalSize - 1]; high != 0; high >>= 1)
     ++highBits;
-  uint64_t canonicalWidth = uint64_t(canonicalSize - 1) * 8 +
-                            std::max(highBits, 1u);
+  uint64_t canonicalWidth =
+      uint64_t(canonicalSize - 1) * 8 + std::max(highBits, 1u);
 
-  OBELISK_RT_TRY {
-    normalized.wideIntegral.resize(24 + canonicalSize);
-  }
+  OBELISK_RT_TRY { normalized.wideIntegral.resize(24 + canonicalSize); }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   // IEEE 1800-2017 7.8.1 treats every wildcard index as unsigned and removes
   // its leading zeroes. The original boxed type is deliberately absent from
@@ -2819,11 +2817,12 @@ obelisk_rt_status ensureAssocCapacity(obelisk_rt_gc_lane_v1 *lane,
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((noinline, cold))
 #endif
-obelisk_rt_status prepareAssocWriteCapacity(obelisk_rt_gc_lane_v1 *lane,
-                                            obelisk_rt_object_v1 *array,
-                                            obelisk_rt_string_v1 &keyRootValue,
-                                            NormalizedAssocKey &normalized,
-                                            ContainerHeader &snapshot) {
+obelisk_rt_status
+prepareAssocWriteCapacity(obelisk_rt_gc_lane_v1 *lane,
+                          obelisk_rt_object_v1 *array,
+                          obelisk_rt_string_v1 &keyRootValue,
+                          NormalizedAssocKey &normalized,
+                          ContainerHeader &snapshot) {
   while (true) {
     normalized.string = keyRootValue;
     obelisk_rt_status status = snapshotHeader(array, snapshot);

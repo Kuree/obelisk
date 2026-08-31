@@ -878,9 +878,9 @@ static bool areEquivalentDirectClockAddresses(Operation *left,
         !areEquivalentDirectClockAddresses(lhsChildren.front(),
                                            rhsChildren.front()))
       return false;
-    for (auto [lhs, rhs] : llvm::zip_equal(
-             ArrayRef<Operation *>(lhsChildren).drop_front(),
-             ArrayRef<Operation *>(rhsChildren).drop_front())) {
+    for (auto [lhs, rhs] :
+         llvm::zip_equal(ArrayRef<Operation *>(lhsChildren).drop_front(),
+                         ArrayRef<Operation *>(rhsChildren).drop_front())) {
       std::optional<StringRef> lhsConstant = getConstantSpelling(lhs);
       std::optional<StringRef> rhsConstant = getConstantSpelling(rhs);
       if (!lhsConstant || !rhsConstant || *lhsConstant != *rhsConstant)
@@ -942,8 +942,7 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   if (effectiveEdge(lhs, lhsChildren.front()) !=
           effectiveEdge(rhs, rhsChildren.front()) ||
       (lhs.getHasIff() &&
-       !areEquivalentClockConditions(lhsChildren.back(),
-                                     rhsChildren.back())))
+       !areEquivalentClockConditions(lhsChildren.back(), rhsChildren.back())))
     return false;
   auto qualifiedClockingDescriptor = [](Operation *expression) {
     return expression->hasAttr(clockingEventHasIffAttrName) ||
@@ -958,10 +957,10 @@ static bool areEquivalentDirectClocks(Operation *left, Operation *right) {
   if (lhsQualified || rhsQualified) {
     if (lhsQualified != rhsQualified)
       return false;
-    auto lhsBlock = lhsChildren.front()->getAttrOfType<SymbolRefAttr>(
-        "referenced_symbol");
-    auto rhsBlock = rhsChildren.front()->getAttrOfType<SymbolRefAttr>(
-        "referenced_symbol");
+    auto lhsBlock =
+        lhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    auto rhsBlock =
+        rhsChildren.front()->getAttrOfType<SymbolRefAttr>("referenced_symbol");
     if (!lhsBlock || !rhsBlock || lhsBlock != rhsBlock)
       return false;
     if (isa<semantic::SVMemberAccessExpressionOp>(lhsChildren.front()) ||
@@ -1010,12 +1009,11 @@ static bool isDirectClock(Operation *operation) {
     return false;
   Operation *primary = children.front();
   bool declaredIff = primary->hasAttr(clockingEventHasIffAttrName) ||
-                     primary->hasAttr(
-                         "virtual_interface_clock_event_has_iff");
+                     primary->hasAttr("virtual_interface_clock_event_has_iff");
   if (declaredIff) {
     SmallVector<Operation *> clockingChildren = getChildren(primary);
-    bool virtualClock = primary->hasAttr(
-        "virtual_interface_clocking_block_event");
+    bool virtualClock =
+        primary->hasAttr("virtual_interface_clocking_block_event");
     size_t expectedClockingChildren = virtualClock ? 3 : 2;
     if (clockingChildren.size() != expectedClockingChildren)
       return false;
@@ -1450,10 +1448,8 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     return result;
   }
 
-  if (auto binary =
-          dyn_cast<semantic::SVBinaryAssertionExprOp>(operation)) {
-    if (binary.getOperatorKind() !=
-            semantic::SVAssertionBinaryOperator::And &&
+  if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation)) {
+    if (binary.getOperatorKind() != semantic::SVAssertionBinaryOperator::And &&
         binary.getOperatorKind() !=
             semantic::SVAssertionBinaryOperator::Intersect)
       return failure();
@@ -1492,23 +1488,22 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
     auto maximum = delay ? delay.getAs<IntegerAttr>("max") : IntegerAttr{};
     auto unbounded = delay ? delay.getAs<BoolAttr>("is_unbounded") : BoolAttr{};
     if (!minimum || !maximum || !unbounded || unbounded.getValue() ||
-        minimum.getInt() != maximum.getInt() ||
-        minimum.getInt() < 0 || minimum.getInt() > 1)
+        minimum.getInt() != maximum.getInt() || minimum.getInt() < 0 ||
+        minimum.getInt() > 1)
       return failure();
     FailureOr<MultiClockSequence> nested =
         compileMultiClockSequence(child, inheritedClock);
     if (failed(nested) || nested->stages.empty())
       return failure();
-    uint64_t combinedDelay = static_cast<uint64_t>(minimum.getInt()) +
-                             nested->stages.front().delay;
+    uint64_t combinedDelay =
+        static_cast<uint64_t>(minimum.getInt()) + nested->stages.front().delay;
     if (combinedDelay > 1)
       return failure();
     nested->stages.front().delay = combinedDelay;
     result.changesClock |= nested->changesClock;
     for (MultiClockSequenceStage &stage : nested->stages) {
-      Operation *previousClock = result.stages.empty()
-                                     ? inheritedClock
-                                     : result.stages.back().clock;
+      Operation *previousClock =
+          result.stages.empty() ? inheritedClock : result.stages.back().clock;
       result.changesClock |=
           !areEquivalentDirectClocks(previousClock, stage.clock);
       if (!result.stages.empty() && stage.delay == 0 &&
@@ -2943,9 +2938,9 @@ static FailureOr<GlobalFuturePropertyPlan>
 compileGlobalFutureProperty(Operation *property, Operation *clock) {
   GlobalFuturePropertyPlan result;
   if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(property);
-      binary && binary.getOperatorKind() ==
-                    semantic::SVAssertionBinaryOperator::
-                        OverlappedImplication) {
+      binary &&
+      binary.getOperatorKind() ==
+          semantic::SVAssertionBinaryOperator::OverlappedImplication) {
     SmallVector<Operation *> operands = getChildren(binary);
     if (operands.size() != 2)
       return failure();
@@ -2997,8 +2992,8 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
 
   Operation *property = unwrapAssertionInstance(children[prefix]);
   Operation *clock = defaultClock;
-  if (auto clocking = dyn_cast_or_null<semantic::SVClockingAssertionExprOp>(
-          property)) {
+  if (auto clocking =
+          dyn_cast_or_null<semantic::SVClockingAssertionExprOp>(property)) {
     SmallVector<Operation *> clocked = getChildren(clocking);
     if (clocked.size() != 2)
       return clocking.emitError("malformed clocked assertion"), failure();
@@ -3026,10 +3021,10 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
     return op.emitError("global-future resolver has no future function"),
            failure();
 
-  auto firstPath = calls.front()->getAttrOfType<StringAttr>(
-      clockingEventPathAttrName);
-  auto firstSymbol = calls.front()->getAttrOfType<SymbolRefAttr>(
-      clockingEventSymbolAttrName);
+  auto firstPath =
+      calls.front()->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  auto firstSymbol =
+      calls.front()->getAttrOfType<SymbolRefAttr>(clockingEventSymbolAttrName);
   auto firstEdge = calls.front()->getAttrOfType<semantic::EdgeKindAttr>(
       clockingEventEdgeAttrName);
   if (!calls.front()->hasAttr(clockingBlockEventAttrName) || !firstPath ||
@@ -3055,8 +3050,8 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
     auto path = call->getAttrOfType<StringAttr>(clockingEventPathAttrName);
     auto symbol =
         call->getAttrOfType<SymbolRefAttr>(clockingEventSymbolAttrName);
-    auto edge = call->getAttrOfType<semantic::EdgeKindAttr>(
-        clockingEventEdgeAttrName);
+    auto edge =
+        call->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
     if (!path || !symbol || !edge || path != firstPath ||
         symbol != firstSymbol || edge != firstEdge)
       return call.emitError(
@@ -3120,9 +3115,9 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
       FailureOr<Value> selector = lowerExpression(guard.selector);
       if (failed(selector))
         return failure();
-      FailureOr<Value> matched = lowerCaseLabel(
-          *selector, selector->getType(), guard.selector, guard.label,
-          semantic::SVCaseCondition::Normal);
+      FailureOr<Value> matched =
+          lowerCaseLabel(*selector, selector->getType(), guard.selector,
+                         guard.label, semantic::SVCaseCondition::Normal);
       if (failed(matched))
         return failure();
       Value selected = *matched;
@@ -3153,8 +3148,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
       return failure();
     Value notAntecedent =
         arith::XOrIOp::create(builder, location, *antecedent, trueValue);
-    passed = arith::OrIOp::create(builder, location, notAntecedent,
-                                  *consequent)
+    passed = arith::OrIOp::create(builder, location, notAntecedent, *consequent)
                  .getResult();
   } else {
     passed = evaluateAlternatives(plan->property);
@@ -3169,8 +3163,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
                            ValueRange{});
   size_t actionBase = prefix + 1;
   setCurrent(pass);
-  if (op.getHasPassAction() &&
-      failed(lowerStatement(children[actionBase])))
+  if (op.getHasPassAction() && failed(lowerStatement(children[actionBase])))
     return failure();
   emitBranch(done);
   setCurrent(fail);
@@ -3551,9 +3544,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(emitEventSuspend(clock, sample)))
       return failure();
     wait->getTerminator()->setAttr(
-        "resume_region",
-        sim::EventRegionAttr::get(function.getContext(),
-                                  sim::EventRegion::Observed));
+        "resume_region", sim::EventRegionAttr::get(function.getContext(),
+                                                   sim::EventRegion::Observed));
     setCurrent(sample);
 
     Block *spawn = sample;
@@ -3581,97 +3573,96 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<std::pair<Operation *, Value>> expressionCaptures;
     SmallVector<std::pair<Operation *, Value>> futureCurrentCaptures;
     {
-    // The endpoint itself resumes in Observed, but every property operand is
-    // sampled in Preponed at that assertion clock. Keep disable iff above on
-    // its required unsampled path, then use the ordinary assertion sampling
-    // context for both current-only fragments and the transition baseline.
-    bool savedSampleAssertionValues = sampleAssertionValues;
-    Operation *savedSampledClock = activeSampledClock;
-    sampleAssertionValues = true;
-    activeSampledClock = clock;
-    llvm::scope_exit restoreSampling([&] {
-      sampleAssertionValues = savedSampleAssertionValues;
-      activeSampledClock = savedSampledClock;
-    });
+      // The endpoint itself resumes in Observed, but every property operand is
+      // sampled in Preponed at that assertion clock. Keep disable iff above on
+      // its required unsampled path, then use the ordinary assertion sampling
+      // context for both current-only fragments and the transition baseline.
+      bool savedSampleAssertionValues = sampleAssertionValues;
+      Operation *savedSampledClock = activeSampledClock;
+      sampleAssertionValues = true;
+      activeSampledClock = clock;
+      llvm::scope_exit restoreSampling([&] {
+        sampleAssertionValues = savedSampleAssertionValues;
+        activeSampledClock = savedSampledClock;
+      });
 
-    SmallVector<Operation *> predicateRoots;
-    auto appendAlternativeRoots = [&](ArrayRef<FixedSequence> alternatives) {
-      for (const FixedSequence &alternative : alternatives) {
-        const FixedSequenceAge &age = alternative.ages.front();
-        llvm::append_range(predicateRoots, age.predicates);
-        llvm::append_range(predicateRoots, age.negatedPredicates);
-        for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
-          predicateRoots.push_back(guard.selector);
-          predicateRoots.push_back(guard.label);
+      SmallVector<Operation *> predicateRoots;
+      auto appendAlternativeRoots = [&](ArrayRef<FixedSequence> alternatives) {
+        for (const FixedSequence &alternative : alternatives) {
+          const FixedSequenceAge &age = alternative.ages.front();
+          llvm::append_range(predicateRoots, age.predicates);
+          llvm::append_range(predicateRoots, age.negatedPredicates);
+          for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+            predicateRoots.push_back(guard.selector);
+            predicateRoots.push_back(guard.label);
+          }
         }
+      };
+      if (futurePlan->implication) {
+        appendAlternativeRoots(futurePlan->antecedent);
+        appendAlternativeRoots(futurePlan->consequent);
+      } else {
+        appendAlternativeRoots(futurePlan->property);
       }
-    };
-    if (futurePlan->implication) {
-      appendAlternativeRoots(futurePlan->antecedent);
-      appendAlternativeRoots(futurePlan->consequent);
-    } else {
-      appendAlternativeRoots(futurePlan->property);
-    }
 
-    DenseMap<Operation *, bool> containsFutureCache;
-    std::function<bool(Operation *)> containsFuture = [&](Operation *node) {
-      if (auto found = containsFutureCache.find(node);
-          found != containsFutureCache.end())
-        return found->second;
-      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
-          call && isGlobalFutureSampledFunction(call.getCalleeName())) {
-        containsFutureCache[node] = true;
-        return true;
-      }
-      bool found = llvm::any_of(getChildren(node), containsFuture);
-      containsFutureCache[node] = found;
-      return found;
-    };
-    DenseSet<Operation *> capturedExpressions;
-    std::function<LogicalResult(Operation *)> captureCurrentFragments =
-        [&](Operation *node) -> LogicalResult {
-      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
-          call && isGlobalFutureSampledFunction(call.getCalleeName()))
-        return success();
-      if (!containsFuture(node)) {
-        if (!capturedExpressions.insert(node).second)
+      DenseMap<Operation *, bool> containsFutureCache;
+      std::function<bool(Operation *)> containsFuture = [&](Operation *node) {
+        if (auto found = containsFutureCache.find(node);
+            found != containsFutureCache.end())
+          return found->second;
+        if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
+            call && isGlobalFutureSampledFunction(call.getCalleeName())) {
+          containsFutureCache[node] = true;
+          return true;
+        }
+        bool found = llvm::any_of(getChildren(node), containsFuture);
+        containsFutureCache[node] = found;
+        return found;
+      };
+      DenseSet<Operation *> capturedExpressions;
+      std::function<LogicalResult(Operation *)> captureCurrentFragments =
+          [&](Operation *node) -> LogicalResult {
+        if (auto call = dyn_cast<semantic::SVCallExpressionOp>(node);
+            call && isGlobalFutureSampledFunction(call.getCalleeName()))
           return success();
-        FailureOr<Value> value = lowerExpression(node);
-        if (failed(value))
-          return failure();
-        expressionCaptures.emplace_back(node, *value);
+        if (!containsFuture(node)) {
+          if (!capturedExpressions.insert(node).second)
+            return success();
+          FailureOr<Value> value = lowerExpression(node);
+          if (failed(value))
+            return failure();
+          expressionCaptures.emplace_back(node, *value);
+          return success();
+        }
+        for (Operation *child : getChildren(node))
+          if (failed(captureCurrentFragments(child)))
+            return failure();
         return success();
-      }
-      for (Operation *child : getChildren(node))
-        if (failed(captureCurrentFragments(child)))
+      };
+      for (Operation *root : predicateRoots)
+        if (failed(captureCurrentFragments(root)))
           return failure();
-      return success();
-    };
-    for (Operation *root : predicateRoots)
-      if (failed(captureCurrentFragments(root)))
-        return failure();
 
-    for (semantic::SVCallExpressionOp call : globalFutureCalls) {
-      if (call.getCalleeName() == "$future_gclk")
-        continue;
-      SmallVector<Operation *> arguments = getChildren(call);
-      if (call.getArgumentCount() != 1 || arguments.size() != 1)
-        return call.emitError("requires exactly one argument"), failure();
-      FailureOr<Value> currentValue =
-          lowerSampledValue(arguments.front(), getSemanticLocation(call));
-      if (failed(currentValue))
-        return failure();
-      futureCurrentCaptures.emplace_back(call.getOperation(), *currentValue);
-    }
+      for (semantic::SVCallExpressionOp call : globalFutureCalls) {
+        if (call.getCalleeName() == "$future_gclk")
+          continue;
+        SmallVector<Operation *> arguments = getChildren(call);
+        if (call.getArgumentCount() != 1 || arguments.size() != 1)
+          return call.emitError("requires exactly one argument"), failure();
+        FailureOr<Value> currentValue =
+            lowerSampledValue(arguments.front(), getSemanticLocation(call));
+        if (failed(currentValue))
+          return failure();
+        futureCurrentCaptures.emplace_back(call.getOperation(), *currentValue);
+      }
     }
 
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
     uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
-    std::string identity = (function.getSymName() +
-                            ".$global_future_resolver." + Twine(node))
-                               .str();
-    Attribute previousCodeUnit =
-        op->getAttr("obelisk_sim.fork_code_unit_id");
+    std::string identity =
+        (function.getSymName() + ".$global_future_resolver." + Twine(node))
+            .str();
+    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
     Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
     SmallVector<Attribute> capturePaths;
     if (auto captures = dyn_cast_or_null<ArrayAttr>(previousCaptures))
@@ -3708,12 +3699,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     resolver->first->setAttr("obelisk_sim.prime_on_spawn",
                              builder.getUnitAttr());
     resolver->first->setAttr(
-        "home_region",
-        sim::EventRegionAttr::get(function.getContext(),
-                                  sim::EventRegion::Observed));
-    sim::SimSpawnOp::create(builder, location,
-                            resolver->first.getSymNameAttr(), resolver->second,
-                            ArrayAttr{}, ArrayAttr{});
+        "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Observed));
+    sim::SimSpawnOp::create(builder, location, resolver->first.getSymNameAttr(),
+                            resolver->second, ArrayAttr{}, ArrayAttr{});
     cf::BranchOp::create(builder, location, wait);
     function->setAttr("obelisk_sim.global_future_monitor",
                       builder.getUnitAttr());
@@ -5460,72 +5449,70 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SmallVector<Value> captures;
     Location location;
   };
-  auto guardReactiveCallback =
-      [&](sim::SimFuncOp evaluator, SmallVectorImpl<Value> &captures,
-          Location callbackLocation, StringRef killEpochAttr) {
-        auto appendEpochArguments = [&](Value epochStorage,
-                                        bool useControlEpoch) {
-          SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
-          inputTypes.push_back(epochStorage.getType());
-          inputTypes.push_back(stateType);
-          evaluator.setFunctionType(FunctionType::get(
-              function.getContext(), inputTypes, TypeRange{}));
-          Block &entry = evaluator.getBody().front();
-          BlockArgument epochReference =
-              entry.addArgument(epochStorage.getType(), callbackLocation);
-          BlockArgument expectedEpoch =
-              entry.addArgument(stateType, callbackLocation);
-          SmallVector<Attribute> argumentAttrs;
-          if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
-            llvm::append_range(argumentAttrs, attrs);
-          while (argumentAttrs.size() + 2 < inputTypes.size())
-            argumentAttrs.push_back(builder.getDictionaryAttr({}));
-          argumentAttrs.push_back(builder.getDictionaryAttr({
-              builder.getNamedAttr(
-                  "obelisk_sim.capture_kind",
-                  sim::CaptureKindAttr::get(function.getContext(),
-                                            sim::CaptureKind::Formal)),
-              builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
-                                   builder.getUnitAttr()),
-          }));
-          argumentAttrs.push_back(builder.getDictionaryAttr(
-              {builder.getNamedAttr(
-                  "obelisk_sim.capture_kind",
-                  sim::CaptureKindAttr::get(function.getContext(),
-                                            sim::CaptureKind::Formal))}));
-          evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
+  auto guardReactiveCallback = [&](sim::SimFuncOp evaluator,
+                                   SmallVectorImpl<Value> &captures,
+                                   Location callbackLocation,
+                                   StringRef killEpochAttr) {
+    auto appendEpochArguments = [&](Value epochStorage, bool useControlEpoch) {
+      SmallVector<Type> inputTypes(evaluator.getFunctionType().getInputs());
+      inputTypes.push_back(epochStorage.getType());
+      inputTypes.push_back(stateType);
+      evaluator.setFunctionType(
+          FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
+      Block &entry = evaluator.getBody().front();
+      BlockArgument epochReference =
+          entry.addArgument(epochStorage.getType(), callbackLocation);
+      BlockArgument expectedEpoch =
+          entry.addArgument(stateType, callbackLocation);
+      SmallVector<Attribute> argumentAttrs;
+      if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
+        llvm::append_range(argumentAttrs, attrs);
+      while (argumentAttrs.size() + 2 < inputTypes.size())
+        argumentAttrs.push_back(builder.getDictionaryAttr({}));
+      argumentAttrs.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr(
+              "obelisk_sim.capture_kind",
+              sim::CaptureKindAttr::get(function.getContext(),
+                                        sim::CaptureKind::Formal)),
+          builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                               builder.getUnitAttr()),
+      }));
+      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
+          "obelisk_sim.capture_kind",
+          sim::CaptureKindAttr::get(function.getContext(),
+                                    sim::CaptureKind::Formal))}));
+      evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
 
-          Block *body = entry.splitBlock(entry.begin());
-          Block *canceled = new Block;
-          evaluator.getBody().push_back(canceled);
-          OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
-          Value currentEpoch;
-          if (useControlEpoch) {
-            auto current = sim::SimAssertionKillEpochOp::create(
-                entryBuilder, callbackLocation, stateType,
-                entry.getArgument(0), assertionControlID);
-            current->setAttr(killEpochAttr, builder.getUnitAttr());
-            currentEpoch = current;
-          } else {
-            currentEpoch = sim::SimRefLoadOp::create(
-                entryBuilder, callbackLocation, stateType, epochReference);
-          }
-          Value current = arith::CmpIOp::create(
-              entryBuilder, callbackLocation, arith::CmpIPredicate::eq,
-              currentEpoch, expectedEpoch);
-          cf::CondBranchOp::create(entryBuilder, callbackLocation, current,
-                                   body, canceled);
-          OpBuilder canceledBuilder = OpBuilder::atBlockEnd(canceled);
-          sim::SimReturnOp::create(canceledBuilder, callbackLocation,
-                                   ValueRange{});
-          captures.push_back(epochStorage);
-        };
+      Block *body = entry.splitBlock(entry.begin());
+      Block *canceled = new Block;
+      evaluator.getBody().push_back(canceled);
+      OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+      Value currentEpoch;
+      if (useControlEpoch) {
+        auto current = sim::SimAssertionKillEpochOp::create(
+            entryBuilder, callbackLocation, stateType, entry.getArgument(0),
+            assertionControlID);
+        current->setAttr(killEpochAttr, builder.getUnitAttr());
+        currentEpoch = current;
+      } else {
+        currentEpoch = sim::SimRefLoadOp::create(entryBuilder, callbackLocation,
+                                                 stateType, epochReference);
+      }
+      Value current = arith::CmpIOp::create(entryBuilder, callbackLocation,
+                                            arith::CmpIPredicate::eq,
+                                            currentEpoch, expectedEpoch);
+      cf::CondBranchOp::create(entryBuilder, callbackLocation, current, body,
+                               canceled);
+      OpBuilder canceledBuilder = OpBuilder::atBlockEnd(canceled);
+      sim::SimReturnOp::create(canceledBuilder, callbackLocation, ValueRange{});
+      captures.push_back(epochStorage);
+    };
 
-        if (disableEpoch)
-          appendEpochArguments(disableEpoch, /*useControlEpoch=*/false);
-        if (killEpochStorage)
-          appendEpochArguments(killEpochStorage, /*useControlEpoch=*/true);
-      };
+    if (disableEpoch)
+      appendEpochArguments(disableEpoch, /*useControlEpoch=*/false);
+    if (killEpochStorage)
+      appendEpochArguments(killEpochStorage, /*useControlEpoch=*/true);
+  };
   auto materializeReactiveCallbackCaptures =
       [&](ArrayRef<Value> callbackCaptures,
           Location callbackLocation) -> SmallVector<Value> {
@@ -5533,8 +5520,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     for (Value capture : callbackCaptures) {
       captures.push_back(capture);
       if (capture == disableEpoch)
-        captures.push_back(sim::SimRefLoadOp::create(
-            builder, callbackLocation, stateType, disableEpoch));
+        captures.push_back(sim::SimRefLoadOp::create(builder, callbackLocation,
+                                                     stateType, disableEpoch));
       if (capture == killEpochStorage)
         captures.push_back(sim::SimRefLoadOp::create(
             builder, callbackLocation, stateType, killEpochStorage));
@@ -5835,8 +5822,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::optional<ReportCallback> &report = passed ? passReport : failReport;
     if (!report)
       return;
-    SmallVector<Value> captures = materializeReactiveCallbackCaptures(
-        report->captures, report->location);
+    SmallVector<Value> captures =
+        materializeReactiveCallbackCaptures(report->captures, report->location);
     sim::SimSpawnOp::create(builder, report->location,
                             report->function.getSymNameAttr(), captures,
                             ArrayAttr{}, ArrayAttr{});
@@ -6047,9 +6034,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     coordinator->setAttr("obelisk_sim.detached_controls",
                          builder.getUnitAttr());
     if (identityTag.starts_with("multiclock_"))
-      coordinator->setAttr(
-          "obelisk_sim.multiclock_sequence_eos_coordinator",
-          builder.getUnitAttr());
+      coordinator->setAttr("obelisk_sim.multiclock_sequence_eos_coordinator",
+                           builder.getUnitAttr());
 
     Block &entry = coordinator.getBody().front();
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
@@ -6615,8 +6601,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   auto outlineEndOfSimulationReports =
       [&](ArrayRef<Value> liveStateStorages, size_t horizon,
-          size_t firstLiveAge,
-          std::optional<bool> operandStrongOverride,
+          size_t firstLiveAge, std::optional<bool> operandStrongOverride,
           std::optional<bool> completionPassedOverride = std::nullopt,
           StringRef identitySuffix = {}) -> LogicalResult {
     if (!endStrengthSource)
@@ -6684,10 +6669,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
 
       ReportCallback &report = **selectedReport;
-      StringRef spelling = completionPassedOverride
-                               ? (completionPassed ? "pass" : "fail")
-                               : semantic::stringifySVAssertionStrength(
-                                     outerStrength);
+      StringRef spelling =
+          completionPassedOverride
+              ? (completionPassed ? "pass" : "fail")
+              : semantic::stringifySVAssertionStrength(outerStrength);
       std::string suffix = identitySuffix.empty()
                                ? std::string{}
                                : (Twine(".") + identitySuffix).str();
@@ -7534,8 +7519,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
       handoffStorage.getDefiningOp()->setAttr(
-          "obelisk_sim.persistent_implication_handoff",
-          builder.getUnitAttr());
+          "obelisk_sim.persistent_implication_handoff", builder.getUnitAttr());
     }
 
     SmallVector<Value> unaryStateStorages{eligibleStorage};
@@ -8500,8 +8484,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             if (nextCount >= persistentRepetition.minimum)
               succeed(amount, *repeated);
             if (persistentRepetition.unbounded)
-              nextCount = std::min(nextCount,
-                                   persistentRepetition.minimum - 1);
+              nextCount = std::min(nextCount, persistentRepetition.minimum - 1);
             if (persistentRepetition.unbounded ||
                 nextCount < persistentRepetition.maximum)
               route(findTokenState(nextCount, false), amount, *repeated);
@@ -8520,8 +8503,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           else {
             uint64_t nextCount = state.occurrences + 1;
             if (persistentRepetition.unbounded)
-              nextCount =
-                  std::min(nextCount, persistentRepetition.minimum);
+              nextCount = std::min(nextCount, persistentRepetition.minimum);
             if (nextCount >= persistentRepetition.minimum)
               succeed(amount, *repeated);
             route(findTokenState(nextCount, false), amount, *repeated);
@@ -8741,17 +8723,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                    << "malformed frozen multi-clock event inventory",
                failure();
       Operation *primaryExpression = children.front();
-      bool virtualClockingBlockEvent = primaryExpression->hasAttr(
-          "virtual_interface_clocking_block_event");
+      bool virtualClockingBlockEvent =
+          primaryExpression->hasAttr("virtual_interface_clocking_block_event");
       bool declaredClockingIff =
           primaryExpression->hasAttr(clockingEventHasIffAttrName) ||
-          primaryExpression->hasAttr(
-              "virtual_interface_clock_event_has_iff");
+          primaryExpression->hasAttr("virtual_interface_clock_event_has_iff");
       bool monitoredClockingEvent =
           primaryExpression->hasAttr(clockingEventMonitorRequiredAttrName) ||
           primaryExpression->hasAttr(clockingEventListAttrName) ||
-          primaryExpression->hasAttr(
-              "virtual_interface_clock_event_monitor") ||
+          primaryExpression->hasAttr("virtual_interface_clock_event_monitor") ||
           primaryExpression->hasAttr("virtual_interface_clock_event_list");
       if (monitoredClockingEvent)
         return emitError(getSemanticLocation(clockOperation))
@@ -8797,8 +8777,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (failed(handle))
         return failure();
       if (isa<sim::DriverType>((*handle).getType()))
-        if (auto path = handleExpression->getAttrOfType<StringAttr>(
-                "referenced_path"))
+        if (auto path =
+                handleExpression->getAttrOfType<StringAttr>("referenced_path"))
           if (Value net = values.lookup(path.getValue());
               net && isa<sim::NetType>(net.getType()))
             handle = net;
@@ -8811,11 +8791,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       clockHandles.push_back(*handle);
 
       sim::EdgeKind edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
-      if (auto clockingEdge = primaryExpression->getAttrOfType<
-              semantic::EdgeKindAttr>("virtual_interface_clock_event_edge"))
+      if (auto clockingEdge =
+              primaryExpression->getAttrOfType<semantic::EdgeKindAttr>(
+                  "virtual_interface_clock_event_edge"))
         edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
-      else if (auto clockingEdge = primaryExpression->getAttrOfType<
-                   semantic::EdgeKindAttr>(clockingEventEdgeAttrName))
+      else if (auto clockingEdge =
+                   primaryExpression->getAttrOfType<semantic::EdgeKindAttr>(
+                       clockingEventEdgeAttrName))
         edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
       edges.push_back(static_cast<int32_t>(edge));
 
@@ -8892,8 +8874,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, waitValues,
         builder.getI32IntegerAttr(conditionHandles.size()),
         builder.getDenseI32ArrayAttr(edges),
-        builder.getDenseI32ArrayAttr(conditionIndices),
-        DenseI32ArrayAttr{},
+        builder.getDenseI32ArrayAttr(conditionIndices), DenseI32ArrayAttr{},
         builder.getI64IntegerAttr(occurrenceSite), UnitAttr{},
         sim::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
@@ -8916,8 +8897,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // finalized occurrence cohort and mask only their corresponding clock.
     // This keeps compiler work O(clocks) and avoids a runtime expression
     // interpreter or per-stage observers.
-    Value cohortMask = arith::ConstantOp::create(
-        builder, location, stateType, builder.getI64IntegerAttr(-1));
+    Value cohortMask = arith::ConstantOp::create(builder, location, stateType,
+                                                 builder.getI64IntegerAttr(-1));
     for (auto [index, condition] : llvm::enumerate(postConditions)) {
       if (!condition)
         continue;
@@ -8940,8 +8921,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value bit = arith::ConstantOp::create(
           builder, location, stateType,
           builder.getI64IntegerAttr(uint64_t{1} << index));
-      Value cleared =
-          arith::XOrIOp::create(builder, location, bit, cohortMask);
+      Value cleared = arith::XOrIOp::create(builder, location, bit, cohortMask);
       Value qualified = arith::SelectOp::create(builder, location, *truth,
                                                 cohortMask, cleared);
       cohort = arith::AndIOp::create(builder, location, cohort, qualified);
@@ -8979,10 +8959,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value bit = arith::ConstantOp::create(
           builder, location, stateType,
           builder.getI64IntegerAttr(uint64_t{1} << index));
-      Value selected =
-          arith::AndIOp::create(builder, location, cohort, bit);
-      return arith::CmpIOp::create(builder, location,
-                                   arith::CmpIPredicate::ne, selected, zero);
+      Value selected = arith::AndIOp::create(builder, location, cohort, bit);
+      return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                   selected, zero);
     };
     SmallVector<Value, 8> present;
     for (unsigned index : stageClockIndices)
@@ -9025,8 +9004,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value amount = sim::SimRefLoadOp::create(builder, location, stateType,
                                                tokenStorages[index]);
       Value consumed = selectAmount(present[index], amount);
-      Value retained = arith::SubIOp::create(builder, location, amount,
-                                             consumed);
+      Value retained =
+          arith::SubIOp::create(builder, location, amount, consumed);
       add(nextAmounts[index], retained);
       Value matched = selectAmount(stageMatches[index], consumed);
       add(failureCount,
@@ -9034,10 +9013,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       routeAfter(index, matched);
     }
 
-    Value oneAmount = arith::ConstantOp::create(
-        builder, location, stateType, builder.getI64IntegerAttr(1));
-    Value sourceAmount =
-        selectAmount(bitPresent(sourceClockIndex), oneAmount);
+    Value oneAmount = arith::ConstantOp::create(builder, location, stateType,
+                                                builder.getI64IntegerAttr(1));
+    Value sourceAmount = selectAmount(bitPresent(sourceClockIndex), oneAmount);
     if (Value enabled = queryAttemptEnabled())
       sourceAmount = selectAmount(enabled, sourceAmount);
     if (multiClockSequence.stages.front().delay == 1) {
@@ -10984,8 +10962,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                 if (member->hasAttr("obelisk_sim.class_field"))
                   hasUnsupportedEvaluation = true;
               }
-              bool nonlocal =
-                  !path.empty() && !localIndices.contains(path);
+              bool nonlocal = !path.empty() && !localIndices.contains(path);
               usesNonlocalValue |= nonlocal;
               if (nonlocal) {
                 FailureOr<Type> type = getNormalizedSemanticType(nested);
@@ -11111,8 +11088,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return success();
     };
     auto reportSuccess = [&] { scheduleResult(true); };
-    auto reportAntecedentFailure =
-        [&](Value enabled, Value matches) -> LogicalResult {
+    auto reportAntecedentFailure = [&](Value enabled,
+                                       Value matches) -> LogicalResult {
       if (!shouldScheduleResult(!followedBy))
         return success();
       Value fails = arith::AndIOp::create(
@@ -11122,8 +11099,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(true))));
       fails.getDefiningOp()->setAttr(
-          "obelisk_sim.implication_antecedent_failure",
-          builder.getUnitAttr());
+          "obelisk_sim.implication_antecedent_failure", builder.getUnitAttr());
       if (!observable)
         return success();
       Block *report = addBlock();
@@ -11171,9 +11147,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     });
 
     Value nextState = zero;
-    auto launchConsequent =
-        [&](Value triggered, SmallVector<Value> localValues,
-            Value baseState) -> FailureOr<Value> {
+    auto launchConsequent = [&](Value triggered, SmallVector<Value> localValues,
+                                Value baseState) -> FailureOr<Value> {
       if (nonoverlapped) {
         storeLocals(0, localValues);
         Value startMask = arith::ConstantOp::create(
@@ -11194,8 +11169,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Block *afterFirst = addBlock();
       afterFirst->addArgument(stateType, location);
       cf::CondBranchOp::create(builder, location, matched, firstMatched,
-                               ValueRange{}, afterFirst,
-                               ValueRange{baseState});
+                               ValueRange{}, afterFirst, ValueRange{baseState});
       setCurrent(firstMatched);
       FailureOr<SmallVector<Value>> updated =
           applyMatchItems(sequence.ages.front().matchItems, localValues);
@@ -11291,8 +11265,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                  ValueRange{}, continued,
                                  ValueRange{nextState});
         setCurrent(matched);
-        FailureOr<SmallVector<Value>> updated = applyMatchItems(
-            antecedentSequence.ages[age].matchItems, ageLocals);
+        FailureOr<SmallVector<Value>> updated =
+            applyMatchItems(antecedentSequence.ages[age].matchItems, ageLocals);
         if (failed(updated))
           return failure();
         Value advancedState = nextState;

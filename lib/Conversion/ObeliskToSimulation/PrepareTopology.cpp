@@ -245,8 +245,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     SmallVector<std::string> chain;
     std::string current = path.str();
     while (true) {
-      auto [it, inserted] =
-          netAliasParents.try_emplace(current, current);
+      auto [it, inserted] = netAliasParents.try_emplace(current, current);
       if (inserted || it->second == current)
         break;
       chain.push_back(current);
@@ -553,8 +552,8 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     rootsWithFlattenedTargets.insert(root);
     if (result.aliases.count(target))
       continue;
-    auto [it, inserted] = externalCanonicalByRoot.try_emplace(root,
-                                                              target.str());
+    auto [it, inserted] =
+        externalCanonicalByRoot.try_emplace(root, target.str());
     if (!inserted && target < it->second)
       it->second = target.str();
   }
@@ -749,36 +748,33 @@ materializeDesignDescriptors(ModuleOp module,
               op->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)) {
         for (Attribute attribute : leafDefinitions) {
           auto definition = dyn_cast<DictionaryAttr>(attribute);
-          auto leafPath = definition
-                              ? definition.getAs<StringAttr>("path")
-                              : StringAttr{};
-          auto semanticType = definition
-                                  ? definition.getAs<TypeAttr>("type")
-                                  : TypeAttr{};
+          auto leafPath =
+              definition ? definition.getAs<StringAttr>("path") : StringAttr{};
+          auto semanticType =
+              definition ? definition.getAs<TypeAttr>("type") : TypeAttr{};
           if (!leafPath || !semanticType) {
             emitError(getSemanticLocation(op))
                 << "interconnect has malformed typed-leaf metadata";
             invalid = true;
             continue;
           }
-          FailureOr<Type> type = normalizeSemanticType(
-              semanticType.getValue(), getSemanticLocation(op));
+          FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
+                                                       getSemanticLocation(op));
           if (failed(type)) {
             invalid = true;
             continue;
           }
           uint64_t id = nextNetId++;
-          descriptors[leafPath.getValue()] = {
-              DescriptorInfo::Kind::Net, id, scopeId, *type,
-              sim::NetResolutionKind::Wire};
+          descriptors[leafPath.getValue()] = {DescriptorInfo::Kind::Net, id,
+                                              scopeId, *type,
+                                              sim::NetResolutionKind::Wire};
           descriptors[leafPath.getValue()].rootType = *type;
           sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
-              sim::ComputeObservabilityKindAttr{},
-              sim::NetResolutionKind::Wire, DenseI64ArrayAttr{},
-              sim::StrengthAttr{}, UnitAttr{});
+              sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
+              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{});
         }
         return;
       }
@@ -812,8 +808,8 @@ materializeDesignDescriptors(ModuleOp module,
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{});
       if (isa<sim::EventType>(*type) &&
-          isa<semantic::SVVariableSymbolOp,
-              semantic::SVClassPropertySymbolOp>(op) &&
+          isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
+              op) &&
           !getChildren(op).empty())
         declaration->setAttr(eventExplicitInitializerAttrName,
                              builder.getUnitAttr());
@@ -955,8 +951,7 @@ materializeDesignDescriptors(ModuleOp module,
         declaration->setAttr("obelisk_sim.resolution_function_path",
                              builder.getStringAttr(*path));
       if (auto symbol = net.getResolutionFunctionSymbol())
-        declaration->setAttr("obelisk_sim.resolution_function_symbol",
-                             *symbol);
+        declaration->setAttr("obelisk_sim.resolution_function_symbol", *symbol);
     }
     if (auto body =
             dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());

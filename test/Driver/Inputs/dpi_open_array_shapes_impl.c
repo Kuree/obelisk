@@ -12,7 +12,7 @@ typedef struct {
 typedef struct obelisk_rt_context obelisk_rt_context;
 extern obelisk_rt_context *obelisk_rt_v1_dpi_current_context(void);
 extern int32_t obelisk_rt_v1_gc_set_threshold(obelisk_rt_context *context,
-                                               uint64_t bytes);
+                                              uint64_t bytes);
 
 int inspect_shapes(const svOpenArrayHandle nested,
                    const svOpenArrayHandle mixed,
@@ -31,12 +31,11 @@ int inspect_shapes(const svOpenArrayHandle nested,
 
   printf("nested=%dx%d data=%d,%d,%d,%d\n", svSize(nested, 1),
          svSize(nested, 2), n[0], n[1], n[2], n[3]);
-  printf("mixed=%dx%d ranges=%d:%d,%d:%d data=%d,%d,%d,%d\n",
-         svSize(mixed, 1), svSize(mixed, 2), svLeft(mixed, 1),
-         svRight(mixed, 1), svLeft(mixed, 2), svRight(mixed, 2), m[0], m[1],
-         m[2], m[3]);
-  printf("logic=%x,%x payload=%d/%s/%x\n", l0, l1, payload->id,
-         payload->label, payload->state);
+  printf("mixed=%dx%d ranges=%d:%d,%d:%d data=%d,%d,%d,%d\n", svSize(mixed, 1),
+         svSize(mixed, 2), svLeft(mixed, 1), svRight(mixed, 1),
+         svLeft(mixed, 2), svRight(mixed, 2), m[0], m[1], m[2], m[3]);
+  printf("logic=%x,%x payload=%d/%s/%x\n", l0, l1, payload->id, payload->label,
+         payload->state);
   *(int32_t *)svGetArrElemPtr2(nested, 0, 1) = 42;
   obelisk_rt_context *context = obelisk_rt_v1_dpi_current_context();
   if (!context || obelisk_rt_v1_gc_set_threshold(context, 1) != 0)
@@ -52,9 +51,9 @@ int inspect_shapes(const svOpenArrayHandle nested,
 int inspect_sized(const svOpenArrayHandle values) {
   svBitVecVal replacement = 0x5a;
   const svBitVecVal *data = (const svBitVecVal *)svGetArrayPtr(values);
-  printf("sized-ranges=%d:%d packed=%d:%d data=%x,%x,%x\n",
-         svLeft(values, 1), svRight(values, 1), svLeft(values, 0),
-         svRight(values, 0), data[0], data[1], data[2]);
+  printf("sized-ranges=%d:%d packed=%d:%d data=%x,%x,%x\n", svLeft(values, 1),
+         svRight(values, 1), svLeft(values, 0), svRight(values, 0), data[0],
+         data[1], data[2]);
   svPutBitArrElem1VecVal(values, &replacement, 0);
   return 0;
 }

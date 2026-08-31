@@ -17,16 +17,14 @@
 // reserved for the runtime's once-per-time-slot Preponed snapshot event.
 // Compiler-generated sampled observers may depend on this event; user named
 // events always carry a nonzero dynamic payload or a design-assigned ID.
-#define OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT                              \
+#define OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT                                \
   OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG
-#define OBELISK_RT_STABLE_HANDLE_TAG_MASK                                  \
-  (OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG |                                \
-   OBELISK_RT_STABLE_HANDLE_STATIC_TAG)
+#define OBELISK_RT_STABLE_HANDLE_TAG_MASK                                      \
+  (OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG | OBELISK_RT_STABLE_HANDLE_STATIC_TAG)
 #define OBELISK_RT_STABLE_HANDLE_MAX_AUTOMATIC_ID UINT32_C(0x7ffffffe)
 #define OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID UINT32_C(0x3fffffff)
 
-static inline int
-obelisk_rt_stable_handle_is_preponed_event(uint64_t handle) {
+static inline int obelisk_rt_stable_handle_is_preponed_event(uint64_t handle) {
   return handle == OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
 }
 
@@ -49,8 +47,9 @@ typedef struct obelisk_rt_stable_handle_v1 {
   int64_t offset;
 } obelisk_rt_stable_handle_v1;
 
-static inline int obelisk_rt_stable_handle_decode(
-    uint64_t handle, obelisk_rt_stable_handle_v1 *decoded) {
+static inline int
+obelisk_rt_stable_handle_decode(uint64_t handle,
+                                obelisk_rt_stable_handle_v1 *decoded) {
   if (!decoded)
     return 0;
   decoded->kind = OBELISK_RT_STABLE_HANDLE_INVALID;
@@ -85,12 +84,12 @@ static inline int obelisk_rt_stable_handle_decode(
   return 1;
 }
 
-static inline uint64_t obelisk_rt_stable_handle_encode(
-    obelisk_rt_stable_handle_kind_v1 kind, uint32_t id, int64_t offset) {
+static inline uint64_t
+obelisk_rt_stable_handle_encode(obelisk_rt_stable_handle_kind_v1 kind,
+                                uint32_t id, int64_t offset) {
   if (kind == OBELISK_RT_STABLE_HANDLE_GLOBAL)
     return offset >= 0 &&
-                   (uint64_t)offset <
-                       OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG
+                   (uint64_t)offset < OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG
                ? (uint64_t)offset
                : UINT64_MAX;
   if (offset < INT32_MIN || offset > INT32_MAX)
@@ -110,8 +109,8 @@ static inline uint64_t obelisk_rt_stable_handle_encode(
   return UINT64_MAX;
 }
 
-static inline uint64_t
-obelisk_rt_stable_handle_offset(uint64_t handle, int64_t amount) {
+static inline uint64_t obelisk_rt_stable_handle_offset(uint64_t handle,
+                                                       int64_t amount) {
   obelisk_rt_stable_handle_v1 decoded;
   if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
       (amount > 0 && decoded.offset > INT64_MAX - amount) ||
@@ -122,12 +121,11 @@ obelisk_rt_stable_handle_offset(uint64_t handle, int64_t amount) {
 }
 
 static inline int obelisk_rt_stable_handle_same_object(uint64_t left,
-                                                        uint64_t right) {
+                                                       uint64_t right) {
   obelisk_rt_stable_handle_v1 lhs;
   obelisk_rt_stable_handle_v1 rhs;
   return obelisk_rt_stable_handle_decode(left, &lhs) &&
-         obelisk_rt_stable_handle_decode(right, &rhs) &&
-         lhs.kind == rhs.kind &&
+         obelisk_rt_stable_handle_decode(right, &rhs) && lhs.kind == rhs.kind &&
          (lhs.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL || lhs.id == rhs.id);
 }
 

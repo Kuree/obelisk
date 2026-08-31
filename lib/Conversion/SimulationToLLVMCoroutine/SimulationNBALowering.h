@@ -48,8 +48,7 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims,
-                                         bool evalCeiling);
+                                         bool guardedClaims, bool evalCeiling);
 mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     mlir::ArrayRef<sim::ComputeNBACommitAttr> orderedCommits, bool enabled);

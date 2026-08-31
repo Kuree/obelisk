@@ -25,16 +25,16 @@ struct PreparedOrdinaryNativeFunction {
   mlir::BoolAttr observerFourState;
 };
 
-mlir::FailureOr<PreparedPlainNativeProcess> preparePlainNativeProcess(
-    sim::SimFuncOp function,
-    const SimulationProcessFrameAnalysis &analysis);
+mlir::FailureOr<PreparedPlainNativeProcess>
+preparePlainNativeProcess(sim::SimFuncOp function,
+                          const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult
 lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process);
 mlir::LogicalResult
 finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process);
-mlir::LogicalResult lowerPlainNativeProcess(
-    sim::SimFuncOp function,
-    const SimulationProcessFrameAnalysis &analysis);
+mlir::LogicalResult
+lowerPlainNativeProcess(sim::SimFuncOp function,
+                        const SimulationProcessFrameAnalysis &analysis);
 mlir::FailureOr<PreparedOrdinaryNativeFunction>
 prepareOrdinaryFunction(sim::SimFuncOp function);
 mlir::LogicalResult

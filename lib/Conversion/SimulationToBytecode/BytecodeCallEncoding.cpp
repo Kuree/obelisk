@@ -179,11 +179,9 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     uint64_t shapeWords = layout.getShapePlan().size();
     if (planWords > (UINT32_MAX - 80) / 8 ||
         dimensions > (UINT32_MAX - 80 - planWords * 8) / 32 ||
-        shapeWords >
-            (UINT32_MAX - 80 - planWords * 8 - dimensions * 32) / 8)
+        shapeWords > (UINT32_MAX - 80 - planWords * 8 - dimensions * 32) / 8)
       return call.emitOpError("open-array metadata is too large");
-    uint64_t recordSize =
-        80 + planWords * 8 + dimensions * 32 + shapeWords * 8;
+    uint64_t recordSize = 80 + planWords * 8 + dimensions * 32 + shapeWords * 8;
     if (recordSize > UINT32_MAX)
       return call.emitOpError("open-array metadata is too large");
     append32(metadata, static_cast<uint32_t>(recordSize));

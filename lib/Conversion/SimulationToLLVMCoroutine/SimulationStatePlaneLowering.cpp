@@ -19,9 +19,8 @@ namespace obelisk {
 namespace detail {
 
 void notifySignal(ConversionPatternRewriter &builder, Location location,
-                  Value handle,
-                  uint64_t width, Value oldValue, Value oldUnknown,
-                  Value newValue, Value newUnknown,
+                  Value handle, uint64_t width, Value oldValue,
+                  Value oldUnknown, Value newValue, Value newUnknown,
                   std::optional<DirectStaticStateRange> directRange) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
@@ -51,8 +50,7 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
         builder, location, arith::CmpIPredicate::eq, changed,
         llvmConstant(builder, location, i64, uint64_t{0}));
     Block *head = builder.getInsertionBlock();
-    Block *continuation =
-        builder.splitBlock(head, builder.getInsertionPoint());
+    Block *continuation = builder.splitBlock(head, builder.getInsertionPoint());
     Region *region = head->getParent();
     Block *publish = builder.createBlock(region, continuation->getIterator());
     recordStaticSpecializationCFGBlocks(builder, head, 2);
@@ -318,9 +316,8 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
         rewriter, location, TypeRange{i32},
         SymbolRefAttr::get(
             rewriter.getContext(),
-            continuous
-                ? "obelisk_rt_v1_native_state_store_continuous_plane"
-                : "obelisk_rt_v1_native_state_store_plane"),
+            continuous ? "obelisk_rt_v1_native_state_store_continuous_plane"
+                       : "obelisk_rt_v1_native_state_store_plane"),
         ValueRange{
             context, base, llvmConstant(rewriter, location, i64, stateBitCount),
             handle, llvmConstant(rewriter, location, i64, inputType.getWidth()),

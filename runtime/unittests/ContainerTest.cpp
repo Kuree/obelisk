@@ -1055,8 +1055,8 @@ TEST_F(ManagedValueTest, DPIAggregateRootsTraceMultipleStringsWithScalarRoot) {
   ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
   obelisk_rt_gc_lane_v1 *executionLane = nullptr;
   bool executionEntered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(
-                context, &executionLane, &executionEntered),
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &executionLane,
+                                               &executionEntered),
             OBELISK_RT_OK);
   ASSERT_NE(executionLane, nullptr);
   ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
@@ -1068,15 +1068,15 @@ TEST_F(ManagedValueTest, DPIAggregateRootsTraceMultipleStringsWithScalarRoot) {
                                         &aggregateStrings[0]),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_roots_push(
-                context, &aggregateStrings[0], sizeof(aggregateStrings[0]),
-                64, stringPlan, std::size(stringPlan), &aggregateRoots[0]),
+                context, &aggregateStrings[0], sizeof(aggregateStrings[0]), 64,
+                stringPlan, std::size(stringPlan), &aggregateRoots[0]),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_string_create(executionLane, "second-aggregate", 16,
                                         &aggregateStrings[1]),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_dpi_aggregate_roots_push(
-                context, &aggregateStrings[1], sizeof(aggregateStrings[1]),
-                64, stringPlan, std::size(stringPlan), &aggregateRoots[1]),
+                context, &aggregateStrings[1], sizeof(aggregateStrings[1]), 64,
+                stringPlan, std::size(stringPlan), &aggregateRoots[1]),
             OBELISK_RT_OK);
 
   obelisk_rt_string_v1 scalarString = 0;

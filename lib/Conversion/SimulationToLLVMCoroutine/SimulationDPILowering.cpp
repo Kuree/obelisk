@@ -181,8 +181,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         isDPIOpenArray(abi[index])
             ? dyn_cast<sim::DPIOpenArrayABIAttr>(openLayouts[index])
             : sim::DPIOpenArrayABIAttr{};
-    bool inputFourState = openLayout ? openLayout.getTransportFourState()
-                                    : abi[index].fourState;
+    bool inputFourState =
+        openLayout ? openLayout.getTransportFourState() : abi[index].fourState;
     if (inputFourState) {
       if (physicalInput >= physicalInputs.size())
         return operation.emitOpError("is missing a physical DPI unknown plane");
@@ -248,8 +248,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       uint64_t stringCount =
           dynamic || recursive ? 0
                                : elementCount * layout.getElementStringCount();
-      if (!dynamic && !recursive &&
-          stringCount > (UINT64_MAX - dataSize) / 8)
+      if (!dynamic && !recursive && stringCount > (UINT64_MAX - dataSize) / 8)
         return operation.emitOpError(
             "open-array string scratch storage is not representable");
       uint64_t capacity = dataSize + stringCount * 8;
@@ -283,31 +282,30 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::LLVMStructType::getLiteral(context, {openType, pointer});
         Value prepared = entryAlloca(rewriter, location, storageType, 1, 8);
         LLVM::MemsetOp::create(rewriter, location, prepared,
-                               llvmConstant(rewriter, location, i8, 0),
-                               c64(72), false);
+                               llvmConstant(rewriter, location, i8, 0), c64(72),
+                               false);
         Value prepareStatus =
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context,
-                    "obelisk_rt_v1_dpi_open_array_prepare_recursive"),
-                ValueRange{valueStorage, unknownStorage,
-                           c64((layout.getTransportWidth() + 7) / 8),
-                           c64(layout.getTransportWidth()),
-                           c32(layout.getTransportFourState()),
-                           c32(abi[index].direction != static_cast<uint32_t>(
-                                                           sim::DPIArgumentDirection::Input)),
-                           c32(static_cast<uint32_t>(layout.getElementKind())),
-                           c32(layout.getElementWidth()),
-                           c32(layout.getFourState()),
-                           c32(static_cast<uint32_t>(layout.getPackedLeft())),
-                           c32(static_cast<uint32_t>(layout.getPackedRight())),
-                           c64(layout.getElementCSize()),
-                           c32(layout.getElementCAlignment()),
-                           c64(layout.getElementStringCount()), plan,
-                           c64(planWords.size()), shape,
-                           c32(static_cast<uint32_t>(ranges.size() / 2)),
-                           prepared})
+                    context, "obelisk_rt_v1_dpi_open_array_prepare_recursive"),
+                ValueRange{
+                    valueStorage, unknownStorage,
+                    c64((layout.getTransportWidth() + 7) / 8),
+                    c64(layout.getTransportWidth()),
+                    c32(layout.getTransportFourState()),
+                    c32(abi[index].direction !=
+                        static_cast<uint32_t>(
+                            sim::DPIArgumentDirection::Input)),
+                    c32(static_cast<uint32_t>(layout.getElementKind())),
+                    c32(layout.getElementWidth()), c32(layout.getFourState()),
+                    c32(static_cast<uint32_t>(layout.getPackedLeft())),
+                    c32(static_cast<uint32_t>(layout.getPackedRight())),
+                    c64(layout.getElementCSize()),
+                    c32(layout.getElementCAlignment()),
+                    c64(layout.getElementStringCount()), plan,
+                    c64(planWords.size()), shape,
+                    c32(static_cast<uint32_t>(ranges.size() / 2)), prepared})
                 .getResult();
         preserveFirstStatus(prepareStatus);
         Value descriptor =
@@ -427,8 +425,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       }
 
       Type rangeType =
-          LLVM::LLVMStructType::getLiteral(context,
-                                           {i32, i32, i64, i32, i32});
+          LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64, i32, i32});
       uint64_t dimensions = dynamic ? 1 : ranges.size() / 2;
       Value rangeStorage =
           dimensions ? entryAlloca(rewriter, location, rangeType, dimensions, 8)
@@ -456,14 +453,14 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             fieldGEP(rewriter, location, address, rangeType, 2), 8);
         Value dimensionFlags = c32(0);
         if (dynamic) {
-          Value empty = arith::CmpIOp::create(
-              rewriter, location, arith::CmpIPredicate::eq, elementCountValue,
-              c64(0));
-          dimensionFlags = arith::SelectOp::create(
-              rewriter, location, empty,
-              c32(OBELISK_RT_DPI_DIMENSION_RUNTIME |
-                  OBELISK_RT_DPI_DIMENSION_EMPTY),
-              c32(OBELISK_RT_DPI_DIMENSION_RUNTIME));
+          Value empty = arith::CmpIOp::create(rewriter, location,
+                                              arith::CmpIPredicate::eq,
+                                              elementCountValue, c64(0));
+          dimensionFlags =
+              arith::SelectOp::create(rewriter, location, empty,
+                                      c32(OBELISK_RT_DPI_DIMENSION_RUNTIME |
+                                          OBELISK_RT_DPI_DIMENSION_EMPTY),
+                                      c32(OBELISK_RT_DPI_DIMENSION_RUNTIME));
         }
         LLVM::StoreOp::create(
             rewriter, location, dimensionFlags,
@@ -492,8 +489,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             alignment);
       };
       uint32_t elementKind = static_cast<uint32_t>(layout.getElementKind());
-      bool packed = elementKind <=
-                    static_cast<uint32_t>(sim::DPIABIKind::LogicVector);
+      bool packed =
+          elementKind <= static_cast<uint32_t>(sim::DPIABIKind::LogicVector);
       bool cLayout = true;
       uint32_t flags =
           (abi[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE : 0) |
@@ -518,9 +515,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       storeOpen(6, c64(elementSize), 8);
       Value descriptorData = data;
       if (dynamic) {
-        Value empty = arith::CmpIOp::create(
-            rewriter, location, arith::CmpIPredicate::eq, elementCountValue,
-            c64(0));
+        Value empty =
+            arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::eq,
+                                  elementCountValue, c64(0));
         descriptorData =
             arith::SelectOp::create(rewriter, location, empty, null, data);
       }
@@ -780,13 +777,12 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                    operation.getIsContext() ? operation.getScopeId() : 0),
       8);
   storeSiteField(5, source, 8);
-  storeSiteField(
-      6,
-      llvmConstant(rewriter, location, i64,
-                   operation.getIsContext()
-                       ? operation.getSourceFile().size()
-                       : uint64_t{0}),
-      8);
+  storeSiteField(6,
+                 llvmConstant(rewriter, location, i64,
+                              operation.getIsContext()
+                                  ? operation.getSourceFile().size()
+                                  : uint64_t{0}),
+                 8);
   storeSiteField(
       7,
       llvmConstant(rewriter, location, i32,
@@ -809,10 +805,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       LLVM::CallOp::create(
           rewriter, location, TypeRange{i32},
           SymbolRefAttr::get(
-              context,
-              operation.getIsContext()
-                  ? "obelisk_rt_v1_import_call_guarded"
-                  : "obelisk_rt_v1_import_call_noncontext_guarded"),
+              context, operation.getIsContext()
+                           ? "obelisk_rt_v1_import_call_guarded"
+                           : "obelisk_rt_v1_import_call_noncontext_guarded"),
           ValueRange{
               marshallingStatus, operation.getRuntimeContext(), site, inputs,
               llvmConstant(rewriter, location, i32, logicalInputs), outputs,
@@ -839,22 +834,20 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context,
-                    "obelisk_rt_v1_dpi_open_array_finish_recursive"),
-                ValueRange{
-                    marshallingStatus, operation.getRuntimeContext(),
-                    storage.recursiveStorage, storage.flatValue,
-                    storage.flatUnknown,
-                    c64((storage.layout.getTransportWidth() + 7) / 8),
-                    c64(storage.layout.getTransportWidth()),
-                    c32(storage.layout.getTransportFourState()),
-                    c32(storage.layout.getElementWidth()),
-                    c32(storage.layout.getFourState()),
-                    c64(storage.layout.getElementCSize()), storage.plan,
-                    c64(storage.layout.getElementLeaves().size()),
-                    storage.shape,
-                    c32(static_cast<uint32_t>(
-                        storage.layout.getRanges().size() / 2))})
+                    context, "obelisk_rt_v1_dpi_open_array_finish_recursive"),
+                ValueRange{marshallingStatus, operation.getRuntimeContext(),
+                           storage.recursiveStorage, storage.flatValue,
+                           storage.flatUnknown,
+                           c64((storage.layout.getTransportWidth() + 7) / 8),
+                           c64(storage.layout.getTransportWidth()),
+                           c32(storage.layout.getTransportFourState()),
+                           c32(storage.layout.getElementWidth()),
+                           c32(storage.layout.getFourState()),
+                           c64(storage.layout.getElementCSize()), storage.plan,
+                           c64(storage.layout.getElementLeaves().size()),
+                           storage.shape,
+                           c32(static_cast<uint32_t>(
+                               storage.layout.getRanges().size() / 2))})
                 .getResult();
         uint64_t paddedWidth =
             ((storage.layout.getTransportWidth() + 63) / 64) * 64;
@@ -866,8 +859,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           Value loaded =
               LLVM::LoadOp::create(rewriter, location, paddedType, address, 8);
           if (paddedType != resultType)
-            loaded = arith::TruncIOp::create(rewriter, location, resultType,
-                                             loaded);
+            loaded =
+                arith::TruncIOp::create(rewriter, location, resultType, loaded);
           return loaded;
         };
         physicalOutputValues.push_back(loadPlane(storage.flatValue));
@@ -897,27 +890,26 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         if (storage.layout.getElementStringCount() != 0) {
           aggregateRootSlot = entryAlloca(rewriter, location, pointer, 1, 8);
           LLVM::StoreOp::create(rewriter, location, null, aggregateRootSlot, 8);
-          Value canRoot = arith::CmpIOp::create(
-              rewriter, location, arith::CmpIPredicate::eq,
-              marshallingStatus, c32(0));
+          Value canRoot = arith::CmpIOp::create(rewriter, location,
+                                                arith::CmpIPredicate::eq,
+                                                marshallingStatus, c32(0));
           Value guardedContext = arith::SelectOp::create(
-              rewriter, location, canRoot, operation.getRuntimeContext(),
-              null);
+              rewriter, location, canRoot, operation.getRuntimeContext(), null);
           Value rootStatus =
               LLVM::CallOp::create(
                   rewriter, location, TypeRange{i32},
                   SymbolRefAttr::get(
                       context,
                       "obelisk_rt_v1_dpi_open_array_aggregate_roots_push"),
-                  ValueRange{guardedContext, storage.flatValue,
-                             storage.planeSizeValue, storage.totalWidthValue,
-                             c32(storage.layout.getElementWidth()),
-                             storage.elementCountValue, c32(0),
-                             storage.unpackedRanges,
-                             c32(storage.unpackedDimensions),
-                             c64(storage.layout.getElementCSize()), storage.plan,
-                             c64(storage.layout.getElementLeaves().size()),
-                             aggregateRootSlot})
+                  ValueRange{
+                      guardedContext, storage.flatValue, storage.planeSizeValue,
+                      storage.totalWidthValue,
+                      c32(storage.layout.getElementWidth()),
+                      storage.elementCountValue, c32(0), storage.unpackedRanges,
+                      c32(storage.unpackedDimensions),
+                      c64(storage.layout.getElementCSize()), storage.plan,
+                      c64(storage.layout.getElementLeaves().size()),
+                      aggregateRootSlot})
                   .getResult();
           preserveFirstStatus(rootStatus);
         }
@@ -941,13 +933,13 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                 .getResult();
         preserveFirstStatus(importContainerStatus);
         if (aggregateRootSlot) {
-          Value rootHandle = LLVM::LoadOp::create(
-              rewriter, location, pointer, aggregateRootSlot, 8);
+          Value rootHandle = LLVM::LoadOp::create(rewriter, location, pointer,
+                                                  aggregateRootSlot, 8);
           Value popStatus =
               LLVM::CallOp::create(
                   rewriter, location, TypeRange{i32},
-                  SymbolRefAttr::get(
-                      context, "obelisk_rt_v1_dpi_aggregate_roots_pop"),
+                  SymbolRefAttr::get(context,
+                                     "obelisk_rt_v1_dpi_aggregate_roots_pop"),
                   ValueRange{operation.getRuntimeContext(), rootHandle})
                   .getResult();
           preserveFirstStatus(popStatus);
@@ -1069,8 +1061,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     if (storage && storage->recursive)
       LLVM::CallOp::create(
           rewriter, location, TypeRange{},
-          SymbolRefAttr::get(
-              context, "obelisk_rt_v1_dpi_open_array_release_recursive"),
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_dpi_open_array_release_recursive"),
           storage->recursiveStorage);
   Value status = runtime::RTStatusFromBitsOp::create(
       rewriter, location, runtime::StatusType::get(context), marshallingStatus);

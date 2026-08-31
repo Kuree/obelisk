@@ -149,9 +149,9 @@ public:
         StringRef symbolName = resolvedSymbol->getName().getStringRef();
         if (userName == "slang.pattern.variable" ||
             userName == "obelisk.sv.pattern.variable") {
-          StringRef expected =
-              userName.starts_with("slang.") ? "slang.symbol.pattern_var"
-                                              : "obelisk.sv.symbol.pattern_var";
+          StringRef expected = userName.starts_with("slang.")
+                                   ? "slang.symbol.pattern_var"
+                                   : "obelisk.sv.symbol.pattern_var";
           if (symbolName != expected) {
             user->emitOpError("referenced pattern variable does not resolve "
                               "to a pattern binding");
@@ -163,9 +163,9 @@ public:
             userName != "obelisk.sv.pattern.tagged")
           continue;
 
-        StringRef expected =
-            userName.starts_with("slang.") ? "slang.symbol.field"
-                                            : "obelisk.sv.symbol.field";
+        StringRef expected = userName.starts_with("slang.")
+                                 ? "slang.symbol.field"
+                                 : "obelisk.sv.symbol.field";
         if (symbolName != expected) {
           user->emitOpError("referenced tagged member does not resolve to an "
                             "aggregate field");
@@ -297,17 +297,16 @@ public:
     // of local assertion variables. Keep that contract explicit: bounded AOT
     // consumers execute only the already-substituted first child and must not
     // accidentally evaluate the metadata copies of actuals a second time.
-    size_t expectedChildren = argumentCount + initializedLocals +
-                              static_cast<size_t>(
-                                  concrete.getHasExpandedBody());
+    size_t expectedChildren =
+        argumentCount + initializedLocals +
+        static_cast<size_t>(concrete.getHasExpandedBody());
     size_t actualChildren = 0;
     if (op->getNumRegions() != 0 && !op->getRegion(0).empty())
       actualChildren = op->getRegion(0).front().getOperations().size();
     if (actualChildren != expectedChildren)
       return op->emitOpError()
-             << "assertion invocation inventory describes "
-             << expectedChildren << " children but body contains "
-             << actualChildren;
+             << "assertion invocation inventory describes " << expectedChildren
+             << " children but body contains " << actualChildren;
     return success();
   }
 };

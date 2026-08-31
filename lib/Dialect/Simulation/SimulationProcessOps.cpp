@@ -741,9 +741,8 @@ LogicalResult SimDPICallOp::verify() {
                          "array or queue value");
       std::optional<uint64_t> provenance = getProvenanceSpan(type);
       std::optional<unsigned> packed = getPackedWidth(type);
-      uint64_t width = layout.getStorage() == 2
-                           ? provenance.value_or(0)
-                           : packed.value_or(0);
+      uint64_t width = layout.getStorage() == 2 ? provenance.value_or(0)
+                                                : packed.value_or(0);
       bool fourState = layout.getStorage() == 2
                            ? containsFourStateLeaf(type)
                            : isa<LogicType>(getPackedScalarType(type));
@@ -828,10 +827,10 @@ LogicalResult SimDPICallOp::verify() {
                                  StringRef role) -> LogicalResult {
     size_t physical = 0;
     for (auto [offset, abi] : llvm::enumerate(entries)) {
-      auto open = abi.getKind() == DPIABIKind::OpenArray
-                      ? cast<DPIOpenArrayABIAttr>(
-                            openLayouts[entryBase + offset])
-                      : DPIOpenArrayABIAttr{};
+      auto open =
+          abi.getKind() == DPIABIKind::OpenArray
+              ? cast<DPIOpenArrayABIAttr>(openLayouts[entryBase + offset])
+              : DPIOpenArrayABIAttr{};
       unsigned planes =
           (open ? open.getTransportFourState() : abi.getFourState()) ? 2 : 1;
       if (physical + planes > types.size())

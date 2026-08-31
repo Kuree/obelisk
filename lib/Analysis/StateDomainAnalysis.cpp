@@ -128,9 +128,7 @@ bool updateBoundary(StateDomainFact &current, StateDomainFact contribution,
   return true;
 }
 
-bool isSuspensionTerminator(Operation *op) {
-  return sim::isSuspensionOp(op);
-}
+bool isSuspensionTerminator(Operation *op) { return sim::isSuspensionOp(op); }
 
 std::optional<APInt> getConstantInteger(Value value) {
   Attribute attribute;
@@ -479,8 +477,7 @@ LocalFacts initializeLocalFacts(const FunctionSummary &summary) {
 }
 
 std::optional<bool>
-getProvableCondition(Value value,
-                     const DenseMap<Value, StateDomainFact> &facts,
+getProvableCondition(Value value, const DenseMap<Value, StateDomainFact> &facts,
                      DenseSet<Value> &active,
                      DenseMap<Value, std::optional<bool>> &memo) {
   auto cached = memo.find(value);
@@ -495,23 +492,22 @@ getProvableCondition(Value value,
   };
 
   APInt constant;
-  if (matchPattern(value, m_ConstantInt(&constant)) && constant.getBitWidth() == 1)
+  if (matchPattern(value, m_ConstantInt(&constant)) &&
+      constant.getBitWidth() == 1)
     return done(!constant.isZero());
 
   if (auto argument = dyn_cast<BlockArgument>(value)) {
     std::optional<bool> result;
     bool sawIncoming = false;
     for (Block *predecessor : argument.getOwner()->getPredecessors()) {
-      auto branch =
-          dyn_cast<BranchOpInterface>(predecessor->getTerminator());
+      auto branch = dyn_cast<BranchOpInterface>(predecessor->getTerminator());
       if (!branch)
         return done(std::nullopt);
-      for (unsigned successor = 0;
-           successor != predecessor->getNumSuccessors(); ++successor) {
+      for (unsigned successor = 0; successor != predecessor->getNumSuccessors();
+           ++successor) {
         if (predecessor->getSuccessor(successor) != argument.getOwner())
           continue;
-        SuccessorOperands operands =
-            branch.getSuccessorOperands(successor);
+        SuccessorOperands operands = branch.getSuccessorOperands(successor);
         if (argument.getArgNumber() >= operands.size() ||
             operands.isOperandProduced(argument.getArgNumber()))
           return done(std::nullopt);
@@ -562,13 +558,12 @@ getProvableCondition(Value value,
     if (equality || inequality) {
       auto isKnownRoundTrip = [&](Value original, Value roundTrip) {
         auto fromBits = roundTrip.getDefiningOp<sim::SimLogicFromBitsOp>();
-        auto toBits = fromBits
-                          ? fromBits.getInput()
-                                .getDefiningOp<sim::SimLogicToBitsOp>()
-                          : sim::SimLogicToBitsOp{};
+        auto toBits =
+            fromBits
+                ? fromBits.getInput().getDefiningOp<sim::SimLogicToBitsOp>()
+                : sim::SimLogicToBitsOp{};
         auto fact = facts.find(original);
-        return toBits && toBits.getInput() == original &&
-               fact != facts.end() &&
+        return toBits && toBits.getInput() == original && fact != facts.end() &&
                fact->second.domain == StateDomain::TwoState;
       };
       if (isKnownRoundTrip(compare.getLhs(), compare.getRhs()) ||
@@ -579,10 +574,9 @@ getProvableCondition(Value value,
   return done(std::nullopt);
 }
 
-bool isProvablyDeadSuccessor(
-    Operation *terminator, unsigned successorIndex,
-    const DenseMap<Value, StateDomainFact> &proofFacts,
-    DenseMap<Value, std::optional<bool>> &memo) {
+bool isProvablyDeadSuccessor(Operation *terminator, unsigned successorIndex,
+                             const DenseMap<Value, StateDomainFact> &proofFacts,
+                             DenseMap<Value, std::optional<bool>> &memo) {
   auto branch = dyn_cast_or_null<cf::CondBranchOp>(terminator);
   if (!branch)
     return false;
@@ -635,55 +629,55 @@ void propagateFunction(const FunctionSummary &summary,
     }
     while (true) {
       bool changed = false;
-    for (const BlockArgumentSummary &argument : summary.blockArguments) {
-      StateDomainFact joined = bottomFact();
-      if (argument.incoming.empty()) {
-        joined = mayFourState(StateDomainReason::UnsupportedProducer);
-      } else {
-        for (const IncomingSummary &incoming : argument.incoming) {
-          if (proofFacts &&
-              (!reachable.contains(incoming.terminator->getBlock()) ||
-               isProvablyDeadSuccessor(incoming.terminator,
-                                       incoming.successorIndex, *proofFacts,
-                                       conditionMemo)))
-            continue;
-          StateDomainFact contribution =
-              incoming.value
-                  ? lookupLocalFact(local.values, incoming.value)
-                  : mayFourState(StateDomainReason::UnsupportedProducer);
-          joined = joinAlternatives(joined, contribution, incoming.reason);
+      for (const BlockArgumentSummary &argument : summary.blockArguments) {
+        StateDomainFact joined = bottomFact();
+        if (argument.incoming.empty()) {
+          joined = mayFourState(StateDomainReason::UnsupportedProducer);
+        } else {
+          for (const IncomingSummary &incoming : argument.incoming) {
+            if (proofFacts &&
+                (!reachable.contains(incoming.terminator->getBlock()) ||
+                 isProvablyDeadSuccessor(incoming.terminator,
+                                         incoming.successorIndex, *proofFacts,
+                                         conditionMemo)))
+              continue;
+            StateDomainFact contribution =
+                incoming.value
+                    ? lookupLocalFact(local.values, incoming.value)
+                    : mayFourState(StateDomainReason::UnsupportedProducer);
+            joined = joinAlternatives(joined, contribution, incoming.reason);
+          }
         }
+        changed |= updateFact(local.values, argument.argument, joined);
       }
-      changed |= updateFact(local.values, argument.argument, joined);
-    }
 
-    for (Operation *operation : summary.operations) {
-      if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-        auto callee = calleeIndex.find(operation);
-        for (auto [index, result] : llvm::enumerate(call.getResults())) {
-          if (!isLogic(result.getType()))
-            continue;
-          StateDomainFact next =
-              callee == calleeIndex.end() ||
-                      index >= resultBoundaries[callee->second].size()
-                  ? mayFourState(StateDomainReason::UnknownCall)
-                  : resultBoundaries[callee->second][index];
-          if (callee == calleeIndex.end())
-            next.reason = StateDomainReason::UnknownCall;
-          else if (next.reason != StateDomainReason::ExternalDeclaration)
-            next.reason = StateDomainReason::CallResult;
-          changed |= updateFact(local.values, result, next);
+      for (Operation *operation : summary.operations) {
+        if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+          auto callee = calleeIndex.find(operation);
+          for (auto [index, result] : llvm::enumerate(call.getResults())) {
+            if (!isLogic(result.getType()))
+              continue;
+            StateDomainFact next =
+                callee == calleeIndex.end() ||
+                        index >= resultBoundaries[callee->second].size()
+                    ? mayFourState(StateDomainReason::UnknownCall)
+                    : resultBoundaries[callee->second][index];
+            if (callee == calleeIndex.end())
+              next.reason = StateDomainReason::UnknownCall;
+            else if (next.reason != StateDomainReason::ExternalDeclaration)
+              next.reason = StateDomainReason::CallResult;
+            changed |= updateFact(local.values, result, next);
+          }
+          continue;
         }
-        continue;
+        StateDomainFact transferred = transferOperation(
+            operation, local.values, summary.provenance, assumedKnownRoots);
+        for (Value result : operation->getResults())
+          if (shouldTrackResult(operation, result))
+            changed |= updateFact(local.values, result, transferred);
       }
-      StateDomainFact transferred = transferOperation(
-          operation, local.values, summary.provenance, assumedKnownRoots);
-      for (Value result : operation->getResults())
-        if (shouldTrackResult(operation, result))
-          changed |= updateFact(local.values, result, transferred);
-    }
-    if (!changed)
-      break;
+      if (!changed)
+        break;
     }
   };
 
@@ -1174,8 +1168,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     if (!partial && driverCount == 1 && fullDriver)
       continue;
     for (uint64_t member : component)
-      candidates.erase(
-          getRootKey(sim::ComputeResourceKind::Net, member));
+      candidates.erase(getRootKey(sim::ComputeResourceKind::Net, member));
   }
 
   DenseMap<Value, StateDomainFact> facts;
@@ -1209,9 +1202,8 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
                 root.first == static_cast<unsigned>(resource))
               rejected.insert(root);
         };
-        if (auto pair =
-                dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
-                    operation)) {
+        if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+                operation)) {
           rejectWrite(pair.getLowDriver(), pair.getLowValue());
           rejectWrite(pair.getHighDriver(), pair.getHighValue());
           return;

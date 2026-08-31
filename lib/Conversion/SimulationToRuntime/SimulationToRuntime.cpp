@@ -318,10 +318,10 @@ public:
   matchAndRewrite(sim::SimTimeScanScaleOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value multiplier = iConstant(rewriter, loc, rewriter.getI64Type(),
-                                 op.getTimeMultiplier());
-    Value precision = iConstant(rewriter, loc, rewriter.getI32Type(),
-                                op.getTimePrecision());
+    Value multiplier =
+        iConstant(rewriter, loc, rewriter.getI64Type(), op.getTimeMultiplier());
+    Value precision =
+        iConstant(rewriter, loc, rewriter.getI32Type(), op.getTimePrecision());
     rewriter.replaceOpWithNewOp<runtime::RTTimeScanScaleOp>(
         op, rewriter.getF64Type(),
         runtimeContext(rewriter, loc, adaptor.getContext().front()),
@@ -807,13 +807,13 @@ public:
 
     ConversionTarget target(context);
     target.addIllegalOp<
-        sim::SimBytesConstantOp, sim::SimTimeFormatOp,
-        sim::SimTimeScanScaleOp, sim::SimFinishOp,
-        sim::SimProgramExitOp, sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
-        sim::SimTerminationRequestedOp, sim::SimTimeNowOp, sim::SimDisplayOp,
-        sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
-        sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,
-        sim::SimFileUngetcOp, sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+        sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimTimeScanScaleOp,
+        sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
+        sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+        sim::SimTimeNowOp, sim::SimDisplayOp, sim::SimStringOutputFormatOp,
+        sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
+        sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
+        sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
         sim::SimFileReadMemTokenOp, sim::SimFileEofOp, sim::SimFileSeekOp,
         sim::SimFileTellOp, sim::SimFileRewindOp, sim::SimDumpOpenOp,
         sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,

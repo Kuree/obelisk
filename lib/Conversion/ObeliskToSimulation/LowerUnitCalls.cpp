@@ -1949,24 +1949,22 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     SmallVector<SemanticDimension> actualDimensions;
     SmallVector<SemanticDimension> formalDimensions;
-    llvm::copy_if(getSemanticDimensions(actualSemantic),
-                  std::back_inserter(actualDimensions),
-                  [](const SemanticDimension &dimension) {
-                    return dimension.unpacked;
-                  });
-    llvm::copy_if(getSemanticDimensions(formalSemantic),
-                  std::back_inserter(formalDimensions),
-                  [](const SemanticDimension &dimension) {
-                    return dimension.unpacked;
-                  });
+    llvm::copy_if(
+        getSemanticDimensions(actualSemantic),
+        std::back_inserter(actualDimensions),
+        [](const SemanticDimension &dimension) { return dimension.unpacked; });
+    llvm::copy_if(
+        getSemanticDimensions(formalSemantic),
+        std::back_inserter(formalDimensions),
+        [](const SemanticDimension &dimension) { return dimension.unpacked; });
     if (actualDimensions.size() != formalDimensions.size())
       return emitError(location)
                  << "DPI open-array actual and formal have different "
                     "unpacked dimension counts",
              failure();
 
-    auto fixedExtent = [&](const SemanticDimension &dimension)
-        -> FailureOr<uint64_t> {
+    auto fixedExtent =
+        [&](const SemanticDimension &dimension) -> FailureOr<uint64_t> {
       uint64_t distance = dimension.left >= dimension.right
                               ? static_cast<uint64_t>(dimension.left) -
                                     static_cast<uint64_t>(dimension.right)
@@ -2006,12 +2004,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                    << "DPI open-array formal has an unsupported dimension",
                failure();
 
-      FailureOr<uint64_t> actualExtent =
-          runtime ? FailureOr<uint64_t>(uint64_t{0})
-                  : fixedExtent(actualDimension);
-      FailureOr<uint64_t> formalExtent =
-          formalUnsized ? FailureOr<uint64_t>(uint64_t{0})
-                        : fixedExtent(formalDimension);
+      FailureOr<uint64_t> actualExtent = runtime
+                                             ? FailureOr<uint64_t>(uint64_t{0})
+                                             : fixedExtent(actualDimension);
+      FailureOr<uint64_t> formalExtent = formalUnsized
+                                             ? FailureOr<uint64_t>(uint64_t{0})
+                                             : fixedExtent(formalDimension);
       if (failed(actualExtent) || failed(formalExtent) ||
           (!runtime && !formalUnsized && *actualExtent != *formalExtent) ||
           (!formalUnsized && *formalExtent > INT32_MAX))
@@ -2034,13 +2032,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (runtime)
         sourceRanges.append({0, 0});
       else
-        sourceRanges.append(
-            {actualDimension.left, actualDimension.right});
+        sourceRanges.append({actualDimension.left, actualDimension.right});
 
       Type child = childType(sourceType);
       std::optional<uint64_t> childSpan = sim::getProvenanceSpan(child);
-      if (!child || !childSpan || *childSpan == 0 ||
-          *childSpan > INT64_MAX)
+      if (!child || !childSpan || *childSpan == 0 || *childSpan > INT64_MAX)
         return emitError(location)
                    << "DPI open-array dimension has no bounded element layout",
                failure();
@@ -2054,13 +2050,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         shapePlan.append({static_cast<int64_t>(kind), descriptorLeft,
                           descriptorRight, 0, 0,
                           static_cast<int64_t>(*childSpan),
-                          childFourState ? 1 : 0,
-                          formalUnsized ? 0 : 1});
+                          childFourState ? 1 : 0, formalUnsized ? 0 : 1});
         hasRuntimeShape = true;
         simpleRootRuntime &= formalUnsized;
       } else {
-        std::optional<uint64_t> alignment =
-            sim::getProvenanceAlignment(child);
+        std::optional<uint64_t> alignment = sim::getProvenanceAlignment(child);
         if (!alignment || *alignment == 0 ||
             *childSpan > UINT64_MAX - (*alignment - 1))
           return emitError(location)
@@ -2081,8 +2075,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         shapePlan.append({0, descriptorLeft, descriptorRight,
                           static_cast<int64_t>(start), signedStride,
                           static_cast<int64_t>(*childSpan),
-                          childFourState ? 1 : 0,
-                          formalUnsized ? 0 : 1});
+                          childFourState ? 1 : 0, formalUnsized ? 0 : 1});
       }
       sourceType = child;
     }
@@ -2123,17 +2116,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                  << transportType,
              failure();
     int64_t packedLeft = static_cast<int64_t>(elementWidth) - 1;
-    bool transportFourState =
-        storage == 0 ? elementABI->fourState
-                     : sim::containsFourStateLeaf(transportType);
+    bool transportFourState = storage == 0
+                                  ? elementABI->fourState
+                                  : sim::containsFourStateLeaf(transportType);
     return sim::DPIOpenArrayABIAttr::get(
         builder.getContext(), storage,
         static_cast<sim::DPIABIKind>(elementABI->kind), elementWidth,
         *transportWidth, transportFourState, elementABI->fourState,
-        elementLayout->getCSize(),
-        elementLayout->getCAlignment(), elementLayout->getStringCount(),
-        elementLayout->getLeaves(), packedLeft, 0,
-        builder.getDenseI64ArrayAttr(ranges),
+        elementLayout->getCSize(), elementLayout->getCAlignment(),
+        elementLayout->getStringCount(), elementLayout->getLeaves(), packedLeft,
+        0, builder.getDenseI64ArrayAttr(ranges),
         builder.getDenseI64ArrayAttr(sourceRanges),
         builder.getDenseI64ArrayAttr(storage == 2 ? shapePlan
                                                   : ArrayRef<int64_t>{}));
@@ -2236,14 +2228,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           return emitError(location)
                      << "DPI open-array binding has no semantic shape",
                  failure();
-        FailureOr<sim::DPIOpenArrayABIAttr> layout = makeOpenArrayLayout(
-            formalSemantic.getValue(), semanticType.getValue(),
-            (*argument).getType());
+        FailureOr<sim::DPIOpenArrayABIAttr> layout =
+            makeOpenArrayLayout(formalSemantic.getValue(),
+                                semanticType.getValue(), (*argument).getType());
         if (failed(layout))
           return failure();
-        FailureOr<Value> transport =
-            layout->getStorage() == 0 ? packOpenArrayActual(*argument)
-                                      : FailureOr<Value>(*argument);
+        FailureOr<Value> transport = layout->getStorage() == 0
+                                         ? packOpenArrayActual(*argument)
+                                         : FailureOr<Value>(*argument);
         if (failed(transport))
           return failure();
         dpiOperandABI.push_back(sim::DPIABIAttr::get(
@@ -2314,9 +2306,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                       "an output DPI open-array formal with unsized "
                       "dimensions",
                failure();
-      FailureOr<Value> transport =
-          layout->getStorage() == 0 ? packOpenArrayActual(*loaded)
-                                    : FailureOr<Value>(*loaded);
+      FailureOr<Value> transport = layout->getStorage() == 0
+                                       ? packOpenArrayActual(*loaded)
+                                       : FailureOr<Value>(*loaded);
       if (failed(transport))
         return failure();
       dpiOperandABI.push_back(sim::DPIABIAttr::get(

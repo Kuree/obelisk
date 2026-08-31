@@ -579,14 +579,14 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
 
     Block *dynamicActionResume = nullptr;
     if (dynamicAction) {
-      Value belowRange = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, dynamicAction,
-          constant(i64, 1));
-      Value aboveRange = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ugt, dynamicAction,
-          constant(i64, 11));
-      Value invalidAction = arith::OrIOp::create(builder, location, belowRange,
-                                                 aboveRange);
+      Value belowRange =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                dynamicAction, constant(i64, 1));
+      Value aboveRange =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ugt,
+                                dynamicAction, constant(i64, 11));
+      Value invalidAction =
+          arith::OrIOp::create(builder, location, belowRange, aboveRange);
       Block *invalid = addBlock();
       Block *valid = addBlock();
       dynamicActionResume = addBlock();
@@ -599,8 +599,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           "11; the task has no effect");
       emitBranch(dynamicActionResume);
       setCurrent(valid);
-      dynamicAction = arith::TruncIOp::create(builder, location, i32,
-                                              dynamicAction);
+      dynamicAction =
+          arith::TruncIOp::create(builder, location, i32, dynamicAction);
     }
 
     ArrayRef<int64_t> targetValues = targets.asArrayRef();
@@ -649,8 +649,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         else
           sim::SimAssertionControlOp::create(
               builder, location, context,
-              builder.getI32IntegerAttr(
-                  static_cast<int32_t>(action.getInt())),
+              builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
               builder.getI64IntegerAttr(target));
         continue;
       }

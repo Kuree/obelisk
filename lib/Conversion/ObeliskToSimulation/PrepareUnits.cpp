@@ -183,7 +183,8 @@ PreparedUnits::resolveVirtualInterfaceCallees(
   if (!callerDesign)
     return {};
   StringRef design = getHierarchyName(callerDesign);
-  auto methodCandidates = virtualInterfaceCalleeIndex.find(call.getCalleeName());
+  auto methodCandidates =
+      virtualInterfaceCalleeIndex.find(call.getCalleeName());
   if (methodCandidates == virtualInterfaceCalleeIndex.end())
     return {};
   auto designCandidates = methodCandidates->second.find(design);
@@ -546,9 +547,10 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   }
   for (auto [index, candidate] :
        llvm::enumerate(result.virtualInterfaceCallees))
-    result.virtualInterfaceCalleeIndex[candidate.method][candidate.design]
-                                         [candidate.interfaceIdentity]
-                                             .push_back(index);
+    result
+        .virtualInterfaceCalleeIndex[candidate.method][candidate.design]
+                                    [candidate.interfaceIdentity]
+        .push_back(index);
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
     auto lhs = cast<semantic::SVSubroutineSymbolOp>(lhsRecord.source);

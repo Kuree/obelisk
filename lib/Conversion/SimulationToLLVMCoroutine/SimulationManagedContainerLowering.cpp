@@ -1963,11 +1963,10 @@ void populateManagedContainerToLLVMConversionPatterns(
       RandomSolveConversion>(converter, context);
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
       converter, context, dataLayout);
-  patterns.add<ContainerExportBitstreamConversion,
-               RecursiveExportBitstreamConversion,
-               AggregateExportBitstreamConversion,
-               AggregateImportBitstreamConversion>(converter, context,
-                                                   dataLayout);
+  patterns.add<
+      ContainerExportBitstreamConversion, RecursiveExportBitstreamConversion,
+      AggregateExportBitstreamConversion, AggregateImportBitstreamConversion>(
+      converter, context, dataLayout);
   patterns.add<RandomSolveWideConversion, SampledReadConversion,
                SampledHistoryConversion, ClockedSampleUpdateConversion,
                ClockedSampleReadConversion>(converter, context);

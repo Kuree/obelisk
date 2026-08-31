@@ -2427,8 +2427,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
         module, *stateLayout, aotEligibility.getActorSlots(),
         aotEligibility.getRuntimeOwnedFanoutActors(),
-        aotEligibility.getNegativeTimingFanoutActors(), true,
-        staticEvalIsland);
+        aotEligibility.getNegativeTimingFanoutActors(), true, staticEvalIsland);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);

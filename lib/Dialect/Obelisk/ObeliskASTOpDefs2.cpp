@@ -1,4 +1,5 @@
-//===- ObeliskASTOpDefs2.cpp - Generated op definitions, shard 2 ---*- C++ -*-===//
+//===- ObeliskASTOpDefs2.cpp - Generated op definitions, shard 2 ---*- C++
+//-*-===//
 //
 // One shard of the TableGen'd op definitions for the obelisk dialect.
 // Compiling every op class in a single translation unit dominates the
@@ -7,8 +8,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"

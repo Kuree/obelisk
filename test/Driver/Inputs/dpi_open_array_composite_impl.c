@@ -15,8 +15,7 @@ int inspect_composite(const svOpenArrayHandle matrix,
                       const svOpenArrayHandle labels,
                       const svOpenArrayHandle tokens) {
   payload_t *first = (payload_t *)svGetArrElemPtr2(matrix, 1, -1);
-  payload_t *dynamic_first =
-      (payload_t *)svGetArrElemPtr1(dynamic_values, 0);
+  payload_t *dynamic_first = (payload_t *)svGetArrElemPtr1(dynamic_values, 0);
   const char **label_data = (const char **)svGetArrayPtr(labels);
   void **token_data = (void **)svGetArrayPtr(tokens);
   printf("matrix-dims=%d ranges=%d:%d,%d:%d first=%d/%s/%x\n",

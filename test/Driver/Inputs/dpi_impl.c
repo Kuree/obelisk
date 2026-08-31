@@ -3,13 +3,10 @@
 #include <stdint.h>
 #include <string.h>
 
-int32_t dpi_add(int32_t value) {
-  return value + 5;
-}
+int32_t dpi_add(int32_t value) { return value + 5; }
 
-int64_t dpi_scalars(int8_t byte_value, int16_t short_value,
-                    int32_t int_value, int64_t long_value,
-                    svBit bit_value, svLogic logic_value,
+int64_t dpi_scalars(int8_t byte_value, int16_t short_value, int32_t int_value,
+                    int64_t long_value, svBit bit_value, svLogic logic_value,
                     int32_t *output_value, int32_t *inout_value) {
   if (bit_value != sv_1 || logic_value != sv_x)
     return -1;
@@ -27,13 +24,9 @@ int dpi_update(const svLogicVecVal *source, svBitVecVal *destination) {
   return 0;
 }
 
-int32_t dpi_unused(int32_t value) {
-  return value;
-}
+int32_t dpi_unused(int32_t value) { return value; }
 
-void dpi_void(int32_t value, int32_t *doubled) {
-  *doubled = value * 2;
-}
+void dpi_void(int32_t value, int32_t *doubled) { *doubled = value * 2; }
 
 double dpi_reals(double source_value, float scale, float *rounded,
                  double *accumulated) {

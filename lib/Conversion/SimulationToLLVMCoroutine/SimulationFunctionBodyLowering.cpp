@@ -113,8 +113,7 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
     return illegalOperation->emitError()
            << "native function-body rewrite left illegal operation '"
            << illegalOperation->getName() << "' in '"
-           << SymbolTable::getSymbolName(root).getValue()
-           << "'";
+           << SymbolTable::getSymbolName(root).getValue() << "'";
   return success();
 }
 

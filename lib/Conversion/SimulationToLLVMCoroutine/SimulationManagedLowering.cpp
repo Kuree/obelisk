@@ -142,8 +142,6 @@ public:
   }
 };
 
-
-
 class ClassAllocConversion final
     : public OpConversionPattern<sim::SimClassAllocOp> {
 public:
@@ -174,7 +172,6 @@ public:
     return success();
   }
 };
-
 
 class ClassCopyConversion final
     : public OpConversionPattern<sim::SimClassCopyOp> {
@@ -346,17 +343,16 @@ public:
     default:
       return rewriter.notifyMatchFailure(op, "unknown managed-watch kind");
     }
-    Value kind = llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                              runtimeKind);
+    Value kind =
+        llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), runtimeKind);
     rewriter.replaceOp(
-        op,
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_managed_watch"),
-            ValueRange{managedObjectPointer(rewriter, op.getLoc(), object),
-                       kind, selector})
-            .getResults());
+        op, LLVM::CallOp::create(
+                rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
+                SymbolRefAttr::get(rewriter.getContext(),
+                                   "obelisk_rt_v1_managed_watch"),
+                ValueRange{managedObjectPointer(rewriter, op.getLoc(), object),
+                           kind, selector})
+                .getResults());
     return success();
   }
 };
@@ -392,20 +388,21 @@ public:
     }
     if (op.getMode() == sim::ManagedRootMode::Candidate) {
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), LLVM::LLVMPointerType::get(rewriter.getContext()),
+          rewriter, op.getLoc(),
+          LLVM::LLVMPointerType::get(rewriter.getContext()),
           "__obelisk_current_context");
       Value context = LLVM::LoadOp::create(
-          rewriter, op.getLoc(), LLVM::LLVMPointerType::get(rewriter.getContext()),
-          contextAddress, 8);
-      owner = LLVM::CallOp::create(
-                  rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
-                  SymbolRefAttr::get(rewriter.getContext(),
-                                     "obelisk_rt_v1_gc_candidate_root"),
-                  ValueRange{context, owner,
-                             llvmConstant(rewriter, op.getLoc(),
-                                          rewriter.getI32Type(),
-                                          op.getKindMask())})
-                  .getResult();
+          rewriter, op.getLoc(),
+          LLVM::LLVMPointerType::get(rewriter.getContext()), contextAddress, 8);
+      owner =
+          LLVM::CallOp::create(
+              rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
+              SymbolRefAttr::get(rewriter.getContext(),
+                                 "obelisk_rt_v1_gc_candidate_root"),
+              ValueRange{context, owner,
+                         llvmConstant(rewriter, op.getLoc(),
+                                      rewriter.getI32Type(), op.getKindMask())})
+              .getResult();
     }
     LLVM::StoreOp::create(rewriter, op.getLoc(), owner,
                           adaptor.getSlot().front(), 8);
@@ -413,7 +410,6 @@ public:
     return success();
   }
 };
-
 
 template <typename Op>
 class ManagedObjectOutputConversion final : public OpConversionPattern<Op> {
@@ -718,8 +714,7 @@ materializeManagedMethodThunks(ModuleOp module,
                                                      llvmContext);
         if (failed(storage))
           return method.emitError("managed task argument has no native ABI");
-        unsigned planes =
-            analysis::getSimulationPhysicalStorageCount(*storage);
+        unsigned planes = analysis::getSimulationPhysicalStorageCount(*storage);
         for (unsigned plane = 0; plane != planes; ++plane)
           expectedSizes.push_back(storage->size);
       }
@@ -755,9 +750,9 @@ materializeManagedMethodThunks(ModuleOp module,
           llvmConstant(builder, method.getLoc(), i64, sizeof(uint64_t)));
       Value validABI = arith::AndIOp::create(builder, method.getLoc(),
                                              countMatches, resultSizeMatches);
-      LLVM::CondBrOp::create(
-          builder, method.getLoc(), validABI,
-          validations.empty() ? invoke : validations.front(), invalid);
+      LLVM::CondBrOp::create(builder, method.getLoc(), validABI,
+                             validations.empty() ? invoke : validations.front(),
+                             invalid);
 
       builder.setInsertionPointToStart(invalid);
       LLVM::ReturnOp::create(builder, method.getLoc(),
@@ -783,30 +778,28 @@ materializeManagedMethodThunks(ModuleOp module,
             llvmConstant(builder, method.getLoc(), i64, expectedSizes[index]));
         Value validRecord = arith::AndIOp::create(builder, method.getLoc(),
                                                   hasData, sizeMatches);
-        LLVM::CondBrOp::create(
-            builder, method.getLoc(), validRecord,
-            index + 1 == physicalArgumentCount ? invoke
-                                               : validations[index + 1],
-            invalid);
+        LLVM::CondBrOp::create(builder, method.getLoc(), validRecord,
+                               index + 1 == physicalArgumentCount
+                                   ? invoke
+                                   : validations[index + 1],
+                               invalid);
         argumentData.push_back(data);
       }
 
       builder.setInsertionPointToStart(invoke);
       SmallVector<Value> callArguments{
           entry->getArgument(0),
-          managedObjectHandle(builder, method.getLoc(),
-                              entry->getArgument(2))};
+          managedObjectHandle(builder, method.getLoc(), entry->getArgument(2))};
       for (unsigned index = 0; index != physicalArgumentCount; ++index) {
-        callArguments.push_back(LLVM::LoadOp::create(
-            builder, method.getLoc(), helperInputs[index + 2],
-            argumentData[index], 1));
+        callArguments.push_back(LLVM::LoadOp::create(builder, method.getLoc(),
+                                                     helperInputs[index + 2],
+                                                     argumentData[index], 1));
       }
       callArguments.push_back(entry->getArgument(5));
-      Value status =
-          LLVM::CallOp::create(builder, method.getLoc(), TypeRange{i32},
-                               SymbolRefAttr::get(context, helperName),
-                               callArguments)
-              .getResult();
+      Value status = LLVM::CallOp::create(
+                         builder, method.getLoc(), TypeRange{i32},
+                         SymbolRefAttr::get(context, helperName), callArguments)
+                         .getResult();
       LLVM::ReturnOp::create(builder, method.getLoc(), status);
       continue;
     }
@@ -900,21 +893,20 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
                                              const llvm::DataLayout &dataLayout,
                                              uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<
-      ClassNullConversion, ManagedNullConversion, ManagedWatchNullConversion,
-      ManagedIsNullConversion,
-      EventNullConversion,
-      ClassAllocConversion, ClassCopyConversion,
-      ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
-      ClassFieldRefConversion, ManagedWatchConversion, ClassRootBindConversion,
-      ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
-      ManagedObjectOutputConversion<sim::SimWeakGetOp>, WeakClearConversion,
-      GCSafepointConversion>(converter, context);
+  patterns.add<ClassNullConversion, ManagedNullConversion,
+               ManagedWatchNullConversion, ManagedIsNullConversion,
+               EventNullConversion, ClassAllocConversion, ClassCopyConversion,
+               ClassIsInstanceConversion, ClassIdConversion,
+               ClassCastConversion, ClassFieldRefConversion,
+               ManagedWatchConversion, ClassRootBindConversion,
+               ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
+               ManagedObjectOutputConversion<sim::SimWeakGetOp>,
+               WeakClearConversion, GCSafepointConversion>(converter, context);
   populateManagedContainerToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout);
   populateManagedCoverageToLLVMConversionPatterns(patterns, converter);
-  populateManagedReferenceToLLVMConversionPatterns(
-      patterns, converter, dataLayout, stateBitCount);
+  populateManagedReferenceToLLVMConversionPatterns(patterns, converter,
+                                                   dataLayout, stateBitCount);
   populateManagedStringToLLVMConversionPatterns(patterns, converter);
   patterns.add<ClassVirtualCallConversion>(converter, context, dataLayout);
 }

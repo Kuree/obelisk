@@ -77,13 +77,11 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
     multipleSuspensions |= suspension != nullptr;
     suspension = operation;
   });
-  if (multipleSuspensions || !suspension ||
-      suspension->getNumSuccessors() != 1)
+  if (multipleSuspensions || !suspension || suspension->getNumSuccessors() != 1)
     return false;
   Block *wait = suspension->getBlock();
   Block *activationEntry = suspension->getSuccessor(0);
-  if (activationEntry == wait ||
-      activationEntry == &function.getBody().front())
+  if (activationEntry == wait || activationEntry == &function.getBody().front())
     return false;
 
   // Collect the complete activation without crossing its suspension block.
@@ -177,8 +175,11 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
       if (found == rootsByCommit.end()) {
         unsigned index = roots.size();
         rootsByCommit.try_emplace(site.getCommit(), index);
-        roots.push_back({site.getCommit(), enqueue.getDestination(),
-                         enqueue.getValue().getType(), site, enqueue.getLoc(),
+        roots.push_back({site.getCommit(),
+                         enqueue.getDestination(),
+                         enqueue.getValue().getType(),
+                         site,
+                         enqueue.getLoc(),
                          {enqueue}});
         continue;
       }
@@ -251,8 +252,7 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
         builder, root.representativeLocation, builder.getI1Type(),
         builder.getBoolAttr(false));
     Value value = sim::SimRefLoadOp::create(
-        builder, root.representativeLocation, root.valueType,
-        root.destination);
+        builder, root.representativeLocation, root.valueType, root.destination);
     initial[rootIndex] = RootState{valid, value};
   }
   incoming[activationEntry] = std::move(initial);
@@ -282,9 +282,9 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
         continue;
       auto enqueue = cast<sim::SimNBAEnqueueOp>(&operation);
       builder.setInsertionPoint(enqueue);
-      Value valid = arith::ConstantOp::create(
-          builder, enqueue.getLoc(), builder.getI1Type(),
-          builder.getBoolAttr(true));
+      Value valid = arith::ConstantOp::create(builder, enqueue.getLoc(),
+                                              builder.getI1Type(),
+                                              builder.getBoolAttr(true));
       state[found->second] = RootState{valid, enqueue.getValue()};
       enqueue.erase();
     }
@@ -370,10 +370,10 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
       bool trueExits = conditional.getTrueDest() == wait;
       Block *trueDest = trueExits ? test : conditional.getTrueDest();
       Block *falseDest = trueExits ? conditional.getFalseDest() : test;
-      ValueRange trueOperands = trueExits ? ValueRange{}
-                                          : conditional.getTrueDestOperands();
-      ValueRange falseOperands = trueExits ? conditional.getFalseDestOperands()
-                                           : ValueRange{};
+      ValueRange trueOperands =
+          trueExits ? ValueRange{} : conditional.getTrueDestOperands();
+      ValueRange falseOperands =
+          trueExits ? conditional.getFalseDestOperands() : ValueRange{};
       cf::CondBranchOp::create(builder, conditional.getLoc(),
                                conditional.getCondition(), trueDest,
                                trueOperands, falseDest, falseOperands);

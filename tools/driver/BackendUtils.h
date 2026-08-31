@@ -17,8 +17,8 @@ llvm::CodeGenOptLevel getCodeGenOptLevel(uint32_t level);
 
 /// Creates a unique temporary next to `output` so publishing it is a rename
 /// within one directory, and therefore atomic.
-mlir::FailureOr<llvm::SmallString<256>> makeTemporaryBeside(llvm::StringRef output,
-                                                            llvm::StringRef suffix);
+mlir::FailureOr<llvm::SmallString<256>>
+makeTemporaryBeside(llvm::StringRef output, llvm::StringRef suffix);
 
 mlir::LogicalResult atomicallyReplace(llvm::StringRef temporary,
                                       llvm::StringRef output);

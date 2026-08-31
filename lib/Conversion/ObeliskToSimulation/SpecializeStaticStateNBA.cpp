@@ -118,11 +118,10 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
     // storage root.  Fixed slices of a wide register file still have constant
     // offsets and are independently eligible for direct plane access.
     SmallVector<uint64_t, 2> managedRoots;
-    bool supported = storageWidth && *storageWidth != 0 &&
-                     sim::getManagedHandleOffsets(storage.getType(),
-                                                  managedRoots) &&
-                     managedRoots.empty() &&
-                     !isa<FloatType>(storage.getType());
+    bool supported =
+        storageWidth && *storageWidth != 0 &&
+        sim::getManagedHandleOffsets(storage.getType(), managedRoots) &&
+        managedRoots.empty() && !isa<FloatType>(storage.getType());
     if (supported)
       stateEligible.insert(storage.getId());
     else if (missedRemarks)

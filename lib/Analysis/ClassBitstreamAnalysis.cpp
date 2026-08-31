@@ -214,8 +214,8 @@ ClassBitstreamAnalysis::getCastClosure(sim::ClassHandleType source,
       }
       state[index] = 1;
       pending.push_back({&schema, true, frame.root});
-      for (sim::ClassHandleType nested : llvm::reverse(
-               schema.nestedStaticTypes)) {
+      for (sim::ClassHandleType nested :
+           llvm::reverse(schema.nestedStaticTypes)) {
         sim::SimClassDeclOp nestedStatic = dispatch.lookup(nested);
         if (!nestedStatic)
           return declaration.emitOpError(

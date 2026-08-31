@@ -453,10 +453,12 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (queue.getBound()) {
       Value size = sim::SimContainerSizeOp::create(
           builder, location, builder.getI64Type(), *receiver);
-      Value zero = arith::ConstantOp::create(
-          builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
-      Value one = arith::ConstantOp::create(
-          builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+      Value zero =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(0));
+      Value one =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(1));
       Value bound = arith::ConstantOp::create(
           builder, location, builder.getI64Type(),
           builder.getI64IntegerAttr(queue.getBound()));
@@ -467,14 +469,13 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
           builder, location, arith::CmpIPredicate::sge, *convertedIndex, zero);
       Value withinBound = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ule, *convertedIndex, bound);
-      Value valid = arith::AndIOp::create(builder, location, nonnegative,
-                                         withinBound);
-      Value trimNeeded =
-          arith::AndIOp::create(builder, location, full, valid);
+      Value valid =
+          arith::AndIOp::create(builder, location, nonnegative, withinBound);
+      Value trimNeeded = arith::AndIOp::create(builder, location, full, valid);
       Block *trim = addBlock();
       Block *insert = addBlock();
-      cf::CondBranchOp::create(builder, location, trimNeeded, trim, ValueRange{},
-                               insert, ValueRange{});
+      cf::CondBranchOp::create(builder, location, trimNeeded, trim,
+                               ValueRange{}, insert, ValueRange{});
       setCurrent(trim);
       Value last = arith::SubIOp::create(builder, location, size, one);
       sim::SimQueueDeleteOp::create(builder, location, *receiver, last);

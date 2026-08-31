@@ -8524,8 +8524,10 @@ TEST(RuntimeInternals, ComputedWaitAcceptsDynamicEventCapture) {
   const obelisk_rt_observer_capture_abi_v1 captureABI{
       OBELISK_RT_OBSERVER_CAPTURE_EVENT, 1};
   obelisk_rt_observer_descriptor_v1 observer{
-      observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
-      nullptr, 0};
+      observerID, &captureABI,
+      1,          1,
+      0,          OBELISK_RT_OBSERVER_NO_BYTECODE,
+      nullptr,    0};
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
   execution.observers = &observer;
@@ -8556,20 +8558,17 @@ TEST(RuntimeInternals, ComputedWaitAcceptsDynamicEventCapture) {
                  sizeof(ObserverWait),
                  0};
   record.observer = {
-      observerID,
-      0,
-      1,
-      0,
-      0,
-      static_cast<uint32_t>(offsetof(ObserverWait, previousValue)),
+      observerID, 0,
+      1,          0,
+      0,          static_cast<uint32_t>(offsetof(ObserverWait, previousValue)),
       0};
   record.capture.stable_id =
       OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG | UINT64_C(17);
   record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
                    OBELISK_RT_WAIT_EDGE_CHANGE,
                    OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY};
-  EXPECT_TRUE(obelisk_rt_validate_computed_wait_record(
-      &execution, &record.wait, sizeof(record)));
+  EXPECT_TRUE(obelisk_rt_validate_computed_wait_record(&execution, &record.wait,
+                                                       sizeof(record)));
 
   // The all-ones null sentinel is not a schedulable event capture.
   record.capture.stable_id = UINT64_MAX;

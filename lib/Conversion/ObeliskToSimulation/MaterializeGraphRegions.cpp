@@ -421,8 +421,9 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
     llvm::sort(boundaries);
     boundaries.erase(std::unique(boundaries.begin(), boundaries.end()),
                      boundaries.end());
-    for (auto boundary : llvm::zip(ArrayRef<uint64_t>(boundaries).drop_back(),
-                                   ArrayRef<uint64_t>(boundaries).drop_front())) {
+    for (auto boundary :
+         llvm::zip(ArrayRef<uint64_t>(boundaries).drop_back(),
+                   ArrayRef<uint64_t>(boundaries).drop_front())) {
       uint64_t low = std::get<0>(boundary);
       uint64_t high = std::get<1>(boundary);
       SmallVector<uint32_t> writers;
@@ -463,8 +464,8 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
           continue;
         }
       }
-      ownedRoots.push_back({descriptor.first, descriptor.second, low,
-                            high - low, owner, tier});
+      ownedRoots.push_back(
+          {descriptor.first, descriptor.second, low, high - low, owner, tier});
     }
   }
   SmallVector<Attribute> roots;

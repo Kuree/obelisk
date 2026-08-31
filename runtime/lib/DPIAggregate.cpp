@@ -69,8 +69,8 @@ bool walkPlan(const int64_t *records, uint64_t recordCount, uint64_t bitBase,
           !addMultiply(frame.byteBase, repetition, frame.byteStride,
                        repeatedByte))
         return false;
-      stack.push_back({frame.records, frame.recordCount, 0, repeatedBit,
-                       repeatedByte});
+      stack.push_back(
+          {frame.records, frame.recordCount, 0, repeatedBit, repeatedByte});
       continue;
     }
     if (frame.index == frame.recordCount) {
@@ -84,8 +84,8 @@ bool walkPlan(const int64_t *records, uint64_t recordCount, uint64_t bitBase,
           record[6] > 1 || record[7] != 0)
         return false;
       uint64_t leafBit = 0, leafByte = 0;
-      if (!addMultiply(frame.bitBase, 1,
-                       static_cast<uint64_t>(record[1]), leafBit) ||
+      if (!addMultiply(frame.bitBase, 1, static_cast<uint64_t>(record[1]),
+                       leafBit) ||
           !addMultiply(frame.byteBase, 1, static_cast<uint64_t>(record[2]),
                        leafByte) ||
           !visit(leafBit, leafByte, static_cast<uint32_t>(record[3]),
@@ -108,16 +108,9 @@ bool walkPlan(const int64_t *records, uint64_t recordCount, uint64_t bitBase,
                      repeatByteBase))
       return false;
     frame.index += bodyRecords + 1;
-    stack.push_back({record + recordWords,
-                     bodyRecords,
-                     0,
-                     repeatBitBase,
-                     repeatByteBase,
-                     true,
-                     0,
-                     static_cast<uint64_t>(record[3]),
-                     record[4],
-                     static_cast<uint64_t>(record[5])});
+    stack.push_back({record + recordWords, bodyRecords, 0, repeatBitBase,
+                     repeatByteBase, true, 0, static_cast<uint64_t>(record[3]),
+                     record[4], static_cast<uint64_t>(record[5])});
   }
   return true;
 }
@@ -412,8 +405,8 @@ void enumerateAggregateStringRoots(void *opaque, ManagedRootVisit visit,
         64 > roots->totalBitWidth - bit || bit / 8 > roots->planeSize ||
         sizeof(obelisk_rt_managed_word_v1) > roots->planeSize - bit / 8)
       return false;
-    auto *slot = reinterpret_cast<obelisk_rt_managed_word_v1 *>(
-        roots->value + bit / 8);
+    auto *slot =
+        reinterpret_cast<obelisk_rt_managed_word_v1 *>(roots->value + bit / 8);
     // Inline strings are immediate values. Heap strings use an aligned object
     // pointer word and can be visited in place so a moving collector updates
     // the aggregate plane before dispatch or copy-out resumes.
@@ -437,8 +430,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_push(
       !outHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outHandle = nullptr;
-  auto validate = [&](uint64_t bit, uint64_t, uint32_t category,
-                      uint32_t width, uint32_t) {
+  auto validate = [&](uint64_t bit, uint64_t, uint32_t category, uint32_t width,
+                      uint32_t) {
     return category != 8 ||
            (width == 64 && bit % 64 == 0 && bit <= totalBitWidth &&
             64 <= totalBitWidth - bit && bit / 8 <= planeSize &&
@@ -466,8 +459,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_push(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_pop(
-    obelisk_rt_context *context, void *handle) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dpi_aggregate_roots_pop(obelisk_rt_context *context,
+                                      void *handle) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
   if (!handle)
@@ -554,8 +548,7 @@ bool makeOpenArrayPlan(uint32_t elementBitWidth, uint64_t elementCount,
 
 } // namespace
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
+extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
     obelisk_rt_context *context, void *value, uint64_t planeSize,
     uint64_t totalBitWidth, uint32_t elementBitWidth, uint64_t elementCount,
     uint32_t reverseElements, const int64_t *unpackedRanges,
@@ -565,8 +558,7 @@ obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
     return OBELISK_RT_INVALID_ARGUMENT;
   *outHandle = nullptr;
   if (elementCount == 0)
-    return totalBitWidth == 0 ? OBELISK_RT_OK
-                              : OBELISK_RT_INVALID_ARGUMENT;
+    return totalBitWidth == 0 ? OBELISK_RT_OK : OBELISK_RT_INVALID_ARGUMENT;
   std::vector<int64_t> plan;
   OBELISK_RT_TRY {
     if (!makeOpenArrayPlan(elementBitWidth, elementCount, reverseElements,
@@ -574,12 +566,10 @@ obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
                            elementPlan, elementPlanWords, plan))
       return OBELISK_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    return OBELISK_RT_OUT_OF_MEMORY;
-  }
-  return obelisk_rt_v1_dpi_aggregate_roots_push(
-      context, value, planeSize, totalBitWidth, plan.data(), plan.size(),
-      outHandle);
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  return obelisk_rt_v1_dpi_aggregate_roots_push(context, value, planeSize,
+                                                totalBitWidth, plan.data(),
+                                                plan.size(), outHandle);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_pack(
@@ -712,8 +702,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_state_alloc(
     slots.push_back({bit, OBELISK_RT_MANAGED_ROOT_KIND_STRING, 0});
     return true;
   };
-  if (!walkPlan(plan, planWords / recordWords, 0, 0, collect) ||
-      slots.empty())
+  if (!walkPlan(plan, planWords / recordWords, 0, 0, collect) || slots.empty())
     return OBELISK_RT_INVALID_ARGUMENT;
   if (!std::is_sorted(slots.begin(), slots.end(),
                       [](const auto &lhs, const auto &rhs) {

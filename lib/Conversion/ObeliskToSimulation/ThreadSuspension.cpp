@@ -355,8 +355,7 @@ public:
         // of the matching clock occurrence. Their observer token is a static
         // planning descriptor, never resumed process state; its captures are
         // serialized by the clock suspension itself.
-        if (timingCheckCoordinator &&
-            isa<sim::ObserverType>(value.getType()))
+        if (timingCheckCoordinator && isa<sim::ObserverType>(value.getType()))
           continue;
         // Entry arguments are the process captures, which the scheduler
         // re-supplies on every activation.

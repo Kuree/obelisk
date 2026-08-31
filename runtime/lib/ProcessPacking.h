@@ -1,4 +1,5 @@
-//===- ProcessPacking.h - Packed plane access and handle decoding -*- C++ -*-===//
+//===- ProcessPacking.h - Packed plane access and handle decoding -*- C++
+//-*-===//
 //
 // Bit-plane accessors and stable-handle decoding shared by the process and
 // scheduler translation units.  These are leaf helpers on the hot path, so
@@ -15,7 +16,8 @@
 #include <cstring>
 #include <vector>
 
-inline bool decodeNativeAutomatic(uint64_t handle, uint32_t &id, int64_t &offset) {
+inline bool decodeNativeAutomatic(uint64_t handle, uint32_t &id,
+                                  int64_t &offset) {
   obelisk_rt_stable_handle_v1 decoded;
   if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
@@ -60,8 +62,8 @@ inline uint64_t packedWidthMask(uint64_t bitWidth) {
   return bitWidth == 64 ? UINT64_MAX : (uint64_t{1} << bitWidth) - 1;
 }
 
-inline uint64_t loadPackedBits(const std::vector<uint64_t> &plane, uint64_t bitOffset,
-                        uint64_t bitWidth) {
+inline uint64_t loadPackedBits(const std::vector<uint64_t> &plane,
+                               uint64_t bitOffset, uint64_t bitWidth) {
   uint64_t limb = bitOffset / 64;
   uint32_t shift = bitOffset % 64;
   uint64_t value = plane[limb] >> shift;
@@ -71,7 +73,7 @@ inline uint64_t loadPackedBits(const std::vector<uint64_t> &plane, uint64_t bitO
 }
 
 inline uint64_t loadPackedBytes(const uint8_t *plane, uint64_t bitOffset,
-                         uint64_t bitWidth) {
+                                uint64_t bitWidth) {
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;
@@ -116,7 +118,7 @@ inline uint64_t loadPackedBytes(const uint8_t *plane, uint64_t bitOffset,
 }
 
 inline void storePackedBits(std::vector<uint64_t> &plane, uint64_t bitOffset,
-                     uint64_t bitWidth, uint64_t value) {
+                            uint64_t bitWidth, uint64_t value) {
   uint64_t limb = bitOffset / 64;
   uint32_t shift = bitOffset % 64;
   uint64_t mask = packedWidthMask(bitWidth);
@@ -130,15 +132,15 @@ inline void storePackedBits(std::vector<uint64_t> &plane, uint64_t bitOffset,
   }
 }
 
-inline void storePackedBytes(uint8_t *plane, uint64_t bitOffset, uint64_t bitWidth,
-                      uint64_t value) {
+inline void storePackedBytes(uint8_t *plane, uint64_t bitOffset,
+                             uint64_t bitWidth, uint64_t value) {
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;
   if (byteCount == 1) {
     uint8_t mask = static_cast<uint8_t>(packedWidthMask(bitWidth) << shift);
-    plane[firstByte] = static_cast<uint8_t>(
-        (plane[firstByte] & ~mask) | ((value << shift) & mask));
+    plane[firstByte] = static_cast<uint8_t>((plane[firstByte] & ~mask) |
+                                            ((value << shift) & mask));
     return;
   }
   if (shift == 0) {

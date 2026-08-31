@@ -1,4 +1,5 @@
-//===- SimulationOpDefs2.cpp - Generated op definitions, shard 2 ---*- C++ -*-===//
+//===- SimulationOpDefs2.cpp - Generated op definitions, shard 2 ---*- C++
+//-*-===//
 //
 // One shard of the TableGen'd op definitions for the simulation dialect.
 // Compiling every op class in a single translation unit dominates the
@@ -7,9 +8,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 

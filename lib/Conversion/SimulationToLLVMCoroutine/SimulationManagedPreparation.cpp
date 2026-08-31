@@ -366,8 +366,8 @@ prepareManagedClassInventory(ModuleOp module,
       if (method)
         if (auto signature = method.getSignatureId())
           effectiveMethodsBySignature.try_emplace(
-              *signature, std::pair<uint64_t, sim::SimClassMethodDeclOp>(
-                              slot, method));
+              *signature,
+              std::pair<uint64_t, sim::SimClassMethodDeclOp>(slot, method));
     for (sim::SimClassDeclOp interface : interfaces) {
       ManagedClassLayout::Interface dispatch;
       dispatch.declaration = interface;
@@ -385,10 +385,10 @@ prepareManagedClassInventory(ModuleOp module,
         uint64_t ordinal = *method.getInterfaceOrdinal();
         if (ordinal >= dispatch.methodSlots.size())
           return method.emitError("interface method ordinals are not dense");
-        auto effective = method.getSignatureId()
-                             ? effectiveMethodsBySignature.find(
-                                   *method.getSignatureId())
-                             : effectiveMethodsBySignature.end();
+        auto effective =
+            method.getSignatureId()
+                ? effectiveMethodsBySignature.find(*method.getSignatureId())
+                : effectiveMethodsBySignature.end();
         if (effective == effectiveMethodsBySignature.end())
           continue;
         uint64_t slot = effective->second.first;
@@ -451,379 +451,400 @@ prepareManagedClassInventory(ModuleOp module,
   // topological order, so materialize each class exactly once.
   for (SharedClass *shared : orderedClasses) {
     if (failed([&]() -> LogicalResult {
-      sim::SimClassDeclOp declaration = shared->declaration;
-      ManagedClassLayout &layout = layouts[declaration.getSymName()];
-      std::string prefix = declaration.getSymName().str();
-      std::string entriesName = prefix + ".__obelisk_trace_entries";
-      std::string traceName = prefix + ".__obelisk_trace_layout";
-      std::string randomEdgesName = prefix + ".__obelisk_random_edges";
-      std::string randomVariablesName = prefix + ".__obelisk_random_variables";
-      std::string randomLayoutName = prefix + ".__obelisk_random_layout";
-      std::string methodsName = prefix + ".__obelisk_methods";
-      std::string interfacesName = prefix + ".__obelisk_interfaces";
-      std::string debugName = prefix + ".__obelisk_debug_name";
-      std::string descriptorName = managedClassDescriptorName(
-          FlatSymbolRefAttr::get(context, declaration.getSymName()));
-      Location location = declaration.getLoc();
+          sim::SimClassDeclOp declaration = shared->declaration;
+          ManagedClassLayout &layout = layouts[declaration.getSymName()];
+          std::string prefix = declaration.getSymName().str();
+          std::string entriesName = prefix + ".__obelisk_trace_entries";
+          std::string traceName = prefix + ".__obelisk_trace_layout";
+          std::string randomEdgesName = prefix + ".__obelisk_random_edges";
+          std::string randomVariablesName =
+              prefix + ".__obelisk_random_variables";
+          std::string randomLayoutName = prefix + ".__obelisk_random_layout";
+          std::string methodsName = prefix + ".__obelisk_methods";
+          std::string interfacesName = prefix + ".__obelisk_interfaces";
+          std::string debugName = prefix + ".__obelisk_debug_name";
+          std::string descriptorName = managedClassDescriptorName(
+              FlatSymbolRefAttr::get(context, declaration.getSymName()));
+          Location location = declaration.getLoc();
 
-      Type entriesType =
-          LLVM::LLVMArrayType::get(traceEntryType, layout.tracedFields.size());
-      if (!layout.tracedFields.empty())
-        makeConstantGlobal(
-            module, location, entriesType, entriesName, LLVM::Linkage::Internal,
-            8, [&](OpBuilder &builder) {
-              Value array =
-                  LLVM::ZeroOp::create(builder, location, entriesType);
-              for (auto [index, field] : llvm::enumerate(layout.tracedFields)) {
-                Value entry =
-                    LLVM::ZeroOp::create(builder, location, traceEntryType);
-                entry = insertValue(
-                    builder, location, entry,
-                    llvmConstant(builder, location, i64, field.offset), 0);
-                entry = insertValue(builder, location, entry,
+          Type entriesType = LLVM::LLVMArrayType::get(
+              traceEntryType, layout.tracedFields.size());
+          if (!layout.tracedFields.empty())
+            makeConstantGlobal(
+                module, location, entriesType, entriesName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array =
+                      LLVM::ZeroOp::create(builder, location, entriesType);
+                  for (auto [index, field] :
+                       llvm::enumerate(layout.tracedFields)) {
+                    Value entry =
+                        LLVM::ZeroOp::create(builder, location, traceEntryType);
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(builder, location, i64, field.offset), 0);
+                    entry =
+                        insertValue(builder, location, entry,
                                     llvmConstant(builder, location, i64, 1), 2);
-                entry = insertValue(builder, location, entry,
-                                    llvmConstant(builder, location, i32,
-                                                 field.weak
-                                                     ? OBELISK_RT_TRACE_WEAK
-                                                     : OBELISK_RT_TRACE_STRONG),
-                                    3);
-                entry = insertValue(
-                    builder, location, entry,
-                    llvmConstant(builder, location, i32, field.slotKind), 4);
-                array = LLVM::InsertValueOp::create(
-                    builder, location, array, entry,
-                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
-              }
-              return array;
-            });
-      makeConstantGlobal(
-          module, location, traceLayoutType, traceName, LLVM::Linkage::Internal,
-          8, [&](OpBuilder &builder) {
-            Value trace =
-                LLVM::ZeroOp::create(builder, location, traceLayoutType);
-            trace = insertValue(
-                builder, location, trace,
-                llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
-            trace = insertValue(
-                builder, location, trace,
-                llvmConstant(builder, location, i64, layout.size), 2);
-            trace = insertValue(
-                builder, location, trace,
-                llvmConstant(builder, location, i64, layout.alignment), 3);
-            if (!layout.tracedFields.empty())
-              trace = insertValue(builder, location, trace,
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(builder, location, i32,
+                                     field.weak ? OBELISK_RT_TRACE_WEAK
+                                                : OBELISK_RT_TRACE_STRONG),
+                        3);
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(builder, location, i32, field.slotKind),
+                        4);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, entry,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+          makeConstantGlobal(
+              module, location, traceLayoutType, traceName,
+              LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                Value trace =
+                    LLVM::ZeroOp::create(builder, location, traceLayoutType);
+                trace = insertValue(
+                    builder, location, trace,
+                    llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                    0);
+                trace = insertValue(
+                    builder, location, trace,
+                    llvmConstant(builder, location, i64, layout.size), 2);
+                trace = insertValue(
+                    builder, location, trace,
+                    llvmConstant(builder, location, i64, layout.alignment), 3);
+                if (!layout.tracedFields.empty())
+                  trace =
+                      insertValue(builder, location, trace,
                                   LLVM::AddressOfOp::create(
                                       builder, location, pointer, entriesName),
                                   4);
-            trace = insertValue(builder, location, trace,
-                                llvmConstant(builder, location, i64,
-                                             layout.tracedFields.size()),
-                                5);
-            return trace;
-          });
-
-      Type randomEdgesType =
-          LLVM::LLVMArrayType::get(randomEdgeType, layout.randomEdges.size());
-      if (!layout.randomEdges.empty()) {
-        makeConstantGlobal(
-            module, location, randomEdgesType, randomEdgesName,
-            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
-              Value array =
-                  LLVM::ZeroOp::create(builder, location, randomEdgesType);
-              for (auto [index, edge] : llvm::enumerate(layout.randomEdges)) {
-                Value record =
-                    LLVM::ZeroOp::create(builder, location, randomEdgeType);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, edge.handleOffset), 0);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, edge.modeOffset), 1);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, edge.modeMask), 2);
-                array = LLVM::InsertValueOp::create(
-                    builder, location, array, record,
-                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
-              }
-              return array;
-            });
-      }
-      Type randomVariablesType = LLVM::LLVMArrayType::get(
-          randomVariableType, layout.randomVariables.size());
-      if (!layout.randomVariables.empty())
-        makeConstantGlobal(
-            module, location, randomVariablesType, randomVariablesName,
-            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
-              Value array =
-                  LLVM::ZeroOp::create(builder, location, randomVariablesType);
-              for (auto [index, variable] :
-                   llvm::enumerate(layout.randomVariables)) {
-                Value record =
-                    LLVM::ZeroOp::create(builder, location, randomVariableType);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, variable.valueOffset),
-                    0);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, variable.modeOffset),
-                    1);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i64, variable.modeMask), 2);
-                record = insertValue(builder, location, record,
-                                     llvmConstant(builder, location, i64,
-                                                  variable.randcKeyOffset),
-                                     3);
-                record = insertValue(builder, location, record,
-                                     llvmConstant(builder, location, i64,
-                                                  variable.randcPositionOffset),
-                                     4);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i32, variable.bitWidth), 5);
-                record = insertValue(
-                    builder, location, record,
-                    llvmConstant(builder, location, i32, variable.flags), 6);
-                array = LLVM::InsertValueOp::create(
-                    builder, location, array, record,
-                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
-              }
-              return array;
-            });
-      if (!layout.randomEdges.empty() || !layout.randomVariables.empty())
-        makeConstantGlobal(
-            module, location, randomLayoutType, randomLayoutName,
-            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
-              Value random =
-                  LLVM::ZeroOp::create(builder, location, randomLayoutType);
-              random = insertValue(
-                  builder, location, random,
-                  llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
-              if (!layout.randomEdges.empty())
-                random = insertValue(
-                    builder, location, random,
-                    LLVM::AddressOfOp::create(builder, location, pointer,
-                                              randomEdgesName),
-                    2);
-              random = insertValue(builder, location, random,
-                                   llvmConstant(builder, location, i64,
-                                                layout.randomEdges.size()),
-                                   3);
-              if (!layout.randomVariables.empty())
-                random = insertValue(
-                    builder, location, random,
-                    LLVM::AddressOfOp::create(builder, location, pointer,
-                                              randomVariablesName),
-                    4);
-              random = insertValue(builder, location, random,
-                                   llvmConstant(builder, location, i64,
-                                                layout.randomVariables.size()),
-                                   5);
-              return random;
-            });
-
-      Type methodsType =
-          LLVM::LLVMArrayType::get(methodType, layout.methods.size());
-      if (!layout.methods.empty())
-        makeConstantGlobal(
-            module, location, methodsType, methodsName, LLVM::Linkage::Internal,
-            8, [&](OpBuilder &builder) {
-              Value array =
-                  LLVM::ZeroOp::create(builder, location, methodsType);
-              for (auto indexedMethod : llvm::enumerate(layout.methods)) {
-                auto index = indexedMethod.index();
-                auto method = indexedMethod.value();
-                // Early virtual-family DCE can leave a slot unused in one
-                // branch while a sibling still needs the stable family slot.
-                // Keep the zero descriptor as an explicit unreachable hole;
-                // runtime validation and dispatch reject attempts to use it.
-                if (!method)
-                  continue;
-                Value entry =
-                    LLVM::ZeroOp::create(builder, location, methodType);
-                entry = insertValue(builder, location, entry,
+                trace = insertValue(builder, location, trace,
                                     llvmConstant(builder, location, i64,
-                                                 *method.getSignatureId()),
+                                                 layout.tracedFields.size()),
+                                    5);
+                return trace;
+              });
+
+          Type randomEdgesType = LLVM::LLVMArrayType::get(
+              randomEdgeType, layout.randomEdges.size());
+          if (!layout.randomEdges.empty()) {
+            makeConstantGlobal(
+                module, location, randomEdgesType, randomEdgesName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array =
+                      LLVM::ZeroOp::create(builder, location, randomEdgesType);
+                  for (auto [index, edge] :
+                       llvm::enumerate(layout.randomEdges)) {
+                    Value record =
+                        LLVM::ZeroOp::create(builder, location, randomEdgeType);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, edge.handleOffset),
+                        0);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, edge.modeOffset),
+                        1);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, edge.modeMask), 2);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, record,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+          }
+          Type randomVariablesType = LLVM::LLVMArrayType::get(
+              randomVariableType, layout.randomVariables.size());
+          if (!layout.randomVariables.empty())
+            makeConstantGlobal(
+                module, location, randomVariablesType, randomVariablesName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array = LLVM::ZeroOp::create(builder, location,
+                                                     randomVariablesType);
+                  for (auto [index, variable] :
+                       llvm::enumerate(layout.randomVariables)) {
+                    Value record = LLVM::ZeroOp::create(builder, location,
+                                                        randomVariableType);
+                    record = insertValue(builder, location, record,
+                                         llvmConstant(builder, location, i64,
+                                                      variable.valueOffset),
+                                         0);
+                    record = insertValue(builder, location, record,
+                                         llvmConstant(builder, location, i64,
+                                                      variable.modeOffset),
+                                         1);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, variable.modeMask),
+                        2);
+                    record = insertValue(builder, location, record,
+                                         llvmConstant(builder, location, i64,
+                                                      variable.randcKeyOffset),
+                                         3);
+                    record =
+                        insertValue(builder, location, record,
+                                    llvmConstant(builder, location, i64,
+                                                 variable.randcPositionOffset),
+                                    4);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i32, variable.bitWidth),
+                        5);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i32, variable.flags),
+                        6);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, record,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+          if (!layout.randomEdges.empty() || !layout.randomVariables.empty())
+            makeConstantGlobal(
+                module, location, randomLayoutType, randomLayoutName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value random =
+                      LLVM::ZeroOp::create(builder, location, randomLayoutType);
+                  random = insertValue(
+                      builder, location, random,
+                      llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                      0);
+                  if (!layout.randomEdges.empty())
+                    random = insertValue(
+                        builder, location, random,
+                        LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  randomEdgesName),
+                        2);
+                  random = insertValue(builder, location, random,
+                                       llvmConstant(builder, location, i64,
+                                                    layout.randomEdges.size()),
+                                       3);
+                  if (!layout.randomVariables.empty())
+                    random = insertValue(
+                        builder, location, random,
+                        LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  randomVariablesName),
+                        4);
+                  random =
+                      insertValue(builder, location, random,
+                                  llvmConstant(builder, location, i64,
+                                               layout.randomVariables.size()),
+                                  5);
+                  return random;
+                });
+
+          Type methodsType =
+              LLVM::LLVMArrayType::get(methodType, layout.methods.size());
+          if (!layout.methods.empty())
+            makeConstantGlobal(
+                module, location, methodsType, methodsName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array =
+                      LLVM::ZeroOp::create(builder, location, methodsType);
+                  for (auto indexedMethod : llvm::enumerate(layout.methods)) {
+                    auto index = indexedMethod.index();
+                    auto method = indexedMethod.value();
+                    // Early virtual-family DCE can leave a slot unused in one
+                    // branch while a sibling still needs the stable family
+                    // slot. Keep the zero descriptor as an explicit unreachable
+                    // hole; runtime validation and dispatch reject attempts to
+                    // use it.
+                    if (!method)
+                      continue;
+                    Value entry =
+                        LLVM::ZeroOp::create(builder, location, methodType);
+                    entry = insertValue(builder, location, entry,
+                                        llvmConstant(builder, location, i64,
+                                                     *method.getSignatureId()),
+                                        0);
+                    uint32_t flags =
+                        method.getIsTask() ? OBELISK_RT_METHOD_TASK : 0;
+                    if (method.getIsPure())
+                      flags |= OBELISK_RT_METHOD_PURE;
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(builder, location, i32, flags), 1);
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(
+                            builder, location, i32,
+                            [&] {
+                              if (auto implementation =
+                                      method.getImplementation()) {
+                                auto found =
+                                    bytecodeFunctions.find(*implementation);
+                                if (found != bytecodeFunctions.end())
+                                  return found->second;
+                              }
+                              return uint32_t{OBELISK_RT_METHOD_NO_BYTECODE};
+                            }()),
+                        2);
+                    if (!method.getIsPure() && !bytecodeOnly)
+                      entry = insertValue(
+                          builder, location, entry,
+                          LLVM::AddressOfOp::create(
+                              builder, location, pointer,
+                              managedMethodThunkName(method.getSymName())),
+                          3);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, entry,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+
+          SmallVector<std::string> interfaceSlotNames;
+          for (auto [index, interface] : llvm::enumerate(layout.interfaces)) {
+            std::string slotsName = prefix + ".__obelisk_interface_" +
+                                    llvm::Twine(index).str() + "_slots";
+            interfaceSlotNames.push_back(slotsName);
+            Type slotsType =
+                LLVM::LLVMArrayType::get(i32, interface.methodSlots.size());
+            if (!interface.methodSlots.empty())
+              makeConstantGlobal(
+                  module, location, slotsType, slotsName,
+                  LLVM::Linkage::Internal, 4, [&](OpBuilder &builder) {
+                    Value array =
+                        LLVM::ZeroOp::create(builder, location, slotsType);
+                    for (auto [ordinal, slot] :
+                         llvm::enumerate(interface.methodSlots))
+                      array = LLVM::InsertValueOp::create(
+                          builder, location, array,
+                          llvmConstant(builder, location, i32, slot),
+                          ArrayRef<int64_t>{static_cast<int64_t>(ordinal)});
+                    return array;
+                  });
+          }
+          Type interfacesType =
+              LLVM::LLVMArrayType::get(interfaceType, layout.interfaces.size());
+          if (!layout.interfaces.empty())
+            makeConstantGlobal(
+                module, location, interfacesType, interfacesName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array =
+                      LLVM::ZeroOp::create(builder, location, interfacesType);
+                  for (auto [index, interface] :
+                       llvm::enumerate(layout.interfaces)) {
+                    Value record =
+                        LLVM::ZeroOp::create(builder, location, interfaceType);
+                    record =
+                        insertValue(builder, location, record,
+                                    llvmConstant(builder, location, i64,
+                                                 interface.declaration.getId()),
                                     0);
+                    if (!interface.methodSlots.empty())
+                      record = insertValue(
+                          builder, location, record,
+                          LLVM::AddressOfOp::create(builder, location, pointer,
+                                                    interfaceSlotNames[index]),
+                          1);
+                    record =
+                        insertValue(builder, location, record,
+                                    llvmConstant(builder, location, i64,
+                                                 interface.methodSlots.size()),
+                                    2);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, record,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+
+          StringRef debug = declaration.getDebugNameAttr()
+                                ? declaration.getDebugNameAttr().getValue()
+                                : StringRef{};
+          if (!debug.empty())
+            makeByteArrayGlobal(module, location, debugName, debug);
+          makeConstantGlobal(
+              module, location, classType, descriptorName,
+              LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                Value descriptor =
+                    LLVM::ZeroOp::create(builder, location, classType);
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                    0);
                 uint32_t flags =
-                    method.getIsTask() ? OBELISK_RT_METHOD_TASK : 0;
-                if (method.getIsPure())
-                  flags |= OBELISK_RT_METHOD_PURE;
-                entry =
-                    insertValue(builder, location, entry,
+                    declaration.getIsAbstract() ? OBELISK_RT_CLASS_ABSTRACT : 0;
+                if (declaration.getIsInterface())
+                  flags |= OBELISK_RT_CLASS_INTERFACE;
+                if (declaration.getIsFinal())
+                  flags |= OBELISK_RT_CLASS_FINAL;
+                if (declaration.getWeakReferentAttr())
+                  flags |= OBELISK_RT_CLASS_WEAK_WRAPPER;
+                descriptor =
+                    insertValue(builder, location, descriptor,
                                 llvmConstant(builder, location, i32, flags), 1);
-                entry = insertValue(
-                    builder, location, entry,
-                    llvmConstant(
-                        builder, location, i32,
-                        [&] {
-                          if (auto implementation =
-                                  method.getImplementation()) {
-                            auto found =
-                                bytecodeFunctions.find(*implementation);
-                            if (found != bytecodeFunctions.end())
-                              return found->second;
-                          }
-                          return uint32_t{OBELISK_RT_METHOD_NO_BYTECODE};
-                        }()),
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64, declaration.getId()),
                     2);
-                if (!method.getIsPure() && !bytecodeOnly)
-                  entry = insertValue(
-                      builder, location, entry,
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64, layout.size), 3);
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64, layout.alignment), 4);
+                if (auto base = declaration.getBase())
+                  descriptor = insertValue(
+                      builder, location, descriptor,
                       LLVM::AddressOfOp::create(
                           builder, location, pointer,
-                          managedMethodThunkName(method.getSymName())),
-                      3);
-                array = LLVM::InsertValueOp::create(
-                    builder, location, array, entry,
-                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
-              }
-              return array;
-            });
-
-      SmallVector<std::string> interfaceSlotNames;
-      for (auto [index, interface] : llvm::enumerate(layout.interfaces)) {
-        std::string slotsName = prefix + ".__obelisk_interface_" +
-                                llvm::Twine(index).str() + "_slots";
-        interfaceSlotNames.push_back(slotsName);
-        Type slotsType =
-            LLVM::LLVMArrayType::get(i32, interface.methodSlots.size());
-        if (!interface.methodSlots.empty())
-          makeConstantGlobal(
-              module, location, slotsType, slotsName, LLVM::Linkage::Internal,
-              4, [&](OpBuilder &builder) {
-                Value array =
-                    LLVM::ZeroOp::create(builder, location, slotsType);
-                for (auto [ordinal, slot] :
-                     llvm::enumerate(interface.methodSlots))
-                  array = LLVM::InsertValueOp::create(
-                      builder, location, array,
-                      llvmConstant(builder, location, i32, slot),
-                      ArrayRef<int64_t>{static_cast<int64_t>(ordinal)});
-                return array;
-              });
-      }
-      Type interfacesType =
-          LLVM::LLVMArrayType::get(interfaceType, layout.interfaces.size());
-      if (!layout.interfaces.empty())
-        makeConstantGlobal(
-            module, location, interfacesType, interfacesName,
-            LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
-              Value array =
-                  LLVM::ZeroOp::create(builder, location, interfacesType);
-              for (auto [index, interface] :
-                   llvm::enumerate(layout.interfaces)) {
-                Value record =
-                    LLVM::ZeroOp::create(builder, location, interfaceType);
-                record =
-                    insertValue(builder, location, record,
-                                llvmConstant(builder, location, i64,
-                                             interface.declaration.getId()),
-                                0);
-                if (!interface.methodSlots.empty())
-                  record = insertValue(
-                      builder, location, record,
+                          managedClassDescriptorName(
+                              FlatSymbolRefAttr::get(context, *base))),
+                      5);
+                if (!layout.interfaces.empty())
+                  descriptor = insertValue(
+                      builder, location, descriptor,
                       LLVM::AddressOfOp::create(builder, location, pointer,
-                                                interfaceSlotNames[index]),
-                      1);
-                record = insertValue(builder, location, record,
-                                     llvmConstant(builder, location, i64,
-                                                  interface.methodSlots.size()),
-                                     2);
-                array = LLVM::InsertValueOp::create(
-                    builder, location, array, record,
-                    ArrayRef<int64_t>{static_cast<int64_t>(index)});
-              }
-              return array;
-            });
-
-      StringRef debug = declaration.getDebugNameAttr()
-                            ? declaration.getDebugNameAttr().getValue()
-                            : StringRef{};
-      if (!debug.empty())
-        makeByteArrayGlobal(module, location, debugName, debug);
-      makeConstantGlobal(
-          module, location, classType, descriptorName, LLVM::Linkage::Internal,
-          8, [&](OpBuilder &builder) {
-            Value descriptor =
-                LLVM::ZeroOp::create(builder, location, classType);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
-            uint32_t flags =
-                declaration.getIsAbstract() ? OBELISK_RT_CLASS_ABSTRACT : 0;
-            if (declaration.getIsInterface())
-              flags |= OBELISK_RT_CLASS_INTERFACE;
-            if (declaration.getIsFinal())
-              flags |= OBELISK_RT_CLASS_FINAL;
-            if (declaration.getWeakReferentAttr())
-              flags |= OBELISK_RT_CLASS_WEAK_WRAPPER;
-            descriptor =
-                insertValue(builder, location, descriptor,
-                            llvmConstant(builder, location, i32, flags), 1);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, declaration.getId()), 2);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, layout.size), 3);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, layout.alignment), 4);
-            if (auto base = declaration.getBase())
-              descriptor =
-                  insertValue(builder, location, descriptor,
-                              LLVM::AddressOfOp::create(
-                                  builder, location, pointer,
-                                  managedClassDescriptorName(
-                                      FlatSymbolRefAttr::get(context, *base))),
-                              5);
-            if (!layout.interfaces.empty())
-              descriptor =
-                  insertValue(builder, location, descriptor,
-                              LLVM::AddressOfOp::create(
-                                  builder, location, pointer, interfacesName),
-                              6);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, layout.interfaces.size()),
-                7);
-            descriptor = insertValue(builder, location, descriptor,
-                                     LLVM::AddressOfOp::create(
-                                         builder, location, pointer, traceName),
-                                     8);
-            if (!layout.methods.empty())
-              descriptor =
-                  insertValue(builder, location, descriptor,
-                              LLVM::AddressOfOp::create(builder, location,
-                                                        pointer, methodsName),
-                              9);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, layout.methods.size()),
-                10);
-            if (!debug.empty())
-              descriptor =
-                  insertValue(builder, location, descriptor,
-                              LLVM::AddressOfOp::create(builder, location,
-                                                        pointer, debugName),
-                              11);
-            descriptor = insertValue(
-                builder, location, descriptor,
-                llvmConstant(builder, location, i64, debug.size()), 12);
-            if (!layout.randomEdges.empty() || !layout.randomVariables.empty())
-              descriptor =
-                  insertValue(builder, location, descriptor,
-                              LLVM::AddressOfOp::create(
-                                  builder, location, pointer, randomLayoutName),
-                              13);
-            return descriptor;
-          });
-      return success();
-    }()))
+                                                interfacesName),
+                      6);
+                descriptor = insertValue(builder, location, descriptor,
+                                         llvmConstant(builder, location, i64,
+                                                      layout.interfaces.size()),
+                                         7);
+                descriptor =
+                    insertValue(builder, location, descriptor,
+                                LLVM::AddressOfOp::create(builder, location,
+                                                          pointer, traceName),
+                                8);
+                if (!layout.methods.empty())
+                  descriptor =
+                      insertValue(builder, location, descriptor,
+                                  LLVM::AddressOfOp::create(
+                                      builder, location, pointer, methodsName),
+                                  9);
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64, layout.methods.size()),
+                    10);
+                if (!debug.empty())
+                  descriptor =
+                      insertValue(builder, location, descriptor,
+                                  LLVM::AddressOfOp::create(builder, location,
+                                                            pointer, debugName),
+                                  11);
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64, debug.size()), 12);
+                if (!layout.randomEdges.empty() ||
+                    !layout.randomVariables.empty())
+                  descriptor = insertValue(
+                      builder, location, descriptor,
+                      LLVM::AddressOfOp::create(builder, location, pointer,
+                                                randomLayoutName),
+                      13);
+                return descriptor;
+              });
+          return success();
+        }()))
       return failure();
   }
   return success();

@@ -2467,8 +2467,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*group),
         static_cast<uint32_t>(*groupCount), static_cast<uint32_t>(*flags),
         *rise, *fall, *turnoff, *pulseReject, *pulseError, packedValue.data(),
-        packedUnknown.data(), masks[0].data(), masks[1].data(),
-        masks[2].data(), masks[3].data(),
+        packedUnknown.data(), masks[0].data(), masks[1].data(), masks[2].data(),
+        masks[3].data(),
         exactTransitions ? packedPulseTransitions.data() : nullptr);
   }
   case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
@@ -2540,8 +2540,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto pulseFlags = scalar(15);
     auto pulseReject = scalar(16);
     auto pulseError = scalar(17);
-    if (!pulseFlags || !pulseReject || !pulseError ||
-        *pulseFlags > UINT32_MAX)
+    if (!pulseFlags || !pulseReject || !pulseError || *pulseFlags > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     Logic pulseTransitions = readLogic(
         frame.data, layoutAt(image, frame.function, inputRegister(18)));
@@ -2758,9 +2757,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return planes;
     };
     auto extractMask = [&](unsigned inputIndex) {
-      Logic source = readLogic(
-          frame.data, layoutAt(image, frame.function,
-                               inputRegister(inputIndex)));
+      Logic source = readLogic(frame.data, layoutAt(image, frame.function,
+                                                    inputRegister(inputIndex)));
       return extract(source).value;
     };
     Planes lowPlanes = extract(low);
@@ -2792,9 +2790,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                bitIndex;
           if (bit(sourceTransitions.value, sourceBit))
             pulseTransitions[(transitionIndex * width + bitIndex) / 8] |=
-                static_cast<uint8_t>(1u
-                                     << ((transitionIndex * width + bitIndex) %
-                                         8));
+                static_cast<uint8_t>(
+                    1u << ((transitionIndex * width + bitIndex) % 8));
         }
       return obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
@@ -3612,23 +3609,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         layout.elementCSize = read64(record + 56);
         layout.elementStringCount = read64(record + 64);
         uint64_t planWords = read64(record + 72);
-        uint64_t shapeWords = layout.storage == 2
-                                  ? uint64_t{dimensions} * 8
-                                  : uint64_t{0};
+        uint64_t shapeWords =
+            layout.storage == 2 ? uint64_t{dimensions} * 8 : uint64_t{0};
         if (planWords == 0 || planWords % 8 != 0 ||
             planWords > (UINT32_MAX - 80) / 8 ||
             uint64_t{dimensions} > (UINT32_MAX - 80 - planWords * 8) / 32 ||
             shapeWords >
-                (UINT32_MAX - 80 - planWords * 8 -
-                 uint64_t{dimensions} * 32) /
+                (UINT32_MAX - 80 - planWords * 8 - uint64_t{dimensions} * 32) /
                     8 ||
             recordSize != 80 + planWords * 8 + uint64_t{dimensions} * 32 +
                               shapeWords * 8 ||
             layout.storage > 2 || layout.elementWidth == 0 ||
             layout.fourState > 1 || layout.transportFourState > 1 ||
             (layout.storage == 1 && layout.transportFourState != 0) ||
-            layout.transportWidth == 0 ||
-            layout.elementCSize == 0 || layout.elementCAlignment == 0 ||
+            layout.transportWidth == 0 || layout.elementCSize == 0 ||
+            layout.elementCAlignment == 0 ||
             (layout.elementCAlignment & (layout.elementCAlignment - 1)) != 0 ||
             layout.elementStringCount > (UINT64_MAX - layout.elementCSize) / 8)
           return OBELISK_RT_INVALID_BYTECODE;
@@ -3644,12 +3639,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           layout.ranges.push_back(static_cast<int64_t>(
               read64(record + rangesOffset + 8 + uint64_t{dimension} * 16)));
         }
-        uint64_t sourceRangesOffset =
-            rangesOffset + uint64_t{dimensions} * 16;
+        uint64_t sourceRangesOffset = rangesOffset + uint64_t{dimensions} * 16;
         layout.sourceRanges.reserve(uint64_t{dimensions} * 2);
         for (uint32_t dimension = 0; dimension != dimensions; ++dimension) {
-          layout.sourceRanges.push_back(static_cast<int64_t>(read64(
-              record + sourceRangesOffset + uint64_t{dimension} * 16)));
+          layout.sourceRanges.push_back(static_cast<int64_t>(
+              read64(record + sourceRangesOffset + uint64_t{dimension} * 16)));
           layout.sourceRanges.push_back(static_cast<int64_t>(read64(
               record + sourceRangesOffset + 8 + uint64_t{dimension} * 16)));
         }
@@ -3762,8 +3756,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           // Recursive provenance can be rooted in a managed dynamic/queue
           // handle or in a fixed two-state aggregate of managed handles.
           return layout.kind == OBELISK_RT_DBREG_BITS ||
-                 (open.storage == 2 &&
-                  layout.kind == OBELISK_RT_DBREG_MANAGED);
+                 (open.storage == 2 && layout.kind == OBELISK_RT_DBREG_MANAGED);
         }
         if (abi.kind == 8)
           return layout.kind == OBELISK_RT_DBREG_STRING && layout.width == 64;
@@ -3884,10 +3877,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             designBytecodeDpiOpenPrepareRecursive(
                 address,
                 layout.transportFourState ? address + rootPlaneSize : nullptr,
-                rootPlaneSize, layout.transportWidth,
-                layout.transportFourState,
-                dpiEntries[index].direction != 0 ? 1 : 0,
-                layout.elementKind, layout.elementWidth, layout.fourState,
+                rootPlaneSize, layout.transportWidth, layout.transportFourState,
+                dpiEntries[index].direction != 0 ? 1 : 0, layout.elementKind,
+                layout.elementWidth, layout.fourState,
                 static_cast<int32_t>(layout.packedLeft),
                 static_cast<int32_t>(layout.packedRight), layout.elementCSize,
                 layout.elementCAlignment, layout.elementStringCount,
@@ -4009,12 +4001,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           return OBELISK_RT_INVALID_BYTECODE;
         storage.dimensions[dimension] = {
             static_cast<int32_t>(left), static_cast<int32_t>(right), stride,
-            storage.dynamic
-                ? OBELISK_RT_DPI_DIMENSION_RUNTIME |
-                      (storage.elementCount == 0
-                           ? OBELISK_RT_DPI_DIMENSION_EMPTY
-                           : 0)
-                : 0,
+            storage.dynamic ? OBELISK_RT_DPI_DIMENSION_RUNTIME |
+                                  (storage.elementCount == 0
+                                       ? OBELISK_RT_DPI_DIMENSION_EMPTY
+                                       : 0)
+                            : 0,
             0};
         uint64_t extent = storage.dynamic
                               ? storage.elementCount
@@ -4234,8 +4225,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           if (open.elementStringCount != 0) {
             status = designBytecodeDpiOpenAggregateRootsPush(
                 context, storage.flatValue.data(), storage.planeSize,
-                storage.totalWidth, open.elementWidth, storage.elementCount,
-                0, nullptr, 0, open.elementCSize, open.elementPlan.data(),
+                storage.totalWidth, open.elementWidth, storage.elementCount, 0,
+                nullptr, 0, open.elementCSize, open.elementPlan.data(),
                 open.elementPlan.size(), &aggregateRoots);
             if (status != OBELISK_RT_OK)
               return status;
@@ -4243,8 +4234,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
           if (!lane) {
             if (aggregateRoots)
-              (void)designBytecodeDpiAggregateRootsPop(context,
-                                                       aggregateRoots);
+              (void)designBytecodeDpiAggregateRootsPop(context, aggregateRoots);
             return OBELISK_RT_INVALID_LIFECYCLE;
           }
           status = obelisk_rt_v1_container_import_fixed(
@@ -4264,8 +4254,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_status status = designBytecodeDpiOpenAggregateUnpack(
             context, storage.data.data(), storage.dataSize, open.elementCSize,
             open.elementPlan.data(), open.elementPlan.size(),
-              storage.elementCount, 0, open.sourceRanges.data(),
-              static_cast<uint32_t>(open.sourceRanges.size() / 2), address,
+            storage.elementCount, 0, open.sourceRanges.data(),
+            static_cast<uint32_t>(open.sourceRanges.size() / 2), address,
             open.fourState ? address + storage.planeSize : nullptr,
             storage.planeSize, storage.totalWidth, open.fourState,
             open.elementWidth);

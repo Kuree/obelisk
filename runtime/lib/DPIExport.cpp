@@ -11,7 +11,8 @@
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((weak))
 #endif
-obelisk_rt_status obelisk_rt_execute_dpi_export_bytecode(
+obelisk_rt_status
+obelisk_rt_execute_dpi_export_bytecode(
     const obelisk_rt_execution_descriptor_v1 &execution,
     const obelisk_rt_export_descriptor_v1 &descriptor,
     obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
@@ -452,8 +453,8 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
   return result;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_export_status(
-    obelisk_rt_status status) {
+extern "C" obelisk_rt_status
+obelisk_rt_v1_dpi_export_status(obelisk_rt_status status) {
   if (status != OBELISK_RT_OK && activeDpiCall)
     latchFailure(*activeDpiCall, status);
   return status;

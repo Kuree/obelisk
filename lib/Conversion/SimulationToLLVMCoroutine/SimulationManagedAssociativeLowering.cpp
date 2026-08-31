@@ -46,46 +46,42 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
                          sim::AssocArrayType array, ValueRange values) {
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  Value storage = entryAlloca(builder, location,
-                              assocKeyType(builder.getContext()), 1, 8);
+  Value storage =
+      entryAlloca(builder, location, assocKeyType(builder.getContext()), 1, 8);
   auto store32 = [&](AssocKeyField field, uint32_t value) {
-    LLVM::StoreOp::create(builder, location,
-                          llvmConstant(builder, location, i32, value),
-                          assocKeyFieldGEP(builder, location, storage, field),
-                          4);
+    LLVM::StoreOp::create(
+        builder, location, llvmConstant(builder, location, i32, value),
+        assocKeyFieldGEP(builder, location, storage, field), 4);
   };
   auto store64 = [&](AssocKeyField field, Value value) {
-    LLVM::StoreOp::create(builder, location,
-                          castIntegerWidth(builder, location, value, i64),
-                          assocKeyFieldGEP(builder, location, storage, field),
-                          8);
+    LLVM::StoreOp::create(
+        builder, location, castIntegerWidth(builder, location, value, i64),
+        assocKeyFieldGEP(builder, location, storage, field), 8);
   };
   auto storePointer = [&](AssocKeyField field, Value value) {
-    LLVM::StoreOp::create(
-        builder, location, value,
-        assocKeyFieldGEP(builder, location, storage, field), 8);
+    LLVM::StoreOp::create(builder, location, value,
+                          assocKeyFieldGEP(builder, location, storage, field),
+                          8);
   };
   bool stringKey = isa<sim::StringType>(array.getKeyType());
   bool classKey = isa<sim::ClassHandleType>(array.getKeyType());
   bool processKey = isa<sim::ProcessType>(array.getKeyType());
   bool wildcardKey = array.getWildcardIndex();
   uint32_t keyKind =
-      wildcardKey ? OBELISK_RT_ASSOC_KEY_WILDCARD
-      : stringKey ? OBELISK_RT_ASSOC_KEY_STRING
-      : classKey ? OBELISK_RT_ASSOC_KEY_CLASS
+      wildcardKey  ? OBELISK_RT_ASSOC_KEY_WILDCARD
+      : stringKey  ? OBELISK_RT_ASSOC_KEY_STRING
+      : classKey   ? OBELISK_RT_ASSOC_KEY_CLASS
       : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
-                : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
-                                        : OBELISK_RT_ASSOC_KEY_UNSIGNED);
+                   : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
+                                           : OBELISK_RT_ASSOC_KEY_UNSIGNED);
   uint64_t keyWidth = stringKey || classKey || processKey || wildcardKey
                           ? 0
                           : *sim::getPackedWidth(array.getKeyType());
   store32(AssocKeyField::Kind, keyKind);
   store32(AssocKeyField::Reserved, 0);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i64, keyWidth),
-                        assocKeyFieldGEP(builder, location, storage,
-                                         AssocKeyField::Width),
-                        8);
+  LLVM::StoreOp::create(
+      builder, location, llvmConstant(builder, location, i64, keyWidth),
+      assocKeyFieldGEP(builder, location, storage, AssocKeyField::Width), 8);
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   if (stringKey) {
@@ -95,41 +91,37 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
   } else if (classKey || processKey || wildcardKey) {
     store64(AssocKeyField::Value, values.front());
     storePointer(AssocKeyField::Unknown, null);
-    LLVM::StoreOp::create(builder, location,
-                          llvmConstant(builder, location, i64, 0),
-                          assocKeyFieldGEP(builder, location, storage,
-                                           AssocKeyField::String),
-                          8);
+    LLVM::StoreOp::create(
+        builder, location, llvmConstant(builder, location, i64, 0),
+        assocKeyFieldGEP(builder, location, storage, AssocKeyField::String), 8);
   } else {
     if (keyWidth <= 64) {
       store64(AssocKeyField::Value, values.front());
       if (values.size() == 2)
         store64(AssocKeyField::Unknown, values[1]);
       else
-        LLVM::StoreOp::create(
-            builder, location, llvmConstant(builder, location, i64, 0),
-            assocKeyFieldGEP(builder, location, storage,
-                             AssocKeyField::Unknown),
-            8);
+        LLVM::StoreOp::create(builder, location,
+                              llvmConstant(builder, location, i64, 0),
+                              assocKeyFieldGEP(builder, location, storage,
+                                               AssocKeyField::Unknown),
+                              8);
     } else {
-      Value valueSlot = entryAlloca(builder, location, values.front().getType(),
-                                    1, 8);
+      Value valueSlot =
+          entryAlloca(builder, location, values.front().getType(), 1, 8);
       LLVM::StoreOp::create(builder, location, values.front(), valueSlot, 8);
       storePointer(AssocKeyField::Value, valueSlot);
       if (values.size() == 2) {
-        Value unknownSlot = entryAlloca(
-            builder, location, values[1].getType(), 1, 8);
+        Value unknownSlot =
+            entryAlloca(builder, location, values[1].getType(), 1, 8);
         LLVM::StoreOp::create(builder, location, values[1], unknownSlot, 8);
         storePointer(AssocKeyField::Unknown, unknownSlot);
       } else {
         storePointer(AssocKeyField::Unknown, null);
       }
     }
-    LLVM::StoreOp::create(builder, location,
-                          llvmConstant(builder, location, i64, 0),
-                          assocKeyFieldGEP(builder, location, storage,
-                                           AssocKeyField::String),
-                          8);
+    LLVM::StoreOp::create(
+        builder, location, llvmConstant(builder, location, i64, 0),
+        assocKeyFieldGEP(builder, location, storage, AssocKeyField::String), 8);
   }
   return storage;
 }
@@ -149,8 +141,7 @@ static SmallVector<Value> makeNativeValueStorage(OpBuilder &builder,
 }
 
 static Value makeNativeAssocTrace(OpBuilder &builder, Location location,
-                                  uint64_t typeID,
-                                  ArrayRef<int64_t> offsets) {
+                                  uint64_t typeID, ArrayRef<int64_t> offsets) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   if (offsets.empty())
     return LLVM::ZeroOp::create(builder, location, pointer);
@@ -173,9 +164,8 @@ public:
     LLVM::StoreOp::create(rewriter, op.getLoc(),
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                           output, 8);
-    Value trace =
-        makeNativeAssocTrace(rewriter, op.getLoc(), op.getTypeId(),
-                             op.getTraceOffsets());
+    Value trace = makeNativeAssocTrace(rewriter, op.getLoc(), op.getTypeId(),
+                                       op.getTraceOffsets());
     if (!trace)
       return failure();
     auto c32 = [&](uint32_t value) {
@@ -245,9 +235,8 @@ public:
                       7) /
                          8);
     if (sim::isManagedHandleType(op.getResult().getType()))
-      planeSize = llvmConstant(
-          rewriter, op.getLoc(), rewriter.getI64Type(),
-          sizeof(obelisk_rt_managed_word_v1));
+      planeSize = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                               sizeof(obelisk_rt_managed_word_v1));
     Value unknownSize =
         storage.size() == 2
             ? planeSize
@@ -477,8 +466,8 @@ public:
           converted.empty() || converted.size() > 2)
         return failure();
       for (auto [index, type] : llvm::enumerate(converted)) {
-        AssocKeyField field = index == 0 ? AssocKeyField::Value
-                                         : AssocKeyField::Unknown;
+        AssocKeyField field =
+            index == 0 ? AssocKeyField::Value : AssocKeyField::Unknown;
         if (*sim::getPackedWidth(array.getKeyType()) <= 64) {
           Value loaded = LLVM::LoadOp::create(
               rewriter, op.getLoc(), i64,
@@ -512,10 +501,10 @@ public:
 void populateManagedAssociativeToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<AssocCreateConversion, AssocReadConversion,
-               AssocWriteConversion, AssocDefaultConversion,
-               AssocExistsConversion, AssocDeleteConversion,
-               AssocTraverseConversion>(converter, context);
+  patterns.add<AssocCreateConversion, AssocReadConversion, AssocWriteConversion,
+               AssocDefaultConversion, AssocExistsConversion,
+               AssocDeleteConversion, AssocTraverseConversion>(converter,
+                                                               context);
 }
 
 } // namespace obelisk::detail

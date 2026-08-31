@@ -124,8 +124,7 @@ static semantic::SVSubroutineSymbolOp getOwningSubroutine(Operation *nested) {
 
 static bool isRandSequenceFormal(Operation *operation) {
   return isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(operation) &&
-         operation
-             ->getParentOfType<semantic::SVRandSeqProductionSymbolOp>();
+         operation->getParentOfType<semantic::SVRandSeqProductionSymbolOp>();
 }
 
 /// A non-ANSI subroutine port and the separate data declaration that gives it
@@ -136,8 +135,8 @@ static bool isMergedFormalVariable(Operation *operation) {
   auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(operation);
   if (!variable)
     return false;
-  auto subroutine =
-      dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(operation->getParentOp());
+  auto subroutine = dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(
+      operation->getParentOp());
   if (!subroutine)
     return false;
   StringAttr name = variable.getSymNameAttr();
@@ -193,9 +192,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       // keeps them on their declarations. Analyze each declaration as a
       // synthetic zero-time source so its direct and transitive captures can
       // participate in the same closure as ordinary code units.
-      analysisUnits.units.push_back(
-          {property, 0, sim::EntryKind::Function, {}, {}, {},
-           ObserverResult::None});
+      analysisUnits.units.push_back({property,
+                                     0,
+                                     sim::EntryKind::Function,
+                                     {},
+                                     {},
+                                     {},
+                                     ObserverResult::None});
     }
   }
   llvm::DenseMap<Operation *, llvm::StringSet<>> subroutineLocalDescriptors;
@@ -227,8 +230,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       semantic::SVSubroutineSymbolOp subroutine =
           getOwningSubroutine(unit.source);
       semantic::SVClassTypeOp owner = getOwningClass(subroutine);
-      if (subroutine && owner &&
-          !subroutine.getIsStatic().value_or(false)) {
+      if (subroutine && owner && !subroutine.getIsStatic().value_or(false)) {
         FailureOr<Type> type = getNormalizedSemanticType(owner);
         std::optional<StringRef> path = subroutine.getThisVariablePath();
         if (failed(type) || !path) {
@@ -257,8 +259,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       return localPath;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
-      if (auto path = nested->getAttrOfType<StringAttr>(
-              interconnectLeafPathAttrName)) {
+      if (auto path =
+              nested->getAttrOfType<StringAttr>(interconnectLeafPathAttrName)) {
         auto descriptor = descriptors.find(path.getValue());
         if (descriptor == descriptors.end() ||
             descriptor->second.kind != DescriptorInfo::Kind::Net) {
@@ -448,8 +450,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                          isa<semantic::SVNetSymbolOp>(referencedSymbol);
       if (!isa<semantic::SVVariableSymbolOp, semantic::SVPatternVarSymbolOp>(
               referencedSymbol) &&
-          !observerNet &&
-          !isRandSequenceFormal(referencedSymbol) &&
+          !observerNet && !isRandSequenceFormal(referencedSymbol) &&
           !(unit.entryKind == sim::EntryKind::Observer &&
             isa<semantic::SVFormalArgumentSymbolOp>(referencedSymbol)))
         return;
@@ -576,14 +577,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
               property.getAs<SymbolRefAttr>(randomPropertySymbolAttrName);
           Operation *referencedSymbol = nullptr;
           if (reference) {
-            auto symbol =
-                semanticSymbols.find(reference.getLeafReference());
+            auto symbol = semanticSymbols.find(reference.getLeafReference());
             if (symbol != semanticSymbols.end())
               referencedSymbol = symbol->second;
           }
           auto qualified =
               path ? qualifiedAutomaticPath(path.getValue(), reference,
-                                             referencedSymbol)
+                                            referencedSymbol)
                    : std::nullopt;
           if (qualified) {
             NamedAttrList rewritten(property);
@@ -693,13 +693,12 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
               call->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName))
         for (Attribute nestedAttr : nestedHooks)
           if (auto nested = dyn_cast<DictionaryAttr>(nestedAttr))
-            for (StringRef name : {StringRef("pre_source"),
-                                   StringRef("post_source")}) {
+            for (StringRef name :
+                 {StringRef("pre_source"), StringRef("post_source")}) {
               auto reference = nested.getAs<FlatSymbolRefAttr>(name);
-              auto hook = reference
-                              ? semanticSymbols.find(
-                                    reference.getLeafReference())
-                              : semanticSymbols.end();
+              auto hook =
+                  reference ? semanticSymbols.find(reference.getLeafReference())
+                            : semanticSymbols.end();
               if (hook != semanticSymbols.end() &&
                   targets.insert(hook->second).second)
                 callEdges[unit.source].push_back(hook->second);
@@ -776,21 +775,21 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (!owner || !owner.getBaseClass())
         return {};
       auto handle = dyn_cast<semantic::ClassHandleType>(*owner.getBaseClass());
-      auto found = handle ? classesBySymbol.find(
-                                handle.getClassName().getLeafReference())
-                          : classesBySymbol.end();
+      auto found =
+          handle
+              ? classesBySymbol.find(handle.getClassName().getLeafReference())
+              : classesBySymbol.end();
       return found == classesBySymbol.end() ? semantic::SVClassTypeOp{}
-                                             : found->second;
+                                            : found->second;
     }
     auto type = construct->getAttrOfType<TypeAttr>("semantic_type");
     auto handle = type ? dyn_cast<semantic::ClassHandleType>(type.getValue())
                        : semantic::ClassHandleType{};
-    auto found = handle
-                     ? classesBySymbol.find(
-                           handle.getClassName().getLeafReference())
-                     : classesBySymbol.end();
+    auto found =
+        handle ? classesBySymbol.find(handle.getClassName().getLeafReference())
+               : classesBySymbol.end();
     return found == classesBySymbol.end() ? semantic::SVClassTypeOp{}
-                                           : found->second;
+                                          : found->second;
   };
   auto addEdge = [&](Operation *source, Operation *target) {
     if (!source || !target)
@@ -799,8 +798,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     if (!llvm::is_contained(targets, target))
       targets.push_back(target);
   };
-  auto mergeConstantCaptures = [&](Operation *destination,
-                                   Operation *source) {
+  auto mergeConstantCaptures = [&](Operation *destination, Operation *source) {
     auto &constants = result.constants[destination];
     llvm::StringSet<> seen;
     for (const PreparedConstant &constant : constants)
@@ -830,9 +828,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       continue;
     if (std::optional<Type> baseType = classType.getBaseClass()) {
       auto handle = dyn_cast<semantic::ClassHandleType>(*baseType);
-      auto found = handle ? classesBySymbol.find(
-                                handle.getClassName().getLeafReference())
-                          : classesBySymbol.end();
+      auto found =
+          handle
+              ? classesBySymbol.find(handle.getClassName().getLeafReference())
+              : classesBySymbol.end();
       if (found != classesBySymbol.end())
         addEdge(constructor, constructorSources.lookup(found->second));
     }
@@ -1037,14 +1036,13 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   }
 
   for (auto &entry : result.descriptors)
-    llvm::sort(entry.second,
-               [](const auto &lhs, const auto &rhs) {
-                 if (lhs.second.kind != rhs.second.kind)
-                   return lhs.second.kind < rhs.second.kind;
-                 if (lhs.second.id != rhs.second.id)
-                   return lhs.second.id < rhs.second.id;
-                 return lhs.first < rhs.first;
-               });
+    llvm::sort(entry.second, [](const auto &lhs, const auto &rhs) {
+      if (lhs.second.kind != rhs.second.kind)
+        return lhs.second.kind < rhs.second.kind;
+      if (lhs.second.id != rhs.second.id)
+        return lhs.second.id < rhs.second.id;
+      return lhs.first < rhs.first;
+    });
   for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::sort(
         result.locals[unit.source],

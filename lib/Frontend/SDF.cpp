@@ -846,7 +846,8 @@ public:
   SDFMLIRImporter(StringRef sourceName, mlir::MLIRContext &context)
       : sourceName(sourceName), context(context), builder(&context) {}
 
-  mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>> import(const SDFNode &root) {
+  mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>>
+  import(const SDFNode &root) {
     using namespace mlir;
     if (!formHead(root, "DELAYFILE")) {
       error(root, "SDF file must contain one DELAYFILE form");
@@ -970,9 +971,8 @@ private:
         error(node, Twine("malformed ") + keywordName + " header");
         return true;
       }
-      std::string attrName = keywordName == "VERSION"
-                                 ? "program_version"
-                                 : keywordName.lower();
+      std::string attrName =
+          keywordName == "VERSION" ? "program_version" : keywordName.lower();
       addHeader(node, attrName, builder.getStringAttr(form->children[1].text),
                 attributes, seenHeaders);
       return true;
@@ -982,16 +982,17 @@ private:
           form->children[1].kind != SDFNode::Kind::Atom)
         error(node, "malformed DIVIDER header");
       else
-        addHeader(node, "divider", builder.getStringAttr(form->children[1].text),
-                  attributes, seenHeaders);
+        addHeader(node, "divider",
+                  builder.getStringAttr(form->children[1].text), attributes,
+                  seenHeaders);
       return true;
     }
     if (const SDFNode *form = formHead(node, "TIMESCALE")) {
       parseTimeScale(*form, attributes, seenHeaders);
       return true;
     }
-    for (StringRef keywordName : {StringRef("VOLTAGE"),
-                                  StringRef("TEMPERATURE")}) {
+    for (StringRef keywordName :
+         {StringRef("VOLTAGE"), StringRef("TEMPERATURE")}) {
       if (const SDFNode *form = formHead(node, keywordName)) {
         if (form->children.size() != 2) {
           error(node, Twine("malformed ") + keywordName + " header");
@@ -1047,8 +1048,8 @@ private:
   }
 
   sdf::DecimalAttr decimal(const SDFNode &node, StringRef spelling) {
-    auto result = checked<sdf::DecimalAttr>(
-        node, builder.getStringAttr(spelling));
+    auto result =
+        checked<sdf::DecimalAttr>(node, builder.getStringAttr(spelling));
     return result;
   }
 
@@ -1056,8 +1057,8 @@ private:
     if (node.kind == SDFNode::Kind::Atom) {
       auto value = decimal(node, node.text);
       return value ? checked<sdf::DelayValueAttr>(
-                         node, sdf::DelayValueForm::Scalar,
-                         sdf::DecimalAttr{}, value, sdf::DecimalAttr{})
+                         node, sdf::DelayValueForm::Scalar, sdf::DecimalAttr{},
+                         value, sdf::DecimalAttr{})
                    : sdf::DelayValueAttr{};
     }
     if (node.kind != SDFNode::Kind::List || node.children.size() > 1 ||
@@ -1067,10 +1068,9 @@ private:
       return {};
     }
     if (node.children.empty())
-      return checked<sdf::DelayValueAttr>(node, sdf::DelayValueForm::Empty,
-                                          sdf::DecimalAttr{},
-                                          sdf::DecimalAttr{},
-                                          sdf::DecimalAttr{});
+      return checked<sdf::DelayValueAttr>(
+          node, sdf::DelayValueForm::Empty, sdf::DecimalAttr{},
+          sdf::DecimalAttr{}, sdf::DecimalAttr{});
     StringRef token = node.children.front().text;
     SmallVector<StringRef, 3> fields;
     token.split(fields, ':', /*MaxSplit=*/2, /*KeepEmpty=*/true);
@@ -1088,10 +1088,11 @@ private:
       error(node, "delay value must be scalar or min:typ:max");
       return {};
     }
-    return checked<sdf::DelayValueAttr>(
-        node, fields.size() == 1 ? sdf::DelayValueForm::Scalar
-                                 : sdf::DelayValueForm::Triple,
-        min, typ, max);
+    return checked<sdf::DelayValueAttr>(node,
+                                        fields.size() == 1
+                                            ? sdf::DelayValueForm::Scalar
+                                            : sdf::DelayValueForm::Triple,
+                                        min, typ, max);
   }
 
   mlir::ArrayAttr parseDelayList(ArrayRef<SDFNode> nodes) {
@@ -1131,8 +1132,8 @@ private:
       return {};
     }
     StringRef spelling = nameNode->text;
-    if (!spelling.starts_with("\\") && spelling.find_first_of("!~&|^=") !=
-                                               StringRef::npos) {
+    if (!spelling.starts_with("\\") &&
+        spelling.find_first_of("!~&|^=") != StringRef::npos) {
       error(node, "port identifier cannot contain a condition operator");
       return {};
     }
@@ -1186,28 +1187,27 @@ private:
     auto operatorAt = [&](size_t at)
         -> std::optional<std::pair<sdf::ConditionOpcode, size_t>> {
       StringRef remaining = spelling.drop_front(at);
-      for (auto candidate :
-           {std::pair<StringLiteral, sdf::ConditionOpcode>{
-                "!==", sdf::ConditionOpcode::CaseNe},
-            {"===", sdf::ConditionOpcode::CaseEq},
-            {"!=", sdf::ConditionOpcode::Ne},
-            {"==", sdf::ConditionOpcode::Eq},
-            {"&&", sdf::ConditionOpcode::And},
-            {"||", sdf::ConditionOpcode::Or},
-            {"!", sdf::ConditionOpcode::Not},
-            {"~", sdf::ConditionOpcode::Not},
-            {"&", sdf::ConditionOpcode::And},
-            {"|", sdf::ConditionOpcode::Or},
-            {"^", sdf::ConditionOpcode::Xor}})
+      for (auto candidate : {std::pair<StringLiteral, sdf::ConditionOpcode>{
+                                 "!==", sdf::ConditionOpcode::CaseNe},
+                             {"===", sdf::ConditionOpcode::CaseEq},
+                             {"!=", sdf::ConditionOpcode::Ne},
+                             {"==", sdf::ConditionOpcode::Eq},
+                             {"&&", sdf::ConditionOpcode::And},
+                             {"||", sdf::ConditionOpcode::Or},
+                             {"!", sdf::ConditionOpcode::Not},
+                             {"~", sdf::ConditionOpcode::Not},
+                             {"&", sdf::ConditionOpcode::And},
+                             {"|", sdf::ConditionOpcode::Or},
+                             {"^", sdf::ConditionOpcode::Xor}})
         if (remaining.starts_with(candidate.first))
           return std::pair(candidate.second, candidate.first.size());
       return std::nullopt;
     };
     while (cursor < spelling.size()) {
       if (auto op = operatorAt(cursor)) {
-        lexemes.push_back(
-            {ConditionLexeme::Kind::Operator,
-             spelling.slice(cursor, cursor + op->second), op->first});
+        lexemes.push_back({ConditionLexeme::Kind::Operator,
+                           spelling.slice(cursor, cursor + op->second),
+                           op->first});
         cursor += op->second;
       } else {
         size_t begin = cursor;
@@ -1413,8 +1413,8 @@ private:
          keyword(node.children.front(), "SCOND") ||
          keyword(node.children.front(), "CCOND"))) {
       if (node.children.size() != 3) {
-        error(node,
-              "conditional timing event requires exactly one port and expression");
+        error(node, "conditional timing event requires exactly one port and "
+                    "expression");
         return {};
       }
       portNode = &node.children[1];
@@ -1516,8 +1516,8 @@ private:
     error(record, "unsupported DELAY annotation record");
   }
 
-  void parsePath(const SDFNode &record, sdf::DelayMode mode,
-                 sdf::PathKind kind, sdf::ConditionAttr condition) {
+  void parsePath(const SDFNode &record, sdf::DelayMode mode, sdf::PathKind kind,
+                 sdf::ConditionAttr condition) {
     if (record.children.size() < 4) {
       error(record, "IOPATH requires input, output, and delay values");
       return;
@@ -1528,7 +1528,8 @@ private:
         named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
         named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(kind))),
         named("input", input), named("output", output),
-        named("delays", parseDelayList(ArrayRef(record.children).drop_front(3)))};
+        named("delays",
+              parseDelayList(ArrayRef(record.children).drop_front(3)))};
     if (condition)
       attrs.push_back(named("condition", condition));
     createOp<sdf::SDFPathDelayOp>(record, attrs);
@@ -1544,7 +1545,8 @@ private:
         {named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
          named("source_port", parsePort(record.children[1])),
          named("destination_port", parsePort(record.children[2])),
-         named("delays", parseDelayList(ArrayRef(record.children).drop_front(3)))});
+         named("delays",
+               parseDelayList(ArrayRef(record.children).drop_front(3)))});
   }
 
   void parseTerminal(const SDFNode &record, sdf::DelayMode mode,
@@ -1564,7 +1566,8 @@ private:
     SmallVector<mlir::NamedAttribute> attrs{
         named("mode", builder.getI32IntegerAttr(static_cast<int32_t>(mode))),
         named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(kind))),
-        named("delays", parseDelayList(ArrayRef(record.children).drop_front(delayStart)))};
+        named("delays", parseDelayList(
+                            ArrayRef(record.children).drop_front(delayStart)))};
     if (terminal)
       attrs.push_back(named("terminal", terminal));
     createOp<sdf::SDFTerminalDelayOp>(record, attrs);
@@ -1605,8 +1608,7 @@ private:
                       .Case("removal", sdf::TimingCheckKind::Removal)
                       .Case("recrem", sdf::TimingCheckKind::Recrem)
                       .Case("skew", sdf::TimingCheckKind::Skew)
-                      .Case("bidirectskew",
-                            sdf::TimingCheckKind::BidirectSkew)
+                      .Case("bidirectskew", sdf::TimingCheckKind::BidirectSkew)
                       .Case("period", sdf::TimingCheckKind::Period)
                       .Case("width", sdf::TimingCheckKind::Width)
                       .Case("nochange", sdf::TimingCheckKind::NoChange)
@@ -1637,10 +1639,10 @@ private:
         if (auto limit = parseDelayValue(record.children[1 + eventCount + i]))
           limits.push_back(limit);
       createOp<sdf::SDFTimingCheckOp>(
-          record,
-          {named("kind", builder.getI32IntegerAttr(static_cast<int32_t>(*kind))),
-           named("events", builder.getArrayAttr(events)),
-           named("limits", builder.getArrayAttr(limits))});
+          record, {named("kind", builder.getI32IntegerAttr(
+                                     static_cast<int32_t>(*kind))),
+                   named("events", builder.getArrayAttr(events)),
+                   named("limits", builder.getArrayAttr(limits))});
     }
   }
 
@@ -1658,10 +1660,8 @@ private:
         error(modeNode, "LABEL requires ABSOLUTE or INCREMENT records");
         continue;
       }
-      for (const SDFNode &record :
-           ArrayRef(modeNode.children).drop_front()) {
-        if (record.kind != SDFNode::Kind::List ||
-            record.children.size() != 2 ||
+      for (const SDFNode &record : ArrayRef(modeNode.children).drop_front()) {
+        if (record.kind != SDFNode::Kind::List || record.children.size() != 2 ||
             record.children.front().kind != SDFNode::Kind::Atom) {
           error(record, "LABEL entry requires a name and value");
           continue;
@@ -1701,15 +1701,15 @@ importSDF(StringRef sourceName, StringRef contents, mlir::MLIRContext &context,
 
 namespace {
 
-static std::pair<unsigned, unsigned> sourcePosition(mlir::Operation *operation) {
+static std::pair<unsigned, unsigned>
+sourcePosition(mlir::Operation *operation) {
   if (auto location = dyn_cast<mlir::FileLineColLoc>(operation->getLoc()))
     return {location.getLine(), location.getColumn()};
   return {1, 1};
 }
 
 static void sdfIRDiagnostic(sdf::SDFDelayFileOp file,
-                            mlir::Operation *operation,
-                            const Twine &message) {
+                            mlir::Operation *operation, const Twine &message) {
   auto [line, column] = sourcePosition(operation);
   errs() << file.getSource() << ':' << line << ':' << column
          << ": error: " << message << '\n';
@@ -1758,8 +1758,8 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
     sdfIRDiagnostic(file, file, "unsupported SDF TIMESCALE unit");
     return std::nullopt;
   }
-  int64_t timeScaleOrder = addDecimalOrder(
-      amount->exponent10, static_cast<int>(*unitOrder));
+  int64_t timeScaleOrder =
+      addDecimalOrder(amount->exponent10, static_cast<int>(*unitOrder));
   std::optional<uint64_t> scaled = scaleDecimalExactlyToLimit(
       *amount, timeScaleOrder, std::numeric_limits<uint64_t>::max());
   if (!scaled || !*scaled) {
@@ -1769,7 +1769,8 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
   }
   result.timeScaleFs = *scaled;
 
-  for (sdf::SDFCellOp cellOp : file.getBody().front().getOps<sdf::SDFCellOp>()) {
+  for (sdf::SDFCellOp cellOp :
+       file.getBody().front().getOps<sdf::SDFCellOp>()) {
     ParsedCell cell;
     std::tie(cell.line, cell.column) = sourcePosition(cellOp);
     cell.cellType = cellOp.getCellType().str();
@@ -1780,11 +1781,10 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
       auto pathOp = dyn_cast<sdf::SDFPathDelayOp>(operation);
       if (!pathOp || pathOp.getKind() != sdf::PathKind::IOPath) {
         auto [line, column] = sourcePosition(&operation);
-        StringRef description =
-            isa<sdf::SDFTimingCheckOp>(operation) ? "TIMINGCHECK"
-                                                  : operation.getName().getStringRef();
-        cell.unsupportedTimingData.push_back(
-            {description.str(), line, column});
+        StringRef description = isa<sdf::SDFTimingCheckOp>(operation)
+                                    ? "TIMINGCHECK"
+                                    : operation.getName().getStringRef();
+        cell.unsupportedTimingData.push_back({description.str(), line, column});
         continue;
       }
       ParsedIOPath path;
@@ -1793,7 +1793,8 @@ static std::optional<ParsedSDF> consumeSDFIR(mlir::ModuleOp module) {
                       ? SDFAnnotationDatabase::DelayAnnotation::Kind::Increment
                       : SDFAnnotationDatabase::DelayAnnotation::Kind::Absolute;
       auto copyPort = [](sdf::PortAttr port) {
-        ParsedIOPath::Port result{port.getName().getValue().str(), std::nullopt};
+        ParsedIOPath::Port result{port.getName().getValue().str(),
+                                  std::nullopt};
         if (port.getHasIndex())
           result.index = static_cast<int32_t>(port.getIndex());
         return result;
@@ -1892,9 +1893,8 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
   size_t annotationApplicationWork = 0;
   DenseSet<const slang::ast::CallExpression *> unorderedCalls;
   auto contains = [](StringRef outer, StringRef inner) {
-    return inner == outer ||
-           (inner.starts_with(outer) &&
-            inner.drop_front(outer.size()).starts_with("."));
+    return inner == outer || (inner.starts_with(outer) &&
+                              inner.drop_front(outer.size()).starts_with("."));
   };
   for (auto [leftIndex, left] : llvm::enumerate(orderedCandidates)) {
     for (const OrderedCandidate &right :
@@ -1958,7 +1958,8 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
     // IEEE 1800-2017 32.9 defines `$sdf_annotate` as an executing system
     // task. Baking it into the elaborated timing metadata is equivalent only
     // when execution is provably once, at startup, and in source order.
-    if (!inventory.startupCalls.contains(call) || unorderedCalls.contains(call)) {
+    if (!inventory.startupCalls.contains(call) ||
+        unorderedCalls.contains(call)) {
       callDiagnostic(sourceManager, *call, "error",
                      unorderedCalls.contains(call)
                          ? "static $sdf_annotate cannot order calls across "

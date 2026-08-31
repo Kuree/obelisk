@@ -4,7 +4,7 @@
 typedef struct obelisk_rt_context obelisk_rt_context;
 extern obelisk_rt_context *obelisk_rt_v1_dpi_current_context(void);
 extern int32_t obelisk_rt_v1_gc_set_threshold(obelisk_rt_context *context,
-                                               uint64_t bytes);
+                                              uint64_t bytes);
 
 typedef struct {
   const char *first;
@@ -27,8 +27,8 @@ int drive_aggregate_gc(void) {
   int32_t functionResult =
       c_check_aggregate_function(&left, &right, "scalar-function-heap");
   int32_t taskResult = 0;
-  int status = c_check_aggregate_task(&left, &right, "scalar-task-heap",
-                                      &taskResult);
+  int status =
+      c_check_aggregate_task(&left, &right, "scalar-task-heap", &taskResult);
   printf("gc-function=%d gc-task=%d status=%d\n", functionResult, taskResult,
          status);
   return status;

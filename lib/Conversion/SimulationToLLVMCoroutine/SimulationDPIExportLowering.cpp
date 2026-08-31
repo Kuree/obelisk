@@ -343,8 +343,8 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, marshallingStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    marshallingStatus = arith::SelectOp::create(
-        builder, location, succeeded, next, marshallingStatus);
+    marshallingStatus = arith::SelectOp::create(builder, location, succeeded,
+                                                next, marshallingStatus);
   };
   uint32_t cCursor = resultABI && isVector(*resultABI) ? 1 : 0;
   for (uint32_t index = 0; index != spec.inputCount; ++index)
@@ -414,8 +414,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
       activeContext =
           LLVM::CallOp::create(
               builder, location, TypeRange{pointer},
-              SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_dpi_current_context"),
+              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_current_context"),
               ValueRange{})
               .getResult();
     Value handle = entryAlloca(builder, location, pointer, 1, 8);
@@ -425,15 +424,15 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
                                "obelisk_rt_v1_dpi_aggregate_roots_push"),
-            ValueRange{activeContext, planes.first,
-                       llvmConstant(builder, location, i64,
-                                    planeBytes(spec.abi[signatureIndex])),
-                       llvmConstant(builder, location, i64,
-                                    spec.abi[signatureIndex].width),
-                       aggregatePlan(signatureIndex),
-                       llvmConstant(builder, location, i64,
-                                    layout.getLeaves().size()),
-                       handle})
+            ValueRange{
+                activeContext, planes.first,
+                llvmConstant(builder, location, i64,
+                             planeBytes(spec.abi[signatureIndex])),
+                llvmConstant(builder, location, i64,
+                             spec.abi[signatureIndex].width),
+                aggregatePlan(signatureIndex),
+                llvmConstant(builder, location, i64, layout.getLeaves().size()),
+                handle})
             .getResult();
     mergeMarshallingStatus(rootStatus);
     aggregateRootHandles.push_back(handle);
@@ -702,13 +701,12 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   for (Value handleSlot : llvm::reverse(aggregateRootHandles)) {
     Value handle =
         LLVM::LoadOp::create(builder, location, pointer, handleSlot, 8);
-    Value popStatus =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_dpi_aggregate_roots_pop"),
-            ValueRange{activeContext, handle})
-            .getResult();
+    Value popStatus = LLVM::CallOp::create(
+                          builder, location, TypeRange{i32},
+                          SymbolRefAttr::get(
+                              context, "obelisk_rt_v1_dpi_aggregate_roots_pop"),
+                          ValueRange{activeContext, handle})
+                          .getResult();
     mergeMarshallingStatus(popStatus);
   }
   marshallingStatus =
@@ -1612,9 +1610,8 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
         module, "obelisk_rt_v1_dpi_aggregate_roots_push", i32,
         {pointer, pointer, builder.getI64Type(), builder.getI64Type(), pointer,
          builder.getI64Type(), pointer});
-    getOrDeclareLLVMFunction(module,
-                             "obelisk_rt_v1_dpi_aggregate_roots_pop", i32,
-                             {pointer, pointer});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_roots_pop",
+                             i32, {pointer, pointer});
     getOrDeclareLLVMFunction(
         module, "obelisk_rt_v1_dpi_aggregate_export_pack", i32,
         {pointer, pointer, builder.getI64Type(), builder.getI64Type(), i32,

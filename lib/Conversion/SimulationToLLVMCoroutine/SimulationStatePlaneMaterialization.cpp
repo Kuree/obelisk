@@ -21,10 +21,8 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
   return layout;
 }
 
-
-LLVM::GlobalOp
-makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes, bool unknown,
-               const NativeStateLayout &layout) {
+LLVM::GlobalOp makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes,
+                              bool unknown, const NativeStateLayout &layout) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToStart(module.getBody());
   Location location = module.getLoc();

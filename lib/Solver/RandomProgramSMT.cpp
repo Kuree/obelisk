@@ -12,9 +12,9 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
@@ -181,8 +181,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   uint16_t headerSize = read16(program + 6);
   if ((!version1 && !version2) ||
       (version1 && headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
-      (version2 &&
-       headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2) ||
+      (version2 && headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2) ||
       programSize < headerSize)
     return std::nullopt;
   uint32_t aggregateWidth = read32(program + 8);
@@ -196,8 +195,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0 ||
-      instructionCount > (std::numeric_limits<size_t>::max() -
-                          headerSize) /
+      instructionCount > (std::numeric_limits<size_t>::max() - headerSize) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;
   size_t instructionBytes = static_cast<size_t>(instructionCount) *
@@ -217,11 +215,11 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     uint64_t auxiliary;
     std::optional<llvm::APInt> literal;
   };
-  auto decodeInstruction = [&](uint32_t index)
-      -> std::optional<DecodedInstruction> {
-    const uint8_t *cursor = program + headerSize +
-                            static_cast<size_t>(index) *
-                                OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  auto decodeInstruction =
+      [&](uint32_t index) -> std::optional<DecodedInstruction> {
+    const uint8_t *cursor =
+        program + headerSize +
+        static_cast<size_t>(index) * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
     DecodedInstruction decoded{};
     decoded.opcode = cursor[0];
     if (version1) {
@@ -260,8 +258,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       word += sizeof(uint64_t);
     }
     unsigned usedHighBits = decoded.width % 64;
-    if (usedHighBits != 0 &&
-        (words.back() >> usedHighBits) != 0)
+    if (usedHighBits != 0 && (words.back() >> usedHighBits) != 0)
       return std::nullopt;
     decoded.literal = llvm::APInt(decoded.width, words);
     return decoded;
@@ -340,8 +337,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         continue;
       if (decoded->auxiliary != nextLiteralWord)
         return std::nullopt;
-      nextLiteralWord +=
-          (static_cast<uint64_t>(decoded->width) + 63) / 64;
+      nextLiteralWord += (static_cast<uint64_t>(decoded->width) + 63) / 64;
     }
     if (nextLiteralWord != literalWordCount)
       return std::nullopt;
@@ -422,9 +418,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       uint32_t capture = read32(record + 40);
       uint32_t flags = read32(record + 44);
       record += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
-      uint64_t mask = width == 64 ? UINT64_MAX
-                                  : width == 0 ? 0
-                                               : (uint64_t{1} << width) - 1;
+      uint64_t mask = width == 64  ? UINT64_MAX
+                      : width == 0 ? 0
+                                   : (uint64_t{1} << width) - 1;
       bool fullDomain = cardinality == 0 && width == 64 && lower == 0;
       if (group >= distGroupCount || width == 0 || width > 64 ||
           targetOffset > aggregateWidth ||
@@ -440,10 +436,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       DistGroupInfo &info = groups[group];
       uint32_t targetFlags = flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
-      if (info.seen &&
-          (info.constraintBlock != constraintBlock ||
-           info.targetOffset != targetOffset || info.width != width ||
-           info.targetFlags != targetFlags))
+      if (info.seen && (info.constraintBlock != constraintBlock ||
+                        info.targetOffset != targetOffset ||
+                        info.width != width || info.targetFlags != targetFlags))
         return std::nullopt;
       info = {true, constraintBlock, targetOffset, width, targetFlags};
     }
@@ -480,8 +475,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       if (group >= domainGroupCount || width == 0 || width > 64 ||
           targetOffset > aggregateWidth ||
           width > aggregateWidth - targetOffset || reserved16 != 0 ||
-          reserved32 != 0 || (mask & ~fieldMask) != 0 ||
-          (value & ~mask) != 0 || (width == 64 && mask == 0))
+          reserved32 != 0 || (mask & ~fieldMask) != 0 || (value & ~mask) != 0 ||
+          (width == 64 && mask == 0))
         return std::nullopt;
       DomainGroup &info = domainGroups[group];
       if (info.seen &&
@@ -499,7 +494,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                      [](const DomainGroup &group) { return !group.seen; }))
       return std::nullopt;
     for (auto [index, group] : llvm::enumerate(domainGroups)) {
-      uint64_t groupEnd = static_cast<uint64_t>(group.targetOffset) + group.width;
+      uint64_t groupEnd =
+          static_cast<uint64_t>(group.targetOffset) + group.width;
       for (const DomainGroup &other :
            llvm::ArrayRef(domainGroups).drop_front(index + 1)) {
         uint64_t otherEnd =
@@ -808,8 +804,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       // Direct comparisons against one capture describe a runtime interval.
       // Retain that shape so lowering can normalize strict endpoints and
       // signed coordinates, then sample it directly.
-      auto directCaptureIndex = [&](const StackValue &value)
-          -> std::optional<uint32_t> {
+      auto directCaptureIndex =
+          [&](const StackValue &value) -> std::optional<uint32_t> {
         auto extract = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
             value.bits.getDefiningOp());
         if (!extract || extract.getLowBit() != 0)
@@ -819,11 +815,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           return std::nullopt;
         return static_cast<uint32_t>(found - captures.begin());
       };
-      if (lhs.width == rhs.width &&
-          (opcode == OBELISK_RT_RANDOM_GE_V1 ||
-           opcode == OBELISK_RT_RANDOM_GT_V1 ||
-           opcode == OBELISK_RT_RANDOM_LE_V1 ||
-           opcode == OBELISK_RT_RANDOM_LT_V1)) {
+      if (lhs.width == rhs.width && (opcode == OBELISK_RT_RANDOM_GE_V1 ||
+                                     opcode == OBELISK_RT_RANDOM_GT_V1 ||
+                                     opcode == OBELISK_RT_RANDOM_LE_V1 ||
+                                     opcode == OBELISK_RT_RANDOM_LT_V1)) {
         std::optional<uint32_t> lhsCapture = directCaptureIndex(lhs);
         std::optional<uint32_t> rhsCapture = directCaptureIndex(rhs);
         if (lhs.directVariable && rhsCapture) {
@@ -842,9 +837,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             kind = SMTCaptureBoundKind::UpperExclusive;
             break;
           }
-          directCaptureBound = SMTVariableCaptureBound{
-              *lhs.directVariable, *rhsCapture, kind, signedOperation,
-              predicate};
+          directCaptureBound =
+              SMTVariableCaptureBound{*lhs.directVariable, *rhsCapture, kind,
+                                      signedOperation, predicate};
         } else if (rhs.directVariable && lhsCapture) {
           SMTCaptureBoundKind kind;
           switch (opcode) {
@@ -861,9 +856,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             kind = SMTCaptureBoundKind::UpperExclusive;
             break;
           }
-          directCaptureBound = SMTVariableCaptureBound{
-              *rhs.directVariable, *lhsCapture, kind, signedOperation,
-              predicate};
+          directCaptureBound =
+              SMTVariableCaptureBound{*rhs.directVariable, *lhsCapture, kind,
+                                      signedOperation, predicate};
         }
       }
       stack.push_back(
@@ -995,9 +990,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-  unsigned softCount = softPriorities == 0
-                           ? 0
-                           : 64 - llvm::countl_zero(softPriorities);
+  unsigned softCount =
+      softPriorities == 0 ? 0 : 64 - llvm::countl_zero(softPriorities);
   uint64_t expectedSoftPriorities =
       softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft ||
@@ -1049,8 +1043,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         constraint.dependencies.push_back(variable);
     if (constraint.directDefinition)
       for (const SMTVariable &variable : result.variables)
-        if (containsVariable(constraint.directDefinition->expression,
-                             variable))
+        if (containsVariable(constraint.directDefinition->expression, variable))
           constraint.directDefinition->dependencies.push_back(variable);
     constraint.hasCapture =
         llvm::any_of(result.captures, [&](mlir::Value capture) {

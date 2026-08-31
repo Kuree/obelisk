@@ -267,7 +267,6 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
     LLVM::ReturnOp::create(
         builder, location,
         LLVM::ZeroOp::create(builder, location, storageType));
-
   }
   return success();
 }
@@ -379,8 +378,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     bool direct =
         width && root.bit_width <= 64 && destination &&
         *width <= root.bit_width && destination->offset <= root.bit_width &&
-        *width <= root.bit_width -
-                      destination->offset &&
+        *width <= root.bit_width - destination->offset &&
         destination->staticID == root.static_state && !enqueue.getDelay() &&
         site && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
@@ -392,8 +390,8 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     }
     if (*width != root.bit_width || destination->offset != 0)
       fullRoot[rootIndex] = false;
-    uint64_t sourceMask = *width == 64 ? UINT64_MAX
-                                      : (uint64_t{1} << *width) - 1;
+    uint64_t sourceMask =
+        *width == 64 ? UINT64_MAX : (uint64_t{1} << *width) - 1;
     uint64_t writeMask = sourceMask << destination->offset;
     if (writeMasks[rootIndex] == 0)
       writeMasks[rootIndex] = writeMask;

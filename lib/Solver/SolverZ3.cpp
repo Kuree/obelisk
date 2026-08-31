@@ -11,8 +11,8 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include "z3++.h"
@@ -371,9 +371,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       for (const SMTSoftConstraint &constraint : smt->softConstraints) {
         if (!selectedSoft[constraint.priority])
           continue;
-        smt->hardConstraints.push_back(
-            {constraint.expression, constraint.dependencies,
-             constraint.hasCapture});
+        smt->hardConstraints.push_back({constraint.expression,
+                                        constraint.dependencies,
+                                        constraint.hasCapture});
         if (constraint.directEquality)
           smt->directEqualities.push_back(*constraint.directEquality);
         if (constraint.directDefinition)
@@ -586,14 +586,13 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     auto overlapsFiniteDomain = [&](const SMTVariable &variable) {
       uint64_t variableEnd =
           static_cast<uint64_t>(variable.offset) + variable.width;
-      return llvm::any_of(smt->finiteDomains,
-                           [&](const SMTFiniteDomain &domain) {
-                             uint64_t domainEnd =
-                                 static_cast<uint64_t>(domain.target.offset) +
+      return llvm::any_of(
+          smt->finiteDomains, [&](const SMTFiniteDomain &domain) {
+            uint64_t domainEnd = static_cast<uint64_t>(domain.target.offset) +
                                  domain.target.width;
-                             return variable.offset < domainEnd &&
-                                    domain.target.offset < variableEnd;
-                           });
+            return variable.offset < domainEnd &&
+                   domain.target.offset < variableEnd;
+          });
     };
     for (const SMTVariable &variable : smt->variables) {
       // The generated finite-domain sampler reproduces these predicates
@@ -615,19 +614,15 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       if (!bits)
         continue;
       bool isSigned = llvm::any_of(
-          smt->directCaptureBounds,
-          [&](const SMTVariableCaptureBound &bound) {
-            return bound.isSigned &&
-                   bound.target.offset == variable.offset &&
+          smt->directCaptureBounds, [&](const SMTVariableCaptureBound &bound) {
+            return bound.isSigned && bound.target.offset == variable.offset &&
                    bound.target.width == variable.width;
           });
       z3::expr projectedBits =
-          isSigned
-              ? *bits ^ bitVectorValue(
-                            context,
-                            llvm::APInt::getOneBitSet(variable.width,
-                                                     variable.width - 1))
-              : *bits;
+          isSigned ? *bits ^ bitVectorValue(context, llvm::APInt::getOneBitSet(
+                                                         variable.width,
+                                                         variable.width - 1))
+                   : *bits;
       z3::expr evaluated = witness.eval(projectedBits, true);
       std::optional<llvm::APInt> modelValue =
           bitVectorNumeral(evaluated, variable.width);
@@ -639,9 +634,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       bool complete = true;
       while (lower.ult(upper)) {
         llvm::APInt midpoint = lower + (upper - lower).lshr(1);
-        z3::check_result query =
-            checkWith(z3::ule(projectedBits,
-                              bitVectorValue(context, midpoint)));
+        z3::check_result query = checkWith(
+            z3::ule(projectedBits, bitVectorValue(context, midpoint)));
         if (query == z3::sat)
           upper = midpoint;
         else if (query == z3::unsat)
@@ -659,11 +653,10 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       upper = llvm::APInt::getAllOnes(variable.width);
       while (lower.ult(upper)) {
         llvm::APInt distance = upper - lower;
-        llvm::APInt midpoint = lower + distance.lshr(1) +
-                               static_cast<uint64_t>(distance[0]);
-        z3::check_result query =
-            checkWith(z3::uge(projectedBits,
-                              bitVectorValue(context, midpoint)));
+        llvm::APInt midpoint =
+            lower + distance.lshr(1) + static_cast<uint64_t>(distance[0]);
+        z3::check_result query = checkWith(
+            z3::uge(projectedBits, bitVectorValue(context, midpoint)));
         if (query == z3::sat)
           lower = midpoint;
         else if (query == z3::unsat)
@@ -774,16 +767,14 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       z3::expr projectedBits =
           domain.isSigned
-              ? *bits ^ bitVectorValue(
-                            context,
-                            llvm::APInt::getOneBitSet(domain.width,
-                                                     domain.width - 1))
+              ? *bits ^
+                    bitVectorValue(context, llvm::APInt::getOneBitSet(
+                                                domain.width, domain.width - 1))
               : *bits;
-      proposal = proposal &&
-                 z3::uge(projectedBits,
-                         bitVectorValue(context, domain.lower)) &&
-                 z3::ule(projectedBits,
-                         bitVectorValue(context, domain.upper));
+      proposal =
+          proposal &&
+          z3::uge(projectedBits, bitVectorValue(context, domain.lower)) &&
+          z3::ule(projectedBits, bitVectorValue(context, domain.upper));
     }
     for (const RandomVariableCaptureBound &bound : analysis.captureBounds) {
       auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
@@ -932,8 +923,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
               assignments.size() == maxAssignmentTableSize)
             break;
           z3::expr evaluated = enumerator.get_model().eval(*assignment, true);
-          std::optional<llvm::APInt> value = bitVectorNumeral(
-              evaluated, assignmentType.getWidth());
+          std::optional<llvm::APInt> value =
+              bitVectorNumeral(evaluated, assignmentType.getWidth());
           if (!value)
             break;
           assignments.push_back(*value);
@@ -941,10 +932,10 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                          bitVectorValue(enumerationContext, *value));
         }
         if (complete && !assignments.empty()) {
-          llvm::sort(assignments, [](const llvm::APInt &lhs,
-                                     const llvm::APInt &rhs) {
-            return lhs.ult(rhs);
-          });
+          llvm::sort(assignments,
+                     [](const llvm::APInt &lhs, const llvm::APInt &rhs) {
+                       return lhs.ult(rhs);
+                     });
           analysis.assignmentTable = std::move(assignments);
           analysis.domains.clear();
           analysis.aliases.clear();
@@ -1022,9 +1013,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         llvm::APInt componentMask = llvm::APInt::getZero(assignmentWidth);
         for (size_t variableNumber : componentVariables[root]) {
           const SMTVariable &variable = smt->variables[variableNumber];
-          componentMask |= llvm::APInt::getLowBitsSet(
-                               assignmentWidth, variable.width)
-                               .shl(variable.offset);
+          componentMask |=
+              llvm::APInt::getLowBitsSet(assignmentWidth, variable.width)
+                  .shl(variable.offset);
         }
         analysis.constraintComponentMasks.push_back(componentMask);
       }
@@ -1054,9 +1045,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         for (size_t variableNumber : componentVariables[root]) {
           const SMTVariable &variable = smt->variables[variableNumber];
           componentWidth += variable.width;
-          componentMask |= llvm::APInt::getLowBitsSet(
-                               assignmentWidth, variable.width)
-                               .shl(variable.offset);
+          componentMask |=
+              llvm::APInt::getLowBitsSet(assignmentWidth, variable.width)
+                  .shl(variable.offset);
         }
         if (componentWidth > maxEnumeratedAssignmentWidth) {
           allConstrainedComponentsComplete = false;
@@ -1130,9 +1121,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
               break;
             }
             assignment |= value->zext(assignmentWidth).shl(variable.offset);
-            different =
-                different ||
-                (bits != bitVectorValue(enumerationContext, *value));
+            different = different ||
+                        (bits != bitVectorValue(enumerationContext, *value));
           }
           if (!translatedComponent)
             break;
@@ -1143,10 +1133,10 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
           allConstrainedComponentsComplete = false;
           continue;
         }
-        llvm::sort(table.assignments, [](const llvm::APInt &lhs,
-                                         const llvm::APInt &rhs) {
-          return lhs.ult(rhs);
-        });
+        llvm::sort(table.assignments,
+                   [](const llvm::APInt &lhs, const llvm::APInt &rhs) {
+                     return lhs.ult(rhs);
+                   });
 
         // Prove each table against its own component formula before retaining
         // it. If dependency discovery missed a cross-component value, the
@@ -1213,12 +1203,11 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                     tableMask)
                        .isZero());
         });
-        llvm::erase_if(analysis.definitions,
-                       [&](const RandomVariableDefinition &item) {
-                         return !(variableMask(item.targetOffset, item.width) &
-                                  tableMask)
-                                     .isZero();
-                       });
+        llvm::erase_if(
+            analysis.definitions, [&](const RandomVariableDefinition &item) {
+              return !(variableMask(item.targetOffset, item.width) & tableMask)
+                          .isZero();
+            });
 
         bool equivalentCompleteProposal =
             sawConstrainedComponent && allConstrainedComponentsComplete &&

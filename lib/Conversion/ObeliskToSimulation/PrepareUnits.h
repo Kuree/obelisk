@@ -39,9 +39,8 @@ struct PreparedVirtualInterfaceCallee {
 };
 
 struct PreparedUnits {
-  using VirtualInterfaceCalleeIndex =
-      llvm::StringMap<llvm::StringMap<llvm::DenseMap<
-          mlir::SymbolRefAttr, mlir::SmallVector<unsigned>>>>;
+  using VirtualInterfaceCalleeIndex = llvm::StringMap<llvm::StringMap<
+      llvm::DenseMap<mlir::SymbolRefAttr, mlir::SmallVector<unsigned>>>>;
 
   mlir::SmallVector<PreparedUnit> units;
   llvm::StringMap<mlir::Operation *> directCalleeSources;

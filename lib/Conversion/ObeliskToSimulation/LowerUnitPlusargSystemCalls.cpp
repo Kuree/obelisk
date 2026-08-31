@@ -81,8 +81,7 @@ std::optional<LiteralPlusargFormat> splitLiteralPlusargFormat(StringRef format,
   result.conversion = *conversion;
   result.prefix.reserve(percent);
   for (size_t index = 0; index < percent; ++index) {
-    if (format[index] == '%' && index + 1 < percent &&
-        format[index + 1] == '%')
+    if (format[index] == '%' && index + 1 < percent && format[index + 1] == '%')
       ++index;
     result.prefix.push_back(format[index]);
   }
@@ -119,8 +118,8 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
                                     isSignedNode(children.front()), location);
     if (failed(text))
       return failure();
-    Value found = sim::SimPlusargTestOp::create(builder, location, i32, context,
-                                                *text);
+    Value found =
+        sim::SimPlusargTestOp::create(builder, location, i32, context, *text);
     return convertResult(found);
   }
 
@@ -188,9 +187,9 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     tail = query.getTail();
     queryFound = query.getFound();
   } else {
-    auto query = sim::SimPlusargScanOp::create(
-        builder, location, TypeRange{stringType, i32, i32}, context,
-        dynamicFormat);
+    auto query = sim::SimPlusargScanOp::create(builder, location,
+                                               TypeRange{stringType, i32, i32},
+                                               context, dynamicFormat);
     tail = query.getTail();
     conversion = query.getConversion();
     queryFound = query.getFound();
@@ -201,8 +200,8 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     if (radix == kStringRadix)
       parsed = tail;
     else if (radix == kRealRadix)
-      parsed = sim::SimPlusargParseRealOp::create(
-          builder, location, builder.getF64Type(), tail);
+      parsed = sim::SimPlusargParseRealOp::create(builder, location,
+                                                  builder.getF64Type(), tail);
     else {
       unsigned width = 64;
       if (Type scalar = sim::getPackedScalarType(destinationType))
@@ -218,11 +217,10 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
   FailureOr<Value> converted;
   Value validConversion;
   auto kindIs = [&](unsigned kind) -> Value {
-    Value expected = arith::ConstantOp::create(
-        builder, location, i32, builder.getI32IntegerAttr(kind));
-    return arith::CmpIOp::create(builder, location,
-                                 arith::CmpIPredicate::eq, conversion,
-                                 expected);
+    Value expected = arith::ConstantOp::create(builder, location, i32,
+                                               builder.getI32IntegerAttr(kind));
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                 conversion, expected);
   };
   if (literalFormat) {
     converted = parseAndConvert(literalFormat->conversion);
@@ -236,8 +234,8 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
       converted = arith::SelectOp::create(builder, location, kindIs(radix),
                                           *candidate, *converted)
                       .getResult();
-      validConversion = arith::OrIOp::create(builder, location,
-                                             validConversion, kindIs(radix));
+      validConversion = arith::OrIOp::create(builder, location, validConversion,
+                                             kindIs(radix));
     }
   } else if (isa<sim::StringType>(destinationType)) {
     converted = parseAndConvert(kStringRadix);
@@ -265,13 +263,12 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
     return failure();
   Value zero = arith::ConstantOp::create(builder, location, i32,
                                          builder.getIntegerAttr(i32, 0));
-  Value found = arith::CmpIOp::create(builder, location,
-                                      arith::CmpIPredicate::ne, queryFound,
-                                      zero);
+  Value found = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ne, queryFound, zero);
   if (validConversion)
     found = arith::AndIOp::create(builder, location, found, validConversion);
-  Value updated = arith::SelectOp::create(builder, location, found, *converted,
-                                          *current);
+  Value updated =
+      arith::SelectOp::create(builder, location, found, *converted, *current);
   if (failed(storeReference(*destination, updated, location)))
     return failure();
   Value result = arith::ExtUIOp::create(builder, location, i32, found);

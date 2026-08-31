@@ -86,11 +86,11 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
     if (file == kInvalidRegister || finalize == kInvalidRegister ||
         allowed == kInvalidRegister)
       return op.emitOpError("cannot allocate dynamic scan validation operands");
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicScanDynamicValidate,
-        {reg(plan, op.getFormat()), reg(plan, op.getPlanCursor()), file,
-         finalize, allowed},
-        {reg(plan, op.getNextPlanCursor())});
+    return emitIntrinsicRegisters(plan, kIntrinsicScanDynamicValidate,
+                                  {reg(plan, op.getFormat()),
+                                   reg(plan, op.getPlanCursor()), file,
+                                   finalize, allowed},
+                                  {reg(plan, op.getNextPlanCursor())});
   }
   if (auto op = dyn_cast<sim::SimStringScanDynamicOp>(operation)) {
     requiresDynamicScanFeature = true;

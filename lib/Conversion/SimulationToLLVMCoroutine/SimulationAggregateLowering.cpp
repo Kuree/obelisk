@@ -262,11 +262,11 @@ public:
       auto inputType = dyn_cast<IntegerType>(input.getType());
       if (!inputType || inputType.getWidth() != *elementWidth)
         return failure();
-      Value block = inputType == outputType
-                        ? input
-                        : arith::ExtUIOp::create(rewriter, op.getLoc(),
-                                                 outputType, input)
-                              .getResult();
+      Value block =
+          inputType == outputType
+              ? input
+              : arith::ExtUIOp::create(rewriter, op.getLoc(), outputType, input)
+                    .getResult();
       Value result = constant(0);
       uint64_t remaining = count;
       uint64_t blockElements = 1;
@@ -598,11 +598,10 @@ public:
     if (selected->first != 0) {
       Value amount = arith::ConstantOp::create(
           rewriter, op.getLoc(), plane,
-          rewriter.getIntegerAttr(
-              plane, APInt(plane.getWidth(), selected->first)));
+          rewriter.getIntegerAttr(plane,
+                                  APInt(plane.getWidth(), selected->first)));
       *value = arith::ShLIOp::create(rewriter, op.getLoc(), *value, amount);
-      unknown =
-          arith::ShLIOp::create(rewriter, op.getLoc(), unknown, amount);
+      unknown = arith::ShLIOp::create(rewriter, op.getLoc(), unknown, amount);
     }
 
     uint64_t tag = 0;
@@ -755,13 +754,12 @@ public:
 void populateAggregateToLLVMConversionPatterns(RewritePatternSet &patterns,
                                                TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<
-      PackedAggregateExtractConversion, PackedAggregateInsertConversion,
-      PackedAggregateConstructConversion, PackedAggregateSplatConversion,
-      AggregateDynamicExtractConversion,
-      AggregateDynamicInsertConversion, AggregateDefaultConversion,
-      UnionConstructConversion, UnionExtractConversion, UnionIsActiveConversion>(
-      converter, context);
+  patterns
+      .add<PackedAggregateExtractConversion, PackedAggregateInsertConversion,
+           PackedAggregateConstructConversion, PackedAggregateSplatConversion,
+           AggregateDynamicExtractConversion, AggregateDynamicInsertConversion,
+           AggregateDefaultConversion, UnionConstructConversion,
+           UnionExtractConversion, UnionIsActiveConversion>(converter, context);
 }
 
 } // namespace obelisk::detail

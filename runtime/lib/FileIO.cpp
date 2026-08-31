@@ -96,9 +96,8 @@ bool scanSpace(int character) {
 bool scanDigit(int character, uint32_t radix) {
   if (character == '_')
     return true;
-  if (radix != 10 &&
-      (character == 'x' || character == 'X' || character == 'z' ||
-       character == 'Z' || character == '?'))
+  if (radix != 10 && (character == 'x' || character == 'X' ||
+                      character == 'z' || character == 'Z' || character == '?'))
     return true;
   uint32_t value = static_cast<unsigned char>(character);
   uint32_t digit = value >= '0' && value <= '9'   ? value - '0'
@@ -245,8 +244,7 @@ ScanResult scanFileField(FileEntry &entry, const char *prefix,
   }
 
   bool real = letter == 'e' || letter == 'f' || letter == 'g' || letter == 't';
-  if ((real || letter == 'd') &&
-      (character == '+' || character == '-')) {
+  if ((real || letter == 'd') && (character == '+' || character == '-')) {
     field.push_back(static_cast<char>(character));
     character = readFieldCharacter();
   }
@@ -309,8 +307,8 @@ ScanResult scanFileField(FileEntry &entry, const char *prefix,
 
 template <bool Synthetic>
 ScanResult scanFileRaw(FileEntry &entry, const char *prefix,
-                       uint64_t prefixSize, uint64_t rawSize,
-                       uint64_t maxWidth, std::string &raw) {
+                       uint64_t prefixSize, uint64_t rawSize, uint64_t maxWidth,
+                       std::string &raw) {
   ScanReader<Synthetic> reader(entry);
   for (uint64_t position = 0; position != prefixSize; ++position) {
     unsigned char expected = static_cast<unsigned char>(prefix[position]);
@@ -967,12 +965,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_scan_field(
     // Dispatch once so ordinary readable streams retain direct stdio calls in
     // their specialized scan loop. A non-readable stream can still supply the
     // one byte held by $ungetc, after which its synthetic reader reports EOF.
-    ScanResult result =
-        entry->readable
-            ? scanFileField<false>(*entry, prefix, prefixSize, specifier,
-                                   width, field)
-            : scanFileField<true>(*entry, prefix, prefixSize, specifier, width,
-                                  field);
+    ScanResult result = entry->readable
+                            ? scanFileField<false>(*entry, prefix, prefixSize,
+                                                   specifier, width, field)
+                            : scanFileField<true>(*entry, prefix, prefixSize,
+                                                  specifier, width, field);
     if (result == ScanResult::Error) {
       recordIOError(context, *entry, "formatted file read failed");
       // A host read error is an fscanf input failure, not a simulation
@@ -1094,9 +1091,8 @@ obelisk_rt_v1_file_scan_dynamic(
         char normalized = letter(conversion.specifier);
         if (!conversion.suppressed) {
           if (finalize) {
-            std::fprintf(stderr,
-                         "obelisk: dynamic $fscanf format has more "
-                         "conversions than destinations\n");
+            std::fprintf(stderr, "obelisk: dynamic $fscanf format has more "
+                                 "conversions than destinations\n");
             return OBELISK_RT_INVALID_ARGUMENT;
           }
           if (!allowed(conversion.specifier)) {
@@ -1112,8 +1108,8 @@ obelisk_rt_v1_file_scan_dynamic(
         ScanResult result;
         std::string field;
         if (normalized == 'u' || normalized == 'z') {
-          uint64_t rawSize = normalized == 'u' ? rawTwoStateBytes
-                                               : rawFourStateBytes;
+          uint64_t rawSize =
+              normalized == 'u' ? rawTwoStateBytes : rawFourStateBytes;
           if (conversion.suppressed)
             rawSize = conversion.width;
           if (rawSize == 0) {
@@ -1124,9 +1120,9 @@ obelisk_rt_v1_file_scan_dynamic(
                 static_cast<char>(conversion.specifier));
             return OBELISK_RT_INVALID_ARGUMENT;
           }
-          result = scanFileRaw<Synthetic>(
-              *entry, conversion.prefix.data(), conversion.prefix.size(),
-              rawSize, conversion.width, field);
+          result = scanFileRaw<Synthetic>(*entry, conversion.prefix.data(),
+                                          conversion.prefix.size(), rawSize,
+                                          conversion.width, field);
         } else {
           result = scanFileField<Synthetic>(
               *entry, conversion.prefix.data(), conversion.prefix.size(),
@@ -1177,9 +1173,8 @@ obelisk_rt_v1_file_scan_dynamic(
       return OBELISK_RT_OK;
     };
     errno = 0;
-    return entry->readable
-               ? interpret(std::integral_constant<bool, false>{})
-               : interpret(std::integral_constant<bool, true>{});
+    return entry->readable ? interpret(std::integral_constant<bool, false>{})
+                           : interpret(std::integral_constant<bool, true>{});
   });
 }
 

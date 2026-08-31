@@ -1,7 +1,7 @@
 //===- SlangDialect.cpp - Elaborated slang semantic AST dialect ----------===//
 
-#include "obelisk/Dialect/Slang/SlangOps.h"
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/Slang/SlangOps.h"
 
 #include "mlir/IR/Diagnostics.h"
 
@@ -308,8 +308,7 @@ static LogicalResult verifyFlags(Operation *operation, ArrayRef<int64_t> flags,
   setCount = 0;
   for (int64_t flag : flags) {
     if (flag != 0 && flag != 1)
-      return operation->emitOpError()
-             << name << " entries must be zero or one";
+      return operation->emitOpError() << name << " entries must be zero or one";
     setCount += flag;
   }
   return success();
@@ -325,15 +324,14 @@ static LogicalResult addInventory(Operation *operation, uint64_t amount,
 
 LogicalResult ConditionalStatementOp::verify() {
   uint64_t patterns = 0;
-  if (failed(verifyFlags(*this, getConditionPatternFlags(),
-                         getConditionCount(), "condition_pattern_flags",
-                         patterns)))
+  if (failed(verifyFlags(*this, getConditionPatternFlags(), getConditionCount(),
+                         "condition_pattern_flags", patterns)))
     return failure();
   if (getConditionCount() == 0)
     return emitOpError("must contain at least one condition");
   uint64_t expected = getConditionCount();
-  if (failed(addInventory(*this, patterns, expected,
-                          "condition and statement")) ||
+  if (failed(
+          addInventory(*this, patterns, expected, "condition and statement")) ||
       failed(addInventory(*this, 1, expected, "condition and statement")) ||
       failed(addInventory(*this, getHasElse(), expected,
                           "condition and statement")))
@@ -347,17 +345,15 @@ LogicalResult ConditionalExpressionOp::verify() {
   if (getConditionCountAttr().getValue().isNegative())
     return emitOpError("condition_count must be nonnegative");
   uint64_t patterns = 0;
-  if (failed(verifyFlags(*this, getConditionPatternFlags(),
-                         getConditionCount(), "condition_pattern_flags",
-                         patterns)))
+  if (failed(verifyFlags(*this, getConditionPatternFlags(), getConditionCount(),
+                         "condition_pattern_flags", patterns)))
     return failure();
   if (getConditionCount() == 0)
     return emitOpError("must contain at least one condition");
   uint64_t expected = getConditionCount();
   if (failed(addInventory(*this, patterns, expected,
                           "conditional-expression child")) ||
-      failed(addInventory(*this, 2, expected,
-                          "conditional-expression child")))
+      failed(addInventory(*this, 2, expected, "conditional-expression child")))
     return failure();
   if (astBodySize(*this) != expected)
     return emitOpError("malformed conditional-expression child inventory");
@@ -435,10 +431,9 @@ LogicalResult ForLoopStatementOp::verify() {
   uint64_t expected = 1;
   if (failed(addInventory(*this, getInitializerCount(), expected,
                           "for-loop child")) ||
-      failed(addInventory(*this, getHasCondition(), expected,
-                          "for-loop child")) ||
-      failed(addInventory(*this, getStepCount(), expected,
-                          "for-loop child")))
+      failed(
+          addInventory(*this, getHasCondition(), expected, "for-loop child")) ||
+      failed(addInventory(*this, getStepCount(), expected, "for-loop child")))
     return failure();
   if (astBodySize(*this) != expected)
     return emitOpError("malformed for-loop child inventory");
@@ -478,20 +473,19 @@ LogicalResult CaseStatementOp::verify() {
 
 LogicalResult PatternCaseStatementOp::verify() {
   if (getConditionKind() == CaseCondition::Inside)
-    return emitOpError(
-        "pattern case cannot use the case-inside matching mode");
+    return emitOpError("pattern case cannot use the case-inside matching mode");
   uint64_t filters = 0;
   if (failed(verifyFlags(*this, getItemFilterFlags(), getItemCount(),
                          "item_filter_flags", filters)))
     return failure();
   uint64_t expected = 1;
-  if (failed(addInventory(*this, getItemCount(), expected,
-                          "pattern case item")) ||
-      failed(addInventory(*this, getItemCount(), expected,
-                          "pattern case item")) ||
+  if (failed(
+          addInventory(*this, getItemCount(), expected, "pattern case item")) ||
+      failed(
+          addInventory(*this, getItemCount(), expected, "pattern case item")) ||
       failed(addInventory(*this, filters, expected, "pattern case item")) ||
-      failed(addInventory(*this, getHasDefault(), expected,
-                          "pattern case item")))
+      failed(
+          addInventory(*this, getHasDefault(), expected, "pattern case item")))
     return failure();
   if (astBodySize(*this) != expected)
     return emitOpError("malformed pattern case item inventory");
@@ -504,7 +498,8 @@ LogicalResult RandCaseStatementOp::verify() {
   // Every item contributes one weight expression and one statement, and the
   // importer emits all weights before all statements.
   uint64_t expected = 0;
-  if (failed(addInventory(*this, getItemCount(), expected, "randcase weight")) ||
+  if (failed(
+          addInventory(*this, getItemCount(), expected, "randcase weight")) ||
       failed(addInventory(*this, getItemCount(), expected, "randcase item")))
     return failure();
   if (astBodySize(*this) != expected)

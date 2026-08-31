@@ -376,17 +376,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       op->getAttrOfType<FlatSymbolRefAttr>(randomizeConstraintTemplateAttrName);
   bool scopeRandomize = op->hasAttr(randomizeScopeAttrName);
   if ((!scopeRandomize && children.empty()) || !properties ||
-      !containerProperties ||
-      !nestedConstraintModes || !nestedHooks || !recursiveAliasGuards ||
-      !totalWidthAttr || (!scopeRandomize && !receiverIndexAttr) ||
-      !constraintCountAttr) {
+      !containerProperties || !nestedConstraintModes || !nestedHooks ||
+      !recursiveAliasGuards || !totalWidthAttr ||
+      (!scopeRandomize && !receiverIndexAttr) || !constraintCountAttr) {
     emitError(location) << "randomize call has no frozen constraint plan";
     return failure();
   }
   APInt totalWidthValue = totalWidthAttr.getValue();
   APInt constraintCountValue = constraintCountAttr.getValue();
-  if (totalWidthValue.isNegative() ||
-      totalWidthValue.getActiveBits() > 64 ||
+  if (totalWidthValue.isNegative() || totalWidthValue.getActiveBits() > 64 ||
       constraintCountValue.isNegative() ||
       constraintCountValue.getActiveBits() > 64) {
     emitError(location) << "randomize call has malformed constraint metadata";
@@ -398,12 +396,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (receiverIndexValue.isNegative() ||
         receiverIndexValue.getActiveBits() > 64 ||
         receiverIndexValue.getZExtValue() >= children.size()) {
-      emitError(location)
-          << "randomize call has malformed receiver metadata";
+      emitError(location) << "randomize call has malformed receiver metadata";
       return failure();
     }
-    receiverIndex =
-        static_cast<unsigned>(receiverIndexValue.getZExtValue());
+    receiverIndex = static_cast<unsigned>(receiverIndexValue.getZExtValue());
   }
   auto isReceiverChild = [&](size_t index) {
     return !scopeRandomize && index == receiverIndex;
@@ -1189,8 +1185,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     increment = randomState.getIncrement();
     mode = arith::ConstantOp::create(builder, location, i64,
                                      builder.getI64IntegerAttr(0));
-    constraintMode = arith::ConstantOp::create(
-        builder, location, i64, builder.getI64IntegerAttr(0));
+    constraintMode = arith::ConstantOp::create(builder, location, i64,
+                                               builder.getI64IntegerAttr(0));
   } else {
     sim::SimClassDeclOp declaration =
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1202,14 +1198,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
-    auto stateField =
-        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                          "obelisk_sim.random_state_field")
-                    : FlatSymbolRefAttr{};
-    auto incrementField =
-        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                          "obelisk_sim.random_increment_field")
-                    : FlatSymbolRefAttr{};
+    auto stateField = declaration
+                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                "obelisk_sim.random_state_field")
+                          : FlatSymbolRefAttr{};
+    auto incrementField = declaration
+                              ? declaration->getAttrOfType<FlatSymbolRefAttr>(
+                                    "obelisk_sim.random_increment_field")
+                              : FlatSymbolRefAttr{};
     auto modeField = declaration
                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
                                "obelisk_sim.random_mode_field")
@@ -1238,10 +1234,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         sim::SimManagedLoadOp::create(builder, location, i64, stateReference);
     increment = sim::SimManagedLoadOp::create(builder, location, i64,
                                               incrementReference);
-    mode =
-        sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
-    constraintMode = sim::SimManagedLoadOp::create(
-        builder, location, i64, constraintModeReference);
+    mode = sim::SimManagedLoadOp::create(builder, location, i64, modeReference);
+    constraintMode = sim::SimManagedLoadOp::create(builder, location, i64,
+                                                   constraintModeReference);
   }
 
   auto loadRandomState = [&]() -> Value {
@@ -3680,18 +3675,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SmallVector<Operation *> nested = getChildren(expression);
     if (isa<semantic::SVMinTypMaxExpressionOp>(expression)) {
-      auto selected =
-          expression->getAttrOfType<IntegerAttr>("selected_index");
-      if (nested.size() != 3 || !selected ||
-          selected.getValue().isNegative() ||
+      auto selected = expression->getAttrOfType<IntegerAttr>("selected_index");
+      if (nested.size() != 3 || !selected || selected.getValue().isNegative() ||
           selected.getValue().getActiveBits() > 64 ||
           selected.getValue().getZExtValue() >= nested.size()) {
         emitError(getSemanticLocation(expression))
             << "random min:typ:max expression has no valid selected branch";
         return failure();
       }
-      return emitProgramExpression(
-          nested[selected.getValue().getZExtValue()]);
+      return emitProgramExpression(nested[selected.getValue().getZExtValue()]);
     }
     auto captureExpression = [&]() -> LogicalResult {
       FailureOr<Value> value = lowerExpression(expression);
@@ -4197,8 +4189,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (constraintTemplate) {
     for (auto [index, root] : llvm::enumerate(children)) {
-      if (!isReceiverChild(index) &&
-          isa<semantic::SVConstraintListOp>(root)) {
+      if (!isReceiverChild(index) && isa<semantic::SVConstraintListOp>(root)) {
         emitError(getSemanticLocation(root))
             << "randomize call mixes a reusable template with cloned "
                "constraints";

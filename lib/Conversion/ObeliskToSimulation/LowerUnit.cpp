@@ -1591,8 +1591,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       return failure();
     if (sourceSigned) {
       descriptor->flags |= OBELISK_RT_ELEMENT_SIGNED;
-      descriptor->typeID =
-          getStableTypeID(value.getType(), descriptor->flags);
+      descriptor->typeID = getStableTypeID(value.getType(), descriptor->flags);
     }
     Type arrayType =
         sim::DynamicArrayType::get(function.getContext(), value.getType());
@@ -2661,8 +2660,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
     // function result. Preserve evaluation (and therefore all side effects),
     // but no value conversion is needed for the enclosing statement.
     auto semanticTarget = op->getAttrOfType<TypeAttr>("semantic_type");
-    if (semanticTarget &&
-        isa<semantic::VoidType>(semanticTarget.getValue()))
+    if (semanticTarget && isa<semantic::VoidType>(semanticTarget.getValue()))
       return lowerExpression(children.front());
     FailureOr<Type> target = getNormalizedSemanticType(op);
     if (failed(target))
@@ -3714,10 +3712,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             "strength-pair path has no stable code unit identity");
       for (Operation *output : outputs) {
         Operation *driverNode = output;
-        while (isa_and_nonnull<semantic::SVElementSelectExpressionOp,
-                               semantic::SVRangeSelectExpressionOp,
-                               semantic::SVMemberAccessExpressionOp>(
-            driverNode)) {
+        while (
+            isa_and_nonnull<semantic::SVElementSelectExpressionOp,
+                            semantic::SVRangeSelectExpressionOp,
+                            semantic::SVMemberAccessExpressionOp>(driverNode)) {
           SmallVector<Operation *> children = getChildren(driverNode);
           if (children.empty())
             break;
@@ -3725,9 +3723,8 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         }
         TimingPathMaskedPlan *plan = nullptr;
         if (auto nodeID =
-                driverNode
-                    ? driverNode->getAttrOfType<IntegerAttr>("node_id")
-                    : IntegerAttr{}) {
+                driverNode ? driverNode->getAttrOfType<IntegerAttr>("node_id")
+                           : IntegerAttr{}) {
           uint64_t id = nodeID.getValue().getZExtValue();
           if (auto found = timingPathMaskedPlans.find(id);
               found != timingPathMaskedPlans.end()) {
@@ -3813,45 +3810,42 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         Value zeroMask = arith::ConstantOp::create(
             builder, location, maskType,
             builder.getIntegerAttr(maskType, zeroBits));
-        auto packPulseTransitions =
-            [&](const std::array<Value, 12> &masks) {
-              IntegerType packedType = builder.getIntegerType(*width * 12);
-              if (llvm::all_equal(masks)) {
-                APInt replicate = APInt::getZero(packedType.getWidth());
-                for (unsigned transition = 0; transition != 12; ++transition)
-                  replicate.setBit(transition * *width);
-                Value extended = arith::ExtUIOp::create(
-                    builder, location, packedType, masks.front());
-                Value factor = arith::ConstantOp::create(
-                    builder, location, packedType,
-                    builder.getIntegerAttr(packedType, replicate));
-                return Value(arith::MulIOp::create(builder, location,
-                                                   extended, factor));
-              }
-              Value packed = arith::ConstantOp::create(
+        auto packPulseTransitions = [&](const std::array<Value, 12> &masks) {
+          IntegerType packedType = builder.getIntegerType(*width * 12);
+          if (llvm::all_equal(masks)) {
+            APInt replicate = APInt::getZero(packedType.getWidth());
+            for (unsigned transition = 0; transition != 12; ++transition)
+              replicate.setBit(transition * *width);
+            Value extended = arith::ExtUIOp::create(builder, location,
+                                                    packedType, masks.front());
+            Value factor = arith::ConstantOp::create(
+                builder, location, packedType,
+                builder.getIntegerAttr(packedType, replicate));
+            return Value(
+                arith::MulIOp::create(builder, location, extended, factor));
+          }
+          Value packed =
+              arith::ConstantOp::create(builder, location, packedType,
+                                        builder.getIntegerAttr(packedType, 0));
+          for (auto [transition, mask] : llvm::enumerate(masks)) {
+            Value extended =
+                arith::ExtUIOp::create(builder, location, packedType, mask);
+            if (transition != 0) {
+              Value shift = arith::ConstantOp::create(
                   builder, location, packedType,
-                  builder.getIntegerAttr(packedType, 0));
-              for (auto [transition, mask] : llvm::enumerate(masks)) {
-                Value extended = arith::ExtUIOp::create(
-                    builder, location, packedType, mask);
-                if (transition != 0) {
-                  Value shift = arith::ConstantOp::create(
-                      builder, location, packedType,
-                      builder.getIntegerAttr(packedType,
-                                             transition * *width));
-                  extended = arith::ShLIOp::create(builder, location,
-                                                   extended, shift);
-                }
-                packed = arith::OrIOp::create(builder, location, packed,
-                                              extended);
-              }
-              return packed;
-            };
+                  builder.getIntegerAttr(packedType, transition * *width));
+              extended =
+                  arith::ShLIOp::create(builder, location, extended, shift);
+            }
+            packed = arith::OrIOp::create(builder, location, packed, extended);
+          }
+          return packed;
+        };
         auto equalMask = [&](Value value, Value constant) {
           Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
               builder, location, maskType, value, constant);
-          return Value(arith::XOrIOp::create(builder, location, difference,
-                                             onesMask));
+          return Value(
+              arith::XOrIOp::create(builder, location, difference, onesMask));
         };
         Value previousZero = arith::AndIOp::create(
             builder, location, equalMask(*previousLow, zeroLogic),
@@ -3900,16 +3894,16 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             oldSymbols[symbol] = equalMask(previousLogical, constant);
             newSymbols[symbol] = equalMask(*nextLogic, constant);
           }
-          constexpr std::array<unsigned, 12> from = {
-              0, 1, 0, 3, 1, 3, 0, 2, 1, 2, 2, 3};
-          constexpr std::array<unsigned, 12> to = {
-              1, 0, 3, 1, 3, 0, 2, 1, 2, 0, 3, 2};
+          constexpr std::array<unsigned, 12> from = {0, 1, 0, 3, 1, 3,
+                                                     0, 2, 1, 2, 2, 3};
+          constexpr std::array<unsigned, 12> to = {1, 0, 3, 1, 3, 0,
+                                                   2, 1, 2, 0, 3, 2};
           for (unsigned index = 0; index != transitions.size(); ++index) {
-            transitions[index] = arith::AndIOp::create(
-                builder, location, oldSymbols[from[index]],
-                newSymbols[to[index]]);
+            transitions[index] = arith::AndIOp::create(builder, location,
+                                                       oldSymbols[from[index]],
+                                                       newSymbols[to[index]]);
             consumed = arith::OrIOp::create(builder, location, consumed,
-                                             transitions[index]);
+                                            transitions[index]);
           }
         }
         if (!plan->edgePending.empty()) {
@@ -3925,15 +3919,15 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                   builder, location, maskType, *previousHigh, *highValue));
           bankDifference = arith::AndIOp::create(
               builder, location, bankDifference, plan->coverageMask);
-          consumed = arith::OrIOp::create(builder, location, consumed,
-                                           bankDifference);
-          Value retained = arith::XOrIOp::create(builder, location, consumed,
-                                                  onesMask);
+          consumed =
+              arith::OrIOp::create(builder, location, consumed, bankDifference);
+          Value retained =
+              arith::XOrIOp::create(builder, location, consumed, onesMask);
           for (Value pendingRef : plan->edgePending) {
-            Value pending = sim::SimRefLoadOp::create(
-                builder, location, maskType, pendingRef);
-            pending = arith::AndIOp::create(builder, location, pending,
-                                            retained);
+            Value pending = sim::SimRefLoadOp::create(builder, location,
+                                                      maskType, pendingRef);
+            pending =
+                arith::AndIOp::create(builder, location, pending, retained);
             sim::SimRefStoreOp::create(builder, location, pending, pendingRef);
           }
         }
@@ -3945,9 +3939,9 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         for (auto [groupIndex, group] : llvm::enumerate(plan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
           auto add = [&](unsigned bank, unsigned transition) {
-            Value selected = arith::AndIOp::create(
-                builder, location, group.masks[transition],
-                transitions[transition]);
+            Value selected = arith::AndIOp::create(builder, location,
+                                                   group.masks[transition],
+                                                   transitions[transition]);
             runtimeMasks[bank] = arith::OrIOp::create(
                 builder, location, runtimeMasks[bank], selected);
           };
@@ -3959,9 +3953,9 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             add(2, transition);
           for (unsigned transition : {6u, 8u, 11u})
             add(0, transition);
-          Value pulseTransitions =
-              group.pulseControlled ? packPulseTransitions(group.masks)
-                                    : Value{};
+          Value pulseTransitions = group.pulseControlled
+                                       ? packPulseTransitions(group.masks)
+                                       : Value{};
           sim::SimDriverDriveInertialPathStrengthPairOp::create(
               builder, location, low->reference, *lowValue, high->reference,
               *highValue, *nextLogical, plan->coverageMask, runtimeMasks[0],
@@ -3970,14 +3964,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
               builder.getI32IntegerAttr(component),
               builder.getI32IntegerAttr(static_cast<uint32_t>(groupIndex)),
               builder.getI32IntegerAttr(groupCount),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseReject
-                                            : -1),
-              builder.getI64IntegerAttr(group.pulseControlled
-                                            ? group.pulseError
-                                            : -1),
-              builder.getBoolAttr(group.pulseControlled &&
-                                  group.pulseOnDetect),
+              builder.getI64IntegerAttr(
+                  group.pulseControlled ? group.pulseReject : -1),
+              builder.getI64IntegerAttr(group.pulseControlled ? group.pulseError
+                                                              : -1),
+              builder.getBoolAttr(group.pulseControlled && group.pulseOnDetect),
               builder.getBoolAttr(group.pulseControlled &&
                                   group.pulseShowCancelled));
         }
@@ -4932,8 +4923,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         auto outputWidth =
             rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
         auto outputRootWidth =
-            rule ? rule.getAs<IntegerAttr>("output_root_width")
-                 : IntegerAttr{};
+            rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
         auto edge =
             rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
         auto pendingPath =
@@ -4956,15 +4946,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             static_cast<uint64_t>(outputRootWidth.getInt());
         monitor.edge = static_cast<int32_t>(edge.getInt());
         if (monitor.outputLow >= monitor.outputRootWidth ||
-            monitor.outputWidth >
-                monitor.outputRootWidth - monitor.outputLow)
+            monitor.outputWidth > monitor.outputRootWidth - monitor.outputLow)
           return function.emitError(
               "derived procedural monitor destination is out of bounds");
         monitor.pending = values.lookup(pendingPath.getValue());
         monitor.epoch = values.lookup(epochPath.getValue());
-        auto pendingRef = monitor.pending
-                              ? dyn_cast<sim::RefType>(monitor.pending.getType())
-                              : sim::RefType{};
+        auto pendingRef =
+            monitor.pending ? dyn_cast<sim::RefType>(monitor.pending.getType())
+                            : sim::RefType{};
         auto epochRef = monitor.epoch
                             ? dyn_cast<sim::RefType>(monitor.epoch.getType())
                             : sim::RefType{};
@@ -4974,7 +4963,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             !epochRef || epochRef.getElementType() != builder.getI64Type())
           return function.emitError(
               "derived procedural monitor state no longer resolves");
-        for (auto [index, pair] : llvm::enumerate(llvm::zip(inputs, snapshots))) {
+        for (auto [index, pair] :
+             llvm::enumerate(llvm::zip(inputs, snapshots))) {
           auto inputPath = dyn_cast<StringAttr>(std::get<0>(pair));
           auto snapshotPath = dyn_cast<StringAttr>(std::get<1>(pair));
           if (!inputPath || !snapshotPath || lsbs[index] < 0)
@@ -4985,9 +4975,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           if (!input || !snapshot || !isa<sim::RefType>(snapshot.getType()))
             return function.emitError(
                 "derived procedural monitor source no longer resolves");
-          monitor.sources.push_back(
-              {input, snapshot, snapshotPath.getValue().str(),
-               static_cast<uint64_t>(lsbs[index])});
+          monitor.sources.push_back({input, snapshot,
+                                     snapshotPath.getValue().str(),
+                                     static_cast<uint64_t>(lsbs[index])});
         }
         if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
           monitor.conditionKind = static_cast<int32_t>(kind.getInt());
@@ -5056,27 +5046,26 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         Value changed = sim::SimLogicCompareOp::create(
             builder, function.getLoc(), builder.getI1Type(),
             sim::CompareKind::CaseNe, previousBit, currentBit);
-        Value one = arith::ConstantOp::create(
-            builder, function.getLoc(), builder.getI1Type(),
-            builder.getBoolAttr(true));
-        Value oldKnown = arith::OrIOp::create(builder, function.getLoc(),
-                                              oldZero, oldOne);
-        Value oldUnknown = arith::XOrIOp::create(builder, function.getLoc(),
-                                                 oldKnown, one);
+        Value one = arith::ConstantOp::create(builder, function.getLoc(),
+                                              builder.getI1Type(),
+                                              builder.getBoolAttr(true));
+        Value oldKnown =
+            arith::OrIOp::create(builder, function.getLoc(), oldZero, oldOne);
+        Value oldUnknown =
+            arith::XOrIOp::create(builder, function.getLoc(), oldKnown, one);
         Value posedge = arith::OrIOp::create(
             builder, function.getLoc(),
-            arith::AndIOp::create(
-                builder, function.getLoc(), oldZero,
-                arith::XOrIOp::create(builder, function.getLoc(), newZero,
-                                      one)),
+            arith::AndIOp::create(builder, function.getLoc(), oldZero,
+                                  arith::XOrIOp::create(builder,
+                                                        function.getLoc(),
+                                                        newZero, one)),
             arith::AndIOp::create(builder, function.getLoc(), oldUnknown,
                                   newOne));
         Value negedge = arith::OrIOp::create(
             builder, function.getLoc(),
             arith::AndIOp::create(
                 builder, function.getLoc(), oldOne,
-                arith::XOrIOp::create(builder, function.getLoc(), newOne,
-                                      one)),
+                arith::XOrIOp::create(builder, function.getLoc(), newOne, one)),
             arith::AndIOp::create(builder, function.getLoc(), oldUnknown,
                                   newZero));
         return {changed, posedge, negedge};
@@ -5086,13 +5075,13 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       SmallVector<Value> conditions;
       llvm::DenseMap<int32_t, Value> anyConditional;
       llvm::StringMap<std::array<Value, 3>> classifiedEdges;
-      Value knownTrue = arith::ConstantOp::create(
-          builder, function.getLoc(), builder.getI1Type(),
-          builder.getBoolAttr(true));
+      Value knownTrue = arith::ConstantOp::create(builder, function.getLoc(),
+                                                  builder.getI1Type(),
+                                                  builder.getBoolAttr(true));
       for (MonitorRule &monitor : monitors) {
-        Value matched = arith::ConstantOp::create(
-            builder, function.getLoc(), builder.getI1Type(),
-            builder.getBoolAttr(false));
+        Value matched = arith::ConstantOp::create(builder, function.getLoc(),
+                                                  builder.getI1Type(),
+                                                  builder.getBoolAttr(false));
         for (const MonitorSource &source : monitor.sources) {
           auto found = transitions.find(source.snapshotPath);
           if (found == transitions.end()) {
@@ -5103,7 +5092,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                 source.snapshot);
             if (!current || current.getType() != previous.getType() ||
                 !isa<sim::LogicType>(current.getType()) ||
-                source.lsb >= cast<sim::LogicType>(current.getType()).getWidth())
+                source.lsb >=
+                    cast<sim::LogicType>(current.getType()).getWidth())
               return function.emitError(
                   "derived procedural monitor requires a logic source");
             found = transitions
@@ -5116,16 +5106,16 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           auto classified = classifiedEdges.find(edgeKey);
           if (classified == classifiedEdges.end())
             classified =
-                classifiedEdges.try_emplace(
-                                   edgeKey, edgeFor(found->second, source.lsb))
+                classifiedEdges
+                    .try_emplace(edgeKey, edgeFor(found->second, source.lsb))
                     .first;
           auto [changed, posedge, negedge] = classified->second;
           Value selected = monitor.edge == 0   ? changed
                            : monitor.edge == 1 ? posedge
                                                : negedge;
           if (monitor.edge == 3)
-            selected = arith::OrIOp::create(builder, function.getLoc(),
-                                            posedge, negedge);
+            selected = arith::OrIOp::create(builder, function.getLoc(), posedge,
+                                            negedge);
           matched = arith::OrIOp::create(builder, function.getLoc(), matched,
                                          selected);
         }
@@ -5135,11 +5125,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           SmallVector<Value, 5> operands{
               function.getBody().front().getArgument(0)};
           llvm::append_range(operands, monitor.conditionCaptures);
-          condition = sim::SimCallOp::create(
-                          builder, function.getLoc(),
-                          TypeRange{builder.getI1Type()},
-                          monitor.conditionEvaluator, operands, ArrayAttr{},
-                          ArrayAttr{})
+          condition = sim::SimCallOp::create(builder, function.getLoc(),
+                                             TypeRange{builder.getI1Type()},
+                                             monitor.conditionEvaluator,
+                                             operands, ArrayAttr{}, ArrayAttr{})
                           .getResult(0);
           Value previous = anyConditional.lookup(monitor.conditionGroup);
           anyConditional[monitor.conditionGroup] =
@@ -5156,25 +5145,24 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         Value condition = conditions[index];
         if (monitor.conditionKind == 2) {
           Value any = anyConditional.lookup(monitor.conditionGroup);
-          condition = any ? arith::XOrIOp::create(
-                                builder, function.getLoc(), any, knownTrue)
+          condition = any ? arith::XOrIOp::create(builder, function.getLoc(),
+                                                  any, knownTrue)
                           : knownTrue;
         }
-        Value qualified = arith::AndIOp::create(
-            builder, function.getLoc(), matchedEdges[index], condition);
-        IntegerType maskType =
-            builder.getIntegerType(monitor.outputRootWidth);
-        APInt bits = APInt::getBitsSet(
-            monitor.outputRootWidth, monitor.outputLow,
-            monitor.outputLow + monitor.outputWidth);
+        Value qualified = arith::AndIOp::create(builder, function.getLoc(),
+                                                matchedEdges[index], condition);
+        IntegerType maskType = builder.getIntegerType(monitor.outputRootWidth);
+        APInt bits =
+            APInt::getBitsSet(monitor.outputRootWidth, monitor.outputLow,
+                              monitor.outputLow + monitor.outputWidth);
         Value selected = arith::SelectOp::create(
             builder, function.getLoc(), qualified,
             arith::ConstantOp::create(builder, function.getLoc(), maskType,
                                       builder.getIntegerAttr(maskType, bits)),
             arith::ConstantOp::create(builder, function.getLoc(), maskType,
                                       builder.getIntegerAttr(maskType, 0)));
-        Value pending = sim::SimRefLoadOp::create(
-            builder, function.getLoc(), maskType, monitor.pending);
+        Value pending = sim::SimRefLoadOp::create(builder, function.getLoc(),
+                                                  maskType, monitor.pending);
         Value epoch = sim::SimRefLoadOp::create(
             builder, function.getLoc(), builder.getI64Type(), monitor.epoch);
         Value sameEpoch = arith::CmpIOp::create(
@@ -5183,8 +5171,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             builder, function.getLoc(), sameEpoch, pending,
             arith::ConstantOp::create(builder, function.getLoc(), maskType,
                                       builder.getIntegerAttr(maskType, 0)));
-        pending = arith::OrIOp::create(builder, function.getLoc(), pending,
-                                       selected);
+        pending =
+            arith::OrIOp::create(builder, function.getLoc(), pending, selected);
         // IEEE 1800-2017 30.5.3 samples path activity at the declared source
         // transition. Retaining the packed mask for this scheduler epoch lets
         // a later same-time derived wake consume that exact qualification.
@@ -5237,11 +5225,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           return failure();
         if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
           Type bitType = sim::LogicType::get(function.getContext(), 1);
-          Value bit = logic.getWidth() == 1
-                          ? *scalar
-                          : Value(sim::SimLogicExtractOp::create(
-                                builder, function.getLoc(), bitType, *scalar,
-                                0));
+          Value bit =
+              logic.getWidth() == 1
+                  ? *scalar
+                  : Value(sim::SimLogicExtractOp::create(
+                        builder, function.getLoc(), bitType, *scalar, 0));
           Value zero = sim::SimLogicConstantOp::create(
               builder, function.getLoc(), bitType,
               builder.getIntegerAttr(builder.getI1Type(), 0),
@@ -5255,17 +5243,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           // intentionally not used here.
           result = arith::XOrIOp::create(
                        builder, function.getLoc(), isZero,
-                       arith::ConstantOp::create(
-                           builder, function.getLoc(), builder.getI1Type(),
-                           builder.getBoolAttr(true)))
+                       arith::ConstantOp::create(builder, function.getLoc(),
+                                                 builder.getI1Type(),
+                                                 builder.getBoolAttr(true)))
                        .getResult();
-        } else if (auto integer =
-                       dyn_cast<IntegerType>((*scalar).getType())) {
-          result = integer.getWidth() == 1
-                       ? *scalar
-                       : Value(arith::TruncIOp::create(
-                             builder, function.getLoc(), builder.getI1Type(),
-                             *scalar));
+        } else if (auto integer = dyn_cast<IntegerType>((*scalar).getType())) {
+          result = integer.getWidth() == 1 ? *scalar
+                                           : Value(arith::TruncIOp::create(
+                                                 builder, function.getLoc(),
+                                                 builder.getI1Type(), *scalar));
         } else {
           return function.emitError(
               "timing path condition is not a packed integral value");
@@ -5377,9 +5363,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
       auto delays =
           rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
-      auto pulseReject =
-          rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject")
-               : DenseI64ArrayAttr{};
+      auto pulseReject = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject")
+                              : DenseI64ArrayAttr{};
       auto pulseError = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error")
                              : DenseI64ArrayAttr{};
       auto pulseOnDetect =
@@ -5398,7 +5383,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       if (!rule || !polarity || polarity.getInt() < 0 ||
           polarity.getInt() > 2 || !delays ||
           (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-          delays.size() != 6 && delays.size() != 12) ||
+           delays.size() != 6 && delays.size() != 12) ||
           (static_cast<bool>(pulseReject) != static_cast<bool>(pulseError)) ||
           (pulseReject && pulseReject.size() != delays.size()) ||
           (pulseError && pulseError.size() != delays.size()) ||
@@ -5566,28 +5551,56 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (values.size() == 1)
           result.fill(v1);
         else if (values.size() == 2)
-          result = {v1, v2, v1, v1, v2, v2, v1, v1, v2, v2,
-                    std::max(v1, v2), std::min(v1, v2)};
+          result = {v1,
+                    v2,
+                    v1,
+                    v1,
+                    v2,
+                    v2,
+                    v1,
+                    v1,
+                    v2,
+                    v2,
+                    std::max(v1, v2),
+                    std::min(v1, v2)};
         else if (values.size() == 3) {
           int64_t v3 = values[2];
-          result = {v1, v2, v3, v1, v3, v2, std::min(v1, v3), v1,
-                    std::min(v2, v3), v2, v3, std::min(v1, v2)};
+          result = {v1,
+                    v2,
+                    v3,
+                    v1,
+                    v3,
+                    v2,
+                    std::min(v1, v3),
+                    v1,
+                    std::min(v2, v3),
+                    v2,
+                    v3,
+                    std::min(v1, v2)};
         } else if (values.size() == 6) {
           int64_t v3 = values[2], v4 = values[3];
           int64_t v5 = values[4], v6 = values[5];
-          result = {v1, v2, v3, v4, v5, v6, std::min(v1, v3),
-                    std::max(v1, v4), std::min(v2, v5), std::max(v2, v6),
-                    std::max(v5, v3), std::min(v4, v6)};
+          result = {v1,
+                    v2,
+                    v3,
+                    v4,
+                    v5,
+                    v6,
+                    std::min(v1, v3),
+                    std::max(v1, v4),
+                    std::min(v2, v5),
+                    std::max(v2, v6),
+                    std::max(v5, v3),
+                    std::min(v4, v6)};
         } else
           llvm::copy(values, result.begin());
       };
       normalizeTransitionValues(delayValues, state.delays);
+      normalizeTransitionValues(pulseReject ? pulseReject.asArrayRef()
+                                            : delayValues,
+                                state.pulseReject);
       normalizeTransitionValues(
-          pulseReject ? pulseReject.asArrayRef() : delayValues,
-          state.pulseReject);
-      normalizeTransitionValues(
-          pulseError ? pulseError.asArrayRef() : delayValues,
-          state.pulseError);
+          pulseError ? pulseError.asArrayRef() : delayValues, state.pulseError);
       if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
         state.conditionKind = static_cast<int32_t>(kind.getInt());
       if (auto group = rule.getAs<IntegerAttr>("condition_group"))
@@ -5971,11 +5984,12 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           }))
         return function.emitError("mixed procedural timing path sites");
       plan.transitionIndependent =
-          llvm::all_of(timingPathRules, [](const TimingPathRuleState &rule) {
-            return llvm::all_equal(rule.delays) &&
-                   llvm::all_equal(rule.pulseReject) &&
-                   llvm::all_equal(rule.pulseError);
-          }) &&
+          llvm::all_of(timingPathRules,
+                       [](const TimingPathRuleState &rule) {
+                         return llvm::all_equal(rule.delays) &&
+                                llvm::all_equal(rule.pulseReject) &&
+                                llvm::all_equal(rule.pulseError);
+                       }) &&
           llvm::all_of(timingPathRules, [&](const TimingPathRuleState &rule) {
             const TimingPathRuleState &first = timingPathRules.front();
             return rule.delays.front() == first.delays.front() &&
@@ -5991,8 +6005,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (rule.edgeSensitive)
           plan.edgePending.push_back(rule.edgePending);
       }
-      using PulsePolicy =
-          std::tuple<int64_t, int64_t, int64_t, bool, bool>;
+      using PulsePolicy = std::tuple<int64_t, int64_t, int64_t, bool, bool>;
       // IEEE 1800-2017 30.7 associates reject/error limits with the delay
       // forming the trailing edge, and 30.7.4 makes on-detect/showcancelled
       // part of that output event policy. Coalesce only identical complete
@@ -6030,11 +6043,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         plan.groups[index].pulseShowCancelled = std::get<4>(policy);
         plan.groups[index].pulseControlled =
             std::get<1>(policy) != std::get<0>(policy) ||
-            std::get<2>(policy) != std::get<0>(policy) ||
-            std::get<3>(policy) || std::get<4>(policy);
+            std::get<2>(policy) != std::get<0>(policy) || std::get<3>(policy) ||
+            std::get<4>(policy);
       }
-      bool batchPulseControlled = llvm::any_of(
-          plan.groups, [](const TimingPathDelayGroup &group) {
+      bool batchPulseControlled =
+          llvm::any_of(plan.groups, [](const TimingPathDelayGroup &group) {
             return group.pulseControlled;
           });
       if (batchPulseControlled) {
@@ -6066,12 +6079,11 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                       builder.getIntegerAttr(
                           destinationMaskType,
                           APInt::getAllOnes(destinationMaskType.getWidth())))));
-          PulsePolicy policy{
-              timingPathRules[index].delays[transition],
-              timingPathRules[index].pulseReject[transition],
-              timingPathRules[index].pulseError[transition],
-              timingPathRules[index].pulseOnDetect,
-              timingPathRules[index].pulseShowCancelled};
+          PulsePolicy policy{timingPathRules[index].delays[transition],
+                             timingPathRules[index].pulseReject[transition],
+                             timingPathRules[index].pulseError[transition],
+                             timingPathRules[index].pulseOnDetect,
+                             timingPathRules[index].pulseShowCancelled};
           unsigned group = static_cast<unsigned>(
               llvm::lower_bound(distinctPolicies, policy) -
               distinctPolicies.begin());

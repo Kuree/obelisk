@@ -56,11 +56,9 @@ static bool isExactDecimal(StringRef value) {
   }
   if (!sawDigit)
     return false;
-  if (cursor < value.size() &&
-      (value[cursor] == 'e' || value[cursor] == 'E')) {
+  if (cursor < value.size() && (value[cursor] == 'e' || value[cursor] == 'E')) {
     ++cursor;
-    if (cursor < value.size() &&
-        (value[cursor] == '+' || value[cursor] == '-'))
+    if (cursor < value.size() && (value[cursor] == '+' || value[cursor] == '-'))
       ++cursor;
     size_t exponentStart = cursor;
     while (cursor < value.size() &&
@@ -99,9 +97,9 @@ TimeScaleAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-LogicalResult PortAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, StringAttr name,
-    bool hasIndex, int64_t index, Edge) {
+LogicalResult
+PortAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                 StringAttr name, bool hasIndex, int64_t index, Edge) {
   if (!name || name.getValue().empty())
     return emitError() << "port name must not be empty";
   if (name.getValue().size() > 16 * 1024)
@@ -111,9 +109,10 @@ LogicalResult PortAttr::verify(
   return success();
 }
 
-LogicalResult ConditionTokenAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    ConditionOpcode opcode, PortAttr port, IntegerAttr constant) {
+LogicalResult
+ConditionTokenAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                           ConditionOpcode opcode, PortAttr port,
+                           IntegerAttr constant) {
   if (opcode == ConditionOpcode::Port)
     return port && !constant
                ? success()
@@ -131,9 +130,9 @@ LogicalResult ConditionTokenAttr::verify(
   return success();
 }
 
-LogicalResult ConditionAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, ArrayAttr tokens,
-    bool) {
+LogicalResult
+ConditionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                      ArrayAttr tokens, bool) {
   // IEEE 1800-2017 32.4 preserves condition structure. A bounded postfix
   // stream avoids an opaque expression string and admits linear validation.
   if (!tokens || tokens.empty() || tokens.size() > 4096)
@@ -163,17 +162,18 @@ LogicalResult ConditionAttr::verify(
                     : emitError() << "condition must produce exactly one value";
 }
 
-LogicalResult TimingEventAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, PortAttr port,
-    ConditionAttr) {
+LogicalResult
+TimingEventAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        PortAttr port, ConditionAttr) {
   if (!port)
     return emitError() << "timing event requires a port";
   return success();
 }
 
-LogicalResult DelayValueAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError, DelayValueForm form,
-    DecimalAttr min, DecimalAttr typ, DecimalAttr max) {
+LogicalResult
+DelayValueAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                       DelayValueForm form, DecimalAttr min, DecimalAttr typ,
+                       DecimalAttr max) {
   // IEEE 1800-2017 32.3 permits empty fields in min:typ:max tuples.  Absence
   // is therefore semantic data, not malformed input.
   if (form == DelayValueForm::Empty)
@@ -229,8 +229,8 @@ LogicalResult SDFCellOp::verify() {
   if (getBody().empty())
     return emitOpError("requires one body block");
   for (Operation &operation : getBody().front())
-    if (!isa<SDFPathDelayOp, SDFTimingCheckOp, SDFLabelOp, SDFInterconnectDelayOp,
-             SDFTerminalDelayOp, SDFPulseOp>(operation))
+    if (!isa<SDFPathDelayOp, SDFTimingCheckOp, SDFLabelOp,
+             SDFInterconnectDelayOp, SDFTerminalDelayOp, SDFPulseOp>(operation))
       return emitOpError("body contains a non-SDF annotation record");
   return success();
 }
@@ -240,28 +240,28 @@ LogicalResult SDFPathDelayOp::verify() {
     return emitOpError("requires 1, 2, 3, 6, or 12 delay values");
   bool hasCondition = static_cast<bool>(getConditionAttr());
   if (hasCondition != (getKind() == PathKind::Cond))
-    return emitOpError("COND requires, and IOPATH/CONDELSE forbid, a condition");
+    return emitOpError(
+        "COND requires, and IOPATH/CONDELSE forbid, a condition");
   return success();
 }
 
 LogicalResult SDFTimingCheckOp::verify() {
   size_t events = getEvents().size();
   size_t limits = getLimits().size();
-  size_t expectedEvents =
-      (getKind() == TimingCheckKind::Period ||
-       getKind() == TimingCheckKind::Width)
-          ? 1
-          : 2;
-  size_t expectedLimits =
-      (getKind() == TimingCheckKind::SetupHold ||
-       getKind() == TimingCheckKind::Recrem ||
-       getKind() == TimingCheckKind::BidirectSkew ||
-       getKind() == TimingCheckKind::NoChange)
-          ? 2
-          : 1;
+  size_t expectedEvents = (getKind() == TimingCheckKind::Period ||
+                           getKind() == TimingCheckKind::Width)
+                              ? 1
+                              : 2;
+  size_t expectedLimits = (getKind() == TimingCheckKind::SetupHold ||
+                           getKind() == TimingCheckKind::Recrem ||
+                           getKind() == TimingCheckKind::BidirectSkew ||
+                           getKind() == TimingCheckKind::NoChange)
+                              ? 2
+                              : 1;
   if (events != expectedEvents || limits != expectedLimits)
     return emitOpError() << "requires " << expectedEvents << " event(s) and "
-                         << expectedLimits << " limit(s) for its timing-check kind";
+                         << expectedLimits
+                         << " limit(s) for its timing-check kind";
   return success();
 }
 

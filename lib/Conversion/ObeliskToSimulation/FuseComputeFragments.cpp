@@ -132,9 +132,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     auto found = cache.find(function.getOperation());
     if (found != cache.end())
       return found->second;
-    bool eligible = primitive
-                        ? isPrimitiveComputeBodyFusionEligible(function)
-                        : isComputeBodyFusionEligible(function);
+    bool eligible = primitive ? isPrimitiveComputeBodyFusionEligible(function)
+                              : isComputeBodyFusionEligible(function);
     cache.try_emplace(function.getOperation(), eligible);
     return eligible;
   };
@@ -359,12 +358,11 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
         continue;
       sim::SimFuncOp function = lookupFunction(fragment.getFunction());
       if (!function || seen.contains(function.getOperation()) ||
-          !isStraightLineContinuous(
-              function, isBodyEligible(function, primitiveOnly),
-              primitiveOnly) ||
-          (primitiveOnly &&
-           (!function->hasAttr("obelisk_sim.primitive_name") ||
-            !entirelyNative.lookup(function.getOperation()))))
+          !isStraightLineContinuous(function,
+                                    isBodyEligible(function, primitiveOnly),
+                                    primitiveOnly) ||
+          (primitiveOnly && (!function->hasAttr("obelisk_sim.primitive_name") ||
+                             !entirelyNative.lookup(function.getOperation()))))
         continue;
       seen.insert(function.getOperation());
       std::optional<uint64_t> instanceScope = getInstanceScope(function);

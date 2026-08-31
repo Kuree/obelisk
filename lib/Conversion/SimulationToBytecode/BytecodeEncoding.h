@@ -67,8 +67,7 @@ constexpr uint32_t kIntrinsicTimeScanScale =
 constexpr uint32_t kIntrinsicPlusargTest = OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST;
 constexpr uint32_t kIntrinsicPlusargValue =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE;
-constexpr uint32_t kIntrinsicPlusargScan =
-    OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
+constexpr uint32_t kIntrinsicPlusargScan = OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN;
 constexpr uint32_t kIntrinsicPlusargParseLogic =
     OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC;
 constexpr uint32_t kIntrinsicPlusargParseReal =

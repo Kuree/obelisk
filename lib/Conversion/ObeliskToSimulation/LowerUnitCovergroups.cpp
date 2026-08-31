@@ -205,9 +205,9 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
       return failure();
     }
 
-    unsigned selectorWidth = logic ? cast<sim::LogicType>(selector.getType())
-                                         .getWidth()
-                                   : integerType.getWidth();
+    unsigned selectorWidth =
+        logic ? cast<sim::LogicType>(selector.getType()).getWidth()
+              : integerType.getWidth();
     Type planeType = builder.getIntegerType(selectorWidth);
     auto constant = [&](Location candidateLocation,
                         const APInt &bits) -> Value {
@@ -240,11 +240,11 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
           .getResult();
     };
 
-    auto matchBin = [&](semantic::SVCoverageBinSymbolOp bin)
-        -> FailureOr<Value> {
+    auto matchBin =
+        [&](semantic::SVCoverageBinSymbolOp bin) -> FailureOr<Value> {
       Location binLocation = getSemanticLocation(bin);
-      auto encoded = bin->getAttrOfType<ArrayAttr>(
-          coverageResolvedIntervalsAttrName);
+      auto encoded =
+          bin->getAttrOfType<ArrayAttr>(coverageResolvedIntervalsAttrName);
       if (!encoded || encoded.size() % 2 != 0) {
         emitError(binLocation)
             << "coverage bin has no resolved state-value inventory";
@@ -263,25 +263,22 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
         }
         Value matched;
         if (lower.getValue() == upper.getValue()) {
-          matched = compare(binLocation, lower.getValue(),
-                            sim::CompareKind::Eq,
+          matched = compare(binLocation, lower.getValue(), sim::CompareKind::Eq,
                             arith::CmpIPredicate::eq);
         } else {
           Value lowerMatched = compare(
               binLocation, lower.getValue(),
               isSigned ? sim::CompareKind::SGE : sim::CompareKind::UGE,
-              isSigned ? arith::CmpIPredicate::sge
-                       : arith::CmpIPredicate::uge);
+              isSigned ? arith::CmpIPredicate::sge : arith::CmpIPredicate::uge);
           Value upperMatched = compare(
               binLocation, upper.getValue(),
               isSigned ? sim::CompareKind::SLE : sim::CompareKind::ULE,
-              isSigned ? arith::CmpIPredicate::sle
-                       : arith::CmpIPredicate::ule);
+              isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule);
           matched = arith::AndIOp::create(builder, binLocation, lowerMatched,
                                           upperMatched);
         }
-        binMatched = arith::OrIOp::create(builder, binLocation, binMatched,
-                                          matched);
+        binMatched =
+            arith::OrIOp::create(builder, binLocation, binMatched, matched);
       }
       return binMatched;
     };
@@ -306,9 +303,9 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
       FailureOr<Value> binMatched = matchBin(bin);
       if (failed(binMatched))
         return failure();
-      explicitlyDefinedMatched = arith::OrIOp::create(
-          builder, getSemanticLocation(bin), explicitlyDefinedMatched,
-          *binMatched);
+      explicitlyDefinedMatched =
+          arith::OrIOp::create(builder, getSemanticLocation(bin),
+                               explicitlyDefinedMatched, *binMatched);
       switch (bin.getBinsKind()) {
       case semantic::SVCoverageBinKind::Bins:
         if (bin->hasAttr(coverageContributingAttrName))
@@ -337,13 +334,13 @@ UnitLowering::lowerCovergroupSample(semantic::SVCallExpressionOp op,
             builder, pointLocation, builder.getI1Type(),
             sim::CompareKind::CaseEq, selector, roundTrip);
       }
-      Value noExplicitMatch = arith::XOrIOp::create(
-          builder, pointLocation, explicitlyDefinedMatched,
-          trueValue(pointLocation));
-      Value defaultMatched = arith::AndIOp::create(
-          builder, pointLocation, known, noExplicitMatch);
-      illegalMatched = arith::OrIOp::create(
-          builder, pointLocation, illegalMatched, defaultMatched);
+      Value noExplicitMatch = arith::XOrIOp::create(builder, pointLocation,
+                                                    explicitlyDefinedMatched,
+                                                    trueValue(pointLocation));
+      Value defaultMatched =
+          arith::AndIOp::create(builder, pointLocation, known, noExplicitMatch);
+      illegalMatched = arith::OrIOp::create(builder, pointLocation,
+                                            illegalMatched, defaultMatched);
     }
 
     // Sections 19.5.5 and 19.5.6 remove ignored and illegal values from every

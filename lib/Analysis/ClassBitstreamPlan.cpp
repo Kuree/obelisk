@@ -224,7 +224,7 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
     }
     llvm::sort(group.members);
     if (std::adjacent_find(group.members.begin(), group.members.end()) !=
-            group.members.end())
+        group.members.end())
       return design.emitOpError(
           "class bit-stream dispatch group contains duplicate members");
 

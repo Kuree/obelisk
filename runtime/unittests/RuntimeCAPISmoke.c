@@ -4,7 +4,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 #include "svdpi.h"
 
-#if defined(DPI_EXTERN) || defined(DPI_PROTOTYPES) || defined(XXTERN) ||         \
+#if defined(DPI_EXTERN) || defined(DPI_PROTOTYPES) || defined(XXTERN) ||       \
     defined(EETERN)
 #error "svdpi.h leaked its implementation helper macros"
 #endif

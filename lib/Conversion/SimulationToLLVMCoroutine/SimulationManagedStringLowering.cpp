@@ -704,22 +704,22 @@ public:
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
-    LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getPlanCursor().front(),
-                          output, 4);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          adaptor.getPlanCursor().front(), output, 4);
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_scan_dynamic_validate"),
-            ValueRange{context, adaptor.getFormat().front(),
-                       adaptor.getPlanCursor().front(),
-                       llvmConstant(rewriter, op.getLoc(), i32,
-                                    op.getFile() ? 1 : 0),
-                       llvmConstant(rewriter, op.getLoc(), i32,
-                                    op.getFinalize() ? 1 : 0),
-                       llvmConstant(rewriter, op.getLoc(), i64,
-                                    op.getAllowedSpecifiers()),
-                       output})
+            ValueRange{
+                context, adaptor.getFormat().front(),
+                adaptor.getPlanCursor().front(),
+                llvmConstant(rewriter, op.getLoc(), i32, op.getFile() ? 1 : 0),
+                llvmConstant(rewriter, op.getLoc(), i32,
+                             op.getFinalize() ? 1 : 0),
+                llvmConstant(rewriter, op.getLoc(), i64,
+                             op.getAllowedSpecifiers()),
+                output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.replaceOp(
@@ -768,21 +768,19 @@ public:
     };
     SmallVector<Value> arguments{context, lane};
     if constexpr (IsFile) {
-      arguments.append({adaptor.getDescriptor().front(),
-                        adaptor.getFormat().front(),
-                        adaptor.getPlanCursor().front(),
-                        adaptor.getEnabled().front()});
+      arguments.append(
+          {adaptor.getDescriptor().front(), adaptor.getFormat().front(),
+           adaptor.getPlanCursor().front(), adaptor.getEnabled().front()});
     } else {
       arguments.append({adaptor.getInput().front(), adaptor.getCursor().front(),
                         adaptor.getFormat().front(),
                         adaptor.getPlanCursor().front(),
                         adaptor.getEnabled().front()});
     }
-    arguments.append(
-        {constant(i32, op.getFinalize() ? 1 : 0),
-         constant(i64, op.getAllowedSpecifiers()),
-         constant(i64, op.getRawTwoStateBytes()),
-         constant(i64, op.getRawFourStateBytes()), fieldOutput});
+    arguments.append({constant(i32, op.getFinalize() ? 1 : 0),
+                      constant(i64, op.getAllowedSpecifiers()),
+                      constant(i64, op.getRawTwoStateBytes()),
+                      constant(i64, op.getRawFourStateBytes()), fieldOutput});
     if constexpr (!IsFile)
       arguments.push_back(scalarOutputs[0]);
     arguments.append({scalarOutputs[IsFile ? 0 : 1],
@@ -793,10 +791,9 @@ public:
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(
-                rewriter.getContext(),
-                IsFile ? "obelisk_rt_v1_file_scan_dynamic"
-                       : "obelisk_rt_v1_string_scan_dynamic"),
+            SymbolRefAttr::get(rewriter.getContext(),
+                               IsFile ? "obelisk_rt_v1_file_scan_dynamic"
+                                      : "obelisk_rt_v1_string_scan_dynamic"),
             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1067,8 +1064,8 @@ public:
   matchAndRewrite(sim::SimStringParseLogicOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> types;
-    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
-                                               types)) ||
+    if (failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.size() != 2 || types[0] != types[1] ||
         adaptor.getInput().size() != 1)
       return failure();
@@ -1088,15 +1085,15 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_plusarg_parse_logic"),
-            ValueRange{adaptor.getInput().front(),
-                       llvmConstant(rewriter, op.getLoc(),
-                                    rewriter.getI32Type(), op.getRadix()),
-                       llvmConstant(rewriter, op.getLoc(), i64,
-                                    plane.getWidth()),
-                       valueOutput,
-                       llvmConstant(rewriter, op.getLoc(), i64, byteCount),
-                       unknownOutput,
-                       llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
+            ValueRange{
+                adaptor.getInput().front(),
+                llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                             op.getRadix()),
+                llvmConstant(rewriter, op.getLoc(), i64, plane.getWidth()),
+                valueOutput,
+                llvmConstant(rewriter, op.getLoc(), i64, byteCount),
+                unknownOutput,
+                llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
             .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
@@ -1118,8 +1115,8 @@ public:
   matchAndRewrite(sim::SimPlusargParseLogicOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> types;
-    if (failed(getTypeConverter()->convertType(op.getResult().getType(),
-                                               types)) ||
+    if (failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.size() != 2 || types[0] != types[1] ||
         adaptor.getInput().size() != 1)
       return failure();
@@ -1130,24 +1127,24 @@ public:
     Value valueOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
     Value unknownOutput = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
     for (Value output : {valueOutput, unknownOutput})
-      LLVM::StoreOp::create(
-          rewriter, op.getLoc(),
-          LLVM::ZeroOp::create(rewriter, op.getLoc(), plane), output, 1);
+      LLVM::StoreOp::create(rewriter, op.getLoc(),
+                            LLVM::ZeroOp::create(rewriter, op.getLoc(), plane),
+                            output, 1);
     Type i64 = rewriter.getI64Type();
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_plusarg_parse_logic"),
-            ValueRange{adaptor.getInput().front(),
-                       llvmConstant(rewriter, op.getLoc(),
-                                    rewriter.getI32Type(), op.getRadix()),
-                       llvmConstant(rewriter, op.getLoc(), i64,
-                                    plane.getWidth()),
-                       valueOutput,
-                       llvmConstant(rewriter, op.getLoc(), i64, byteCount),
-                       unknownOutput,
-                       llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
+            ValueRange{
+                adaptor.getInput().front(),
+                llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                             op.getRadix()),
+                llvmConstant(rewriter, op.getLoc(), i64, plane.getWidth()),
+                valueOutput,
+                llvmConstant(rewriter, op.getLoc(), i64, byteCount),
+                unknownOutput,
+                llvmConstant(rewriter, op.getLoc(), i64, byteCount)})
             .getResult();
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
@@ -1165,23 +1162,24 @@ public:
 void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
                                                    TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<
-      StringLiteralConversion, StringFromPackedConversion,
-      StringToPackedConversion, StringToPackedExactConversion,
-      StringConcatConversion, StringLengthConversion,
-      StringGetcConversion, StringCompareConversion, StringScanFieldConversion,
-      DynamicScanValidateConversion,
-      DynamicScanConversion<sim::SimStringScanDynamicOp, false>,
-      RawScanConversion<sim::SimStringScanRawOp, false, false>,
-      RawScanConversion<sim::SimStringSkipRawOp, false, true>,
-      FileScanFieldConversion,
-      DynamicScanConversion<sim::SimFileScanDynamicOp, true>,
-      RawScanConversion<sim::SimFileScanRawOp, true, false>,
-      RawScanConversion<sim::SimFileSkipRawOp, true, true>,
-      StringParseLogicConversion, PlusargParseLogicConversion,
-      PlusargTestConversion, PlusargValueConversion, PlusargScanConversion,
-      SystemConversion, StringDumpOpenConversion, StringDumpPortsConversion,
-      StringDumpPortsControlConversion>(converter, context);
+  patterns
+      .add<StringLiteralConversion, StringFromPackedConversion,
+           StringToPackedConversion, StringToPackedExactConversion,
+           StringConcatConversion, StringLengthConversion, StringGetcConversion,
+           StringCompareConversion, StringScanFieldConversion,
+           DynamicScanValidateConversion,
+           DynamicScanConversion<sim::SimStringScanDynamicOp, false>,
+           RawScanConversion<sim::SimStringScanRawOp, false, false>,
+           RawScanConversion<sim::SimStringSkipRawOp, false, true>,
+           FileScanFieldConversion,
+           DynamicScanConversion<sim::SimFileScanDynamicOp, true>,
+           RawScanConversion<sim::SimFileScanRawOp, true, false>,
+           RawScanConversion<sim::SimFileSkipRawOp, true, true>,
+           StringParseLogicConversion, PlusargParseLogicConversion,
+           PlusargTestConversion, PlusargValueConversion, PlusargScanConversion,
+           SystemConversion, StringDumpOpenConversion,
+           StringDumpPortsConversion, StringDumpPortsControlConversion>(
+          converter, context);
   patterns.add<StringFileOpenConversion<sim::SimFileOpenStringMCDOp>,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(converter,
                                                                    context);

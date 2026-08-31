@@ -13,7 +13,8 @@ using namespace mlir;
 int main(int argc, char **argv) {
   TranslateToMLIRRegistration importSDF(
       "import-sdf", "import an IEEE 1800-2017 Clause 32 SDF delay file",
-      [](llvm::SourceMgr &sourceMgr, MLIRContext *context) -> OwningOpRef<Operation *> {
+      [](llvm::SourceMgr &sourceMgr,
+         MLIRContext *context) -> OwningOpRef<Operation *> {
         const llvm::MemoryBuffer *buffer = sourceMgr.getMemoryBuffer(1);
         auto module = obelisk::frontend::importSDF(
             buffer->getBufferIdentifier(), buffer->getBuffer(), *context);

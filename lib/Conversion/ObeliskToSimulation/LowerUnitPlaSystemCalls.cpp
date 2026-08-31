@@ -27,8 +27,7 @@ UnitLowering::lowerPlaSystemCall(semantic::SVCallExpressionOp op) {
   bool conjunction = name.contains("$and$") || nand;
   bool disjunction = name.contains("$or$") || nor;
   if ((!asynchronous && !name.starts_with("$sync$")) ||
-      (!plane && !name.ends_with("$array")) ||
-      (!conjunction && !disjunction)) {
+      (!plane && !name.ends_with("$array")) || (!conjunction && !disjunction)) {
     emitError(location) << "invalid PLA system task " << name;
     return failure();
   }

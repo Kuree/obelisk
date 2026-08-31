@@ -7,8 +7,8 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace mlir;
 
@@ -175,10 +175,9 @@ public:
         Type type = sampler.getArgumentTypes()[index];
         Value value;
         if (kind && descriptor && kind.getValue() == sim::CaptureKind::Storage)
-          value = sim::SimContextStorageOp::create(rootBuilder, sampler.getLoc(),
-                                                   type, context, descriptor);
-        else if (kind && descriptor &&
-                 kind.getValue() == sim::CaptureKind::Net)
+          value = sim::SimContextStorageOp::create(
+              rootBuilder, sampler.getLoc(), type, context, descriptor);
+        else if (kind && descriptor && kind.getValue() == sim::CaptureKind::Net)
           value = sim::SimContextNetOp::create(rootBuilder, sampler.getLoc(),
                                                type, context, descriptor);
         else if (kind && descriptor &&
