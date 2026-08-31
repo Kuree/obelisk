@@ -266,13 +266,14 @@ def compile_design(obelisk: str, sources: list[str], output: str,
                    single_unit: bool = True, opt: str = "-O0",
                    timeout: float = 60.0,
                    native_inputs: list[str] | None = None,
-                   vpi: str = "off") -> CompileResult:
+                   vpi: str = "off", cwd: str | None = None) -> CompileResult:
     """Compile `sources` into the native executable `output`.
 
     Obelisk is invoked directly — there is no `iverilog` shim in this model. A
     non-zero exit is a normal outcome (compile-error tests and unimplemented
     features both land here), so the caller inspects `ok`/`stderr` rather than
-    treating failure as an error. A compile timeout bounds pathological designs
+    treating failure as an error. `cwd` lets a suite preserve its upstream
+    relative fixture layout. A compile timeout bounds pathological designs
     (huge elaborations) so one test cannot stall the batch.
     """
     command = [obelisk]
@@ -283,7 +284,7 @@ def compile_design(obelisk: str, sources: list[str], output: str,
         *(native_inputs or []), "-o", output,
     ]
     try:
-        result = _run_with_retry(command, timeout)
+        result = _run_with_retry(command, timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
         return CompileResult(
             ok=False, stderr=f"compile exceeded {timeout:g}s",

@@ -6,6 +6,7 @@ descriptors. We translate Icarus arguments, build any C/C++ VPI module, compile
 the design and native inputs with Obelisk, run it, and judge it three ways:
 
   * type `CE` expects a compile error;
+  * types `CO` and `CN` stop after a successful compile;
   * a descriptor with a gold file passes iff its stdout matches the gold;
   * otherwise the test self-checks and must print `PASSED`.
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -37,6 +39,19 @@ SINGLE_UNIT = True
 DEFAULT_LISTS = ["regress-sv.list", "regress-vlg.list"]
 PASSED_MARKER = "PASSED"
 _LISTS_DIR = Path(__file__).resolve().parents[2] / "lists" / "ivtest"
+
+
+def _normalize_fixture_paths(output: str, ivtest_dir: Path,
+                             run_dir: Path) -> str:
+    """Canonicalize isolated-checkout paths for upstream text oracles."""
+    fixture = (ivtest_dir / "ivltests").resolve()
+    spellings = {
+        fixture.as_posix(),
+        Path(os.path.relpath(fixture, run_dir)).as_posix(),
+    }
+    for spelling in sorted(spellings, key=len, reverse=True):
+        output = output.replace(spelling + "/", "./ivltests/")
+    return output
 
 
 class Exclusion(NamedTuple):
@@ -261,10 +276,14 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         binary = Path(tmp) / "sim"
         selected_vpi = vpi_mode or (
             "full" if native.inputs else "off")
+        compile_flags = [*flags, "-I", tmp]
+        source = str(desc.source)
+        if desc.source.parent == ivtest_dir / "ivltests":
+            source = f"./ivltests/{desc.source.name}"
         compiled = runner.compile_design(
-            obelisk, [str(desc.source)], str(binary), flags, std=std,
+            obelisk, [source], str(binary), compile_flags, std=std,
             single_unit=SINGLE_UNIT,
-            native_inputs=native.inputs, vpi=selected_vpi,
+            native_inputs=native.inputs, vpi=selected_vpi, cwd=tmp,
         )
 
         if desc.test_type == "CE":
@@ -276,6 +295,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
                     model.Outcome(model.COMPILE_FAIL, compiled.stderr))
         if not compiled.ok:
             return (desc.key, model.Outcome(model.COMPILE_FAIL, compiled.stderr))
+        if desc.test_type in ("CO", "CN"):
+            return (desc.key, model.Outcome(model.PASS))
 
         result = runner.execute(str(binary), timeout, args=plusargs, cwd=tmp)
         if desc.artifact_diffs:
@@ -300,8 +321,10 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
                     ))
             return (desc.key, model.Outcome(model.PASS))
         if desc.gold is not None:
+            normalized = _normalize_fixture_paths(
+                result.stdout, ivtest_dir, run_dir)
             if (result.ok and desc.gold.exists() and
-                    result.stdout == desc.gold.read_text(
+                    normalized == desc.gold.read_text(
                         encoding="utf-8", errors="replace")):
                 return (desc.key, model.Outcome(model.PASS))
             return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
@@ -324,7 +347,7 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     """Select, compile, run, and judge the ivtest corpus, optionally in parallel."""
     requested = args.lists if args.lists else DEFAULT_LISTS
     lists = resolve_lists(root, requested)
-    ivtest_dir = _ivtest_dir(root)
+    ivtest_dir = _ivtest_dir(root).resolve()
     items = read_items(ivtest_dir, lists)
     if args.tests:
         requested_tests = set(args.tests)
