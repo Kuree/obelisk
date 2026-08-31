@@ -3632,34 +3632,53 @@ void ObeliskSimPreparePass::runOnOperation() {
       builder, module.getLoc(), "__obelisk_root", rootType,
       sim::EntryKind::RootInitializer, rootAttrs, rootArgAttrs);
 
+  llvm::DenseMap<Operation *, SmallVector<semantic::SVClassTypeOp>>
+      classHierarchyCache;
   auto collectClassHierarchy =
       [&](semantic::SVClassTypeOp leaf,
           SmallVectorImpl<semantic::SVClassTypeOp> &hierarchy,
           StringRef purpose) -> LogicalResult {
-    llvm::SmallPtrSet<Operation *, 8> visiting;
-    std::function<LogicalResult(semantic::SVClassTypeOp)> collect =
-        [&](semantic::SVClassTypeOp classType) -> LogicalResult {
-      if (!visiting.insert(classType).second)
-        return classType.emitError("randomization class hierarchy is cyclic");
-      if (std::optional<Type> baseType = classType.getBaseClass()) {
-        auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
-        auto base = baseHandle
-                        ? semanticClasses.find(
-                              baseHandle.getClassName().getLeafReference())
-                        : semanticClasses.end();
-        if (base == semanticClasses.end()) {
-          emitError(getSemanticLocation(classType))
-              << purpose << " cannot resolve the base class";
-          return failure();
-        }
-        if (failed(collect(base->second)))
-          return failure();
-      }
-      hierarchy.push_back(classType);
-      return success();
-    };
-    return collect(leaf);
-  };
+        llvm::SmallPtrSet<Operation *, 8> visiting;
+        std::function<LogicalResult(
+            semantic::SVClassTypeOp,
+            SmallVectorImpl<semantic::SVClassTypeOp> &)>
+            collect = [&](semantic::SVClassTypeOp classType,
+                          SmallVectorImpl<semantic::SVClassTypeOp> &result)
+            -> LogicalResult {
+          auto cached = classHierarchyCache.find(classType);
+          if (cached != classHierarchyCache.end()) {
+            llvm::append_range(result, cached->second);
+            return success();
+          }
+          if (!visiting.insert(classType).second)
+            return classType.emitError(
+                "randomization class hierarchy is cyclic");
+          SmallVector<semantic::SVClassTypeOp> resolved;
+          if (std::optional<Type> baseType = classType.getBaseClass()) {
+            auto baseHandle = dyn_cast<semantic::ClassHandleType>(*baseType);
+            auto base =
+                baseHandle
+                    ? semanticClasses.find(
+                          baseHandle.getClassName().getLeafReference())
+                    : semanticClasses.end();
+            if (base == semanticClasses.end()) {
+              emitError(getSemanticLocation(classType))
+                  << purpose << " cannot resolve the base class";
+              return failure();
+            }
+            if (failed(collect(base->second, resolved)))
+              return failure();
+          }
+          resolved.push_back(classType);
+          visiting.erase(classType);
+          auto [entry, inserted] =
+              classHierarchyCache.try_emplace(classType, std::move(resolved));
+          (void)inserted;
+          llvm::append_range(result, entry->second);
+          return success();
+        };
+        return collect(leaf, hierarchy);
+      };
 
   using EffectiveConstraintGroup =
       SmallVector<semantic::SVConstraintBlockSymbolOp, 2>;
