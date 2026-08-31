@@ -194,6 +194,11 @@ LOCATOR_RETURN_ELEMENT_TYPE = Exclusion(
     "`int unsigned array[3]` gives min() the type `int unsigned$[$]`; the test "
     "expects Verilator's spelling with the element's unsigned dropped, and its "
     "%p expectations are the hexadecimal ones 21.2.1.7 already rules out")
+POST_2017_ARRAY_MAP = Exclusion(
+    "IEEE 1800-2017 7.12",
+    "the exhaustive 2017 list of array manipulation methods contains locator, "
+    "ordering, and reduction methods but no `map()` method; these 2024 tests "
+    "require a later SystemVerilog language version")
 STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION = Exclusion(
     "IEEE 1800-2017 5.9",
     "a string literal assigned to an unpacked array of bytes is left "
@@ -392,6 +397,10 @@ NARROW_STREAM_TARGET = Exclusion(
     "unpacks a four-byte queue into one byte; 11.4.14.3's own example spells "
     "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
 EXCLUDED: dict[str, Exclusion] = {
+    "t_array_method": POST_2017_ARRAY_MAP,
+    "t_assoc_method": POST_2017_ARRAY_MAP,
+    "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
+    "t_queue_method": POST_2017_ARRAY_MAP,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_crc_example": PATTERN_RADIX,
