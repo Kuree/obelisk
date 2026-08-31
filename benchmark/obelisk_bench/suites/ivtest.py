@@ -112,6 +112,11 @@ EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE = Exclusion(
     "test expects the undriven member of `output two_bits b2out` to behave "
     "like a net at z, but the variable member starts at x and that x resolves "
     "against the second driver on the connected net")
+SIZED_ADDITION_HAS_NO_CARRY_BIT = Exclusion(
+    "IEEE 1800-2017 11.6.1",
+    "Table 11-21 gives addition the maximum width of its operands, so "
+    "1'h1 + 1'h1 is one bit and evaluates to zero; the test selects the "
+    "value two only under Icarus's __ICARUS_UNSIZED__ extension")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -141,6 +146,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
+    "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
     "sv_unit1c": BUFFER_HIGH_IMPEDANCE_INPUT,
     "sys_func_task_error": FUNCTION_CALL_AS_STATEMENT_ERROR,
 }
