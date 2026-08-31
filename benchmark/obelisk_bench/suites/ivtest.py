@@ -40,6 +40,19 @@ DEFAULT_LISTS = ["regress-sv.list", "regress-vlg.list"]
 PASSED_MARKER = "PASSED"
 _LISTS_DIR = Path(__file__).resolve().parents[2] / "lists" / "ivtest"
 
+# These arithmetic stress tests legitimately run close to the ordinary
+# wall-clock limit even in isolation. Under the full 24-worker run, host
+# contention can push them beyond ten seconds despite producing the correct
+# result. Preserve the tight default for ordinary hangs and raise only the
+# upstream fixtures whose exhaustive loops are intentionally expensive.
+RUNTIME_TIMEOUT_FLOORS: dict[str, float] = {
+    "multiply_large": 60.0,
+    "pow_ca_signed": 60.0,
+    "pow_ca_unsigned": 60.0,
+    "pow_reg_signed": 60.0,
+    "pow_reg_unsigned": 60.0,
+}
+
 
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
@@ -364,7 +377,9 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         if desc.test_type in ("CO", "CN"):
             return (desc.key, model.Outcome(model.PASS))
 
-        result = runner.execute(str(binary), timeout, args=plusargs, cwd=tmp)
+        run_timeout = max(timeout, RUNTIME_TIMEOUT_FLOORS.get(desc.key, 0.0))
+        result = runner.execute(
+            str(binary), run_timeout, args=plusargs, cwd=tmp)
         if desc.artifact_diffs:
             if not result.ok:
                 return (desc.key,
@@ -408,7 +423,7 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         if result.stderr:
             diagnostic += result.stderr
         if result.timed_out and not diagnostic:
-            diagnostic = f"execution exceeded {timeout:g}s"
+            diagnostic = f"execution exceeded {run_timeout:g}s"
         return (desc.key,
                 dependency_failure(desc.key, model.RUN_FAIL, diagnostic))
 

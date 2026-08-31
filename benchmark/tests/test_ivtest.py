@@ -195,6 +195,40 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertFalse(compile_design.call_args.kwargs["single_unit"])
             execute.assert_not_called()
 
+    def test_arithmetic_stress_test_has_a_parallel_runtime_floor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ivtest_dir = Path(temporary).resolve()
+            source = ivtest_dir / "ivltests" / "pow_ca_signed.v"
+            source.parent.mkdir()
+            source.write_text("module test; endmodule\n", encoding="ascii")
+            descriptor = ivtest.Descriptor(
+                key="pow_ca_signed",
+                test_type="normal",
+                iverilog_args=[],
+                source=source,
+                gold=None,
+                artifact_diffs=[],
+                vpi_sources=[],
+                vpi_compiler_args=[],
+            )
+            compile_result = mock.Mock(ok=True, stderr="", failure_kind=None)
+            run_result = mock.Mock(
+                ok=True, stdout="PASSED\n", stderr="", timed_out=False)
+
+            with (
+                mock.patch.object(ivtest.runner, "build_vpi_inputs",
+                                  return_value=mock.Mock(ok=True, inputs=[])),
+                mock.patch.object(ivtest.runner, "compile_design",
+                                  return_value=compile_result),
+                mock.patch.object(ivtest.runner, "execute",
+                                  return_value=run_result) as execute,
+            ):
+                _, outcome = ivtest.judge_one(
+                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+
+            self.assertEqual(outcome.status, model.PASS)
+            self.assertEqual(execute.call_args.args[1], 60.0)
+
 
 if __name__ == "__main__":
     unittest.main()
