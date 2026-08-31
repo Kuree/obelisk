@@ -4620,6 +4620,23 @@ TEST_F(ManagedHeapTest, PlusargConversionsAreStrictWideAndFourState) {
                                          0xff, 0xff, 0x01}));
   EXPECT_EQ(unknown, value);
 
+  // An underscore is a separator wherever it appears, so it does not make the
+  // lone decimal x or z stop being the whole value.
+  parse("z_", 10, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0xff}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  parse("_x_", 10, 8, value, unknown);
+  EXPECT_EQ(value, (std::vector<uint8_t>{0x00}));
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  // A decimal x or z still stands for the whole value, so it may not share the
+  // conversion with a digit on either side.
+  parse("z5", 10, 8, value, unknown);
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  EXPECT_EQ(value, (std::vector<uint8_t>{0x00}));
+  parse("5z", 10, 8, value, unknown);
+  EXPECT_EQ(unknown, (std::vector<uint8_t>{0xff}));
+  EXPECT_EQ(value, (std::vector<uint8_t>{0x00}));
+
   parse("10xz", 2, 8, value, unknown);
   EXPECT_EQ(value, (std::vector<uint8_t>{0x09}));
   EXPECT_EQ(unknown, (std::vector<uint8_t>{0x03}));

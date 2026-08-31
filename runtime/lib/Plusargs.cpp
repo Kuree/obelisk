@@ -220,7 +220,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     if (isX || isZ) {
       if (radix != 10) {
         hasUnknown = true;
-      } else if (digitCount == 0 && index + 1 == size && !hadSign) {
+      } else if (digitCount == 0 && !hadSign) {
+        // A decimal x or z stands for the whole value rather than one digit,
+        // so it is recorded here and rejected below if any digit joins it.
+        // Underscores are separators anywhere in the number, so the check
+        // cannot simply require the x or z to end the string.
         decimalUnknown = static_cast<char>(character);
       } else {
         valid = false;
@@ -232,6 +236,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     }
     ++digitCount;
   }
+  // A lone decimal x or z is the entire value, so a digit beside it is a
+  // conversion the string cannot supply.
+  if (decimalUnknown && digitCount != 1)
+    valid = false;
   // A genuinely empty remainder is the one special zero-valued case in
   // 21.6. Signs, separators, or whitespace without a digit are malformed.
   if (!valid || (digitCount == 0 && size != 0)) {
