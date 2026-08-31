@@ -339,6 +339,15 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     if (existing != threadedValues[block].end())
       return existing->second;
 
+    // Recursive reconstruction asks for the value at predecessor
+    // terminators. When it reaches the block containing the definition, the
+    // root itself is available on every outgoing edge even though it does not
+    // dominate the block's first operation. Stopping here also prevents a
+    // loop from incorrectly demanding an undefined initial value on paths
+    // entering before the definition executes.
+    if (root.getParentBlock() == block)
+      return root;
+
     bool bypassed = resumeReachable[root].contains(block);
     if (!bypassed && dominance.dominates(root, &block->front()))
       return root;

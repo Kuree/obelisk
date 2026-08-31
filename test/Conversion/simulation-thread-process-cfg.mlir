@@ -8,6 +8,7 @@ module {
     obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "thread_process_cfg.side_resume"
     obelisk_sim.code_unit.decl 5 in 0 initial hierarchy "thread_process_cfg.control_side_resume"
     obelisk_sim.code_unit.decl 6 in 0 initial hierarchy "thread_process_cfg.constant_dag"
+    obelisk_sim.code_unit.decl 7 in 0 initial hierarchy "thread_process_cfg.body_defined_resume"
 
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context
@@ -136,6 +137,35 @@ module {
           (!obelisk_sim.context, i32) -> ()
       cf.br ^loop
     }
+
+    // A suspension-live root can be defined in a loop preheader rather than
+    // the entry block. Recursive reconstruction must stop at that definition
+    // for outgoing edges; the root need not exist on the initial path into
+    // the preheader itself.
+    obelisk_sim.func @body_defined_resume(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32},
+        %input: i32 {obelisk_sim.capture_kind = 2 : i32})
+        attributes {code_unit_id = 7 : i64, entry_kind = 1 : i32} {
+      cf.br ^make_value
+    ^make_value:
+      %live = arith.addi %input, %input : i32
+      cf.br ^loop
+    ^loop:
+      %condition = arith.constant true
+      cf.cond_br %condition, ^wait, ^use
+    ^wait:
+      %delay = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %delay to ^resume(%live : i32)
+    ^resume(%restored: i32):
+      cf.br ^side
+    ^side:
+      cf.br ^loop
+    ^use:
+      obelisk_sim.file.flush %ctx, %live :
+          (!obelisk_sim.context, i32) -> ()
+      obelisk_sim.return
+    }
   }
 
   obelisk_sim.design @duplicate_successor {
@@ -218,6 +248,21 @@ module {
 // CHECK-NEXT: %[[USE_THREE:.*]] = arith.constant 3 : i32
 // CHECK-NEXT: %[[USE_DERIVED:.*]] = arith.addi %[[USE_TWO]], %[[USE_THREE]] : i32
 // CHECK-NEXT: obelisk_sim.file.flush %{{.*}}, %[[USE_DERIVED]]
+
+// CHECK-LABEL: obelisk_sim.func @body_defined_resume
+// CHECK: ^[[BODY_DEF:.*]]:
+// CHECK-NEXT: %[[BODY_LIVE:.*]] = arith.addi
+// CHECK-NEXT: cf.br ^[[BODY_LOOP:.*]](%[[BODY_LIVE]] : i32)
+// CHECK: ^[[BODY_LOOP]](%[[BODY_CURRENT:.*]]: i32):
+// CHECK: cf.cond_br %{{.*}}, ^[[BODY_WAIT:.*]](%[[BODY_CURRENT]] : i32), ^[[BODY_USE:.*]](%[[BODY_CURRENT]] : i32)
+// CHECK: ^[[BODY_WAIT]](%[[BODY_WAIT_VALUE:.*]]: i32):
+// CHECK: obelisk_sim.suspend.delay %{{.*}} to ^[[BODY_RESUME:.*]](%[[BODY_WAIT_VALUE]] : i32)
+// CHECK: ^[[BODY_RESUME]](%[[BODY_RESTORED:.*]]: i32):
+// CHECK: cf.br ^[[BODY_SIDE:.*]](%[[BODY_RESTORED]] : i32)
+// CHECK: ^[[BODY_SIDE]](%[[BODY_SIDE_VALUE:.*]]: i32):
+// CHECK: cf.br ^[[BODY_LOOP]](%[[BODY_SIDE_VALUE]] : i32)
+// CHECK: ^[[BODY_USE]](%[[BODY_USE_VALUE:.*]]: i32):
+// CHECK: obelisk_sim.file.flush %{{.*}}, %[[BODY_USE_VALUE]]
 
 // CHECK-LABEL: obelisk_sim.func @duplicate_successor_process
 // CHECK: %[[DUP_LIVE:.*]] = arith.addi
