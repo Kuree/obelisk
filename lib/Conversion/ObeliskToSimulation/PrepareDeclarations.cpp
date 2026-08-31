@@ -472,6 +472,14 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         if (next >= children.size())
           break;
         Operation *child = children[next++];
+        auto semanticSource =
+            child->getAttrOfType<TypeAttr>("semantic_type");
+        if (semanticSource &&
+            isa<semantic::VoidType>(semanticSource.getValue())) {
+          if (withFlag != 0)
+            ++next;
+          continue;
+        }
         FailureOr<Type> source = getNormalizedSemanticType(child);
         bool containsClass =
             succeeded(source) && containsClassBitstreamSource(*source);
@@ -493,11 +501,25 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     SmallVector<Operation *> children = getChildren(conversion);
     if (children.size() != 1)
       return WalkResult::advance();
+    // IEEE 1800-2017 13.4.1 permits an explicit cast to void to discard a
+    // function result. This inventory walk only detects class bit-stream
+    // casts, so a void target is unrelated and must not be normalized as a
+    // simulation value type.
+    auto semanticTarget =
+        conversion->getAttrOfType<TypeAttr>("semantic_type");
+    if (semanticTarget &&
+        isa<semantic::VoidType>(semanticTarget.getValue()))
+      return WalkResult::advance();
     FailureOr<Type> target = getNormalizedSemanticType(conversion);
     if (failed(target) ||
         (!sim::getPackedScalarType(*target) &&
          !isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
               sim::UnpackedArrayType, sim::UnpackedStructType>(*target)))
+      return WalkResult::advance();
+    auto semanticSource =
+        children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (semanticSource &&
+        isa<semantic::VoidType>(semanticSource.getValue()))
       return WalkResult::advance();
     FailureOr<Type> source = getNormalizedSemanticType(children.front());
     bool containsClass =

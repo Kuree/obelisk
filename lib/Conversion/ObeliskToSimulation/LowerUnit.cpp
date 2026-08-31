@@ -2615,6 +2615,13 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       unsupported(op) << " (conversion arity)";
       return failure();
     }
+    // IEEE 1800-2017 13.4.1 uses an explicit cast to void to discard a
+    // function result. Preserve evaluation (and therefore all side effects),
+    // but no value conversion is needed for the enclosing statement.
+    auto semanticTarget = op->getAttrOfType<TypeAttr>("semantic_type");
+    if (semanticTarget &&
+        isa<semantic::VoidType>(semanticTarget.getValue()))
+      return lowerExpression(children.front());
     FailureOr<Type> target = getNormalizedSemanticType(op);
     if (failed(target))
       return failure();
