@@ -35,7 +35,7 @@ public:
 
   /// Return every non-abstract, non-interface class compatible with the
   /// receiver's static class, ordered by class ID and then symbol name.
-  mlir::SmallVector<sim::SimClassDeclOp>
+  mlir::ArrayRef<sim::SimClassDeclOp>
   compatibleConcreteClasses(sim::SimClassDeclOp staticClass) const;
 
   /// Resolve and deduplicate every concrete implementation reachable from a

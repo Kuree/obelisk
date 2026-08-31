@@ -165,14 +165,15 @@ ClassDispatchAnalysis::resolve(sim::SimClassDeclOp dynamicClass, uint64_t slot,
   return selected;
 }
 
-SmallVector<sim::SimClassDeclOp>
+ArrayRef<sim::SimClassDeclOp>
 ClassDispatchAnalysis::compatibleConcreteClasses(
     sim::SimClassDeclOp staticClass) const {
   if (!staticClass)
     return {};
   auto found = classIndices.find(staticClass.getSymName());
-  return found == classIndices.end() ? SmallVector<sim::SimClassDeclOp>{}
-                                     : compatibleConcrete[found->second];
+  return found == classIndices.end()
+             ? ArrayRef<sim::SimClassDeclOp>{}
+             : ArrayRef<sim::SimClassDeclOp>(compatibleConcrete[found->second]);
 }
 
 SmallVector<sim::SimClassMethodDeclOp>
