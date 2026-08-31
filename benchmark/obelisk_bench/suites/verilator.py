@@ -45,6 +45,10 @@ STOP_MARKER = "$stop"
 CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
 SCENARIO = "simulator"
 KNOWN_SLANG_BUGS = {
+    "t_assert_assert": (
+        "IEEE 1800-2017 16.14.1 explicitly permits immediate assertion "
+        "statements in a concurrent assertion action block; pinned Slang "
+        "rejects both action-block assertions as nonprocedural"),
     "t_array_pattern_default_recursive": (
         "IEEE 1800-2017 10.9.1 requires a default key that does not directly "
         "match an unmatched subarray to descend recursively; pinned Slang "
@@ -410,9 +414,16 @@ NARROW_STREAM_TARGET = Exclusion(
     "fewer bits) than the stream, an error shall be generated\", and the test "
     "unpacks a four-byte queue into one byte; 11.4.14.3's own example spells "
     "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
+INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT = Exclusion(
+    "IEEE 1800-2017 16.14.7",
+    "a call to `$inferred_disable` may only be the entire default value of a "
+    "property or sequence formal; the test itself says it requires "
+    "Verilator's superset use in a disable condition and an initial block")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
+    "t_assert_disable_count": INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT,
+    "t_assert_pre": USE_BEFORE_DECLARATION,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
