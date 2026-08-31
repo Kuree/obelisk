@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='obelisk_sim.hierarchical_name = "worker::dead"'
+// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='obelisk_sim.hierarchical_name = "worker::dead"' --implicit-check-not='obelisk_sim.hierarchical_name = "worker::dead_virtual"'
 
 class worker;
   function int live();
@@ -9,8 +9,12 @@ class worker;
     return 9;
   endfunction
 
-  virtual function int keep_vtable();
+  virtual function int dead_virtual();
     return 11;
+  endfunction
+
+  virtual function int live_virtual();
+    return 13;
   endfunction
 endclass
 
@@ -20,10 +24,13 @@ module early_class_method_dce;
     value = new;
     if (value.live() != 7)
       $fatal(1, "live method was not retained");
+    if (value.live_virtual() != 13)
+      $fatal(1, "live virtual method was not retained");
   end
 endmodule
 
 // CHECK: obelisk_sim.func private
 // CHECK-SAME: obelisk_sim.hierarchical_name = "worker::live"
 // CHECK: obelisk_sim.class.method
-// CHECK-SAME: debug_name = "keep_vtable"
+// CHECK-SAME: slot 0
+// CHECK-SAME: debug_name = "live_virtual"

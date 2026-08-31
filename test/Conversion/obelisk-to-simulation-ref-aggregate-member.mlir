@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=early-symbol-dce=false' | FileCheck %s
 
 !record = !obelisk.source_aggregate<"$unit", false, false, false, false, false, false, 0, 96, 96, 0, [{name = "kind", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "address", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<64, false, false, 63 : 0, longint>}]>
 

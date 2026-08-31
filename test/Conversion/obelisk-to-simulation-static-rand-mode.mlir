@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
 // Static random variables participate in ordinary object.randomize(). Their

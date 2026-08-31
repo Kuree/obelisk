@@ -18,6 +18,7 @@
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -10901,14 +10902,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                               semantic::SVSubroutineKind::Task),
           builder.getBoolAttr(method.getIsFinal().value_or(false)),
           builder.getStringAttr(getDebugName(method)));
-      // A non-virtual method has no runtime dispatch-table role. Its direct
-      // call sites carry an explicit symbol reference, so ordinary symbol
-      // reachability can discard the declaration and implementation when no
-      // executable root calls it. Virtual methods remain externally visible
-      // roots because every concrete class must retain a complete vtable.
-      if (!isVirtual)
-        SymbolTable::setSymbolVisibility(declaration,
-                                         SymbolTable::Visibility::Private);
+      // Class methods are internal to the closed elaborated design. Direct
+      // calls name their descriptor explicitly; virtual calls receive the
+      // complete compatible target set below. This lets ordinary symbol DCE
+      // discard unused method families before per-function lowering.
+      SymbolTable::setSymbolVisibility(declaration,
+                                       SymbolTable::Visibility::Private);
     }
   }
   if (invalid)
@@ -12482,6 +12481,61 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (isRootSpawned(unit) && hasDeferredTimeZeroActivation(unit))
       if (failed(spawnRootUnit(unit)))
         return abort();
+  // Make virtual dispatch edges visible to generic symbol reachability while
+  // the prepared semantic calls still retain their static method identity.
+  // A live virtual call keeps every effective implementation compatible with
+  // its receiver type; a dead caller contributes no roots. The early
+  // devirtualization pass compacts the surviving slots after symbol DCE.
+  {
+    analysis::ClassDispatchAnalysis dispatch(design);
+    llvm::StringMap<sim::SimClassMethodDeclOp> methods;
+    design.walk([&](sim::SimClassMethodDeclOp method) {
+      methods[method.getSymName()] = method;
+    });
+    llvm::StringMap<SmallVector<Attribute>> targetsByMethod;
+    llvm::DenseMap<Operation *, llvm::DenseSet<Attribute>> targetsByFunction;
+    design.walk([&](semantic::SVCallExpressionOp call) {
+      if (!call->hasAttr("obelisk_sim.class_virtual"))
+        return;
+      auto reference =
+          call->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_method");
+      auto slot = call->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+      auto signature =
+          call->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
+      auto found =
+          reference ? methods.find(reference.getValue()) : methods.end();
+      if (found == methods.end() || !slot || !signature)
+        return;
+      sim::SimClassMethodDeclOp method = found->second;
+      auto [cached, inserted] =
+          targetsByMethod.try_emplace(method.getSymName());
+      if (inserted) {
+        sim::SimClassDeclOp owner = dispatch.lookup(method.getOwner());
+        for (sim::SimClassMethodDeclOp target :
+             dispatch.compatibleImplementations(
+                 owner, slot.getValue().getZExtValue(),
+                 signature.getValue().getZExtValue(), method.getIsTask()))
+          cached->second.push_back(
+              FlatSymbolRefAttr::get(context, target.getSymName()));
+      }
+      if (sim::SimFuncOp function = call->getParentOfType<sim::SimFuncOp>())
+        targetsByFunction[function].insert(cached->second.begin(),
+                                           cached->second.end());
+    });
+    for (auto &[operation, targetSet] : targetsByFunction) {
+      SmallVector<Attribute> targets(targetSet.begin(), targetSet.end());
+      llvm::sort(targets, [](Attribute lhs, Attribute rhs) {
+        return cast<FlatSymbolRefAttr>(lhs).getValue() <
+               cast<FlatSymbolRefAttr>(rhs).getValue();
+      });
+      sim::SimFuncOp function = cast<sim::SimFuncOp>(operation);
+      OpBuilder markerBuilder =
+          OpBuilder::atBlockBegin(&function.getBody().front());
+      sim::SimClassDispatchTargetsOp::create(markerBuilder, function.getLoc(),
+                                             builder.getArrayAttr(targets));
+    }
+  }
+
   sim::SimReturnOp::create(rootBuilder, module.getLoc(), ValueRange{});
 }
 

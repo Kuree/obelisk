@@ -40,6 +40,10 @@ struct ObeliskToSimulationPipelineOptions
   Option<unsigned> optLevel{*this, "opt-level",
                             llvm::cl::desc("optimization level from 0 to 3"),
                             llvm::cl::init(3)};
+  Option<bool> earlySymbolDCE{
+      *this, "early-symbol-dce",
+      llvm::cl::desc("prune unreachable prepared symbols before unit lowering"),
+      llvm::cl::init(true)};
   Option<std::string> staticSpecialization{
       *this, "static-specialization",
       llvm::cl::desc("static state/NBA specialization: auto, off, or on"),
@@ -198,13 +202,22 @@ void ObeliskSimFinalizePass::runOnOperation() {
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode, uint32_t optLevel,
-                                      StringRef staticSpecialization) {
+                                      StringRef staticSpecialization,
+                                      bool earlySymbolDCE) {
   manager.addPass(createObeliskSimPreparePass());
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable
   // private code units before paying the per-function lowering cost.
-  designManager.addPass(createSymbolDCEPass());
+  if (earlySymbolDCE)
+    designManager.addPass(createSymbolDCEPass());
+  // Prepared virtual calls expose all compatible targets as symbol edges.
+  // Once DCE removes unused method families, compact their vtable slots before
+  // those call contracts are lowered to executable dispatch operations.
+  ObeliskSimDevirtualizeClassCallsPassOptions earlyDevirtualizeOptions;
+  earlyDevirtualizeOptions.preserveAllMethods = !earlySymbolDCE;
+  designManager.addPass(createObeliskSimDevirtualizeClassCallsPass(
+      std::move(earlyDevirtualizeOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createObeliskSimLowerUnitPass());
@@ -338,17 +351,18 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager) {
-  buildObeliskToSimulationPipeline(manager, 1, "off", 3, "auto");
+  buildObeliskToSimulationPipeline(manager, 1, "off", 3, "auto", true);
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode) {
-  buildObeliskToSimulationPipeline(manager, workers, vpiMode, 3, "auto");
+  buildObeliskToSimulationPipeline(manager, workers, vpiMode, 3, "auto", true);
 }
 
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode, uint32_t optLevel) {
-  buildObeliskToSimulationPipeline(manager, workers, vpiMode, optLevel, "auto");
+  buildObeliskToSimulationPipeline(manager, workers, vpiMode, optLevel, "auto",
+                                   true);
 }
 
 void registerObeliskToSimulationPipeline() {
@@ -360,7 +374,8 @@ void registerObeliskToSimulationPipeline() {
         buildObeliskToSimulationPipeline(
             manager, options.workers.getValue(), options.vpi.getValue(),
             options.optLevel.getValue(),
-            options.staticSpecialization.getValue());
+            options.staticSpecialization.getValue(),
+            options.earlySymbolDCE.getValue());
       });
 }
 

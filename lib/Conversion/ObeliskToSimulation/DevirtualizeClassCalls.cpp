@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,6 +22,83 @@ namespace obelisk {
 namespace {
 
 namespace sim = ::obelisk::sim;
+namespace semantic = ::obelisk::ir;
+
+/// Symbol DCE may remove every implementation of an unreachable virtual
+/// family. Renumber the surviving families densely within each inheritance
+/// tree before managed layout construction, and update the prepared call
+/// contracts in lockstep. Interface dispatch uses its reserved ABI slot and
+/// is intentionally unaffected.
+void compactPreparedVirtualSlots(sim::SimDesignOp design) {
+  llvm::StringMap<sim::SimClassDeclOp> classes;
+  design.walk([&](sim::SimClassDeclOp declaration) {
+    classes[declaration.getSymName()] = declaration;
+  });
+
+  llvm::StringMap<std::string> roots;
+  std::function<StringRef(StringRef)> findRoot = [&](StringRef name) {
+    auto cached = roots.find(name);
+    if (cached != roots.end())
+      return StringRef(cached->second);
+    auto found = classes.find(name);
+    if (found == classes.end() || !found->second.getBase()) {
+      roots[name] = name.str();
+      return StringRef(roots.find(name)->second);
+    }
+    StringRef root = findRoot(*found->second.getBase());
+    roots[name] = root.str();
+    return StringRef(roots.find(name)->second);
+  };
+
+  llvm::StringMap<SmallVector<uint64_t>> slotsByRoot;
+  llvm::StringMap<sim::SimClassMethodDeclOp> methods;
+  design.walk([&](sim::SimClassMethodDeclOp method) {
+    methods[method.getSymName()] = method;
+    if (!method.getSlot() ||
+        *method.getSlot() ==
+            analysis::ClassDispatchAnalysis::getInterfaceDispatchSlot())
+      return;
+    slotsByRoot[findRoot(method.getOwner())].push_back(*method.getSlot());
+  });
+
+  llvm::StringMap<DenseMap<uint64_t, uint64_t>> remapped;
+  for (auto &entry : slotsByRoot) {
+    llvm::sort(entry.second);
+    entry.second.erase(std::unique(entry.second.begin(), entry.second.end()),
+                       entry.second.end());
+    DenseMap<uint64_t, uint64_t> &mapping = remapped[entry.first()];
+    for (auto [next, old] : llvm::enumerate(entry.second))
+      mapping[old] = next;
+  }
+
+  Builder builder(design.getContext());
+  for (auto &entry : methods) {
+    sim::SimClassMethodDeclOp method = entry.second;
+    if (!method.getSlot() ||
+        *method.getSlot() ==
+            analysis::ClassDispatchAnalysis::getInterfaceDispatchSlot())
+      continue;
+    method.setSlotAttr(builder.getI64IntegerAttr(
+        remapped[findRoot(method.getOwner())].lookup(*method.getSlot())));
+  }
+
+  design.walk([&](semantic::SVCallExpressionOp call) {
+    auto slot = call->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+    auto reference =
+        call->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_method");
+    auto found = reference ? methods.find(reference.getValue()) : methods.end();
+    if (!slot || found == methods.end() ||
+        slot.getValue().getZExtValue() ==
+            analysis::ClassDispatchAnalysis::getInterfaceDispatchSlot())
+      return;
+    uint64_t old = slot.getValue().getZExtValue();
+    auto root = remapped.find(findRoot(found->second.getOwner()));
+    if (root != remapped.end())
+      if (auto mapped = root->second.find(old); mapped != root->second.end())
+        call->setAttr("obelisk_sim.class_slot",
+                      builder.getI64IntegerAttr(mapped->second));
+  });
+}
 
 bool isDirectTarget(sim::SimClassMethodDeclOp method, uint64_t signatureId,
                     bool isTask) {
@@ -328,6 +406,22 @@ private:
 
 void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  compactPreparedVirtualSlots(design);
+
+  // The first symbol-DCE pass has now removed unreachable virtual families.
+  // Preserve the surviving closed-world vtable entries across later DCE, then
+  // discard the preparation-only call-graph edges before function lowering.
+  SmallVector<sim::SimClassDispatchTargetsOp> markers;
+  design.walk([&](sim::SimClassMethodDeclOp method) {
+    if (preserveAllMethods || method.getSlot())
+      SymbolTable::setSymbolVisibility(method, SymbolTable::Visibility::Public);
+  });
+  design.walk([&](sim::SimClassDispatchTargetsOp marker) {
+    markers.push_back(marker);
+  });
+  for (sim::SimClassDispatchTargetsOp marker : markers)
+    marker.erase();
+
   analysis::ClassDispatchAnalysis dispatch(design);
   MonomorphicResolver monomorphic(dispatch);
   ExactClassResolver resolver(dispatch);

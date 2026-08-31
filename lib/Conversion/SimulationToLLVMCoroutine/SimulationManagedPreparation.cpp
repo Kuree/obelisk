@@ -303,11 +303,6 @@ prepareManagedClassInventory(ModuleOp module,
         layout.methods.resize(static_cast<size_t>(slot) + 1);
       layout.methods[slot] = method;
     }
-    for (auto [slot, method] : llvm::enumerate(layout.methods))
-      if (!method)
-        return declaration.emitError()
-               << "virtual method table has an empty slot " << slot;
-
     declaration->setAttr(
         "obelisk.native.instance_size",
         IntegerAttr::get(IntegerType::get(module.getContext(), 64),
@@ -383,7 +378,8 @@ prepareManagedClassInventory(ModuleOp module,
         if (ordinal >= dispatch.methodSlots.size())
           return method.emitError("interface method ordinals are not dense");
         for (auto [slot, effective] : llvm::enumerate(layout.methods))
-          if (effective.getSignatureId() == method.getSignatureId()) {
+          if (effective &&
+              effective.getSignatureId() == method.getSignatureId()) {
             // A pure declaration still occupies and shadows its effective
             // class slot, but it does not implement the interface method.
             if (!effective.getIsPure() && effective.getImplementationAttr()) {
@@ -633,6 +629,12 @@ prepareManagedClassInventory(ModuleOp module,
               for (auto indexedMethod : llvm::enumerate(layout.methods)) {
                 auto index = indexedMethod.index();
                 auto method = indexedMethod.value();
+                // Early virtual-family DCE can leave a slot unused in one
+                // branch while a sibling still needs the stable family slot.
+                // Keep the zero descriptor as an explicit unreachable hole;
+                // runtime validation and dispatch reject attempts to use it.
+                if (!method)
+                  continue;
                 Value entry =
                     LLVM::ZeroOp::create(builder, location, methodType);
                 entry = insertValue(builder, location, entry,

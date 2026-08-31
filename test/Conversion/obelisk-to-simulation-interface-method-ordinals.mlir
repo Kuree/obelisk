@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,

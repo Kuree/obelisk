@@ -167,6 +167,10 @@ def ObeliskSimDevirtualizeClassCallsPass
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::cf::ControlFlowDialect"
   ];
+  let options = [
+    Option<"preserveAllMethods", "preserve-all-methods", "bool", "false",
+           "Keep every prepared class method for lowering inspection">
+  ];
 }
 
 def ObeliskSimEliminateDeadCapturesPass

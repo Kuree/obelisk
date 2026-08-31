@@ -5796,6 +5796,15 @@ TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
 }
 
 TEST(ManagedHeap, RejectsMalformedClassLayouts) {
+  obelisk_rt_method_descriptor_v1 sparseMethods[]{{}, nodeMethods[0]};
+  obelisk_rt_class_descriptor_v1 sparse = nodeDescriptor;
+  sparse.methods = sparseMethods;
+  sparse.method_count = std::size(sparseMethods);
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&sparse), OBELISK_RT_OK);
+
+  sparseMethods[0].flags = OBELISK_RT_METHOD_PURE;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&sparse), OBELISK_RT_INVALID_DESIGN);
+
   obelisk_rt_class_descriptor_v1 malformed = nodeDescriptor;
   malformed.class_id = 0;
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),

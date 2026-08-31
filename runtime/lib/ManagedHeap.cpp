@@ -2089,7 +2089,16 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
     }
     for (uint64_t index = 0; index != current->method_count; ++index) {
       const obelisk_rt_method_descriptor_v1 &method = current->methods[index];
-      if (method.signature_id == 0 || (method.flags & ~validMethodFlags) != 0 ||
+      // A zeroed descriptor is an unreachable sparse-vtable hole left after
+      // closed-world virtual-family DCE. Every other descriptor remains
+      // subject to the full ABI validation below.
+      if (method.signature_id == 0) {
+        if (method.flags != 0 || method.bytecode_function != 0 ||
+            method.native_entry != nullptr || method.environment != nullptr)
+          return OBELISK_RT_INVALID_DESIGN;
+        continue;
+      }
+      if ((method.flags & ~validMethodFlags) != 0 ||
           (!method.native_entry &&
            method.bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE &&
            (method.flags & OBELISK_RT_METHOD_PURE) == 0))
@@ -2101,6 +2110,8 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
             current->methods[index];
         const obelisk_rt_method_descriptor_v1 &overrideMethod =
             derived->methods[index];
+        if (baseMethod.signature_id == 0)
+          continue;
         if (overrideMethod.signature_id != baseMethod.signature_id ||
             ((overrideMethod.flags ^ baseMethod.flags) &
              OBELISK_RT_METHOD_TASK) != 0)

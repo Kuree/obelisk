@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=require-bytecode' \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   --encode-obelisk-sim-to-bytecode \
 // RUN:   | FileCheck %s --check-prefix=AUTO
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=require-bytecode' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=HYBRID

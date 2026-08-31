@@ -1659,6 +1659,16 @@ def SimClassDirectCallOp : SimOp<"class.direct_call", [
   }];
 }
 
+// Preparation-only call-graph edges. This marker is consumed immediately
+// after the first symbol-DCE pass and never reaches executable simulation IR.
+def SimClassDispatchTargetsOp : SimOp<"class.dispatch_targets", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>, Pure
+  ]> {
+  let summary = "retain compatible closed-world virtual dispatch targets";
+  let arguments = (ins SymbolRefArrayAttr:$targets);
+  let assemblyFormat = "$targets attr-dict";
+}
+
 def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[

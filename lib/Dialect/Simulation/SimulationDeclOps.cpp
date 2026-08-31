@@ -1267,6 +1267,20 @@ SimClassDirectCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult SimClassDispatchTargetsOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  for (Attribute attribute : getTargets()) {
+    auto reference = dyn_cast<SymbolRefAttr>(attribute);
+    auto method =
+        reference ? symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+                        *this, reference)
+                  : SimClassMethodDeclOp{};
+    if (!method || !method.getIsVirtual())
+      return emitOpError("references an unknown non-virtual dispatch target");
+  }
+  return success();
+}
+
 LogicalResult
 SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(

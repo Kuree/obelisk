@@ -84,7 +84,8 @@ void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
 void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
                                       uint32_t workers, llvm::StringRef vpiMode,
                                       uint32_t optLevel,
-                                      llvm::StringRef staticSpecialization);
+                                      llvm::StringRef staticSpecialization,
+                                      bool earlySymbolDCE = true);
 
 /// Register the aggregate serial/parallel/serial lowering pipeline.
 void registerObeliskToSimulationPipeline();
