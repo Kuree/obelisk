@@ -30,6 +30,11 @@ obelisk_rt_stable_handle_is_preponed_event(uint64_t handle) {
   return handle == OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
 }
 
+static inline int obelisk_rt_stable_handle_is_dynamic_event(uint64_t handle) {
+  return (handle & OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG) != 0 &&
+         (handle & OBELISK_RT_STABLE_HANDLE_TAG_MASK) == 0;
+}
+
 typedef uint32_t obelisk_rt_stable_handle_kind_v1;
 enum {
   OBELISK_RT_STABLE_HANDLE_INVALID = 0,

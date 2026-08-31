@@ -66,8 +66,7 @@ inline bool isDynamicEventStableHandle(uint64_t stable) {
   // Payload zero is the compiler-reserved Preponed snapshot event. It is an
   // event identity for canonical bytecode captures even though it remains
   // deliberately invalid for ordinary state-handle decoding.
-  return (stable & OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG) != 0 &&
-         (stable & OBELISK_RT_STABLE_HANDLE_TAG_MASK) == 0;
+  return obelisk_rt_stable_handle_is_dynamic_event(stable);
 }
 
 inline bool isDynamicEventHandle(uint32_t kind, uint64_t stable) {

@@ -636,9 +636,17 @@ bool obelisk_rt_validate_computed_wait_record(
           descriptor->capture_abi[capture];
       if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
         continue;
+      uint64_t stable =
+          captures[observer.capture_begin + capture].stable_id;
+      // Runtime-created named events use the disjoint dynamic-event
+      // namespace, not the state-handle namespace. They are nevertheless a
+      // canonical event capture and the observer evaluator reconstructs the
+      // event handle from this exact word.
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT &&
+          obelisk_rt_stable_handle_is_dynamic_event(stable))
+        continue;
       obelisk_rt_stable_handle_v1 decoded;
-      if (!obelisk_rt_stable_handle_decode(
-              captures[observer.capture_begin + capture].stable_id, &decoded))
+      if (!obelisk_rt_stable_handle_decode(stable, &decoded))
         return false;
     }
     for (uint32_t dependency = 0; dependency != observer.dependency_count;
