@@ -56,7 +56,10 @@ _FILELIST_VARIABLE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _RESULT_CACHE_SCHEMA = 1
 _SUCCESS_STATUSES = {model.PASS, model.XFAIL_PASS}
-_UVM_PREFERRED_THREADS = 4
+# Most UVM time is spent in serial whole-design passes. Two compiler threads
+# retain useful per-function parallelism while allowing twice as many tests
+# under the lane's unchanged half-host CPU budget.
+_UVM_PREFERRED_THREADS = 2
 _UVM_ESTIMATED_RSS = 4 * 1024 ** 3
 _UVM_MAX_MEMORY_RESERVE = 16 * 1024 ** 3
 

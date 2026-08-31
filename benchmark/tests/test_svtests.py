@@ -77,7 +77,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 svtests.runner, "available_memory_bytes",
                 return_value=56 * 1024 ** 3),
         ):
-            self.assertEqual(svtests._uvm_parallelism(24, 104), (3, 4))
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (6, 2))
 
         with (
             mock.patch.object(
@@ -86,7 +86,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 svtests.runner, "available_memory_bytes",
                 return_value=8 * 1024 ** 3),
         ):
-            self.assertEqual(svtests._uvm_parallelism(24, 104), (1, 4))
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (1, 2))
 
         with (
             mock.patch.object(
@@ -102,7 +102,7 @@ class SvTestsHelpersTest(unittest.TestCase):
             mock.patch.object(
                 svtests.runner, "available_memory_bytes", return_value=None),
         ):
-            self.assertEqual(svtests._uvm_parallelism(64, 104), (1, 4))
+            self.assertEqual(svtests._uvm_parallelism(64, 104), (1, 2))
 
         with (
             mock.patch.object(
@@ -111,7 +111,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 svtests.runner, "available_memory_bytes",
                 return_value=7 * 1024 ** 3),
         ):
-            self.assertEqual(svtests._uvm_parallelism(24, 104), (0, 4))
+            self.assertEqual(svtests._uvm_parallelism(24, 104), (0, 2))
 
     def test_assertion_output_is_checked_without_arbitrary_python(self):
         self.assertEqual(
