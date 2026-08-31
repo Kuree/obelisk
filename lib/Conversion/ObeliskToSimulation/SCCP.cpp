@@ -605,13 +605,22 @@ void ObeliskSimSCCPPass::runOnOperation() {
   // executable drive site.  Such a component is immutable after its
   // continuous assignment initializes, and seeding its reads lets local SCCP
   // erase configuration-disabled RTL before compute-graph fusion.  Writable
-  // VPI and language overrides deliberately disable this specialization.
+  // VPI and language overrides deliberately disable this specialization, and
+  // so does a resolution kind that contributes a driver of its own: IEEE
+  // 1800-2017 6.6.6 gives a supply net supply strength, 6.6.4 gives tri0 and
+  // tri1 a pull, and 28.16.2 lets a trireg resolve retained charge, none of
+  // which the component's one `driver.decl` accounts for.
   DenseMap<uint64_t, BoundaryFact> netFacts;
   if (vpi == "off") {
     struct NetInfo {
       Type type;
       uint64_t width = 0;
       bool visible = false;
+      // Whether the resolution kind's implicit contribution is high impedance,
+      // which 28.12 resolves away against any one explicit driver. Wired logic
+      // (wand/wor) qualifies too: 28.12.4 only decides equal-strength
+      // conflicts, which one driver cannot raise.
+      bool implicitlyHighImpedance = true;
     };
     DenseMap<uint64_t, NetInfo> nets;
     DenseMap<uint64_t, SmallVector<uint64_t>> connections;
@@ -628,7 +637,24 @@ void ObeliskSimSCCPPass::runOnOperation() {
         bool visible =
             net.getObservability() &&
             *net.getObservability() != sim::ComputeObservabilityKind::Invisible;
-        nets[net.getId()] = {net.getType(), *width, visible};
+        bool implicitlyHighImpedance = true;
+        switch (net.getResolutionKind()) {
+        case sim::NetResolutionKind::Tri0:
+        case sim::NetResolutionKind::Tri1:
+        case sim::NetResolutionKind::Supply0:
+        case sim::NetResolutionKind::Supply1:
+        case sim::NetResolutionKind::TriReg:
+          implicitlyHighImpedance = false;
+          break;
+        case sim::NetResolutionKind::Wire:
+        case sim::NetResolutionKind::Tri:
+        case sim::NetResolutionKind::UWire:
+        case sim::NetResolutionKind::WAnd:
+        case sim::NetResolutionKind::WOr:
+          break;
+        }
+        nets[net.getId()] = {net.getType(), *width, visible,
+                             implicitlyHighImpedance};
         connections[net.getId()];
         continue;
       }
@@ -690,6 +716,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
           representative = std::min(representative, member);
           auto info = nets.find(member);
           eligible &= info != nets.end() && !info->second.visible &&
+                      info->second.implicitlyHighImpedance &&
                       !invalid.contains(member);
           drivers += driverCounts.lookup(member);
           fullDriver |= hasFullDriver.lookup(member);
