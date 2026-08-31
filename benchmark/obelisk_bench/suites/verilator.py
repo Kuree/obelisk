@@ -429,6 +429,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assert_disable_count": INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT,
     "t_assert_disabled": VERILATOR_ASSERTIONS_DISABLED,
+    "t_assert_future": TWO_STATE_INITIALIZATION,
     "t_assert_pre": USE_BEFORE_DECLARATION,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
