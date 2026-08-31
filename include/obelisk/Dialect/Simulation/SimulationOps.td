@@ -298,6 +298,7 @@ def SimCovergroupNullOp : SimOp<"covergroup.null", [Pure, ConstantLike]> {
   let summary = "typed null functional coverage handle";
   let results = (outs SimCovergroupHandleType:$result);
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
   let hasVerifier = 1;
 }
 
@@ -306,12 +307,14 @@ def SimVirtualInterfaceNullOp
   let summary = "typed null virtual interface handle";
   let results = (outs SimVirtualInterfaceType:$result);
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
 }
 
 def SimChandleNullOp : SimOp<"chandle.null", [Pure, ConstantLike]> {
   let summary = "typed null DPI C pointer";
   let results = (outs SimChandleType:$result);
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
 }
 
 def SimChandleEqualOp : SimOp<"chandle.equal", [Pure, Commutative]> {
@@ -605,12 +608,14 @@ def SimClassNullOp : SimOp<"class.null", [Pure, ConstantLike]> {
   let summary = "typed null managed class handle";
   let results = (outs SimClassHandleType:$result);
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
 }
 
 def SimManagedNullOp : SimOp<"managed.null", [Pure, ConstantLike]> {
   let summary = "typed null non-class managed handle";
   let results = (outs AnyType:$result);
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
   let hasVerifier = 1;
 }
 
@@ -648,6 +653,7 @@ def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
   let summary = "null event handle";
   let results = (outs SimEventType:$result);
   let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
 }
 
 def SimEventCreateOp : SimOp<"event.create", [
@@ -1477,6 +1483,7 @@ def SimManagedWatchNullOp
   let summary = "null managed mutation dependency";
   let results = (outs SimManagedWatchType:$result);
   let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
 }
 
 def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
@@ -2445,6 +2452,7 @@ def SimProcessNullOp : SimOp<"process.null", [Pure, ConstantLike]> {
   let summary = "create the null IEEE process object handle";
   let results = (outs SimProcessType:$result);
   let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
 }
 
 def SimProcessCurrentOp : SimOp<"process.current", [

@@ -476,6 +476,28 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
   // require a scalar constant followed by packed.unflatten, which is not a
   // zero-operand constant-like operation and therefore cannot be returned from
   // this dialect hook. Unit lowering materializes it explicitly instead.
+  // Handle-like nulls have no payload beyond their result type.  UnitAttr is
+  // their fold representation; the type selects the precise null operation
+  // when the operation folder needs to rematerialize one.
+  if (isa<UnitAttr>(value)) {
+    if (isa<CovergroupHandleType>(type))
+      return SimCovergroupNullOp::create(builder, location, type);
+    if (isa<VirtualInterfaceType>(type))
+      return SimVirtualInterfaceNullOp::create(builder, location, type);
+    if (isa<ChandleType>(type))
+      return SimChandleNullOp::create(builder, location);
+    if (isa<ClassHandleType>(type))
+      return SimClassNullOp::create(builder, location, type);
+    if (isManagedHandleType(type))
+      return SimManagedNullOp::create(builder, location, type);
+    if (isa<EventType>(type))
+      return SimEventNullOp::create(builder, location, type);
+    if (isa<ManagedWatchType>(type))
+      return SimManagedWatchNullOp::create(builder, location);
+    if (isa<ProcessType>(type))
+      return SimProcessNullOp::create(builder, location);
+    return nullptr;
+  }
   if (isa<BytesType>(type)) {
     auto bytes = dyn_cast<StringAttr>(value);
     return bytes ? SimBytesConstantOp::create(builder, location, type, bytes)
@@ -514,5 +536,19 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
 }
 
 OpFoldResult SimBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
+
+#define OBELISK_NULL_FOLD(OP)                                                \
+  OpFoldResult OP::fold(FoldAdaptor) { return UnitAttr::get(getContext()); }
+
+OBELISK_NULL_FOLD(SimCovergroupNullOp)
+OBELISK_NULL_FOLD(SimVirtualInterfaceNullOp)
+OBELISK_NULL_FOLD(SimChandleNullOp)
+OBELISK_NULL_FOLD(SimClassNullOp)
+OBELISK_NULL_FOLD(SimManagedNullOp)
+OBELISK_NULL_FOLD(SimEventNullOp)
+OBELISK_NULL_FOLD(SimManagedWatchNullOp)
+OBELISK_NULL_FOLD(SimProcessNullOp)
+
+#undef OBELISK_NULL_FOLD
 
 } // namespace obelisk::sim
