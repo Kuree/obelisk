@@ -352,6 +352,21 @@ TEST_F(ManagedValueTest, ParsesAndFormatsStringNumbers) {
   ASSERT_EQ(obelisk_rt_v1_string_format_integer(lane, 255, 16, 0, &output),
             OBELISK_RT_OK);
   expectString(output, "ff");
+  // IEEE 1800-2017 6.16.12 through 6.16.14 keep the signed `integer` of
+  // 6.16.11 and change only the base, so a negative value stays signed in
+  // hexadecimal, octal, and binary.
+  ASSERT_EQ(obelisk_rt_v1_string_format_integer(
+                lane, static_cast<uint64_t>(int64_t{-11}), 16, 1, &output),
+            OBELISK_RT_OK);
+  expectString(output, "-b");
+  ASSERT_EQ(obelisk_rt_v1_string_format_integer(
+                lane, static_cast<uint64_t>(int64_t{-11}), 8, 1, &output),
+            OBELISK_RT_OK);
+  expectString(output, "-13");
+  ASSERT_EQ(obelisk_rt_v1_string_format_integer(
+                lane, static_cast<uint64_t>(int64_t{-11}), 2, 1, &output),
+            OBELISK_RT_OK);
+  expectString(output, "-1011");
   ASSERT_EQ(obelisk_rt_v1_string_format_real(lane, 3.25, &output),
             OBELISK_RT_OK);
   expectString(output, "3.25");

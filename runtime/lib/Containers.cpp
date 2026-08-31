@@ -2257,7 +2257,11 @@ obelisk_rt_v1_string_format_integer(obelisk_rt_gc_lane_v1 *lane, uint64_t value,
   *outString = 0;
   char buffer[66];
   std::to_chars_result formatted;
-  if (isSigned && radix == 10)
+  // IEEE 1800-2017 6.16.11 through 6.16.14 take the same signed `integer` and
+  // differ only in base, so a negative value keeps its sign in every radix:
+  // hextoa(-11) is "-b", not the unsigned reading of the two's-complement
+  // pattern. std::to_chars spells that for any base it accepts.
+  if (isSigned)
     formatted = std::to_chars(std::begin(buffer), std::end(buffer),
                               static_cast<int64_t>(value), radix);
   else

@@ -1455,10 +1455,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                          : name == "octtoa" ? 8
                          : name == "hextoa" ? 16
                                             : 10;
+        // IEEE 1800-2017 6.16.11 through 6.16.14 word the four methods alike,
+        // differing only in base: each stores "the ASCII <base> representation
+        // of i" for the same signed `integer` formal. The sign therefore
+        // survives the radix, so -11 spells "-b" in hex rather than the
+        // unsigned reading of its two's-complement pattern.
         Value updated = sim::SimStringFormatIntegerOp::create(
             builder, location, sim::StringType::get(function.getContext()),
             *input, builder.getI32IntegerAttr(radix),
-            builder.getBoolAttr(name == "itoa" && isSignedNode(children[1])));
+            builder.getBoolAttr(isSignedNode(children[1])));
         if (failed(storeReference(*destination, updated, location)))
           return failure();
         return arith::ConstantOp::create(builder, location, builder.getI1Type(),
