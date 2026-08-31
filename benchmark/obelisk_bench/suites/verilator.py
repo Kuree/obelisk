@@ -1020,18 +1020,24 @@ def judge_one(obelisk: str, top: Path, timeout: float,
             # diagnostic is also a failure even when the process exits zero.
             if not result.timed_out and (not result.ok or runtime_error):
                 return model.Outcome(model.XFAIL_PASS)
-            return model.Outcome(model.RUN_FAIL, runtime_log)
+            return model.Outcome(
+                model.RUN_FAIL,
+                classify_dependency_failure(name, runtime_log))
         if (result.ok and not runtime_error and
                 (FINISHED_MARKER in result.stdout or
                  top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER)):
             return model.Outcome(model.PASS)
         if FINISHED_MARKER in top_text:
             # Test has the marker but didn't print it — genuine runtime bug.
-            return model.Outcome(model.RUN_FAIL, runtime_log)
+            return model.Outcome(
+                model.RUN_FAIL,
+                classify_dependency_failure(name, runtime_log))
         # Test doesn't use the marker at all. Treat clean exit as pass.
         if result.ok and not runtime_error:
             return model.Outcome(model.PASS)
-        return model.Outcome(model.RUN_FAIL, runtime_log)
+        return model.Outcome(
+            model.RUN_FAIL,
+            classify_dependency_failure(name, runtime_log))
 
 
 def run(root: Path, args) -> dict[str, model.Outcome]:

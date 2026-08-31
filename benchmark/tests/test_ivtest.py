@@ -52,6 +52,24 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(outcome.log, "")
 
 
+class DependencyFailureTest(unittest.TestCase):
+    def test_known_slang_bug_is_tagged_at_compile_or_runtime(self):
+        for status in (model.COMPILE_FAIL, model.RUN_FAIL):
+            with self.subTest(status=status):
+                outcome = ivtest.dependency_failure(
+                    "sv_unit2b", status, "dependency diagnostic\n")
+                self.assertEqual(outcome.status, status)
+                self.assertIn("known Slang bug:", outcome.log)
+                self.assertIn("IEEE 1800-2017 13.7 and 23.8.1", outcome.log)
+                self.assertTrue(outcome.log.endswith("dependency diagnostic\n"))
+
+    def test_unlisted_failure_is_unchanged(self):
+        outcome = ivtest.dependency_failure(
+            "ordinary_test", model.RUN_FAIL, "program output\n")
+        self.assertEqual(outcome.status, model.RUN_FAIL)
+        self.assertEqual(outcome.log, "program output\n")
+
+
 class FixtureDirectoryTest(unittest.TestCase):
     def test_continued_list_entry_preserves_sources_and_unit_mode(self):
         with tempfile.TemporaryDirectory() as temporary:

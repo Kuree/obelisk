@@ -87,11 +87,15 @@ def command_run(args) -> int:
     if args.show_failures:
         _print_failures(outcomes)
 
-    # Only compile-failure diagnostics feed the blocker table: those name a
-    # missing feature. A run-fail carries program stdout, not a diagnostic, so
-    # classifying it would just be noise — it is counted, not ranked.
+    # Compile diagnostics name missing features. Ordinary runtime output is not
+    # diagnostic enough to rank, but a manually audited Slang marker is: keep
+    # dependency bugs in the same visible category even if they fail at run
+    # time or move across the compile/run boundary after an upstream update.
     logs = {name: outcome.log for name, outcome in outcomes.items()
-            if outcome.log and outcome.status == model.COMPILE_FAIL}
+            if outcome.log and
+            (outcome.status == model.COMPILE_FAIL or
+             (outcome.status == model.RUN_FAIL and
+              classify.SLANG_BUG_MARKER in outcome.log))}
     counters = classify.tally(logs)
     print("\n" + classify.format_table(counters))
     if args.greedy:

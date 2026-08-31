@@ -79,6 +79,26 @@ FUNCTION_CALL_AS_STATEMENT_ERROR = Exclusion(
     "calling a nonvoid function as a statement is legal and shall issue a "
     "warning; the test requires Icarus to defer three invalid-call diagnostics "
     "until runtime and treats the legal `$sscanf` statement as one of them")
+BUFFER_HIGH_IMPEDANCE_INPUT = Exclusion(
+    "IEEE 1800-2017 28.5",
+    "Table 28-4 requires a buf primitive with a z input to produce x; the "
+    "test instead requires the undriven input to propagate z to the output")
+
+# Dependency failures whose source and deciding LRM clause have both been
+# audited. Keep these as failures: they are useful upstream Slang patch cases,
+# but must not be counted as missing Obelisk functionality. The tag is applied
+# after either compilation or simulation so a dependency update that moves the
+# failure across that boundary does not silently lose its classification.
+KNOWN_SLANG_BUGS: dict[str, str] = {
+    "sv_unit1b": (
+        "IEEE 1800-2017 22.5.1 permits macro redefinition and requires the "
+        "latest definition to prevail; pinned Slang gives command-line "
+        "predefines permanent precedence over later source `define directives"),
+    "sv_unit2b": (
+        "IEEE 1800-2017 13.7 and 23.8.1 require task and function calls to "
+        "use modified upward hierarchical lookup, including declarations "
+        "later in an enclosing module; pinned Slang rejects both hello4 calls"),
+}
 
 # Tests whose expectations require Icarus extensions instead of IEEE
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
@@ -91,8 +111,17 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
+    "sv_unit1c": BUFFER_HIGH_IMPEDANCE_INPUT,
     "sys_func_task_error": FUNCTION_CALL_AS_STATEMENT_ERROR,
 }
+
+
+def dependency_failure(name: str, status: str, log: str) -> model.Outcome:
+    """Return a failure, tagging an audited upstream Slang dependency bug."""
+    reason = KNOWN_SLANG_BUGS.get(name)
+    if reason:
+        log = f"known Slang bug: {reason}\n{log}"
+    return model.Outcome(status, log)
 
 
 def _ivtest_dir(root: Path) -> Path:
@@ -300,7 +329,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         )
         if not native.ok:
             return (desc.key,
-                    model.Outcome(model.COMPILE_FAIL, native.stderr))
+                    dependency_failure(desc.key, model.COMPILE_FAIL,
+                                       native.stderr))
         binary = Path(tmp) / "sim"
         selected_vpi = vpi_mode or (
             "full" if native.inputs else "off")
@@ -322,35 +352,40 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             if compiled.failure_kind == "compile":
                 return (desc.key, model.Outcome(model.XFAIL_PASS))
             if compiled.ok:
-                return (desc.key, model.Outcome(model.RUN_FAIL))
+                return (desc.key,
+                        dependency_failure(desc.key, model.RUN_FAIL, ""))
             return (desc.key,
-                    model.Outcome(model.COMPILE_FAIL, compiled.stderr))
+                    dependency_failure(desc.key, model.COMPILE_FAIL,
+                                       compiled.stderr))
         if not compiled.ok:
-            return (desc.key, model.Outcome(model.COMPILE_FAIL, compiled.stderr))
+            return (desc.key,
+                    dependency_failure(desc.key, model.COMPILE_FAIL,
+                                       compiled.stderr))
         if desc.test_type in ("CO", "CN"):
             return (desc.key, model.Outcome(model.PASS))
 
         result = runner.execute(str(binary), timeout, args=plusargs, cwd=tmp)
         if desc.artifact_diffs:
             if not result.ok:
-                return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
+                return (desc.key,
+                        dependency_failure(desc.key, model.RUN_FAIL,
+                                           result.stdout))
             for artifact in desc.artifact_diffs:
                 actual = run_dir / artifact.actual
                 if not actual.exists() or not artifact.expected.exists():
-                    return (desc.key, model.Outcome(
-                        model.RUN_FAIL,
+                    return (desc.key, dependency_failure(
+                        desc.key, model.RUN_FAIL,
                         f"missing artifact oracle: {actual} or "
-                        f"{artifact.expected}",
-                    ))
+                        f"{artifact.expected}"))
                 actual_lines = actual.read_text(
                     encoding="utf-8", errors="replace").splitlines()
                 expected_lines = artifact.expected.read_text(
                     encoding="utf-8", errors="replace").splitlines()
                 if (actual_lines[artifact.skip_lines:] !=
                         expected_lines[artifact.skip_lines:]):
-                    return (desc.key, model.Outcome(
-                        model.RUN_FAIL, f"artifact differs: {artifact.actual}",
-                    ))
+                    return (desc.key, dependency_failure(
+                        desc.key, model.RUN_FAIL,
+                        f"artifact differs: {artifact.actual}"))
             return (desc.key, model.Outcome(model.PASS))
         if desc.gold is not None:
             normalized = _normalize_fixture_paths(
@@ -359,7 +394,9 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
                     normalized == desc.gold.read_text(
                         encoding="utf-8", errors="replace")):
                 return (desc.key, model.Outcome(model.PASS))
-            return (desc.key, model.Outcome(model.RUN_FAIL, result.stdout))
+            return (desc.key,
+                    dependency_failure(desc.key, model.RUN_FAIL,
+                                       result.stdout))
         if result.ok and any(
                 line.strip() == PASSED_MARKER
                 for line in result.stdout.splitlines()):
@@ -372,7 +409,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             diagnostic += result.stderr
         if result.timed_out and not diagnostic:
             diagnostic = f"execution exceeded {timeout:g}s"
-        return (desc.key, model.Outcome(model.RUN_FAIL, diagnostic))
+        return (desc.key,
+                dependency_failure(desc.key, model.RUN_FAIL, diagnostic))
 
 
 def run(root: Path, args) -> dict[str, model.Outcome]:
