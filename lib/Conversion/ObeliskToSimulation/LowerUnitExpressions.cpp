@@ -5226,6 +5226,20 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         toArrayIndex(*index, isSignedNode(children[1]), location);
     if (failed(widened))
       return failure();
+    // IEEE 1800-2017 16.5.1 recursively evaluates a sampled expression from
+    // the sampled values of its arguments.  A dynamic packed subreference has
+    // no static state range to snapshot, so sample the whole packed aggregate
+    // first and apply the already-sampled index to that value.
+    if (!lvalue && sampleAssertionValues &&
+        isa<sim::RefType>((*input).getType()) &&
+        sim::getPackedWidth(sourceValueType)) {
+      FailureOr<Value> aggregate = loadReference(*input, location);
+      if (failed(aggregate))
+        return failure();
+      return sim::SimArrayDynExtractOp::create(
+                 builder, location, *resultType, *aggregate, *widened)
+          .getResult();
+    }
     if (isa<sim::RefType>((*input).getType())) {
       Value selected = sim::SimRefArrayElementOp::create(
           builder, location,
@@ -5261,6 +5275,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       isa<sim::RefType, sim::NetType, sim::DriverType>((*input).getType())) {
     unsupported(op) << " (reference to a part-select wider than its value)";
     return failure();
+  }
+
+  // As above, a dynamically addressed packed subreference cannot identify one
+  // canonical sampled state range.  Snapshot the statically addressed base
+  // and perform the dynamic extraction on its sampled value.
+  if (!lvalue && sampleAssertionValues && !constant &&
+      isa<sim::RefType>((*input).getType())) {
+    FailureOr<Value> sampled = loadReference(*input, location);
+    if (failed(sampled))
+      return failure();
+    input = *sampled;
   }
 
   if (isa<sim::RefType>((*input).getType())) {
