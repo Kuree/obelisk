@@ -174,9 +174,18 @@ prepareManagedClassInventory(ModuleOp module,
     if (failed(orderClass(shared)))
       return failure();
 
+  llvm::StringMap<sim::SimClassDeclOp> hierarchyRoots;
   for (SharedClass *sharedPtr : orderedClasses) {
     SharedClass &shared = *sharedPtr;
     sim::SimClassDeclOp declaration = shared.declaration;
+    sim::SimClassDeclOp hierarchyRoot = declaration;
+    if (auto baseName = declaration.getBase()) {
+      auto root = hierarchyRoots.find(*baseName);
+      if (root == hierarchyRoots.end())
+        return declaration.emitError("managed base hierarchy root is missing");
+      hierarchyRoot = root->second;
+    }
+    hierarchyRoots[declaration.getSymName()] = hierarchyRoot;
     ManagedClassLayout layout;
     layout.declaration = declaration;
     if (auto baseName = declaration.getBase()) {
@@ -202,16 +211,7 @@ prepareManagedClassInventory(ModuleOp module,
             "random property exceeds the 64-property rand_mode boundary");
         return failure();
       }
-      sim::SimClassDeclOp root = declaration;
-      while (root.getBaseAttr()) {
-        auto base = classesByName.find(*root.getBase());
-        if (base == classesByName.end()) {
-          root.emitError("managed base descriptor is missing");
-          return failure();
-        }
-        root = base->second;
-      }
-      auto modeField = root->getAttrOfType<FlatSymbolRefAttr>(
+      auto modeField = hierarchyRoot->getAttrOfType<FlatSymbolRefAttr>(
           sim::metadata::randomModeField);
       auto modeOffset = modeField ? fieldOffsets.find(modeField.getValue())
                                   : fieldOffsets.end();
