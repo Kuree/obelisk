@@ -74,6 +74,11 @@ LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
     "historical nonstandard `protect and `endprotect directives")
+FUNCTION_CALL_AS_STATEMENT_ERROR = Exclusion(
+    "IEEE 1800-2017 13.4.1",
+    "calling a nonvoid function as a statement is legal and shall issue a "
+    "warning; the test requires Icarus to defer three invalid-call diagnostics "
+    "until runtime and treats the legal `$sscanf` statement as one of them")
 
 # Tests whose expectations require Icarus extensions instead of IEEE
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
@@ -86,6 +91,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
+    "sys_func_task_error": FUNCTION_CALL_AS_STATEMENT_ERROR,
 }
 
 
