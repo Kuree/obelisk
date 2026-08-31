@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace mlir;
 
@@ -50,12 +51,10 @@ struct FusionCandidate {
   uint64_t instanceScope;
 };
 
-bool isStraightLineContinuous(sim::SimFuncOp function,
+bool isStraightLineContinuous(sim::SimFuncOp function, bool eligible,
                               bool primitiveDriverOps) {
   if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
-      function.getBody().getBlocks().size() != 2 ||
-      !(primitiveDriverOps ? isPrimitiveComputeBodyFusionEligible(function)
-                           : isComputeBodyFusionEligible(function)))
+      function.getBody().getBlocks().size() != 2 || !eligible)
     return false;
   Block &entry = function.getBody().front();
   Block &body = function.getBody().back();
@@ -116,6 +115,29 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     return;
 
   ArrayAttr nodes = graph.getNodes();
+  llvm::StringMap<sim::SimFuncOp> functions;
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    functions.try_emplace(function.getSymName(), function);
+  auto lookupFunction = [&](FlatSymbolRefAttr reference) {
+    auto found = functions.find(reference.getValue());
+    return found == functions.end() ? sim::SimFuncOp{} : found->second;
+  };
+  DenseMap<Operation *, bool> bodyEligibility;
+  DenseMap<Operation *, bool> primitiveBodyEligibility;
+  auto isBodyEligible = [&](sim::SimFuncOp function, bool primitive) {
+    if (!function)
+      return false;
+    auto &cache = primitive ? primitiveBodyEligibility : bodyEligibility;
+    auto found = cache.find(function.getOperation());
+    if (found != cache.end())
+      return found->second;
+    bool eligible = primitive
+                        ? isPrimitiveComputeBodyFusionEligible(function)
+                        : isComputeBodyFusionEligible(function);
+    cache.try_emplace(function.getOperation(), eligible);
+    return eligible;
+  };
   // Partition planning may assign different blocks of one process body to
   // different tiers. Physical body fusion removes the entire original
   // function, so primitive-only fusion is legal only when every fragment of
@@ -126,8 +148,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)
       continue;
-    sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+    sim::SimFuncOp function = lookupFunction(fragment.getFunction());
     if (!function)
       continue;
     auto entry =
@@ -175,9 +196,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
                         ? dyn_cast<sim::ComputeFragmentAttr>(
                               nodes[static_cast<size_t>(target)])
                         : sim::ComputeFragmentAttr{};
-    sim::SimFuncOp function = fragment ? design.lookupSymbol<sim::SimFuncOp>(
-                                             fragment.getFunction().getValue())
-                                       : sim::SimFuncOp{};
+    sim::SimFuncOp function =
+        fragment ? lookupFunction(fragment.getFunction()) : sim::SimFuncOp{};
     if (function)
       entryOrder.try_emplace(function.getOperation(),
                              static_cast<uint32_t>(order));
@@ -230,8 +250,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
         sensitivity.getWidth() == 0)
       continue;
 
-    sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+    sim::SimFuncOp function = lookupFunction(fragment.getFunction());
     if (primitiveOnly &&
         (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
          !function->hasAttr("obelisk_sim.primitive_name") ||
@@ -243,7 +262,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     if (bodyFusion && primitiveOnly &&
         function.getEntryKind() == sim::EntryKind::Continuous)
       continue;
-    if (!function || (bodyFusion && !isComputeBodyFusionEligible(function))) {
+    if (!function || (bodyFusion && !isBodyEligible(function, false))) {
       if (function)
         ++rejectedActors;
       continue;
@@ -338,14 +357,16 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
           (fragment.getAction() != sim::ComputeActionKind::SuspendChange &&
            fragment.getAction() != sim::ComputeActionKind::SuspendAny))
         continue;
-      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
-          fragment.getFunction().getValue());
-      if (!isStraightLineContinuous(function, primitiveOnly) ||
+      sim::SimFuncOp function = lookupFunction(fragment.getFunction());
+      if (!function || seen.contains(function.getOperation()) ||
+          !isStraightLineContinuous(
+              function, isBodyEligible(function, primitiveOnly),
+              primitiveOnly) ||
           (primitiveOnly &&
            (!function->hasAttr("obelisk_sim.primitive_name") ||
-            !entirelyNative.lookup(function.getOperation()))) ||
-          !seen.insert(function.getOperation()).second)
+            !entirelyNative.lookup(function.getOperation()))))
         continue;
+      seen.insert(function.getOperation());
       std::optional<uint64_t> instanceScope = getInstanceScope(function);
       if ((evalBodyFusion || primitiveOnly) && !instanceScope) {
         ++rejectedActors;
