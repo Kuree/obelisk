@@ -113,6 +113,36 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
+
+        // a[=1:2] |=> b
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, sym_name = "s70", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = true, has_pass_action = false, node_id = 71 : i64} {
+            obelisk.sv.assertion.clocking attributes {node_id = 72 : i64} {
+              obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 73 : i64} {
+                obelisk.sv.expression.named_value attributes {node_id = 74 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              obelisk.sv.assertion.binary attributes {node_id = 75 : i64, operator_kind = 12 : i32} {
+                obelisk.sv.assertion.simple attributes {has_repetition = true, is_null = false, node_id = 76 : i64, repetition_is_unbounded = false, repetition_kind = 1 : i32, repetition_max = 2 : i64, repetition_min = 1 : i64} {
+                  obelisk.sv.expression.named_value attributes {node_id = 77 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 78 : i64, repetition_is_unbounded = false} {
+                  obelisk.sv.expression.named_value attributes {node_id = 79 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 80 : i64} {
+              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 81 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.expression.named_value attributes {node_id = 82 : i64, referenced_path = "top.hit", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.hit, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+                obelisk.sv.expression.named_value attributes {node_id = 83 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -149,3 +179,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
 // CHECK-COUNT-1: obelisk_sim.assert.sampled_read
 // CHECK: arith.subi
+
+// A persistent implication antecedent keeps an aggregate DFA. Nonoverlap uses
+// counted handoffs, including continuation states for later legal endpoints.
+// CHECK-LABEL: obelisk_sim.func private @unit_3(
+// CHECK-SAME: obelisk_sim.persistent_antecedent_handoff_states = 4 : i64
+// CHECK-SAME: obelisk_sim.persistent_repetition_antecedent
+// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: obelisk_sim.persistent_repetition_nonoverlapped
+// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
+// CHECK-COUNT-2: obelisk_sim.assert.sampled_read

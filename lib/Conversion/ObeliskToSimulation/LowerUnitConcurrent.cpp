@@ -3930,6 +3930,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   FixedSequenceAlternatives sequenceAlternatives;
   PersistentRepetitionSequence persistentRepetition;
   bool hasPersistentRepetition = false;
+  FixedSequenceAge persistentAntecedentConsequent;
+  bool persistentAntecedentImplication = false;
   PersistentUntilProperty persistentUntil;
   bool hasPersistentUntil = false;
   PersistentUnaryProperty persistentUnary;
@@ -4064,6 +4066,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         compilePersistentRepetition(directFirstMatchConsequentSequence
                                         ? directFirstMatchConsequentSequence
                                         : rhsOperand);
+    FailureOr<PersistentRepetitionSequence> repetitionLhs =
+        compilePersistentRepetition(operands.front());
+    if (succeeded(repetitionLhs)) {
+      if (followedBy)
+        return emitError(getSemanticLocation(operands.front()))
+                   << "persistent repetition antecedents do not yet compose "
+                      "with followed-by",
+               failure();
+      bool oneCycleBooleanConsequent =
+          succeeded(rhs) && rhs->size() == 1 &&
+          isSingleBooleanAge(rhs->front()) && !rhs->front().vacuousSuccess &&
+          !rhs->front().hasIntrinsicEndStrength &&
+          rhs->front().firstMatchBoundaries.empty();
+      if (!oneCycleBooleanConsequent || consequentEndStrength ||
+          directFirstMatchConsequent)
+        return emitError(getSemanticLocation(operands.back()))
+                   << "persistent implication antecedents "
+                      "currently require one nonvacuous one-cycle Boolean "
+                      "consequent without strength, first_match, or match "
+                      "items",
+               failure();
+      FixedSequence alwaysMatches;
+      alwaysMatches.ages.resize(1);
+      lhs = FixedSequenceAlternatives{std::move(alwaysMatches)};
+      repetitionRhs = std::move(*repetitionLhs);
+      persistentAntecedentConsequent = rhs->front().ages.front();
+      persistentAntecedentImplication = true;
+    }
     if (succeeded(lhs)) {
       bool hasEmpty = llvm::any_of(
           *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
@@ -7903,13 +7933,22 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                       builder.getUnitAttr());
     function->setAttr("obelisk_sim.sva_transition_normal_form",
                       builder.getStringAttr("canonical-minimal"));
-    bool retainEveryRepetitionEndpoint = coverSequence && !firstMatch;
+    // An implication must evaluate its consequent for every successful
+    // antecedent match (IEEE 1800-2017 16.12.7).  In particular, a
+    // nonconsecutive repetition can keep producing endpoints on later false
+    // samples after its final occurrence.  Retain that live source just as a
+    // plain cover sequence retains all of its observable matches.
+    bool retainEveryRepetitionEndpoint =
+        (coverSequence && !firstMatch) || persistentAntecedentImplication;
     if (retainEveryRepetitionEndpoint)
       function->setAttr("obelisk_sim.persistent_repetition_all_matches",
                         builder.getUnitAttr());
     if (implication) {
       function->setAttr("obelisk_sim.persistent_repetition_implication",
                         builder.getUnitAttr());
+      if (persistentAntecedentImplication)
+        function->setAttr("obelisk_sim.persistent_repetition_antecedent",
+                          builder.getUnitAttr());
       if (nonoverlapped)
         function->setAttr("obelisk_sim.persistent_repetition_nonoverlapped",
                           builder.getUnitAttr());
@@ -8000,12 +8039,33 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
     Value handoffStorage;
-    if (implication && nonoverlapped) {
+    if (implication && nonoverlapped && !persistentAntecedentImplication) {
       handoffStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
       handoffStorage.getDefiningOp()->setAttr(
           "obelisk_sim.persistent_implication_handoff", builder.getUnitAttr());
+    }
+    SmallVector<Value> persistentAntecedentHandoffStorages;
+    Value persistentAntecedentFinalHandoffStorage;
+    if (persistentAntecedentImplication && nonoverlapped) {
+      function->setAttr("obelisk_sim.persistent_antecedent_handoff_states",
+                        builder.getI64IntegerAttr(tokenStates.size() + 1));
+      persistentAntecedentHandoffStorages.reserve(tokenStates.size());
+      for ([[maybe_unused]] const TokenState &state : tokenStates) {
+        Value storage = sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), stateType), zero);
+        storage.getDefiningOp()->setAttr(
+            "obelisk_sim.persistent_antecedent_handoff", builder.getUnitAttr());
+        persistentAntecedentHandoffStorages.push_back(storage);
+      }
+      persistentAntecedentFinalHandoffStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+      persistentAntecedentFinalHandoffStorage.getDefiningOp()->setAttr(
+          "obelisk_sim.persistent_antecedent_final_handoff",
+          builder.getUnitAttr());
     }
 
     SmallVector<Value> repetitionStateStorages;
@@ -8015,6 +8075,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       repetitionStateStorages.push_back(prefixStateStorage);
     if (handoffStorage)
       repetitionStateStorages.push_back(handoffStorage);
+    llvm::append_range(repetitionStateStorages,
+                       persistentAntecedentHandoffStorages);
+    if (persistentAntecedentFinalHandoffStorage)
+      repetitionStateStorages.push_back(
+          persistentAntecedentFinalHandoffStorage);
     if (failed(outlineDisableObserver(repetitionStateStorages)))
       return failure();
 
@@ -8026,6 +8091,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       abortBitsets.push_back(prefixStateStorage);
     if (handoffStorage)
       abortBitsets.push_back(handoffStorage);
+    llvm::append_range(abortCounts, persistentAntecedentHandoffStorages);
+    if (persistentAntecedentFinalHandoffStorage)
+      abortCounts.push_back(persistentAntecedentFinalHandoffStorage);
     FailureOr<std::optional<PersistentAbortPlan>> persistentAbort =
         preparePersistentAbort(abortCounts, abortBitsets);
     if (failed(persistentAbort))
@@ -8041,6 +8109,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         endBitsets.push_back(prefixStateStorage);
       if (handoffStorage)
         endBitsets.push_back(handoffStorage);
+      llvm::append_range(endCounts, persistentAntecedentHandoffStorages);
+      if (persistentAntecedentFinalHandoffStorage)
+        endCounts.push_back(persistentAntecedentFinalHandoffStorage);
     }
     StringRef completionTag =
         weakCompletion ? "repetition_weak" : "repetition_strong";
@@ -8176,7 +8247,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     Value attemptEnabled = queryAttemptEnabled();
     Value antecedentTruth;
-    if (implication) {
+    if (implication && !persistentAntecedentImplication) {
       FailureOr<Value> antecedent =
           evaluateAge(antecedentSequence.ages.front());
       if (failed(antecedent))
@@ -8184,7 +8255,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       antecedentTruth = *antecedent;
     }
     Value currentAttemptCount = computePersistentAttemptCount(
-        attemptEnabled, antecedentTruth, handoffStorage);
+        attemptEnabled, antecedentTruth,
+        persistentAntecedentImplication ? Value{} : handoffStorage);
     if (failed(
             abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
       return failure();
@@ -8295,6 +8367,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
 
     Value successCount = zero;
+    Value implicationFailureCount = zero;
+    Value persistentConsequentTruth;
+    Value persistentConsequentFailure;
+    if (persistentAntecedentImplication) {
+      FailureOr<Value> consequent = evaluateAge(persistentAntecedentConsequent);
+      if (failed(consequent))
+        return failure();
+      persistentConsequentTruth = *consequent;
+      persistentConsequentFailure = negate(*consequent);
+    }
     auto route = [&](unsigned destination, Value amount, Value condition) {
       addCount(nextAmounts[destination], selectCount(condition, amount));
     };
@@ -8305,9 +8387,107 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       addCount(failureCount, selectCount(condition, amount));
     };
 
+    SmallVector<Value> nextPersistentAntecedentHandoffs(
+        persistentAntecedentHandoffStorages.size(), zero);
+    Value nextPersistentAntecedentFinalHandoff = zero;
+    if (persistentAntecedentImplication && nonoverlapped) {
+      for (auto [index, storage] :
+           llvm::enumerate(persistentAntecedentHandoffStorages)) {
+        Value pending =
+            sim::SimRefLoadOp::create(builder, location, stateType, storage);
+        addCount(implicationFailureCount,
+                 selectCount(persistentConsequentFailure, pending));
+        addCount(amounts[index],
+                 selectCount(persistentConsequentTruth, pending));
+      }
+      Value pendingFinal =
+          sim::SimRefLoadOp::create(builder, location, stateType,
+                                    persistentAntecedentFinalHandoffStorage);
+      addCount(implicationFailureCount,
+               selectCount(persistentConsequentFailure, pendingFinal));
+      addCount(successCount,
+               selectCount(persistentConsequentTruth, pendingFinal));
+    }
+    auto routePersistentAntecedentEndpoint =
+        [&](unsigned destination, Value amount, Value condition) {
+          if (nonoverlapped) {
+            addCount(nextPersistentAntecedentHandoffs[destination],
+                     selectCount(condition, amount));
+            return;
+          }
+          Value passed = arith::AndIOp::create(builder, location, condition,
+                                               persistentConsequentTruth);
+          Value failed = arith::AndIOp::create(builder, location, condition,
+                                               persistentConsequentFailure);
+          route(destination, amount, passed);
+          addCount(implicationFailureCount, selectCount(failed, amount));
+        };
+    auto finishPersistentAntecedentEndpoint = [&](Value amount,
+                                                  Value condition) {
+      if (nonoverlapped) {
+        addCount(nextPersistentAntecedentFinalHandoff,
+                 selectCount(condition, amount));
+        return;
+      }
+      Value passed = arith::AndIOp::create(builder, location, condition,
+                                           persistentConsequentTruth);
+      Value failed = arith::AndIOp::create(builder, location, condition,
+                                           persistentConsequentFailure);
+      succeed(amount, passed);
+      addCount(implicationFailureCount, selectCount(failed, amount));
+    };
+
     for (auto [index, state] : llvm::enumerate(tokenStates)) {
       Value amount = amounts[index];
       if (!persistentRepetition.hasTerminal) {
+        if (persistentAntecedentImplication) {
+          if (persistentRepetition.kind ==
+              semantic::SVSequenceRepetitionKind::GoTo) {
+            uint64_t nextCount = state.occurrences + 1;
+            bool endpoint = nextCount >= persistentRepetition.minimum;
+            if (persistentRepetition.unbounded)
+              nextCount = std::min(nextCount, persistentRepetition.minimum - 1);
+            bool continues = persistentRepetition.unbounded ||
+                             nextCount < persistentRepetition.maximum;
+            if (endpoint) {
+              if (continues)
+                routePersistentAntecedentEndpoint(
+                    findTokenState(nextCount, false), amount, *repeated);
+              else
+                finishPersistentAntecedentEndpoint(amount, *repeated);
+            } else {
+              route(findTokenState(nextCount, false), amount, *repeated);
+            }
+            route(index, amount, notRepeated);
+            fail(amount, repeatedUnknown);
+            continue;
+          }
+
+          // A nonconsecutive endpoint is produced by the occurrence that
+          // reaches the admitted range and by every later strictly-false
+          // sample.  A failed consequent consumes that assertion attempt;
+          // only a successful endpoint may remain eligible for a later match.
+          bool atMaximum = !persistentRepetition.unbounded &&
+                           state.occurrences == persistentRepetition.maximum;
+          if (atMaximum) {
+            fail(amount, *repeated);
+          } else {
+            uint64_t nextCount = state.occurrences + 1;
+            if (persistentRepetition.unbounded)
+              nextCount = std::min(nextCount, persistentRepetition.minimum);
+            if (nextCount >= persistentRepetition.minimum)
+              routePersistentAntecedentEndpoint(
+                  findTokenState(nextCount, false), amount, *repeated);
+            else
+              route(findTokenState(nextCount, false), amount, *repeated);
+          }
+          if (state.occurrences >= persistentRepetition.minimum)
+            routePersistentAntecedentEndpoint(index, amount, notRepeated);
+          else
+            route(index, amount, notRepeated);
+          fail(amount, repeatedUnknown);
+          continue;
+        }
         if (retainEveryRepetitionEndpoint &&
             persistentRepetition.kind !=
                 semantic::SVSequenceRepetitionKind::Consecutive) {
@@ -8494,9 +8674,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     for (auto [state, nextAmount] : llvm::zip_equal(tokenStates, nextAmounts))
       sim::SimRefStoreOp::create(builder, location, nextAmount, state.storage);
+    for (auto [storage, nextAmount] :
+         llvm::zip_equal(persistentAntecedentHandoffStorages,
+                         nextPersistentAntecedentHandoffs))
+      sim::SimRefStoreOp::create(builder, location, nextAmount, storage);
+    if (persistentAntecedentFinalHandoffStorage)
+      sim::SimRefStoreOp::create(builder, location,
+                                 nextPersistentAntecedentFinalHandoff,
+                                 persistentAntecedentFinalHandoffStorage);
 
-    scheduleCount(successCount, true);
-    scheduleCount(failureCount, false);
+    if (persistentAntecedentImplication) {
+      scheduleCount(successCount, true);
+      scheduleCount(failureCount, true);
+      scheduleCount(implicationFailureCount, false);
+    } else {
+      scheduleCount(successCount, true);
+      scheduleCount(failureCount, false);
+    }
     cf::BranchOp::create(builder, location, wait);
     return success();
   }

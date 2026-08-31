@@ -448,12 +448,21 @@ TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY = Exclusion(
     "the implementation must report a unique-case violation but the clause "
     "leaves the report mechanism tool-specific; Obelisk emits the required "
     "warning, while this test expects Verilator's `--assert` fatal policy")
+NONCONSECUTIVE_IMPLICATION_REPORT_COUNT = Exclusion(
+    "IEEE 1800-2017 16.12.7",
+    "an implication evaluation attempt is false once any one of its "
+    "antecedent matches has a false consequent, and its fail statement then "
+    "executes once under 16.14.1; the LRM result for the test's stimulus is "
+    "29, which its own comment records as the result from other simulators, "
+    "while the test expects Verilator's 34")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assert_disable_count": INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT,
     "t_assert_disabled": VERILATOR_ASSERTIONS_DISABLED,
     "t_assert_future": TWO_STATE_INITIALIZATION,
+    "t_assert_goto_rep": TWO_STATE_INITIALIZATION,
+    "t_assert_nonconsec_rep": NONCONSECUTIVE_IMPLICATION_REPORT_COUNT,
     "t_assert_pre": USE_BEFORE_DECLARATION,
     "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
     "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,
