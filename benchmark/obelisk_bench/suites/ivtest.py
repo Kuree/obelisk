@@ -106,6 +106,12 @@ BUFFER_HIGH_IMPEDANCE_INPUT = Exclusion(
     "IEEE 1800-2017 28.5",
     "Table 28-4 requires a buf primitive with a z input to produce x; the "
     "test instead requires the undriven input to propagate z to the output")
+EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE = Exclusion(
+    "IEEE 1800-2017 23.2.2.3",
+    "an output port with an explicit data_type defaults to a variable; the "
+    "test expects the undriven member of `output two_bits b2out` to behave "
+    "like a net at z, but the variable member starts at x and that x resolves "
+    "against the second driver on the connected net")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -127,6 +133,7 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
+    "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "pr1787423": PULL_GATE_ARITY,
