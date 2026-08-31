@@ -528,7 +528,7 @@ class SvTestsJudgeTest(unittest.TestCase):
         )
         self.assertIn("--execution-tier=bytecode", flags)
         self.assertIn("-fno-lto", flags)
-        self.assertEqual(compile_mock.call_args.kwargs["timeout"], 120)
+        self.assertEqual(compile_mock.call_args.kwargs["timeout"], 60)
 
     def test_uvm_configuration_preserves_existing_no_dpi_define(self):
         self.write_test(

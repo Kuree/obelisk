@@ -574,11 +574,6 @@ def judge_one(
     except ValueError as error:
         return rel, model.Outcome(model.SKIP, str(error))
     frontend_timeout = max(compile_timeout, timeout)
-    if is_uvm:
-        # Even a tiny UVM test reparses and lowers the complete class library.
-        # With one compiler thread per parallel corpus worker that can exceed
-        # the ordinary 6x execution allowance without being stuck.
-        frontend_timeout = max(frontend_timeout, run_timeout * 12)
     with tempfile.TemporaryDirectory(prefix="obelisk-svt-") as tmp:
         if mode == "preprocessing":
             output = str(Path(tmp) / "preprocessed.sv")
