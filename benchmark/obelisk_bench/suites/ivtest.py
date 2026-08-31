@@ -53,6 +53,16 @@ RUNTIME_TIMEOUT_FLOORS: dict[str, float] = {
     "pow_reg_unsigned": 60.0,
 }
 
+# Icarus does not enable these diagnostics by default. IEEE 1800-2017 11.4.10
+# defines an oversized shift and 11.5.1 defines out-of-range selection results,
+# but neither requires a warning. Match the suite compiler's default diagnostic
+# profile without changing Obelisk's defaults outside this adapter.
+DEFAULT_WARNING_SUPPRESSIONS = [
+    "-Wno-index-oob",
+    "-Wno-range-oob",
+    "-Wno-shift-count-overflow",
+]
+
 
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
@@ -321,6 +331,7 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
     # ivtest defines this for non-strict runs; harmless to Obelisk, faithful to
     # how the sources expect to be compiled.
     flags += ["-D", "__ICARUS_UNSIZED__"]
+    flags += DEFAULT_WARNING_SUPPRESSIONS
     # Let includes and separate library modules under ivltests/ resolve.
     flags += ["-y", str(ivtest_dir / "ivltests"), "-I", str(ivtest_dir / "ivltests")]
 
@@ -403,15 +414,20 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
                         f"artifact differs: {artifact.actual}"))
             return (desc.key, model.Outcome(model.PASS))
         if desc.gold is not None:
+            # vvp_reg.pl redirects successful iverilog diagnostics into the
+            # test log before appending vvp output. Preserve that ordering so
+            # gold files that intentionally cover compile warnings exercise
+            # Obelisk's diagnostics too instead of silently losing them.
+            output = compiled.stderr + result.stdout
             normalized = _normalize_fixture_paths(
-                result.stdout, ivtest_dir, run_dir)
+                output, ivtest_dir, run_dir)
             if (result.ok and desc.gold.exists() and
                     normalized == desc.gold.read_text(
                         encoding="utf-8", errors="replace")):
                 return (desc.key, model.Outcome(model.PASS))
             return (desc.key,
                     dependency_failure(desc.key, model.RUN_FAIL,
-                                       result.stdout))
+                                       output))
         if result.ok and any(
                 line.strip() == PASSED_MARKER
                 for line in result.stdout.splitlines()):

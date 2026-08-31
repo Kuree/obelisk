@@ -129,16 +129,18 @@ class FixtureDirectoryTest(unittest.TestCase):
             fixture_visible = False
             fixture_include_visible = False
             source_spelling = ""
+            compile_flags: list[str] = []
 
             def compile_from_fixture(*args, **kwargs):
-                nonlocal fixture_visible, fixture_include_visible, source_spelling
+                nonlocal fixture_visible, fixture_include_visible
+                nonlocal source_spelling, compile_flags
                 fixture_visible = (Path(kwargs["cwd"]) / "ivltests").is_symlink()
                 source_spelling = args[1][0]
-                flags = args[3]
+                compile_flags = args[3]
                 fixture_include_visible = any(
                     Path(path) == Path(kwargs["cwd"])
-                    for index, path in enumerate(flags)
-                    if index and flags[index - 1] == "-I"
+                    for index, path in enumerate(compile_flags)
+                    if index and compile_flags[index - 1] == "-I"
                 )
                 return compile_result
 
@@ -155,6 +157,8 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertTrue(fixture_visible)
             self.assertTrue(fixture_include_visible)
             self.assertEqual(source_spelling, "./ivltests/include_test.v")
+            self.assertTrue(set(ivtest.DEFAULT_WARNING_SUPPRESSIONS)
+                            <= set(compile_flags))
 
     def test_compile_only_descriptor_does_not_run_the_binary(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -228,6 +232,43 @@ class FixtureDirectoryTest(unittest.TestCase):
 
             self.assertEqual(outcome.status, model.PASS)
             self.assertEqual(execute.call_args.args[1], 60.0)
+
+    def test_gold_log_includes_successful_compile_diagnostics_first(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ivtest_dir = Path(temporary).resolve()
+            source = ivtest_dir / "ivltests" / "warning.v"
+            source.parent.mkdir()
+            source.write_text("module warning; endmodule\n", encoding="ascii")
+            gold = ivtest_dir / "gold" / "warning.gold"
+            gold.parent.mkdir()
+            gold.write_text("compile warning\nPASSED\n", encoding="ascii")
+            descriptor = ivtest.Descriptor(
+                key="warning",
+                test_type="normal",
+                iverilog_args=[],
+                source=source,
+                gold=gold,
+                artifact_diffs=[],
+                vpi_sources=[],
+                vpi_compiler_args=[],
+            )
+            compile_result = mock.Mock(
+                ok=True, stderr="compile warning\n", failure_kind=None)
+            run_result = mock.Mock(
+                ok=True, stdout="PASSED\n", stderr="", timed_out=False)
+
+            with (
+                mock.patch.object(ivtest.runner, "build_vpi_inputs",
+                                  return_value=mock.Mock(ok=True, inputs=[])),
+                mock.patch.object(ivtest.runner, "compile_design",
+                                  return_value=compile_result),
+                mock.patch.object(ivtest.runner, "execute",
+                                  return_value=run_result),
+            ):
+                _, outcome = ivtest.judge_one(
+                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+
+            self.assertEqual(outcome.status, model.PASS)
 
 
 if __name__ == "__main__":
