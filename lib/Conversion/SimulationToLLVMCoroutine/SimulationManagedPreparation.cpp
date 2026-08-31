@@ -360,6 +360,14 @@ prepareManagedClassInventory(ModuleOp module,
                  return std::tuple(left.getId(), left.getSymName()) <
                         std::tuple(right.getId(), right.getSymName());
                });
+    DenseMap<uint64_t, std::pair<uint64_t, sim::SimClassMethodDeclOp>>
+        effectiveMethodsBySignature;
+    for (auto [slot, method] : llvm::enumerate(layout.methods))
+      if (method)
+        if (auto signature = method.getSignatureId())
+          effectiveMethodsBySignature.try_emplace(
+              *signature, std::pair<uint64_t, sim::SimClassMethodDeclOp>(
+                              slot, method));
     for (sim::SimClassDeclOp interface : interfaces) {
       ManagedClassLayout::Interface dispatch;
       dispatch.declaration = interface;
@@ -377,19 +385,23 @@ prepareManagedClassInventory(ModuleOp module,
         uint64_t ordinal = *method.getInterfaceOrdinal();
         if (ordinal >= dispatch.methodSlots.size())
           return method.emitError("interface method ordinals are not dense");
-        for (auto [slot, effective] : llvm::enumerate(layout.methods))
-          if (effective &&
-              effective.getSignatureId() == method.getSignatureId()) {
-            // A pure declaration still occupies and shadows its effective
-            // class slot, but it does not implement the interface method.
-            if (!effective.getIsPure() && effective.getImplementationAttr()) {
-              if (slot > UINT32_MAX)
-                return effective.emitError(
-                    "interface vtable slot is too large");
-              dispatch.methodSlots[ordinal] = static_cast<uint32_t>(slot);
-            }
-            break;
-          }
+        auto effective = method.getSignatureId()
+                             ? effectiveMethodsBySignature.find(
+                                   *method.getSignatureId())
+                             : effectiveMethodsBySignature.end();
+        if (effective == effectiveMethodsBySignature.end())
+          continue;
+        uint64_t slot = effective->second.first;
+        sim::SimClassMethodDeclOp implementation = effective->second.second;
+        // A pure declaration still occupies and shadows its effective class
+        // slot, but it does not implement the interface method.
+        if (!implementation.getIsPure() &&
+            implementation.getImplementationAttr()) {
+          if (slot > UINT32_MAX)
+            return implementation.emitError(
+                "interface vtable slot is too large");
+          dispatch.methodSlots[ordinal] = static_cast<uint32_t>(slot);
+        }
       }
       if (!layout.declaration.getIsAbstract() &&
           llvm::is_contained(dispatch.methodSlots, UINT32_MAX))
