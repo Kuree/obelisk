@@ -58,6 +58,122 @@ bool isTaggedUnionType(Type type) {
   return false;
 }
 
+bool isClockedSampleAggregate(Type type) {
+  return isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type);
+}
+
+uint64_t clockedSampleLeafID(StringRef identity, uint64_t rootID,
+                             ArrayRef<unsigned> path) {
+  if (path.empty())
+    return rootID;
+  std::string key = (Twine("$clocked_sample_leaf|") + identity).str();
+  for (unsigned ordinal : path)
+    key += (Twine("|") + Twine(ordinal)).str();
+  return stableCodeUnitID(key);
+}
+
+FailureOr<Value> emitClockedSampleRead(OpBuilder &builder, Location location,
+                                       Value context, Type type,
+                                       StringRef identity, uint64_t rootID,
+                                       uint64_t depth, uint64_t age,
+                                       SmallVectorImpl<unsigned> &path) {
+  if (sim::getPackedWidth(type))
+    return sim::SimClockedSampleReadOp::create(
+               builder, location, type, context,
+               builder.getI64IntegerAttr(
+                   clockedSampleLeafID(identity, rootID, path)),
+               builder.getI64IntegerAttr(depth), builder.getI64IntegerAttr(age))
+        .getResult();
+  if (!isClockedSampleAggregate(type))
+    return emitError(location)
+               << "clocking input sampling does not support type " << type,
+           failure();
+
+  SmallVector<Value> elements;
+  unsigned count = sim::getAggregateNumElements(type);
+  elements.reserve(count);
+  for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+    path.push_back(ordinal);
+    FailureOr<Value> element = emitClockedSampleRead(
+        builder, location, context, sim::getAggregateElementType(type, ordinal),
+        identity, rootID, depth, age, path);
+    path.pop_back();
+    if (failed(element))
+      return failure();
+    elements.push_back(*element);
+  }
+  return sim::SimAggregateConstructOp::create(builder, location, type, elements)
+      .getResult();
+}
+
+LogicalResult emitClockedSampleUpdate(OpBuilder &builder, Location location,
+                                      Value context, Value current, Value gate,
+                                      StringRef identity, uint64_t rootID,
+                                      uint64_t depth,
+                                      SmallVectorImpl<unsigned> &path) {
+  Type type = current.getType();
+  if (sim::getPackedWidth(type)) {
+    sim::SimClockedSampleUpdateOp::create(
+        builder, location, context, current, gate,
+        builder.getI64IntegerAttr(clockedSampleLeafID(identity, rootID, path)),
+        builder.getI64IntegerAttr(depth));
+    return success();
+  }
+  if (!isClockedSampleAggregate(type))
+    return emitError(location)
+           << "clocking input sampling does not support type " << type;
+
+  for (unsigned ordinal = 0, count = sim::getAggregateNumElements(type);
+       ordinal != count; ++ordinal) {
+    Type elementType = sim::getAggregateElementType(type, ordinal);
+    Value element = sim::SimAggregateExtractOp::create(
+        builder, location, elementType, current, ordinal);
+    path.push_back(ordinal);
+    LogicalResult updated =
+        emitClockedSampleUpdate(builder, location, context, element, gate,
+                                identity, rootID, depth, path);
+    path.pop_back();
+    if (failed(updated))
+      return failure();
+  }
+  return success();
+}
+
+FailureOr<Value> emitPreponedSampleRead(OpBuilder &builder, Location location,
+                                        Value context, Value source,
+                                        Type type) {
+  if (sim::getPackedWidth(type))
+    return sim::SimSampledReadOp::create(builder, location, type, context,
+                                         source)
+        .getResult();
+  if (!isClockedSampleAggregate(type))
+    return emitError(location)
+               << "clocking input sampling does not support type " << type,
+           failure();
+  if (!isa<sim::RefType>(source.getType()))
+    return emitError(location)
+               << "fixed unpacked #1step clocking input must name variable "
+                  "storage",
+           failure();
+
+  SmallVector<Value> elements;
+  unsigned count = sim::getAggregateNumElements(type);
+  elements.reserve(count);
+  for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+    Type elementType = sim::getAggregateElementType(type, ordinal);
+    Value elementRef = sim::SimRefSubelementOp::create(
+        builder, location, sim::RefType::get(type.getContext(), elementType),
+        source, builder.getDenseI64ArrayAttr({static_cast<int64_t>(ordinal)}));
+    FailureOr<Value> element = emitPreponedSampleRead(
+        builder, location, context, elementRef, elementType);
+    if (failed(element))
+      return failure();
+    elements.push_back(*element);
+  }
+  return sim::SimAggregateConstructOp::create(builder, location, type, elements)
+      .getResult();
+}
+
 FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
                                            StringRef delayIsRealName,
                                            StringRef timeUnitName,
@@ -2463,10 +2579,11 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
   }
 
   uint64_t delayedSiteID = 0;
+  std::string delayKey;
   if (skewTicks) {
-    std::string delayKey = (function.getSymName() + "|clocking-input-delay|" +
-                            sourceIdentity + "|" + Twine(skewTicks))
-                               .str();
+    delayKey = (function.getSymName() + "|clocking-input-delay|" +
+                sourceIdentity + "|" + Twine(skewTicks))
+                   .str();
     delayedSiteID = stableCodeUnitID(delayKey);
     if (!alternateClockSamplePlans.contains(delayKey)) {
       alternateClockSamplePlans[delayKey] = {delayedSiteID, 1, sourceType};
@@ -2530,11 +2647,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       Value publishGate = arith::ConstantOp::create(
           publishBuilder, location, publishBuilder.getI1Type(),
           publishBuilder.getBoolAttr(true));
-      sim::SimClockedSampleUpdateOp::create(
-          publishBuilder, location, commitEntry.getArgument(0),
-          publish->getArgument(0), publishGate,
-          publishBuilder.getI64IntegerAttr(delayedSiteID),
-          publishBuilder.getI64IntegerAttr(1));
+      SmallVector<unsigned> publishPath;
+      if (failed(emitClockedSampleUpdate(
+              publishBuilder, location, commitEntry.getArgument(0),
+              publish->getArgument(0), publishGate, delayKey, delayedSiteID, 1,
+              publishPath)))
+        return failure();
       sim::SimReturnOp::create(publishBuilder, location, ValueRange{});
       commit->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
 
@@ -2620,17 +2738,21 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
             observerOperands, sourcePlan->captureCount);
         initial = evaluateSource(monitorBuilder);
       } else {
-        initial = sim::SimSampledReadOp::create(
-            monitorBuilder, location, sourceType, monitorEntry.getArgument(0),
-            monitorEntry.getArgument(1));
+        FailureOr<Value> initialSample = emitPreponedSampleRead(
+            monitorBuilder, location, monitorEntry.getArgument(0),
+            monitorEntry.getArgument(1), sourceType);
+        if (failed(initialSample))
+          return failure();
+        initial = *initialSample;
       }
       Value initialGate = arith::ConstantOp::create(
           monitorBuilder, location, monitorBuilder.getI1Type(),
           monitorBuilder.getBoolAttr(true));
-      sim::SimClockedSampleUpdateOp::create(
-          monitorBuilder, location, monitorEntry.getArgument(0), initial,
-          initialGate, monitorBuilder.getI64IntegerAttr(delayedSiteID),
-          monitorBuilder.getI64IntegerAttr(1));
+      SmallVector<unsigned> initialUpdatePath;
+      if (failed(emitClockedSampleUpdate(
+              monitorBuilder, location, monitorEntry.getArgument(0), initial,
+              initialGate, delayKey, delayedSiteID, 1, initialUpdatePath)))
+        return failure();
       cf::BranchOp::create(monitorBuilder, location, wait);
       OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
       if (sourcePlan) {
@@ -2842,19 +2964,24 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                                           context, sim::EventRegion::Observed));
     OpBuilder sampleBuilder = OpBuilder::atBlockEnd(sample);
     Value sampled;
-    if (skewTicks)
-      sampled = sim::SimClockedSampleReadOp::create(
-          sampleBuilder, location, sourceType, entry.getArgument(0),
-          sampleBuilder.getI64IntegerAttr(delayedSiteID),
-          sampleBuilder.getI64IntegerAttr(1),
-          sampleBuilder.getI64IntegerAttr(0));
-    else if (sourcePlan)
+    if (skewTicks) {
+      SmallVector<unsigned> delayedReadPath;
+      FailureOr<Value> delayed = emitClockedSampleRead(
+          sampleBuilder, location, entry.getArgument(0), sourceType, delayKey,
+          delayedSiteID, 1, 0, delayedReadPath);
+      if (failed(delayed))
+        return failure();
+      sampled = *delayed;
+    } else if (sourcePlan)
       sampled = evaluateSourceInSampler(sampleBuilder);
-    else if (oneStep)
-      sampled = sim::SimSampledReadOp::create(sampleBuilder, location,
-                                              sourceType, entry.getArgument(0),
-                                              entry.getArgument(*sourceIndex));
-    else if (isa<sim::NetType>(source.getType()))
+    else if (oneStep) {
+      FailureOr<Value> preponed =
+          emitPreponedSampleRead(sampleBuilder, location, entry.getArgument(0),
+                                 entry.getArgument(*sourceIndex), sourceType);
+      if (failed(preponed))
+        return failure();
+      sampled = *preponed;
+    } else if (isa<sim::NetType>(source.getType()))
       sampled = sim::SimNetReadOp::create(sampleBuilder, location, sourceType,
                                           entry.getArgument(*sourceIndex));
     else
@@ -2863,19 +2990,18 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     Value gate = arith::ConstantOp::create(sampleBuilder, location,
                                            sampleBuilder.getI1Type(),
                                            sampleBuilder.getBoolAttr(true));
-    sim::SimClockedSampleUpdateOp::create(
-        sampleBuilder, location, entry.getArgument(0), sampled, gate,
-        sampleBuilder.getI64IntegerAttr(siteID),
-        sampleBuilder.getI64IntegerAttr(1));
+    SmallVector<unsigned> sampleUpdatePath;
+    if (failed(emitClockedSampleUpdate(sampleBuilder, location,
+                                       entry.getArgument(0), sampled, gate, key,
+                                       siteID, 1, sampleUpdatePath)))
+      return failure();
     cf::BranchOp::create(sampleBuilder, location, wait);
     sampler->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   }
-  return sim::SimClockedSampleReadOp::create(
-             builder, location, sourceType,
-             function.getBody().front().getArgument(0),
-             builder.getI64IntegerAttr(siteID), builder.getI64IntegerAttr(1),
-             builder.getI64IntegerAttr(0))
-      .getResult();
+  SmallVector<unsigned> resultPath;
+  return emitClockedSampleRead(builder, location,
+                               function.getBody().front().getArgument(0),
+                               sourceType, key, siteID, 1, 0, resultPath);
 }
 
 FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
