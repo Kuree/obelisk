@@ -63,6 +63,17 @@ module attributes {
         (!obelisk_rt.arg, !obelisk_rt.arg) -> !obelisk_rt.args
     return %byte : i8
   }
+
+  // $readmemb and $readmemh produce numeric planes with their least
+  // significant byte first, unlike file reads whose bytes retain stream order.
+  func.func @least_significant_byte_first(%scratch: !obelisk_rt.mut_bytes)
+      -> i24 {
+    %count = arith.constant 3 : i64
+    %packed = obelisk_rt.bytes.to_packed %scratch, %count
+        {high_alignment = false, least_significant_byte_first = true} :
+        (!obelisk_rt.mut_bytes, i64) -> i24
+    return %packed : i24
+  }
 }
 
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("abc")
@@ -110,3 +121,11 @@ module attributes {
 // CHECK: llvm.mlir.zero : !llvm.ptr
 // CHECK: llvm.mlir.constant(0 : i64) : i64
 // CHECK: return {{.*}} : i8
+
+// CHECK-LABEL: func.func @least_significant_byte_first
+// CHECK: llvm.mlir.constant(0 : i24) : i24
+// CHECK: llvm.shl {{.*}}, %{{.*}} : i24
+// CHECK: llvm.mlir.constant(8 : i24) : i24
+// CHECK: llvm.shl {{.*}}, %{{.*}} : i24
+// CHECK: llvm.mlir.constant(16 : i24) : i24
+// CHECK: llvm.shl {{.*}}, %{{.*}} : i24

@@ -421,7 +421,10 @@ public:
         if (storageWidth > 8)
           wide = LLVM::ZExtOp::create(rewriter, location, storageType, byte);
         Value shift;
-        if (op.getHighAlignment()) {
+        if (op.getLeastSignificantByteFirst()) {
+          shift =
+              llvmIntegerConstant(rewriter, location, storageType, index * 8);
+        } else if (op.getHighAlignment()) {
           shift = llvmIntegerConstant(rewriter, location, storageType,
                                       (byteCount - 1 - index) * 8);
         } else {

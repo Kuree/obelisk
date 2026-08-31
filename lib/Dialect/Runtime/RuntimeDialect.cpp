@@ -329,6 +329,9 @@ LogicalResult RTBytesSizeOp::verify() {
 LogicalResult RTPackedFromBytesOp::verify() {
   if (!isByteContainer(getBytes().getType()))
     return emitOpError("requires a byte span, mutable byte span, or buffer");
+  if (getHighAlignment() && getLeastSignificantByteFirst())
+    return emitOpError("cannot combine high alignment with least-significant-"
+                       "byte-first ordering");
   return success();
 }
 

@@ -40,7 +40,9 @@ def RTBytesSizeOp : RTOp<"bytes.size", [Pure]> {
 
 def RTPackedFromBytesOp : RTOp<"bytes.to_packed", [MemoryEffects<[MemRead]>]> {
   let arguments = (ins AnyType:$bytes, I64:$count,
-                       BoolAttr:$high_alignment);
+                       BoolAttr:$high_alignment,
+                       DefaultValuedAttr<BoolAttr, "false">:
+                           $least_significant_byte_first);
   let results = (outs AnyInteger:$result);
   let hasVerifier = 1;
 }

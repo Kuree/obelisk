@@ -640,7 +640,8 @@ public:
     Value count = runtime::RTBytesSizeOp::create(
         rewriter, loc, rewriter.getI64Type(), call.getLine());
     Value packed = runtime::RTPackedFromBytesOp::create(
-        rewriter, loc, op.getData().getType(), call.getLine(), count, false);
+        rewriter, loc, op.getData().getType(), call.getLine(), count, false,
+        false);
     runtime::RTBufferReleaseOp::create(rewriter, loc, call.getLine());
     Value count32 =
         arith::TruncIOp::create(rewriter, loc, rewriter.getI32Type(), count);
@@ -672,7 +673,8 @@ public:
         runtimeContext(rewriter, loc, adaptor.getContext().front()),
         descriptor(rewriter, loc, adaptor.getDescriptor().front()), scratch);
     Value packed = runtime::RTPackedFromBytesOp::create(
-        rewriter, loc, op.getData().getType(), scratch, call.getRead(), true);
+        rewriter, loc, op.getData().getType(), scratch, call.getRead(), true,
+        false);
     Value count = arith::TruncIOp::create(rewriter, loc, rewriter.getI32Type(),
                                           call.getRead());
     Value zero = iConstant(rewriter, loc, rewriter.getI32Type(), 0);
@@ -715,9 +717,9 @@ public:
     sim::SimStatusCheckOp::create(rewriter, loc, call.getStatus());
     Value count = iConstant(rewriter, loc, rewriter.getI64Type(), byteSize);
     Value value = runtime::RTPackedFromBytesOp::create(
-        rewriter, loc, packedType, valueScratch, count, false);
+        rewriter, loc, packedType, valueScratch, count, false, true);
     Value unknown = runtime::RTPackedFromBytesOp::create(
-        rewriter, loc, packedType, unknownScratch, count, false);
+        rewriter, loc, packedType, unknownScratch, count, false, true);
     // The four-state token data occupies two of the replacement values, so the
     // results have to be handed over grouped rather than flattened.
     rewriter.replaceOpWithMultiple(
