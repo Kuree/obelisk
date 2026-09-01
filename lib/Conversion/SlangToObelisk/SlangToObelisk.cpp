@@ -370,10 +370,16 @@ public:
       return rewriter.notifyMatchFailure(
           op, "invalid semantic sentinels have no Obelisk representation");
 
-    if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp>) {
+    if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp> ||
+                  std::is_same_v<SourceOp, slangir::InstanceSymbolOp>) {
       if (auto inactive =
               op->template getAttrOfType<BoolAttr>("is_uninstantiated");
           inactive && inactive.getValue()) {
+        // Slang retains inactive generate arms and invalid instances for
+        // semantic checking. Neither is part of the elaborated design. In
+        // particular, IEEE 1800-2017 6.20 forbids implicitly instantiating a
+        // design element whose parameter has no default, so its synthetic
+        // instance can contain intentionally unset values and error types.
         rewriter.eraseOp(op);
         return success();
       }
