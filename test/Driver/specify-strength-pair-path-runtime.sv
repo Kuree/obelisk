@@ -25,9 +25,11 @@ module specify_strength_pair_path_runtime;
   strength_cell dut(data, enable, destination);
 
   initial begin
-    #5;
-    if (destination !== 1'bz)
-      $fatal(1, "z0 matured early");
+    // IEEE 1800-2017 4.9.1 and 10.3.3: the delayed driver starts at x,
+    // selecting the explicit x-to-0 delay of 10 at time zero.
+    #9;
+    if (destination !== 1'bx)
+      $fatal(1, "x0 matured early");
     #1;
     if (destination !== 0)
       $fatal(1, "initial 0 did not settle");
