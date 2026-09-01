@@ -440,6 +440,12 @@ NARROW_STREAM_TARGET = Exclusion(
     "fewer bits) than the stream, an error shall be generated\", and the test "
     "unpacks a four-byte queue into one byte; 11.4.14.3's own example spells "
     "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
+REAL_STREAM_MEMBER = Exclusion(
+    "IEEE 1800-2017 11.4.14.1",
+    "6.24.3 defines a bit-stream type from integral, packed, string, or "
+    "recursive aggregates of those types, not real or realtime; the streaming "
+    "procedure requires an error when the test reaches its real, realtime, "
+    "and unpacked real-array members")
 INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT = Exclusion(
     "IEEE 1800-2017 16.14.7",
     "a call to `$inferred_disable` may only be the entire default value of a "
@@ -596,6 +602,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_langext_order": NON_STANDARD_KEYWORD_LEVEL,
     "t_process_task": KILLED_PROCESS_SUBTREE,
     "t_stream_queue_interface": NARROW_STREAM_TARGET,
+    "t_stream_unpacked_struct": REAL_STREAM_MEMBER,
 }
 
 
