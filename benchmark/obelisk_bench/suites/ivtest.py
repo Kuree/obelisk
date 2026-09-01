@@ -180,6 +180,11 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
         "warning:", 2, prefix_lines=4),
     "br_gh127e": OptionalWarningGoldOracle(
         "warning:", 2, prefix_lines=4),
+    # Clause 27.4 defines the genvar as an integer during elaboration and
+    # permits this descending loop to terminate when i becomes negative. The
+    # gold records an older Verilog-2001 warning plus its continuation line.
+    "br_gh567": OptionalWarningGoldOracle(
+        "warning:", 1, prefix_lines=2),
     # Every out-of-range select that produces these pinned-Icarus diagnostics
     # is guarded by its predefined __ICARUS__ macro. Another compiler sees
     # only the portable semantic checks. Each diagnostic has one continuation
