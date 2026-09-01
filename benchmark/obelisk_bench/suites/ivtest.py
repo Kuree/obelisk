@@ -440,6 +440,12 @@ COINCIDENT_TASK_EVENT_CONTROL_RACE = Exclusion(
     "events at the same times and may execute in any order; when the clock "
     "runs first, the tasks arm their posedge controls too late and miss that "
     "edge, while the gold requires the opposite ordering at every collision")
+COINCIDENT_INITIAL_ALWAYS_DELAY_RACE = Exclusion(
+    "IEEE 1800-2017 4.4.2.2",
+    "the initial block's reset assignments and the always block's state "
+    "updates become Active events at the same times and may execute in any "
+    "order; the gold requires the initial block to run first at every "
+    "collision")
 UNKNOWN_TO_ZERO_IS_NEGEDGE = Exclusion(
     "IEEE 1800-2017 9.4.2",
     "Table 9-2 requires the test's time-zero clk transition from x to 0 to "
@@ -576,6 +582,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2001162": COINCIDENT_TASK_EVENT_CONTROL_RACE,
+    "pr243": COINCIDENT_INITIAL_ALWAYS_DELAY_RACE,
     "pr2172606b": CONDITIONAL_ZZ_CHECKER_CONTRADICTION,
     "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
