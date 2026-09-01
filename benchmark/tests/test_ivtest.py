@@ -267,7 +267,7 @@ class FixtureDirectoryTest(unittest.TestCase):
 
     def test_supported_upstream_compile_error_runs_its_self_check(self):
         for key in ("sv_port_default14", "event_array", "br1015a",
-                    "br_gh25a", "br_gh25b"):
+                    "br_gh1182", "br_gh25a", "br_gh25b"):
             with (
                 self.subTest(test=key),
                 tempfile.TemporaryDirectory() as temporary,
@@ -276,12 +276,15 @@ class FixtureDirectoryTest(unittest.TestCase):
                 source = ivtest_dir / "ivltests" / f"{key}.v"
                 source.parent.mkdir()
                 source.write_text("module test; endmodule\n", encoding="ascii")
+                gold = ivtest_dir / "gold" / f"{key}.gold"
+                gold.parent.mkdir()
+                gold.write_text("old-mode compile error\n", encoding="ascii")
                 descriptor = ivtest.Descriptor(
                     key=key,
                     test_type="CE",
                     iverilog_args=["-g2009"],
                     source=source,
-                    gold=None,
+                    gold=gold,
                     artifact_diffs=[],
                     vpi_sources=[],
                     vpi_compiler_args=[],

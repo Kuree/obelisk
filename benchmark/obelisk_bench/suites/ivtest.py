@@ -76,6 +76,10 @@ SELF_CHECKING_CE_OVERRIDES = {
     # rejects this source, but it is valid in the SystemVerilog mode used by
     # this harness and carries a complete parity self-check.
     "br1015a",
+    # IEEE 1800-2017 9.3.1 permits block item declarations directly inside
+    # unnamed sequential blocks. This source is a CE test only in its
+    # old-Verilog list and self-checks the valid SystemVerilog behavior.
+    "br_gh1182",
     # IEEE 1800-2017 3.12.1 allows the compilation-unit scope to contain any
     # package item, and 26.2 includes task and function declarations. These
     # sources are CE tests only in their old-Verilog list and self-check the
@@ -1044,6 +1048,21 @@ def judge_one(
         run_timeout = max(timeout, RUNTIME_TIMEOUT_FLOORS.get(desc.key, 0.0))
         result = runner.execute(
             str(binary), run_timeout, args=plusargs, cwd=tmp)
+        if (desc.test_type == "CE" and
+                desc.key in SELF_CHECKING_CE_OVERRIDES):
+            # These descriptors are compile errors only in an older language
+            # mode. In this harness's SystemVerilog mode their source-level
+            # self-check is authoritative, even when the old-mode descriptor
+            # also names a diagnostic gold file.
+            passed = any(
+                line.strip() == PASSED_MARKER
+                for line in result.stdout.splitlines()
+            )
+            if result.ok and passed:
+                return (desc.key, model.Outcome(model.PASS))
+            return (desc.key, dependency_failure(
+                desc.key, model.RUN_FAIL,
+                compiled.stderr + result.stdout + result.stderr))
         if desc.artifact_diffs:
             if not result.ok:
                 return (desc.key,
