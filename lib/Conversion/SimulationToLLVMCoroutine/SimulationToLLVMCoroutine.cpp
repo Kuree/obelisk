@@ -2103,7 +2103,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     hasLanguageOverride |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
                                sim::SimReleaseOverrideOp>(operation);
   });
-  if (vpi.getMode() == sim::ComputeVPIMode::Off && !hasLanguageOverride) {
+  if (!vpi.allowsWrite() && !hasLanguageOverride) {
     auto authorizeFixedHandles = [&](const auto &descriptors) {
       for (const auto &[descriptor, handle] : descriptors) {
         (void)descriptor;
@@ -2372,12 +2372,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // available to generic and hybrid lowering as well; dynamic handles still
   // use the validating runtime helpers and writable VPI roots retain their
   // generated guards.
-  // Read-only VPI still publishes the runtime-owned planes to plugins. Until
-  // those planes are the generated code's canonical storage, keep reads and
-  // writes on the coherent helper path in that mode. Full VPI uses guarded
+  // Read-only VPI is a reflection capability, not an always-live observer.
+  // Explicit VPI/DPI calls are safe points and design reads consult the
+  // generated plan's canonical plane directly. Full VPI uses guarded
   // specialization, while language force/release likewise requires helpers.
   directStaticState = staticSpecialization && vpi.hasComputeGraph() &&
-                      vpi.getMode() != sim::ComputeVPIMode::Read &&
                       !hasLanguageOverride &&
                       (!stateLayout->directHandles.empty() ||
                        !stateLayout->guardedHandles.empty());

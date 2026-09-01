@@ -2,16 +2,14 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 // RUN: sed 's/native_scheduler = 0/native_scheduler = 3/' %s \
-// RUN:   | not obelisk-opt \
+// RUN:   | obelisk-opt \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=EVAL-DIAG
+// RUN:   | FileCheck %s --check-prefix=EVAL
 
-// Requesting VPI observability withdraws the directly addressable handles for
-// nets, so a net read materializes through a runtime plane accessor. A
-// path-sensitive checkpoint probe that reads such a net would carry that call
-// into the generated closure, which the closure verifier rejects. The owner
-// keeps its canonical route instead, so observability costs performance
-// rather than the build.
+// Read-only VPI retains safe-point visibility but cannot mutate state, so the
+// generated plan remains the canonical plane and fixed net handles may read it
+// directly. The owner in this fixture still misses the exact path-dispatch
+// shape for an unrelated control-flow reason and keeps its canonical route.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -122,10 +120,18 @@ module attributes {
 // CHECK-NOT: llvm.func @__obelisk_eval_four_state_fallback_v1_
 // CHECK-NOT: llvm.func @__obelisk_eval_checkpoint_body_v1_
 
-// The activation keeps its canonical body: the net read goes through the
-// runtime plane accessor and the display leaf stays inline.
+// The activation keeps its canonical body, but its fixed net read addresses
+// the generated canonical planes directly; no runtime state helper is in the
+// hot activation. The display leaf stays inline.
 // CHECK-LABEL: llvm.func @guarded.__obelisk_coro_ramp
-// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK: llvm.load
+// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.load
 // CHECK: llvm.call @obelisk_rt_v1_display
 
-// EVAL-DIAG: an eval owner keeps an unguarded runtime leaf
+// Read-only VPI no longer rejects forced generated-eval lowering merely for a
+// fixed canonical net read.
+// EVAL: obelisk.eval.generated
+// EVAL-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
