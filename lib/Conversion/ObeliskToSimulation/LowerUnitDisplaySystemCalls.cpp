@@ -569,7 +569,19 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       if (failed(real))
         return failure();
       output.items.push_back(*real);
-      output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_REAL);
+      Operation *spelling = child;
+      while (isa<semantic::SVConversionExpressionOp>(spelling)) {
+        SmallVector<Operation *> converted = getChildren(spelling);
+        if (converted.size() != 1)
+          break;
+        spelling = converted.front();
+      }
+      auto system = dyn_cast<semantic::SVCallExpressionOp>(spelling);
+      bool isRealtime = system && system.getIsSystemCall() &&
+                        system.getCalleeName() == "$realtime";
+      output.flags.push_back(
+          OBELISK_RT_OUTPUT_ITEM_REAL |
+          (isRealtime ? OBELISK_RT_OUTPUT_ITEM_REAL_TIME : 0));
     } else if (isa<sim::StringType>((*value).getType())) {
       output.items.push_back(*value);
       // Unconsumed strings in a display output list are format strings just

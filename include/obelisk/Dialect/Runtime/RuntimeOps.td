@@ -81,7 +81,8 @@ def RTArgumentRawAggregateOp
 }
 
 def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
-  let arguments = (ins F64:$value);
+  let arguments = (ins F64:$value,
+                       DefaultValuedAttr<BoolAttr, "false">:$is_time);
   let results = (outs RTArgumentType:$result);
   let hasVerifier = 1;
 }

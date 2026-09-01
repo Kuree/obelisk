@@ -747,6 +747,10 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
           "real display items must have f64 operands");
     if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) == 0 && item.getType().isF64())
       return operation->emitOpError("f64 display operands must be marked real");
+    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME) != 0 &&
+        (flags & OBELISK_RT_OUTPUT_ITEM_REAL) == 0)
+      return operation->emitOpError(
+          "realtime display items must also be marked real");
     if ((flags &
          (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED)) ==
         (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED))
@@ -789,8 +793,11 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
         return operation->emitOpError(
             "process-handle items require only the process flag");
     } else if (item.getType().isF64()) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_REAL)
-        return operation->emitOpError("f64 items require only the real flag");
+      if (flags != OBELISK_RT_OUTPUT_ITEM_REAL &&
+          flags !=
+              (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_REAL_TIME))
+        return operation->emitOpError(
+            "f64 items require the real flag and may carry the realtime flag");
     } else if (!isa<BytesType>(item.getType()) && flags != 0 &&
                flags != OBELISK_RT_OUTPUT_ITEM_SIGNED) {
       return operation->emitOpError(

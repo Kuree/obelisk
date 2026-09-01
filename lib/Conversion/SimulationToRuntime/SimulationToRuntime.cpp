@@ -249,7 +249,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "real output item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentRealOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front()));
+          converted.front(), (flags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME) != 0));
       continue;
     }
     if (converted.size() != 1 && converted.size() != 2)

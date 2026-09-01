@@ -3960,7 +3960,10 @@ enum {
   // Marks the sole format expression of $sformat/$sformatf. It owns format
   // substitutions in the following arguments; values left after those
   // substitutions continue as ordinary output-list items.
-  OBELISK_RT_ARG_DESIGNATED_FORMAT = 1u << 2
+  OBELISK_RT_ARG_DESIGNATED_FORMAT = 1u << 2,
+  // A direct $realtime result uses scope time precision for its default
+  // unformatted rendering. Explicit format conversions remain unchanged.
+  OBELISK_RT_ARG_REAL_TIME = 1u << 3
 };
 
 // Runtime-only pairing of an enum's executable packed representation with

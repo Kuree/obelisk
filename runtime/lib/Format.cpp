@@ -592,6 +592,9 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
                                  char specifier, const FormatOptions &options,
                                  const obelisk_rt_format_env_v1 *environment,
                                  const TimeOverride &timeFormat) {
+  if ((argument.flags & OBELISK_RT_ARG_REAL_TIME) != 0 &&
+      argument.kind != OBELISK_RT_ARG_REAL)
+    return OBELISK_RT_INVALID_ARGUMENT;
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
   if (argument.kind == OBELISK_RT_ARG_RAW_AGGREGATE) {
@@ -1084,6 +1087,21 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
   }
 }
 
+std::optional<uint32_t>
+realtimeFractionDigits(const obelisk_rt_format_env_v1 *environment) {
+  if (!environment || environment->time_multiplier == 0)
+    return std::nullopt;
+  uint64_t multiplier = environment->time_multiplier;
+  uint32_t digits = 0;
+  while (multiplier > 1 && multiplier % 10 == 0) {
+    multiplier /= 10;
+    ++digits;
+  }
+  if (multiplier != 1)
+    return std::nullopt;
+  return digits;
+}
+
 obelisk_rt_status
 buildDisplay(obelisk_rt_context *context, std::string &output,
              obelisk_rt_radix radix, const obelisk_rt_arg_v1 *items,
@@ -1098,12 +1116,14 @@ buildDisplay(obelisk_rt_context *context, std::string &output,
   uint64_t index = 0;
   while (index < itemCount) {
     const obelisk_rt_arg_v1 &item = items[index++];
-    constexpr uint32_t validFlags = OBELISK_RT_ARG_SIGNED |
-                                    OBELISK_RT_ARG_FORMAT_STRING |
-                                    OBELISK_RT_ARG_DESIGNATED_FORMAT;
+    constexpr uint32_t validFlags =
+        OBELISK_RT_ARG_SIGNED | OBELISK_RT_ARG_FORMAT_STRING |
+        OBELISK_RT_ARG_DESIGNATED_FORMAT | OBELISK_RT_ARG_REAL_TIME;
     if ((item.flags & ~validFlags) != 0 ||
         ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0 &&
-         ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) == 0 || index != 1))) {
+         ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) == 0 || index != 1)) ||
+        ((item.flags & OBELISK_RT_ARG_REAL_TIME) != 0 &&
+         item.kind != OBELISK_RT_ARG_REAL)) {
       error = "invalid display item flags";
       return OBELISK_RT_INVALID_ARGUMENT;
     }
@@ -1131,6 +1151,22 @@ buildDisplay(obelisk_rt_context *context, std::string &output,
       // ordinary output-list items and use the task's default radix. A
       // designated $sformat/$sformatf string owns format substitutions, but
       // does not discard the remaining list once its substitutions end.
+      continue;
+    }
+    if ((item.flags & OBELISK_RT_ARG_REAL_TIME) != 0) {
+      std::optional<uint32_t> digits = realtimeFractionDigits(environment);
+      if (!digits) {
+        error = "invalid realtime display scale";
+        return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      FormatOptions options;
+      options.precision = *digits;
+      obelisk_rt_status status = formatArgument(
+          context, output, item, 'f', options, environment, timeFormat);
+      if (status != OBELISK_RT_OK) {
+        error = "failed to format realtime display item";
+        return status;
+      }
       continue;
     }
     char specifier = defaultSpecifier(item, radix);

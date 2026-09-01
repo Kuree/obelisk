@@ -31,7 +31,10 @@ enum {
   // strings: its assignment-pattern rendering, followed by its independently
   // leaf-padded two-state and four-state raw encodings.
   OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE = 1u << 12,
-  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 13) - 1
+  // A real value produced directly by $realtime keeps the invoking scope's
+  // time precision when it is displayed without an explicit conversion.
+  OBELISK_RT_OUTPUT_ITEM_REAL_TIME = 1u << 13,
+  OBELISK_RT_OUTPUT_ITEM_ALL = (1u << 14) - 1
 };
 
 #endif // OBELISK_RUNTIME_OUTPUTITEMFLAGS_H

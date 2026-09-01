@@ -678,6 +678,7 @@ public:
       return success();
     }
     case RuntimeMaterializer::ArgumentReal: {
+      auto op = cast<runtime::RTArgumentRealOp>(operation);
       FailureOr<Value> data =
           allocateAtFunctionEntry(operation, rewriter, abi,
                                   operands[0].getType(), 1, abi.alignments.i64);
@@ -689,6 +690,11 @@ public:
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i32, 3), 0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmIntegerConstant(rewriter, location, abi.i32,
+                              op.getIsTime() ? OBELISK_RT_ARG_REAL_TIME : 0),
+          1);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();

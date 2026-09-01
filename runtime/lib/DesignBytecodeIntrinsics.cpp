@@ -4467,7 +4467,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         arguments.push_back({OBELISK_RT_ARG_PROCESS, 0, 0,
                              frame.data + layout.offset, nullptr});
       } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_REAL)
+        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_REAL &&
+            itemFlags != (OBELISK_RT_OUTPUT_ITEM_REAL |
+                          OBELISK_RT_OUTPUT_ITEM_REAL_TIME))
           return OBELISK_RT_INVALID_BYTECODE;
         if (layout.kind != OBELISK_RT_DBREG_REAL32 &&
             layout.kind != OBELISK_RT_DBREG_REAL64)
@@ -4481,8 +4483,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           std::memcpy(&real, frame.data + layout.offset, sizeof(real));
         }
         realValues.push_back(real);
-        arguments.push_back(
-            {OBELISK_RT_ARG_REAL, 0, 0, &realValues.back(), nullptr});
+        arguments.push_back({OBELISK_RT_ARG_REAL,
+                             static_cast<obelisk_rt_arg_flags>(
+                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME)
+                                     ? OBELISK_RT_ARG_REAL_TIME
+                                     : 0),
+                             0, &realValues.back(), nullptr});
       } else {
         if (itemFlags != 0 && itemFlags != OBELISK_RT_OUTPUT_ITEM_SIGNED)
           return OBELISK_RT_INVALID_BYTECODE;
