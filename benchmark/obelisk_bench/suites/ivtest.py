@@ -116,6 +116,17 @@ OPTIONAL_WARNING_GOLD_PREFIXES = {
     "nested_impl_event2": "warning: @* found no sensitivities",
 }
 
+# IEEE 1800-2017 9.2.2.2 through 9.2.2.4 recommend additional modeling
+# diagnostics for always_comb/always_latch/always_ff but do not prescribe
+# their wording or count. These gold files otherwise end in a short portable
+# self-check, so retain that output exactly instead of inheriting Icarus's
+# synthesis-warning policy. Lookup is O(1) and comparison is linear in the
+# selected test's tiny output; compiler and simulator paths are unaffected.
+MODELING_WARNING_GOLD_OUTPUTS: dict[str, str] = {
+    "always_comb_no_sens": "PASSED\n",
+    "always_ff_warn_sens": "Expect compile warnings!\nPASSED\n",
+}
+
 
 class AssertionGoldOracle(NamedTuple):
     """Portable assertion actions and Obelisk diagnostics for an ivtest."""
@@ -317,6 +328,11 @@ ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA = Exclusion(
     "and destination before waiting, but commits in the NBA region after "
     "Active-region execution; the test reads immediately after blocking ->e "
     "and requires Icarus's update-before-read ordering")
+ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
+    "IEEE 1800-2017 9.2.2.3",
+    "tools should warn when an always_latch procedure does not represent "
+    "latched logic, but the construct is not illegal; the CE entry requires "
+    "Icarus's stronger compile-error policy")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -347,6 +363,7 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
+    "always_latch_no_sens": ALWAYS_LATCH_MODELING_DIAGNOSTIC,
     "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
     "array_word_check": DUMPVARS_SELECTED_VARIABLE,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
@@ -682,6 +699,13 @@ def judge_one(
                     desc.key, desc.gold, compiled.stderr, result.stdout,
                     result.stderr, result.ok, result.timed_out):
                 return (desc.key, model.Outcome(model.PASS))
+            modeling_output = MODELING_WARNING_GOLD_OUTPUTS.get(desc.key)
+            if modeling_output is not None:
+                if (result.ok and not result.timed_out and not result.stderr and
+                        result.stdout == modeling_output):
+                    return (desc.key, model.Outcome(model.PASS))
+                return (desc.key, dependency_failure(
+                    desc.key, model.RUN_FAIL, output + result.stderr))
             if desc.key in NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES:
                 warned = ("warning: calling nonvoid function" in
                            compiled.stderr)
