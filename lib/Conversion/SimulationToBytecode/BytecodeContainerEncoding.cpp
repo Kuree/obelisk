@@ -247,6 +247,8 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
                          {op.getSemaphore(), op.getKeys()}, {op.getSuccess()});
   if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
+  if (auto op = dyn_cast<sim::SimLegacyRandomOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicLegacyRandom, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimRandomStateOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomGetState, {},
                          {op.getState(), op.getIncrement()});

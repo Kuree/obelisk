@@ -1291,6 +1291,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC = UINT32_C(0x0001045c),
   OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP = UINT32_C(0x0001045d),
   OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE = UINT32_C(0x00010463),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY = UINT32_C(0x00010467),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -4208,6 +4209,11 @@ obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
     double *out_percentage, int32_t *out_covered, int32_t *out_total);
 obelisk_rt_status obelisk_rt_v1_random_next(obelisk_rt_context *context,
                                             uint64_t *out_value);
+// IEEE 1800-2017 20.15.1 and normative Annex N `$random`. This context-global
+// legacy stream is deliberately independent of the process-local `$urandom`
+// stream exposed by random_next.
+obelisk_rt_status obelisk_rt_v1_random_legacy(obelisk_rt_context *context,
+                                              int32_t *out_value);
 obelisk_rt_status obelisk_rt_v1_random_seed(obelisk_rt_context *context,
                                             uint64_t seed);
 obelisk_rt_status obelisk_rt_v1_random_bounded(obelisk_rt_context *context,

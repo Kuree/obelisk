@@ -11,6 +11,13 @@
 // CHECK: %[[WITH_RESULT:.*]] = llvm.insertvalue %[[RESULT]], {{.*}}[0]
 // CHECK: llvm.insertvalue %[[NEXT_SEED]], %[[WITH_RESULT]][1]
 
+// The no-argument `$random` form uses the same Annex N algorithm through its
+// dedicated context-global state, not the process-local `$urandom` ABI.
+// CHECK-LABEL: llvm.func @legacy(
+// CHECK: llvm.call @obelisk_rt_v1_random_legacy(%{{.*}}, %[[LEGACY_PTR:[0-9]+]])
+// CHECK: %[[LEGACY:.*]] = llvm.load %[[LEGACY_PTR]]
+// CHECK: llvm.insertvalue %[[LEGACY]], {{.*}}[0]
+
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -18,6 +25,7 @@ module attributes {
   obelisk_sim.design @distribution {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 function hierarchy "distribution.draw"
+    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "distribution.legacy"
 
     obelisk_sim.func private @draw(
         %ctx: !obelisk_sim.context
@@ -30,6 +38,14 @@ module attributes {
           %ctx, %seed, %low, %high {distribution = 0 : i32} :
           (!obelisk_sim.context, i32, i32, i32) -> (i32, i32)
       obelisk_sim.return %result, %next_seed : i32, i32
+    }
+
+    obelisk_sim.func private @legacy(
+        %ctx: !obelisk_sim.context
+            {obelisk_sim.capture_kind = 0 : i32}) -> i32
+        attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
+      %result = obelisk_sim.random.legacy %ctx : (!obelisk_sim.context) -> i32
+      obelisk_sim.return %result : i32
     }
   }
 }

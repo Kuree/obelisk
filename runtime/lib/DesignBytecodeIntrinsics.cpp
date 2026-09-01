@@ -962,6 +962,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status = obelisk_rt_v1_random_next(context, &result);
     return status == OBELISK_RT_OK ? sentinel(0, result) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY: {
+    int32_t result = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_legacy(context, &result);
+    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+                                   : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED: {
     auto seed = scalar(0);
     return seed ? obelisk_rt_v1_random_seed(context, *seed)

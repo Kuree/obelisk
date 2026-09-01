@@ -314,6 +314,8 @@ constexpr uint32_t kIntrinsicRandomSolveWideState =
 constexpr uint32_t kIntrinsicRandomCycleNext =
     OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT;
 constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
+constexpr uint32_t kIntrinsicLegacyRandom =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY;
 constexpr uint32_t kIntrinsicRandomSeed = OBELISK_RT_INTRINSIC_V1_RANDOM_SEED;
 constexpr uint32_t kIntrinsicRandomGetState =
     OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE;

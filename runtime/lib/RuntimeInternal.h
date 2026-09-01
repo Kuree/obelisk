@@ -1814,6 +1814,10 @@ struct obelisk_rt_context {
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
   obelisk_rt_random_state_v1 random{};
+  // IEEE 1800 Annex N state for the no-argument `$random` form. Keep this
+  // independent of hierarchical `$urandom` streams and initialize it to the
+  // standardized algorithm's zero-seed entry point.
+  int32_t legacyRandomSeed = 0;
   // Cold feature-local tail: bounded parsed plans for dynamic
   // $sscanf/$fscanf format strings. Keeping this after all preexisting fields
   // preserves their offsets; null is the complete no-feature state.

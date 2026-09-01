@@ -362,6 +362,20 @@ obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_random_legacy(obelisk_rt_context *context, int32_t *outValue) {
+  if (!context || !outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    *outValue = annexDistUniform(context->legacyRandomSeed,
+                                 std::numeric_limits<int32_t>::min(),
+                                 std::numeric_limits<int32_t>::max());
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *outState) {
   if (!context || !outState)

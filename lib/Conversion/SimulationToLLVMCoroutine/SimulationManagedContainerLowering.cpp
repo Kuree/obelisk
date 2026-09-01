@@ -1146,6 +1146,31 @@ public:
   }
 };
 
+class LegacyRandomConversion final
+    : public OpConversionPattern<sim::SimLegacyRandomOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimLegacyRandomOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1)
+      return failure();
+    Type i32 = rewriter.getI32Type();
+    Value context = adaptor.getContext().front();
+    Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
+    Value status =
+        LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{i32},
+                             SymbolRefAttr::get(rewriter.getContext(),
+                                                "obelisk_rt_v1_random_legacy"),
+                             ValueRange{context, output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op, LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4));
+    return success();
+  }
+};
+
 class RandomStateConversion final
     : public OpConversionPattern<sim::SimRandomStateOp> {
 public:
@@ -1957,10 +1982,10 @@ void populateManagedContainerToLLVMConversionPatterns(
       BoxCastConversion<sim::SimBoxPackOp>,
       BoxCastConversion<sim::SimBoxCastOp>, BoxIsTypeConversion,
       ContainerReadConversion, ContainerWriteConversion, RandomNextConversion,
-      RandomStateConversion, RandomSetStateConversion, RandomSeedConversion,
-      RandomBoundedConversion, RandomDistributionConversion,
-      StochasticQueueConversion, RandomCycleNextConversion,
-      RandomSolveConversion>(converter, context);
+      LegacyRandomConversion, RandomStateConversion, RandomSetStateConversion,
+      RandomSeedConversion, RandomBoundedConversion,
+      RandomDistributionConversion, StochasticQueueConversion,
+      RandomCycleNextConversion, RandomSolveConversion>(converter, context);
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(
       converter, context, dataLayout);
   patterns.add<

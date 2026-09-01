@@ -885,6 +885,18 @@ def SimRandomNextOp : SimOp<"random.next", [
   let results = (outs I64:$result);
 }
 
+def SimLegacyRandomOp : SimOp<"random.legacy", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw the next IEEE Annex N $random value";
+  let description = [{
+    Draws from the context-global 32-bit legacy `$random` stream. This stream
+    is independent of the process-local `$urandom` state.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I32:$result);
+}
+
 def SimRandomStateOp : SimOp<"random.state", [
     MemoryEffects<[MemRead<SimRNGResource>]>
   ]> {

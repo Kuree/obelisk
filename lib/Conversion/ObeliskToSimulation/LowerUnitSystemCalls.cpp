@@ -830,19 +830,22 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           convert(*seedValue, i32, isSignedNode(seedNode), location);
       if (failed(seed32))
         return failure();
-      Value seed = arith::ExtUIOp::create(builder, location, i64, *seed32);
-      sim::SimRandomSeedOp::create(builder, location, context, seed);
-    }
-    Value value = sim::SimRandomNextOp::create(builder, location, i64, context);
-    value = arith::TruncIOp::create(builder, location, i32, value);
-    if (succeeded(seedDestination)) {
+      Value low = constant(i32, INT32_MIN);
+      Value high = constant(i32, INT32_MAX);
+      auto draw = sim::SimRandomDistributionOp::create(
+          builder, location, TypeRange{i32, i32}, context,
+          OBELISK_RT_DISTRIBUTION_UNIFORM, *seed32, low, high);
+
       Type destinationType = getReferenceElementType(*seedDestination);
       FailureOr<Value> updated =
-          convert(value, destinationType, true, location);
+          convert(draw.getNextSeed(), destinationType, true, location);
       if (failed(updated) ||
           failed(storeReference(*seedDestination, *updated, location)))
         return failure();
+      return convertResult(draw.getResult());
     }
+    Value value =
+        sim::SimLegacyRandomOp::create(builder, location, i32, context);
     return convertResult(value);
   }
 
