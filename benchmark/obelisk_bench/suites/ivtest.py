@@ -373,6 +373,11 @@ PACKAGE_REFERENCE_TO_COMPILATION_UNIT = Exclusion(
     "a package shall not refer to compilation-unit items; the macro expanded "
     "inside the package class reads and writes the compilation-unit variable "
     "failed and expects those references to resolve")
+PRINTTIMESCALE_NONMODULE_ARGUMENT = Exclusion(
+    "IEEE 1800-2017 20.4.1",
+    "$printtimescale accepts an optional hierarchical identifier naming a "
+    "module; the test also passes parameters, events, variables, named "
+    "blocks, tasks, and functions and expects their containing timescale")
 LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
@@ -647,6 +652,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1367855": TIME_ZERO_PORT_ASSIGNMENT_RACE,
     "pr1467825": LEGACY_FAULT_SIMULATION_DIRECTIVES,
     "pr1662508": UNKNOWN_TO_ZERO_IS_NEGEDGE,
+    "pr1701855b": PRINTTIMESCALE_NONMODULE_ARGUMENT,
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
