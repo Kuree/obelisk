@@ -74,6 +74,12 @@ KNOWN_SLANG_BUGS = {
         "IEEE 1800-2017 7.12.1 permits this locator-method use; pinned Slang "
         "v11 crashes during speculative constant evaluation before emitting "
         "IR"),
+    "t_stream": (
+        "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
+        "operand of a bit-stream cast, and 6.24.1 defines a positive "
+        "constant-size cast as a packed array; pinned Slang instead checks "
+        "the streaming expression's placeholder void type for integrality "
+        "before constructing that packed result"),
 }
 SIM_TIME = 1100  # matches driver.py's default; the shell runs `while ($time < N)`
 # A test that needs a longer run says so in its descriptor, and driver.py writes
