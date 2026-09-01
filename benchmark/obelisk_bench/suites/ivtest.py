@@ -296,6 +296,17 @@ WIDTHLESS_SUPPRESSED_RAW_SCAN = Exclusion(
     "raw %u and %z input reads enough data to fill their destination, but "
     "assignment suppression provides no destination from which to obtain a "
     "size; the test requires Icarus's implicit 32-bit suppressed element")
+EMPTY_FUNCTION_FORMAL_LIST = Exclusion(
+    "IEEE 1800-2017 13.4",
+    "the function grammar permits an empty parenthesized formal list and the "
+    "old-style form permits zero tf_item_declarations; this CE entry checks "
+    "the older IEEE 1364-2005 restriction, but Obelisk intentionally compiles "
+    "the corpus as SystemVerilog")
+GENERATE_BLOCK_PARAMETER = Exclusion(
+    "IEEE 1800-2017 27.2",
+    "a parameter declared in a generate block is legal and is treated as a "
+    "localparam under 6.20.4; this CE entry checks its rejection in IEEE "
+    "1364-2005, but Obelisk intentionally compiles the corpus as SystemVerilog")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -334,6 +345,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "dump_memword": DUMPVARS_SELECTED_VARIABLE,
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "function4": EMPTY_FUNCTION_FORMAL_LIST,
     "fscanf_u": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_u_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_z": WIDTHLESS_SUPPRESSED_RAW_SCAN,
@@ -350,6 +362,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
+    "parameter_in_generate1": GENERATE_BLOCK_PARAMETER,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
     "resetall": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
