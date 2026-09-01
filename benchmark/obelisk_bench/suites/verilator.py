@@ -103,6 +103,13 @@ EXECUTES = re.compile(r"\btest\.execute\s*\(")
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
+# This negative test predates the corpus's `_bad` naming convention. Every
+# statement in it is required to fail by IEEE 1800-2017 11.4.14: a streaming
+# assignment target cannot consume too few source bits, and a fixed data-object
+# target cannot be narrower than its source stream. Keep the exception exact so
+# an unrelated descriptor cannot make a standards-compliant rejection look
+# like a pass merely by asking Verilator itself to fail.
+EXPECTED_ERROR_NAMES = frozenset({"t_stream_unpack_narrower"})
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on
 # `test.execute` means it builds and the *run* is what has to fail. The name
@@ -743,7 +750,7 @@ def detect_expectation(name: str, descriptor: Path) -> Expectation:
     diagnosis as a failure. An unreadable descriptor leaves the name's reading
     in place.
     """
-    nominated = bool(EXPECTED_ERROR.search(name))
+    nominated = name in EXPECTED_ERROR_NAMES or bool(EXPECTED_ERROR.search(name))
     if not nominated or not descriptor.exists():
         return Expectation(nominated, False)
     text = descriptor.read_text(encoding="utf-8", errors="replace")
