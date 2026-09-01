@@ -1492,6 +1492,47 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         return failure();
       return convertResult(read.getCount());
     }
+    auto mergeReadData = [&](Value oldValue, Value readData, Value readCount,
+                             Type valueType,
+                             unsigned width) -> FailureOr<Value> {
+      FailureOr<Value> oldScalar = toPackedScalar(oldValue, location);
+      if (failed(oldScalar))
+        return failure();
+      FailureOr<Value> readScalar =
+          convert(readData, (*oldScalar).getType(), false, location);
+      if (failed(readScalar))
+        return failure();
+
+      // file.read_packed aligns the bytes it obtained to the most significant
+      // storage byte. Extract that populated suffix and insert it at the same
+      // position in the old value. A zero-byte read produces an out-of-range
+      // insertion and therefore leaves every old bit alone.
+      uint64_t capacity = (static_cast<uint64_t>(width) + 7) / 8;
+      Value count64 =
+          arith::ExtUIOp::create(builder, location, i64, readCount);
+      Value unreadBytes = arith::SubIOp::create(
+          builder, location, constant(i64, static_cast<int64_t>(capacity)),
+          count64);
+      Value lowBit = arith::MulIOp::create(builder, location, unreadBytes,
+                                           constant(i64, 8));
+      Value replacement;
+      Value merged;
+      if (isa<sim::LogicType>((*oldScalar).getType())) {
+        replacement = sim::SimLogicDynExtractOp::create(
+            builder, location, (*oldScalar).getType(), *readScalar, lowBit);
+        merged = sim::SimLogicDynInsertOp::create(
+            builder, location, (*oldScalar).getType(), *oldScalar, replacement,
+            lowBit);
+      } else {
+        replacement = sim::SimBitsDynExtractOp::create(
+            builder, location, (*oldScalar).getType(), *readScalar, lowBit);
+        merged = sim::SimBitsDynInsertOp::create(
+            builder, location, (*oldScalar).getType(), *oldScalar, replacement,
+            lowBit);
+      }
+      return convert(merged, valueType, false, location);
+    };
+
     if (name == "$fread") {
       auto dynamicArray = dyn_cast<sim::DynamicArrayType>(destinationType);
       auto queue = dyn_cast<sim::QueueType>(destinationType);
@@ -1593,8 +1634,11 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                  ValueRange{}, done, ValueRange{total});
 
         setCurrent(storeElement);
-        FailureOr<Value> converted =
-            convert(read.getData(), elementType, false, location);
+        Value oldElement = sim::SimContainerReadOp::create(
+            builder, location, elementType, memory, index);
+        FailureOr<Value> converted = mergeReadData(
+            oldElement, read.getData(), read.getCount(), elementType,
+            *elementWidth);
         if (failed(converted))
           return failure();
         sim::SimContainerWriteOp::create(builder, location, memory, index,
@@ -1705,14 +1749,17 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                  ValueRange{}, done, ValueRange{total});
 
         setCurrent(storeElement);
-        FailureOr<Value> converted =
-            convert(read.getData(), elementType, false, location);
-        if (failed(converted))
-          return failure();
         Value elementReference = sim::SimRefArrayElementOp::create(
             builder, location,
             sim::RefType::get(function.getContext(), elementType), *destination,
             index);
+        Value oldElement = sim::SimRefLoadOp::create(
+            builder, location, elementType, elementReference);
+        FailureOr<Value> converted = mergeReadData(
+            oldElement, read.getData(), read.getCount(), elementType,
+            *elementWidth);
+        if (failed(converted))
+          return failure();
         sim::SimRefStoreOp::create(builder, location, *converted,
                                    elementReference);
         Value nextTotal =
@@ -1763,8 +1810,15 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       data = read.getData();
       count = read.getCount();
     }
-    FailureOr<Value> converted =
-        convert(data, destinationType, false, location);
+    FailureOr<Value> converted;
+    if (name == "$fread") {
+      FailureOr<Value> oldValue = loadReference(*destination, location);
+      if (failed(oldValue))
+        return failure();
+      converted = mergeReadData(*oldValue, data, count, destinationType, *width);
+    } else {
+      converted = convert(data, destinationType, false, location);
+    }
     if (failed(converted))
       return failure();
     if (failed(storeReference(*destination, *converted, location)))

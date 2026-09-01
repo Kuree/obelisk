@@ -388,8 +388,12 @@ module {
 // CHECK: obelisk_sim.ref.store %[[LINE_VALUE]]
 // CHECK: obelisk_sim.logic.from_bits %[[LINE_COUNT]]
 // CHECK: %[[READ_DATA:.*]], %[[READ_COUNT:.*]] = obelisk_sim.file.read_packed
+// CHECK: %[[READ_OLD:.*]] = obelisk_sim.ref.load
+// CHECK: %[[READ_OLD_LOGIC:.*]] = obelisk_sim.packed.flatten %[[READ_OLD]]
 // CHECK: %[[READ_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[READ_DATA]]
-// CHECK: %[[READ_VALUE:.*]] = obelisk_sim.packed.unflatten %[[READ_LOGIC]]
+// CHECK: %[[READ_PART:.*]] = obelisk_sim.logic.dyn_extract %[[READ_LOGIC]]
+// CHECK: %[[READ_MERGED:.*]] = obelisk_sim.logic.dyn_insert %[[READ_PART]] into %[[READ_OLD_LOGIC]]
+// CHECK: %[[READ_VALUE:.*]] = obelisk_sim.packed.unflatten %[[READ_MERGED]]
 // CHECK: obelisk_sim.ref.store %[[READ_VALUE]]
 // CHECK: obelisk_sim.logic.from_bits %[[READ_COUNT]]
 // CHECK: obelisk_sim.file.eof
