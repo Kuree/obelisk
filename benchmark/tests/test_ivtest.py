@@ -344,6 +344,22 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertFalse(ivtest._matches_optional_warning_gold(
                 "pr2043585", gold, "", "0\n1\n", "", True, False))
 
+    def test_optional_compile_warning_prefix_preserves_runtime_oracle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            gold = Path(temporary) / "br_gh127f.gold"
+            warnings = [f"source.v:{line}: warning: coercion\n"
+                        for line in range(8)]
+            continuations = ["source.v: note one\n", "source.v: note two\n"]
+            gold.write_text(
+                "".join(warnings + continuations) + "values\nPASSED\n",
+                encoding="ascii")
+            self.assertTrue(ivtest._matches_optional_warning_gold(
+                "br_gh127f", gold, "different compiler warning\n",
+                "values\nPASSED\n", "", True, False))
+            self.assertFalse(ivtest._matches_optional_warning_gold(
+                "br_gh127f", gold, "different compiler warning\n",
+                "changed\nPASSED\n", "", True, False))
+
     def test_required_runtime_warning_preserves_every_other_gold_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             gold = Path(temporary) / "pic.gold"

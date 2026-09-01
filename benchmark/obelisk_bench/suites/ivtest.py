@@ -111,6 +111,8 @@ NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
 class OptionalWarningGoldOracle(NamedTuple):
     marker: str
     count: int = 1
+    prefix_lines: int = 0
+    allow_compile_stderr: bool = False
 
 
 OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
@@ -134,6 +136,13 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # Icarus-only -Wsensitivity-entire-array switch.
     "pr2043585": OptionalWarningGoldOracle(
         "warning: @* is sensitive to all 4 words in array 'Data'.", 4),
+    # Clause 23.3.3.1 permits coercing a direction-mismatched net port to
+    # inout and requires a warning only when the port is not coerced. Icarus's
+    # gold begins with eight vendor-formatted warnings plus two continuation
+    # lines. Preserve the complete value trace while allowing Obelisk's
+    # successful compile to use different warning text and source snippets.
+    "br_gh127f": OptionalWarningGoldOracle(
+        "warning:", 8, prefix_lines=10, allow_compile_stderr=True),
 }
 
 # IEEE 1800-2017 21.4 requires this warning but does not prescribe its text.
@@ -261,17 +270,28 @@ def _matches_optional_warning_gold(
         return False
     expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
         keepends=True)
-    portable: list[str] = []
-    warning_count = 0
-    for line in expected:
-        if oracle.marker in line:
-            warning_count += 1
-        else:
-            portable.append(line)
+    if oracle.prefix_lines:
+        if len(expected) < oracle.prefix_lines:
+            return False
+        removed = expected[:oracle.prefix_lines]
+        portable = expected[oracle.prefix_lines:]
+        warning_count = sum(oracle.marker in line for line in removed)
+        if any(oracle.marker in line for line in portable):
+            return False
+    else:
+        portable = []
+        warning_count = 0
+        for line in expected:
+            if oracle.marker in line:
+                warning_count += 1
+            else:
+                portable.append(line)
     if warning_count != oracle.count:
         return False
-    return (result_ok and not timed_out and not compile_stderr and not stderr
-            and stdout == "".join(portable))
+    compile_diagnostics_ok = (oracle.allow_compile_stderr or
+                              not compile_stderr)
+    return (result_ok and not timed_out and compile_diagnostics_ok and
+            not stderr and stdout == "".join(portable))
 
 
 def _matches_required_runtime_warning_gold(
