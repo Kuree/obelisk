@@ -582,7 +582,11 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       llvm::count_if(*conversions, [](const ScanConversion &conversion) {
         return !conversion.suppressed;
       });
-  if (destinationCount != children.size() - 2) {
+  // IEEE 1800-2017 21.3.4.3 leaves too few destinations undefined, but
+  // explicitly ignores destinations left over when the format is exhausted.
+  // Diagnose only the former; the conversion loop naturally leaves excess
+  // lvalues untouched.
+  if (destinationCount > children.size() - 2) {
     emitError(location) << name << " format has " << destinationCount
                         << " conversions but " << (children.size() - 2)
                         << " destinations";

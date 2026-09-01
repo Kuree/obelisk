@@ -33,7 +33,7 @@ module {
               obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 10 : i64, referenced_path = "t.value", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
               obelisk.sv.expression.conversion attributes {is_signed = true, node_id = 11 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
-                obelisk.sv.expression.call attributes {argument_count = 3 : i64, callee_name = "$fscanf", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                obelisk.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "$fscanf", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, subroutine_kind = 0 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
                   obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 13 : i64, referenced_path = "t.fd", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.fd, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }
                   obelisk.sv.expression.string_literal attributes {constant_value = "%d", is_signed = false, node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -42,6 +42,12 @@ module {
                     obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 16 : i64, referenced_path = "t.value", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                     obelisk.sv.expression.empty_argument attributes {is_signed = true, node_id = 17 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 18 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 19 : i64, referenced_path = "t.value", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.empty_argument attributes {is_signed = true, node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                     }
                   }
                 }
