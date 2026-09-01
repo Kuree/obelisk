@@ -1090,8 +1090,7 @@ LogicalResult makeNativeEvalPlan(
             std::min(rangeEnd, entry.low_bit + entry.bit_width);
         if (overlapLow >= overlapHigh)
           continue;
-        if ((entry.reserved &
-             OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
+        if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
           needsActiveSelfCheck = true;
           continue;
         }
@@ -1558,14 +1557,14 @@ LogicalResult makeNativeEvalPlan(
       LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
   Block *runEntry = run.addEntryBlock(builder);
   builder.setInsertionPointToStart(runEntry);
-  bool generatedEvalLoop =
-      !periodicClocks.empty() && !clockKernels.empty() &&
-      !mergedFragments.empty() && mergedFragments.size() <= 64 &&
+  bool generatedEvalPlan =
+      !clockKernels.empty() && !mergedFragments.empty() &&
+      mergedFragments.size() <= 64 &&
       mergedExecutors.size() == mergedFragments.size() &&
       mergedTwoStateExecutors.size() == mergedFragments.size() &&
       llvm::none_of(mergedExecutors,
                     [](const std::string &name) { return name.empty(); });
-  if (!generatedEvalLoop) {
+  if (!generatedEvalPlan) {
     auto firstEmpty = llvm::find_if(
         mergedExecutors, [](const std::string &name) { return name.empty(); });
     auto diagnostic = module.emitError();
@@ -1617,7 +1616,23 @@ LogicalResult makeNativeEvalPlan(
     }
     return failure();
   }
-  if (generatedEvalLoop) {
+  if (periodicClocks.empty()) {
+    // A clockless design retains ordinary calendar/control ownership in the
+    // trusted AOT node loop. Static fanout queues generated ingress there, so
+    // the same coordinator below drains event-driven model work without the
+    // legacy metadata-only schedule wrapper.
+    Value nodes =
+        LLVM::AddressOfOp::create(builder, location, pointer, nodesName);
+    Value status = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       SymbolRefAttr::get(
+                           context, "obelisk_rt_v1_scheduler_run_aot_nodes"),
+                       ValueRange{runEntry->getArgument(1), nodes,
+                                  llvmConstant(builder, location, i32,
+                                               executableNodes.size())})
+                       .getResult();
+    LLVM::ReturnOp::create(builder, location, status);
+  } else {
     // One model-wide ready bit owns each direct fragment. Physical trigger
     // groups remain distinct and merely OR into that shared model mask, so a
     // fragment reached by coincident clocks executes once before the common
@@ -2835,12 +2850,6 @@ LogicalResult makeNativeEvalPlan(
     failed->addArgument(i32, location);
     builder.setInsertionPointToStart(failed);
     LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
-  } else {
-    // Explicit eval is a proof/debug mode. Never silently measure the generic
-    // scheduler when its direct run_until prerequisites are incomplete.
-    LLVM::ReturnOp::create(
-        builder, location,
-        llvmConstant(builder, location, i32, OBELISK_RT_INVALID_DESIGN));
   }
 
   bool generatedEvalHasPathGuards =
@@ -4153,6 +4162,8 @@ LogicalResult makeNativeEvalPlan(
       });
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes", i32,
+                           {pointer, pointer, i32});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_prepare_periodic_aot", i32,
       {pointer, pointer, i32, pointer, i32, pointer, i32, pointer, pointer});

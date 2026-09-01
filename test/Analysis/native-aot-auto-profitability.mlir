@@ -2,13 +2,23 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ANALYSIS
 // RUN: obelisk-opt %s \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
+// RUN:   | FileCheck %s --check-prefix=FUSION
+// RUN: sed 's/native_scheduler = 0 : i32/native_scheduler = 3 : i32, obelisk.native_scheduler.auto_requested/' %s \
+// RUN:   | obelisk-opt - \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
+// RUN:   | FileCheck %s --check-prefix=FUSION
+// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=LOWERING
 
-// A partial schedule without a periodic clock has no generated execution
-// path. Auto must not pay to emit an AOT plan that calls the generic scheduler.
+// A partial schedule has no closed generated execution path. Auto must not pay
+// to clone evaluator bodies or emit an AOT plan that calls the generic
+// scheduler merely because the design is clockless.
 
 // ANALYSIS: native-aot eligible=true fully=false selected=false periodic=false
+
+// FUSION-NOT: __obelisk_eval_body
 
 // LOWERING-NOT: __obelisk_aot_schedule_plan_v1
 // LOWERING-LABEL: llvm.func @main
@@ -16,6 +26,7 @@
 // LOWERING-NOT: llvm.call @obelisk_rt_v1_scheduler_run_aot(
 
 module attributes {
+  obelisk.native_scheduler = 0 : i32,
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {

@@ -35,7 +35,23 @@ bool useEvalBodyFusion(sim::SimDesignOp design) {
   ModuleOp module = design->getParentOfType<ModuleOp>();
   auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
       "obelisk.native_scheduler");
-  return scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Eval;
+  if (!scheduler)
+    return false;
+  bool autoRequested =
+      module->hasAttr("obelisk.native_scheduler.auto_requested");
+  if (scheduler.getValue() == sim::NativeSchedulerMode::Eval && !autoRequested)
+    return true;
+  if (scheduler.getValue() != sim::NativeSchedulerMode::Auto &&
+      !(scheduler.getValue() == sim::NativeSchedulerMode::Eval &&
+        autoRequested))
+    return false;
+
+  // The driver temporarily represents Auto as Eval + auto_requested so this
+  // early pipeline can prepare direct bodies before backend selection. Both
+  // representations must restrict that work to designs already certified as
+  // fully closed and cost-effective, so dynamic/UVM-heavy models do not pay
+  // the code-size and cloning cost of an unusable evaluator.
+  return analysis::NativeAOTAnalysis::compute(module).isAOTCostEffective();
 }
 
 bool isPrimitiveContinuousFusion(sim::SimDesignOp design,
@@ -2204,9 +2220,9 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     sim::ComputeGraphAttr graph,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
-    uint64_t &eliminatedTerminationPolls, uint64_t &ifConvertedNBAs,
-    uint64_t &sharedStableConditions, uint64_t &promotedPrivateStores) {
-  bool evalBodyFusion = useEvalBodyFusion(design);
+    bool evalBodyFusion, uint64_t &eliminatedTerminationPolls,
+    uint64_t &ifConvertedNBAs, uint64_t &sharedStableConditions,
+    uint64_t &promotedPrivateStores) {
   auto rejectEval = [&](StringRef) -> FailureOr<sim::SimFuncOp> {
     return failure();
   };
@@ -2880,8 +2896,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     bool primitiveContinuous =
         isPrimitiveContinuousFusion(design, fusion, graph);
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
-        design, fusion, graph, scheduleOrder, spawnsByCallee, removedPolls,
-        convertedNBAs, sharedConditions, promotedStores);
+        design, fusion, graph, scheduleOrder, spawnsByCallee, evalScheduler,
+        removedPolls, convertedNBAs, sharedConditions, promotedStores);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
