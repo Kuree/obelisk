@@ -787,6 +787,26 @@ def judge_one(
             if not destination.exists():
                 destination.symlink_to(
                     ivtest_dir / fixture_root, target_is_directory=True)
+        compile_flags = [*flags, "-I", tmp]
+        if compile_threads is not None:
+            compile_flags.append(f"--compile-threads={compile_threads}")
+        source = (f"./{source_relative.as_posix()}"
+                  if source_relative is not None else str(desc.source))
+        # vvp_reg.pl appends the named test source after every source operand
+        # carried in the comma-separated argument field. The order is
+        # observable through compilation-unit macros and directives.
+        sources = [*source_args, source]
+        if desc.test_type in ("CO", "CN"):
+            compiled = runner.compile_frontend(
+                obelisk, sources, str(Path(tmp) / "frontend.mlir"),
+                compile_flags, std=std,
+                single_unit=SINGLE_UNIT and not separate_units, cwd=tmp,
+            )
+            if not compiled.ok:
+                return (desc.key, dependency_failure(
+                    desc.key, model.COMPILE_FAIL, compiled.stderr))
+            return (desc.key, model.Outcome(model.PASS))
+
         native = runner.build_vpi_inputs(
             obelisk,
             [*(str(path) for path in desc.vpi_sources), *vpi_code],
@@ -804,15 +824,6 @@ def judge_one(
         binary = Path(tmp) / "sim"
         selected_vpi = vpi_mode or (
             "full" if native.inputs else "off")
-        compile_flags = [*flags, "-I", tmp]
-        if compile_threads is not None:
-            compile_flags.append(f"--compile-threads={compile_threads}")
-        source = (f"./{source_relative.as_posix()}"
-                  if source_relative is not None else str(desc.source))
-        # vvp_reg.pl appends the named test source after every source operand
-        # carried in the comma-separated argument field. The order is
-        # observable through compilation-unit macros and directives.
-        sources = [*source_args, source]
         compiled = runner.compile_design(
             obelisk, sources, str(binary), compile_flags, std=std,
             single_unit=SINGLE_UNIT and not separate_units,
@@ -833,9 +844,6 @@ def judge_one(
             return (desc.key,
                     dependency_failure(desc.key, model.COMPILE_FAIL,
                                        compiled.stderr))
-        if desc.test_type in ("CO", "CN"):
-            return (desc.key, model.Outcome(model.PASS))
-
         run_timeout = max(timeout, RUNTIME_TIMEOUT_FLOORS.get(desc.key, 0.0))
         result = runner.execute(
             str(binary), run_timeout, args=plusargs, cwd=tmp)

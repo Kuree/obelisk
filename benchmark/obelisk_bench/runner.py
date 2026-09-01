@@ -310,7 +310,8 @@ def compile_design(obelisk: str, sources: list[str], output: str,
 def compile_frontend(obelisk: str, sources: list[str], output: str,
                      extra_flags: list[str], std: str = "1800-2017",
                      single_unit: bool = True,
-                     timeout: float = 60.0) -> CompileResult:
+                     timeout: float = 60.0,
+                     cwd: str | None = None) -> CompileResult:
     """Preprocess, parse, and elaborate sources without lowering a simulator.
 
     ``-emit-slang`` stops after the elaborated frontend IR. This is the closest
@@ -325,7 +326,7 @@ def compile_frontend(obelisk: str, sources: list[str], output: str,
         f"--std={std}", *extra_flags, *sources, "-emit-slang", "-o", output,
     ]
     try:
-        result = _run_with_retry(command, timeout)
+        result = _run_with_retry(command, timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
         return CompileResult(
             ok=False, stderr=f"frontend compile exceeded {timeout:g}s",

@@ -23,6 +23,9 @@ three ways:
 - a test with a **gold file** passes iff its stdout matches the gold;
 - a Verilator test whose descriptor never calls `test.execute()` is compile-only
   upstream, so it passes iff it builds and is never simulated here either;
+- an ivtest `CO` or `CN` descriptor is compile-only upstream, so Obelisk stops
+  after emitting elaborated frontend MLIR instead of lowering or linking a
+  simulator that the test never runs;
 - otherwise the test **self-checks** and must print its success marker
   (`*-* All Finished *-*` for Verilator, `PASSED` for ivtest).
 

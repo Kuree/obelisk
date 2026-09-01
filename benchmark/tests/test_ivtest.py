@@ -239,10 +239,13 @@ class FixtureDirectoryTest(unittest.TestCase):
             compile_result = mock.Mock(ok=True, stderr="", failure_kind=None)
 
             with (
-                mock.patch.object(ivtest.runner, "build_vpi_inputs",
-                                  return_value=mock.Mock(ok=True, inputs=[])),
-                mock.patch.object(ivtest.runner, "compile_design",
-                                  return_value=compile_result) as compile_design,
+                mock.patch.object(ivtest.runner, "compile_frontend",
+                                  return_value=compile_result) as
+                compile_frontend,
+                mock.patch.object(ivtest.runner, "compile_design") as
+                compile_design,
+                mock.patch.object(ivtest.runner, "build_vpi_inputs") as
+                build_vpi_inputs,
                 mock.patch.object(ivtest.runner, "execute") as execute,
             ):
                 _, outcome = ivtest.judge_one(
@@ -250,10 +253,16 @@ class FixtureDirectoryTest(unittest.TestCase):
 
             self.assertEqual(outcome.status, model.PASS)
             self.assertEqual(
-                compile_design.call_args.args[1],
+                compile_frontend.call_args.args[1],
                 ["./ivltests/first.v", "./ivltests/compile_only.v"],
             )
-            self.assertFalse(compile_design.call_args.kwargs["single_unit"])
+            self.assertFalse(
+                compile_frontend.call_args.kwargs["single_unit"])
+            compile_cwd = Path(compile_frontend.call_args.kwargs["cwd"])
+            self.assertTrue(compile_cwd.name.startswith("obelisk-ivt-"))
+            self.assertNotEqual(compile_cwd, ivtest_dir)
+            compile_design.assert_not_called()
+            build_vpi_inputs.assert_not_called()
             execute.assert_not_called()
 
     def test_supported_upstream_compile_error_runs_its_self_check(self):

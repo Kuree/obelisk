@@ -786,6 +786,7 @@ class BenchmarkRunnerTest(unittest.TestCase):
                 "output.mlir",
                 ["-I", "include"],
                 timeout=12,
+                cwd="fixture",
             )
 
         self.assertTrue(result.ok)
@@ -793,6 +794,7 @@ class BenchmarkRunnerTest(unittest.TestCase):
         self.assertIn("-emit-slang", command)
         self.assertIn("--single-unit", command)
         self.assertEqual(run.call_args.args[1], 12)
+        self.assertEqual(run.call_args.kwargs["cwd"], "fixture")
 
     def test_compile_preprocessor_uses_preprocessing_phase_boundary(self):
         completed = subprocess.CompletedProcess(
