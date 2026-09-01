@@ -411,6 +411,12 @@ TIME_ZERO_PORT_ASSIGNMENT_RACE = Exclusion(
     "observes xxxx first, 5.7.1 and 12.5 make its unsized 32-bit x label "
     "unequal to the zero-extended 4-bit selector, so the test's default arm "
     "legitimately reports failure")
+COINCIDENT_TASK_EVENT_CONTROL_RACE = Exclusion(
+    "IEEE 1800-2017 4.4.2.2",
+    "the clock's blocking edge and both delayed task callers become Active "
+    "events at the same times and may execute in any order; when the clock "
+    "runs first, the tasks arm their posedge controls too late and miss that "
+    "edge, while the gold requires the opposite ordering at every collision")
 UNKNOWN_TO_ZERO_IS_NEGEDGE = Exclusion(
     "IEEE 1800-2017 9.4.2",
     "Table 9-2 requires the test's time-zero clk transition from x to 0 to "
@@ -541,6 +547,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "no_timescale_in_module": TIMESCALE_DIRECTIVE_LOCATION,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
+    "pr2001162": COINCIDENT_TASK_EVENT_CONTROL_RACE,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
