@@ -246,6 +246,14 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
         "warning:", 8, prefix_lines=10, allow_compile_stderr=True),
 }
 
+# These golds contain complete semantic output from independent processes that
+# wake in the same Active region. IEEE 1800-2017 4.4.2.2 does not order those
+# processes. Compare the exact line multiset (including multiplicity and final
+# newline) so every value remains authoritative without inventing an ordering.
+UNORDERED_GOLD_OUTPUTS = {
+    "pr2715558b",
+}
+
 # IEEE 1800-2017 21.4 requires this warning but does not prescribe its text.
 # Preserve every other gold line exactly and require exactly one corresponding
 # Obelisk runtime warning. Lookup is O(1), and the comparison is linear only in
@@ -1326,10 +1334,16 @@ def judge_one(
                     desc.key, model.RUN_FAIL, output))
             normalized = _normalize_fixture_paths(
                 output, ivtest_dir, run_dir)
-            if (result.ok and desc.gold.exists() and
-                    normalized == desc.gold.read_text(
-                        encoding="utf-8", errors="replace")):
-                return (desc.key, model.Outcome(model.PASS))
+            if result.ok and desc.gold.exists():
+                expected = desc.gold.read_text(
+                    encoding="utf-8", errors="replace")
+                if normalized == expected:
+                    return (desc.key, model.Outcome(model.PASS))
+                if (desc.key in UNORDERED_GOLD_OUTPUTS and
+                        normalized.endswith("\n") == expected.endswith("\n") and
+                        Counter(normalized.splitlines()) ==
+                        Counter(expected.splitlines())):
+                    return (desc.key, model.Outcome(model.PASS))
             return (desc.key,
                     dependency_failure(desc.key, model.RUN_FAIL,
                                        output))
