@@ -425,6 +425,8 @@ obelisk_rt_status
 refreshNativeAOTReadyPhaseUnlocked(obelisk_rt_context *context) {
   std::fill(context->nativeScheduleReadyNodes.begin(),
             context->nativeScheduleReadyNodes.end(), 0);
+  if (context->schedulerRunningFinals && context->schedulerFinalsAborted)
+    return OBELISK_RT_OK;
   for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
        ++slot) {
     obelisk_rt_process_instance_v1 *actor = context->nativeScheduleActors[slot];

@@ -2035,6 +2035,18 @@ extern "C" void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL {}
 }
 
+static void requestExplicitFinishUnlocked(obelisk_rt_context *context,
+                                          uint32_t verbosity,
+                                          obelisk_rt_status status) {
+  if (context->schedulerRunningFinals)
+    context->schedulerFinalsAborted = true;
+  context->schedulerFinishRequested = true;
+  context->nativePeriodicTerminationRequested = 1;
+  context->schedulerFinishVerbosity = verbosity;
+  if (status != OBELISK_RT_OK)
+    context->schedulerFinishStatus = status;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
                                uint32_t verbosity) {
@@ -2043,9 +2055,7 @@ obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    context->schedulerFinishRequested = true;
-    context->nativePeriodicTerminationRequested = 1;
-    context->schedulerFinishVerbosity = verbosity;
+    requestExplicitFinishUnlocked(context, verbosity, OBELISK_RT_OK);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -2110,10 +2120,7 @@ obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context, uint32_t verbosity) {
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    context->schedulerFinishRequested = true;
-    context->nativePeriodicTerminationRequested = 1;
-    context->schedulerFinishVerbosity = verbosity;
-    context->schedulerFinishStatus = OBELISK_RT_FATAL;
+    requestExplicitFinishUnlocked(context, verbosity, OBELISK_RT_FATAL);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -2680,8 +2687,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         context->schedulerCompactionPending =
             context->schedulerDeadProcessCount != 0;
       }
-      if (context->schedulerFinishRequested)
+      if (context->schedulerFinishRequested) {
         context->schedulerRunningFinals = true;
+        if (context->schedulerFinalsAborted)
+          return context->schedulerFinishStatus;
+      }
     }
     uint32_t nativeRegion = UINT32_MAX;
     uint32_t nativeRank = UINT32_MAX;

@@ -3773,7 +3773,8 @@ obelisk_rt_status obelisk_rt_v1_native_state_store_continuous_plane(
     uint32_t unknown_plane, const uint8_t *value, uint8_t *out_changed);
 void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context);
 // Request orderly design-wide termination. The scheduler stops selecting
-// ordinary processes and pending updates, then runs every final process.
+// ordinary processes and pending updates, then runs final processes. A request
+// made from a final process stops the remaining final processes immediately.
 // `verbosity` is retained for SystemVerilog compatibility; diagnostic text is
 // implementation-defined and this runtime currently emits none.
 obelisk_rt_status obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,

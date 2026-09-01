@@ -1702,6 +1702,9 @@ struct obelisk_rt_context {
   uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
   bool schedulerFinishRequested = false;
+  // An explicit termination request made while a final procedure is active
+  // suppresses every remaining final procedure (IEEE 1800-2017 9.2.3).
+  bool schedulerFinalsAborted = false;
   // Program completion is event-driven: each owned logical process is
   // registered once and removed once, so ordinary scheduler selection never
   // scans for 24.7 completion.
