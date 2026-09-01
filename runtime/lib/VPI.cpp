@@ -29,7 +29,9 @@
 #include <utility>
 #include <vector>
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(_WIN32)
+#define OBELISK_VPI_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
 #define OBELISK_VPI_EXPORT __attribute__((visibility("default")))
 #else
 #define OBELISK_VPI_EXPORT

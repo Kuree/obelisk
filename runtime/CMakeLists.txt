@@ -64,8 +64,9 @@ add_library(ObeliskRuntime ALIAS obelisk_rt)
 target_include_directories(obelisk_rt
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  PRIVATE
-    ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
+target_include_directories(obelisk_rt SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
 )
 
 target_compile_features(obelisk_rt PUBLIC cxx_std_17)
