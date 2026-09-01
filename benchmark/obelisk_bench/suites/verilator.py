@@ -478,6 +478,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
+    "t_stream_bitqueue": PATTERN_RADIX,
     "t_stream_crc_example": PATTERN_RADIX,
     "t_stream_dynamic": PATTERN_RADIX,
     "t_stream_unpack": PATTERN_RADIX,
