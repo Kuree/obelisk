@@ -80,6 +80,31 @@ class ParallelismTest(unittest.TestCase):
 
 
 class FixtureDirectoryTest(unittest.TestCase):
+    def test_assertion_gold_override_requires_exact_actions_and_errors(self):
+        oracle = ivtest.ASSERTION_GOLD_OVERRIDES["sv_immediate_assert"]
+        source = Path("/checkout/ivltests/sv_immediate_assert.v")
+        stdout = (
+            "Check 4 : this should be displayed\n"
+            "Check 5 : this should be displayed\n"
+            "Check 7 : this should be displayed\n"
+            "Check 8 : this should be displayed\n"
+            "Check 10 : this should be displayed\n")
+        stderr = (
+            "ERROR: /checkout/ivltests/sv_immediate_assert.v:7: "
+            "immediate assertion failed.\n"
+            "ERROR: /checkout/ivltests/sv_immediate_assert.v:11: "
+            "immediate assertion failed.\n"
+            "ERROR: /checkout/ivltests/sv_immediate_assert.v:19: "
+            "Check 9 : this should be displayed\n")
+
+        self.assertTrue(ivtest._matches_assertion_gold_override(
+            oracle, source, "", stdout, stderr, False))
+        self.assertFalse(ivtest._matches_assertion_gold_override(
+            oracle, source, "", stdout, stderr + stderr.splitlines()[0] + "\n",
+            False))
+        self.assertFalse(ivtest._matches_assertion_gold_override(
+            oracle, source, "", stdout, stderr, True))
+
     def test_continued_list_entry_preserves_sources_and_unit_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
             ivtest_dir = Path(temporary)

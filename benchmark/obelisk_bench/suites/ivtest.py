@@ -20,7 +20,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
 import tempfile
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
@@ -100,6 +102,49 @@ NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
 }
 
 
+class AssertionGoldOracle(NamedTuple):
+    """Portable assertion actions and Obelisk diagnostics for an ivtest."""
+    stdout: tuple[str, ...]
+    errors: tuple[tuple[int, str], ...]
+
+
+_ASSERTION_ACTIONS = (
+    "Check 4 : this should be displayed",
+    "Check 5 : this should be displayed",
+    "Check 7 : this should be displayed",
+    "Check 8 : this should be displayed",
+)
+_DEFERRED_ASSERTION_ORACLE = AssertionGoldOracle(
+    stdout=_ASSERTION_ACTIONS,
+    errors=((9, "immediate assertion failed."),
+            (13, "immediate assertion failed.")),
+)
+_IMMEDIATE_ASSERTION_ORACLE = AssertionGoldOracle(
+    stdout=(*_ASSERTION_ACTIONS, "Check 10 : this should be displayed"),
+    errors=((7, "immediate assertion failed."),
+            (11, "immediate assertion failed."),
+            (19, "Check 9 : this should be displayed")),
+)
+
+# Icarus's deferred gold files contain only its "unsupported" diagnostics;
+# the immediate gold files mix tool-specific error formatting into portable
+# action output. IEEE 1800-2017 16.3 and 16.4.1 define the semantic result, so
+# require every action and every default/explicit error instead of inheriting
+# either implementation's presentation. Lookup is O(1); matching is linear in
+# the short output of the one selected test.
+ASSERTION_GOLD_OVERRIDES: dict[str, AssertionGoldOracle] = {
+    "sv_deferred_assert1": _DEFERRED_ASSERTION_ORACLE,
+    "sv_deferred_assert2": _DEFERRED_ASSERTION_ORACLE,
+    "sv_deferred_assume1": _DEFERRED_ASSERTION_ORACLE,
+    "sv_deferred_assume2": _DEFERRED_ASSERTION_ORACLE,
+    "sv_immediate_assert": _IMMEDIATE_ASSERTION_ORACLE,
+    "sv_immediate_assume": _IMMEDIATE_ASSERTION_ORACLE,
+}
+
+_RUNTIME_ERROR_DIAGNOSTIC = re.compile(
+    r"^ERROR:\s+(.+):(\d+):\s*(.*)$")
+
+
 def _parallelism(jobs: int, task_count: int) -> tuple[int, int]:
     """Divide the host thread budget across concurrently compiled tests."""
     workers = min(jobs, task_count)
@@ -119,6 +164,23 @@ def _normalize_fixture_paths(output: str, ivtest_dir: Path,
     for spelling in sorted(spellings, key=len, reverse=True):
         output = output.replace(spelling + "/", "./ivltests/")
     return output
+
+
+def _matches_assertion_gold_override(
+        oracle: AssertionGoldOracle, source: Path, compile_stderr: str,
+        stdout: str, stderr: str, timed_out: bool,
+) -> bool:
+    """Require the exact portable action and assertion-diagnostic multisets."""
+    if (timed_out or compile_stderr or
+            tuple(stdout.splitlines()) != oracle.stdout):
+        return False
+    actual: Counter[tuple[int, str]] = Counter()
+    for line in stderr.splitlines():
+        diagnostic = _RUNTIME_ERROR_DIAGNOSTIC.fullmatch(line)
+        if not diagnostic or Path(diagnostic.group(1)).name != source.name:
+            return False
+        actual[(int(diagnostic.group(2)), diagnostic.group(3))] += 1
+    return actual == Counter(oracle.errors)
 
 
 class Exclusion(NamedTuple):
@@ -551,6 +613,15 @@ def judge_one(
             # gold files that intentionally cover compile warnings exercise
             # Obelisk's diagnostics too instead of silently losing them.
             output = compiled.stderr + result.stdout
+            assertion_oracle = ASSERTION_GOLD_OVERRIDES.get(desc.key)
+            if assertion_oracle is not None:
+                output += result.stderr
+                if _matches_assertion_gold_override(
+                        assertion_oracle, desc.source, compiled.stderr,
+                        result.stdout, result.stderr, result.timed_out):
+                    return (desc.key, model.Outcome(model.PASS))
+                return (desc.key, dependency_failure(
+                    desc.key, model.RUN_FAIL, output))
             if desc.key in NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES:
                 warned = ("warning: calling nonvoid function" in
                            compiled.stderr)
