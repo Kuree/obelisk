@@ -959,16 +959,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       continue;
     result.nativeGraphCost += weight;
   }
-  // Hybrid handoff has a substantial fixed cost. Select it automatically only
-  // when the static actors cover at least seven tenths of estimated graph work;
-  // a fully closed schedule remains unconditionally profitable. Explicit AOT
-  // retains its strict full-eligibility contract.
-  result.aotCostEffective =
-      result.fullyEligible ||
-      (result.totalGraphCost != 0 &&
-       static_cast<long double>(result.nativeGraphCost) /
-               static_cast<long double>(result.totalGraphCost) >=
-           0.7L);
+  // The legacy partial AOT wrapper ultimately runs the generic scheduler, so
+  // selecting it automatically only adds planning and code-generation work.
+  // A fully closed schedule executes generated nodes and remains profitable.
+  // Explicit AOT and Eval retain their separate strict admission contracts.
+  result.aotCostEffective = result.fullyEligible;
   return result;
 }
 

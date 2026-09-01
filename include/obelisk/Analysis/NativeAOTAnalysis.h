@@ -59,6 +59,7 @@ public:
   /// observers. Explicit AOT may use the hybrid coordinator for these actors
   /// while retaining the statically bound monitor actors.
   bool isForcedHybridEligible() const { return forcedHybridEligible; }
+  /// Whether Auto can profit from a fully closed static schedule.
   bool isAOTCostEffective() const { return aotCostEffective; }
   bool hasPeriodicClockCandidate() const { return periodicClockCandidate; }
   uint64_t getTotalGraphCost() const { return totalGraphCost; }
