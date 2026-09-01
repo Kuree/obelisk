@@ -4531,6 +4531,14 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
   expressionPlaceholder = previousPlaceholder;
   if (failed(converted))
     return failure();
+  // IEEE 1800-2017 10.8 and 23.3.3 make this output-port connection an
+  // assignment-like continuous assignment. Preserve the ordinary assignment
+  // dispatch for a Clause 11.4.14.3 streaming target: its semantic type is
+  // intentionally void because the individual stream elements are the
+  // lvalues.
+  if (auto streaming =
+          dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(children[0]))
+    return lowerStreamingAssignment(streaming, *converted);
   return writeLValue(children[0], *converted, isSignedNode(children[1]), false,
                      location);
 }
