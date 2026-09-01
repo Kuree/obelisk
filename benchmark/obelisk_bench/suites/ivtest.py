@@ -521,6 +521,11 @@ ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
     "tools should warn when an always_latch procedure does not represent "
     "latched logic, but the construct is not illegal; the CE entry requires "
     "Icarus's stronger compile-error policy")
+ALWAYS_FF_EVENT_CONTROL_POSITION = Exclusion(
+    "IEEE 1800-2017 9.2.2.4",
+    "always_ff requires exactly one event control but does not require it to "
+    "precede every other statement; the test contains exactly one and "
+    "requires Icarus's additional placement restriction to be a compile error")
 UNTYPED_STRING_PARAMETER_IS_INTEGRAL = Exclusion(
     "IEEE 1800-2017 6.20.2",
     "under 5.9 a string literal used as a parameter value is an unsigned "
@@ -628,6 +633,7 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
+    "always_ff_fail2": ALWAYS_FF_EVENT_CONTROL_POSITION,
     "always_latch_no_sens": ALWAYS_LATCH_MODELING_DIAGNOSTIC,
     "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
     "array_word_check": DUMPVARS_SELECTED_VARIABLE,
