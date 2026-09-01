@@ -180,6 +180,15 @@ MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES = Exclusion(
     "it is an error for some design elements to specify a time unit and "
     "precision while others do not; the test instead requires compilation "
     "to continue and reports tool-specific 1s defaults for the latter")
+PROCEDURAL_ASSIGN_VARIABLE_SELECT = Exclusion(
+    "IEEE 1800-2017 10.6.1",
+    "procedural assign and deassign targets shall be singular variable "
+    "references or concatenations of variables, not bit- or part-selects of "
+    "variables; the test requires Icarus's variable-select extension")
+PROCEDURAL_FORCE_VARIABLE_SELECT = Exclusion(
+    "IEEE 1800-2017 10.6.2",
+    "force and release targets shall not be bit- or part-selects of variables; "
+    "the test requires Icarus's variable-select extension")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -201,14 +210,18 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
+    "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
+    "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
+    "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
