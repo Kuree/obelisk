@@ -578,6 +578,21 @@ struct DesignInventory
         startupBlock[call] = &proceduralBlock;
         return true;
       }
+      if (expression.kind == slang::ast::ExpressionKind::Call) {
+        const auto &call = expression.as<slang::ast::CallExpression>();
+        if (call.isSystemCall()) {
+          StringRef name = call.getSubroutineName();
+          // IEEE 1800-2017 21.2.3 makes these calls immediate monitor-state
+          // updates. They neither suspend nor terminate the initial process,
+          // so a following static annotation still executes once at time
+          // zero. Keep the whitelist narrow: an arbitrary system task could
+          // terminate the process or otherwise invalidate static ordering.
+          if (name == "$monitor" || name == "$monitorb" ||
+              name == "$monitoro" || name == "$monitorh" ||
+              name == "$monitoron" || name == "$monitoroff")
+            return true;
+        }
+      }
       // A preceding task call can suspend internally. Functions in ordinary
       // value expressions cannot consume simulation time, but a standalone
       // call is conservatively a task boundary in this static tranche.
