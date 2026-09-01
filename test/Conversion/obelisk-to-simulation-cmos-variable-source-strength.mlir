@@ -46,10 +46,17 @@ module {
 // CHECK-SAME: obelisk_sim.strength_group = [[GROUP]] : i64
 // CHECK-SAME: strength0 = 0 : i32
 // CHECK-NOT: obelisk_sim.net.pass.decl
-// CHECK: obelisk_sim.logic.unary bit_not
-// CHECK: obelisk_sim.logic.binary or
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: arith.select
-// CHECK: obelisk_sim.driver.drive
+// CHECK: %[[DATA:.*]] = obelisk_sim.ref.load
+// CHECK: %[[CONTROL_NOT:.*]] = obelisk_sim.logic.unary bit_not
+// CHECK: %[[ENABLED:.*]] = obelisk_sim.logic.binary or
+// CHECK: %[[DATA_NOT:.*]] = obelisk_sim.logic.unary bit_not %[[DATA]]
+// CHECK: %[[LOW_ENABLE:.*]] = obelisk_sim.logic.binary and %[[DATA_NOT]], %[[ENABLED]]
+// CHECK: %[[HIGH_ENABLE:.*]] = obelisk_sim.logic.binary and %[[DATA]], %[[ENABLED]]
+// CHECK: %[[LOW_RANGE:.*]] = obelisk_sim.logic.mux %[[LOW_ENABLE]]
+// CHECK: %[[HIGH_RANGE:.*]] = obelisk_sim.logic.mux %[[HIGH_ENABLE]]
+// CHECK: %[[DATA_IS_Z:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK: %[[LOW:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[LOW_RANGE]]
+// CHECK: %[[HIGH:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[HIGH_RANGE]]
+// CHECK: obelisk_sim.driver.drive {{.*}} = %[[LOW]]
 // CHECK-SAME: obelisk_sim.defer_net_resolution
-// CHECK: obelisk_sim.driver.drive
+// CHECK: obelisk_sim.driver.drive {{.*}} = %[[HIGH]]

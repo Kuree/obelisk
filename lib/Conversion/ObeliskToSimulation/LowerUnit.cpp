@@ -3656,32 +3656,34 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     // An uncertain MOS control contributes either the source value or Z.
     // Preserve that L/H strength range with the same polarity-bank encoding
     // used by conditional gates. Unlike a logic gate, a MOS source of Z stays
-    // exactly Z, so override the four-state mux's X merge for that case.
+    // exactly Z, so override the range with Z for that case. Direct polarity
+    // enables avoid applying the conditional-operator Z/Z-to-X rule to the
+    // bank that remains inactive under an uncertain control.
+    Value enabledControl =
+        activeHigh
+            ? controlValue
+            : Value(sim::SimLogicUnaryOp::create(
+                  builder, location, controlValue.getType(),
+                  sim::UnaryKind::BitNot, controlValue));
+    Value invertedDriven = sim::SimLogicUnaryOp::create(
+        builder, location, logicType, sim::UnaryKind::BitNot, driven);
+    Value lowEnable = sim::SimLogicBinaryOp::create(
+        builder, location, logicType, sim::BinaryKind::And, invertedDriven,
+        enabledControl);
+    Value highEnable = sim::SimLogicBinaryOp::create(
+        builder, location, logicType, sim::BinaryKind::And, driven,
+        enabledControl);
+    Value lowRange = sim::SimLogicMuxOp::create(
+        builder, location, logicType, lowEnable, zero, disabled);
+    Value highRange = sim::SimLogicMuxOp::create(
+        builder, location, logicType, highEnable, one, disabled);
     Value dataIsZ = sim::SimLogicCompareOp::create(
         builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
         driven, disabled);
-    Value lowCandidate = sim::SimLogicMuxOp::create(
-        builder, location, logicType, driven, disabled, zero);
-    lowCandidate = arith::SelectOp::create(builder, location, dataIsZ, disabled,
-                                           lowCandidate);
-    Value highCandidate = sim::SimLogicMuxOp::create(
-        builder, location, logicType, driven, one, disabled);
-    highCandidate = arith::SelectOp::create(builder, location, dataIsZ,
-                                            disabled, highCandidate);
-    Value lowResult =
-        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, controlValue,
-                                                      lowCandidate, disabled))
-                   : Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, controlValue,
-                                                      disabled, lowCandidate));
-    Value highResult =
-        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, controlValue,
-                                                      highCandidate, disabled))
-                   : Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, controlValue,
-                                                      disabled, highCandidate));
+    Value lowResult = arith::SelectOp::create(builder, location, dataIsZ,
+                                              disabled, lowRange);
+    Value highResult = arith::SelectOp::create(builder, location, dataIsZ,
+                                               disabled, highRange);
     strengthResults = std::array<Value, 2>{lowResult, highResult};
   } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
              name == "notif1") {
