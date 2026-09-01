@@ -4323,6 +4323,17 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       unsupported(op) << " (expression statement arity)";
       return failure();
     }
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(children.front())) {
+      auto resultType = call->getAttrOfType<TypeAttr>("semantic_type");
+      // IEEE 1800-2017 13.4.1 makes this legal but requires a warning. An
+      // explicit void cast is the standard spelling that deliberately
+      // discards the result without one.
+      if (resultType && !isa<semantic::VoidType>(resultType.getValue()) &&
+          !call.getIsVoidCasted())
+        emitWarning(getSemanticLocation(call))
+            << "calling nonvoid function '" << call.getCalleeName()
+            << "' as a statement discards its return value";
+    }
     return success(succeeded(lowerExpression(children.front())));
   }
   if (auto override = dyn_cast<semantic::SVProceduralAssignStatementOp>(op)) {

@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/void-cast.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=VOID
-// RUN: obelisk-opt %t/task.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=TASK
+// RUN: obelisk-opt %t/void-cast.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=VOID
+// RUN: obelisk-opt %t/task.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=TASK
 
 // IEEE 1800-2017 6.24.2: the task form of $cast reports a failed cast as a
 // run-time error, while the function form reports failure through its 0
@@ -8,6 +8,8 @@
 // keeps its function semantics, so a failed cast there stays silent.
 
 // VOID-NOT: $cast failed when used as a task
+// VOID-NOT: calling nonvoid function
+// TASK: warning: calling nonvoid function '$cast' as a statement discards its return value
 // TASK: $cast failed when used as a task
 
 //--- void-cast.mlir
@@ -115,5 +117,4 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-
 

@@ -92,6 +92,13 @@ QUEUE_WARNING_GOLD_OVERRIDES: dict[str, int] = {
     "sv_queue_vec_bounded": 7,
 }
 
+# Clause 13.4.1 requires the warning but does not prescribe vendor wording.
+# This source self-checks the function's behavior; require Obelisk's semantic
+# warning marker instead of Icarus's two-line diagnostic text.
+NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
+    "sys_func_as_task",
+}
+
 
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
@@ -496,6 +503,17 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             # gold files that intentionally cover compile warnings exercise
             # Obelisk's diagnostics too instead of silently losing them.
             output = compiled.stderr + result.stdout
+            if desc.key in NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES:
+                warned = ("warning: calling nonvoid function" in
+                           compiled.stderr)
+                passed = any(
+                    line.strip() == PASSED_MARKER
+                    for line in result.stdout.splitlines()
+                )
+                if result.ok and warned and passed:
+                    return (desc.key, model.Outcome(model.PASS))
+                return (desc.key, dependency_failure(
+                    desc.key, model.RUN_FAIL, output))
             required_queue_warnings = QUEUE_WARNING_GOLD_OVERRIDES.get(
                 desc.key)
             if required_queue_warnings is not None:
