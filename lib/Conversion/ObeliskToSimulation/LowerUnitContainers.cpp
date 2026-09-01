@@ -334,8 +334,35 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return failure();
     Value size = sim::SimContainerSizeOp::create(
         builder, location, builder.getI64Type(), *receiver);
+    Block *write = nullptr;
+    Block *resume = nullptr;
+    if (queue.getBound()) {
+      Value capacity = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(static_cast<uint64_t>(queue.getBound()) +
+                                    1));
+      Value full = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::uge, size, capacity);
+      Block *discard = addBlock();
+      write = addBlock();
+      resume = addBlock();
+      cf::CondBranchOp::create(builder, location, full, discard, ValueRange{},
+                               write, ValueRange{});
+      setCurrent(discard);
+      // IEEE 1800-2017 7.10.5 requires a warning whenever an operation on a
+      // bounded queue discards an element beyond its bound. Keep formatting
+      // and I/O entirely on that exceptional path.
+      emitRuntimeWarning(location,
+                         "bounded queue push_back discarded an element");
+      cf::BranchOp::create(builder, location, resume);
+      setCurrent(write);
+    }
     sim::SimContainerWriteOp::create(builder, location, *receiver, size,
                                      *converted);
+    if (resume) {
+      cf::BranchOp::create(builder, location, resume);
+      setCurrent(resume);
+    }
     return mutatedResult(arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false)));
   }
@@ -369,6 +396,9 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       cf::CondBranchOp::create(builder, location, full, trim, ValueRange{},
                                insert, ValueRange{});
       setCurrent(trim);
+      emitRuntimeWarning(location,
+                         "bounded queue push_front discarded its last "
+                         "element");
       Value one =
           arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                     builder.getI64IntegerAttr(1));
@@ -472,8 +502,14 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       Value valid =
           arith::AndIOp::create(builder, location, nonnegative, withinBound);
       Value trimNeeded = arith::AndIOp::create(builder, location, full, valid);
+      Block *warn = addBlock();
       Block *trim = addBlock();
       Block *insert = addBlock();
+      cf::CondBranchOp::create(builder, location, full, warn, ValueRange{},
+                               insert, ValueRange{});
+      setCurrent(warn);
+      emitRuntimeWarning(location,
+                         "bounded queue insert discarded its last element");
       cf::CondBranchOp::create(builder, location, trimNeeded, trim,
                                ValueRange{}, insert, ValueRange{});
       setCurrent(trim);

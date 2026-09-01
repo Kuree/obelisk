@@ -13,13 +13,12 @@
 // CHECK: arith.cmpi uge, %[[INSERT_SIZE]],
 // CHECK: arith.cmpi sge, %[[INSERT_INDEX]],
 // CHECK: arith.cmpi ule, %[[INSERT_INDEX]],
+// CHECK: obelisk_sim.bytes.constant {{.*}}bounded queue insert discarded its last element
+// CHECK: obelisk_sim.display
 // CHECK: obelisk_sim.queue.delete
 // CHECK: obelisk_sim.queue.insert {{.*}}[%[[INSERT_INDEX]]]
-// Queue assignment permits index == size (append) while the nonnegative check
-// and the unknown-index sentinel continue to reject invalid indices.
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size
-// CHECK: arith.cmpi sge
-// CHECK: arith.cmpi ule, {{.*}}, %[[SIZE]]
+// Queue assignment delegates append and invalid-index handling to the one
+// container-write intrinsic rather than duplicating bounds checks per caller.
 // CHECK: obelisk_sim.container.write
 // A queue read uses the same knownness-preserving index conversion.
 // CHECK: %[[READ_KNOWN:.*]] = obelisk_sim.logic.compare case_eq

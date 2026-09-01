@@ -74,6 +74,24 @@ SELF_CHECKING_CE_OVERRIDES = {
     "sv_port_default14",
 }
 
+# These queue tests use gold files solely because Icarus emits implementation-
+# specific warning text before their ordinary PASSED self-check. IEEE
+# 1800-2017 7.10.1 and 7.10.5 specify which exceptional operations must warn,
+# but not the diagnostic wording. Require one warning for every mandatory
+# event while retaining the source's semantic self-check. This is an O(1)
+# descriptor lookup followed by a linear scan of this test's short output; it
+# has no compiler or simulator cost.
+QUEUE_WARNING_GOLD_OVERRIDES: dict[str, int] = {
+    "sv_queue_parray": 6,
+    "sv_queue_parray_bounded": 7,
+    "sv_queue_real": 6,
+    "sv_queue_real_bounded": 7,
+    "sv_queue_string": 6,
+    "sv_queue_string_bounded": 7,
+    "sv_queue_vec": 6,
+    "sv_queue_vec_bounded": 7,
+}
+
 
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
@@ -472,6 +490,23 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             # gold files that intentionally cover compile warnings exercise
             # Obelisk's diagnostics too instead of silently losing them.
             output = compiled.stderr + result.stdout
+            required_queue_warnings = QUEUE_WARNING_GOLD_OVERRIDES.get(
+                desc.key)
+            if required_queue_warnings is not None:
+                output = compiled.stderr + result.stderr + result.stdout
+                warnings = sum(
+                    line.startswith(("WARNING:", "warning:"))
+                    for line in result.stderr.splitlines()
+                )
+                passed = any(
+                    line.strip() == PASSED_MARKER
+                    for line in result.stdout.splitlines()
+                )
+                if (result.ok and warnings == required_queue_warnings and
+                        passed):
+                    return (desc.key, model.Outcome(model.PASS))
+                return (desc.key, dependency_failure(
+                    desc.key, model.RUN_FAIL, output))
             normalized = _normalize_fixture_paths(
                 output, ivtest_dir, run_dir)
             if (result.ok and desc.gold.exists() and

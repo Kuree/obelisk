@@ -173,6 +173,12 @@ bool queueIsFull(const ContainerHeader &header) {
          header.size >= queueElementLimit(header.bound);
 }
 
+OBELISK_RT_FEATURE_TEXT void warnIgnoredQueueWrite(bool bounded) {
+  std::fputs(bounded ? "WARNING: bounded queue write discarded an element\n"
+                     : "WARNING: invalid indexed queue write was ignored\n",
+             stderr);
+}
+
 void walkTraceSlots(
     uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
     const std::function<void(obelisk_rt_managed_word_v1 *,
@@ -4016,15 +4022,20 @@ obelisk_rt_v1_container_write(obelisk_rt_gc_lane_v1 *lane,
     return status;
   if (snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if (index < 0 || static_cast<uint64_t>(index) > snapshot.size)
+  if (index < 0 || static_cast<uint64_t>(index) > snapshot.size) {
+    if (snapshot.kind == OBELISK_RT_CONTAINER_QUEUE)
+      warnIgnoredQueueWrite(false);
     return OBELISK_RT_OK;
+  }
   bool append = snapshot.kind == OBELISK_RT_CONTAINER_QUEUE &&
                 static_cast<uint64_t>(index) == snapshot.size;
   if (!append && static_cast<uint64_t>(index) >= snapshot.size)
     return OBELISK_RT_OK;
   if (append) {
-    if (queueIsFull(snapshot))
+    if (queueIsFull(snapshot)) {
+      warnIgnoredQueueWrite(true);
       return OBELISK_RT_OK;
+    }
     status = ensureCapacity(lane, container, snapshot.size + 1);
     if (status != OBELISK_RT_OK)
       return status;

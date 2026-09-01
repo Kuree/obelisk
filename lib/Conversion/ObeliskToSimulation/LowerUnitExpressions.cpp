@@ -3861,8 +3861,21 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
             : arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                         builder.getI64IntegerAttr(0));
     uint64_t bound = 0;
-    if (auto queue = dyn_cast<sim::QueueType>(*resultType))
+    uint64_t retainedElementCount = resultElementCount;
+    if (auto queue = dyn_cast<sim::QueueType>(*resultType)) {
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+      if (queue.getBound()) {
+        uint64_t capacity = static_cast<uint64_t>(queue.getBound()) + 1;
+        if (resultElementCount > capacity) {
+          // IEEE 1800-2017 7.10.5 requires both truncation and a warning. Cap
+          // construction itself as well, so a small bounded destination does
+          // not pay for every discarded source element.
+          emitRuntimeWarning(location,
+                             "bounded queue assignment discarded elements");
+          retainedElementCount = capacity;
+        }
+      }
+    }
     Value result = sim::SimContainerCreateOp::create(
         builder, location, *resultType, allocationSize, descriptor->typeID,
         descriptor->kind, descriptor->flags, descriptor->valueSize,
@@ -3880,7 +3893,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
                                             builder.getI64IntegerAttr(1));
       Value limit = arith::ConstantOp::create(
           builder, location, i64,
-          builder.getI64IntegerAttr(resultElementCount));
+          builder.getI64IntegerAttr(retainedElementCount));
       Block *header = addBlock();
       Value ordinal = header->addArgument(i64, location);
       Block *body = addBlock();
@@ -3898,6 +3911,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       cf::BranchOp::create(builder, location, header, ValueRange{next});
       setCurrent(done);
       for (auto [index, value] : compactIndexed) {
+        if (index >= retainedElementCount)
+          continue;
         Value selected = arith::ConstantOp::create(
             builder, location, i64, builder.getI64IntegerAttr(index));
         sim::SimContainerWriteOp::create(builder, location, result, selected,
@@ -3913,7 +3928,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
                                             builder.getI64IntegerAttr(1));
       Value limit = arith::ConstantOp::create(
           builder, location, i64,
-          builder.getI64IntegerAttr(compactRepetitions));
+          builder.getI64IntegerAttr(retainedElementCount /
+                                    compactItems.size()));
       Value stride = arith::ConstantOp::create(
           builder, location, i64,
           builder.getI64IntegerAttr(compactItems.size()));
@@ -3939,9 +3955,21 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       Value next = arith::AddIOp::create(builder, location, repetition, one);
       cf::BranchOp::create(builder, location, header, ValueRange{next});
       setCurrent(done);
+      uint64_t fullRepetitions = retainedElementCount / compactItems.size();
+      uint64_t remainder = retainedElementCount % compactItems.size();
+      for (uint64_t index = 0; index != remainder; ++index) {
+        Value ordinal = arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getI64IntegerAttr(fullRepetitions * compactItems.size() +
+                                      index));
+        sim::SimContainerWriteOp::create(builder, location, result, ordinal,
+                                         compactItems[index]);
+      }
       return result;
     }
-    for (auto [index, value] : llvm::enumerate(elementValues)) {
+    for (auto [index, value] : llvm::enumerate(
+             ArrayRef(elementValues)
+                 .take_front(static_cast<size_t>(retainedElementCount)))) {
       Value ordinal =
           arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                     builder.getI64IntegerAttr(index));

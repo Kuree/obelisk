@@ -1703,6 +1703,27 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       uint64_t bound = 0;
       if (auto queue = dyn_cast<sim::QueueType>(targetType))
         bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+      Value copiedSize = size;
+      if (auto queue = dyn_cast<sim::QueueType>(targetType);
+          queue && queue.getBound()) {
+        Value capacity = arith::ConstantOp::create(
+            builder, location, builder.getI64Type(),
+            builder.getI64IntegerAttr(static_cast<uint64_t>(queue.getBound()) +
+                                      1));
+        Value truncated = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ugt, size, capacity);
+        copiedSize = arith::SelectOp::create(builder, location, truncated,
+                                             capacity, size);
+        Block *warn = addBlock();
+        Block *ready = addBlock();
+        cf::CondBranchOp::create(builder, location, truncated, warn,
+                                 ValueRange{}, ready, ValueRange{});
+        setCurrent(warn);
+        emitRuntimeWarning(location,
+                           "bounded queue assignment discarded elements");
+        cf::BranchOp::create(builder, location, ready);
+        setCurrent(ready);
+      }
       Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
                                  ? size
                                  : Value(arith::ConstantOp::create(
@@ -1726,7 +1747,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       setCurrent(header);
       Value index = header->getArgument(0);
       Value more = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, index, size);
+          builder, location, arith::CmpIPredicate::ult, index, copiedSize);
       cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
                                exit, ValueRange{});
       setCurrent(body);
@@ -1863,6 +1884,15 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
       uint64_t bound = 0;
       if (queue)
         bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+      unsigned copiedCount = sourceCount;
+      if (queue && queue.getBound()) {
+        uint64_t capacity = static_cast<uint64_t>(queue.getBound()) + 1;
+        if (sourceCount > capacity) {
+          emitRuntimeWarning(location,
+                             "bounded queue assignment discarded elements");
+          copiedCount = static_cast<unsigned>(capacity);
+        }
+      }
       Value size = arith::ConstantOp::create(
           builder, location, builder.getI64Type(),
           builder.getI64IntegerAttr(queue ? 0 : sourceCount));
@@ -1875,7 +1905,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
           queue ? OBELISK_RT_CONTAINER_QUEUE
                 : OBELISK_RT_CONTAINER_DYNAMIC_ARRAY,
           bound);
-      for (unsigned ordinal = 0; ordinal < sourceCount; ++ordinal) {
+      for (unsigned ordinal = 0; ordinal < copiedCount; ++ordinal) {
         Type elementType = sim::getAggregateElementType(sourceArray, ordinal);
         Value element = sim::SimAggregateExtractOp::create(
             builder, location, elementType, value, ordinal);

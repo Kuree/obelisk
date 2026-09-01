@@ -1903,27 +1903,32 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         return failure();
       mutableContainer = *allocated;
     }
-    Value size = sim::SimContainerSizeOp::create(
-        builder, location, builder.getI64Type(), mutableContainer);
-    Value zero = arith::ConstantOp::create(
-        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
-    Value nonnegative = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sge, destination.index, zero);
-    // A queue element assignment at index == size appends one element. Dynamic
-    // arrays have fixed runtime size and therefore retain the strict bound.
-    arith::CmpIPredicate upperPredicate =
-        isa<sim::QueueType>((*currentContainer).getType())
-            ? arith::CmpIPredicate::ule
-            : arith::CmpIPredicate::ult;
-    Value inRange = arith::CmpIOp::create(builder, location, upperPredicate,
-                                          destination.index, size);
-    Value valid =
-        arith::AndIOp::create(builder, location, nonnegative, inRange);
+    bool queue = isa<sim::QueueType>((*currentContainer).getType());
     Block *write = addBlock();
     Block *resume = addBlock();
     resume->addArgument(mutableContainer.getType(), location);
-    cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
-                             resume, ValueRange{mutableContainer});
+    if (queue) {
+      // The queue write intrinsic already owns the append, bound, and invalid
+      // index decisions. Keeping them there avoids duplicating checks in every
+      // caller and lets its exceptional branch issue the Clause 7.10 warning.
+      cf::BranchOp::create(builder, location, write);
+    } else {
+      Value size = sim::SimContainerSizeOp::create(
+          builder, location, builder.getI64Type(), mutableContainer);
+      Value zero =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(0));
+      Value nonnegative =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
+                                destination.index, zero);
+      Value inRange =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                destination.index, size);
+      Value valid =
+          arith::AndIOp::create(builder, location, nonnegative, inRange);
+      cf::CondBranchOp::create(builder, location, valid, write, ValueRange{},
+                               resume, ValueRange{mutableContainer});
+    }
     setCurrent(write);
     Value updated = directStorage
                         ? mutableContainer
