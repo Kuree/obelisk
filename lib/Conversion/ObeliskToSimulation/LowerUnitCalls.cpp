@@ -2402,9 +2402,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool excludeWrittenSensitivity =
       function.getEntryKind() == sim::EntryKind::AlwaysComb ||
       function.getEntryKind() == sim::EntryKind::AlwaysLatch;
+  bool includeCalleeReadSensitivity =
+      function.getEntryKind() != sim::EntryKind::Continuous &&
+      function.getEntryKind() != sim::EntryKind::PortInput &&
+      function.getEntryKind() != sim::EntryKind::PortOutput;
   if (!virtualCallees)
     for (const auto &read : readCaptures) {
-      if (excludeWrittenSensitivity && writtenCaptures.contains(read.getKey()))
+      if (!includeCalleeReadSensitivity ||
+          (excludeWrittenSensitivity &&
+           writtenCaptures.contains(read.getKey())))
         continue;
       Value capture = values.lookup(read.getKey());
       if (!capture)
@@ -2422,7 +2428,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
               << "direct callee capture has no frozen local binding: " << path;
           return failure();
         }
-        if (readCaptures.contains(path) &&
+        if (includeCalleeReadSensitivity && readCaptures.contains(path) &&
             (!excludeWrittenSensitivity || !writtenCaptures.contains(path)))
           recordSensitivity(capture);
         operands.push_back(capture);
@@ -2558,7 +2564,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
         for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
           StringRef path = cast<StringAttr>(readAttr).getValue();
-          if (excludeWrittenSensitivity && candidateWrites.contains(path))
+          if (!includeCalleeReadSensitivity ||
+              (excludeWrittenSensitivity && candidateWrites.contains(path)))
             continue;
           Value capture = values.lookup(path);
           if (capture)
@@ -2615,7 +2622,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
         for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
           StringRef path = cast<StringAttr>(readAttr).getValue();
-          if (excludeWrittenSensitivity && candidateWrites.contains(path))
+          if (!includeCalleeReadSensitivity ||
+              (excludeWrittenSensitivity && candidateWrites.contains(path)))
             continue;
           Value capture = values.lookup(path);
           if (capture)

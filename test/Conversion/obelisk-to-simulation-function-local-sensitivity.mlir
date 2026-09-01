@@ -81,16 +81,15 @@ module {
 // PREPARE-SAME: #obelisk_sim.descriptor_binding<path = "function_local_sensitivity.transform.scratch", descriptor = 3, type = !obelisk_sim.ref<!obelisk_sim.logic<32>>>
 // PREPARE-SAME: #obelisk_sim.descriptor_binding<path = "function_local_sensitivity.transform.read_only", descriptor = 4, type = !obelisk_sim.ref<!obelisk_sim.logic<32>>>
 
-// The continuous process keeps both function-local statics for sensitivity,
-// while the function resolves them directly from context. Its implicit
-// sensitivity excludes the callee-written scratch but retains the true design
-// input and the read-only static.
+// IEEE 1800-2017 4.9.1 and 10.3.2 make a continuous assignment sensitive to
+// the source operands in its RHS expression. A function's hidden static state
+// is not an operand of the call; the lexical argument remains the only source.
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.source"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.transform"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.scratch"
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.read_only"
 // CHECK-LABEL: obelisk_sim.func private @{{.*}}(
-// CHECK-SAME: %{{.*}}, %[[SOURCE_ARG:arg[0-9]+]]: {{.*}}, %[[RETURN_ARG:arg[0-9]+]]: {{.*}}, %[[SCRATCH_ARG:arg[0-9]+]]: {{.*}}, %[[READ_ONLY_ARG:arg[0-9]+]]: {{.*}}, %{{.*}}) attributes {{.*}}entry_kind = 7 : i32
+// CHECK-SAME: %{{.*}}, %[[SOURCE_ARG:arg[0-9]+]]: {{.*}}, %{{.*}}) attributes {{.*}}entry_kind = 7 : i32
 // CHECK: obelisk_sim.call @{{.*}}(%{{.*}}, %{{.*}})
-// CHECK: obelisk_sim.suspend.any %[[SOURCE_ARG]], %[[READ_ONLY_ARG]]
+// CHECK: obelisk_sim.suspend.change %[[SOURCE_ARG]]
 // CHECK-NOT: obelisk.sv.

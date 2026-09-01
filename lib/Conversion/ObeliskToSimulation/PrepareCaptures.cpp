@@ -874,6 +874,17 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       result.contextStorageSources.insert(unit.source);
   for (const auto &constructor : constructorSources)
     result.contextStorageSources.insert(constructor.second);
+  llvm::DenseMap<Operation *, sim::EntryKind> entryKinds;
+  for (const PreparedUnit &unit : analysisUnits.units)
+    entryKinds.try_emplace(unit.source, unit.entryKind);
+  auto hasLexicalContinuousSensitivity = [&](Operation *source) {
+    auto found = entryKinds.find(source);
+    if (found == entryKinds.end())
+      return false;
+    return found->second == sim::EntryKind::Continuous ||
+           found->second == sim::EntryKind::PortInput ||
+           found->second == sim::EntryKind::PortOutput;
+  };
   auto isDirectContextStorage = [&](Operation *source, const auto &capture) {
     return result.contextStorageSources.contains(source) &&
            isContextResolvableStorage(capture.second);
@@ -972,20 +983,26 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         // context. Keeping callee-only storage in the caller made large class
         // libraries grow a quadratic capture ABI even though no reference is
         // passed at the call site.
-        if (isDirectContextStorage(destination, capture))
+        if (isDirectContextStorage(destination, capture) ||
+            (hasLexicalContinuousSensitivity(destination) &&
+             isDirectContextStorage(source, capture)))
           continue;
         if (seen.insert(capture.first).second) {
           captures.push_back(capture);
           changed = true;
         }
       }
-      for (; dependency.readCursor < sourceReads.size();
-           ++dependency.readCursor) {
-        StringRef read = sourceReads[dependency.readCursor];
-        auto inserted = result.readDescriptors[destination].insert(read);
-        if (inserted.second) {
-          orderedReads[destination].push_back(inserted.first->getKey());
-          changed = true;
+      if (hasLexicalContinuousSensitivity(destination)) {
+        dependency.readCursor = sourceReads.size();
+      } else {
+        for (; dependency.readCursor < sourceReads.size();
+             ++dependency.readCursor) {
+          StringRef read = sourceReads[dependency.readCursor];
+          auto inserted = result.readDescriptors[destination].insert(read);
+          if (inserted.second) {
+            orderedReads[destination].push_back(inserted.first->getKey());
+            changed = true;
+          }
         }
       }
       for (; dependency.writtenCursor < sourceWrites.size();
