@@ -747,6 +747,12 @@ MISSING_SDF_VERSION = Exclusion(
     "statement to identify the grammar version to apply; the test omits it "
     "and expects Icarus to infer a legacy dialect from the remaining "
     "DELAYFILE forms")
+STROBE_COMPLEX_ARGUMENT_LIMITATION = Exclusion(
+    "IEEE 1800-2017 21.2.2",
+    "$strobe arguments are specified exactly like $display arguments, so "
+    "indexed expressions are legal; the gold instead requires Icarus's "
+    "implementation limitation diagnostic that only simple signals and "
+    "constant expressions may be passed")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -872,6 +878,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "no_timescale_in_module": TIMESCALE_DIRECTIVE_LOCATION,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
+    "pr1830834": STROBE_COMPLEX_ARGUMENT_LIMITATION,
     "pr2001162": COINCIDENT_TASK_EVENT_CONTROL_RACE,
     "pr243": COINCIDENT_INITIAL_ALWAYS_DELAY_RACE,
     "pr2172606b": CONDITIONAL_ZZ_CHECKER_CONTRADICTION,
