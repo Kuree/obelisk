@@ -117,6 +117,11 @@ SIZED_ADDITION_HAS_NO_CARRY_BIT = Exclusion(
     "Table 11-21 gives addition the maximum width of its operands, so "
     "1'h1 + 1'h1 is one bit and evaluates to zero; the test selects the "
     "value two only under Icarus's __ICARUS_UNSIZED__ extension")
+VECTOR_STRENGTH_FORMAT = Exclusion(
+    "IEEE 1800-2017 21.2.1.5",
+    "each %v conversion requires a corresponding scalar net reference; the "
+    "test passes a four-bit vector and expects Icarus's underscore-joined "
+    "multi-bit strength extension")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -141,6 +146,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
+    "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2834340": PULL_GATE_ARITY,
