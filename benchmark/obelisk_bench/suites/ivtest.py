@@ -122,6 +122,10 @@ VECTOR_STRENGTH_FORMAT = Exclusion(
     "each %v conversion requires a corresponding scalar net reference; the "
     "test passes a four-bit vector and expects Icarus's underscore-joined "
     "multi-bit strength extension")
+ZERO_PADDED_DECIMAL_FORMAT = Exclusion(
+    "IEEE 1800-2017 21.2.1.3",
+    "decimal fields are padded with leading spaces; the gold file instead "
+    "expects %04d to use C-style leading-zero padding")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -144,6 +148,7 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
+    "delay": ZERO_PADDED_DECIMAL_FORMAT,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
