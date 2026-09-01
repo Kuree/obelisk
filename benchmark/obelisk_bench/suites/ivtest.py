@@ -645,6 +645,12 @@ TIME_ZERO_PORT_ASSIGNMENT_RACE = Exclusion(
     "observes xxxx first, 5.7.1 and 12.5 make its unsized 32-bit x label "
     "unequal to the zero-extended 4-bit selector, so the test's default arm "
     "legitimately reports failure")
+TIME_ZERO_EVENT_ARMING_RACE = Exclusion(
+    "IEEE 1800-2017 4.7",
+    "the time-zero blocking reset assignment races both always procedures "
+    "becoming sensitive to its posedge; Active events may execute in any "
+    "order, so the gold's missed reset edge and Obelisk's observed reset "
+    "edge are both legal")
 COINCIDENT_TASK_EVENT_CONTROL_RACE = Exclusion(
     "IEEE 1800-2017 4.4.2.2",
     "the clock's blocking edge and both delayed task callers become Active "
@@ -884,6 +890,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2172606b": CONDITIONAL_ZZ_CHECKER_CONTRADICTION,
     "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "pr3064375": TIME_ZERO_EVENT_ARMING_RACE,
     "pr3587570": CONTRADICTORY_COMBINATIONAL_UDP_ROWS,
     "udp_dff": NAMED_UDP_TERMINAL_CONNECTIONS,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
