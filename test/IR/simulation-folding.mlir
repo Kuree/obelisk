@@ -184,8 +184,8 @@ module {
 // CHECK: obelisk_sim.return %[[FOUR]], %[[TWELVE]], %[[ELEVEN]], %[[ZERO]]
 
 // CHECK-LABEL: obelisk_sim.func @conditional_merge
-// CHECK-DAG: %[[MISMATCH:.*]] = obelisk_sim.logic.constant -7 : i4, 3 : i4
-// CHECK-DAG: %[[SYMBOLS:.*]] = obelisk_sim.logic.constant 6 : i4, -4 : i4
+// CHECK-DAG: %[[MISMATCH:.*]] = obelisk_sim.logic.constant -8 : i4, 3 : i4
+// CHECK-DAG: %[[SYMBOLS:.*]] = obelisk_sim.logic.constant 2 : i4, -4 : i4
 // CHECK-DAG: %[[KNOWN:.*]] = obelisk_sim.logic.constant -7 : i4, 1 : i4
 // CHECK-NOT: obelisk_sim.logic.mux
 // CHECK: obelisk_sim.return %[[MISMATCH]], %[[SYMBOLS]], %[[KNOWN]]

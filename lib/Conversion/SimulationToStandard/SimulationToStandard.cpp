@@ -801,14 +801,13 @@ public:
 
     Value valueMismatch =
         arith::XOrIOp::create(rewriter, loc, trueValue.value, falseValue.value);
-    Value unknownMismatch = arith::XOrIOp::create(
-        rewriter, loc, trueValue.unknown, falseValue.unknown);
+    Value eitherUnknown = arith::OrIOp::create(rewriter, loc, trueValue.unknown,
+                                               falseValue.unknown);
     Value mismatch =
-        arith::OrIOp::create(rewriter, loc, valueMismatch, unknownMismatch);
-    LogicValue merged{
-        arith::AndIOp::create(rewriter, loc, trueValue.value,
-                              bitNot(rewriter, loc, mismatch)),
-        arith::OrIOp::create(rewriter, loc, trueValue.unknown, mismatch)};
+        arith::OrIOp::create(rewriter, loc, valueMismatch, eitherUnknown);
+    LogicValue merged{arith::AndIOp::create(rewriter, loc, trueValue.value,
+                                            bitNot(rewriter, loc, mismatch)),
+                      mismatch};
 
     Value conditionKnown = boolNot(rewriter, loc, condition.unknown);
     LogicValue selected{select(rewriter, loc, condition.value, trueValue.value,

@@ -966,10 +966,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
             bool leftValue = bit(left.value, bitIndex);
             bool leftUnknown = bit(left.unknown, bitIndex);
-            bool same = leftValue == bit(right.value, bitIndex) &&
-                        leftUnknown == bit(right.unknown, bitIndex);
-            setBit(result.value, bitIndex, same && leftValue);
-            setBit(result.unknown, bitIndex, !same || leftUnknown);
+            bool mismatch = leftUnknown || bit(right.unknown, bitIndex) ||
+                            leftValue != bit(right.value, bitIndex);
+            setBit(result.value, bitIndex, !mismatch && leftValue);
+            setBit(result.unknown, bitIndex, mismatch);
           }
           write(instruction.destination, result);
         } else {

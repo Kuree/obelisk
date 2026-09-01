@@ -3597,11 +3597,12 @@ def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
 def SimLogicMuxOp : SimOp<"logic.mux", [
     Pure, AllTypesMatch<["true_value", "false_value", "result"]>
   ]> {
-  let summary = "conditional-expression selection with exact X/Z merging";
+  let summary = "conditional-expression selection with IEEE X/Z merging";
   let description = [{
     A known condition selects one operand. For an X or Z condition, each
-    result symbol is preserved when both operands contain the same 0, 1, X,
-    or Z symbol; every mismatch becomes X.
+    result bit is preserved only when both operands contain the same known 0
+    or 1; every other combination becomes X, as required by IEEE 1800-2017
+    Table 11-20.
   }];
   let arguments = (ins SimLogic1Type:$condition, SimLogicType:$true_value,
                        SimLogicType:$false_value);

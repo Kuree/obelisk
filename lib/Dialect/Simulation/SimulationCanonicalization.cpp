@@ -318,8 +318,6 @@ OpFoldResult SimLogicIsTrueOp::fold(FoldAdaptor adaptor) {
 }
 
 OpFoldResult SimLogicMuxOp::fold(FoldAdaptor adaptor) {
-  if (getTrueValue() == getFalseValue())
-    return getTrueValue();
   auto condition = getLogicPlanes(adaptor.getCondition());
   if (!condition)
     return {};
@@ -330,10 +328,9 @@ OpFoldResult SimLogicMuxOp::fold(FoldAdaptor adaptor) {
   auto falseValue = getLogicPlanes(adaptor.getFalseValue());
   if (!trueValue || !falseValue)
     return {};
-  APInt mismatch = (trueValue->value ^ falseValue->value) |
-                   (trueValue->unknown ^ falseValue->unknown);
-  LogicPlanes result{trueValue->value & ~mismatch,
-                     trueValue->unknown | mismatch};
+  APInt mismatch = (trueValue->value ^ falseValue->value) | trueValue->unknown |
+                   falseValue->unknown;
+  LogicPlanes result{trueValue->value & ~mismatch, mismatch};
   return getLogicAttribute(getContext(), std::move(result));
 }
 

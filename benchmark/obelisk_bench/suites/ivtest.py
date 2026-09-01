@@ -445,6 +445,11 @@ UNKNOWN_TO_ZERO_IS_NEGEDGE = Exclusion(
     "Table 9-2 requires the test's time-zero clk transition from x to 0 to "
     "trigger its negedge checker; that checker reads uninitialized RAM and "
     "permanently marks the otherwise-correct square table as failed")
+CONDITIONAL_ZZ_CHECKER_CONTRADICTION = Exclusion(
+    "IEEE 1800-2017 11.4.11",
+    "Table 11-20 requires an ambiguous conditional with Z in both integral "
+    "arms to produce X; the test's dedicated Z/Z branch accepts that X, but "
+    "its following equal-arms branch immediately rejects it and requires Z")
 ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
     "IEEE 1800-2017 9.2.2.3",
     "tools should warn when an always_latch procedure does not represent "
@@ -571,6 +576,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2001162": COINCIDENT_TASK_EVENT_CONTROL_RACE,
+    "pr2172606b": CONDITIONAL_ZZ_CHECKER_CONTRADICTION,
     "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
