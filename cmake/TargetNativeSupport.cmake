@@ -133,6 +133,12 @@ set(OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE
 file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h")
+set(_obelisk_target_runtime_vpi_include_dir
+    "${CMAKE_BINARY_DIR}/lib/obelisk/include")
+set(_obelisk_target_runtime_vpi_headers
+    "${_obelisk_target_runtime_vpi_include_dir}/vpi_user.h"
+    "${_obelisk_target_runtime_vpi_include_dir}/sv_vpi_user.h"
+    "${_obelisk_target_runtime_vpi_include_dir}/vpi_compatibility.h")
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
 set(_obelisk_target_runtime_definitions)
@@ -181,6 +187,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
       -I "${_obelisk_runtime_source_dir}/include"
       -I "${_obelisk_runtime_source_dir}/lib"
+      -isystem "${_obelisk_target_runtime_vpi_include_dir}"
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
       --target=${OBELISK_TARGET_TRIPLE}
@@ -195,10 +202,12 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
       -I "${_obelisk_runtime_source_dir}/include"
       -I "${_obelisk_runtime_source_dir}/lib"
+      -isystem "${_obelisk_target_runtime_vpi_include_dir}"
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
     DEPENDS
       ${source_dependencies}
       ${_obelisk_target_runtime_headers}
+      ${_obelisk_target_runtime_vpi_headers}
     COMMENT "Building native and Full-LTO target runtime ${source}.cpp"
     VERBATIM)
 endforeach()
