@@ -647,6 +647,12 @@ COINCIDENT_INITIAL_ALWAYS_DELAY_RACE = Exclusion(
     "updates become Active events at the same times and may execute in any "
     "order; the gold requires the initial block to run first at every "
     "collision")
+SHARED_IMPLICIT_SENSITIVITY_LOOP_INDEX = Exclusion(
+    "IEEE 1800-2017 9.4.2.2",
+    "an index variable used on the left-hand side of an assignment is "
+    "explicitly included in an @* sensitivity list; both combinational "
+    "processes share and update i, so each can reactivate the other forever, "
+    "while the test requires Icarus to omit that mandatory dependency")
 UNKNOWN_TO_ZERO_IS_NEGEDGE = Exclusion(
     "IEEE 1800-2017 9.4.2",
     "Table 9-2 requires the test's time-zero clk transition from x to 0 to "
@@ -805,6 +811,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "br960b": MISSING_SDF_VERSION,
     "br960c": MISSING_SDF_VERSION,
     "br960d": MISSING_SDF_VERSION,
+    "br1000": SHARED_IMPLICIT_SENSITIVITY_LOOP_INDEX,
     "br1029a": REAL_WITH_INTEGER_DISPLAY_FORMAT,
     "br1029b": REAL_WITH_INTEGER_DISPLAY_FORMAT,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
