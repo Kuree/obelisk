@@ -108,18 +108,32 @@ NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
 # IEEE 1800-2017 9.4.2.2 defines an empty nested @* sensitivity set but does
 # not require a diagnostic. Retain the gold's exact runtime-output oracle while
 # accepting Obelisk's equally conforming choice not to emit Icarus's warning.
-OPTIONAL_WARNING_GOLD_PREFIXES = {
+class OptionalWarningGoldOracle(NamedTuple):
+    marker: str
+    count: int = 1
+
+
+OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # IEEE 1800-2017 21.4 defines the explicit start-address traversal used by
     # this test but does not require Icarus's warning that IEEE 1364-2005
     # changed the default direction. Keep every data line as the exact oracle.
-    "mem1": "$readmemb: The behaviour for reg[...] mem[N:0]",
-    "nested_impl_event2": "warning: @* found no sensitivities",
+    "mem1": OptionalWarningGoldOracle(
+        "$readmemb: The behaviour for reg[...] mem[N:0]"),
+    "nested_impl_event2": OptionalWarningGoldOracle(
+        "warning: @* found no sensitivities"),
     # Clause 21.3.1 defines MCD bit zero as standard output and does not
     # prescribe a diagnostic when $fclose cannot close it. The corresponding
     # VPI rule says this predefined channel cannot be closed. Preserve all
     # eight formatted-output lines while accepting the absence of Icarus's
     # implementation-specific warning.
-    "pr1698820": "could not close MCD STDOUT (0x1) in $fclose()",
+    "pr1698820": OptionalWarningGoldOracle(
+        "could not close MCD STDOUT (0x1) in $fclose()"),
+    # Clause 9.4.2.2 requires every referenced array word in @* sensitivity,
+    # but does not require announcing those dependencies. Keep the complete
+    # value trace and remove exactly the four diagnostics requested by the
+    # Icarus-only -Wsensitivity-entire-array switch.
+    "pr2043585": OptionalWarningGoldOracle(
+        "warning: @* is sensitive to all 4 words in array 'Data'.", 4),
 }
 
 # IEEE 1800-2017 21.4 requires this warning but does not prescribe its text.
@@ -241,20 +255,23 @@ def _matches_optional_warning_gold(
         key: str, gold: Path, compile_stderr: str, stdout: str, stderr: str,
         result_ok: bool, timed_out: bool,
 ) -> bool:
-    """Compare runtime output after one exact, nonrequired gold warning."""
-    warning = OPTIONAL_WARNING_GOLD_PREFIXES.get(key)
-    if warning is None or not gold.exists():
+    """Compare output after the exact nonrequired gold-warning inventory."""
+    oracle = OPTIONAL_WARNING_GOLD_PREFIXES.get(key)
+    if oracle is None or not gold.exists():
         return False
     expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
         keepends=True)
-    warning_lines = [
-        index for index, line in enumerate(expected) if warning in line
-    ]
-    if len(warning_lines) != 1:
+    portable: list[str] = []
+    warning_count = 0
+    for line in expected:
+        if oracle.marker in line:
+            warning_count += 1
+        else:
+            portable.append(line)
+    if warning_count != oracle.count:
         return False
-    del expected[warning_lines[0]]
     return (result_ok and not timed_out and not compile_stderr and not stderr
-            and stdout == "".join(expected))
+            and stdout == "".join(portable))
 
 
 def _matches_required_runtime_warning_gold(

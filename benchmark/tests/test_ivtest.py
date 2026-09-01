@@ -331,6 +331,19 @@ class FixtureDirectoryTest(unittest.TestCase):
                 "pr1698820", gold, "", "The variable is 10\n", "", True,
                 False))
 
+    def test_optional_gold_warning_requires_its_exact_count(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            gold = Path(temporary) / "pr2043585.gold"
+            warning = (
+                "source.v:27: warning: @* is sensitive to all 4 words in "
+                "array 'Data'.\n")
+            gold.write_text(warning * 4 + "0\n1\n", encoding="ascii")
+            self.assertTrue(ivtest._matches_optional_warning_gold(
+                "pr2043585", gold, "", "0\n1\n", "", True, False))
+            gold.write_text(warning * 3 + "0\n1\n", encoding="ascii")
+            self.assertFalse(ivtest._matches_optional_warning_gold(
+                "pr2043585", gold, "", "0\n1\n", "", True, False))
+
     def test_required_runtime_warning_preserves_every_other_gold_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             gold = Path(temporary) / "pic.gold"
