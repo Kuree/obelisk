@@ -159,6 +159,21 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # vendor-formatted -Wselect-range diagnostics. Preserve the unguarded
     # value trace and self-check exactly.
     "br1007": OptionalWarningGoldOracle("warning:", 3),
+    # Clauses 23.3.3 and 23.3.3.8 apply ordinary assignment sizing to port
+    # connections without prescribing Icarus's padding/pruning diagnostics.
+    # Clause 23.3.3.1 also permits the direction coercions in br_gh127c;
+    # Obelisk reports those using its own source-oriented diagnostic format.
+    # Remove only each complete diagnostic prefix and retain all value lines.
+    "br_gh127a": OptionalWarningGoldOracle(
+        "warning:", 2, prefix_lines=4),
+    "br_gh127b": OptionalWarningGoldOracle(
+        "warning:", 2, prefix_lines=4),
+    "br_gh127c": OptionalWarningGoldOracle(
+        "warning:", 8, prefix_lines=10, allow_compile_stderr=True),
+    "br_gh127d": OptionalWarningGoldOracle(
+        "warning:", 2, prefix_lines=4),
+    "br_gh127e": OptionalWarningGoldOracle(
+        "warning:", 2, prefix_lines=4),
     # Every out-of-range select that produces these pinned-Icarus diagnostics
     # is guarded by its predefined __ICARUS__ macro. Another compiler sees
     # only the portable semantic checks. Each diagnostic has one continuation
