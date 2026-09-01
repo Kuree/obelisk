@@ -82,16 +82,24 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimRefStoreOp>(operation)) {
+    uint32_t reference = reg(plan, op.getReference());
+    uint32_t value = reg(plan, op.getValue());
+    uint8_t valueKind = plan.layouts[value].kind;
+    // Managed object words use the dedicated change-publication path in the
+    // interpreter; packed continuous-value retention does not apply to them.
+    bool supportsContinuousStore = valueKind == Bits || valueKind == Logic ||
+                                   valueKind == String || valueKind == Real32 ||
+                                   valueKind == Real64;
     sim::EntryKind entryKind = plan.function.getEntryKind();
-    bool continuous = !isa<sim::EventType>(op.getValue().getType()) &&
-                      (op->hasAttr(continuousStoreAttrName) ||
-                       entryKind == sim::EntryKind::Continuous ||
-                       entryKind == sim::EntryKind::PortInput ||
-                       entryKind == sim::EntryKind::PortOutput);
+    bool continuous =
+        supportsContinuousStore && (op->hasAttr(continuousStoreAttrName) ||
+                                    entryKind == sim::EntryKind::Continuous ||
+                                    entryKind == sim::EntryKind::PortInput ||
+                                    entryKind == sim::EntryKind::PortOutput);
     emit({StoreState,
           static_cast<uint16_t>(
               continuous ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS : 0),
-          0, reg(plan, op.getReference()), reg(plan, op.getValue())});
+          0, reference, value});
     return success();
   }
   if (auto op = dyn_cast<sim::SimNetWriteOp>(operation)) {
