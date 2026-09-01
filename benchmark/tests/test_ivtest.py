@@ -70,6 +70,15 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertEqual(outcome.log, "program output\n")
 
 
+class ParallelismTest(unittest.TestCase):
+    def test_host_threads_are_divided_across_active_compilers(self):
+        with mock.patch.object(
+                ivtest.runner, "available_cpu_count", return_value=24):
+            self.assertEqual(ivtest._parallelism(24, 2669), (24, 1))
+            self.assertEqual(ivtest._parallelism(8, 2669), (8, 3))
+            self.assertEqual(ivtest._parallelism(24, 1), (1, 24))
+
+
 class FixtureDirectoryTest(unittest.TestCase):
     def test_continued_list_entry_preserves_sources_and_unit_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -151,7 +160,8 @@ class FixtureDirectoryTest(unittest.TestCase):
                                   side_effect=compile_from_fixture),
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10,
+                    compile_threads=3)
 
             self.assertEqual(outcome.status, model.COMPILE_FAIL)
             self.assertTrue(fixture_visible)
@@ -159,6 +169,7 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertEqual(source_spelling, "./ivltests/include_test.v")
             self.assertTrue(set(ivtest.DEFAULT_WARNING_SUPPRESSIONS)
                             <= set(compile_flags))
+            self.assertIn("--compile-threads=3", compile_flags)
 
     def test_compile_only_descriptor_does_not_run_the_binary(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -198,7 +209,6 @@ class FixtureDirectoryTest(unittest.TestCase):
             )
             self.assertFalse(compile_design.call_args.kwargs["single_unit"])
             execute.assert_not_called()
-
     def test_supported_upstream_compile_error_runs_its_self_check(self):
         with tempfile.TemporaryDirectory() as temporary:
             ivtest_dir = Path(temporary).resolve()

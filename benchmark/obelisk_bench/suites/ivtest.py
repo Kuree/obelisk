@@ -100,6 +100,14 @@ NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
 }
 
 
+def _parallelism(jobs: int, task_count: int) -> tuple[int, int]:
+    """Divide the host thread budget across concurrently compiled tests."""
+    workers = min(jobs, task_count)
+    active_compilers = max(1, workers)
+    threads = max(1, runner.available_cpu_count() // active_compilers)
+    return workers, threads
+
+
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
     """Canonicalize isolated-checkout paths for upstream text oracles."""
@@ -426,9 +434,11 @@ def read_items(ivtest_dir: Path, lists: list[Path]) -> list[Descriptor]:
             for key, fields in entries.items()]
 
 
-def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
-              timeout: float, vpi_code: tuple[str, ...] = (),
-              vpi_mode: str | None = None) -> tuple[str, model.Outcome]:
+def judge_one(
+        obelisk: str, ivtest_dir: Path, desc: Descriptor, timeout: float,
+        vpi_code: tuple[str, ...] = (), vpi_mode: str | None = None,
+        compile_threads: int | None = None,
+) -> tuple[str, model.Outcome]:
     """Compile, run, and judge one ivtest test in its own temporary directory."""
     if excluded := EXCLUDED.get(desc.key):
         return (desc.key, model.Outcome(
@@ -478,6 +488,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
         selected_vpi = vpi_mode or (
             "full" if native.inputs else "off")
         compile_flags = [*flags, "-I", tmp]
+        if compile_threads is not None:
+            compile_flags.append(f"--compile-threads={compile_threads}")
         source = str(desc.source)
         if desc.source.parent == ivtest_dir / "ivltests":
             source = f"./ivltests/{desc.source.name}"
@@ -594,6 +606,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
 
 def run(root: Path, args) -> dict[str, model.Outcome]:
     """Select, compile, run, and judge the ivtest corpus, optionally in parallel."""
+    if args.jobs < 1:
+        raise SystemExit("ivtest jobs must be at least one")
     requested = args.lists if args.lists else DEFAULT_LISTS
     lists = resolve_lists(root, requested)
     ivtest_dir = _ivtest_dir(root).resolve()
@@ -625,20 +639,25 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     vpi_code = tuple(
         str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
     vpi_mode = getattr(args, "vpi", None)
+    workers, compile_threads = _parallelism(args.jobs, len(items))
     print(f"Running {len(items)} ivtest tests from "
-          f"{', '.join(path.name for path in lists)} with -j{args.jobs} ...")
+          f"{', '.join(path.name for path in lists)} with "
+          f"{workers} worker(s), {compile_threads} compile thread(s) each ...")
 
     outcomes: dict[str, model.Outcome] = {}
-    if args.jobs == 1:
+    if workers == 0:
+        return outcomes
+    if workers == 1:
         for item in items:
             key, outcome = judge_one(
-                obelisk, ivtest_dir, item, timeout, vpi_code, vpi_mode)
+                obelisk, ivtest_dir, item, timeout, vpi_code, vpi_mode,
+                compile_threads)
             outcomes[key] = outcome
     else:
-        with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             for key, outcome in pool.map(
                     judge_one,
                     *zip(*[(obelisk, ivtest_dir, item, timeout, vpi_code,
-                            vpi_mode) for item in items])):
+                            vpi_mode, compile_threads) for item in items])):
                 outcomes[key] = outcome
     return outcomes
