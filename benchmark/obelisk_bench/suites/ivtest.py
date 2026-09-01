@@ -76,6 +76,12 @@ SELF_CHECKING_CE_OVERRIDES = {
     # rejects this source, but it is valid in the SystemVerilog mode used by
     # this harness and carries a complete parity self-check.
     "br1015a",
+    # IEEE 1800-2017 3.12.1 allows the compilation-unit scope to contain any
+    # package item, and 26.2 includes task and function declarations. These
+    # sources are CE tests only in their old-Verilog list and self-check the
+    # valid SystemVerilog behavior used by this harness.
+    "br_gh25a",
+    "br_gh25b",
     # IEEE 1800-2017 15.5.1 explicitly defines triggering elements of a named
     # event array. The source exercises four fixed-array elements and carries
     # its own event-count self-check.
