@@ -25,6 +25,7 @@ import ast
 import re
 import shlex
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
@@ -39,7 +40,14 @@ SOURCE = model.GitSource(
 SINGLE_UNIT = True
 FINISHED_MARKER = "*-* All Finished *-*"
 STOP_MARKER = "$stop"
-RUNTIME_ERROR = re.compile(r"(?m)^(?:ERROR:|%Error:)")
+RUNTIME_ERROR = re.compile(
+    r"(?m)^(?:\[[^\]\n]*\]\s+)?(?:ERROR:|%Error:)")
+RUNTIME_ERROR_LINE = re.compile(
+    r"(?m)^(?:\[[^\]\n]*\]\s+)?(?:ERROR:|%Error:)[^\n]*")
+RUNTIME_ERROR_LOCATION = re.compile(
+    r"([^/\\:\s]+\.(?:s?vh?)):(\d+):")
+ASSERTION_FAILURE = re.compile(r"\bassert(?:ion)?\b.*\bfailed\b",
+                               re.IGNORECASE)
 # A small number of upstream self-checks call $finish after their checks and
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
@@ -491,6 +499,13 @@ DEFAULT_ASSERT_FAILURE_ACTION = Exclusion(
     "when it fails, even if it has an explicit pass statement; 20.12 also "
     "identifies this as the default fail action, but the test deliberately "
     "fails two such assertions and expects a clean run")
+DEFERRED_REPORT_QUEUE = Exclusion(
+    "IEEE 1800-2017 16.4.1",
+    "deferred reports remain queued until they mature or the process reaches "
+    "one of the three flush points listed by 16.4.2, while 16.3 requires a "
+    "failing immediate assert or assume without an else clause to call $error "
+    "even when it has a pass statement; the golden matures reports after "
+    "ordinary task returns and omits the pass-only statements' default errors")
 TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY = Exclusion(
     "IEEE 1800-2017 12.5.3.1",
     "the implementation must report a unique-case violation but the clause "
@@ -524,6 +539,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_goto_rep": TWO_STATE_INITIALIZATION,
     "t_assert_nonconsec_rep": NONCONSECUTIVE_IMPLICATION_REPORT_COUNT,
     "t_assert_pre": USE_BEFORE_DECLARATION,
+    "t_assert_ctl_arg": DEFERRED_REPORT_QUEUE,
     "t_assert_ctl_pass_actions": ACTIVE_ASSERTION_ACTION_CONTROL,
     "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
     "t_assert_seq_event_unsup": LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY,
@@ -931,6 +947,86 @@ def contains_runtime_error(stdout: str, stderr: str) -> bool:
     return bool(RUNTIME_ERROR.search(stdout) or RUNTIME_ERROR.search(stderr))
 
 
+def _golden_output(descriptor: Path) -> Path | None:
+    """Return the canonical sibling golden named by an execute descriptor."""
+    if not descriptor.exists():
+        return None
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    for arguments in descriptor_calls(text, "execute"):
+        try:
+            call = ast.parse(f"_execute({arguments})", mode="eval").body
+        except SyntaxError:
+            continue
+        for keyword in call.keywords:
+            value = keyword.value
+            if (keyword.arg == "expect_filename" and
+                    isinstance(value, ast.Attribute) and
+                    value.attr == "golden_filename" and
+                    isinstance(value.value, ast.Name) and
+                    value.value.id == "test"):
+                golden = descriptor.with_suffix(".out")
+                return golden if golden.exists() else None
+    return None
+
+
+def _runtime_assertion_error_signature(
+        *outputs: str,
+) -> tuple[Counter[tuple[str, int]], int]:
+    """Count assertion errors by source location and all runtime errors."""
+    locations: Counter[tuple[str, int]] = Counter()
+    total = 0
+    for output in outputs:
+        for error in RUNTIME_ERROR_LINE.finditer(output):
+            total += 1
+            line = error.group(0)
+            location = RUNTIME_ERROR_LOCATION.search(line)
+            if location and ASSERTION_FAILURE.search(line):
+                locations[(location.group(1), int(location.group(2)))] += 1
+    return locations, total
+
+
+def _golden_runtime_error_match(
+        descriptor: Path, stdout: str, stderr: str,
+) -> bool | None:
+    """Whether every runtime error matches an intentional golden assertion.
+
+    Verilator and Obelisk format the same default assertion failure
+    differently, and stdout/stderr capture loses their interleaving. Match the
+    authoritative source location multiset instead. Refuse to excuse a golden
+    with no errors, an unrecognized error, a missing diagnostic, or an extra
+    diagnostic.
+    """
+    golden = _golden_output(descriptor)
+    if golden is None:
+        return None
+    expected, expected_total = _runtime_assertion_error_signature(
+        golden.read_text(encoding="utf-8", errors="replace"))
+    if expected_total == 0:
+        return None
+    if expected_total != expected.total():
+        return False
+    actual, actual_total = _runtime_assertion_error_signature(stdout, stderr)
+    return (actual_total == expected_total and
+            actual_total == actual.total() and actual == expected)
+
+
+def runtime_errors_match_golden(
+        descriptor: Path, stdout: str, stderr: str,
+) -> bool:
+    """Whether the descriptor has runtime errors and all match its golden."""
+    return _golden_runtime_error_match(descriptor, stdout, stderr) is True
+
+
+def runtime_errors_mismatch_golden(
+        descriptor: Path, stdout: str, stderr: str,
+) -> bool:
+    """Whether runtime errors are unexpected, missing, or do not match."""
+    matched = _golden_runtime_error_match(descriptor, stdout, stderr)
+    if matched is not None:
+        return not matched
+    return contains_runtime_error(stdout, stderr)
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top") -> str:
@@ -1093,7 +1189,10 @@ def judge_one(
             return model.Outcome(
                 model.RUN_FAIL,
                 classify_dependency_failure(name, runtime_log))
-        if (result.ok and not runtime_error and
+        descriptor = top.with_suffix(".py")
+        runtime_error_mismatch = runtime_errors_mismatch_golden(
+            descriptor, result.stdout, result.stderr)
+        if (result.ok and not runtime_error_mismatch and
                 (FINISHED_MARKER in result.stdout or
                  top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER)):
             return model.Outcome(model.PASS)
@@ -1103,7 +1202,7 @@ def judge_one(
                 model.RUN_FAIL,
                 classify_dependency_failure(name, runtime_log))
         # Test doesn't use the marker at all. Treat clean exit as pass.
-        if result.ok and not runtime_error:
+        if result.ok and not runtime_error_mismatch:
             return model.Outcome(model.PASS)
         return model.Outcome(
             model.RUN_FAIL,

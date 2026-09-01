@@ -227,6 +227,33 @@ class RuntimeErrorTest(unittest.TestCase):
         self.assertFalse(verilator.contains_runtime_error(
             "*-* All Finished *-*\n", "warning: ignored key\n"))
 
+    def test_golden_runtime_errors_must_match_every_source_location(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            descriptor = Path(tmp) / "t_expected.py"
+            descriptor.write_text(
+                "test.execute(expect_filename=test.golden_filename)\n",
+                encoding="utf-8")
+            descriptor.with_suffix(".out").write_text(
+                "[0] %Error: t_expected.v:12: Assertion failed\n"
+                "[0] %Error: t_expected.v:12: Assertion failed\n",
+                encoding="utf-8")
+            exact = (
+                "ERROR: /tmp/t_expected.v:12: immediate assertion failed.\n"
+                "ERROR: /tmp/t_expected.v:12: immediate assertion failed.\n")
+            extra = exact + (
+                "ERROR: /tmp/t_expected.v:14: immediate assertion failed.\n")
+            missing = "ERROR: /tmp/t_expected.v:12: immediate assertion failed.\n"
+            self.assertTrue(verilator.runtime_errors_match_golden(
+                descriptor, "", exact))
+            self.assertFalse(verilator.runtime_errors_match_golden(
+                descriptor, "", extra))
+            self.assertFalse(verilator.runtime_errors_match_golden(
+                descriptor, "", missing))
+            self.assertFalse(verilator.runtime_errors_mismatch_golden(
+                descriptor, "", exact))
+            self.assertTrue(verilator.runtime_errors_mismatch_golden(
+                descriptor, "", ""))
+
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
