@@ -834,7 +834,9 @@ UnitLowering::outlineForkBranch(
     bool captureReferences,
     ArrayRef<std::pair<Operation *, Value>> expressionCaptures,
     ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures,
-    ArrayRef<std::pair<StringRef, Value>> explicitCaptures) {
+    ArrayRef<std::pair<StringRef, Value>> explicitCaptures,
+    SmallVectorImpl<MonitorObservation> *outlinedMonitorObservations,
+    bool *outlinedMonitorObservationComplete) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -1167,6 +1169,11 @@ UnitLowering::outlineForkBranch(
     outlined.erase();
     return failure();
   }
+  if (outlinedMonitorObservations)
+    llvm::append_range(*outlinedMonitorObservations,
+                       nested.monitorObservations);
+  if (outlinedMonitorObservationComplete)
+    *outlinedMonitorObservationComplete = nested.monitorObservationComplete;
   root->erase();
   outlined->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   return std::make_pair(outlined, std::move(captures));
@@ -1187,14 +1194,26 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                              .str();
 
   Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
+  Attribute previousMonitorCallback =
+      call->getAttr("obelisk_sim.monitor_callback");
   StringAttr previousName = call.getCalleeNameAttr();
   call->setAttr("obelisk_sim.fork_code_unit_id",
                 builder.getI64IntegerAttr(stableCodeUnitID(identity)));
   call->setAttr("callee_name", builder.getStringAttr(immediateName));
+  if (persistent)
+    call->setAttr("obelisk_sim.monitor_callback", builder.getUnitAttr());
+  SmallVector<MonitorObservation> observations;
+  bool observationComplete = false;
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
       outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
-                        /*captureReferences=*/true);
+                        /*captureReferences=*/true, {}, {}, {},
+                        persistent ? &observations : nullptr,
+                        persistent ? &observationComplete : nullptr);
   call->setAttr("callee_name", previousName);
+  if (previousMonitorCallback)
+    call->setAttr("obelisk_sim.monitor_callback", previousMonitorCallback);
+  else
+    call->removeAttr("obelisk_sim.monitor_callback");
   if (previousForkID)
     call->setAttr("obelisk_sim.fork_code_unit_id", previousForkID);
   else
@@ -1235,7 +1254,24 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
       watched.push_back(argument);
   for (sim::SimReturnOp returnOp : returns) {
     OpBuilder waitBuilder(returnOp);
-    if (watched.empty()) {
+    if (observationComplete && !observations.empty()) {
+      SmallVector<Value> operands;
+      SmallVector<int32_t> edges(observations.size(),
+                                 static_cast<int32_t>(sim::EdgeKind::Change));
+      SmallVector<int32_t> conditionIndices(observations.size(), -1);
+      operands.reserve(observations.size() * 2);
+      for (const MonitorObservation &observation : observations)
+        operands.push_back(observation.observer);
+      for (const MonitorObservation &observation : observations)
+        operands.push_back(observation.initial);
+      sim::SimSuspendObserveOp::create(
+          waitBuilder, returnOp.getLoc(), operands, uint32_t{0}, edges,
+          conditionIndices, sim::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else if ((observationComplete && observations.empty()) ||
+               watched.empty()) {
       sim::SimSuspendForeverOp::create(
           waitBuilder, returnOp.getLoc(), ValueRange{},
           sim::ContinuationSiteAttr{},

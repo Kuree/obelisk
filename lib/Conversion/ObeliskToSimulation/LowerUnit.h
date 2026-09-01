@@ -58,6 +58,14 @@ private:
   struct LoweredOutputList {
     ::mlir::SmallVector<::mlir::Value> items;
     ::mlir::SmallVector<int32_t> flags;
+    /// The value produced directly from each semantic output operand. String
+    /// literals and omitted operands have no entry value.
+    ::mlir::SmallVector<::mlir::Value> sourceValues;
+  };
+
+  struct MonitorObservation {
+    ::mlir::Value observer;
+    ::mlir::Value initial;
   };
 
   struct CapturedLValue {
@@ -420,7 +428,10 @@ private:
       ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
           globalFutureCurrentCaptures = {},
       ::mlir::ArrayRef<std::pair<::llvm::StringRef, ::mlir::Value>>
-          explicitCaptures = {});
+          explicitCaptures = {},
+      ::mlir::SmallVectorImpl<MonitorObservation> *monitorObservations =
+          nullptr,
+      bool *monitorObservationComplete = nullptr);
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
@@ -785,6 +796,8 @@ private:
   ::mlir::SmallVector<ControlScope> controlScopes;
   ::llvm::StringMap<uint64_t> inheritedControlIDs;
   ::llvm::StringMap<uint64_t> assertionControlIDs;
+  ::mlir::SmallVector<MonitorObservation> monitorObservations;
+  bool monitorObservationComplete = false;
   uint64_t nextForkOrdinal = 0;
   uint64_t nextPostponedOrdinal = 0;
   uint64_t nextPlaOrdinal = 0;

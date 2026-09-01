@@ -730,6 +730,70 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                       "clocking_iff", unit.id, unit.hierarchy});
         return;
       }
+      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
+          call && call.getIsSystemCall()) {
+        StringRef name = call.getCalleeName();
+        bool fileMonitor = name == "$fmonitor" || name == "$fmonitorb" ||
+                           name == "$fmonitoro" || name == "$fmonitorh";
+        bool monitor = fileMonitor || name == "$monitor" ||
+                       name == "$monitorb" || name == "$monitoro" ||
+                       name == "$monitorh";
+        if (monitor) {
+          SmallVector<Operation *> arguments = getChildren(call);
+          SmallVector<Operation *> observedArguments;
+          SmallVector<Operation *> classArguments;
+          bool complete = true;
+          for (Operation *argument :
+               ArrayRef(arguments).drop_front(fileMonitor ? 1 : 0)) {
+            if (isa<semantic::SVEmptyArgumentExpressionOp>(argument))
+              continue;
+            Operation *spelling = argument;
+            while (isa<semantic::SVConversionExpressionOp>(spelling)) {
+              SmallVector<Operation *> converted = getChildren(spelling);
+              if (converted.size() != 1)
+                break;
+              spelling = converted.front();
+            }
+            if (isa<semantic::SVStringLiteralOp, semantic::SVIntegerLiteralOp,
+                    semantic::SVUnbasedUnsizedIntegerLiteralOp,
+                    semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(
+                    spelling) ||
+                spelling->hasAttr("obelisk_sim.constant_value"))
+              continue;
+            if (auto system = dyn_cast<semantic::SVCallExpressionOp>(spelling);
+                system && system.getIsSystemCall() &&
+                (system.getCalleeName() == "$time" ||
+                 system.getCalleeName() == "$stime" ||
+                 system.getCalleeName() == "$realtime"))
+              continue;
+            FailureOr<Type> normalized = getNormalizedSemanticType(argument);
+            if (failed(normalized)) {
+              complete = false;
+              continue;
+            }
+            if (isa<sim::ClassHandleType>(*normalized))
+              classArguments.push_back(argument);
+            else if (!isa<FloatType>(*normalized) &&
+                     !sim::getPackedScalarType(*normalized)) {
+              complete = false;
+              continue;
+            }
+            observedArguments.push_back(argument);
+          }
+          if (complete) {
+            for (Operation *argument : classArguments)
+              argument->setAttr(
+                  observerCoercedTypeAttrName,
+                  TypeAttr::get(IntegerType::get(module.getContext(), 64)));
+            for (Operation *argument : observedArguments)
+              observerCandidates.push_back({argument, ObserverResult::Value,
+                                            "monitor", unit.id,
+                                            unit.hierarchy});
+          }
+          call->setAttr("obelisk_sim.monitor_observation_complete",
+                        builder.getBoolAttr(complete));
+        }
+      }
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
       if (!event)
         return;

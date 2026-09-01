@@ -382,6 +382,7 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
                                    bool interpretLiteralsAsFormats,
                                    std::optional<unsigned> designatedFormat) {
   LoweredOutputList output;
+  output.sourceValues.resize(operations.size());
   Type stringType = sim::StringType::get(function.getContext());
   auto getStringLiteral = [&](Operation *child) {
     Operation *spelling = child;
@@ -536,6 +537,7 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
     FailureOr<Value> value = lowerExpression(child);
     if (failed(value))
       return failure();
+    output.sourceValues[index] = *value;
     if (isFormat) {
       Value format = *value;
       if (!isa<sim::StringType>(format.getType())) {
@@ -1094,6 +1096,46 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         lowerOutputListItems(ArrayRef(children).drop_front(firstItem), true);
     if (failed(output))
       return failure();
+    if (op->hasAttr("obelisk_sim.monitor_callback")) {
+      auto complete = op->getAttrOfType<BoolAttr>(
+          "obelisk_sim.monitor_observation_complete");
+      monitorObservationComplete = complete && complete.getValue();
+      if (monitorObservationComplete) {
+        ArrayRef<Operation *> monitored =
+            ArrayRef(children).drop_front(firstItem);
+        for (auto [index, child] : llvm::enumerate(monitored)) {
+          if (!child->hasAttr("obelisk_sim.observer"))
+            continue;
+          Value initial = output->sourceValues[index];
+          if (!initial) {
+            emitError(getSemanticLocation(child))
+                << "monitor observer has no evaluated initial value";
+            return failure();
+          }
+          FailureOr<Value> observer = bindObserver(child);
+          if (failed(observer))
+            return failure();
+          Type resultType =
+              cast<sim::ObserverType>((*observer).getType()).getResultType();
+          if (!isa<FloatType>(resultType)) {
+            FailureOr<Value> scalar =
+                toPackedScalar(initial, getSemanticLocation(child));
+            if (failed(scalar))
+              return failure();
+            initial = *scalar;
+          }
+          if (initial.getType() != resultType) {
+            FailureOr<Value> converted =
+                convert(initial, resultType, isSignedNode(child),
+                        getSemanticLocation(child));
+            if (failed(converted))
+              return failure();
+            initial = *converted;
+          }
+          monitorObservations.push_back({*observer, initial});
+        }
+      }
+    }
     llvm::append_range(items, output->items);
     llvm::append_range(flags, output->flags);
     auto timeMultiplier =
