@@ -442,6 +442,12 @@ VECTOR_STRENGTH_FORMAT = Exclusion(
     "each %v conversion requires a corresponding scalar net reference; the "
     "test passes a four-bit vector and expects Icarus's underscore-joined "
     "multi-bit strength extension")
+REAL_WITH_INTEGER_DISPLAY_FORMAT = Exclusion(
+    "IEEE 1800-2017 21.2.1.2",
+    "the integer display formats are defined for integral arguments, while "
+    "real arguments use %e, %f, or %g; the test passes real values to %d, %x, "
+    "and %b and requires Icarus's extension, including its negative-zero "
+    "decimal spelling")
 ZERO_PADDED_DECIMAL_FORMAT = Exclusion(
     "IEEE 1800-2017 21.2.1.3",
     "decimal fields are padded with leading spaces; the gold file instead "
@@ -685,6 +691,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "br960b": MISSING_SDF_VERSION,
     "br960c": MISSING_SDF_VERSION,
     "br960d": MISSING_SDF_VERSION,
+    "br1029a": REAL_WITH_INTEGER_DISPLAY_FORMAT,
+    "br1029b": REAL_WITH_INTEGER_DISPLAY_FORMAT,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
     "display_bug": PACKED_DIMENSION_REQUIRES_RANGE,
