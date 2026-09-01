@@ -348,6 +348,11 @@ PORT_DECLARATION_WITHOUT_LIST = Exclusion(
     "a non-ANSI module header requires list_of_ports and its body declarations "
     "describe identifiers in that list; the test omits the list and then "
     "declares output ports in the body")
+MODULE_INSTANCE_PORT_PARENTHESES = Exclusion(
+    "IEEE 1800-2017 A.4.1.1",
+    "hierarchical_instance requires parentheses around its optional port "
+    "connection list; the test omits the parentheses from an arrayed module "
+    "instance and expects Icarus's relaxed grammar")
 LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
@@ -581,6 +586,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
     "array_word_check": DUMPVARS_SELECTED_VARIABLE,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
+    "br_gh553": MODULE_INSTANCE_PORT_PARENTHESES,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
     "dump_memword": DUMPVARS_SELECTED_VARIABLE,
