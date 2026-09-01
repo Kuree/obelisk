@@ -380,6 +380,11 @@ MACRO_REDEFINITION_WARNING_POLICY = Exclusion(
     "but the clause does not require a warning or distinguish identical from "
     "changed replacement text; this test checks Icarus-specific warning "
     "switch policy and exact diagnostic text")
+STRING_WILDCARD_EQUALITY_EXTENSION = Exclusion(
+    "IEEE 1800-2017 6.16",
+    "the complete string-operator table does not include wildcard equality, "
+    "which 11.4.6 defines as a bitwise integral comparison; this mixed test "
+    "requires Icarus's ==? and !=? extension for string operands")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -458,6 +463,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "parameter_in_generate1": GENERATE_BLOCK_PARAMETER,
     "parameter_no_default": PARAMETER_PORT_WITHOUT_DEFAULT,
     "param_string": UNTYPED_STRING_PARAMETER_IS_INTEGRAL,
+    "param_string_compare": STRING_WILDCARD_EQUALITY_EXTENSION,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
     "resetall": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
