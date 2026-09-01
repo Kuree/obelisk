@@ -762,6 +762,21 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
         "IEEE 1800-2017 Annex D.2 explicitly permits $countdrivers to query "
         "a bit-select of a vector net; pinned Slang rejects every selected "
         "net argument with ExpectedNetRef before Obelisk IR is imported"),
+    "func_init_var1": (
+        "IEEE 1800-2017 13.4.3 requires variables in each constant-function "
+        "invocation to be initialized as for normal simulation; pinned Slang "
+        "warns that it skips the static initializer and folds 1 + value as "
+        "value before Obelisk IR is imported"),
+    "func_init_var2": (
+        "IEEE 1800-2017 13.4.3 requires variables in each constant-function "
+        "invocation to be initialized as for normal simulation; pinned Slang "
+        "warns that it skips the static initializer and folds 1 + value as "
+        "value before Obelisk IR is imported"),
+    "func_init_var3": (
+        "IEEE 1800-2017 13.4.3 requires variables in each constant-function "
+        "invocation to be initialized as for normal simulation; pinned Slang "
+        "warns that it skips the static initializer and folds 1 + value as "
+        "value before Obelisk IR is imported"),
     "indef_width_concat": (
         "IEEE 1800-2017 11.4.12 forbids unsized constant numbers in "
         "concatenations; pinned Slang accepts {pval, 2} instead of rejecting "
