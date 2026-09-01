@@ -353,6 +353,11 @@ MODULE_INSTANCE_PORT_PARENTHESES = Exclusion(
     "hierarchical_instance requires parentheses around its optional port "
     "connection list; the test omits the parentheses from an arrayed module "
     "instance and expects Icarus's relaxed grammar")
+PACKED_DIMENSION_REQUIRES_RANGE = Exclusion(
+    "IEEE 1800-2017 A.2.5",
+    "a sized packed_dimension requires constant_range with two bounds; the "
+    "test uses the one-expression unpacked array shorthand after a packed "
+    "struct type and expects Icarus to interpret it as [0:1]")
 LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
@@ -589,6 +594,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "br_gh553": MODULE_INSTANCE_PORT_PARENTHESES,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
+    "display_bug": PACKED_DIMENSION_REQUIRES_RANGE,
     "dump_memword": DUMPVARS_SELECTED_VARIABLE,
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
