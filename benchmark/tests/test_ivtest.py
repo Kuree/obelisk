@@ -301,6 +301,37 @@ class FixtureDirectoryTest(unittest.TestCase):
                 "nested_impl_event2", gold, "", "Triggered 1 at 40\n", "",
                 True, False))
 
+    def test_required_runtime_warning_preserves_every_other_gold_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            gold = Path(temporary) / "pic.gold"
+            gold.write_text(
+                "start\n"
+                "                  50: portc changes to: 00\n"
+                "                  50: portb changes to: 00\n"
+                "WARNING: source.v:1: $readmemh(contrib/TEST9.ROM): "
+                "Too many words in the file\n"
+                "finish\n",
+                encoding="ascii")
+            warning = (
+                "WARNING: $readmemh: data word count does not match address "
+                "range\n")
+            self.assertTrue(ivtest._matches_required_runtime_warning_gold(
+                "pic", gold, "",
+                "start\n"
+                "                  50: portb changes to: 00\n"
+                "                  50: portc changes to: 00\n"
+                "finish\n",
+                warning, True, False))
+            self.assertFalse(ivtest._matches_required_runtime_warning_gold(
+                "pic", gold, "", "start\nchanged\n", warning, True, False))
+            self.assertFalse(ivtest._matches_required_runtime_warning_gold(
+                "pic", gold, "",
+                "start\n"
+                "                  50: portb changes to: 00\n"
+                "                  50: portc changes to: 00\n"
+                "finish\n",
+                warning + warning, True, False))
+
     def test_arithmetic_stress_test_has_a_parallel_runtime_floor(self):
         with tempfile.TemporaryDirectory() as temporary:
             ivtest_dir = Path(temporary).resolve()

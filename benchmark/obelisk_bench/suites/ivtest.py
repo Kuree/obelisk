@@ -116,6 +116,28 @@ OPTIONAL_WARNING_GOLD_PREFIXES = {
     "nested_impl_event2": "warning: @* found no sensitivities",
 }
 
+# IEEE 1800-2017 21.4 requires this warning but does not prescribe its text.
+# Preserve every other gold line exactly and require exactly one corresponding
+# Obelisk runtime warning. Lookup is O(1), and the comparison is linear only in
+# the selected test's output; compiler and simulator paths are unaffected.
+class RequiredRuntimeWarningGoldOracle(NamedTuple):
+    gold_marker: str
+    runtime_warning: str
+    unordered_groups: tuple[frozenset[str], ...]
+
+
+REQUIRED_RUNTIME_WARNING_GOLD_LINES: dict[
+    str, RequiredRuntimeWarningGoldOracle
+] = {
+    "pic": RequiredRuntimeWarningGoldOracle(
+        "$readmemh(contrib/TEST9.ROM): Too many words",
+        "WARNING: $readmemh: data word count does not match address range",
+        (frozenset((
+            "                  50: portb changes to: 00",
+            "                  50: portc changes to: 00",
+        )),)),
+}
+
 # IEEE 1800-2017 9.2.2.2 through 9.2.2.4 recommend additional modeling
 # diagnostics for always_comb/always_latch/always_ff but do not prescribe
 # their wording or count. These gold files otherwise end in a short portable
@@ -223,6 +245,44 @@ def _matches_optional_warning_gold(
         return False
     return (result_ok and not timed_out and not compile_stderr and not stderr
             and stdout == "".join(expected[1:]))
+
+
+def _matches_required_runtime_warning_gold(
+        key: str, gold: Path, compile_stderr: str, stdout: str, stderr: str,
+        result_ok: bool, timed_out: bool,
+) -> bool:
+    """Compare exact behavior around one mandatory vendor-formatted warning."""
+    oracle = REQUIRED_RUNTIME_WARNING_GOLD_LINES.get(key)
+    if oracle is None or not gold.exists():
+        return False
+    expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
+        keepends=True)
+    warning_lines = [
+        index for index, line in enumerate(expected)
+        if oracle.gold_marker in line
+    ]
+    if len(warning_lines) != 1:
+        return False
+    del expected[warning_lines[0]]
+    expected_text = "".join(expected)
+    expected_lines = expected_text.splitlines()
+    actual_lines = stdout.splitlines()
+    for group in oracle.unordered_groups:
+        for lines in (expected_lines, actual_lines):
+            positions = [
+                index for index, line in enumerate(lines) if line in group
+            ]
+            if (len(positions) != len(group) or
+                    positions != list(range(positions[0],
+                                            positions[0] + len(group)))):
+                return False
+            start = positions[0]
+            lines[start:start + len(group)] = sorted(
+                lines[start:start + len(group)])
+    return (result_ok and not timed_out and not compile_stderr and
+            stderr.splitlines() == [oracle.runtime_warning] and
+            stdout.endswith("\n") == expected_text.endswith("\n") and
+            actual_lines == expected_lines)
 
 
 class Exclusion(NamedTuple):
@@ -785,6 +845,13 @@ def judge_one(
                     return (desc.key, model.Outcome(model.PASS))
                 return (desc.key, dependency_failure(
                     desc.key, model.RUN_FAIL, output))
+            if desc.key in REQUIRED_RUNTIME_WARNING_GOLD_LINES:
+                if _matches_required_runtime_warning_gold(
+                        desc.key, desc.gold, compiled.stderr, result.stdout,
+                        result.stderr, result.ok, result.timed_out):
+                    return (desc.key, model.Outcome(model.PASS))
+                return (desc.key, dependency_failure(
+                    desc.key, model.RUN_FAIL, output + result.stderr))
             if _matches_optional_warning_gold(
                     desc.key, desc.gold, compiled.stderr, result.stdout,
                     result.stderr, result.ok, result.timed_out):
