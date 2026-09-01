@@ -196,6 +196,10 @@ PROCEDURAL_FORCE_VARIABLE_SELECT = Exclusion(
 # after either compilation or simulation so a dependency update that moves the
 # failure across that boundary does not silently lose its classification.
 KNOWN_SLANG_BUGS: dict[str, str] = {
+    "pr1792734": (
+        "IEEE 1800-2017 5.7.1 permits underscores anywhere in a number except "
+        "the first character and ignores them; pinned Slang changes 7'dz__ "
+        "from high impedance to unknown while importing the literal"),
     "sv_unit1b": (
         "IEEE 1800-2017 22.5.1 permits macro redefinition and requires the "
         "latest definition to prevail; pinned Slang gives command-line "
