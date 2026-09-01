@@ -15,4 +15,4 @@ endmodule
 // Collapsing this path onto the destination actor would incorrectly add the
 // intermediate delay before the module-path delay. Transitive source closure
 // is therefore restricted to zero-delay combinational actors.
-// CHECK: error: simple specify path driver must depend only on its declared whole inputs
+// CHECK: error: simple specify path driver must directly observe every declared whole input

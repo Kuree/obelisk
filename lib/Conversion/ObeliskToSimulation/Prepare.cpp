@@ -3061,13 +3061,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool hasStateDependent = llvm::any_of(paths, [](const SimpleTimingPath &p) {
       return p.condition || p.ifnone;
     });
-    auto hasExactInputs = [&](Operation *unit, bool allowTransitive) {
-      // Clause 30.4.3 explicitly makes an edge path's arbitrary data-source
-      // expression irrelevant to propagation and events. Its functional
-      // destination actor therefore needs no dependency relationship to the
-      // path source or the preserved metadata expression.
-      if (!hasSimplePath)
-        return true;
+    enum class DirectInputMatch { Missing, Exact, Superset };
+    llvm::DenseMap<Operation *, DirectInputMatch> directInputMatches;
+    auto classifyDirectInputs = [&](Operation *unit) {
+      auto cached = directInputMatches.find(unit);
+      if (cached != directInputMatches.end())
+        return cached->second;
       llvm::StringSet<> referencedPaths;
       for (Operation *root : getDriverDependencyRoots(unit))
         root->walk([&](Operation *nested) {
@@ -3075,12 +3074,30 @@ void ObeliskSimPreparePass::runOnOperation() {
                   nested->getAttrOfType<StringAttr>("referenced_path"))
             referencedPaths.insert(referenced.getValue());
         });
-      bool exact = referencedPaths.size() == driverInputs.size();
-      if (exact)
+      bool containsAll = referencedPaths.size() >= driverInputs.size();
+      if (containsAll)
         for (StringRef input : driverInputs.keys())
-          exact &= referencedPaths.contains(input);
-      if (exact || !allowTransitive)
-        return exact;
+          containsAll &= referencedPaths.contains(input);
+      DirectInputMatch match = DirectInputMatch::Missing;
+      if (containsAll)
+        match = referencedPaths.size() == driverInputs.size()
+                    ? DirectInputMatch::Exact
+                    : DirectInputMatch::Superset;
+      directInputMatches.try_emplace(unit, match);
+      return match;
+    };
+    auto hasExactInputs = [&](Operation *unit, bool allowTransitive) {
+      // Clause 30.4.3 explicitly makes an edge path's arbitrary data-source
+      // expression irrelevant to propagation and events. Its functional
+      // destination actor therefore needs no dependency relationship to the
+      // path source or the preserved metadata expression.
+      if (!hasSimplePath)
+        return true;
+      DirectInputMatch direct = classifyDirectInputs(unit);
+      if (direct == DirectInputMatch::Exact)
+        return true;
+      if (direct == DirectInputMatch::Superset || !allowTransitive)
+        return false;
       llvm::StringSet<> transitiveInputs;
       llvm::DenseSet<Operation *> activeDrivers;
       std::function<bool(Operation *)> collect = [&](Operation *driverUnit) {
@@ -3109,11 +3126,20 @@ void ObeliskSimPreparePass::runOnOperation() {
         activeDrivers.erase(driverUnit);
         return valid;
       };
-      exact = collect(unit) && transitiveInputs.size() == driverInputs.size();
+      bool exact =
+          collect(unit) && transitiveInputs.size() == driverInputs.size();
       if (exact)
         for (StringRef input : driverInputs.keys())
           exact &= transitiveInputs.contains(input);
       return exact;
+    };
+    auto observesAllPathInputsDirectly = [&](Operation *unit) {
+      // Extra functional dependencies are safe in the masked plan: a wake
+      // with no changed path source has an empty active mask and publishes
+      // immediately. A missing path dependency is not safe because its
+      // snapshot would remain stale until an unrelated later wake.
+      return !hasSimplePath ||
+             classifyDirectInputs(unit) != DirectInputMatch::Missing;
     };
     auto hasDelayedEdgeDependency = [&](Operation *unit) {
       auto isLiteralZeroDelay = [&](Operation *operation) {
@@ -3470,10 +3496,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         break;
       }
       if (!span.procedural && validatedUnits.insert(span.unit).second &&
-          !hasExactInputs(span.unit, false)) {
+          !observesAllPathInputsDirectly(span.unit)) {
         emitError(getSemanticLocation(path.declaration))
-            << "simple specify path driver must depend only on its declared "
-               "whole inputs";
+            << "simple specify path driver must directly observe every "
+               "declared whole input";
         invalid = true;
         break;
       }
