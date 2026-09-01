@@ -524,6 +524,11 @@ MODULE_INSTANCE_PORT_PARENTHESES = Exclusion(
     "hierarchical_instance requires parentheses around its optional port "
     "connection list; the test omits the parentheses from an arrayed module "
     "instance and expects Icarus's relaxed grammar")
+MODULE_PARAMETER_ASSIGNMENT_PARENTHESES = Exclusion(
+    "IEEE 1800-2017 23.3.2",
+    "parameter_value_assignment is #(list_of_parameter_assignments); the "
+    "test uses the gate-delay-style #number form on module instances and "
+    "expects Icarus to treat each number as an ordered parameter value")
 PACKED_DIMENSION_REQUIRES_RANGE = Exclusion(
     "IEEE 1800-2017 A.2.5",
     "a sized packed_dimension requires constant_range with two bounds; the "
@@ -915,6 +920,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr2972866": MISSING_SDF_VERSION,
     "pr3064375": TIME_ZERO_EVENT_ARMING_RACE,
+    "pr3194155": MODULE_PARAMETER_ASSIGNMENT_PARENTHESES,
     "pr3587570": CONTRADICTORY_COMBINATIONAL_UDP_ROWS,
     "udp_dff": NAMED_UDP_TERMINAL_CONNECTIONS,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
