@@ -311,6 +311,12 @@ GENERATE_BLOCK_PARAMETER = Exclusion(
     "a parameter declared in a generate block is legal and is treated as a "
     "localparam under 6.20.4; this CE entry checks its rejection in IEEE "
     "1364-2005, but Obelisk intentionally compiles the corpus as SystemVerilog")
+ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA = Exclusion(
+    "IEEE 1800-2017 10.4.2",
+    "an event-controlled nonblocking assignment snapshots its right-hand side "
+    "and destination before waiting, but commits in the NBA region after "
+    "Active-region execution; the test reads immediately after blocking ->e "
+    "and requires Icarus's update-before-read ordering")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -357,6 +363,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
+    "nb_ec_concat": ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
