@@ -86,6 +86,11 @@ KNOWN_SLANG_BUGS = {
         "IEEE 1800-2017 7.12.1 permits this locator-method use; pinned Slang "
         "v11 crashes during speculative constant evaluation before emitting "
         "IR"),
+    "t_inst_dff": (
+        "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
+        "follow its final override value, and 5.7.1 makes self-determined '0 "
+        "one bit; pinned Slang instead widens the override to the parameter's "
+        "32-bit default before folding $bits(RESET)"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "
