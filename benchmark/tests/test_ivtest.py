@@ -69,6 +69,13 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertEqual(outcome.status, model.RUN_FAIL)
         self.assertEqual(outcome.log, "program output\n")
 
+    def test_named_scope_parameter_override_is_a_slang_bug(self):
+        outcome = ivtest.dependency_failure(
+            "scoped_events", model.COMPILE_FAIL, "frontend diagnostic\n")
+        self.assertIn("known Slang bug:", outcome.log)
+        self.assertIn("IEEE 1800-2017 23.10.2", outcome.log)
+        self.assertTrue(outcome.log.endswith("frontend diagnostic\n"))
+
 
 class ParallelismTest(unittest.TestCase):
     def test_host_threads_are_divided_across_active_compilers(self):
