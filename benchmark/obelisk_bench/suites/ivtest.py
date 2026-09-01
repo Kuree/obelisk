@@ -522,6 +522,7 @@ class Descriptor:
     artifact_diffs: list[ArtifactDiff]
     vpi_sources: list[Path]
     vpi_compiler_args: list[str]
+    top: str | None = None
 
 
 def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descriptor:
@@ -585,6 +586,7 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
     type_and_args = second.split(",")
     directory = fields[1] if len(fields) > 1 else "ivltests"
     gold = None
+    top = None
     artifact_diffs: list[ArtifactDiff] = []
     for extra in fields[2:]:
         if extra.startswith("gold="):
@@ -599,6 +601,8 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
                 expected=ivtest_dir / parts[1],
                 skip_lines=skip_lines,
             ))
+        elif not extra.startswith("unordered="):
+            top = extra
     return Descriptor(
         key=key,
         test_type=type_and_args[0],
@@ -608,6 +612,7 @@ def _parse_descriptor(ivtest_dir: Path, key: str, fields: list[str]) -> Descript
         artifact_diffs=artifact_diffs,
         vpi_sources=[],
         vpi_compiler_args=[],
+        top=top,
     )
 
 
@@ -669,6 +674,8 @@ def judge_one(
     # how the sources expect to be compiled.
     flags += ["-D", "__ICARUS_UNSIZED__"]
     flags += DEFAULT_WARNING_SUPPRESSIONS
+    if desc.top:
+        flags.append(f"--top={desc.top}")
     # Let includes and separate library modules under ivltests/ resolve.
     flags += ["-y", str(ivtest_dir / "ivltests"), "-I", str(ivtest_dir / "ivltests")]
 

@@ -119,7 +119,7 @@ class FixtureDirectoryTest(unittest.TestCase):
             list_path.write_text(
                 "multi CE,-g2009,-u,\\\n"
                 "  ./ivltests/part1.v,\\\n"
-                "  ./ivltests/part2.sv ivltests gold=multi.gold\n",
+                "  ./ivltests/part2.sv ivltests selected_top gold=multi.gold\n",
                 encoding="ascii",
             )
             descriptor = ivtest.read_items(ivtest_dir, [list_path])[0]
@@ -134,6 +134,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                              ivtest_dir / "ivltests" / "multi.v")
             self.assertEqual(descriptor.gold,
                              ivtest_dir / "gold" / "multi.gold")
+            self.assertEqual(descriptor.top, "selected_top")
 
     def test_fixture_paths_are_normalized_only_to_the_upstream_spelling(self):
         ivtest_dir = Path("/checkout/ivtest")
