@@ -440,6 +440,12 @@ NARROW_STREAM_TARGET = Exclusion(
     "fewer bits) than the stream, an error shall be generated\", and the test "
     "unpacks a four-byte queue into one byte; 11.4.14.3's own example spells "
     "the same rule `int j = {>>{a, b, c}}; // error: j is 32 bits < 96 bits`")
+UNDERSIZED_STREAM_SOURCE = Exclusion(
+    "IEEE 1800-2017 11.4.14.3",
+    "a streaming assignment target that needs more bits than its source shall "
+    "generate an error, but the test expects a 40-bit target to be zero-padded "
+    "from a 32-bit source; it also uses untyped assignment patterns as equality "
+    "operands even though 10.9 restricts them to assignment-like contexts")
 REAL_STREAM_MEMBER = Exclusion(
     "IEEE 1800-2017 11.4.14.1",
     "6.24.3 defines a bit-stream type from integral, packed, string, or "
@@ -494,6 +500,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_stream_crc_example": PATTERN_RADIX,
     "t_stream_dynamic": PATTERN_RADIX,
     "t_stream_unpack": PATTERN_RADIX,
+    "t_stream_unpack_lhs": UNDERSIZED_STREAM_SOURCE,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
