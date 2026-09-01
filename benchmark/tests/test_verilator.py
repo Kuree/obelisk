@@ -115,6 +115,15 @@ class TopShellTest(unittest.TestCase):
         self.assertNotIn("module top;", shell)
 
 
+class GeneratedFixtureTest(unittest.TestCase):
+    def test_fread_fixture_matches_upstream_descriptor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            verilator.prepare_generated_fixtures("t_sys_fread", directory)
+            data = (Path(directory) / "t_sys_fread.mem").read_bytes()
+        self.assertEqual(len(data), 32 * 256)
+        self.assertEqual(data, bytes(range(256)) * 32)
+
+
 class ShellModuleNameTest(unittest.TestCase):
     def test_a_design_without_its_own_top_keeps_driver_pys_name(self):
         self.assertEqual(verilator.shell_module_name("module t (input clk);"),

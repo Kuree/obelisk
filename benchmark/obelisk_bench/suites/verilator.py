@@ -1114,6 +1114,18 @@ def object_directory_define(directory: str | Path) -> str:
     return f"-DTEST_OBJ_DIR={Path(directory)}"
 
 
+def prepare_generated_fixtures(name: str, directory: str | Path) -> None:
+    """Reproduce deterministic files made by an upstream test descriptor.
+
+    The harness never executes descriptor Python. Keep each replacement exact,
+    bounded, and local to the selected test's temporary object directory.
+    """
+    if name == "t_sys_fread":
+        # Upstream writes byte values 0..255 in order, repeated 32 times.
+        (Path(directory) / "t_sys_fread.mem").write_bytes(
+            bytes(range(256)) * 32)
+
+
 def classify_dependency_failure(name: str, log: str) -> str:
     """Tag manually audited dependency failures without hiding the failure."""
     reason = KNOWN_SLANG_BUGS.get(name)
@@ -1134,6 +1146,7 @@ def judge_one(
     expectation = detect_expectation(name, top.with_suffix(".py"))
 
     with tempfile.TemporaryDirectory(prefix="obelisk-vlt-") as tmp:
+        prepare_generated_fixtures(name, tmp)
         native = runner.build_vpi_inputs(
             obelisk, list(vpi_code), tmp, cwd=str(top.parent),
             module_name="verilator_" + "".join(
