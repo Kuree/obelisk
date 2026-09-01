@@ -284,8 +284,14 @@ LogicalResult instrumentManagedRoots(ModuleOp module) {
 
             SmallVector<Operation *> exits;
             function.walk([&](Operation *operation) {
+              // A control boundary records an externally reachable resume
+              // continuation, but ordinary execution follows its body edge
+              // synchronously.  Only the later external resume starts a new
+              // activation; the boundary itself must retain the current
+              // activation's roots.
               if (isa<sim::SimReturnOp>(operation) ||
-                  sim::isSuspensionOp(operation))
+                  (sim::isSuspensionOp(operation) &&
+                   !isa<sim::SimControlBoundaryOp>(operation)))
                 exits.push_back(operation);
             });
             for (Operation *exit : exits) {

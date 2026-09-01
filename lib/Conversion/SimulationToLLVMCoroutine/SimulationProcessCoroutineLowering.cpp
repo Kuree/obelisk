@@ -770,6 +770,33 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
                                 slot.alignment));
       }
     }
+
+    // Managed-root instrumentation runs before coroutine lowering and places
+    // a root-range reacquisition prologue at every semantic resume target.
+    // Such a target can also have ordinary CFG predecessors (for example, an
+    // always_comb entry can branch directly to the block resumed after its
+    // implicit wait).  Leaving the prologue in the semantic block would then
+    // push the same activation record once on entry and again without an
+    // intervening suspension.  Move the marked prefix into this resume-only
+    // shim so it executes for scheduler dispatch but not for ordinary edges.
+    Operation *rootPushCheck = nullptr;
+    for (Operation &operation : *continuation) {
+      if (operation.hasAttr(managedRootRangePushCheckAttr)) {
+        rootPushCheck = &operation;
+        break;
+      }
+    }
+    if (rootPushCheck) {
+      Operation *operation = &continuation->front();
+      while (operation) {
+        Operation *next = operation->getNextNode();
+        bool last = operation == rootPushCheck;
+        operation->moveBefore(shim, shim->end());
+        if (last)
+          break;
+        operation = next;
+      }
+    }
     cf::BranchOp::create(builder, location, continuation, loaded);
   }
 
