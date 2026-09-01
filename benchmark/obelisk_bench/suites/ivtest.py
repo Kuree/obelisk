@@ -569,6 +569,12 @@ STRING_WILDCARD_EQUALITY_EXTENSION = Exclusion(
     "the complete string-operator table does not include wildcard equality, "
     "which 11.4.6 defines as a bitwise integral comparison; this mixed test "
     "requires Icarus's ==? and !=? extension for string operands")
+MISSING_SDF_VERSION = Exclusion(
+    "IEEE 1800-2017 32.4",
+    "the referenced IEEE 1497-2001 SDF grammar requires the SDFVERSION "
+    "statement to identify the grammar version to apply; the test omits it "
+    "and expects Icarus to infer a legacy dialect from the remaining "
+    "DELAYFILE forms")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -612,6 +618,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "array_word_check": DUMPVARS_SELECTED_VARIABLE,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "br_gh553": MODULE_INSTANCE_PORT_PARENTHESES,
+    "br960a": MISSING_SDF_VERSION,
+    "br960b": MISSING_SDF_VERSION,
+    "br960c": MISSING_SDF_VERSION,
+    "br960d": MISSING_SDF_VERSION,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
     "display_bug": PACKED_DIMENSION_REQUIRES_RANGE,
