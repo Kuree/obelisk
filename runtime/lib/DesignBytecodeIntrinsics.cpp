@@ -4378,7 +4378,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
              static_cast<uint32_t>((itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
                                        ? OBELISK_RT_ARG_SIGNED
                                        : 0),
-             0, value.value.data(),
+             context->nativeSchedulePlan && !context->nativeScheduleDeoptimized
+                 ? 1u
+                 : 0u,
+             value.value.data(),
              value.fourState ? value.unknown.data() : nullptr, stable});
         arguments.push_back({OBELISK_RT_ARG_NET,
                              static_cast<obelisk_rt_arg_flags>(
