@@ -348,6 +348,11 @@ EMPTY_UDP_INPUT_TERMINAL = Exclusion(
     "udp_instance requires one output_terminal followed by every declared "
     "input_terminal; the test leaves its final UDP input connection empty "
     "and expects compilation to continue")
+CONTRADICTORY_COMBINATIONAL_UDP_ROWS = Exclusion(
+    "IEEE 1800-2017 29.3.4",
+    "it is illegal for the same UDP input combination to specify different "
+    "outputs; the test's wildcard row overlaps its explicit input-one row "
+    "with contradictory output values")
 PORT_DECLARATION_WITHOUT_LIST = Exclusion(
     "IEEE 1800-2017 23.2.2.1",
     "a non-ANSI module header requires list_of_ports and its body declarations "
@@ -630,6 +635,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2172606b": CONDITIONAL_ZZ_CHECKER_CONTRADICTION,
     "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "pr3587570": CONTRADICTORY_COMBINATIONAL_UDP_ROWS,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
