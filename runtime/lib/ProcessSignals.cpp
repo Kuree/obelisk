@@ -1061,9 +1061,28 @@ bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
   if (edges == 0)
     return true;
   uint64_t sequence = 0;
-  if (!obelisk_rt_publish_signal_occurrence_unlocked(context, bitOffset, 1,
-                                                     edges, &sequence))
+  if (context->nativeSchedulePlan && !context->clockOccurrences &&
+      canUseStaticAOTFanout(context)) {
+    // The AOT publisher consumes packed byte planes. A scalar transition is
+    // represented by one byte per plane, with bit zero populated.
+    const uint8_t changedBits = 1;
+    const uint8_t posedgeBits =
+        (edges & OBELISK_RT_SIGNAL_POSEDGE) != 0 ? 1 : 0;
+    const uint8_t negedgeBits =
+        (edges & OBELISK_RT_SIGNAL_NEGEDGE) != 0 ? 1 : 0;
+    const uint8_t oldValueBits = oldValue ? 1 : 0;
+    const uint8_t oldUnknownBits = oldUnknown ? 1 : 0;
+    const uint8_t newValueBits = newValue ? 1 : 0;
+    const uint8_t newUnknownBits = newUnknown ? 1 : 0;
+    if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+            context, bitOffset, 1, &changedBits, &posedgeBits, &negedgeBits, 0,
+            &sequence, &oldValueBits, &oldUnknownBits, &newValueBits,
+            &newUnknownBits))
+      return false;
+  } else if (!obelisk_rt_publish_signal_occurrence_unlocked(
+                 context, bitOffset, 1, edges, &sequence)) {
     return false;
+  }
   if (obelisk_rt_has_conditional_signal_waiters(context))
     context->signalValueSnapshots[bitOffset] = {sequence, newValue, newUnknown};
   if (!obelisk_rt_latch_conditional_signal_waiters_unlocked(context, bitOffset,
