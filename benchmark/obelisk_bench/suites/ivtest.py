@@ -86,6 +86,10 @@ SELF_CHECKING_CE_OVERRIDES = {
     # valid SystemVerilog behavior used by this harness.
     "br_gh25a",
     "br_gh25b",
+    # IEEE 1800-2017 23.3.3.3 permits a built-in-net output port to connect to
+    # a variable. This is a CE test only in the old-Verilog list; in the
+    # SystemVerilog mode used by this harness its PASSED check is authoritative.
+    "br_gh956a",
     # IEEE 1800-2017 15.5.1 explicitly defines triggering elements of a named
     # event array. The source exercises four fixed-array elements and carries
     # its own event-count self-check.
