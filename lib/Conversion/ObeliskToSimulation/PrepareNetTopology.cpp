@@ -90,12 +90,15 @@ getDriverStrengths(Operation *unit) {
   return {strength0, strength1};
 }
 
-static bool isConditionalGate(Operation *unit) {
+static bool usesStrengthBanks(Operation *unit) {
   auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(unit);
   auto name = primitive ? primitive->getAttrOfType<StringAttr>("primitive_name")
                         : StringAttr{};
   return name && (name.getValue() == "bufif0" || name.getValue() == "bufif1" ||
-                  name.getValue() == "notif0" || name.getValue() == "notif1");
+                  name.getValue() == "notif0" || name.getValue() == "notif1" ||
+                  name.getValue() == "nmos" || name.getValue() == "pmos" ||
+                  name.getValue() == "cmos" || name.getValue() == "rnmos" ||
+                  name.getValue() == "rpmos" || name.getValue() == "rcmos");
 }
 
 static bool isControlledPassSwitch(Operation *unit) {
@@ -1255,9 +1258,12 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       collectDriverRuns(children.front(), sinks);
     }
 
-    bool conditionalGate = isConditionalGate(unit);
+    // Static-source MOS devices were converted to topology edges above. The
+    // remaining MOS devices need the same asymmetric banks as conditional
+    // gates to represent source-or-Z strength ranges exactly.
+    bool strengthBanks = usesStrengthBanks(unit);
     for (const NetRun &sink : sinks) {
-      unsigned bankCount = conditionalGate ? 2 : 1;
+      unsigned bankCount = strengthBanks ? 2 : 1;
       uint64_t strengthGroup = nextDriverId;
       for (unsigned bank = 0; bank != bankCount; ++bank) {
         uint64_t id = nextDriverId++;
@@ -1268,7 +1274,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         info.delayedNet = sink.descriptor.delayedNet;
         continuousDrivers[unit].push_back(
             {sink.path, info, sink.nodeId, sink.offset, sink.width,
-             conditionalGate ? std::optional<unsigned>(bank) : std::nullopt});
+             strengthBanks ? std::optional<unsigned>(bank) : std::nullopt});
         auto driver = sim::SimDriverDeclOp::create(
             builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
             sink.descriptor.type, sim::Lifetime::Design,
@@ -1280,16 +1286,16 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             builder.getI64IntegerAttr(sink.offset),
             builder.getI64IntegerAttr(sink.width));
         sim::Strength driverStrength0 =
-            conditionalGate && bank == 1 ? sim::Strength::HighZ : strength0;
+            strengthBanks && bank == 1 ? sim::Strength::HighZ : strength0;
         sim::Strength driverStrength1 =
-            conditionalGate && bank == 0 ? sim::Strength::HighZ : strength1;
+            strengthBanks && bank == 0 ? sim::Strength::HighZ : strength1;
         driver->setAttr(
             "strength0",
             sim::StrengthAttr::get(builder.getContext(), driverStrength0));
         driver->setAttr(
             "strength1",
             sim::StrengthAttr::get(builder.getContext(), driverStrength1));
-        if (conditionalGate) {
+        if (strengthBanks) {
           driver->setAttr("obelisk_sim.strength_group",
                           builder.getI64IntegerAttr(strengthGroup));
           driver->setAttr("obelisk_sim.strength_bank",

@@ -3583,16 +3583,58 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value disabled = sim::SimLogicConstantOp::create(
         builder, location, logicType, builder.getIntegerAttr(planeType, highZ),
         builder.getIntegerAttr(planeType, highZ));
+    Value zero = sim::SimLogicConstantOp::create(
+        builder, location, logicType,
+        builder.getIntegerAttr(planeType, APInt::getZero(logicType.getWidth())),
+        builder.getIntegerAttr(planeType,
+                               APInt::getZero(logicType.getWidth())));
+    Value one = sim::SimLogicConstantOp::create(
+        builder, location, logicType,
+        builder.getIntegerAttr(planeType,
+                               APInt::getAllOnes(logicType.getWidth())),
+        builder.getIntegerAttr(planeType,
+                               APInt::getZero(logicType.getWidth())));
     bool activeHigh = complementary || name == "nmos" || name == "rnmos";
-    // MOS source terminals preserve Z. For an uncertain gate, the ordinary
-    // four-state merge yields L/H as X and keeps Z exact; strength-aware net
-    // resolution then applies the device's static output strength.
+    // MOS source terminals preserve Z. Keep the ordinary four-state result
+    // for logical transition and delay selection; the banks below retain its
+    // exact L/H strength range.
     result =
         activeHigh
             ? Value(sim::SimLogicMuxOp::create(builder, location, logicType,
                                                controlValue, driven, disabled))
             : Value(sim::SimLogicMuxOp::create(builder, location, logicType,
                                                controlValue, disabled, driven));
+
+    // An uncertain MOS control contributes either the source value or Z.
+    // Preserve that L/H strength range with the same polarity-bank encoding
+    // used by conditional gates. Unlike a logic gate, a MOS source of Z stays
+    // exactly Z, so override the four-state mux's X merge for that case.
+    Value dataIsZ = sim::SimLogicCompareOp::create(
+        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+        driven, disabled);
+    Value lowCandidate = sim::SimLogicMuxOp::create(
+        builder, location, logicType, driven, disabled, zero);
+    lowCandidate = arith::SelectOp::create(builder, location, dataIsZ, disabled,
+                                           lowCandidate);
+    Value highCandidate = sim::SimLogicMuxOp::create(
+        builder, location, logicType, driven, one, disabled);
+    highCandidate = arith::SelectOp::create(builder, location, dataIsZ,
+                                            disabled, highCandidate);
+    Value lowResult =
+        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, controlValue,
+                                                      lowCandidate, disabled))
+                   : Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, controlValue,
+                                                      disabled, lowCandidate));
+    Value highResult =
+        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, controlValue,
+                                                      highCandidate, disabled))
+                   : Value(sim::SimLogicMuxOp::create(builder, location,
+                                                      logicType, controlValue,
+                                                      disabled, highCandidate));
+    strengthResults = std::array<Value, 2>{lowResult, highResult};
   } else if (name == "bufif0" || name == "bufif1" || name == "notif0" ||
              name == "notif1") {
     if (inputs.size() != 2)
