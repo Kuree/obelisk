@@ -381,6 +381,10 @@ BUILTIN_NET_EXTENSION_CHECKS = Exclusion(
 # after either compilation or simulation so a dependency update that moves the
 # failure across that boundary does not silently lose its classification.
 KNOWN_SLANG_BUGS: dict[str, str] = {
+    "indef_width_concat": (
+        "IEEE 1800-2017 11.4.12 forbids unsized constant numbers in "
+        "concatenations; pinned Slang accepts {pval, 2} instead of rejecting "
+        "the unsized decimal operand"),
     "module_nonansi_vec_fail2": (
         "IEEE 1800-2017 23.2.2.1 requires the range of a separately declared "
         "non-ANSI port vector to match its port declaration; pinned Slang "
