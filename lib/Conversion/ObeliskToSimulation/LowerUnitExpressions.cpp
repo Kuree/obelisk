@@ -1265,15 +1265,49 @@ FailureOr<Value> UnitLowering::appendToBitStream(Value value, Value stream,
   return exit->getArgument(0);
 }
 
+// Drop everything past a bit stream's leading `limit` bits. Ordinal zero of an
+// internal bit stream is the most significant end IEEE 1800-2017 11.4.14.3
+// consumes from, so the bits to drop are the trailing ones. The stream is the
+// lowering's own scratch buffer, so this shortens it in place, and a stream
+// that already ends there costs one comparison.
+void UnitLowering::trimBitStream(Value stream, sim::QueueType streamType,
+                                 Value limit, Location location) {
+  Value one = arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(1));
+  Value size = sim::SimContainerSizeOp::create(builder, location,
+                                               builder.getI64Type(), stream);
+  Block *header = addBlock();
+  Value remaining = header->addArgument(builder.getI64Type(), location);
+  Block *body = addBlock();
+  Block *exit = addBlock();
+  cf::BranchOp::create(builder, location, header, ValueRange{size});
+  setCurrent(header);
+  Value longer = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ugt, remaining, limit);
+  cf::CondBranchOp::create(builder, location, longer, body, ValueRange{}, exit,
+                           ValueRange{});
+  setCurrent(body);
+  Value last = arith::SubIOp::create(builder, location, remaining, one);
+  sim::SimQueueDeleteOp::create(builder, location, stream, last);
+  cf::BranchOp::create(builder, location, header, ValueRange{last});
+  setCurrent(exit);
+}
+
 FailureOr<Value> UnitLowering::reorderBitStream(Value stream, uint64_t slice,
                                                 Location location,
                                                 Value limit) {
-  if (slice == 0)
-    return stream;
   auto streamType = dyn_cast<sim::QueueType>(stream.getType());
   if (!streamType)
     return emitError(location) << "internal bit stream is not a queue",
            failure();
+  // A left-to-right stream already reads in the order its targets consume, so
+  // there is no reordered copy to build. The caller's limit still has to hold
+  // for what it gets back, and shortening this stream is how it holds here.
+  if (slice == 0) {
+    if (limit)
+      trimBitStream(stream, streamType, limit, location);
+    return stream;
+  }
   bool fourState = isa<sim::LogicType>(streamType.getElementType());
   FailureOr<Value> reordered = createBitStream(fourState, location);
   if (failed(reordered))
