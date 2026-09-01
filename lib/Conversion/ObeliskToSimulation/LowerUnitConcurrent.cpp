@@ -3680,6 +3680,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                    builder.getUnitAttr());
     return state;
   };
+  auto gateActionPermission = [&](Value condition, Value enabled,
+                                  bool reportedPassed, bool vacuous) -> Value {
+    if (!enabled)
+      return condition;
+    auto gated = arith::AndIOp::create(builder, location, condition, enabled);
+    gated->setAttr("obelisk_sim.concurrent_action_control",
+                   builder.getUnitAttr());
+    gated->setAttr("obelisk_sim.concurrent_action_class",
+                   builder.getStringAttr(
+                       reportedPassed
+                           ? (vacuous ? "vacuous-pass" : "nonvacuous-pass")
+                           : "fail"));
+    return gated;
+  };
   auto gateActionResult = [&](Value condition, Value actionState,
                               bool reportedPassed, bool vacuous) -> Value {
     if (!actionState)
@@ -3693,15 +3707,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location, arith::CmpIPredicate::ne, selected,
         arith::ConstantOp::create(builder, location, builder.getI32Type(),
                                   builder.getI32IntegerAttr(0)));
-    auto gated = arith::AndIOp::create(builder, location, condition, enabled);
-    gated->setAttr("obelisk_sim.concurrent_action_control",
-                   builder.getUnitAttr());
-    gated->setAttr("obelisk_sim.concurrent_action_class",
-                   builder.getStringAttr(
-                       reportedPassed
-                           ? (vacuous ? "vacuous-pass" : "nonvacuous-pass")
-                           : "fail"));
-    return gated;
+    return gateActionPermission(condition, enabled, reportedPassed, vacuous);
   };
 
   size_t prefix = 0;
@@ -4810,13 +4816,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       (expectMonitor || abort || localInstance || temporalNegation ||
        hasPersistentDelay || hasPersistentUnary || hasPersistentUntil ||
        hasPersistentRepetition || nonoverlapped ||
-       (implication && antecedentHorizon != 1) || consequentHorizon != 1 ||
+       (implication && antecedentHorizon != 1) ||
+       (consequentHorizon != 1 &&
+        (branchingSequence || branchingAntecedent || branchingConsequent)) ||
        (branchingAntecedent && sequence.vacuousSuccess)))
     return emitError(location)
                << "concurrent assertion action control currently requires a "
-                  "single-clock one-cycle directive without expect, abort, "
-                  "locals, persistent state, nonoverlapped handoff, or a "
-                  "vacuous branching-antecedent consequent",
+                  "fixed bounded single-clock directive without expect, "
+                  "abort, locals, persistent state, nonoverlapped handoff, "
+                  "multicycle branching, or a vacuous branching-antecedent "
+                  "consequent",
            failure();
   if (implication && localInstance && branchingAntecedent)
     return emitError(getSemanticLocation(implication))
@@ -5731,6 +5740,29 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     stateStorage = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), stateType),
         zero);
+  // IEEE 1800-2017 20.12 says an action-control change does not affect an
+  // assertion already executing. Keep one bitset beside the bounded attempt
+  // state for each action class so every live age retains its start-time
+  // permission. Linear monitors have at most one attempt at each age; the
+  // ordinary one-cycle and uncontrolled paths allocate none of this state.
+  SmallVector<Value, 3> attemptActionStateStorages;
+  if (actionControlled && !branchingSequence && !branchingAntecedent &&
+      !branchingConsequent && consequentHorizon > 1) {
+    attemptActionStateStorages.reserve(3);
+    for (unsigned index = 0; index != 3; ++index) {
+      Value storage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), stateType), zero);
+      storage.getDefiningOp()->setAttr(
+          "obelisk_sim.concurrent_attempt_action_state_storage",
+          builder.getUnitAttr());
+      attemptActionStateStorages.push_back(storage);
+    }
+  }
+  SmallVector<Value, 4> fixedStateStorages;
+  if (stateStorage)
+    fixedStateStorages.push_back(stateStorage);
+  llvm::append_range(fixedStateStorages, attemptActionStateStorages);
 
   Value disableEpoch;
   Value initialDisable;
@@ -6153,7 +6185,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   if (disable && !proceduralAttempt && !persistentStateOwner &&
       !branchingSequence && !branchingAntecedent && !branchingConsequent &&
-      failed(outlineDisableObserver({stateStorage})))
+      failed(outlineDisableObserver(fixedStateStorages)))
     return failure();
 
   auto scheduleReportedResult = [&](bool passed) {
@@ -7052,7 +7084,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       [&](ArrayRef<Value> liveStateStorages, size_t horizon,
           size_t firstLiveAge, std::optional<bool> operandStrongOverride,
           std::optional<bool> completionPassedOverride = std::nullopt,
-          StringRef identitySuffix = {}) -> LogicalResult {
+          StringRef identitySuffix = {},
+          ArrayRef<Value> actionStateStorages = {}) -> LogicalResult {
     if (!endStrengthSource)
       return success();
     bool operandStrong = operandStrongOverride.value_or(
@@ -7095,6 +7128,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     bool completionPassed = completionPassedOverride.value_or(operandPassed);
     if (temporalNegation)
       completionPassed = !completionPassed;
+    Value actionStateStorage;
+    if (!actionStateStorages.empty()) {
+      if (actionStateStorages.size() != 3)
+        return function.emitError(
+                   "captured assertion action state requires three class "
+                   "bitsets"),
+               failure();
+      unsigned actionClass =
+          completionPassed ? (completionPassedOverride ? 1u : 0u) : 2u;
+      actionStateStorage = actionStateStorages[actionClass];
+    }
     std::optional<ReportCallback> *selectedReport =
         completionPassed ? &passReport : &failReport;
     if (horizon > firstLiveAge && !liveStateStorages.empty() &&
@@ -7180,6 +7224,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         if (inserted)
           captures.push_back(storage);
         stateCaptureIndices.push_back(entry->second);
+      }
+      std::optional<unsigned> actionStateCaptureIndex;
+      if (actionStateStorage) {
+        auto [entry, inserted] =
+            captureIndices.try_emplace(actionStateStorage, captures.size());
+        if (inserted)
+          captures.push_back(actionStateStorage);
+        actionStateCaptureIndex = entry->second;
       }
       SmallVector<unsigned> reportCaptureIndices;
       reportCaptureIndices.reserve(report.captures.size());
@@ -7287,6 +7339,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                     getSemanticLocation(endStrengthSource),
                                     live, alternative);
       }
+      Value permittedActions;
+      if (actionStateCaptureIndex) {
+        permittedActions = sim::SimRefLoadOp::create(
+            coordinatorBuilder, getSemanticLocation(endStrengthSource),
+            stateType, current->getArgument(*actionStateCaptureIndex));
+        permittedActions.getDefiningOp()->setAttr(
+            "obelisk_sim.concurrent_attempt_action_state_load",
+            coordinatorBuilder.getUnitAttr());
+      }
       for (uint64_t age = horizon; age-- > firstLiveAge;) {
         Block *reportBlock = new Block;
         Block *continuation = new Block;
@@ -7303,6 +7364,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         Value active = arith::CmpIOp::create(
             coordinatorBuilder, getSemanticLocation(endStrengthSource),
             arith::CmpIPredicate::ne, present, finalZero);
+        if (permittedActions) {
+          Value permittedBits = arith::AndIOp::create(
+              coordinatorBuilder, getSemanticLocation(endStrengthSource),
+              permittedActions, mask);
+          Value permitted = arith::CmpIOp::create(
+              coordinatorBuilder, getSemanticLocation(endStrengthSource),
+              arith::CmpIPredicate::ne, permittedBits, finalZero);
+          active = arith::AndIOp::create(coordinatorBuilder,
+                                         getSemanticLocation(endStrengthSource),
+                                         active, permitted);
+          active.getDefiningOp()->setAttr(
+              "obelisk_sim.concurrent_action_control",
+              coordinatorBuilder.getUnitAttr());
+        }
         cf::CondBranchOp::create(
             coordinatorBuilder, getSemanticLocation(endStrengthSource), active,
             reportBlock, ValueRange{}, continuation, ValueRange{});
@@ -7356,9 +7431,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                    : implication && nonoverlapped ? 0
                                                                   : 1;
   if (!branchingSequence && !branchingAntecedent && !branchingConsequent &&
-      failed(outlineEndOfSimulationReports({stateStorage}, sequence.ages.size(),
-                                           firstEndOfSimulationAge,
-                                           intrinsicOperandStrengthOverride)))
+      failed(outlineEndOfSimulationReports(
+          {stateStorage}, sequence.ages.size(), firstEndOfSimulationAge,
+          intrinsicOperandStrengthOverride,
+          /*completionPassedOverride=*/
+          std::nullopt,
+          /*identitySuffix=*/{}, attemptActionStateStorages)))
     return failure();
   if (localInstance && implication && antecedentSequence.ages.size() > 1 &&
       failed(outlineEndOfSimulationReports(
@@ -11577,9 +11655,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       state = stateStorage ? sim::SimRefLoadOp::create(builder, location,
                                                        stateType, stateStorage)
                            : zero;
-    if (failed(cancelDisabledSample(wait, {stateStorage})))
+    if (failed(cancelDisabledSample(wait, fixedStateStorages)))
       return failure();
-    if (failed(cancelKilledSample({stateStorage})))
+    if (failed(cancelKilledSample(fixedStateStorages)))
       return failure();
     if (killEpochStorage)
       state = stateStorage ? sim::SimRefLoadOp::create(builder, location,
@@ -11833,9 +11911,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (stateStorage && !killEpochStorage)
     state =
         sim::SimRefLoadOp::create(builder, location, stateType, stateStorage);
-  if (failed(cancelDisabledSample(wait, {stateStorage})))
+  if (failed(cancelDisabledSample(wait, fixedStateStorages)))
     return failure();
-  if (failed(cancelKilledSample({stateStorage})))
+  if (failed(cancelKilledSample(fixedStateStorages)))
     return failure();
   if (stateStorage && killEpochStorage)
     state =
@@ -11852,16 +11930,106 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
   Value attemptEnabled = queryAttemptEnabled();
   Value currentActionState = queryActionState();
+  SmallVector<Value, 3> capturedActionStates;
+  SmallVector<Value, 3> nextCapturedActionStates;
+  capturedActionStates.reserve(attemptActionStateStorages.size());
+  nextCapturedActionStates.reserve(attemptActionStateStorages.size());
+  for (Value storage : attemptActionStateStorages) {
+    Value captured =
+        sim::SimRefLoadOp::create(builder, location, stateType, storage);
+    captured.getDefiningOp()->setAttr(
+        "obelisk_sim.concurrent_attempt_action_state_load",
+        builder.getUnitAttr());
+    capturedActionStates.push_back(captured);
+    nextCapturedActionStates.push_back(zero);
+  }
+  auto actionClassIndex = [](bool reportedPassed, bool vacuous) -> unsigned {
+    return reportedPassed ? (vacuous ? 1u : 0u) : 2u;
+  };
+  auto capturedActionPermission = [&](unsigned actionClass,
+                                      uint64_t age) -> Value {
+    if (capturedActionStates.empty())
+      return {};
+    Value mask = arith::ConstantOp::create(
+        builder, location, stateType,
+        builder.getI64IntegerAttr(uint64_t{1} << age));
+    Value bits = arith::AndIOp::create(builder, location,
+                                       capturedActionStates[actionClass], mask);
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                 bits, zero);
+  };
+  SmallVector<Value, 3> currentActionPermissions;
+  if (!attemptActionStateStorages.empty()) {
+    assert(currentActionState && "captured action state requires a query");
+    currentActionPermissions.reserve(3);
+    for (int32_t mask : {1, 2, 4}) {
+      Value selected = arith::AndIOp::create(
+          builder, location, currentActionState,
+          arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                    builder.getI32IntegerAttr(mask)));
+      currentActionPermissions.push_back(arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, selected,
+          arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                    builder.getI32IntegerAttr(0))));
+    }
+  }
+  auto routeCapturedAction = [&](Value advances, uint64_t sourceAge,
+                                 uint64_t targetAge) {
+    if (capturedActionStates.empty())
+      return;
+    Value targetMask = arith::ConstantOp::create(
+        builder, location, stateType,
+        builder.getI64IntegerAttr(uint64_t{1} << targetAge));
+    for (unsigned actionClass = 0; actionClass != 3; ++actionClass) {
+      Value permitted = capturedActionPermission(actionClass, sourceAge);
+      Value carries =
+          arith::AndIOp::create(builder, location, advances, permitted);
+      Value carriedBit =
+          arith::SelectOp::create(builder, location, carries, targetMask, zero);
+      carriedBit.getDefiningOp()->setAttr(
+          "obelisk_sim.concurrent_attempt_action_state_next",
+          builder.getI64IntegerAttr(actionClass));
+      nextCapturedActionStates[actionClass] = arith::OrIOp::create(
+          builder, location, nextCapturedActionStates[actionClass], carriedBit);
+    }
+  };
+  auto startCapturedAction = [&](Value starts, uint64_t targetAge) {
+    if (currentActionPermissions.empty())
+      return;
+    Value targetMask = arith::ConstantOp::create(
+        builder, location, stateType,
+        builder.getI64IntegerAttr(uint64_t{1} << targetAge));
+    for (unsigned actionClass = 0; actionClass != 3; ++actionClass) {
+      Value carries = arith::AndIOp::create(
+          builder, location, starts, currentActionPermissions[actionClass]);
+      Value carriedBit =
+          arith::SelectOp::create(builder, location, carries, targetMask, zero);
+      carriedBit.getDefiningOp()->setAttr(
+          "obelisk_sim.concurrent_attempt_action_state_next",
+          builder.getI64IntegerAttr(actionClass));
+      nextCapturedActionStates[actionClass] = arith::OrIOp::create(
+          builder, location, nextCapturedActionStates[actionClass], carriedBit);
+    }
+  };
   llvm::DenseMap<Operation *, Value> predicateCache;
   auto conditionalResult = [&](Value condition, bool passed,
                                bool alreadyReported = false,
-                               bool vacuous = false) -> LogicalResult {
+                               bool vacuous = false,
+                               std::optional<uint64_t> capturedActionAge =
+                                   std::nullopt) -> LogicalResult {
     if (!observable)
       return success();
     bool reportedPassed =
         alreadyReported ? passed : (temporalNegation ? !passed : passed);
-    condition = gateActionResult(condition, currentActionState, reportedPassed,
-                                 vacuous);
+    if (capturedActionAge && !capturedActionStates.empty()) {
+      Value permitted = capturedActionPermission(
+          actionClassIndex(reportedPassed, vacuous), *capturedActionAge);
+      condition =
+          gateActionPermission(condition, permitted, reportedPassed, vacuous);
+    } else {
+      condition = gateActionResult(condition, currentActionState,
+                                   reportedPassed, vacuous);
+    }
     Block *report = addBlock();
     Block *continuation = addBlock();
     cf::CondBranchOp::create(builder, location, condition, report, ValueRange{},
@@ -11988,13 +12156,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, *matches,
             arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                       builder.getBoolAttr(true))));
-    if (failed(conditionalResult(fails, false)))
+    if (failed(conditionalResult(fails, false,
+                                 /*alreadyReported=*/false,
+                                 /*vacuous=*/false, age)))
       return failure();
     Value advances = arith::AndIOp::create(builder, location, active, *matches);
     if (age + 1 == sequence.ages.size()) {
       if (failed(conditionalResult(advances, true,
                                    /*alreadyReported=*/false,
-                                   sequence.vacuousSuccess)))
+                                   sequence.vacuousSuccess, age)))
         return failure();
     } else {
       Value nextMask = arith::ConstantOp::create(
@@ -12004,6 +12174,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::SelectOp::create(builder, location, advances, nextMask, zero);
       nextState =
           arith::OrIOp::create(builder, location, nextState, advancedBit);
+      routeCapturedAction(advances, age, age + 1);
     }
   }
 
@@ -12038,6 +12209,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value started =
         arith::SelectOp::create(builder, location, matched, nextMask, zero);
     nextState = arith::OrIOp::create(builder, location, nextState, started);
+    startCapturedAction(matched, 1);
     return success();
   };
 
@@ -12140,11 +12312,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value started = arith::SelectOp::create(builder, location, activeStart,
                                               nextMask, zero);
       nextState = arith::OrIOp::create(builder, location, nextState, started);
+      startCapturedAction(activeStart, 1);
     }
   }
 
   if (stateStorage)
     sim::SimRefStoreOp::create(builder, location, nextState, stateStorage);
+  for (auto [storage, nextCaptured] :
+       llvm::zip_equal(attemptActionStateStorages, nextCapturedActionStates)) {
+    auto stored =
+        sim::SimRefStoreOp::create(builder, location, nextCaptured, storage);
+    stored->setAttr("obelisk_sim.concurrent_attempt_action_state_store",
+                    builder.getUnitAttr());
+  }
   cf::BranchOp::create(builder, location, wait);
   return success();
 }

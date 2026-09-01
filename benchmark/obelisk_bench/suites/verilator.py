@@ -509,6 +509,11 @@ LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY = Exclusion(
     "match of either operand of a sequence `or` is a match of the composite "
     "sequence under 16.9.7; this negative test records Verilator's deliberately "
     "unsupported non-edge and `or` endpoint topologies, which Obelisk supports")
+ACTIVE_ASSERTION_ACTION_CONTROL = Exclusion(
+    "IEEE 1800-2017 20.12",
+    "PassOff explicitly does not affect an assertion already executing, but "
+    "the test expects PassOff between two clocks to suppress the pass action "
+    "of a ##1 attempt that started on the preceding clock")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -519,6 +524,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_goto_rep": TWO_STATE_INITIALIZATION,
     "t_assert_nonconsec_rep": NONCONSECUTIVE_IMPLICATION_REPORT_COUNT,
     "t_assert_pre": USE_BEFORE_DECLARATION,
+    "t_assert_ctl_pass_actions": ACTIVE_ASSERTION_ACTION_CONTROL,
     "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
     "t_assert_seq_event_unsup": LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY,
     "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,

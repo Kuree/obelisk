@@ -5,9 +5,9 @@
 // RUN: not obelisk-opt %t/action.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ACTION
 
 // Kill invalidates live monitor state and queued reports through a per-target
-// generation. Action controls support one-cycle concurrent evaluations; a
-// multi-cycle selection must reject until its start-time snapshot is carried
-// through temporal state.
+// generation. Action controls carry a start-time snapshot through fixed linear
+// monitors; a multicycle branching monitor must reject until each alternative
+// can retain the snapshot independently.
 
 //--- kill.mlir
 
@@ -104,18 +104,24 @@ module {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 20 : i64, referenced_path = "assertion_control_concurrent_action.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
                 }
-                obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 21 : i64} {
-                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 22 : i64, repetition_is_unbounded = false} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 23 : i64, referenced_path = "assertion_control_concurrent_action.a", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                obelisk.sv.assertion.binary attributes {node_id = 21 : i64, operator_kind = 1 : i32} {
+                  obelisk.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 22 : i64} {
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 23 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 24 : i64, referenced_path = "assertion_control_concurrent_action.a", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 25 : i64, repetition_is_unbounded = false} {
+                      obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 26 : i64, referenced_path = "assertion_control_concurrent_action.a", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                      }
                     }
                   }
-                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 24 : i64, repetition_is_unbounded = false} {
-                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 25 : i64, referenced_path = "assertion_control_concurrent_action.a", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+                  obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 27 : i64, repetition_is_unbounded = false} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 28 : i64, referenced_path = "assertion_control_concurrent_action.a", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent_action::@s4.assertion_control_concurrent_action::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                     }
                   }
                 }
               }
-              obelisk.sv.statement.empty attributes {node_id = 26 : i64} {
+              obelisk.sv.statement.empty attributes {node_id = 29 : i64} {
               }
             }
           }
@@ -129,4 +135,4 @@ module {
 // KILL: obelisk_sim.concurrent_report_kill_epoch
 // KILL: obelisk_sim.concurrent_kill_epoch_storage
 // KILL: obelisk_sim.concurrent_kill_epoch_check
-// ACTION: concurrent assertion action control currently requires a single-clock one-cycle directive without expect, abort, locals, persistent state, nonoverlapped handoff, or a vacuous branching-antecedent consequent
+// ACTION: concurrent assertion action control currently requires a fixed bounded single-clock directive without expect, abort, locals, persistent state, nonoverlapped handoff, multicycle branching, or a vacuous branching-antecedent consequent
