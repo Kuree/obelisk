@@ -444,6 +444,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "module_input_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
     "nb_ec_concat": ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA,
+    "nb_ec_multi_ev": ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA,
     "no_timescale_in_module": TIMESCALE_DIRECTIVE_LOCATION,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
