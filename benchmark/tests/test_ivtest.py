@@ -305,6 +305,42 @@ class FixtureDirectoryTest(unittest.TestCase):
                 self.assertEqual(outcome.status, model.PASS)
                 execute.assert_called_once()
 
+    def test_old_verilog_compile_error_uses_systemverilog_gold(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ivtest_dir = Path(temporary).resolve()
+            source = ivtest_dir / "ivltests" / "br1027c.v"
+            source.parent.mkdir()
+            source.write_text("module test; endmodule\n", encoding="ascii")
+            old_gold = ivtest_dir / "gold" / "br1027c.gold"
+            old_gold.parent.mkdir()
+            old_gold.write_text("old-mode error\n", encoding="ascii")
+            (old_gold.parent / "br1027c-fsv.gold").write_text(
+                "          0           1\n", encoding="ascii")
+            descriptor = ivtest.Descriptor(
+                key="br1027c", test_type="CE", iverilog_args=[],
+                source=source, gold=old_gold, artifact_diffs=[],
+                vpi_sources=[], vpi_compiler_args=[])
+            compile_result = mock.Mock(
+                ok=True, stderr="", failure_kind=None)
+            run_result = mock.Mock(
+                ok=True, stdout="          0           1\n", stderr="",
+                timed_out=False)
+
+            with (
+                mock.patch.object(
+                    ivtest.runner, "build_vpi_inputs",
+                    return_value=mock.Mock(ok=True, inputs=[])),
+                mock.patch.object(ivtest.runner, "compile_design",
+                                  return_value=compile_result),
+                mock.patch.object(ivtest.runner, "execute",
+                                  return_value=run_result) as execute,
+            ):
+                _, outcome = ivtest.judge_one(
+                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+
+            self.assertEqual(outcome.status, model.PASS)
+            execute.assert_called_once()
+
     def test_optional_gold_warning_does_not_replace_the_output_oracle(self):
         with tempfile.TemporaryDirectory() as temporary:
             gold = Path(temporary) / "nested_impl_event2.gold"

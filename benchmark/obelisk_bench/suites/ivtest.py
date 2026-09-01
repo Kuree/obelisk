@@ -85,6 +85,18 @@ SELF_CHECKING_CE_OVERRIDES = {
     "sv_port_default14",
 }
 
+# The default corpus includes old-Verilog CE entries even though this adapter
+# deliberately compiles in SystemVerilog mode. Reuse upstream's corresponding
+# SystemVerilog output oracle when it exists instead of treating valid syntax
+# as an expected error.
+SYSTEMVERILOG_CE_GOLD_OVERRIDES: dict[str, str] = {
+    # IEEE 1800-2017 13.3 defaults omitted task-port directions to input, and
+    # 21.2.1 defines an empty $display argument as one output space.
+    "br1027a": "br1027a-fsv.gold",
+    "br1027c": "br1027c-fsv.gold",
+    "br1027e": "br1027e-fsv.gold",
+}
+
 # These queue tests use gold files solely because Icarus emits implementation-
 # specific warning text before their ordinary PASSED self-check. IEEE
 # 1800-2017 7.10.1 and 7.10.5 specify which exceptional operations must warn,
@@ -908,6 +920,9 @@ def judge_one(
     if excluded := EXCLUDED.get(desc.key):
         return (desc.key, model.Outcome(
             model.SKIP, f"{excluded.clause}: {excluded.reason}"))
+    if gold := SYSTEMVERILOG_CE_GOLD_OVERRIDES.get(desc.key):
+        desc = dataclasses.replace(
+            desc, test_type="normal", gold=ivtest_dir / "gold" / gold)
     if not desc.source.exists():
         return (desc.key, model.Outcome(model.SKIP))
 
