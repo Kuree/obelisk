@@ -454,6 +454,11 @@ UNDERSIZED_STREAM_SOURCE = Exclusion(
     "generate an error, but the test expects a 40-bit target to be zero-padded "
     "from a 32-bit source; it also uses untyped assignment patterns as equality "
     "operands even though 10.9 restricts them to assignment-like contexts")
+UNTYPED_PATTERN_COMPARISON = Exclusion(
+    "IEEE 1800-2017 10.9",
+    "an untyped assignment pattern has no self-determined type and may only "
+    "appear on a side of an assignment-like context; 10.8 says no other "
+    "contexts qualify, but the test uses such patterns as equality operands")
 REAL_STREAM_MEMBER = Exclusion(
     "IEEE 1800-2017 11.4.14.1",
     "6.24.3 defines a bit-stream type from integral, packed, string, or "
@@ -491,6 +496,7 @@ NONCONSECUTIVE_IMPLICATION_REPORT_COUNT = Exclusion(
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
+    "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
     "t_assert_disable_count": INFERRED_EXPRESSION_OUTSIDE_FORMAL_DEFAULT,
     "t_assert_disabled": VERILATOR_ASSERTIONS_DISABLED,
     "t_assert_future": TWO_STATE_INITIALIZATION,
