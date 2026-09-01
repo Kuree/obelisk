@@ -857,7 +857,6 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> finish = addressArgument(3, high);
     if (failed(start) || failed(finish))
       return failure();
-    bool hasExplicitRange = hasExplicitStart && hasExplicitFinish;
     bool unsignedAddress = associative && !associative.getSignedKey();
     auto greaterThan =
         unsignedAddress ? arith::CmpIPredicate::ugt : arith::CmpIPredicate::sgt;
@@ -1060,8 +1059,6 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
 
     setCurrent(extraData);
     Value suppressExtraWarning = sawFileAddress;
-    if (!hasExplicitRange)
-      suppressExtraWarning = constant(builder.getI1Type(), 1);
     cf::CondBranchOp::create(builder, location, suppressExtraWarning, exit,
                              ValueRange{}, warnWordCount, ValueRange{});
 
@@ -1197,8 +1194,6 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location, arith::CmpIPredicate::eq, wordCount, expectedWords);
     Value suppressWarning =
         arith::OrIOp::create(builder, location, sawFileAddress, countMatches);
-    if (!hasExplicitRange)
-      suppressWarning = constant(builder.getI1Type(), 1);
     cf::CondBranchOp::create(builder, location, suppressWarning, exit,
                              ValueRange{}, warnWordCount, ValueRange{});
 
