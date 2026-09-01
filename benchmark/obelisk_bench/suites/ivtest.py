@@ -204,6 +204,11 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
         "$readmemb: The behaviour for reg[...] mem[N:0]"),
     "nested_impl_event2": OptionalWarningGoldOracle(
         "warning: @* found no sensitivities"),
+    # Clause 9.4.2.2 gives this procedure an empty inferred event expression,
+    # so it never triggers, but does not require a diagnostic announcing that
+    # fact. Preserve the exact observed x value after removing the one warning.
+    "pr3441576": OptionalWarningGoldOracle(
+        "warning: @* found no sensitivities", prefix_lines=1),
     # Clause 21.3.1 defines MCD bit zero as standard output and does not
     # prescribe a diagnostic when $fclose cannot close it. The corresponding
     # VPI rule says this predefined channel cannot be closed. Preserve all
