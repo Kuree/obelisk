@@ -305,6 +305,12 @@ LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
     "historical nonstandard `protect and `endprotect directives")
+LEGACY_FAULT_SIMULATION_DIRECTIVES = Exclusion(
+    "IEEE 1800-2017 22.1",
+    "the complete compiler-directive inventory does not include "
+    "`suppress_faults, `nosuppress_faults, `enable_portfaults, or "
+    "`disable_portfaults; this compile-only test requires those historical "
+    "Verilog-XL fault-simulation directives")
 FUNCTION_CALL_AS_STATEMENT_ERROR = Exclusion(
     "IEEE 1800-2017 13.4.1",
     "calling a nonvoid function as a statement is legal and shall issue a "
@@ -517,6 +523,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
+    "pr1467825": LEGACY_FAULT_SIMULATION_DIRECTIVES,
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,

@@ -43,6 +43,15 @@ class ExcludedTest(unittest.TestCase):
                                  r"^IEEE 1800-2017 (?:[A-Z]\.)?\d+(\.\d+)*$")
                 self.assertTrue(excluded.reason.strip())
 
+    def test_legacy_fault_directives_are_an_exact_exclusion(self):
+        key, outcome = ivtest.judge_one(
+            "/nonexistent/obelisk", Path("/nonexistent"),
+            self.descriptor("pr1467825"), 10)
+        self.assertEqual(key, "pr1467825")
+        self.assertEqual(outcome.status, model.SKIP)
+        self.assertIn("IEEE 1800-2017 22.1", outcome.log)
+        self.assertIn("`suppress_faults", outcome.log)
+
     def test_a_test_outside_the_list_is_still_judged(self):
         key, outcome = ivtest.judge_one(
             "/nonexistent/obelisk", Path("/nonexistent"),
