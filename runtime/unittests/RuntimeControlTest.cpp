@@ -113,7 +113,7 @@ TEST(RuntimeOnce, StaticAndDeferredClaimsUseTheirDocumentedScope) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(RuntimeDeferredAssertion, LatestPerProcessReportMatures) {
+TEST(RuntimeDeferredAssertion, EveryPendingProcessReportMatures) {
   EXPECT_EQ(obelisk_rt_v1_deferred_enqueue(nullptr, 1), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(nullptr, 1), 0u);
 
@@ -122,20 +122,20 @@ TEST(RuntimeDeferredAssertion, LatestPerProcessReportMatures) {
   context->activeLogicalProcessToken = 11;
   EXPECT_EQ(obelisk_rt_v1_deferred_enqueue(context, 0), 0u);
   uint64_t first = obelisk_rt_v1_deferred_enqueue(context, 71);
-  uint64_t latest = obelisk_rt_v1_deferred_enqueue(context, 71);
+  uint64_t second = obelisk_rt_v1_deferred_enqueue(context, 71);
   uint64_t otherSite = obelisk_rt_v1_deferred_enqueue(context, 72);
   ASSERT_NE(first, 0u);
-  ASSERT_NE(latest, 0u);
+  ASSERT_NE(second, 0u);
   ASSERT_NE(otherSite, 0u);
-  EXPECT_NE(first, latest);
+  EXPECT_NE(first, second);
 
   context->activeLogicalProcessToken = 12;
   uint64_t otherProcess = obelisk_rt_v1_deferred_enqueue(context, 71);
   ASSERT_NE(otherProcess, 0u);
 
-  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, first), 0u);
-  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, latest), 1u);
-  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, latest), 0u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, first), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, second), 1u);
+  EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, second), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherSite), 1u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherProcess), 1u);
 
@@ -165,7 +165,7 @@ TEST(RuntimeDeferredAssertion, FlushCancelsOnlyTheSelectedProcess) {
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, secondSite), 0u);
   EXPECT_EQ(obelisk_rt_v1_deferred_mature(context, otherProcess), 1u);
   EXPECT_TRUE(context->deferredImmediateReports.empty());
-  EXPECT_TRUE(context->latestDeferredImmediateReports.empty());
+  EXPECT_TRUE(context->deferredImmediateProcessReports.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 

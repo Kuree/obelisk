@@ -538,7 +538,7 @@ static void resetDeferredImmediateReportsForTime(obelisk_rt_context *context) {
     return;
   context->deferredImmediateSites.clear();
   context->deferredImmediateReports.clear();
-  context->latestDeferredImmediateReports.clear();
+  context->deferredImmediateProcessReports.clear();
   context->deferredImmediateAssertionReports.clear();
   context->deferredImmediateTime = context->schedulerTime;
 }
@@ -565,14 +565,12 @@ void obelisk_rt_flush_deferred_immediate_reports_unlocked(
   if (!context || logicalProcess == 0)
     return;
   resetDeferredImmediateReportsForTime(context);
-  auto process = context->latestDeferredImmediateReports.find(logicalProcess);
-  if (process == context->latestDeferredImmediateReports.end())
+  auto process = context->deferredImmediateProcessReports.find(logicalProcess);
+  if (process == context->deferredImmediateProcessReports.end())
     return;
-  for (const auto &[site, ticket] : process->second) {
-    (void)site;
+  for (uint64_t ticket : process->second)
     eraseDeferredImmediateReportUnlocked(context, ticket);
-  }
-  context->latestDeferredImmediateReports.erase(process);
+  context->deferredImmediateProcessReports.erase(process);
 }
 
 bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
@@ -598,14 +596,12 @@ bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
       ++iterator;
       continue;
     }
-    auto process = context->latestDeferredImmediateReports.find(
+    auto process = context->deferredImmediateProcessReports.find(
         report->second.logicalProcess);
-    if (process != context->latestDeferredImmediateReports.end()) {
-      auto site = process->second.find(report->second.site);
-      if (site != process->second.end() && site->second == ticket)
-        process->second.erase(site);
+    if (process != context->deferredImmediateProcessReports.end()) {
+      process->second.erase(ticket);
       if (process->second.empty())
-        context->latestDeferredImmediateReports.erase(process);
+        context->deferredImmediateProcessReports.erase(process);
     }
     context->deferredImmediateReports.erase(report);
     iterator = assertion->second.erase(iterator);
@@ -766,15 +762,11 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     uint64_t ticket = context->nextDeferredImmediateTicket++;
     if (ticket == 0)
       ticket = context->nextDeferredImmediateTicket++;
-    auto &sites = context->latestDeferredImmediateReports
-                      [context->activeLogicalProcessToken];
-    auto previous = sites.find(siteID);
-    if (previous != sites.end())
-      eraseDeferredImmediateReportUnlocked(context, previous->second);
+    uint64_t logicalProcess = context->activeLogicalProcessToken;
     context->deferredImmediateReports.emplace(
         ticket, obelisk_rt_context::DeferredImmediateReport{
-                    context->activeLogicalProcessToken, siteID, assertionID});
-    sites[siteID] = ticket;
+                    logicalProcess, assertionID});
+    context->deferredImmediateProcessReports[logicalProcess].insert(ticket);
     if (assertionID != 0)
       context->deferredImmediateAssertionReports[assertionID].insert(ticket);
     return ticket;
@@ -801,20 +793,16 @@ extern "C" uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
     auto report = context->deferredImmediateReports.find(ticket);
     if (report == context->deferredImmediateReports.end())
       return 0;
-    auto process = context->latestDeferredImmediateReports.find(
+    auto process = context->deferredImmediateProcessReports.find(
         report->second.logicalProcess);
-    bool current = false;
-    if (process != context->latestDeferredImmediateReports.end()) {
-      auto site = process->second.find(report->second.site);
-      current = site != process->second.end() && site->second == ticket;
-      if (current) {
-        process->second.erase(site);
-        if (process->second.empty())
-          context->latestDeferredImmediateReports.erase(process);
-      }
+    bool pending = false;
+    if (process != context->deferredImmediateProcessReports.end()) {
+      pending = process->second.erase(ticket) != 0;
+      if (process->second.empty())
+        context->deferredImmediateProcessReports.erase(process);
     }
     eraseDeferredImmediateReportUnlocked(context, ticket);
-    return current ? 1u : 0u;
+    return pending ? 1u : 0u;
   }
   OBELISK_RT_CATCH_ALL {
     if (context)

@@ -3370,8 +3370,8 @@ uint32_t obelisk_rt_v1_static_once(obelisk_rt_context *context,
 uint32_t obelisk_rt_v1_deferred_once(obelisk_rt_context *context,
                                      uint64_t site_id);
 // Enqueue one deferred-immediate assertion report for the current logical
-// process. Re-enqueuing the same site in the same slot supersedes the previous
-// ticket. The returned nonzero ticket is opaque and context-local.
+// process. Every encounter has an independent pending ticket until it matures
+// or reaches a process flush point. The ticket is opaque and context-local.
 uint64_t obelisk_rt_v1_deferred_enqueue(obelisk_rt_context *context,
                                         uint64_t site_id);
 // Site enqueue carrying the stable identity of a specifically labeled
@@ -3397,8 +3397,8 @@ uint32_t obelisk_rt_v1_assertion_action_state(obelisk_rt_context *context,
 // A locked assertion ignores Kill and therefore retains its generation.
 uint64_t obelisk_rt_v1_assertion_kill_epoch(obelisk_rt_context *context,
                                             uint64_t assertion_id);
-// Consume a deferred report ticket and return one iff it is still the latest
-// report for its originating process and assertion site.
+// Consume a deferred report ticket and return one iff it remains pending for
+// its originating logical process.
 uint32_t obelisk_rt_v1_deferred_mature(obelisk_rt_context *context,
                                        uint64_t ticket);
 // Copy one nonblocking assignment into the current time slot. The scheduler

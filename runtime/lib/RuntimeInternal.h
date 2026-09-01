@@ -1663,14 +1663,13 @@ struct obelisk_rt_context {
       deferredImmediateSites;
   struct DeferredImmediateReport {
     uint64_t logicalProcess = 0;
-    uint64_t site = 0;
     uint64_t assertion = 0;
   };
   uint64_t nextDeferredImmediateTicket = 1;
   std::unordered_map<uint64_t, DeferredImmediateReport>
       deferredImmediateReports;
-  std::unordered_map<uint64_t, std::unordered_map<uint64_t, uint64_t>>
-      latestDeferredImmediateReports;
+  std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
+      deferredImmediateProcessReports;
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
       deferredImmediateAssertionReports;
   // Per-identity nondefault IEEE assertion-control bits. See Runtime.cpp for

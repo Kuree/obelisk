@@ -2708,12 +2708,12 @@ def SimDeferredEnqueueOp : SimOp<"assert.deferred_enqueue", [
                    MemWrite<SimSchedulerResource>,
                    MemRead<SimProcessResource>]>
   ]> {
-  let summary = "enqueue or replace a deferred-immediate assertion report";
+  let summary = "enqueue a deferred-immediate assertion report";
   let description = [{
     Record an encounter of one deferred-immediate assertion site in the
-    current logical process and return an opaque report ticket. A later
-    encounter of the same site in that process and time slot supersedes this
-    ticket, matching the LRM's last-report semantics.
+    current logical process and return an opaque report ticket. Each encounter
+    remains independently pending until it matures or the originating process
+    reaches an LRM-defined flush point.
   }];
   let arguments = (ins I64Attr:$id);
   let results = (outs I64:$ticket);
@@ -2727,9 +2727,9 @@ def SimDeferredMatureOp : SimOp<"assert.deferred_mature", [
   ]> {
   let summary = "mature a pending deferred-immediate assertion report";
   let description = [{
-    Return true only when the opaque report ticket is still the latest report
-    for its assertion site and originating logical process. The ticket is
-    consumed regardless, so superseded callbacks become no-ops.
+    Return true only when the opaque report ticket is still pending for its
+    originating logical process. The ticket is consumed regardless, so
+    callbacks canceled by a process flush or assertion kill become no-ops.
   }];
   let arguments = (ins I64:$ticket);
   let results = (outs I1:$current);

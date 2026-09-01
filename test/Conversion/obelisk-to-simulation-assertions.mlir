@@ -148,8 +148,8 @@ module {
 // CHECK-DAG: obelisk_sim.ref.store
 // CHECK-DAG: "ERROR: {{.*}}immediate assertion failed."
 
-// Deferred expressions branch at encounter time. Report tickets select only
-// the last result for each site/process before the evaluator matures.
+// Deferred expressions branch at encounter time. Every evaluation receives
+// an independent report ticket that remains pending until its evaluator runs.
 // CHECK-DAG: cf.cond_br
 // CHECK-DAG: obelisk_sim.assert.deferred_enqueue
 // CHECK-DAG: obelisk_sim.assert.deferred_mature
