@@ -32,13 +32,15 @@ module {
     }
 
     // Reads and transition watches are likewise expanded through topology.
+    // Bits outside the connected component remain dependencies of their
+    // original descriptor; sparse alias expansion must not drop them.
     // CHECK-LABEL: obelisk_sim.func @reader
     // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = net, target = descriptor, descriptor = 0
     // CHECK-SAME: effect = read, resource = net, target = descriptor, descriptor = 1
-    // CHECK-SAME: effect = read, resource = net, target = descriptor, descriptor = 2
+    // CHECK-SAME: effect = read, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 0
     // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 1
-    // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 2
+    // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     obelisk_sim.func @reader(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %net: !obelisk_sim.net<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 2 : i64})

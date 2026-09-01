@@ -560,11 +560,22 @@ struct ProgramAnalysis {
       uint64_t begin = effect.target.dynamic ? 0 : effect.target.low;
       uint64_t width =
           effect.target.dynamic ? effect.target.rootWidth : effect.target.width;
-      bool found = false;
+      // Connectivity is sparse: getComponent() returns no members for an
+      // isolated bit. Preserve the complete source range once, then add only
+      // aliases not already covered by that range. Otherwise a vector with
+      // some connected bits would silently lose all of its isolated bits.
+      ComputeEffect source = effect;
+      source.target.low = begin;
+      source.target.width = width;
+      source.target.dynamic = false;
+      expanded.push_back(source);
       for (uint64_t bit = 0; bit != width; ++bit) {
         ArrayRef<::obelisk::analysis::NetBit> component =
             connectivity.getComponent({*effect.target.descriptor, begin + bit});
         for (::obelisk::analysis::NetBit member : component) {
+          if (member.net == *effect.target.descriptor &&
+              member.offset >= begin && member.offset - begin < width)
+            continue;
           std::optional<uint64_t> rootWidth =
               connectivity.getNetWidth(member.net);
           if (!rootWidth)
@@ -577,11 +588,8 @@ struct ProgramAnalysis {
           alias.target.rootWidth = *rootWidth;
           alias.target.dynamic = false;
           expanded.push_back(alias);
-          found = true;
         }
       }
-      if (!found)
-        expanded.push_back(effect);
     }
     effects.assign(expanded.begin(), expanded.end());
     normalizeEffects(effects);
