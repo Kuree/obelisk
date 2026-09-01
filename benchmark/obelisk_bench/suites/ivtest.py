@@ -194,6 +194,11 @@ DUMPVARS_SELECTED_VARIABLE = Exclusion(
     "$dumpvars accepts module identifiers and variable identifiers, not "
     "selected words of an unpacked array; the test requires Icarus's selected-"
     "variable extension")
+WIDTHLESS_SUPPRESSED_RAW_SCAN = Exclusion(
+    "IEEE 1800-2017 21.3.4.3",
+    "raw %u and %z input reads enough data to fill their destination, but "
+    "assignment suppression provides no destination from which to obtain a "
+    "size; the test requires Icarus's implicit 32-bit suppressed element")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -227,6 +232,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "dump_memword": DUMPVARS_SELECTED_VARIABLE,
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "fscanf_u": WIDTHLESS_SUPPRESSED_RAW_SCAN,
+    "fscanf_u_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
+    "fscanf_z": WIDTHLESS_SUPPRESSED_RAW_SCAN,
+    "fscanf_z_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
