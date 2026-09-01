@@ -144,6 +144,16 @@ class OptionalWarningGoldOracle(NamedTuple):
 
 
 OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
+    # These fixtures intentionally exercise constructs that Icarus considers
+    # unsynthesizable inside always_comb/always_latch/always_ff. Synthesis
+    # diagnostics are implementation-specific; preserve the complete runtime
+    # trace and self-check after removing only the pinned-Icarus warning block.
+    "always_comb_warn": OptionalWarningGoldOracle(
+        "warning:", 44, prefix_lines=44),
+    "always_ff_warn": OptionalWarningGoldOracle(
+        "warning:", 42, prefix_lines=42),
+    "always_latch_warn": OptionalWarningGoldOracle(
+        "warning:", 42, prefix_lines=42),
     # The three out-of-range assignments are guarded by Icarus's predefined
     # __ICARUS__ macro, so another compiler neither sees them nor emits their
     # vendor-formatted -Wselect-range diagnostics. Preserve the unguarded
