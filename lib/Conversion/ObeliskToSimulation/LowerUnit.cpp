@@ -2462,27 +2462,15 @@ void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
 }
 
 // Unsized numeric literals whose most-significant four-state bit is unknown
-// fill that bit through a wider context. Slang retains the declared-unsized
-// fact separately from the normalized 32-bit constant value.
+// fill that bit through a wider context (IEEE 1800-2017 5.7.1).
 static bool fillsWidenedUnknown(Operation *source, Type targetType) {
-  auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(source);
-  auto declaredUnsized = source->getAttrOfType<BoolAttr>("is_declared_unsized");
-  if (!literal || !declaredUnsized || !declaredUnsized.getValue())
+  std::optional<unsigned> sourceWidth = getUnsizedUnknownFillWidth(source);
+  if (!sourceWidth)
     return false;
-  FailureOr<Type> sourceType = getNormalizedSemanticType(source);
-  Type sourceScalar =
-      succeeded(sourceType) ? sim::getPackedScalarType(*sourceType) : Type{};
   Type targetScalar = sim::getPackedScalarType(targetType);
-  std::optional<unsigned> sourceWidth =
-      sourceScalar ? sim::getPackedWidth(sourceScalar) : std::nullopt;
   std::optional<unsigned> targetWidth =
       targetScalar ? sim::getPackedWidth(targetScalar) : std::nullopt;
-  std::optional<StringRef> spelling = getConstantSpelling(source);
-  if (!sourceWidth || !targetWidth || *targetWidth <= *sourceWidth || !spelling)
-    return false;
-  FailureOr<ParsedConstant> parsed =
-      parseSVInteger(*spelling, *sourceWidth, getSemanticLocation(source));
-  return succeeded(parsed) && parsed->unknown.isSignBitSet();
+  return targetWidth && *targetWidth > *sourceWidth;
 }
 
 // Slang represents context-determined integral conversions explicitly.  Their

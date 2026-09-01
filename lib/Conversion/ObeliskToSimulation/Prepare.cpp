@@ -423,25 +423,63 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   bool invalid = false;
 
+  // Propagate stale frontend folds through expression parents in postorder.
+  // Each expression enters this set at most once, avoiding a repeated upward
+  // walk (and quadratic behavior) when one expression contains many affected
+  // literals or compile-time queries.
+  llvm::SmallPtrSet<Operation *, 16> staleFoldExpressions;
+  auto isSemanticExpression = [](Operation *operation) {
+    return operation && operation->getName().getStringRef().starts_with(
+                            "obelisk.sv.expression.");
+  };
+
   // Freeze call-specific frontend facts while the whole elaborated inventory
-  // is still available. This walk already visits every system call for
+  // is still available. This walk already visits every operation for
   // `$dumpports`, so repairing an affected expression chain below adds no
   // additional whole-design traversal.
-  semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
+  semanticRoot->walk<WalkOrder::PostOrder>([&](Operation *operation) {
+    bool staleFold = staleFoldExpressions.erase(operation);
+
+    // IEEE 1800-2017 5.7.1: "Unsized unsigned literal constants where the
+    // high-order bit is unknown (X or x) or three-state (Z or z) shall be
+    // extended to the size of the expression containing the literal
+    // constant." Slang widens such a literal with the zero padding of an
+    // ordinary conversion, so its cached value -- and every fold computed
+    // from it -- describes the wrong operand. Lowering fills the unknown bit
+    // instead, so hand these expressions to it.
+    if (std::optional<unsigned> filled =
+            getUnsizedUnknownFillWidth(operation)) {
+      Operation *widened = operation->getParentOp();
+      auto widenedType =
+          widened ? widened->getAttrOfType<TypeAttr>("semantic_type")
+                  : TypeAttr{};
+      std::optional<uint64_t> widenedWidth =
+          widenedType ? getSemanticPackedWidth(widenedType.getValue())
+                      : std::nullopt;
+      if (widenedWidth && *widenedWidth > *filled &&
+          isSemanticExpression(widened))
+        staleFoldExpressions.insert(widened);
+    }
+
+    auto call = dyn_cast<semantic::SVCallExpressionOp>(operation);
+
     // IEEE 1800-2017 20.7 expands intermediate typedefs before numbering
     // dimensions. Slang's cached value currently uses the flattened storage
     // order, and enclosing expressions can therefore carry stale folds too.
     // Keep all unaffected frontend folds, but recompute this short expression
     // chain from the corrected compile-time query constants.
-    if (call->hasAttr(arrayQueryDimensionsAttrName)) {
-      for (Operation *expression = call; expression;
-           expression = expression->getParentOp()) {
-        if (!expression->getName().getStringRef().starts_with(
-                "obelisk.sv.expression."))
-          break;
-        expression->removeAttr(foldedConstantAttrName);
-      }
+    if (call && call->hasAttr(arrayQueryDimensionsAttrName))
+      staleFold = true;
+
+    if (staleFold && isSemanticExpression(operation)) {
+      operation->removeAttr(foldedConstantAttrName);
+      Operation *parent = operation->getParentOp();
+      if (isSemanticExpression(parent))
+        staleFoldExpressions.insert(parent);
     }
+
+    if (!call)
+      return;
 
     // `$dumpports` selections are arbitrary-symbol expressions whose semantic
     // type is void, so their module-instance kind is otherwise lost when code

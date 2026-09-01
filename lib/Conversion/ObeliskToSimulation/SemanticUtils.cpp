@@ -127,6 +127,29 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   return std::nullopt;
 }
 
+std::optional<unsigned> getUnsizedUnknownFillWidth(Operation *operation) {
+  auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(operation);
+  if (!literal)
+    return std::nullopt;
+  auto declaredUnsized =
+      operation->getAttrOfType<BoolAttr>("is_declared_unsized");
+  if (!declaredUnsized || !declaredUnsized.getValue())
+    return std::nullopt;
+  FailureOr<Type> type = getNormalizedSemanticType(operation);
+  if (failed(type))
+    return std::nullopt;
+  Type scalar = sim::getPackedScalarType(*type);
+  std::optional<unsigned> width =
+      scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+  if (!width)
+    return std::nullopt;
+  FailureOr<ParsedConstant> parsed = parseSVInteger(
+      literal.getConstantValue(), *width, getSemanticLocation(operation));
+  if (failed(parsed) || !parsed->unknown.isSignBitSet())
+    return std::nullopt;
+  return width;
+}
+
 std::optional<int64_t> getTypeReferenceIdentity(Operation *operation) {
   if (!isa<semantic::SVTypeReferenceExpressionOp>(operation))
     return std::nullopt;

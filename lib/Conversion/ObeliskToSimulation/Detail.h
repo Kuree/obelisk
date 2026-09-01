@@ -506,6 +506,15 @@ getNetInitializerExpressions(::mlir::Operation *op);
 std::optional<::mlir::StringRef>
 getConstantSpelling(::mlir::Operation *operation);
 
+/// Self-determined width of an unsized based literal whose most significant
+/// four-state bit is unknown, or nothing for any other node. IEEE 1800-2017
+/// 5.7.1 fills that bit through every wider containing expression instead of
+/// padding the literal with zeros, so a widening of such a literal -- and any
+/// fold computed from one -- has to follow that rule rather than an ordinary
+/// conversion.
+std::optional<unsigned>
+getUnsizedUnknownFillWidth(::mlir::Operation *operation);
+
 /// Matching-type identity of a type-reference node, or nothing when the node
 /// is not a type reference the importer numbered.
 std::optional<int64_t> getTypeReferenceIdentity(::mlir::Operation *operation);
