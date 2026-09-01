@@ -566,7 +566,8 @@ TimeOverride snapshotTimeFormat(obelisk_rt_context *context) {
 // the two exponents give the factor between them.
 obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
                                        int32_t precisionExponent,
-                                       const TimeOverride &timeFormat) {
+                                       const TimeOverride &timeFormat,
+                                       uint32_t width) {
   long double scaled =
       ticks * std::pow(10.0L, static_cast<long double>(precisionExponent -
                                                        timeFormat.units));
@@ -579,8 +580,8 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
   std::string rendered(buffer, static_cast<size_t>(length));
   rendered += timeFormat.suffix;
   // IEEE gives the minimum width for the whole field, suffix included.
-  if (rendered.size() < timeFormat.width)
-    output.append(timeFormat.width - rendered.size(), ' ');
+  if (rendered.size() < width)
+    output.append(width - rendered.size(), ' ');
   output += rendered;
   return OBELISK_RT_OK;
 }
@@ -781,7 +782,7 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       if (ticks)
         return formatOverriddenTime(
             output, *ticks, environment ? environment->time_precision : 0,
-            timeFormat);
+            timeFormat, options.width.value_or(timeFormat.width));
     }
     obelisk_rt_status status;
     if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {

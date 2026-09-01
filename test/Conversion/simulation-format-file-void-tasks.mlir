@@ -14,6 +14,7 @@
 // records an I/O error without terminating the process. MCD zero writes nowhere.
 // CHECK: :00610062:610062: a b:a b:
 // CHECK-NEXT: value=12         97
+// CHECK-NEXT: 7
 // CHECK-NEXT: PASSED
 
 module attributes {
@@ -75,6 +76,28 @@ module attributes {
       obelisk_sim.display %ctx to %stdout(%as_string, %designated)
           newline = true radix = 10 flags = [0, 8] :
           !obelisk_sim.bytes, !obelisk_sim.string
+
+      // IEEE 1800-2017 21.2.1.3: an explicit conversion width overrides the
+      // minimum width installed by $timeformat.
+      %units = arith.constant -9 : i32
+      %digits = arith.constant 0 : i32
+      %suffix = obelisk_sim.bytes.constant "ns"
+      %minimum_width = arith.constant 5 : i32
+      obelisk_sim.time.format %ctx, %units, %digits, %suffix, %minimum_width :
+          (!obelisk_sim.context, i32, i32, !obelisk_sim.bytes, i32) -> ()
+      %time_format = obelisk_sim.bytes.constant "%7t"
+      %time = obelisk_sim.logic.constant 0 : i64, 0 : i64 :
+          !obelisk_sim.logic<64>
+      %formatted_time = obelisk_sim.string.output_format %ctx(
+          %time_format, %time) radix = 10 flags = [32, 0]
+          {time_multiplier = 1 : i64, time_precision = -9 : i32} :
+          !obelisk_sim.bytes, !obelisk_sim.logic<64>
+      %time_width = obelisk_sim.string.length %formatted_time :
+          (!obelisk_sim.string) -> i64
+      %decimal = obelisk_sim.bytes.constant "%0d"
+      obelisk_sim.display %ctx to %stdout(%decimal, %time_width)
+          newline = true radix = 10 flags = [0, 0] :
+          !obelisk_sim.bytes, i64
 
       %zero = arith.constant 0 : i32
       %discarded = obelisk_sim.bytes.constant "must not be written"
