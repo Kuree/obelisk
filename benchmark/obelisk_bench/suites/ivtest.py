@@ -343,6 +343,11 @@ PULL_GATE_ARITY = Exclusion(
     "pull_gate_instance has exactly one output_terminal; multiple pull "
     "instances are a comma-separated list outside the closing parenthesis, "
     "but the test places several terminals inside one named instance")
+EMPTY_UDP_INPUT_TERMINAL = Exclusion(
+    "IEEE 1800-2017 29.8",
+    "udp_instance requires one output_terminal followed by every declared "
+    "input_terminal; the test leaves its final UDP input connection empty "
+    "and expects compilation to continue")
 PORT_DECLARATION_WITHOUT_LIST = Exclusion(
     "IEEE 1800-2017 23.2.2.1",
     "a non-ANSI module header requires list_of_ports and its body declarations "
@@ -634,6 +639,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
+    "pr707": EMPTY_UDP_INPUT_TERMINAL,
     "parameter_in_generate1": GENERATE_BLOCK_PARAMETER,
     "parameter_no_default": PARAMETER_PORT_WITHOUT_DEFAULT,
     "param_string": UNTYPED_STRING_PARAMETER_IS_INTEGRAL,
