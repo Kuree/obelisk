@@ -216,6 +216,16 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # typical expression was selected. Keep the selected value as the oracle.
     "pr1792152": OptionalWarningGoldOracle(
         "warning: Choosing typ expression.", prefix_lines=1),
+    # Clause 13.4 permits the legacy non-ANSI function form used here. The
+    # seven scalar-port/vector-declaration warnings are Icarus policy; retain
+    # the computed hexadecimal values as the exact oracle.
+    "pr1960619": OptionalWarningGoldOracle(
+        "warning: Scalar port", 7, prefix_lines=7),
+    # Clause 21.7.1.1 defines $dumpfile selection but does not require a
+    # simulator to announce that the VCD file was opened. With that optional
+    # informational line removed, this test intentionally has no stdout.
+    "pr1963962": OptionalWarningGoldOracle(
+        "VCD info: dumpfile", prefix_lines=1),
     # Clause 9.4.2.2 requires every referenced array word in @* sensitivity,
     # but does not require announcing those dependencies. Keep the complete
     # value trace and remove exactly the four diagnostics requested by the
