@@ -368,6 +368,12 @@ INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC = Exclusion(
     "does not prescribe a diagnostic or its wording when a file output task "
     "receives a bit pattern that names no open file; this gold file requires "
     "Icarus's exact warning text")
+BUILTIN_NET_EXTENSION_CHECKS = Exclusion(
+    "IEEE 1800-2017 6.7.1",
+    "built-in nets may contain only 4-state data, so the source correctly "
+    "guards its wire bit and wire real extension declarations with "
+    "__ICARUS__; however, it unconditionally checks the corresponding "
+    "undriven nets even when those Icarus-only branches are disabled")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -418,6 +424,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "fscanf_u_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_z": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_z_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
+    "implicit_cast13": BUILTIN_NET_EXTENSION_CHECKS,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_inout_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
