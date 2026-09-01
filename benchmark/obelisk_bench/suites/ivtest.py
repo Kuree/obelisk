@@ -374,6 +374,12 @@ BUILTIN_NET_EXTENSION_CHECKS = Exclusion(
     "guards its wire bit and wire real extension declarations with "
     "__ICARUS__; however, it unconditionally checks the corresponding "
     "undriven nets even when those Icarus-only branches are disabled")
+MACRO_REDEFINITION_WARNING_POLICY = Exclusion(
+    "IEEE 1800-2017 22.5.1",
+    "text macro redefinition is allowed and the latest definition prevails, "
+    "but the clause does not require a warning or distinguish identical from "
+    "changed replacement text; this test checks Icarus-specific warning "
+    "switch policy and exact diagnostic text")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -429,6 +435,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "fscanf_z": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_z_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "implicit_cast13": BUILTIN_NET_EXTENSION_CHECKS,
+    "macro_redefinition": MACRO_REDEFINITION_WARNING_POLICY,
+    "macro_replacement": MACRO_REDEFINITION_WARNING_POLICY,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_inout_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
