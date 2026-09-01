@@ -404,6 +404,13 @@ ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA = Exclusion(
     "and destination before waiting, but commits in the NBA region after "
     "Active-region execution; the test reads immediately after blocking ->e "
     "and requires Icarus's update-before-read ordering")
+TIME_ZERO_PORT_ASSIGNMENT_RACE = Exclusion(
+    "IEEE 1800-2017 4.8",
+    "the time-zero implicit port continuous-assignment update may interleave "
+    "with the test's blocking initialization of its source; if the input net "
+    "observes xxxx first, 5.7.1 and 12.5 make its unsized 32-bit x label "
+    "unequal to the zero-extended 4-bit selector, so the test's default arm "
+    "legitimately reports failure")
 ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
     "IEEE 1800-2017 9.2.2.3",
     "tools should warn when an always_latch procedure does not represent "
@@ -533,6 +540,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
+    "pr1367855": TIME_ZERO_PORT_ASSIGNMENT_RACE,
     "pr1467825": LEGACY_FAULT_SIMULATION_DIRECTIVES,
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
