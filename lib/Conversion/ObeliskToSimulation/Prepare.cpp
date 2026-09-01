@@ -547,7 +547,56 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
+    bool firstEndpointUse = !sequence->hasAttr(sequenceEndpointEventAttrName);
     sequence->setAttr(sequenceEndpointEventAttrName, UnitAttr::get(context));
+    if (!firstEndpointUse)
+      return;
+
+    // IEEE 1800-2017 16.13.6 applies sampled-function clock inference to a
+    // sequence instantiated in an event expression. Materialize the available
+    // default clock only for a sequence that actually needs an endpoint
+    // monitor; ordinary sequence declarations retain their compact AST.
+    SmallVector<Operation *> declarationChildren = getChildren(sequence);
+    auto defaultInstance =
+        declarationChildren.size() == 1
+            ? dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
+                  declarationChildren.front())
+            : semantic::SVAssertionInstanceExpressionOp{};
+    SmallVector<Operation *> defaultInstanceChildren =
+        defaultInstance ? getChildren(defaultInstance)
+                        : SmallVector<Operation *>{};
+    Operation *declarationBody =
+        defaultInstance && defaultInstance.getHasExpandedBody() &&
+                defaultInstance.getArgumentCount() == 0 &&
+                defaultInstanceChildren.size() == 1
+            ? defaultInstanceChildren.front()
+            : nullptr;
+    if (!declarationBody ||
+        isa<semantic::SVClockingAssertionExprOp>(declarationBody))
+      return;
+    auto defaultClock =
+        sequence->getAttrOfType<SymbolRefAttr>("default_clocking_symbol");
+    auto clockingSymbol =
+        defaultClock ? semanticSymbols.find(defaultClock.getLeafReference())
+                     : semanticSymbols.end();
+    auto clocking = clockingSymbol == semanticSymbols.end()
+                        ? semantic::SVClockingBlockSymbolOp{}
+                        : dyn_cast<semantic::SVClockingBlockSymbolOp>(
+                              clockingSymbol->second);
+    if (!clocking)
+      return;
+    SmallVector<Operation *> clockingChildren = getChildren(clocking);
+    auto clockEvent = llvm::find_if(clockingChildren, [](Operation *child) {
+      return isa<semantic::SVSignalEventControlOp,
+                 semantic::SVEventListControlOp>(child);
+    });
+    if (clockEvent == clockingChildren.end())
+      return;
+    OpBuilder endpointBuilder(context);
+    endpointBuilder.setInsertionPointToEnd(&sequence->getRegion(0).front());
+    Operation *resolvedClock = endpointBuilder.clone(**clockEvent);
+    resolvedClock->setAttr(sequenceEndpointDefaultClockAttrName,
+                           UnitAttr::get(context));
   });
 
   // Freeze the normalized storage type of every assertion local on its

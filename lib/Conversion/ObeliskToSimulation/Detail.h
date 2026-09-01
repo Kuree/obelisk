@@ -218,6 +218,8 @@ inline constexpr ::mlir::StringLiteral concurrentAbortObserverRequestAttrName =
     "obelisk_sim.concurrent_abort_observer_request";
 inline constexpr ::mlir::StringLiteral sequenceEndpointEventAttrName =
     "obelisk_sim.sequence_endpoint_event";
+inline constexpr ::mlir::StringLiteral sequenceEndpointDefaultClockAttrName =
+    "obelisk_sim.sequence_endpoint_default_clock";
 inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
     "obelisk_sim.sequence_endpoint_monitor";
 inline constexpr ::mlir::StringLiteral sequenceEndpointPathAttrName =

@@ -503,6 +503,12 @@ NONCONSECUTIVE_IMPLICATION_REPORT_COUNT = Exclusion(
     "executes once under 16.14.1; the LRM result for the test's stimulus is "
     "29, which its own comment records as the result from other simulators, "
     "while the test expects Verilator's 34")
+LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY = Exclusion(
+    "IEEE 1800-2017 9.4.2.4",
+    "a sequence instance may directly control a procedural event, and every "
+    "match of either operand of a sequence `or` is a match of the composite "
+    "sequence under 16.9.7; this negative test records Verilator's deliberately "
+    "unsupported non-edge and `or` endpoint topologies, which Obelisk supports")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -514,6 +520,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_nonconsec_rep": NONCONSECUTIVE_IMPLICATION_REPORT_COUNT,
     "t_assert_pre": USE_BEFORE_DECLARATION,
     "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
+    "t_assert_seq_event_unsup": LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY,
     "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,

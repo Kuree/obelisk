@@ -2730,9 +2730,10 @@ analyzeUniformIntrinsicEndStrength(Operation *candidate,
 
 LogicalResult
 UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
-  if (roots.size() != 1)
+  if (roots.empty() || roots.size() > 2)
     return function.emitError(
-               "sequence endpoint monitor requires one assertion instance"),
+               "sequence endpoint monitor requires one assertion instance "
+               "and an optional resolved default clock"),
            failure();
   auto instance =
       dyn_cast<semantic::SVAssertionInstanceExpressionOp>(roots.front());
@@ -2751,30 +2752,45 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
                << "sequence endpoint monitor requires a nonrecursive "
                   "expanded instance without local variables",
            failure();
+  Operation *resolvedClock = nullptr;
+  if (roots.size() == 2 &&
+      roots.back()->hasAttr(sequenceEndpointDefaultClockAttrName))
+    resolvedClock = roots.back();
   auto clocking = dyn_cast<semantic::SVClockingAssertionExprOp>(*expanded);
   SmallVector<Operation *> clocked =
       clocking ? getChildren(clocking) : SmallVector<Operation *>{};
-  if (!clocking || clocked.size() != 2)
+  Operation *sequence = *expanded;
+  if (clocking && clocked.size() == 2) {
+    resolvedClock = clocked.front();
+    sequence = clocked.back();
+  } else if (clocking || !resolvedClock) {
     return emitError(getSemanticLocation(*expanded))
-               << "sequence endpoint monitor requires an explicit clock",
+               << "sequence endpoint monitor requires a resolved clock",
            failure();
-  auto clock = dyn_cast<semantic::SVSignalEventControlOp>(clocked.front());
+  }
+  auto clock = dyn_cast<semantic::SVSignalEventControlOp>(resolvedClock);
   if (!clock || clock.getHasIff() || getChildren(clock).size() != 1 ||
       !isAddressableExpression(getChildren(clock).front()))
-    return emitError(getSemanticLocation(clocked.front()))
+    return emitError(getSemanticLocation(resolvedClock))
                << "sequence endpoint monitor requires one direct signal "
                   "edge clock without iff",
            failure();
-  FailureOr<FixedSequence> compiled = compileFixedSequence(clocked.back());
-  if (failed(compiled) || compiled->ages.empty() ||
-      compiled->ages.size() > 63 ||
-      llvm::any_of(compiled->ages, [](const FixedSequenceAge &age) {
-        return !age.matchItems.empty();
+  FailureOr<FixedSequenceAlternatives> compiled =
+      compileFixedSequenceAlternatives(sequence, resolvedClock);
+  if (failed(compiled) || compiled->empty() ||
+      llvm::any_of(*compiled, [](const FixedSequence &alternative) {
+        return alternative.ages.empty() || alternative.ages.size() > 63 ||
+               alternative.emptyMatch || alternative.vacuousSuccess ||
+               alternative.hasIntrinsicEndStrength ||
+               !alternative.firstMatchBoundaries.empty() ||
+               llvm::any_of(alternative.ages, [](const FixedSequenceAge &age) {
+                 return !age.matchItems.empty() || !age.caseGuards.empty();
+               });
       }))
-    return emitError(getSemanticLocation(clocked.back()))
-               << "sequence endpoint monitor supports boolean terms, fixed "
-                  "## delays, and fixed consecutive repetition up to 63 "
-                  "cycles",
+    return emitError(getSemanticLocation(sequence))
+               << "sequence endpoint monitor supports Boolean terms, "
+                  "bounded ## delay ranges, and bounded consecutive "
+                  "repetition with at most 63 cycles per trace",
            failure();
 
   auto endpointPath =
@@ -2795,11 +2811,15 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
-  Value stateStorage;
-  if (compiled->ages.size() > 1)
-    stateStorage = sim::SimRefAllocOp::create(
-        builder, location, sim::RefType::get(function.getContext(), stateType),
-        zero);
+  SmallVector<Value> stateStorages;
+  stateStorages.reserve(compiled->size());
+  for (const FixedSequence &alternative : *compiled)
+    stateStorages.push_back(
+        alternative.ages.size() > 1
+            ? sim::SimRefAllocOp::create(
+                  builder, location,
+                  sim::RefType::get(function.getContext(), stateType), zero)
+            : Value{});
 
   Block *wait = addBlock();
   Block *sample = addBlock();
@@ -2874,48 +2894,58 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
     setCurrent(continuation);
   };
 
-  Value state = stateStorage ? sim::SimRefLoadOp::create(
-                                   builder, location, stateType, stateStorage)
-                             : zero;
-  Value nextState = zero;
-  for (uint64_t age = 1; age < compiled->ages.size(); ++age) {
-    Value mask = arith::ConstantOp::create(
-        builder, location, stateType,
-        builder.getI64IntegerAttr(uint64_t{1} << age));
-    Value presentBits = arith::AndIOp::create(builder, location, state, mask);
-    Value active = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, presentBits, zero);
-    FailureOr<Value> matches = evaluateAge(compiled->ages[age]);
-    if (failed(matches))
-      return failure();
-    Value advances = arith::AndIOp::create(builder, location, active, *matches);
-    if (age + 1 == compiled->ages.size()) {
-      triggerIf(advances);
-    } else {
-      Value nextMask = arith::ConstantOp::create(
+  Value endpointMatch = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+  for (auto [alternative, stateStorage] :
+       llvm::zip_equal(*compiled, stateStorages)) {
+    Value state = stateStorage ? sim::SimRefLoadOp::create(
+                                     builder, location, stateType, stateStorage)
+                               : zero;
+    Value nextState = zero;
+    for (uint64_t age = 1; age < alternative.ages.size(); ++age) {
+      Value mask = arith::ConstantOp::create(
           builder, location, stateType,
-          builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
-      Value advancedBit =
-          arith::SelectOp::create(builder, location, advances, nextMask, zero);
-      nextState =
-          arith::OrIOp::create(builder, location, nextState, advancedBit);
+          builder.getI64IntegerAttr(uint64_t{1} << age));
+      Value presentBits = arith::AndIOp::create(builder, location, state, mask);
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, presentBits, zero);
+      FailureOr<Value> matches = evaluateAge(alternative.ages[age]);
+      if (failed(matches))
+        return failure();
+      Value advances =
+          arith::AndIOp::create(builder, location, active, *matches);
+      if (age + 1 == alternative.ages.size()) {
+        endpointMatch =
+            arith::OrIOp::create(builder, location, endpointMatch, advances);
+      } else {
+        Value nextMask = arith::ConstantOp::create(
+            builder, location, stateType,
+            builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
+        Value advancedBit = arith::SelectOp::create(builder, location, advances,
+                                                    nextMask, zero);
+        nextState =
+            arith::OrIOp::create(builder, location, nextState, advancedBit);
+      }
     }
-  }
 
-  FailureOr<Value> starts = evaluateAge(compiled->ages.front());
-  if (failed(starts))
-    return failure();
-  if (compiled->ages.size() == 1) {
-    triggerIf(*starts);
-  } else {
-    Value nextMask = arith::ConstantOp::create(builder, location, stateType,
-                                               builder.getI64IntegerAttr(2));
-    Value started =
-        arith::SelectOp::create(builder, location, *starts, nextMask, zero);
-    nextState = arith::OrIOp::create(builder, location, nextState, started);
+    FailureOr<Value> starts = evaluateAge(alternative.ages.front());
+    if (failed(starts))
+      return failure();
+    if (alternative.ages.size() == 1) {
+      endpointMatch =
+          arith::OrIOp::create(builder, location, endpointMatch, *starts);
+    } else {
+      Value nextMask = arith::ConstantOp::create(builder, location, stateType,
+                                                 builder.getI64IntegerAttr(2));
+      Value startedBit =
+          arith::SelectOp::create(builder, location, *starts, nextMask, zero);
+      nextState =
+          arith::OrIOp::create(builder, location, nextState, startedBit);
+    }
+    if (stateStorage)
+      sim::SimRefStoreOp::create(builder, location, nextState, stateStorage);
   }
-  if (stateStorage)
-    sim::SimRefStoreOp::create(builder, location, nextState, stateStorage);
+  triggerIf(endpointMatch);
   cf::BranchOp::create(builder, location, wait);
   return success();
 }
