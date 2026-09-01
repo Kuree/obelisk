@@ -63,6 +63,17 @@ DEFAULT_WARNING_SUPPRESSIONS = [
     "-Wno-shift-count-overflow",
 ]
 
+# Some CE entries record features missing from the pinned Icarus compiler,
+# rather than source that IEEE 1800 requires a compiler to reject. Once
+# Obelisk supports such a feature, keep its upstream self-check active so a
+# later regression is visible. Membership is intentionally a constant-time
+# lookup on the one descriptor being judged.
+SELF_CHECKING_CE_OVERRIDES = {
+    # IEEE 1800-2017 13.5.3 explicitly permits defaults on output arguments
+    # and defines their declaration-scope binding and copy-out behavior.
+    "sv_port_default14",
+}
+
 
 def _normalize_fixture_paths(output: str, ivtest_dir: Path,
                              run_dir: Path) -> str:
@@ -413,7 +424,8 @@ def judge_one(obelisk: str, ivtest_dir: Path, desc: Descriptor,
             native_inputs=native.inputs, vpi=selected_vpi, cwd=tmp,
         )
 
-        if desc.test_type == "CE":
+        if (desc.test_type == "CE" and
+                desc.key not in SELF_CHECKING_CE_OVERRIDES):
             if compiled.failure_kind == "compile":
                 return (desc.key, model.Outcome(model.XFAIL_PASS))
             if compiled.ok:
