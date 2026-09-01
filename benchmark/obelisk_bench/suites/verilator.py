@@ -432,6 +432,12 @@ TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "tasks and system functions are not part of this standard\"; the test is "
     "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
     "it uses to hide a value from constant folding")
+VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
+    "IEEE 1800-2017 20.15.1",
+    "$random uses the standard's normative probabilistic-distribution "
+    "algorithm from Annex N; the test instead passes Verilator's private "
+    "+verilator+seed+N runtime option and requires two Verilator-specific "
+    "seed-to-value mappings")
 NON_STANDARD_REWIND_SPELLING = Exclusion(
     "IEEE 1800-2017 21.3.5",
     "the standard spells the seek-to-start file function $rewind, which "
@@ -552,6 +558,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
+    "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_bitqueue": PATTERN_RADIX,
