@@ -114,6 +114,12 @@ OPTIONAL_WARNING_GOLD_PREFIXES = {
     # changed the default direction. Keep every data line as the exact oracle.
     "mem1": "$readmemb: The behaviour for reg[...] mem[N:0]",
     "nested_impl_event2": "warning: @* found no sensitivities",
+    # Clause 21.3.1 defines MCD bit zero as standard output and does not
+    # prescribe a diagnostic when $fclose cannot close it. The corresponding
+    # VPI rule says this predefined channel cannot be closed. Preserve all
+    # eight formatted-output lines while accepting the absence of Icarus's
+    # implementation-specific warning.
+    "pr1698820": "could not close MCD STDOUT (0x1) in $fclose()",
 }
 
 # IEEE 1800-2017 21.4 requires this warning but does not prescribe its text.
@@ -241,10 +247,14 @@ def _matches_optional_warning_gold(
         return False
     expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
         keepends=True)
-    if not expected or warning not in expected[0]:
+    warning_lines = [
+        index for index, line in enumerate(expected) if warning in line
+    ]
+    if len(warning_lines) != 1:
         return False
+    del expected[warning_lines[0]]
     return (result_ok and not timed_out and not compile_stderr and not stderr
-            and stdout == "".join(expected[1:]))
+            and stdout == "".join(expected))
 
 
 def _matches_required_runtime_warning_gold(

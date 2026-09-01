@@ -310,6 +310,18 @@ class FixtureDirectoryTest(unittest.TestCase):
                 "nested_impl_event2", gold, "", "Triggered 1 at 40\n", "",
                 True, False))
 
+    def test_optional_gold_warning_may_follow_portable_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            gold = Path(temporary) / "pr1698820.gold"
+            gold.write_text(
+                "The variable is 10\n"
+                "WARNING: source.v:17: could not close MCD STDOUT (0x1) "
+                "in $fclose().\n",
+                encoding="ascii")
+            self.assertTrue(ivtest._matches_optional_warning_gold(
+                "pr1698820", gold, "", "The variable is 10\n", "", True,
+                False))
+
     def test_required_runtime_warning_preserves_every_other_gold_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             gold = Path(temporary) / "pic.gold"
