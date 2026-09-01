@@ -1069,24 +1069,20 @@ private:
   }
 
   sdf::DelayValueAttr parseDelayValue(const SDFNode &node) {
-    if (node.kind == SDFNode::Kind::Atom) {
-      auto value = decimal(node, node.text);
-      return value ? checked<sdf::DelayValueAttr>(
-                         node, sdf::DelayValueForm::Scalar, sdf::DecimalAttr{},
-                         value, sdf::DecimalAttr{})
-                   : sdf::DelayValueAttr{};
-    }
-    if (node.kind != SDFNode::Kind::List || node.children.size() > 1 ||
-        (!node.children.empty() &&
-         node.children.front().kind != SDFNode::Kind::Atom)) {
-      error(node, "delay value must be an empty or one-token list");
+    if (node.kind != SDFNode::Kind::Atom &&
+        (node.kind != SDFNode::Kind::List || node.children.size() > 1 ||
+         (!node.children.empty() &&
+          node.children.front().kind != SDFNode::Kind::Atom))) {
+      error(node, "delay value must be a token or an empty or one-token list");
       return {};
     }
-    if (node.children.empty())
+    if (node.kind == SDFNode::Kind::List && node.children.empty())
       return checked<sdf::DelayValueAttr>(
           node, sdf::DelayValueForm::Empty, sdf::DecimalAttr{},
           sdf::DecimalAttr{}, sdf::DecimalAttr{});
-    StringRef token = node.children.front().text;
+    StringRef token = node.kind == SDFNode::Kind::Atom
+                          ? StringRef(node.text)
+                          : StringRef(node.children.front().text);
     SmallVector<StringRef, 3> fields;
     token.split(fields, ':', /*MaxSplit=*/2, /*KeepEmpty=*/true);
     sdf::DecimalAttr min, typ, max;
