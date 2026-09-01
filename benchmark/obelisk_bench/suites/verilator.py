@@ -483,6 +483,12 @@ UNDERSIZED_STREAM_SOURCE = Exclusion(
     "generate an error, but the test expects a 40-bit target to be zero-padded "
     "from a 32-bit source; it also uses untyped assignment patterns as equality "
     "operands even though 10.9 restricts them to assignment-like contexts")
+DYNAMIC_BITSTREAM_SIZE_MISMATCH = Exclusion(
+    "IEEE 1800-2017 6.24.3",
+    "a string is a dynamic array of bytes for bit-stream casting, and a size "
+    "difference between a dynamic source and fixed destination shall issue an "
+    "error when known; the test instead requires every cast to truncate or "
+    "zero-pad the string to the destination width")
 UNTYPED_PATTERN_COMPARISON = Exclusion(
     "IEEE 1800-2017 10.9",
     "an untyped assignment pattern has no self-determined type and may only "
@@ -566,6 +572,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_stream_dynamic": PATTERN_RADIX,
     "t_stream_unpack": PATTERN_RADIX,
     "t_stream_unpack_lhs": UNDERSIZED_STREAM_SOURCE,
+    "t_string_to_bit": DYNAMIC_BITSTREAM_SIZE_MISMATCH,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
