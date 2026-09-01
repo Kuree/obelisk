@@ -517,6 +517,13 @@ PROCEDURAL_FORCE_VARIABLE_SELECT = Exclusion(
     "IEEE 1800-2017 10.6.2",
     "force and release targets shall not be bit- or part-selects of variables; "
     "the test requires Icarus's variable-select extension")
+NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL = Exclusion(
+    "IEEE 1800-2017 9.2.2.1",
+    "an always procedure with no control that allows simulation time to "
+    "advance creates a zero-delay infinite loop; under 10.4.2, a nonblocking "
+    "assignment's intra-assignment delay or event control does not block "
+    "procedural flow, so the test requires Icarus to advance time despite "
+    "that loop")
 DUMPVARS_SELECTED_VARIABLE = Exclusion(
     "IEEE 1800-2017 21.7.1.2",
     "$dumpvars accepts module identifiers and variable identifiers, not "
@@ -704,6 +711,13 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # 1800-2017. Keep every decision clause-local: an unfamiliar failure remains
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
+    "always3.1.2C": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2D": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2E": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2F": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2G": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2H": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
+    "always3.1.2I": NONBLOCKING_ALWAYS_INTRA_ASSIGNMENT_CONTROL,
     "always_ff_fail2": ALWAYS_FF_EVENT_CONTROL_POSITION,
     "always_latch_no_sens": ALWAYS_LATCH_MODELING_DIAGNOSTIC,
     "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
