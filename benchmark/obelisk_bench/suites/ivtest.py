@@ -211,6 +211,11 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # implementation-specific warning.
     "pr1698820": OptionalWarningGoldOracle(
         "could not close MCD STDOUT (0x1) in $fclose()"),
+    # Clause 11.11 defines min:typ:max expressions and permits tools to select
+    # one value for a run; it does not require Icarus's announcement that the
+    # typical expression was selected. Keep the selected value as the oracle.
+    "pr1792152": OptionalWarningGoldOracle(
+        "warning: Choosing typ expression.", prefix_lines=1),
     # Clause 9.4.2.2 requires every referenced array word in @* sensitivity,
     # but does not require announcing those dependencies. Keep the complete
     # value trace and remove exactly the four diagnostics requested by the
