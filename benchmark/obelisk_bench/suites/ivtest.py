@@ -356,6 +356,12 @@ PARAMETER_PORT_WITHOUT_DEFAULT = Exclusion(
     "a parameter declaration in a parameter port list may omit its default "
     "when every instantiation supplies an override; this test supplies A by "
     "name, but its later CE descriptor checks the older IEEE 1364 restriction")
+TIMESCALE_DIRECTIVE_LOCATION = Exclusion(
+    "IEEE 1800-2017 22.7",
+    "the directive sets defaults for design elements that follow it and has "
+    "no restriction on appearing within a design element; unlike resetall in "
+    "22.3, this placement is not an error, and this source has no later design "
+    "element for the replacement timescale to affect")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -407,6 +413,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "module_input_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
     "nb_ec_concat": ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA,
+    "no_timescale_in_module": TIMESCALE_DIRECTIVE_LOCATION,
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
