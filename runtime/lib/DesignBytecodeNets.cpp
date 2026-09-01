@@ -1264,6 +1264,33 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
                            false);
 }
 
+static bool resolveInitialDriverNets(const Image &image,
+                                     obelisk_rt_context *context,
+                                     bool useNativeState, bool &changed) {
+  NetAliasCache *cache = getNetAliasCache(image, context);
+  if (!cache)
+    return false;
+  std::vector<uint64_t> roots;
+  std::unordered_set<uint64_t> seen;
+  for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
+    CaptureRecord driver = captureAt(image, index);
+    if (driver.function != kDriverStateDescriptor ||
+        (driver.argument & OBELISK_RT_DB_DRIVER_INITIAL_X) == 0)
+      continue;
+    for (uint64_t bit = 0; bit != driver.planeSize; ++bit) {
+      auto found = cache->rootByBit.find(driver.unknownOffset + bit);
+      if (found == cache->rootByBit.end())
+        return false;
+      if (seen.insert(found->second).second)
+        roots.push_back(found->second);
+    }
+  }
+  if (roots.empty())
+    return true;
+  return resolveNetRoots(*cache, context, std::move(roots), changed,
+                         useNativeState);
+}
+
 } // namespace obelisk::designbytecode
 
 using namespace obelisk::designbytecode;
@@ -1790,8 +1817,9 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
                  fourState);
         }
       } else if (driver.function == kDriverStateDescriptor) {
+        bool initialX = (driver.argument & OBELISK_RT_DB_DRIVER_INITIAL_X) != 0;
         for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
-          setBit(context->stateValue, driver.valueOffset + bitIndex, true);
+          setBit(context->stateValue, driver.valueOffset + bitIndex, !initialX);
           setBit(context->stateUnknown, driver.valueOffset + bitIndex, true);
         }
       }
@@ -1812,6 +1840,11 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
         setBit(context->stateUnknown, destination, false);
       }
     }
+    bool changed = false;
+    if (!resolveInitialDriverNets(image, context, false, changed))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_DESIGN
+                 : context->schedulerStatus;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -1849,6 +1882,30 @@ extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_resolve_drivers(obelisk_rt_context *context,
                                         uint64_t begin, uint64_t end) {
   return obelisk_rt_resolve_design_drivers(context, begin, end);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context) {
+  if (!context || !context->execution)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextTransaction transaction(context);
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image))
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    bool changed = false;
+    bool useNativeState = context->nativeStateValue != nullptr &&
+                          context->nativeStateUnknown != nullptr;
+    if (!resolveInitialDriverNets(image, context, useNativeState, changed))
+      return context->schedulerStatus == OBELISK_RT_OK
+                 ? OBELISK_RT_INVALID_DESIGN
+                 : context->schedulerStatus;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
 obelisk_rt_status

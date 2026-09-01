@@ -77,6 +77,7 @@ struct StateLayout {
     sim::NetResolutionKind resolution;
     sim::Strength strength0;
     sim::Strength strength1;
+    bool initialX;
     std::optional<unsigned> strengthBank;
   };
   struct Connection {

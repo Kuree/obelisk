@@ -520,7 +520,8 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                           StringRef triple, bool bytecode, StringRef vpi,
                           obelisk::sim::NativeSchedulerMode nativeScheduler,
                           uint32_t optLevel, bool planSemanticPartitions,
-                          bool timing, bool &requiresStateSync) {
+                          bool timing, bool &requiresStateSync,
+                          bool &resolveInitialDrivers) {
   if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
@@ -577,6 +578,7 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
   requiresStateSync = vpi != "off" || hasLanguageOverride || hasDriverNBA ||
                       hasDelayedNet || hasInertialDriver ||
                       hasClockOccurrenceCondition;
+  resolveInitialDrivers = hasInertialDriver;
   module->setAttr("obelisk.native_scheduler",
                   obelisk::sim::NativeSchedulerModeAttr::get(
                       module.getContext(), nativeScheduler));
@@ -745,7 +747,7 @@ LogicalResult lowerLLVMCoroutines(llvm::Module &module,
 LogicalResult
 addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
                        ArrayRef<SharedLibraryInput> sharedLibraryInputs,
-                       bool requiresStateSync) {
+                       bool requiresStateSync, bool resolveInitialDrivers) {
   bool enableVPI = vpi != "off";
   if (!enableVPI && !requiresStateSync)
     return success();
@@ -869,6 +871,15 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
         "obelisk.state.sync");
     beforeSpawn.CreateCall(fail, {runtimeContext, syncStatus});
   }
+  if (resolveInitialDrivers) {
+    llvm::FunctionCallee resolve = module.getOrInsertFunction(
+        "obelisk_rt_v1_scheduler_resolve_initial_drivers",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
+                                false));
+    llvm::Value *resolveStatus = beforeSpawn.CreateCall(
+        resolve, {runtimeContext}, "obelisk.initial.drivers");
+    beforeSpawn.CreateCall(fail, {runtimeContext, resolveStatus});
+  }
   if (enableVPI) {
     llvm::FunctionCallee startup = module.getOrInsertFunction(
         "obelisk_rt_v1_vpi_startup",
@@ -980,6 +991,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     return failure();
   }
   bool requiresStateSync = false;
+  bool resolveInitialDrivers = false;
   std::optional<obelisk::sim::NativeSchedulerMode> nativeScheduler =
       obelisk::sim::symbolizeNativeSchedulerMode(options.nativeScheduler);
   if (!nativeScheduler) {
@@ -1006,11 +1018,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
     // fanout, and direct-fragment coverage can be proved together. A false
     // positive must remain eligible for the generic/AOT fallback.
   }
-  if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
-                         useBytecode, options.vpi, *nativeScheduler,
-                         options.optLevel,
-                         backend->supportsSemanticPartitions() && !useBytecode,
-                         options.timing, requiresStateSync)))
+  if (failed(lowerToLLVM(
+          module, *targetMachine, backend->getTriple(), useBytecode,
+          options.vpi, *nativeScheduler, options.optLevel,
+          backend->supportsSemanticPartitions() && !useBytecode, options.timing,
+          requiresStateSync, resolveInitialDrivers)))
     return failure();
   auto lastBackendTiming = std::chrono::steady_clock::now();
   auto markBackendTiming = [&](StringRef name) {
@@ -1052,7 +1064,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   llvmModule->setDataLayout(targetMachine->createDataLayout());
   if (failed(addVPIStartupLifecycle(*llvmModule, options.vpi,
                                     options.sharedLibraryInputs,
-                                    requiresStateSync)))
+                                    requiresStateSync, resolveInitialDrivers)))
     return failure();
   markBackendTiming("VPI lifecycle materialization");
   bool splitModule = nativePartitionPlan &&

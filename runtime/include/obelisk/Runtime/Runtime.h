@@ -846,6 +846,10 @@ typedef struct obelisk_rt_design_database_header_v1 {
 #define OBELISK_RT_DESIGN_BYTECODE_MAGIC "OBBCDS1"
 #define OBELISK_RT_DESIGN_DATABASE_MAGIC "OBDSGN1"
 
+// Static driver-state descriptor flag. Delayed gate and continuous-assignment
+// drivers start at X until their time-zero evaluation propagates to the output.
+#define OBELISK_RT_DB_DRIVER_INITIAL_X (UINT32_C(1) << 14)
+
 typedef uint8_t obelisk_rt_design_register_kind;
 enum {
   OBELISK_RT_DBREG_INVALID = 0,
@@ -3519,6 +3523,10 @@ obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_strength_pair(
 obelisk_rt_status
 obelisk_rt_v1_scheduler_resolve_drivers(obelisk_rt_context *context,
                                         uint64_t begin, uint64_t end);
+// Resolve only nets reached by drivers whose bytecode descriptors carry
+// OBELISK_RT_DB_DRIVER_INITIAL_X. This runs before user processes are spawned.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context);
 // Clocking-output forms retain the clock-variable identity so coincident
 // synchronous drives can be checked and resolved bitwise at the NBA barrier.
 obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(

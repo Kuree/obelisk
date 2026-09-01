@@ -48,6 +48,7 @@ struct NativeStateLayoutAnalysis {
     unsigned drivenWidth;
     sim::Strength strength0;
     sim::Strength strength1;
+    bool initialX;
     std::optional<uint64_t> strengthGroup;
     std::optional<unsigned> strengthBank;
   };

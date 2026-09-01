@@ -1996,7 +1996,7 @@ bool validateImage(const Image &image) {
     uint32_t strength1 = (driver.argument >> 7) & 0xf;
     bool highStrengthBank = (driver.argument & (uint32_t{1} << 11)) != 0;
     if (driver.function != kDriverStateDescriptor ||
-        (driver.argument & ~uint32_t{0x3fff}) != 0 ||
+        (driver.argument & ~uint32_t{0x7fff}) != 0 ||
         (driver.argument & 1) == 0 ||
         decodeDriverResolution(driver.argument) > 9 || strength0 > 8 ||
         strength1 > 8 || driver.planeSize == 0 ||

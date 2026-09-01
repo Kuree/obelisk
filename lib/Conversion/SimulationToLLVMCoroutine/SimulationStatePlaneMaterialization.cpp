@@ -39,11 +39,14 @@ LLVM::GlobalOp makeStatePlane(ModuleOp module, StringRef name, uint64_t bytes,
       }
     }
   } else {
-    for (const NativeStateLayout::Driver &driver : layout.driverLayouts)
+    for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
+      if (driver.initialX)
+        continue;
       for (unsigned bit = 0; bit < driver.width; ++bit) {
         uint64_t absolute = driver.offset + bit;
         initial[absolute / 8] |= static_cast<uint8_t>(1u << (absolute % 8));
       }
+    }
     for (const NativeStateLayout::Net &net : layout.netLayouts) {
       if (!net.fourState)
         continue;

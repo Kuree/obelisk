@@ -22,11 +22,45 @@ uint64_t encodeStaticHandle(uint32_t id) {
                                          0);
 }
 
+std::optional<uint64_t> getStaticDriverID(Value value) {
+  while (value) {
+    if (auto context = value.getDefiningOp<sim::SimContextDriverOp>())
+      return context.getId();
+    Operation *definition = value.getDefiningOp();
+    if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition))
+      value = extract.getInput();
+    else if (auto extract =
+                 dyn_cast_or_null<sim::SimDriverDynExtractOp>(definition))
+      value = extract.getInput();
+    else if (auto subelement =
+                 dyn_cast_or_null<sim::SimDriverSubelementOp>(definition))
+      value = subelement.getInput();
+    else if (auto element =
+                 dyn_cast_or_null<sim::SimDriverArrayElementOp>(definition))
+      value = element.getInput();
+    else
+      break;
+  }
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument)
+    return std::nullopt;
+  auto function = dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+  if (!function || argument.getOwner() != &function.getBody().front())
+    return std::nullopt;
+  auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+      argument.getArgNumber(), sim::metadata::descriptorId);
+  if (!descriptor || descriptor.getValue().isNegative() ||
+      descriptor.getValue().getActiveBits() > 64)
+    return std::nullopt;
+  return descriptor.getValue().getZExtValue();
+}
+
 } // namespace
 
 FailureOr<NativeStateLayoutAnalysis>
 NativeStateLayoutAnalysis::compute(ModuleOp module) {
   NativeStateLayoutAnalysis layout;
+  DenseSet<uint64_t> initialXDrivers;
   uint32_t nextHandleID = 1;
   auto allocate = [&](Type type, bool fourState, uint64_t &offset,
                       uint64_t &handle) -> LogicalResult {
@@ -176,7 +210,28 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
           {declaration.getId(), declaration.getNetId(), nextHandleID - 1,
            offset, *width, static_cast<unsigned>(drivenLow),
            static_cast<unsigned>(drivenWidth), declaration.getStrength0(),
-           declaration.getStrength1(), strengthGroup, strengthBank});
+           declaration.getStrength1(), false, strengthGroup, strengthBank});
+    } else if (auto drive =
+                   dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
+        initialXDrivers.insert(*id);
+    } else if (auto drive =
+                   dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
+        initialXDrivers.insert(*id);
+    } else if (auto drive = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
+                   operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getLowDriver()))
+        initialXDrivers.insert(*id);
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
+        initialXDrivers.insert(*id);
+    } else if (auto drive =
+                   dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+                       operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getLowDriver()))
+        initialXDrivers.insert(*id);
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
+        initialXDrivers.insert(*id);
     } else if (isa<sim::SimPassSwitchDeclOp>(operation)) {
       layout.hasPassSwitch = true;
     }
@@ -184,6 +239,9 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
   });
   if (walked.wasInterrupted())
     return failure();
+
+  for (Driver &driver : layout.driverLayouts)
+    driver.initialX = initialXDrivers.contains(driver.id);
 
   DenseMap<uint64_t, std::array<const Driver *, 2>> strengthGroups;
   for (const Driver &driver : layout.driverLayouts) {

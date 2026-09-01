@@ -1401,6 +1401,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse,
                  const uint8_t *, const uint8_t *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_resolve_drivers,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_resolve_initial_drivers,
+             obelisk_rt_status (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_pass_switch_control,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    uint32_t));
