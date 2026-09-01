@@ -333,6 +333,13 @@ ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
     "tools should warn when an always_latch procedure does not represent "
     "latched logic, but the construct is not illegal; the CE entry requires "
     "Icarus's stronger compile-error policy")
+UNTYPED_STRING_PARAMETER_IS_INTEGRAL = Exclusion(
+    "IEEE 1800-2017 6.20.2",
+    "under 5.9 a string literal used as a parameter value is an unsigned "
+    "integral constant, so an untyped parameter becomes a logic vector; "
+    "21.2.1.2 then gives its unformatted $display argument decimal format, "
+    "while the test expects Icarus to retain the initializer's source "
+    "spelling as a display string")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -391,6 +398,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
     "parameter_in_generate1": GENERATE_BLOCK_PARAMETER,
+    "param_string": UNTYPED_STRING_PARAMETER_IS_INTEGRAL,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
     "resetall": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
