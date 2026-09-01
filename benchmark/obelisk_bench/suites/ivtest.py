@@ -421,6 +421,11 @@ REAL_TO_INTEGER_COMPOUND_ASSIGNMENT = Exclusion(
     "IEEE 1800-2017 6.12.2",
     "real-to-integer assignment rounds to the nearest integer with ties away "
     "from zero; the test expects /= with a real operand to truncate 2.5 to 2")
+NONFINITE_REAL_TO_INTEGER_RESULT = Exclusion(
+    "IEEE 1800-2017 6.12.2",
+    "real-to-integer conversion rounds to the nearest integer, but infinity "
+    "has no nearest integer and the clause specifies no result for that case; "
+    "the test requires Icarus's implementation-specific conversion to zero")
 WIDE_ARRAY_INDEX_TRUNCATION = Exclusion(
     "IEEE 1800-2017 11.5.2",
     "an array address may be any integer expression and an out-of-bounds "
@@ -623,6 +628,9 @@ EXCLUDED: dict[str, Exclusion] = {
     "array_word_check": DUMPVARS_SELECTED_VARIABLE,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "br_gh553": MODULE_INSTANCE_PORT_PARENTHESES,
+    "br_gh1223a": NONFINITE_REAL_TO_INTEGER_RESULT,
+    "br_gh1223b": NONFINITE_REAL_TO_INTEGER_RESULT,
+    "br_gh1223c": NONFINITE_REAL_TO_INTEGER_RESULT,
     "br960a": MISSING_SDF_VERSION,
     "br960b": MISSING_SDF_VERSION,
     "br960c": MISSING_SDF_VERSION,
