@@ -125,12 +125,14 @@ QUEUE_WARNING_GOLD_OVERRIDES: dict[str, int] = {
     "sv_queue_vec_bounded": 7,
 }
 
-# Clause 13.4.1 requires the warning but does not prescribe vendor wording.
-# This source self-checks the function's behavior; require Obelisk's semantic
-# warning marker instead of Icarus's two-line diagnostic text.
-NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
-    "br921",
-    "sys_func_as_task",
+# Clause 13.4.1 requires a warning for every nonvoid function call whose
+# result is discarded, but does not prescribe vendor wording. These sources
+# self-check the function behavior; require Obelisk's exact semantic warning
+# count instead of Icarus's diagnostic text.
+NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES: dict[str, int] = {
+    "br921": 1,
+    "br_gh433": 3,
+    "sys_func_as_task": 1,
 }
 
 # IEEE 1800-2017 9.4.2.2 defines an empty nested @* sensitivity set but does
@@ -1166,14 +1168,19 @@ def judge_one(
                     return (desc.key, model.Outcome(model.PASS))
                 return (desc.key, dependency_failure(
                     desc.key, model.RUN_FAIL, output + result.stderr))
-            if desc.key in NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES:
-                warned = ("warning: calling nonvoid function" in
-                           compiled.stderr)
+            required_nonvoid_warnings = (
+                NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES.get(desc.key))
+            if required_nonvoid_warnings is not None:
+                warnings = sum(
+                    "warning: calling nonvoid function" in line
+                    for line in compiled.stderr.splitlines()
+                )
                 passed = any(
                     line.strip() == PASSED_MARKER
                     for line in result.stdout.splitlines()
                 )
-                if result.ok and warned and passed:
+                if (result.ok and warnings == required_nonvoid_warnings and
+                        passed):
                     return (desc.key, model.Outcome(model.PASS))
                 return (desc.key, dependency_failure(
                     desc.key, model.RUN_FAIL, output))
