@@ -411,6 +411,11 @@ TIME_ZERO_PORT_ASSIGNMENT_RACE = Exclusion(
     "observes xxxx first, 5.7.1 and 12.5 make its unsized 32-bit x label "
     "unequal to the zero-extended 4-bit selector, so the test's default arm "
     "legitimately reports failure")
+UNKNOWN_TO_ZERO_IS_NEGEDGE = Exclusion(
+    "IEEE 1800-2017 9.4.2",
+    "Table 9-2 requires the test's time-zero clk transition from x to 0 to "
+    "trigger its negedge checker; that checker reads uninitialized RAM and "
+    "permanently marks the otherwise-correct square table as failed")
 ALWAYS_LATCH_MODELING_DIAGNOSTIC = Exclusion(
     "IEEE 1800-2017 9.2.2.3",
     "tools should warn when an always_latch procedure does not represent "
@@ -542,6 +547,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1367855": TIME_ZERO_PORT_ASSIGNMENT_RACE,
     "pr1467825": LEGACY_FAULT_SIMULATION_DIRECTIVES,
+    "pr1662508": UNKNOWN_TO_ZERO_IS_NEGEDGE,
     "pr2834340": PULL_GATE_ARITY,
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
