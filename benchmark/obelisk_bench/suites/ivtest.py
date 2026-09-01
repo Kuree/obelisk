@@ -130,6 +130,11 @@ REAL_TO_INTEGER_COMPOUND_ASSIGNMENT = Exclusion(
     "IEEE 1800-2017 6.12.2",
     "real-to-integer assignment rounds to the nearest integer with ties away "
     "from zero; the test expects /= with a real operand to truncate 2.5 to 2")
+WIDE_ARRAY_INDEX_TRUNCATION = Exclusion(
+    "IEEE 1800-2017 11.5.2",
+    "an array address may be any integer expression and an out-of-bounds "
+    "address is invalid; the test expects a set bit at position 120 of a "
+    "128-bit address to be discarded by Icarus's narrower internal index")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -163,6 +168,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
+    "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
     "sv_unit1c": BUFFER_HIGH_IMPEDANCE_INPUT,
     "sys_func_task_error": FUNCTION_CALL_AS_STATEMENT_ERROR,
 }
