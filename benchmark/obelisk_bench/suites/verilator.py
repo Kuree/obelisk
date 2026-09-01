@@ -189,6 +189,12 @@ TWO_STATE_INITIALIZATION = Exclusion(
     "it with (4.4.2.2 also leaves the time-zero order of initial and always "
     "blocks arbitrary, since the Active region's events \"can be processed "
     "in any order\")")
+ACTIVE_REGION_READ_WRITE_RACE = Exclusion(
+    "IEEE 1800-2017 4.7",
+    "the testbench writes d with a blocking assignment in one posedge-clocked "
+    "process while the DFF reads d in another; Active-region events may be "
+    "processed in any order, but the test requires Verilator's write-first "
+    "ordering")
 STATIC_SUBROUTINE_RECURSION = Exclusion(
     "IEEE 1800-2017 13.3.2",
     "\"all variables of a static task shall be static in that there shall be "
@@ -520,6 +526,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_param_extends": CLASS_PATTERN,
     "t_display_class": CLASS_PATTERN,
     "t_always_nosplit": TWO_STATE_INITIALIZATION,
+    "t_assign_dff": ACTIVE_REGION_READ_WRITE_RACE,
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
