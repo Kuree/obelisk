@@ -149,10 +149,10 @@ class FixtureDirectoryTest(unittest.TestCase):
             "Other /checkout/ivtest/gold/test.gold\n",
         )
 
-    def test_compile_runs_where_the_ivltests_fixture_link_is_visible(self):
+    def test_compile_runs_where_suite_fixture_links_are_visible(self):
         with tempfile.TemporaryDirectory() as temporary:
             ivtest_dir = Path(temporary).resolve()
-            source = ivtest_dir / "ivltests" / "include_test.v"
+            source = ivtest_dir / "contrib" / "include_test.v"
             source.parent.mkdir()
             source.write_text("module include_test; endmodule\n",
                               encoding="ascii")
@@ -169,14 +169,17 @@ class FixtureDirectoryTest(unittest.TestCase):
             compile_result = mock.Mock(ok=False, stderr="stop",
                                        failure_kind="compile")
             fixture_visible = False
+            source_fixture_visible = False
             fixture_include_visible = False
             source_spelling = ""
             compile_flags: list[str] = []
 
             def compile_from_fixture(*args, **kwargs):
                 nonlocal fixture_visible, fixture_include_visible
-                nonlocal source_spelling, compile_flags
+                nonlocal source_fixture_visible, source_spelling, compile_flags
                 fixture_visible = (Path(kwargs["cwd"]) / "ivltests").is_symlink()
+                source_fixture_visible = (
+                    Path(kwargs["cwd"]) / "contrib").is_symlink()
                 source_spelling = args[1][0]
                 compile_flags = args[3]
                 fixture_include_visible = any(
@@ -198,8 +201,9 @@ class FixtureDirectoryTest(unittest.TestCase):
 
             self.assertEqual(outcome.status, model.COMPILE_FAIL)
             self.assertTrue(fixture_visible)
+            self.assertTrue(source_fixture_visible)
             self.assertTrue(fixture_include_visible)
-            self.assertEqual(source_spelling, "./ivltests/include_test.v")
+            self.assertEqual(source_spelling, "./contrib/include_test.v")
             self.assertTrue(set(ivtest.DEFAULT_WARNING_SUPPRESSIONS)
                             <= set(compile_flags))
             self.assertIn("--compile-threads=3", compile_flags)

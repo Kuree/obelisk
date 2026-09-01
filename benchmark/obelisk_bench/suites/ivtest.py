@@ -683,8 +683,19 @@ def judge_one(
         run_dir = Path(tmp)
         (run_dir / "work").mkdir()
         (run_dir / "log").mkdir()
-        (run_dir / "ivltests").symlink_to(
-            ivtest_dir / "ivltests", target_is_directory=True)
+        fixture_roots = {"ivltests"}
+        source_relative: Path | None = None
+        try:
+            source_relative = desc.source.resolve().relative_to(ivtest_dir)
+        except ValueError:
+            pass
+        if source_relative is not None and len(source_relative.parts) > 1:
+            fixture_roots.add(source_relative.parts[0])
+        for fixture_root in sorted(fixture_roots):
+            destination = run_dir / fixture_root
+            if not destination.exists():
+                destination.symlink_to(
+                    ivtest_dir / fixture_root, target_is_directory=True)
         native = runner.build_vpi_inputs(
             obelisk,
             [*(str(path) for path in desc.vpi_sources), *vpi_code],
@@ -705,9 +716,8 @@ def judge_one(
         compile_flags = [*flags, "-I", tmp]
         if compile_threads is not None:
             compile_flags.append(f"--compile-threads={compile_threads}")
-        source = str(desc.source)
-        if desc.source.parent == ivtest_dir / "ivltests":
-            source = f"./ivltests/{desc.source.name}"
+        source = (f"./{source_relative.as_posix()}"
+                  if source_relative is not None else str(desc.source))
         # vvp_reg.pl appends the named test source after every source operand
         # carried in the comma-separated argument field. The order is
         # observable through compilation-unit macros and directives.
