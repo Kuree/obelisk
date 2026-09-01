@@ -368,6 +368,11 @@ PACKED_DIMENSION_REQUIRES_RANGE = Exclusion(
     "a sized packed_dimension requires constant_range with two bounds; the "
     "test uses the one-expression unpacked array shorthand after a packed "
     "struct type and expects Icarus to interpret it as [0:1]")
+PACKAGE_REFERENCE_TO_COMPILATION_UNIT = Exclusion(
+    "IEEE 1800-2017 26.2",
+    "a package shall not refer to compilation-unit items; the macro expanded "
+    "inside the package class reads and writes the compilation-unit variable "
+    "failed and expects those references to resolve")
 LEGACY_PROTECT_DIRECTIVE = Exclusion(
     "IEEE 1800-2017 34.4",
     "protected envelopes use `pragma protect; the test instead requires the "
@@ -655,6 +660,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
     "struct_member_signed": NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION,
     "struct_signed": NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION,
+    "sv_ps_type_class1": PACKAGE_REFERENCE_TO_COMPILATION_UNIT,
     "sv_unit1c": BUFFER_HIGH_IMPEDANCE_INPUT,
     "sys_func_task_error": FUNCTION_CALL_AS_STATEMENT_ERROR,
 }
