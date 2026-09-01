@@ -232,6 +232,10 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         initialXDrivers.insert(*id);
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
         initialXDrivers.insert(*id);
+    } else if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation);
+               drive && drive->hasAttr("obelisk_sim.initial_driver_x")) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
+        initialXDrivers.insert(*id);
     } else if (isa<sim::SimPassSwitchDeclOp>(operation)) {
       layout.hasPassSwitch = true;
     }

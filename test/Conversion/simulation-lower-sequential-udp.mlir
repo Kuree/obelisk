@@ -23,6 +23,7 @@ module {
     // CHECK: %[[RAW:.*]] = obelisk_sim.driver.read %arg3
     // CHECK: %[[UNINIT:.*]] = obelisk_sim.logic.compare case_eq %[[RAW]]
     // CHECK: %[[STATE:.*]] = arith.select %[[UNINIT]]
+    // CHECK-NOT: obelisk_sim.initial_driver_x
     // CHECK: obelisk_sim.driver.drive_changed %arg3 = %[[STATE]]
     // CHECK: obelisk_sim.logic.concat %[[NORMAL]], %[[STATE]]
     // Explicit (b?) uses direct known-set predicates plus a real-change test.

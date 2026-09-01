@@ -3232,6 +3232,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       Value rawState = sim::SimDriverReadOp::create(
           builder, location, logicType, output->reference);
       Value initialState = outputX;
+      bool initialDriverX = true;
       if (auto spelling = udp.getAs<StringAttr>("init_value")) {
         FailureOr<ParsedConstant> parsed =
             parseSVInteger(spelling.getValue(), 1, location);
@@ -3246,6 +3247,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
             builder, location, logicType,
             builder.getIntegerAttr(scalarPlaneType, parsed->value),
             builder.getIntegerAttr(scalarPlaneType, parsed->unknown));
+        initialDriverX = !parsed->unknown.isZero();
       }
       Value rawZ = scalarConstant('z');
       Value uninitialized = sim::SimLogicCompareOp::create(
@@ -3256,8 +3258,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       // Publishing the selected value on every activation is a no-op after
       // initialization.  On the first activation it makes the declaration
       // initializer visible immediately, independently of propagation delay.
-      sim::SimDriverDriveChangedOp::create(builder, location, output->reference,
-                                           currentState);
+      auto initialize = sim::SimDriverDriveChangedOp::create(
+          builder, location, output->reference, currentState);
+      if (initialDriverX)
+        initialize->setAttr("obelisk_sim.initial_driver_x",
+                            builder.getUnitAttr());
     }
 
     Value knownTrue = arith::ConstantOp::create(
