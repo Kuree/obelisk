@@ -168,6 +168,11 @@ NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION = Exclusion(
     "IEEE 1800-2017 20.1",
     "the standard utility-system-function inventory includes $signed and "
     "$unsigned but does not define the Icarus-specific $is_signed query")
+MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES = Exclusion(
+    "IEEE 1800-2017 3.14.2.3",
+    "it is an error for some design elements to specify a time unit and "
+    "precision while others do not; the test instead requires compilation "
+    "to continue and reports tool-specific 1s defaults for the latter")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -201,6 +206,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
+    "resetall": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "signed_a": WIDE_ARRAY_INDEX_TRUNCATION,
     "struct_member_signed": NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION,
     "struct_signed": NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION,
