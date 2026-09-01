@@ -958,6 +958,9 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
     bool activeSelf = context->activeLogicalProcessToken ==
                       (kNativeLogicalProcessTag | scheduled.token);
+    if (activeSelf &&
+        (entry->reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0)
+      continue;
     if ((actor->continuation != entry->continuation && !activeSelf) ||
         scheduled.instance != actor || !scheduled.started ||
         (scheduled.signalTriggered && !activeSelf) ||
@@ -997,7 +1000,8 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
       published = true;
     }
     if constexpr (UseClockIngress) {
-      if (entry->reserved == OBELISK_RT_FANOUT_DIRECT ||
+      if ((entry->reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
+              OBELISK_RT_FANOUT_DIRECT ||
           metadataOnlyClockCoordinator) {
         if (entry->kernel >= context->nativeSchedulePlan->clock_kernel_count ||
             entry->merged_bit / 64 >=

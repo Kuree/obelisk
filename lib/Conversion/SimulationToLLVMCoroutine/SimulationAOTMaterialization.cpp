@@ -19,6 +19,10 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+static uint32_t fanoutRoute(const obelisk_rt_static_fanout_entry &entry) {
+  return entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
+}
+
 LogicalResult makeNativeEvalPlan(
     ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
@@ -1072,19 +1076,31 @@ LogicalResult makeNativeEvalPlan(
       };
       SmallVector<MergedPublication, 4> publications;
       uint64_t rangeEnd = *lowBit + *bitWidth;
+      // Direct ingress publication has no logical-process identity with which
+      // to distinguish an external producer from the controlled statement
+      // that owns a source event control. Keep this uncommon, marked case on
+      // the runtime publication path, which performs that exact identity
+      // check. All ordinary generated eval writes retain direct ingress.
+      bool needsActiveSelfCheck = false;
       for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
-        if (entry.reserved != OBELISK_RT_FANOUT_DIRECT ||
-            entry.static_state != *staticState ||
-            entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
-          continue;
-        if (periodicTwoState && !periodicClosureRecords.empty() &&
-            !llvm::is_contained(periodicClosureRecords,
-                                static_cast<unsigned>(entry.merged_bit)))
+        if (entry.static_state != *staticState)
           continue;
         uint64_t overlapLow = std::max(*lowBit, entry.low_bit);
         uint64_t overlapHigh =
             std::min(rangeEnd, entry.low_bit + entry.bit_width);
         if (overlapLow >= overlapHigh)
+          continue;
+        if ((entry.reserved &
+             OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
+          needsActiveSelfCheck = true;
+          continue;
+        }
+        if (periodicTwoState && !periodicClosureRecords.empty() &&
+            !llvm::is_contained(periodicClosureRecords,
+                                static_cast<unsigned>(entry.merged_bit)))
+          continue;
+        if (fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
+            entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
           continue;
         uint64_t overlapMask = packedMask(overlapHigh - overlapLow)
                                << (overlapLow - *lowBit);
@@ -1107,6 +1123,8 @@ LogicalResult makeNativeEvalPlan(
           publication->changeMask |= overlapMask;
         }
       }
+      if (needsActiveSelfCheck)
+        continue;
       if (publications.empty()) {
         call.erase();
         continue;
@@ -1655,7 +1673,7 @@ LogicalResult makeNativeEvalPlan(
         };
     for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks))
       for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
-        if (fanout.reserved == OBELISK_RT_FANOUT_RUNTIME ||
+        if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             !clockTouchesFanout(clock, fanout) ||
             fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
           continue;
@@ -1699,7 +1717,7 @@ LogicalResult makeNativeEvalPlan(
         continue;
       uint64_t targetLocalBit = alias.targetBitOffset - targetBound->offset;
       for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
-        if (fanout.reserved == OBELISK_RT_FANOUT_RUNTIME ||
+        if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             (fanout.actor_slot == alias.forwardingActorSlot &&
              fanout.continuation == alias.forwardingContinuation) ||
             fanout.static_state != alias.targetStaticState ||
@@ -3553,7 +3571,7 @@ LogicalResult makeNativeEvalPlan(
                SmallVector<uint64_t>(directActivationWordCount, 0)});
           group = std::prev(groups.end());
         }
-        if (entry.reserved == OBELISK_RT_FANOUT_DIRECT &&
+        if (fanoutRoute(entry) == OBELISK_RT_FANOUT_DIRECT &&
             entry.merged_bit < directActivationWordCount * 64 &&
             directActivationWordCount != 0)
           group->direct[entry.merged_bit / 64] |= uint64_t{1}

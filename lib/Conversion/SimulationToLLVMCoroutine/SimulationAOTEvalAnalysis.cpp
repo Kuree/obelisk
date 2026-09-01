@@ -46,6 +46,11 @@ resolveNativeEvalPlan(ModuleOp module,
     return result;
   result.fanoutEntries.assign(staticFanoutPlan.entries.begin(),
                               staticFanoutPlan.entries.end());
+  auto setFanoutRoute = [](obelisk_rt_static_fanout_entry &entry,
+                           uint32_t route) {
+    entry.reserved =
+        (entry.reserved & ~OBELISK_RT_FANOUT_ROUTE_MASK) | route;
+  };
   for (obelisk_rt_static_fanout_entry &entry : result.fanoutEntries) {
     auto node = llvm::find_if(executableNodes, [&](const auto &candidate) {
       return candidate.actor_slot == entry.actor_slot &&
@@ -55,7 +60,7 @@ resolveNativeEvalPlan(ModuleOp module,
       return module.emitError("static fanout has no indexed compute fragment"),
              failure();
     entry.compute_node = static_cast<uint32_t>(node - executableNodes.begin());
-    entry.reserved = OBELISK_RT_FANOUT_RUNTIME;
+    setFanoutRoute(entry, OBELISK_RT_FANOUT_RUNTIME);
     result.clockKernels.push_back(
         {entry.static_state, entry.edge, entry.low_bit, entry.bit_width});
   }
@@ -97,7 +102,7 @@ resolveNativeEvalPlan(ModuleOp module,
     const NativeEvalFanoutOwner &plannedOwner =
         evalOwnership.fanoutOwners[entryIndex];
     if (plannedOwner.kind == NativeEvalFanoutOwnerKind::PeriodicAlias) {
-      entry.reserved = OBELISK_RT_FANOUT_PERIODIC_ALIAS;
+      setFanoutRoute(entry, OBELISK_RT_FANOUT_PERIODIC_ALIAS);
       entry.merged_bit = 0;
       continue;
     }
@@ -108,7 +113,7 @@ resolveNativeEvalPlan(ModuleOp module,
     // null executor here would make the hot coordinator's ownership model
     // incomplete after handoff.
     if (plannedOwner.kind == NativeEvalFanoutOwnerKind::Runtime) {
-      entry.reserved = OBELISK_RT_FANOUT_RUNTIME;
+      setFanoutRoute(entry, OBELISK_RT_FANOUT_RUNTIME);
       entry.merged_bit = 0;
       continue;
     }
@@ -136,16 +141,16 @@ resolveNativeEvalPlan(ModuleOp module,
       entry.merged_bit = merged->bit;
       size_t mergedIndex =
           static_cast<size_t>(merged - result.mergedFragments.begin());
-      entry.reserved = !result.mergedExecutors[mergedIndex].empty()
-                           ? OBELISK_RT_FANOUT_DIRECT
-                           : OBELISK_RT_FANOUT_RUNTIME;
+      setFanoutRoute(entry, !result.mergedExecutors[mergedIndex].empty()
+                                ? OBELISK_RT_FANOUT_DIRECT
+                                : OBELISK_RT_FANOUT_RUNTIME);
       merged->compute_node = std::min(merged->compute_node, entry.compute_node);
       continue;
     }
 
     entry.merged_bit = static_cast<uint32_t>(result.mergedFragments.size());
-    entry.reserved =
-        direct ? OBELISK_RT_FANOUT_DIRECT : OBELISK_RT_FANOUT_RUNTIME;
+    setFanoutRoute(entry, direct ? OBELISK_RT_FANOUT_DIRECT
+                                 : OBELISK_RT_FANOUT_RUNTIME);
     result.mergedFragments.push_back(
         {direct ? direct->actorSlot : executable.actor_slot,
          direct ? direct->continuation : executable.continuation, entry.kernel,
@@ -190,7 +195,8 @@ resolveNativeEvalPlan(ModuleOp module,
     result.mergedTwoStateExecutors = std::move(rankedTwoStateExecutors);
     result.mergedPromotionRanges = std::move(rankedPromotionRanges);
     for (auto &entry : result.fanoutEntries)
-      if (entry.reserved == OBELISK_RT_FANOUT_DIRECT)
+      if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
+          OBELISK_RT_FANOUT_DIRECT)
         entry.merged_bit = remap[entry.merged_bit];
   }
 
@@ -230,8 +236,9 @@ resolveNativeEvalPlan(ModuleOp module,
       return entry.low_bit <= bit && bit - entry.low_bit < entry.bit_width;
     };
     for (const auto &entry : result.fanoutEntries) {
-      if (entry.reserved == OBELISK_RT_FANOUT_RUNTIME ||
-          entry.reserved == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
+      uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
+      if (route == OBELISK_RT_FANOUT_RUNTIME ||
+          route == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
           entry.merged_bit >= result.mergedFragments.size())
         continue;
       bool periodic = llvm::any_of(periodicClocks, [&](const auto &clock) {

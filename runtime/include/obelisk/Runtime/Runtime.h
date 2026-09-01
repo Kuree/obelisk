@@ -3056,12 +3056,18 @@ typedef struct obelisk_rt_static_nba_site {
   obelisk_rt_static_nba_storage storage;
 } obelisk_rt_static_nba_site;
 
-// Internal routing encoded in static_fanout_entry::reserved for eval plans.
-// Generic plans require RUNTIME. The names keep the revision-coupled compiler
-// and runtime ABI from assigning independent meanings to numeric literals.
+// Internal routing and orthogonal behavior flags encoded in
+// static_fanout_entry::reserved. Generic plans require the RUNTIME route. The
+// names keep the revision-coupled compiler and runtime ABI from assigning
+// independent meanings to numeric literals.
 #define OBELISK_RT_FANOUT_RUNTIME UINT32_C(0)
 #define OBELISK_RT_FANOUT_DIRECT UINT32_C(1)
 #define OBELISK_RT_FANOUT_PERIODIC_ALIAS UINT32_C(2)
+#define OBELISK_RT_FANOUT_ROUTE_MASK UINT32_C(3)
+// The source event control is inactive while its controlled statement runs.
+// A blocking write from that same logical process must therefore not satisfy
+// the wait that the process will re-enter after the statement completes.
+#define OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF (UINT32_C(1) << 2)
 
 typedef struct obelisk_rt_static_fanout_entry {
   uint32_t static_state;

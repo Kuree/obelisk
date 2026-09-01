@@ -111,6 +111,11 @@ inline constexpr llvm::StringLiteral staticSuperstep =
 /// the active process itself cannot satisfy the wait it will reach next.
 inline constexpr llvm::StringLiteral topLevelWildcardWait =
     "obelisk_sim.top_level_wildcard_wait";
+/// Marks a source-language procedural event control. Its controlled statement
+/// executes after the wait and cannot reactivate that same wait from within
+/// the active logical process.
+inline constexpr llvm::StringLiteral proceduralEventWait =
+    "obelisk_sim.procedural_event_wait";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
@@ -201,7 +206,8 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == classBitstreamVisibility || name == staticBodyFusion ||
          name == staticFusion || name == computeKernels ||
          name == threeTierSchedule || name == staticSpecialization ||
-         name == staticSuperstep || name == topLevelWildcardWait;
+         name == staticSuperstep || name == topLevelWildcardWait ||
+         name == proceduralEventWait;
 }
 
 } // namespace obelisk::sim::metadata

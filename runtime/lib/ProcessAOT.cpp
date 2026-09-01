@@ -40,6 +40,10 @@
 using namespace obelisk::process;
 using namespace obelisk::runtime;
 
+static uint32_t fanoutRoute(const obelisk_rt_static_fanout_entry &entry) {
+  return entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
+}
+
 //===------------------------------------------------------------------===//
 // Plan readiness: dirty static roots, actor readiness, and the deadline heap
 //===------------------------------------------------------------------===//
@@ -1907,7 +1911,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           for (uint64_t index = 0;
                index != context->nativeScheduleFanoutEntryCount; ++index) {
             const auto &entry = context->nativeScheduleFanoutEntries[index];
-            if (entry.reserved == OBELISK_RT_FANOUT_RUNTIME ||
+            if (fanoutRoute(entry) == OBELISK_RT_FANOUT_RUNTIME ||
                 entry.actor_slot != actorSlot ||
                 entry.continuation != continuation ||
                 entry.static_state != staticID || entry.bit_width == 0)
@@ -2039,7 +2043,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         // classified as an initial process (always/always_comb use that
         // lifecycle flag too). Finite unsupported stimulus remains explicitly
         // runtime-owned until its continuation terminates.
-        if (entry.reserved != OBELISK_RT_FANOUT_RUNTIME)
+        if (fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME)
           continue;
         bool periodic = false;
         for (uint32_t clockIndex = 0; clockIndex != clockCount; ++clockIndex)
@@ -2128,7 +2132,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
               entry.actor_slot >= context->nativeScheduleActors.size() ||
               entry.kernel >= context->nativeSchedulePlan->clock_kernel_count)
             return OBELISK_RT_OK;
-          if (entry.reserved == OBELISK_RT_FANOUT_DIRECT) {
+          if (fanoutRoute(entry) == OBELISK_RT_FANOUT_DIRECT) {
             const auto &kernel =
                 context->nativeSchedulePlan->clock_kernels[entry.kernel];
             if (entry.merged_bit / 64 >= kernel.ingress_word_count)
@@ -2328,7 +2332,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     for (uint64_t index = 0; index != context->nativeScheduleFanoutEntryCount;
          ++index) {
       const auto &entry = context->nativeScheduleFanoutEntries[index];
-      if (entry.reserved != OBELISK_RT_FANOUT_RUNTIME ||
+      if (fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME ||
           !generatedWritesState(entry.static_state) ||
           entry.actor_slot >= context->nativeScheduleActors.size())
         continue;

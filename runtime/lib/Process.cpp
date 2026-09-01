@@ -1233,12 +1233,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   }
   for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
     const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
+    uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
+    uint32_t unknownFlags =
+        entry.reserved & ~(OBELISK_RT_FANOUT_ROUTE_MASK |
+                           OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF);
     if (entry.static_state == 0 || entry.actor_slot >= plan->actor_capacity ||
         entry.continuation == 0 || entry.bit_width == 0 ||
-        entry.compute_node == UINT32_MAX ||
-        (entry.reserved != OBELISK_RT_FANOUT_RUNTIME &&
+        entry.compute_node == UINT32_MAX || unknownFlags != 0 ||
+        (route != OBELISK_RT_FANOUT_RUNTIME &&
          (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0) ||
-          entry.reserved > OBELISK_RT_FANOUT_PERIODIC_ALIAS)) ||
+          route > OBELISK_RT_FANOUT_PERIODIC_ALIAS)) ||
         entry.low_bit > UINT64_MAX - entry.bit_width ||
         entry.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
         entry.edge > OBELISK_RT_WAIT_EDGE_BOTH ||

@@ -246,14 +246,19 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendEventOp::create(builder, location, watched, operands,
                                      sim::ContinuationSiteAttr{}, resume,
                                      successor);
-    else if (edge == sim::EdgeKind::Change)
-      sim::SimSuspendChangeOp::create(builder, location, watched, operands,
-                                      sim::ContinuationSiteAttr{}, resume,
-                                      successor);
-    else
-      sim::SimSuspendEdgeOp::create(builder, location, edge, watched, operands,
-                                    sim::ContinuationSiteAttr{}, resume,
-                                    successor);
+    else if (edge == sim::EdgeKind::Change) {
+      auto suspend = sim::SimSuspendChangeOp::create(
+          builder, location, watched, operands, sim::ContinuationSiteAttr{},
+          resume, successor);
+      suspend->setAttr(sim::metadata::proceduralEventWait,
+                       builder.getUnitAttr());
+    } else {
+      auto suspend = sim::SimSuspendEdgeOp::create(
+          builder, location, edge, watched, operands,
+          sim::ContinuationSiteAttr{}, resume, successor);
+      suspend->setAttr(sim::metadata::proceduralEventWait,
+                       builder.getUnitAttr());
+    }
   };
   auto bindEventPrimary = [&](Value event,
                               Operation *source) -> FailureOr<Value> {
@@ -719,9 +724,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (iff requires signal handles)";
       return failure();
     }
-    sim::SimSuspendEdgeIffOp::create(
+    auto suspend = sim::SimSuspendEdgeIffOp::create(
         builder, location, edge, *handle, *condition, continuationOperands,
         sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+    suspend->setAttr(sim::metadata::proceduralEventWait,
+                     builder.getUnitAttr());
     return success();
   }
 
@@ -780,9 +787,10 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   }
   SmallVector<Value> values(watched);
   llvm::append_range(values, continuationOperands);
-  sim::SimSuspendAnyOp::create(
+  auto suspend = sim::SimSuspendAnyOp::create(
       builder, location, values, builder.getDenseI32ArrayAttr(edges),
       sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  suspend->setAttr(sim::metadata::proceduralEventWait, builder.getUnitAttr());
   return success();
 }
 
@@ -1192,6 +1200,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       auto suspend = sim::SimSuspendChangeOp::create(
           builder, location, dependencies.front(), ValueRange{},
           sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+      suspend->setAttr(sim::metadata::proceduralEventWait,
+                       builder.getUnitAttr());
       if (control == topLevelWildcardControl)
         suspend->setAttr(sim::metadata::topLevelWildcardWait,
                          builder.getUnitAttr());
@@ -1200,6 +1210,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
           builder, location, dependencies.getArrayRef(),
           builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
           sim::EventRegionAttr{}, continuation);
+      suspend->setAttr(sim::metadata::proceduralEventWait,
+                       builder.getUnitAttr());
       if (control == topLevelWildcardControl)
         suspend->setAttr(sim::metadata::topLevelWildcardWait,
                          builder.getUnitAttr());

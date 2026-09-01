@@ -948,9 +948,13 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
     return false;
   };
   auto consider = [&](const obelisk_rt_wait_record_v1 *wait,
-                      uint32_t suspendKind, bool &latched) {
+                      uint32_t suspendKind, uint64_t logicalToken,
+                      bool &latched) {
     if (!wait || latched || wait->version != OBELISK_RT_VERSION ||
         wait->kind != suspendKind)
+      return;
+    if ((wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0 &&
+        context->activeLogicalProcessToken == logicalToken)
       return;
     const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
     if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE && wait->count == 1) {
@@ -959,7 +963,9 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
         latched = levelTrue(entries[0]);
       return;
     }
-    if (wait->flags != OBELISK_RT_WAIT_EDGE_IFF || wait->count != 2 ||
+    uint32_t behaviorFlags =
+        wait->flags & ~OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+    if (behaviorFlags != OBELISK_RT_WAIT_EDGE_IFF || wait->count != 2 ||
         !rangesOverlap(entries[0].stable_id, entries[0].reserved, bitOffset,
                        1) ||
         !signalEdgeMatches(entries[0].edge, edges))
@@ -976,6 +982,7 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
     if (process.token == token && process.instance && process.started) {
       bool wasTriggered = process.signalTriggered;
       consider(currentWait(process), process.suspendKind,
+               kNativeLogicalProcessTag | token,
                process.signalTriggered);
       if (!wasTriggered && process.signalTriggered) {
         OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
@@ -1002,7 +1009,7 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
       wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
           task.frame.data() + task.waitOffset);
     bool wasTriggered = task.signalTriggered;
-    consider(wait, task.suspendKind, task.signalTriggered);
+    consider(wait, task.suspendKind, id, task.signalTriggered);
     if (!wasTriggered && task.signalTriggered) {
       OBELISK_RT_TRY { context->designPollCandidates.insert(id); }
       OBELISK_RT_CATCH(const std::bad_alloc &) {

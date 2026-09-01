@@ -1545,11 +1545,14 @@ void ComputeGraphBuilder::buildDataEdges() {
       watchedEffects.forEachAlias(produced.target, [&](IndexedEffect consumed) {
         Fragment &consumer = fragments[consumed.owner];
         // A top-level wildcard wait is inactive while its process evaluates
-        // the controlled statement. Writes from that process cannot activate
+        // the controlled statement. The same is true of every source-language
+        // procedural event control. Writes from that process cannot activate
         // the wait it will reach next; writes from other processes can.
         if (producer.function == consumer.function &&
-            consumer.block->getTerminator()->hasAttr(
-                sim::metadata::topLevelWildcardWait))
+            (consumer.block->getTerminator()->hasAttr(
+                 sim::metadata::topLevelWildcardWait) ||
+             consumer.block->getTerminator()->hasAttr(
+                 sim::metadata::proceduralEventWait)))
           return;
         if (provenancesAlias(produced.target, consumed.effect->target))
           addEdge(producer.id, consumer.id, sim::ComputeEdgeKind::Sensitivity,

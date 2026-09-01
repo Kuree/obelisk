@@ -412,7 +412,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
                 0) == hasObserver;
     } else if (behaviorFlags == OBELISK_RT_WAIT_EDGE_IFF)
       valid = wait->count == 2 && wait->payload == 0 && wait->auxiliary == 0 &&
-              !suppressActiveSelf && wait->flags == OBELISK_RT_WAIT_EDGE_IFF &&
+              (wait->flags & ~(OBELISK_RT_WAIT_EDGE_IFF |
+                               OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF)) == 0 &&
               validEdge(entries[0].edge) && entries[0].reserved != 0 &&
               entries[1].edge == OBELISK_RT_WAIT_EDGE_NONE &&
               entries[1].reserved != 0 &&

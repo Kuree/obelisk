@@ -50,7 +50,7 @@ LogicalResult makeNativeAOTPlanLegacy(
             "static fanout has no indexed compute fragment");
       entry.compute_node =
           static_cast<uint32_t>(node - executableNodes.begin());
-      entry.reserved = 0;
+      entry.reserved &= ~OBELISK_RT_FANOUT_ROUTE_MASK;
     }
   }
   ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries = indexedFanoutEntries;

@@ -47,8 +47,10 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
       waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
   } else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
-  if (operation->hasAttr(sim::metadata::topLevelWildcardWait) &&
-      isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(operation))
+  if ((operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
+      operation->hasAttr(sim::metadata::proceduralEventWait)) &&
+      isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+          sim::SimSuspendEdgeIffOp, sim::SimSuspendAnyOp>(operation))
     waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   storeAt(builder, location, wait, 8,
           llvmConstant(builder, location, i32, waitFlags), 4);

@@ -924,8 +924,13 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         disableExactFanout("watch has unsupported trigger", function);
         continue;
       }
+      uint32_t flags =
+          terminator->hasAttr(sim::metadata::proceduralEventWait) ||
+                  terminator->hasAttr(sim::metadata::topLevelWildcardWait)
+              ? OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF
+              : 0;
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
-                              UINT32_MAX, 0, effect.getLow(),
+                              UINT32_MAX, flags, effect.getLow(),
                               effect.getWidth()});
     }
   }
