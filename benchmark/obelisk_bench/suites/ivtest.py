@@ -769,6 +769,11 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
         "IEEE 1800-2017 5.7.1 permits underscores anywhere in a number except "
         "the first character and ignores them; pinned Slang changes 7'dz__ "
         "from high impedance to unknown while importing the literal"),
+    "pr1704013": (
+        "IEEE 1800-2017 23.2.2.1 requires identical ranges when a non-ANSI "
+        "port declaration without a type is followed by a net or variable "
+        "declaration; pinned Slang accepts scalar output a followed by the "
+        "incompatible reg [1:0] a declaration"),
     "scoped_events": (
         "IEEE 1800-2017 23.10.2 explicitly permits a parameter declared in a "
         "named block or task to be redefined using defparam; pinned Slang "
