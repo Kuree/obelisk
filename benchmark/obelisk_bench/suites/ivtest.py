@@ -516,6 +516,12 @@ INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC = Exclusion(
     "does not prescribe a diagnostic or its wording when a file output task "
     "receives a bit pattern that names no open file; this gold file requires "
     "Icarus's exact warning text")
+MISSING_FORMAT_ARGUMENT = Exclusion(
+    "IEEE 1800-2017 21.2.1.2",
+    "each percent conversion other than %m, %l, and %% requires a "
+    "corresponding expression after the format string; the test supplies two "
+    "%d conversions but only one expression and expects compilation to "
+    "continue")
 BUILTIN_NET_EXTENSION_CHECKS = Exclusion(
     "IEEE 1800-2017 6.7.1",
     "built-in nets may contain only 4-state data, so the source correctly "
@@ -580,6 +586,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "dump_memword": DUMPVARS_SELECTED_VARIABLE,
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
+    "format": MISSING_FORMAT_ARGUMENT,
     "function4": EMPTY_FUNCTION_FORMAL_LIST,
     "fdisplay_fail_fd": INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC,
     "fdisplay_fail_mcd": INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC,
