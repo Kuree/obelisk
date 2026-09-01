@@ -547,9 +547,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     if (depths || assertionTypes || directiveTypes)
       zero = constant(i64, 0);
 
-    // A dynamic mask receives the same unsupported-kind check as a literal
-    // mask, but at the point where the task executes and after its argument
-    // expressions have been evaluated.
+    // A dynamic mask receives the same validity check as a literal mask, but
+    // at the point where the task executes and after its argument expressions
+    // have been evaluated. All eight assertion-type bits are defined by IEEE
+    // 1800-2017 20.12, including unique/unique0/priority violation reports.
     Value invalidMask;
     auto addInvalidMask = [&](Value mask, uint64_t supported) {
       Value unsupported = arith::AndIOp::create(builder, location, mask,
@@ -561,7 +562,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                                 : invalid;
     };
     if (assertionTypes)
-      addInvalidMask(assertionTypeMask, UINT64_C(31));
+      addInvalidMask(assertionTypeMask, UINT64_C(255));
     if (directiveTypes)
       addInvalidMask(directiveTypeMask, UINT64_C(7));
     if (invalidMask) {
@@ -571,8 +572,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       setCurrent(invalid);
       if (failed(emitRuntimeFatal(
               location,
-              "assertion-control masks select unsupported unique, unique0, "
-              "priority, or directive kinds")))
+              "assertion-control mask contains a value outside the assertion "
+              "or directive types defined by IEEE 1800-2017 20.12")))
         return failure();
       setCurrent(valid);
     }
@@ -634,7 +635,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         addSelection(arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne, matched, zero));
       }
-      if (directiveTypes) {
+      if (directiveTypes && directiveTypeValues[index] != 0) {
         Value matched = arith::AndIOp::create(
             builder, location, directiveTypeMask,
             constant(i64, static_cast<uint64_t>(directiveTypeValues[index])));

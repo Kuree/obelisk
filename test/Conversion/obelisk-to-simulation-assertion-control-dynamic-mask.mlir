@@ -60,7 +60,7 @@ module {
   }
 }
 
-// CHECK-DAG: arith.constant -32 : i64
+// CHECK-DAG: arith.constant -256 : i64
 // CHECK-DAG: arith.constant -8 : i64
 // CHECK-DAG: arith.constant 2 : i64
 // CHECK-DAG: arith.constant 1 : i64

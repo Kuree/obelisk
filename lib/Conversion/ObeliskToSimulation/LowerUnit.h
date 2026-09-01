@@ -396,7 +396,8 @@ private:
   lowerCaseLabel(::mlir::Value selector, ::mlir::Type selectorType,
                  ::mlir::Operation *selectorNode, ::mlir::Operation *label,
                  semantic::SVCaseCondition condition);
-  void emitQualifierWarning(::mlir::Location location,
+  void emitQualifierWarning(::mlir::Operation *statement,
+                            ::mlir::Location location,
                             semantic::SVUniquePriorityCheck qualifier,
                             ::mlir::StringRef statementKind,
                             ::mlir::StringRef reason);

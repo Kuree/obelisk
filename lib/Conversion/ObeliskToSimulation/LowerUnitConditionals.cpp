@@ -591,7 +591,8 @@ UnitLowering::lowerQualifiedConditional(semantic::SVConditionalStatementOp op) {
       setCurrent(nextBranch);
     }
     if (!finalElse)
-      emitQualifierWarning(location, op.getCheckKind(), "if", "no match");
+      emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "if",
+                           "no match");
     else if (failed(lowerStatement(finalElse)))
       return failure();
     emitBranch(mergeBlock);
@@ -648,7 +649,8 @@ UnitLowering::lowerQualifiedConditional(semantic::SVConditionalStatementOp op) {
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "if", "multiple matches");
+  emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "if",
+                       "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
@@ -661,7 +663,8 @@ UnitLowering::lowerQualifiedConditional(semantic::SVConditionalStatementOp op) {
     cf::CondBranchOp::create(builder, location, noMatch, noMatchWarning,
                              ValueRange{}, dispatch, ValueRange{});
     setCurrent(noMatchWarning);
-    emitQualifierWarning(location, op.getCheckKind(), "if", "no match");
+    emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "if",
+                         "no match");
     emitBranch(dispatch);
   } else {
     emitBranch(dispatch);
@@ -912,8 +915,9 @@ FailureOr<Value> UnitLowering::lowerPattern(Value input, Operation *pattern,
 }
 
 void UnitLowering::emitQualifierWarning(
-    Location location, semantic::SVUniquePriorityCheck qualifier,
-    StringRef statementKind, StringRef reason) {
+    Operation *statement, Location location,
+    semantic::SVUniquePriorityCheck qualifier, StringRef statementKind,
+    StringRef reason) {
   StringRef qualifierName;
   switch (qualifier) {
   case semantic::SVUniquePriorityCheck::Unique:
@@ -927,6 +931,21 @@ void UnitLowering::emitQualifierWarning(
     break;
   case semantic::SVUniquePriorityCheck::None:
     return;
+  }
+  Block *controlResume = nullptr;
+  if (statement->hasAttr("obelisk_sim.assertion_controlled")) {
+    IntegerAttr assertionID = statement->getAttrOfType<IntegerAttr>(
+        "obelisk_sim.assertion_control_target_id");
+    assert(assertionID && assertionID.getValue().isStrictlyPositive() &&
+           "controlled qualifier report must have a prepared identity");
+    Value context = function.getBody().front().getArgument(0);
+    Value enabled = sim::SimAssertionEnabledOp::create(
+        builder, location, builder.getI1Type(), context, assertionID);
+    Block *report = addBlock();
+    controlResume = addBlock();
+    cf::CondBranchOp::create(builder, location, enabled, report, ValueRange{},
+                             controlResume, ValueRange{});
+    setCurrent(report);
   }
   std::string file = "<unknown>";
   unsigned line = 0;
@@ -953,6 +972,10 @@ void UnitLowering::emitQualifierWarning(
       builder, location, function.getBody().front().getArgument(0), descriptor,
       ValueRange{text}, true, 10, ArrayRef<int32_t>{0}, scope, StringAttr{},
       multiplier, IntegerAttr{});
+  if (controlResume) {
+    emitBranch(controlResume);
+    setCurrent(controlResume);
+  }
 }
 
 FailureOr<Value>
@@ -1234,7 +1257,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
     }
     if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Priority &&
         !hasDefault)
-      emitQualifierWarning(location, op.getCheckKind(), "case", "no match");
+      emitQualifierWarning(op.getOperation(), location, op.getCheckKind(),
+                           "case", "no match");
     if (hasDefault && failed(lowerStatement(statements.back())))
       return failure();
     emitBranch(mergeBlock);
@@ -1316,7 +1340,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "case", "multiple matches");
+  emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "case",
+                       "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
@@ -1329,7 +1354,8 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
     cf::CondBranchOp::create(builder, location, noMatch, noMatchWarning,
                              ValueRange{}, dispatch, ValueRange{});
     setCurrent(noMatchWarning);
-    emitQualifierWarning(location, op.getCheckKind(), "case", "no match");
+    emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "case",
+                         "no match");
     emitBranch(dispatch);
   } else {
     emitBranch(dispatch);
@@ -2295,7 +2321,8 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
     }
     if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Priority &&
         !op.getHasDefault())
-      emitQualifierWarning(location, op.getCheckKind(), "case", "no match");
+      emitQualifierWarning(op.getOperation(), location, op.getCheckKind(),
+                           "case", "no match");
     if (op.getHasDefault() && failed(lowerStatement(statements.back())))
       return failure();
     emitBranch(mergeBlock);
@@ -2376,7 +2403,8 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
   cf::CondBranchOp::create(builder, location, overlap, overlapWarning,
                            ValueRange{}, checkNoMatch, ValueRange{});
   setCurrent(overlapWarning);
-  emitQualifierWarning(location, op.getCheckKind(), "case", "multiple matches");
+  emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "case",
+                       "multiple matches");
   emitBranch(dispatch);
   setCurrent(checkNoMatch);
   if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique &&
@@ -2389,7 +2417,8 @@ UnitLowering::lowerPatternCase(semantic::SVPatternCaseStatementOp op) {
     cf::CondBranchOp::create(builder, location, noMatch, noMatchWarning,
                              ValueRange{}, dispatch, ValueRange{});
     setCurrent(noMatchWarning);
-    emitQualifierWarning(location, op.getCheckKind(), "case", "no match");
+    emitQualifierWarning(op.getOperation(), location, op.getCheckKind(), "case",
+                         "no match");
     emitBranch(dispatch);
   } else {
     emitBranch(dispatch);

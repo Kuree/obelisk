@@ -1059,30 +1059,81 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm_unreachable("unhandled assertion directive kind");
   };
 
-  semanticRoot->walk([&](semantic::SVImmediateAssertionStatementOp assertion) {
-    semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
+  auto addQualifierReport = [&](Operation *statement,
+                                semantic::SVUniquePriorityCheck qualifier) {
+    if (qualifier == semantic::SVUniquePriorityCheck::None)
+      return;
+    semantic::SVInstanceBodySymbolOp body = enclosingInstance(statement);
     auto scopeAttr = body ? body->getAttrOfType<StringAttr>("hierarchical_name")
                           : StringAttr{};
     std::string scope = scopeAttr ? scopeAttr.getValue().str() : std::string{};
-    uint32_t type =
-        assertion.getIsDeferred() ? (assertion.getIsFinal() ? 8u : 4u) : 2u;
-    assertionInventory.push_back(
-        {assertion, assertionPath(assertion, scope), scope, 0,
-         instanceScopeDepths.lookup(scope), type,
-         directiveMask(assertion.getAssertionKind()), true});
-  });
-  semanticRoot->walk([&](semantic::SVConcurrentAssertionStatementOp assertion) {
-    semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
-    auto scopeAttr = body ? body->getAttrOfType<StringAttr>("hierarchical_name")
-                          : StringAttr{};
-    std::string scope = scopeAttr ? scopeAttr.getValue().str() : std::string{};
-    uint32_t type =
-        assertion.getAssertionKind() == semantic::SVAssertionKind::Expect ? 16u
-                                                                          : 1u;
-    assertionInventory.push_back(
-        {assertion, assertionPath(assertion, scope), scope, 0,
-         instanceScopeDepths.lookup(scope), type,
-         directiveMask(assertion.getAssertionKind()), type == 1});
+    uint32_t type = 0;
+    switch (qualifier) {
+    case semantic::SVUniquePriorityCheck::Unique:
+      type = 32;
+      break;
+    case semantic::SVUniquePriorityCheck::Unique0:
+      type = 64;
+      break;
+    case semantic::SVUniquePriorityCheck::Priority:
+      type = 128;
+      break;
+    case semantic::SVUniquePriorityCheck::None:
+      llvm_unreachable("handled above");
+    }
+    // IEEE 1800-2017 20.12 says directive_type is checked only for
+    // assertions. Zero marks a violation-report target for which that mask is
+    // intentionally ignored.
+    assertionInventory.push_back({statement, assertionPath(statement, scope),
+                                  scope, 0, instanceScopeDepths.lookup(scope),
+                                  type, 0, true});
+  };
+  // Keep assertion inventory construction to one linear AST walk. This is on
+  // the UVM path even when no assertion control call ultimately selects a
+  // qualifier report.
+  semanticRoot->walk([&](Operation *operation) {
+    if (auto assertion =
+            dyn_cast<semantic::SVImmediateAssertionStatementOp>(operation)) {
+      semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
+      auto scopeAttr =
+          body ? body->getAttrOfType<StringAttr>("hierarchical_name")
+               : StringAttr{};
+      std::string scope =
+          scopeAttr ? scopeAttr.getValue().str() : std::string{};
+      uint32_t type =
+          assertion.getIsDeferred() ? (assertion.getIsFinal() ? 8u : 4u) : 2u;
+      assertionInventory.push_back(
+          {assertion, assertionPath(assertion, scope), scope, 0,
+           instanceScopeDepths.lookup(scope), type,
+           directiveMask(assertion.getAssertionKind()), true});
+      return;
+    }
+    if (auto assertion =
+            dyn_cast<semantic::SVConcurrentAssertionStatementOp>(operation)) {
+      semantic::SVInstanceBodySymbolOp body = enclosingInstance(assertion);
+      auto scopeAttr =
+          body ? body->getAttrOfType<StringAttr>("hierarchical_name")
+               : StringAttr{};
+      std::string scope =
+          scopeAttr ? scopeAttr.getValue().str() : std::string{};
+      uint32_t type =
+          assertion.getAssertionKind() == semantic::SVAssertionKind::Expect
+              ? 16u
+              : 1u;
+      assertionInventory.push_back(
+          {assertion, assertionPath(assertion, scope), scope, 0,
+           instanceScopeDepths.lookup(scope), type,
+           directiveMask(assertion.getAssertionKind()), type == 1});
+      return;
+    }
+    if (auto statement =
+            dyn_cast<semantic::SVConditionalStatementOp>(operation))
+      addQualifierReport(statement, statement.getCheckKind());
+    else if (auto statement = dyn_cast<semantic::SVCaseStatementOp>(operation))
+      addQualifierReport(statement, statement.getCheckKind());
+    else if (auto statement =
+                 dyn_cast<semantic::SVPatternCaseStatementOp>(operation))
+      addQualifierReport(statement, statement.getCheckKind());
   });
 
   llvm::sort(assertionInventory, [](const AssertionInventoryEntry &left,
@@ -1142,7 +1193,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     uint32_t action = shorthandAction;
     bool dynamicAction = false;
     size_t actionArgument = 0;
-    uint64_t assertionTypes = attemptShorthand ? 15 : 31;
+    uint64_t assertionTypes = attemptShorthand ? 15 : 255;
     uint64_t directiveTypes = 7;
     bool dynamicAssertionTypes = false;
     bool dynamicDirectiveTypes = false;
@@ -1202,10 +1253,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         } else {
           dynamicAssertionTypes = true;
           assertionTypesArgument = 1;
-          assertionTypes = 31;
+          assertionTypes = 255;
         }
       } else {
-        assertionTypes = 31;
+        assertionTypes = 255;
       }
       if (arguments.size() >= 3 &&
           !isa<semantic::SVEmptyArgumentExpressionOp>(arguments[2])) {
@@ -1240,19 +1291,23 @@ void ObeliskSimPreparePass::runOnOperation() {
         firstSelector = arguments.size();
       }
     }
-    if ((!dynamicAssertionTypes && (assertionTypes & ~UINT64_C(31)) != 0) ||
+    if ((!dynamicAssertionTypes && (assertionTypes & ~UINT64_C(255)) != 0) ||
         (!dynamicDirectiveTypes && (directiveTypes & ~UINT64_C(7)) != 0)) {
       emitError(getSemanticLocation(call))
-          << "assertion-control masks select unsupported unique, unique0, "
-             "priority, or directive kinds";
+          << "assertion-control mask contains a value outside the assertion "
+             "or directive types defined by IEEE 1800-2017 20.12";
       invalid = true;
       return;
     }
     // On, Off, and Kill do not affect expect statements. The remaining
     // controls do, so selecting an expect statement is rejected below until
-    // executable expect support lands.
+    // executable expect support lands. Conversely, PassOn through VacuousOff
+    // do not affect violation report types. Prune both statically known no-op
+    // selections before building control targets or runtime queries.
     if (!dynamicAction && action >= 3 && action <= 5)
       assertionTypes &= ~UINT64_C(16);
+    if (!dynamicAction && action >= 6 && action <= 11)
+      assertionTypes &= ~UINT64_C(224);
 
     SmallVector<StringRef> selectors;
     for (Operation *argument : ArrayRef(arguments).drop_front(firstSelector)) {
@@ -1296,7 +1351,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<std::pair<Operation *, uint64_t>> selectedAssertions;
     for (const AssertionInventoryEntry &entry : assertionInventory) {
       if ((entry.assertionType & assertionTypes) == 0 ||
-          (entry.directiveType & directiveTypes) == 0)
+          (entry.directiveType != 0 &&
+           (entry.directiveType & directiveTypes) == 0))
         continue;
       bool selected = selectors.empty();
       // -1 denotes a target selected independently of the levels value. For
