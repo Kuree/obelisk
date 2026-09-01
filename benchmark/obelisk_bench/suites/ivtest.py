@@ -190,15 +190,21 @@ REQUIRED_RUNTIME_WARNING_GOLD_LINES: dict[
         )),)),
 }
 
-# IEEE 1800-2017 9.2.2.2 through 9.2.2.4 recommend additional modeling
-# diagnostics for always_comb/always_latch/always_ff but do not prescribe
-# their wording or count. These gold files otherwise end in a short portable
-# self-check, so retain that output exactly instead of inheriting Icarus's
-# synthesis-warning policy. Lookup is O(1) and comparison is linear in the
-# selected test's tiny output; compiler and simulator paths are unaffected.
-MODELING_WARNING_GOLD_OUTPUTS: dict[str, str] = {
+# Some gold files contain only a pinned-Icarus diagnostic or mix one into a
+# portable value trace. Use an exact standard-defined output oracle for these
+# tests instead of inheriting that implementation's limitations or optional
+# diagnostic policy. Lookup and comparison affect only the harness.
+EXACT_PORTABLE_GOLD_OUTPUTS: dict[str, str] = {
+    # IEEE 1800-2017 9.2.2.2 through 9.2.2.4 recommend additional modeling
+    # diagnostics for always_comb/always_latch/always_ff but do not prescribe
+    # their wording or count.
     "always_comb_no_sens": "PASSED\n",
     "always_ff_warn_sens": "Expect compile warnings!\nPASSED\n",
+    # Clauses 21.2.2 and 21.2.3 accept the same expression arguments as
+    # $display. The pinned Icarus build reports these expressions as
+    # unsupported instead of executing the required strobe/monitor behavior.
+    "br916a": "2 3\n",
+    "br916b": "x x\n0 1\n2 3\n",
 }
 
 
@@ -1072,10 +1078,10 @@ def judge_one(
                     desc.key, desc.gold, compiled.stderr, result.stdout,
                     result.stderr, result.ok, result.timed_out):
                 return (desc.key, model.Outcome(model.PASS))
-            modeling_output = MODELING_WARNING_GOLD_OUTPUTS.get(desc.key)
-            if modeling_output is not None:
+            portable_output = EXACT_PORTABLE_GOLD_OUTPUTS.get(desc.key)
+            if portable_output is not None:
                 if (result.ok and not result.timed_out and not result.stderr and
-                        result.stdout == modeling_output):
+                        result.stdout == portable_output):
                     return (desc.key, model.Outcome(model.PASS))
                 return (desc.key, dependency_failure(
                     desc.key, model.RUN_FAIL, output + result.stderr))
