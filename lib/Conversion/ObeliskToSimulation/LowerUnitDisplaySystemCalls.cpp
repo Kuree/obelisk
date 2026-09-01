@@ -661,7 +661,9 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (auto enumValues =
-                   child->getAttrOfType<ArrayAttr>(enumFormatValuesAttrName)) {
+                   child->getAttrOfType<ArrayAttr>(enumFormatValuesAttrName);
+               enumValues &&
+               (consumingSpecifier == 'p' || consumingSpecifier == '?')) {
       auto enumNames = child->getAttrOfType<ArrayAttr>(enumFormatNamesAttrName);
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
@@ -681,6 +683,13 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
           OBELISK_RT_OUTPUT_ITEM_ENUM |
           (isSignedNode(child) ? OBELISK_RT_OUTPUT_ITEM_SIGNED : 0));
     } else {
+      auto semanticType = child->getAttrOfType<TypeAttr>("semantic_type");
+      if (semanticType && isa<semantic::EnumType>(semanticType.getValue()) &&
+          (consumingSpecifier == 'p' || consumingSpecifier == '?')) {
+        emitError(getSemanticLocation(child))
+            << "enum assignment-pattern format has no declaration inventory";
+        return failure();
+      }
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
       if (failed(scalar))

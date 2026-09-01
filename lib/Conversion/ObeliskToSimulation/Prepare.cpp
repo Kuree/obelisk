@@ -789,9 +789,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           names.append(inventory->second.names.begin(),
                        inventory->second.names.end());
         } else {
-          emitError(getSemanticLocation(argument))
-              << "formatted enum has no declaration inventory";
-          invalid = true;
+          // Numeric and default output formats need only the packed enum value
+          // (IEEE 1800-2017 21.2.1.2). Leave an enum without a declaration
+          // inventory unannotated; lowering diagnoses it only if the format
+          // actually selects §21.2.1.7 assignment-pattern rendering.
           continue;
         }
         ArrayAttr spellings = ArrayAttr::get(context, valueSpellings);
