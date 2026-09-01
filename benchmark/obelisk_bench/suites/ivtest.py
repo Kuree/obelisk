@@ -476,6 +476,11 @@ EMPTY_UDP_INPUT_TERMINAL = Exclusion(
     "udp_instance requires one output_terminal followed by every declared "
     "input_terminal; the test leaves its final UDP input connection empty "
     "and expects compilation to continue")
+NAMED_UDP_TERMINAL_CONNECTIONS = Exclusion(
+    "IEEE 1800-2017 29.8",
+    "Syntax 29-2 defines udp_instance with an ordered output_terminal followed "
+    "by input_terminals and provides no named-connection form; the test uses "
+    "module-style .Q, .C, and .D named connections")
 CONTRADICTORY_COMBINATIONAL_UDP_ROWS = Exclusion(
     "IEEE 1800-2017 29.3.4",
     "it is illegal for the same UDP input combination to specify different "
@@ -853,6 +858,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr3587570": CONTRADICTORY_COMBINATIONAL_UDP_ROWS,
+    "udp_dff": NAMED_UDP_TERMINAL_CONNECTIONS,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406b": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
