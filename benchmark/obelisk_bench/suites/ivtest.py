@@ -230,11 +230,33 @@ class RequiredRuntimeWarningGoldOracle(NamedTuple):
     gold_marker: str
     runtime_warning: str
     unordered_groups: tuple[frozenset[str], ...]
+    ignored_gold_prefix: tuple[str, ...] = ()
+    gold_continuation_lines: int = 0
+    runtime_warning_is_suffix: bool = False
 
 
 REQUIRED_RUNTIME_WARNING_GOLD_LINES: dict[
     str, RequiredRuntimeWarningGoldOracle
 ] = {
+    # Clause 12.5.3 requires one violation report for the unmatched priority
+    # or unique case value, but does not prescribe its stream or wording.
+    # Icarus places a two-line report in the gold output and also emits a
+    # compile-time "sorry" for unique; Obelisk emits one precise runtime
+    # warning on stderr while preserving the same value trace.
+    "case_priority": RequiredRuntimeWarningGoldOracle(
+        "WARNING:",
+        "case_priority.v:12:7: warning: priority case violation: no match",
+        (), gold_continuation_lines=1, runtime_warning_is_suffix=True),
+    "case_unique": RequiredRuntimeWarningGoldOracle(
+        "WARNING:",
+        "case_unique.v:12:7: warning: unique case violation: no match",
+        (),
+        ignored_gold_prefix=(
+            "./ivltests/case_unique.v:12: vvp.tgt sorry: Case "
+            "unique/unique0 qualities are ignored.",
+        ),
+        gold_continuation_lines=1,
+        runtime_warning_is_suffix=True),
     "pic": RequiredRuntimeWarningGoldOracle(
         "$readmemh(contrib/TEST9.ROM): Too many words",
         "WARNING: $readmemh: data word count does not match address range",
@@ -387,13 +409,25 @@ def _matches_required_runtime_warning_gold(
         return False
     expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
         keepends=True)
+    if len(expected) < len(oracle.ignored_gold_prefix):
+        return False
+    actual_prefix = tuple(
+        line.rstrip("\r\n")
+        for line in expected[:len(oracle.ignored_gold_prefix)]
+    )
+    if actual_prefix != oracle.ignored_gold_prefix:
+        return False
+    del expected[:len(oracle.ignored_gold_prefix)]
     warning_lines = [
         index for index, line in enumerate(expected)
         if oracle.gold_marker in line
     ]
     if len(warning_lines) != 1:
         return False
-    del expected[warning_lines[0]]
+    warning_end = warning_lines[0] + 1 + oracle.gold_continuation_lines
+    if warning_end > len(expected):
+        return False
+    del expected[warning_lines[0]:warning_end]
     expected_text = "".join(expected)
     expected_lines = expected_text.splitlines()
     actual_lines = stdout.splitlines()
@@ -409,8 +443,15 @@ def _matches_required_runtime_warning_gold(
             start = positions[0]
             lines[start:start + len(group)] = sorted(
                 lines[start:start + len(group)])
+    runtime_warnings = stderr.splitlines()
+    runtime_warning_matches = runtime_warnings == [oracle.runtime_warning]
+    if oracle.runtime_warning_is_suffix:
+        runtime_warning_matches = (
+            len(runtime_warnings) == 1 and
+            runtime_warnings[0].endswith(oracle.runtime_warning)
+        )
     return (result_ok and not timed_out and not compile_stderr and
-            stderr.splitlines() == [oracle.runtime_warning] and
+            runtime_warning_matches and
             stdout.endswith("\n") == expected_text.endswith("\n") and
             actual_lines == expected_lines)
 
