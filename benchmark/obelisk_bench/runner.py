@@ -113,8 +113,9 @@ def _run_with_retry(command, timeout, cwd=None):
     """
     for attempt in range(2):
         try:
-            return subprocess.run(command, capture_output=True, text=True,
-                                  timeout=timeout, check=False, cwd=cwd)
+            return subprocess.run(
+                command, capture_output=True, text=True, errors="replace",
+                timeout=timeout, check=False, cwd=cwd)
         except OSError:
             if attempt == 0:
                 time.sleep(0.2)
@@ -393,8 +394,9 @@ def execute(binary: str, timeout: float, args: list[str] | None = None,
     command = [binary, *(args or [])]
     for attempt in range(2):
         try:
-            result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=timeout, check=False, cwd=cwd)
+            result = subprocess.run(
+                command, capture_output=True, text=True, errors="replace",
+                timeout=timeout, check=False, cwd=cwd)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
                               timed_out=False, stderr=result.stderr,
                               returncode=result.returncode)

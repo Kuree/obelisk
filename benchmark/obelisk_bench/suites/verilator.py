@@ -165,6 +165,14 @@ class Exclusion(NamedTuple):
     reason: str
 
 
+def _parallelism(jobs: int, task_count: int) -> tuple[int, int]:
+    """Divide the host thread budget across concurrently compiled tests."""
+    workers = min(jobs, task_count)
+    active_compilers = max(1, workers)
+    threads = max(1, runner.available_cpu_count() // active_compilers)
+    return workers, threads
+
+
 PATTERN_RADIX = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "a singular pattern element prints the way it prints unformatted, which "
@@ -967,9 +975,11 @@ def classify_dependency_failure(name: str, log: str) -> str:
     return f"known Slang bug: {reason}\n{log}" if reason else log
 
 
-def judge_one(obelisk: str, top: Path, timeout: float,
-              vpi_code: tuple[str, ...] = (),
-              vpi_mode: str | None = None) -> model.Outcome:
+def judge_one(
+        obelisk: str, top: Path, timeout: float,
+        vpi_code: tuple[str, ...] = (), vpi_mode: str | None = None,
+        compile_threads: int | None = None,
+) -> model.Outcome:
     """Compile and run one test, returning its outcome."""
     name = top.stem
     if excluded := EXCLUDED.get(name):
@@ -1008,6 +1018,8 @@ def judge_one(obelisk: str, top: Path, timeout: float,
         extra.extend(detect_compile_defines(top.with_suffix(".py")))
         extra.extend("-D" + definition
                      for definition in COMPATIBILITY_DEFINES.get(name, ()))
+        if compile_threads is not None:
+            extra.append(f"--compile-threads={compile_threads}")
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,
@@ -1072,25 +1084,30 @@ def run(root: Path, args) -> dict[str, model.Outcome]:
     """Compile, run, and judge the corpus, optionally in parallel."""
     from concurrent.futures import ProcessPoolExecutor  # local: fork-only use
 
+    if args.jobs < 1:
+        raise SystemExit("verilator jobs must be at least one")
     tops = select(root, args)
     obelisk = args.obelisk_binary
     timeout = args.timeout
     vpi_code = tuple(
         str(Path(path).resolve()) for path in getattr(args, "vpi_code", []))
     vpi_mode = getattr(args, "vpi", None)
+    workers, compile_threads = _parallelism(args.jobs, len(tops))
     print(f"Running {len(tops)} Verilator simulator-scenario tests with "
-          f"-j{args.jobs} ...")
+          f"{workers} worker(s), {compile_threads} compile thread(s) each ...")
 
     outcomes: dict[str, model.Outcome] = {}
-    if args.jobs == 1:
+    if workers == 0:
+        return outcomes
+    if workers == 1:
         for top in tops:
             outcomes[top.stem] = judge_one(
-                obelisk, top, timeout, vpi_code, vpi_mode)
+                obelisk, top, timeout, vpi_code, vpi_mode, compile_threads)
     else:
-        with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = {
                 pool.submit(judge_one, obelisk, top, timeout, vpi_code,
-                            vpi_mode): top.stem
+                            vpi_mode, compile_threads): top.stem
                        for top in tops}
             for future in futures:
                 outcomes[futures[future]] = future.result()

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
@@ -307,6 +308,15 @@ class TraceDumpfileTest(unittest.TestCase):
                 verilator.trace_dumpfile_define(tmp),
                 f"-DTEST_DUMPFILE={expected}",
             )
+
+
+class ParallelismTest(unittest.TestCase):
+    def test_host_threads_are_divided_across_active_compilers(self):
+        with mock.patch.object(
+                verilator.runner, "available_cpu_count", return_value=24):
+            self.assertEqual(verilator._parallelism(24, 1708), (24, 1))
+            self.assertEqual(verilator._parallelism(8, 1708), (8, 3))
+            self.assertEqual(verilator._parallelism(24, 1), (1, 24))
 
 
 class ObjectDirectoryTest(unittest.TestCase):

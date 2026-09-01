@@ -768,11 +768,12 @@ class BenchmarkRunnerTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=[], returncode=19, stdout="diagnostic\n", stderr="")
         with mock.patch.object(
-                runner.subprocess, "run", return_value=completed):
+                runner.subprocess, "run", return_value=completed) as run:
             result = runner.execute("sim", 10)
 
         self.assertFalse(result.ok)
         self.assertEqual(result.returncode, 19)
+        self.assertEqual(run.call_args.kwargs["errors"], "replace")
 
     def test_compile_frontend_uses_emit_slang_phase_boundary(self):
         completed = subprocess.CompletedProcess(
