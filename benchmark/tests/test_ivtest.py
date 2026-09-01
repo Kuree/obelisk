@@ -266,7 +266,7 @@ class FixtureDirectoryTest(unittest.TestCase):
             execute.assert_not_called()
 
     def test_supported_upstream_compile_error_runs_its_self_check(self):
-        for key in ("sv_port_default14", "event_array"):
+        for key in ("sv_port_default14", "event_array", "br1015a"):
             with (
                 self.subTest(test=key),
                 tempfile.TemporaryDirectory() as temporary,

@@ -71,6 +71,11 @@ DEFAULT_WARNING_SUPPRESSIONS = [
 # later regression is visible. Membership is intentionally a constant-time
 # lookup on the one descriptor being judged.
 SELF_CHECKING_CE_OVERRIDES = {
+    # Clause 13.4 says functions accept the same formal arguments as tasks and
+    # explicitly permits an unpacked array formal. The pinned Icarus mode
+    # rejects this source, but it is valid in the SystemVerilog mode used by
+    # this harness and carries a complete parity self-check.
+    "br1015a",
     # IEEE 1800-2017 15.5.1 explicitly defines triggering elements of a named
     # event array. The source exercises four fixed-array elements and carries
     # its own event-count self-check.
