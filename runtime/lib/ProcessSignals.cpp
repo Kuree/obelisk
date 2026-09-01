@@ -642,6 +642,14 @@ bool obelisk_rt_register_signal_wait_unlocked(
         }
         continue;
       }
+      // A dynamic selection can be temporarily invalid while another entry
+      // in the same implicit event expression (for example, its index)
+      // remains watchable.  Preserve the positional slot so resuspension can
+      // compare the wait exactly, but do not try to subscribe the sentinel.
+      if (entries[index].stable_id == UINT64_MAX) {
+        subscriptions.emplace_back(nullptr);
+        continue;
+      }
       if (!appendSignalSubscriptionUnlocked(
               context, entries[index].stable_id, entries[index].reserved,
               entries[index].edge,

@@ -337,7 +337,8 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
                      entry.reserved == OBELISK_RT_WAIT_WIDTH_MANAGED;
       if (requireSignalHandle) {
         if (managed ? entry.edge != OBELISK_RT_WAIT_EDGE_CHANGE
-                    : !validSignalHandle(entry.stable_id))
+                    : entry.stable_id != UINT64_MAX &&
+                          !validSignalHandle(entry.stable_id))
           return false;
       }
       if (requireEdge ? (!managed && entry.reserved == 0) : entry.reserved != 0)

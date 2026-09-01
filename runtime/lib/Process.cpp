@@ -2427,6 +2427,11 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
   for (uint32_t index = 0; index != wait->count; ++index) {
     const SignalSubscription *subscription =
         scheduled.signalSubscriptions[index].get();
+    if (entries[index].stable_id == UINT64_MAX) {
+      if (subscription)
+        return false;
+      continue;
+    }
     if (!subscription || subscription->stableID != entries[index].stable_id ||
         subscription->bitWidth != entries[index].reserved ||
         subscription->edge != entries[index].edge ||
