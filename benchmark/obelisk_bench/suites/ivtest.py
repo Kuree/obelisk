@@ -71,6 +71,10 @@ DEFAULT_WARNING_SUPPRESSIONS = [
 # later regression is visible. Membership is intentionally a constant-time
 # lookup on the one descriptor being judged.
 SELF_CHECKING_CE_OVERRIDES = {
+    # IEEE 1800-2017 15.5.1 explicitly defines triggering elements of a named
+    # event array. The source exercises four fixed-array elements and carries
+    # its own event-count self-check.
+    "event_array",
     # IEEE 1800-2017 13.5.3 explicitly permits defaults on output arguments
     # and defines their declaration-scope binding and copy-out behavior.
     "sv_port_default14",
@@ -99,6 +103,13 @@ QUEUE_WARNING_GOLD_OVERRIDES: dict[str, int] = {
 # warning marker instead of Icarus's two-line diagnostic text.
 NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
     "sys_func_as_task",
+}
+
+# IEEE 1800-2017 9.4.2.2 defines an empty nested @* sensitivity set but does
+# not require a diagnostic. Retain the gold's exact runtime-output oracle while
+# accepting Obelisk's equally conforming choice not to emit Icarus's warning.
+OPTIONAL_WARNING_GOLD_PREFIXES = {
+    "nested_impl_event2": "warning: @* found no sensitivities",
 }
 
 
@@ -181,6 +192,22 @@ def _matches_assertion_gold_override(
             return False
         actual[(int(diagnostic.group(2)), diagnostic.group(3))] += 1
     return actual == Counter(oracle.errors)
+
+
+def _matches_optional_warning_gold(
+        key: str, gold: Path, compile_stderr: str, stdout: str, stderr: str,
+        result_ok: bool, timed_out: bool,
+) -> bool:
+    """Compare runtime output after one exact, nonrequired gold warning."""
+    warning = OPTIONAL_WARNING_GOLD_PREFIXES.get(key)
+    if warning is None or not gold.exists():
+        return False
+    expected = gold.read_text(encoding="utf-8", errors="replace").splitlines(
+        keepends=True)
+    if not expected or warning not in expected[0]:
+        return False
+    return (result_ok and not timed_out and not compile_stderr and not stderr
+            and stdout == "".join(expected[1:]))
 
 
 class Exclusion(NamedTuple):
@@ -622,6 +649,10 @@ def judge_one(
                     return (desc.key, model.Outcome(model.PASS))
                 return (desc.key, dependency_failure(
                     desc.key, model.RUN_FAIL, output))
+            if _matches_optional_warning_gold(
+                    desc.key, desc.gold, compiled.stderr, result.stdout,
+                    result.stderr, result.ok, result.timed_out):
+                return (desc.key, model.Outcome(model.PASS))
             if desc.key in NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES:
                 warned = ("warning: calling nonvoid function" in
                            compiled.stderr)
