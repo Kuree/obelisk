@@ -149,6 +149,14 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # vendor-formatted -Wselect-range diagnostics. Preserve the unguarded
     # value trace and self-check exactly.
     "br1007": OptionalWarningGoldOracle("warning:", 3),
+    # Every out-of-range select that produces these pinned-Icarus diagnostics
+    # is guarded by its predefined __ICARUS__ macro. Another compiler sees
+    # only the portable semantic checks. Each diagnostic has one continuation
+    # line, followed by the exact PASSED oracle.
+    "sel_rval_bit_ob": OptionalWarningGoldOracle(
+        "warning:", 56, prefix_lines=112),
+    "sel_rval_part_ob": OptionalWarningGoldOracle(
+        "warning:", 112, prefix_lines=224),
     # IEEE 1800-2017 21.4 defines the explicit start-address traversal used by
     # this test but does not require Icarus's warning that IEEE 1364-2005
     # changed the default direction. Keep every data line as the exact oracle.
