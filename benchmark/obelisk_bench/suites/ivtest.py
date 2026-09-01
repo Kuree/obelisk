@@ -351,6 +351,11 @@ ANSI_INPUT_PORT_DEFAULT = Exclusion(
     "a singular ANSI input port may specify a constant default value, but the "
     "selected CE entry checks the older IEEE 1364 restriction while Obelisk "
     "compiles the corpus as SystemVerilog")
+PARAMETER_PORT_WITHOUT_DEFAULT = Exclusion(
+    "IEEE 1800-2017 6.20.1",
+    "a parameter declaration in a parameter port list may omit its default "
+    "when every instantiation supplies an override; this test supplies A by "
+    "name, but its later CE descriptor checks the older IEEE 1364 restriction")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -412,6 +417,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr2834340b": PULL_GATE_ARITY,
     "pr478": LEGACY_PROTECT_DIRECTIVE,
     "parameter_in_generate1": GENERATE_BLOCK_PARAMETER,
+    "parameter_no_default": PARAMETER_PORT_WITHOUT_DEFAULT,
     "param_string": UNTYPED_STRING_PARAMETER_IS_INTEGRAL,
     "pr1742910": SIZED_ADDITION_HAS_NO_CARRY_BIT,
     "resetall": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
