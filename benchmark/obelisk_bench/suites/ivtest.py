@@ -582,6 +582,11 @@ MISSING_SDF_VERSION = Exclusion(
 # after either compilation or simulation so a dependency update that moves the
 # failure across that boundary does not silently lose its classification.
 KNOWN_SLANG_BUGS: dict[str, str] = {
+    "br_gh782b": (
+        "IEEE 1800-2017 5.3 makes newlines ordinary ignored white space and "
+        "22.7 defines `timescale as its directive token followed by time_unit "
+        "/ time_precision; pinned Slang incorrectly terminates the directive "
+        "at each intervening line comment"),
     "indef_width_concat": (
         "IEEE 1800-2017 11.4.12 forbids unsized constant numbers in "
         "concatenations; pinned Slang accepts {pval, 2} instead of rejecting "
