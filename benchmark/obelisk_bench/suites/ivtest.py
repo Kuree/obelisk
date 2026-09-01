@@ -119,6 +119,7 @@ QUEUE_WARNING_GOLD_OVERRIDES: dict[str, int] = {
 # This source self-checks the function's behavior; require Obelisk's semantic
 # warning marker instead of Icarus's two-line diagnostic text.
 NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
+    "br921",
     "sys_func_as_task",
 }
 
