@@ -3721,25 +3721,30 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     // drivers: the low bank has (strength0, highz1), and the high bank has
     // (highz0, strength1). Their ordinary four-state values therefore encode
     // L, H, and full x as exact strength ranges without extending logic<N>.
-    Value lowCandidate = sim::SimLogicMuxOp::create(
-        builder, location, logicType, driven, disabled, zero);
-    Value highCandidate = sim::SimLogicMuxOp::create(
-        builder, location, logicType, driven, one, disabled);
+    // Form the polarity enables directly. Nesting ordinary conditional
+    // operators would apply Table 11-20 twice, turning an inactive Z/Z bank
+    // into X when the control is unknown instead of preserving the one-sided
+    // L/H range required by 28.12.2. This also halves the number of expensive
+    // four-state muxes in the hot primitive evaluator.
     bool activeHigh = name.ends_with("1");
-    Value lowResult =
-        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, *control,
-                                                      lowCandidate, disabled))
-                   : Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, *control,
-                                                      disabled, lowCandidate));
-    Value highResult =
-        activeHigh ? Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, *control,
-                                                      highCandidate, disabled))
-                   : Value(sim::SimLogicMuxOp::create(builder, location,
-                                                      logicType, *control,
-                                                      disabled, highCandidate));
+    Value enabledControl =
+        activeHigh
+            ? *control
+            : Value(sim::SimLogicUnaryOp::create(
+                  builder, location, control->getType(),
+                  sim::UnaryKind::BitNot, *control));
+    Value invertedDriven = sim::SimLogicUnaryOp::create(
+        builder, location, logicType, sim::UnaryKind::BitNot, driven);
+    Value lowEnable = sim::SimLogicBinaryOp::create(
+        builder, location, logicType, sim::BinaryKind::And, invertedDriven,
+        enabledControl);
+    Value highEnable = sim::SimLogicBinaryOp::create(
+        builder, location, logicType, sim::BinaryKind::And, driven,
+        enabledControl);
+    Value lowResult = sim::SimLogicMuxOp::create(
+        builder, location, logicType, lowEnable, zero, disabled);
+    Value highResult = sim::SimLogicMuxOp::create(
+        builder, location, logicType, highEnable, one, disabled);
     // Keep the ordinary four-state gate result alongside its two exact
     // strength ranges. IEEE 1800-2017 28.6 and 28.16 select propagation delay
     // from this logical transition: L and H use the x delay, not the delay of

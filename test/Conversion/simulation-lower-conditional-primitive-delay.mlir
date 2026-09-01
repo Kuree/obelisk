@@ -126,6 +126,15 @@ module {
 // CHECK: %[[DATA:.*]] = obelisk_sim.ref.load %arg3
 // CHECK: %[[CONTROL:.*]] = obelisk_sim.ref.load %arg4
 // CHECK: %[[DRIVEN:.*]] = obelisk_sim.logic.binary and %[[DATA]],
+// Clause 28.12.2 strength banks use direct polarity enables. In particular,
+// an unknown control with data 0 must leave the high bank at Z, not merge Z
+// with Z through the Clause 11.4.11 conditional operator and turn it into X.
+// CHECK: %[[ACTIVE_CONTROL:.*]] = obelisk_sim.logic.unary bit_not %[[CONTROL]]
+// CHECK: %[[NOT_DRIVEN:.*]] = obelisk_sim.logic.unary bit_not %[[DRIVEN]]
+// CHECK: %[[LOW_ENABLE:.*]] = obelisk_sim.logic.binary and %[[NOT_DRIVEN]], %[[ACTIVE_CONTROL]]
+// CHECK: %[[HIGH_ENABLE:.*]] = obelisk_sim.logic.binary and %[[DRIVEN]], %[[ACTIVE_CONTROL]]
+// CHECK: %[[LOW_BANK:.*]] = obelisk_sim.logic.mux %[[LOW_ENABLE]]
+// CHECK: %[[HIGH_BANK:.*]] = obelisk_sim.logic.mux %[[HIGH_ENABLE]]
 // CHECK-DAG: %[[ACTIVE:.*]] = obelisk_sim.logic.compare case_eq %[[CONTROL]], %{{.*}} : {{.*}} -> i1
 // CHECK-DAG: %[[INACTIVE:.*]] = obelisk_sim.logic.compare case_eq %[[CONTROL]], %{{.*}} : {{.*}} -> i1
 // CHECK: %[[ACTIVE_VALUE:.*]] = arith.select %[[ACTIVE]], %[[DRIVEN]], %{{.*}}
@@ -133,7 +142,7 @@ module {
 // CHECK-DAG: %[[RISE:.*]] = obelisk_sim.time.constant 2
 // CHECK-DAG: %[[FALL:.*]] = obelisk_sim.time.constant 3
 // CHECK-DAG: %[[OFF:.*]] = obelisk_sim.time.constant 4
-// CHECK: obelisk_sim.driver.drive_inertial_strength_pair %arg1 = %{{.*}}, %arg2 = %{{.*}} transition %[[TRANSITION]] after[%[[RISE]], %[[FALL]], %[[OFF]]] site 1 : 0
+// CHECK: obelisk_sim.driver.drive_inertial_strength_pair %arg1 = %[[LOW_BANK]], %arg2 = %[[HIGH_BANK]] transition %[[TRANSITION]] after[%[[RISE]], %[[FALL]], %[[OFF]]] site 1 : 0
 
 // One delay expands to the same rise, fall, and turn-off delay.
 // CHECK-LABEL: obelisk_sim.func @bufif1_one

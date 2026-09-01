@@ -117,10 +117,10 @@ module {
 
     // CHECK-LABEL: obelisk_sim.func @primitive_bufif0
     // CHECK: %[[Z:.*]] = obelisk_sim.logic.constant true, true
-    // CHECK: %[[LOW_CANDIDATE:.*]] = obelisk_sim.logic.mux
-    // CHECK: %[[HIGH_CANDIDATE:.*]] = obelisk_sim.logic.mux
-    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[Z]] : %[[LOW_CANDIDATE]]
-    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[Z]] : %[[HIGH_CANDIDATE]]
+    // CHECK: %[[LOW_ENABLE:.*]] = obelisk_sim.logic.binary and
+    // CHECK: %[[HIGH_ENABLE:.*]] = obelisk_sim.logic.binary and
+    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %[[LOW_ENABLE]] ? %{{.*}} : %[[Z]]
+    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %[[HIGH_ENABLE]] ? %{{.*}} : %[[Z]]
     // CHECK: obelisk_sim.driver.drive %arg1 = %[[LOW]]
     // CHECK-SAME: obelisk_sim.defer_net_resolution
     // CHECK: obelisk_sim.driver.drive %arg2 = %[[HIGH]]
@@ -149,10 +149,10 @@ module {
     // CHECK-LABEL: obelisk_sim.func @primitive_notif1
     // CHECK: %[[INVERTED:.*]] = obelisk_sim.logic.unary bit_not
     // CHECK: %[[Z:.*]] = obelisk_sim.logic.constant true, true
-    // CHECK: %[[LOW_CANDIDATE:.*]] = obelisk_sim.logic.mux
-    // CHECK: %[[HIGH_CANDIDATE:.*]] = obelisk_sim.logic.mux
-    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[LOW_CANDIDATE]] : %[[Z]]
-    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %{{.*}} ? %[[HIGH_CANDIDATE]] : %[[Z]]
+    // CHECK: %[[LOW_ENABLE:.*]] = obelisk_sim.logic.binary and
+    // CHECK: %[[HIGH_ENABLE:.*]] = obelisk_sim.logic.binary and
+    // CHECK: %[[LOW:.*]] = obelisk_sim.logic.mux %[[LOW_ENABLE]] ? %{{.*}} : %[[Z]]
+    // CHECK: %[[HIGH:.*]] = obelisk_sim.logic.mux %[[HIGH_ENABLE]] ? %{{.*}} : %[[Z]]
     // CHECK: obelisk_sim.driver.drive %arg1 = %[[LOW]]
     // CHECK-SAME: obelisk_sim.defer_net_resolution
     // CHECK: obelisk_sim.driver.drive %arg2 = %[[HIGH]]
