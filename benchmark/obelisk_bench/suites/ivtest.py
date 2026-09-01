@@ -340,6 +340,17 @@ UNTYPED_STRING_PARAMETER_IS_INTEGRAL = Exclusion(
     "21.2.1.2 then gives its unformatted $display argument decimal format, "
     "while the test expects Icarus to retain the initializer's source "
     "spelling as a display string")
+ANSI_PORT_EXPLICIT_DATA_TYPE = Exclusion(
+    "IEEE 1800-2017 23.2.2.3",
+    "input and inout ports may carry explicit integral data types; the clause "
+    "even gives inout integer as a legal example, but the selected CE entry "
+    "checks the older IEEE 1364 restriction while Obelisk compiles the corpus "
+    "as SystemVerilog")
+ANSI_INPUT_PORT_DEFAULT = Exclusion(
+    "IEEE 1800-2017 23.2.2.4",
+    "a singular ANSI input port may specify a constant default value, but the "
+    "selected CE entry checks the older IEEE 1364 restriction while Obelisk "
+    "compiles the corpus as SystemVerilog")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -386,6 +397,9 @@ EXCLUDED: dict[str, Exclusion] = {
     "fscanf_z_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
     "module_output_port_var2": PORT_DECLARATION_WITHOUT_LIST,
+    "module_inout_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
+    "module_input_port_list_def": ANSI_INPUT_PORT_DEFAULT,
+    "module_input_port_type": ANSI_PORT_EXPLICIT_DATA_TYPE,
     "multi_bit_strength": VECTOR_STRENGTH_FORMAT,
     "nb_ec_concat": ACTIVE_READ_BEFORE_EVENT_CONTROLLED_NBA,
     "pr1787423": PULL_GATE_ARITY,
