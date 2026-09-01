@@ -189,6 +189,11 @@ PROCEDURAL_FORCE_VARIABLE_SELECT = Exclusion(
     "IEEE 1800-2017 10.6.2",
     "force and release targets shall not be bit- or part-selects of variables; "
     "the test requires Icarus's variable-select extension")
+DUMPVARS_SELECTED_VARIABLE = Exclusion(
+    "IEEE 1800-2017 21.7.1.2",
+    "$dumpvars accepts module identifiers and variable identifiers, not "
+    "selected words of an unpacked array; the test requires Icarus's selected-"
+    "variable extension")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -215,9 +220,11 @@ KNOWN_SLANG_BUGS: dict[str, str] = {
 # visible until the LRM itself settles it.
 EXCLUDED: dict[str, Exclusion] = {
     "assign3.2E": PROCEDURAL_ASSIGN_VARIABLE_SELECT,
+    "array_word_check": DUMPVARS_SELECTED_VARIABLE,
     "br_gh307": EXPLICIT_OUTPUT_DATA_TYPE_IS_VARIABLE,
     "cfunc_assign_op_mixed": REAL_TO_INTEGER_COMPOUND_ASSIGNMENT,
     "delay": ZERO_PADDED_DECIMAL_FORMAT,
+    "dump_memword": DUMPVARS_SELECTED_VARIABLE,
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "module_output_port_sv_var2": PORT_DECLARATION_WITHOUT_LIST,
