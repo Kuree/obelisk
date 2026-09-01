@@ -109,6 +109,10 @@ NONVOID_FUNCTION_WARNING_GOLD_OVERRIDES = {
 # not require a diagnostic. Retain the gold's exact runtime-output oracle while
 # accepting Obelisk's equally conforming choice not to emit Icarus's warning.
 OPTIONAL_WARNING_GOLD_PREFIXES = {
+    # IEEE 1800-2017 21.4 defines the explicit start-address traversal used by
+    # this test but does not require Icarus's warning that IEEE 1364-2005
+    # changed the default direction. Keep every data line as the exact oracle.
+    "mem1": "$readmemb: The behaviour for reg[...] mem[N:0]",
     "nested_impl_event2": "warning: @* found no sensitivities",
 }
 
