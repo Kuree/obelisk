@@ -116,6 +116,11 @@ class OptionalWarningGoldOracle(NamedTuple):
 
 
 OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
+    # The three out-of-range assignments are guarded by Icarus's predefined
+    # __ICARUS__ macro, so another compiler neither sees them nor emits their
+    # vendor-formatted -Wselect-range diagnostics. Preserve the unguarded
+    # value trace and self-check exactly.
+    "br1007": OptionalWarningGoldOracle("warning:", 3),
     # IEEE 1800-2017 21.4 defines the explicit start-address traversal used by
     # this test but does not require Icarus's warning that IEEE 1364-2005
     # changed the default direction. Keep every data line as the exact oracle.

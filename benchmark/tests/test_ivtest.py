@@ -344,6 +344,17 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertFalse(ivtest._matches_optional_warning_gold(
                 "pr2043585", gold, "", "0\n1\n", "", True, False))
 
+    def test_vendor_macro_warning_gold_preserves_portable_self_check(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            gold = Path(temporary) / "br1007.gold"
+            warning = "source.v:15: warning: select is out of range.\n"
+            output = "0000\n0000\n1000\nPASSED\n"
+            gold.write_text(warning * 3 + output, encoding="ascii")
+            self.assertTrue(ivtest._matches_optional_warning_gold(
+                "br1007", gold, "", output, "", True, False))
+            self.assertFalse(ivtest._matches_optional_warning_gold(
+                "br1007", gold, "", "0000\nFAILED\n", "", True, False))
+
     def test_optional_compile_warning_prefix_preserves_runtime_oracle(self):
         with tempfile.TemporaryDirectory() as temporary:
             gold = Path(temporary) / "br_gh127f.gold"
