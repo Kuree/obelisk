@@ -737,7 +737,7 @@ def SimContainerExportFixedOp : SimOp<"container.export_fixed", [
 def SimContainerExportBitstreamOp : SimOp<"container.export_bitstream", [
     MemoryEffects<[MemRead<SimHeapResource>]>
   ]> {
-  let summary = "pack a dynamic container into one fixed bit-stream value";
+  let summary = "pack leading dynamic-container elements into a fixed bit-stream";
   let arguments = (ins AnyType:$container);
   let results = (outs AnyType:$result);
   let hasVerifier = 1;

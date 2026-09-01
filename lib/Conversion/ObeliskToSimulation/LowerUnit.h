@@ -169,8 +169,6 @@ private:
                                                     uint64_t slice,
                                                     ::mlir::Location location,
                                                     ::mlir::Value limit = {});
-  void trimBitStream(::mlir::Value stream, sim::QueueType streamType,
-                     ::mlir::Value limit, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> materializeDynamicBitStreamTarget(
       ::mlir::Value stream, ::mlir::Value totalWidth, ::mlir::Type targetType,
       ::mlir::Location location, ::mlir::Value packedSource = {},

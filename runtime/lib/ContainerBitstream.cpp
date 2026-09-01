@@ -210,7 +210,9 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
       header->element->bit_width != request->elementWidth ||
       header->element->value_size != request->elementPlaneSize ||
       fourState != (request->elementFourState != 0) ||
-      header->size != request->count || header->size > header->capacity ||
+      (sequential ? header->size < request->count
+                  : header->size != request->count) ||
+      header->size > header->capacity ||
       !header->buffer ||
       (header->kind == OBELISK_RT_CONTAINER_QUEUE &&
        (header->capacity == 0 ||

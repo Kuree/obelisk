@@ -3,9 +3,8 @@
 // IEEE 1800-2017 11.4.14.3: "If the source expression contains more bits than
 // are needed, the appropriate number of bits shall be consumed from its left
 // (most significant) end." A left-to-right target reorders nothing, so the
-// stream still arrives as long as the eight-bit source; the six bits its
-// targets need have to be separated from the two that follow them before the
-// bulk export packs the stream.
+// six-bit bulk export must consume the stream's leading six bits and leave the
+// two trailing source bits unused.
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "top"} {
   }
@@ -35,7 +34,7 @@ module {
   }
 }
 
-// The trailing bits are dropped from the stream, so the export packs exactly
-// the six bits the three targets take.
-// CHECK: obelisk_sim.queue.delete
+// The export reads only the leading six bits. Truncation must not synthesize a
+// loop that deletes each unused bit from the internal queue.
+// CHECK-NOT: obelisk_sim.queue.delete
 // CHECK: obelisk_sim.container.export_bitstream %{{.*}} -> !obelisk_sim.logic<6>
