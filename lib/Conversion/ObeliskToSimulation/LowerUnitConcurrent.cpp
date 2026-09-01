@@ -2978,6 +2978,12 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
              failure();
     ++prefix;
   }
+  Operation *contextualClock = nullptr;
+  if (op.getHasContextualClock().value_or(false)) {
+    if (prefix >= children.size())
+      return op.emitError("missing resolved contextual clock event"), failure();
+    contextualClock = children[prefix++];
+  }
   Operation *defaultClock = nullptr;
   if (op.getDefaultClockingSymbolAttr()) {
     if (prefix >= children.size())
@@ -2991,7 +2997,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
            failure();
 
   Operation *property = unwrapAssertionInstance(children[prefix]);
-  Operation *clock = defaultClock;
+  Operation *clock = contextualClock ? contextualClock : defaultClock;
   if (auto clocking =
           dyn_cast_or_null<semantic::SVClockingAssertionExprOp>(property)) {
     SmallVector<Operation *> clocked = getChildren(clocking);
@@ -3197,6 +3203,270 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (op->hasAttr("obelisk_sim.global_future_resolver"))
     return lowerGlobalFutureAssertionResolver(op);
   SmallVector<Operation *> children = getChildren(op);
+
+  bool proceduralAttempt =
+      function->hasAttr("obelisk_sim.procedural_assertion_attempt");
+  bool proceduralStatement =
+      op.getIsProcedural().value_or(false) &&
+      op.getAssertionKind() != semantic::SVAssertionKind::Expect;
+  auto referencesAutomaticStorage = [&](Operation *root) {
+    bool found = false;
+    root->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+        path = hierarchical.getReferencedPath();
+      if (path.empty())
+        return WalkResult::advance();
+      Value storage = lvalues.lookup(path);
+      if (storage && !isStaticallyAllocatedOverrideTarget(storage)) {
+        found = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    return found;
+  };
+  if (proceduralStatement && !proceduralAttempt &&
+      !op.getStartsOnCurrentClock().value_or(false)) {
+    Operation *automaticDisable = nullptr;
+    op->walk([&](semantic::SVDisableIffAssertionExprOp disabled) {
+      SmallVector<Operation *> nested = getChildren(disabled);
+      if (nested.size() == 2 && referencesAutomaticStorage(nested.front()))
+        automaticDisable = nested.front();
+    });
+    if (automaticDisable)
+      return emitError(getSemanticLocation(automaticDisable))
+                 << "disable iff cannot asynchronously observe an automatic "
+                    "variable",
+             failure();
+  }
+  if (proceduralStatement && !proceduralAttempt &&
+      !op.getStartsOnCurrentClock().value_or(false) &&
+      op.getIsStaticTimeZeroEquivalent().value_or(false)) {
+    bool requiresSavedValue = referencesAutomaticStorage(op);
+    op->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (requiresSavedValue)
+        return WalkResult::interrupt();
+      if (auto constCast = nested->getAttrOfType<BoolAttr>("is_const_cast");
+          constCast && constCast.getValue()) {
+        requiresSavedValue = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (requiresSavedValue)
+      return emitError(location)
+                 << "time-zero procedural assertion with a future leading "
+                    "clock requires unsupported queue-time saved values",
+             failure();
+    proceduralStatement = false;
+  }
+  Value proceduralEpochCurrent;
+  if (proceduralAttempt) {
+    auto referencePath = op->getAttrOfType<StringAttr>(
+        "obelisk_sim.procedural_assertion_epoch_reference");
+    auto valuePath = op->getAttrOfType<StringAttr>(
+        "obelisk_sim.procedural_assertion_epoch_value");
+    Value reference =
+        referencePath ? lvalues.lookup(referencePath.getValue()) : Value{};
+    Value expected = valuePath ? values.lookup(valuePath.getValue()) : Value{};
+    auto referenceType = reference ? dyn_cast<sim::RefType>(reference.getType())
+                                   : sim::RefType{};
+    if (!referenceType || !referenceType.getElementType().isInteger(64) ||
+        !expected || !expected.getType().isInteger(64))
+      return emitError(location)
+                 << "procedural assertion attempt has no valid queue epoch",
+             failure();
+    Value current = sim::SimRefLoadOp::create(builder, location,
+                                              builder.getI64Type(), reference);
+    proceduralEpochCurrent = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, current, expected);
+  }
+  if (proceduralStatement && !proceduralAttempt) {
+    if (!op.getStartsOnCurrentClock().value_or(false))
+      return emitError(location)
+                 << "procedural concurrent assertions whose leading clock "
+                    "differs from the current procedural event are not "
+                    "executable yet",
+             failure();
+
+    if (op->hasAttr("outer_process_scope_named"))
+      return emitError(location)
+                 << "procedural concurrent assertions in named process "
+                    "scopes are not executable yet because an outermost "
+                    "disable must flush their pending queue",
+             failure();
+
+    if (!proceduralAssertionEpoch) {
+      llvm::SmallPtrSet<Block *, 2> flushTargets;
+      function.walk([&](Operation *operation) {
+        if (!operation->hasAttr(sim::metadata::proceduralEventWait) ||
+            operation->getNumSuccessors() != 1)
+          return;
+        flushTargets.insert(operation->getSuccessor(0));
+      });
+      if (flushTargets.size() != 1)
+        return emitError(location)
+                   << "procedural assertion queue lowering requires exactly "
+                      "one process-resume flush point",
+               failure();
+
+      Block &entry = function.getBody().front();
+      OpBuilder entryBuilder = OpBuilder::atBlockBegin(&entry);
+      Value zero = arith::ConstantOp::create(entryBuilder, location,
+                                             entryBuilder.getI64Type(),
+                                             entryBuilder.getI64IntegerAttr(0));
+      proceduralAssertionEpoch = sim::SimRefAllocOp::create(
+          entryBuilder, location,
+          sim::RefType::get(function.getContext(), entryBuilder.getI64Type()),
+          zero);
+
+      OpBuilder flushBuilder = OpBuilder::atBlockBegin(*flushTargets.begin());
+      Value current = sim::SimRefLoadOp::create(flushBuilder, location,
+                                                flushBuilder.getI64Type(),
+                                                proceduralAssertionEpoch);
+      Value one = arith::ConstantOp::create(flushBuilder, location,
+                                            flushBuilder.getI64Type(),
+                                            flushBuilder.getI64IntegerAttr(1));
+      Value next = arith::AddIOp::create(flushBuilder, location, current, one);
+      sim::SimRefStoreOp::create(flushBuilder, location, next,
+                                 proceduralAssertionEpoch);
+    }
+    Value queuedEpoch = sim::SimRefLoadOp::create(
+        builder, location, builder.getI64Type(), proceduralAssertionEpoch);
+    std::string epochReferencePath =
+        (function.getSymName() + ".$procedural_assertion_epoch.reference")
+            .str();
+    std::string epochValuePath =
+        (function.getSymName() + ".$procedural_assertion_epoch.value").str();
+
+    // IEEE 1800-2017 16.14.6.1 freezes const expressions and automatic
+    // variables when a procedural assertion is queued. Preserve those values
+    // explicitly; ordinary static design values remain references so the
+    // outlined attempt samples their Preponed snapshots below.
+    SmallVector<std::pair<Operation *, Value>> frozenExpressions;
+    llvm::StringMap<Value> frozenAutomaticValues;
+    LogicalResult captureResult = success();
+    auto referencedPath = [](Operation *expression) -> StringRef {
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(expression))
+        return named.getReferencedPath();
+      if (auto hierarchical =
+              dyn_cast<semantic::SVHierarchicalValueExpressionOp>(expression))
+        return hierarchical.getReferencedPath();
+      return {};
+    };
+    op->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (failed(captureResult))
+        return WalkResult::interrupt();
+
+      BoolAttr constCast = nested->getAttrOfType<BoolAttr>("is_const_cast");
+      bool freeze = constCast && constCast.getValue();
+      StringRef automaticPath;
+      if (freeze) {
+        SmallVector<Operation *> operands = getChildren(nested);
+        if (operands.size() == 1) {
+          StringRef path = referencedPath(operands.front());
+          Value storage = lvalues.lookup(path);
+          if (storage && !isStaticallyAllocatedOverrideTarget(storage))
+            automaticPath = path;
+        }
+      }
+      if (!freeze) {
+        StringRef path = referencedPath(nested);
+        if (!path.empty()) {
+          Value storage = lvalues.lookup(path);
+          freeze = storage && !isStaticallyAllocatedOverrideTarget(storage);
+          if (freeze)
+            automaticPath = path;
+        }
+      }
+      if (!freeze)
+        return WalkResult::advance();
+
+      Value frozen;
+      if (!automaticPath.empty())
+        frozen = frozenAutomaticValues.lookup(automaticPath);
+      if (!frozen) {
+        FailureOr<Value> value = lowerExpression(nested);
+        if (failed(value)) {
+          captureResult = failure();
+          return WalkResult::interrupt();
+        }
+        frozen = cloneSequentialValue(*value, getSemanticLocation(nested));
+        if (!automaticPath.empty())
+          frozenAutomaticValues.try_emplace(automaticPath, frozen);
+      }
+      Type type = frozen.getType();
+      if (isa<sim::RefType, sim::ArgumentRefType, sim::ManagedRefType,
+              sim::NetType, sim::DriverType, sim::ReferencePathType>(type)) {
+        emitError(getSemanticLocation(nested))
+            << "procedural assertion saved expression has unsupported "
+               "reference-valued type "
+            << type;
+        captureResult = failure();
+        return WalkResult::interrupt();
+      }
+      frozenExpressions.emplace_back(nested, frozen);
+      return WalkResult::skip();
+    });
+    if (failed(captureResult))
+      return failure();
+
+    auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    std::string identity =
+        (function.getSymName() + ".$procedural_assertion." + Twine(node)).str();
+    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
+    Attribute previousEpochReference =
+        op->getAttr("obelisk_sim.procedural_assertion_epoch_reference");
+    Attribute previousEpochValue =
+        op->getAttr("obelisk_sim.procedural_assertion_epoch_value");
+    op->setAttr("obelisk_sim.fork_code_unit_id",
+                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    op->setAttr("obelisk_sim.procedural_assertion_attempt",
+                builder.getUnitAttr());
+    op->setAttr("obelisk_sim.procedural_assertion_epoch_reference",
+                builder.getStringAttr(epochReferencePath));
+    op->setAttr("obelisk_sim.procedural_assertion_epoch_value",
+                builder.getStringAttr(epochValuePath));
+    SmallVector<std::pair<StringRef, Value>> epochCaptures{
+        {epochReferencePath, proceduralAssertionEpoch},
+        {epochValuePath, queuedEpoch},
+    };
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> attempt =
+        outlineForkBranch(op, node, /*branchIndex=*/48,
+                          /*captureReferences=*/true, frozenExpressions,
+                          /*globalFutureCurrentCaptures=*/{}, epochCaptures);
+    op->removeAttr("obelisk_sim.procedural_assertion_attempt");
+    if (previousEpochReference)
+      op->setAttr("obelisk_sim.procedural_assertion_epoch_reference",
+                  previousEpochReference);
+    else
+      op->removeAttr("obelisk_sim.procedural_assertion_epoch_reference");
+    if (previousEpochValue)
+      op->setAttr("obelisk_sim.procedural_assertion_epoch_value",
+                  previousEpochValue);
+    else
+      op->removeAttr("obelisk_sim.procedural_assertion_epoch_value");
+    if (previousCodeUnit)
+      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+    else
+      op->removeAttr("obelisk_sim.fork_code_unit_id");
+    if (failed(attempt))
+      return failure();
+    attempt->first->setAttr(
+        "home_region", sim::EventRegionAttr::get(function.getContext(),
+                                                 sim::EventRegion::Observed));
+    attempt->first->setAttr(
+        "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                                sim::ExecutionDomain::Design));
+    sim::SimSpawnOp::create(builder, location, attempt->first.getSymNameAttr(),
+                            attempt->second, ArrayAttr{}, ArrayAttr{});
+    return success();
+  }
 
   bool expect = op.getAssertionKind() == semantic::SVAssertionKind::Expect;
   bool expectMonitor = op->hasAttr("obelisk_sim.expect_monitor");
@@ -3412,6 +3682,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              failure();
     disable = children[prefix++];
   }
+  Operation *contextualClock = nullptr;
+  if (op.getHasContextualClock().value_or(false)) {
+    if (prefix >= children.size() ||
+        !isa<semantic::SVSignalEventControlOp, semantic::SVEventListControlOp>(
+            children[prefix]))
+      return op.emitError("missing resolved contextual clock event"), failure();
+    contextualClock = children[prefix++];
+  }
   Operation *defaultClock = nullptr;
   if (op.getDefaultClockingSymbolAttr()) {
     if (prefix >= children.size() ||
@@ -3449,7 +3727,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                         "monitor"),
            failure();
 
-  Operation *clock = defaultClock;
+  Operation *clock = contextualClock ? contextualClock : defaultClock;
   if (auto clocking = dyn_cast<semantic::SVClockingAssertionExprOp>(property)) {
     SmallVector<Operation *> clocked = getChildren(clocking);
     if (clocked.size() != 2)
@@ -5355,11 +5633,33 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     sim::EventRegionAttr::get(function.getContext(),
                                               sim::EventRegion::Observed));
 
+  auto isOneCycleProceduralAge = [](const FixedSequenceAge &age) {
+    return age.caseGuards.empty() && age.matchItems.empty();
+  };
+  if (proceduralAttempt &&
+      (expectMonitor || multiClockAttempt || localInstance || firstMatch ||
+       temporalNegation || abort || attemptControlled || killControlled ||
+       actionControlled || nonoverlapped || branchingSequence ||
+       branchingAntecedent || branchingConsequent || hasPersistentDelay ||
+       hasPersistentUnary || hasPersistentUntil || hasPersistentRepetition ||
+       !sequenceAlternatives.empty() || !antecedentAlternatives.empty() ||
+       !consequentAlternatives.empty() || sequence.ages.size() != 1 ||
+       !isOneCycleProceduralAge(sequence.ages.front()) ||
+       (implication &&
+        (antecedentSequence.ages.size() != 1 ||
+         !isOneCycleProceduralAge(antecedentSequence.ages.front())))))
+    return emitError(location)
+               << "procedural concurrent assertion attempts currently "
+                  "require one same-clock Boolean property or overlapped "
+                  "implication without locals, match items, abort, or "
+                  "assertion control",
+           failure();
+
   Type stateType = builder.getI64Type();
   Value zero = arith::ConstantOp::create(builder, location, stateType,
                                          builder.getI64IntegerAttr(0));
   Value killEpochStorage;
-  if (killControlled) {
+  if (killControlled && !proceduralAttempt) {
     Value context = function.getBody().front().getArgument(0);
     auto initialKillEpoch = sim::SimAssertionKillEpochOp::create(
         builder, location, stateType, context, assertionControlID);
@@ -5384,14 +5684,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   bool persistentStateOwner = hasPersistentDelay || hasPersistentUnary ||
                               hasPersistentUntil || hasPersistentRepetition;
   bool needsState =
-      (disable && !persistentStateOwner && !branchingSequence &&
-       !branchingAntecedent && !branchingConsequent) ||
-      (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
-      (!branchingSequence && sequence.ages.size() > 1) ||
-      (implication && !branchingAntecedent && !branchingConsequent &&
-       !hasPersistentDelay && !hasPersistentUnary && !hasPersistentUntil &&
-       !hasPersistentRepetition &&
-       (nonoverlapped || antecedentSequence.ages.size() > 1));
+      !proceduralAttempt &&
+      ((disable && !persistentStateOwner && !branchingSequence &&
+        !branchingAntecedent && !branchingConsequent) ||
+       (abort && !abort.getIsSynchronous() && !persistentStateOwner) ||
+       (!branchingSequence && sequence.ages.size() > 1) ||
+       (implication && !branchingAntecedent && !branchingConsequent &&
+        !hasPersistentDelay && !hasPersistentUnary && !hasPersistentUntil &&
+        !hasPersistentRepetition &&
+        (nonoverlapped || antecedentSequence.ages.size() > 1)));
   if (implication && antecedentHorizon > 1)
     function->setAttr("obelisk_sim.bounded_antecedent_horizon",
                       builder.getI64IntegerAttr(antecedentHorizon));
@@ -5405,7 +5706,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Value initialDisable;
   sim::SimObserverBindOp disableObserverBinding;
   sim::SimDesignOp disableDesign;
-  if (disable) {
+  if (disable && !proceduralAttempt) {
     // `disable iff` is unsampled and asynchronous. Bind its two-state truth
     // value as a computed observer: every false-to-true transition wakes a
     // cold Reactive actor which clears live attempts and advances an epoch.
@@ -5561,9 +5862,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (defaultFailure)
       op->setAttr("obelisk_sim.default_assertion_failure",
                   builder.getUnitAttr());
-    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
-        outlineForkBranch(outlined, node, ordinal,
-                          /*captureReferences=*/true);
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback = [&]() {
+      SmallVector<std::pair<Operation *, Value>> frozenActionExpressions;
+      outlined->walk([&](Operation *nested) {
+        if (Value value = expressionCaptures.lookup(nested))
+          frozenActionExpressions.emplace_back(nested, value);
+      });
+      return outlineForkBranch(outlined, node, ordinal,
+                               /*captureReferences=*/true,
+                               frozenActionExpressions);
+    }();
     if (defaultFailure)
       op->removeAttr("obelisk_sim.default_assertion_failure");
     if (previousCodeUnit)
@@ -5813,8 +6121,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   };
 
-  if (disable && !persistentStateOwner && !branchingSequence &&
-      !branchingAntecedent && !branchingConsequent &&
+  if (disable && !proceduralAttempt && !persistentStateOwner &&
+      !branchingSequence && !branchingAntecedent && !branchingConsequent &&
       failed(outlineDisableObserver({stateStorage})))
     return failure();
 
@@ -5831,6 +6139,117 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   auto scheduleResult = [&](bool passed) {
     scheduleReportedResult(temporalNegation ? !passed : passed);
   };
+  if (proceduralAttempt) {
+    Block *done = addBlock();
+    Block *currentAttempt = addBlock();
+    cf::CondBranchOp::create(builder, location, proceduralEpochCurrent,
+                             currentAttempt, ValueRange{}, done, ValueRange{});
+    setCurrent(currentAttempt);
+    if (disable) {
+      FailureOr<Value> currentDisable = lowerExpression(disable);
+      if (failed(currentDisable))
+        return failure();
+      FailureOr<Value> disabled =
+          truthValue(*currentDisable, getSemanticLocation(disable));
+      if (failed(disabled))
+        return failure();
+      Block *evaluate = addBlock();
+      cf::CondBranchOp::create(builder, getSemanticLocation(disable), *disabled,
+                               done, ValueRange{}, evaluate, ValueRange{});
+      setCurrent(evaluate);
+    }
+
+    bool savedSampleAssertionValues = sampleAssertionValues;
+    Operation *savedSampledClock = activeSampledClock;
+    sampleAssertionValues = true;
+    activeSampledClock = clock;
+    llvm::scope_exit restoreSampling([&] {
+      sampleAssertionValues = savedSampleAssertionValues;
+      activeSampledClock = savedSampledClock;
+    });
+
+    DenseMap<Operation *, Value> predicateCache;
+    auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
+      Value result = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+        if (auto found = predicateCache.find(predicate);
+            found != predicateCache.end())
+          return found->second;
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        predicateCache.try_emplace(predicate, *truth);
+        return *truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated = arith::XOrIOp::create(
+            builder, location, *truth,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true)));
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      return result;
+    };
+
+    Value result;
+    if (implication) {
+      FailureOr<Value> antecedent =
+          evaluateAge(antecedentSequence.ages.front());
+      if (failed(antecedent))
+        return failure();
+      Block *evaluateConsequent = addBlock();
+      Block *resolved = addBlock();
+      resolved->addArgument(builder.getI1Type(), location);
+      Value vacuousResult =
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(!followedBy));
+      cf::CondBranchOp::create(builder, location, *antecedent,
+                               evaluateConsequent, ValueRange{}, resolved,
+                               ValueRange{vacuousResult});
+      setCurrent(evaluateConsequent);
+      FailureOr<Value> consequent = evaluateAge(sequence.ages.front());
+      if (failed(consequent))
+        return failure();
+      cf::BranchOp::create(builder, location, resolved,
+                           ValueRange{*consequent});
+      setCurrent(resolved);
+      result = resolved->getArgument(0);
+    } else {
+      FailureOr<Value> evaluated = evaluateAge(sequence.ages.front());
+      if (failed(evaluated))
+        return failure();
+      result = *evaluated;
+    }
+
+    Block *passed = addBlock();
+    Block *failed = addBlock();
+    cf::CondBranchOp::create(builder, location, result, passed, ValueRange{},
+                             failed, ValueRange{});
+    setCurrent(passed);
+    scheduleResult(true);
+    cf::BranchOp::create(builder, location, done);
+    setCurrent(failed);
+    scheduleResult(false);
+    cf::BranchOp::create(builder, location, done);
+    setCurrent(done);
+    sim::SimReturnOp::create(builder, location, ValueRange{});
+    setCurrent(addBlock());
+    return success();
+  }
   auto shouldScheduleReportedResult = [&](bool passed) {
     return (passed ? passReport : failReport).has_value();
   };

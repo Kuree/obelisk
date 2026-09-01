@@ -417,7 +417,9 @@ private:
       ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
           expressionCaptures = {},
       ::mlir::ArrayRef<std::pair<::mlir::Operation *, ::mlir::Value>>
-          globalFutureCurrentCaptures = {});
+          globalFutureCurrentCaptures = {},
+      ::mlir::ArrayRef<std::pair<::llvm::StringRef, ::mlir::Value>>
+          explicitCaptures = {});
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
@@ -621,6 +623,7 @@ private:
   /// cloned expression. This is used when an expression's source-region value
   /// must not be recomputed in the callback's later scheduling region.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
+  ::mlir::Value proceduralAssertionEpoch;
   /// Current-endpoint values paired with cloned global-future calls. The
   /// detached resolver compares these values with the next global tick.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value>

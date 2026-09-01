@@ -1793,6 +1793,100 @@ private:
     }
   }
 
+  const slang::analysis::AnalyzedProcedure *
+  getAnalyzedProcedure(const slang::ast::Symbol &symbol) {
+    if (symbol.kind == slang::ast::SymbolKind::Subroutine)
+      return analysisManager.getAnalyzedSubroutine(
+          symbol.as<slang::ast::SubroutineSymbol>());
+
+    const slang::ast::Scope *scope = symbol.getParentScope();
+    if (!scope)
+      return nullptr;
+    if (indexedAnalysisScopes.insert(scope).second)
+      if (const slang::analysis::AnalyzedScope *analyzed =
+              analysisManager.getAnalyzedScope(*scope))
+        for (const slang::analysis::AnalyzedProcedure &procedure :
+             analyzed->procedures)
+          analyzedProcedures.try_emplace(procedure.analyzedSymbol, &procedure);
+    auto found = analyzedProcedures.find(&symbol);
+    return found == analyzedProcedures.end() ? nullptr : found->second;
+  }
+
+  void cacheContextualAssertionClocks(const slang::ast::Symbol &symbol) {
+    if (!analyzedAssertionProcedures.insert(&symbol).second)
+      return;
+    const slang::analysis::AnalyzedProcedure *procedure =
+        getAnalyzedProcedure(symbol);
+    if (!procedure)
+      return;
+    const slang::ast::TimingControl *clock = procedure->getInferredClock();
+    const slang::analysis::SensitivityList &sensitivity =
+        procedure->getSensitivityList();
+    for (const slang::analysis::AnalyzedAssertion *assertion :
+         analysisManager.getAnalyzedAssertions(symbol)) {
+      const auto *statement =
+          std::get_if<const slang::ast::ConcurrentAssertionStatement *>(
+              &assertion->astNode);
+      if (!statement)
+        continue;
+      proceduralAssertions.insert(*statement);
+      const slang::ast::TimingControl *semanticClock =
+          assertion->getSemanticLeadingClock();
+      if (clock && semanticClock == clock)
+        contextualAssertionClocks.try_emplace(*statement, clock);
+      if (clock && semanticClock &&
+          sensitivity.kind ==
+              slang::analysis::SensitivityList::Kind::Explicit &&
+          sensitivity.timingControl &&
+          (sensitivity.timingControl == clock ||
+           sensitivity.timingControl->isEquivalentTo(*clock)) &&
+          semanticClock->isEquivalentTo(*clock))
+        proceduralAssertionsStartingOnCurrentClock.insert(*statement);
+    }
+  }
+
+  static bool hasNamedOutermostProcessScope(const slang::ast::Symbol &symbol) {
+    const auto *procedure = symbol.as_if<slang::ast::ProceduralBlockSymbol>();
+    if (!procedure)
+      return false;
+    const slang::ast::Statement *body = &procedure->getBody();
+    if (const auto *timed = body->as_if<slang::ast::TimedStatement>())
+      body = &timed->stmt;
+    const auto *block = body->as_if<slang::ast::BlockStatement>();
+    return block && block->blockSymbol && !block->blockSymbol->name.empty();
+  }
+
+  static bool isStaticTimeZeroEquivalent(
+      const slang::ast::Symbol &symbol,
+      const slang::ast::ConcurrentAssertionStatement &assertion) {
+    const auto *procedure = symbol.as_if<slang::ast::ProceduralBlockSymbol>();
+    if (!procedure ||
+        procedure->procedureKind != slang::ast::ProceduralBlockKind::Initial ||
+        assertion.assertionKind == slang::ast::AssertionKind::Expect ||
+        hasNamedOutermostProcessScope(symbol))
+      return false;
+
+    // A sole assertion reached by an unnamed initial process at time zero is
+    // equivalent to a static monitor unless queue-time values must be saved.
+    // The lowering verifies that latter condition before taking this path.
+    const slang::ast::Statement *statement = &procedure->getBody();
+    while (true) {
+      if (const auto *block = statement->as_if<slang::ast::BlockStatement>()) {
+        if (block->blockKind != slang::ast::StatementBlockKind::Sequential)
+          return false;
+        statement = &block->body;
+        continue;
+      }
+      if (const auto *list = statement->as_if<slang::ast::StatementList>()) {
+        if (list->list.size() != 1)
+          return false;
+        statement = list->list.front();
+        continue;
+      }
+      return statement == &assertion;
+    }
+  }
+
   const slang::ast::ClockingBlockSymbol *
   getGlobalClocking(const slang::ast::CallExpression &call) {
     StringRef name = call.getSubroutineName();
@@ -3774,6 +3868,8 @@ private:
                                                    convertEnum(node.op)));
     } else if constexpr (std::same_as<T, slang::ast::ConversionExpression>) {
       attrs.set("is_implicit", builder.getBoolAttr(node.isImplicit()));
+      if (node.isConstCast)
+        attrs.set("is_const_cast", builder.getBoolAttr(true));
     } else if constexpr (std::same_as<T, slang::ast::AssignmentExpression>) {
       if (node.op)
         SET_OP_ATTR(OperatorKind,
@@ -4485,12 +4581,29 @@ private:
       SET_OP_ATTR(HasFailAction, builder.getBoolAttr(node.ifFalse != nullptr));
     } else if constexpr (std::same_as<
                              T, slang::ast::ConcurrentAssertionStatement>) {
+      if (!currentProcedures.empty())
+        cacheContextualAssertionClocks(*currentProcedures.back());
+      bool isProcedural = proceduralAssertions.contains(&node);
+      bool hasContextualClock = contextualAssertionClocks.contains(&node);
       SET_OP_ATTR(AssertionKind,
                   slangir::AssertionKindAttr::get(
                       builder.getContext(), convertEnum(node.assertionKind)));
       SET_OP_ATTR(HasPassAction, builder.getBoolAttr(node.ifTrue != nullptr));
       SET_OP_ATTR(HasFailAction, builder.getBoolAttr(node.ifFalse != nullptr));
-      addDefaultClocking<Op>(attrs, getCurrentScope());
+      if (isProcedural)
+        SET_OP_ATTR(IsProcedural, builder.getBoolAttr(true));
+      if (isProcedural && !currentProcedures.empty() &&
+          isStaticTimeZeroEquivalent(*currentProcedures.back(), node))
+        SET_OP_ATTR(IsStaticTimeZeroEquivalent, builder.getBoolAttr(true));
+      if (isProcedural && !currentProcedures.empty() &&
+          hasNamedOutermostProcessScope(*currentProcedures.back()))
+        attrs.set("outer_process_scope_named", builder.getBoolAttr(true));
+      if (hasContextualClock)
+        SET_OP_ATTR(HasContextualClock, builder.getBoolAttr(true));
+      else
+        addDefaultClocking<Op>(attrs, getCurrentScope());
+      if (proceduralAssertionsStartingOnCurrentClock.contains(&node))
+        SET_OP_ATTR(StartsOnCurrentClock, builder.getBoolAttr(true));
       SET_OP_ATTR(HasDefaultDisable,
                   builder.getBoolAttr(getCurrentDefaultDisable() != nullptr));
     } else if constexpr (std::same_as<T,
@@ -4791,6 +4904,16 @@ private:
     using T = std::remove_cvref_t<Node>;
     if constexpr (std::derived_from<Node, slang::ast::Scope>)
       currentScopes.push_back(&node);
+    bool pushedProcedure = false;
+    if constexpr (std::same_as<T, slang::ast::ProceduralBlockSymbol>) {
+      if (!node.isFromAssertion) {
+        currentProcedures.push_back(&node);
+        pushedProcedure = true;
+      }
+    } else if constexpr (std::same_as<T, slang::ast::SubroutineSymbol>) {
+      currentProcedures.push_back(&node);
+      pushedProcedure = true;
+    }
     if constexpr (std::same_as<T, slang::ast::GenericClassDefSymbol>) {
       // Slang stores specializations in a hash map. Importing that iteration
       // order directly makes semantic symbol and node IDs depend on allocator
@@ -4976,16 +5099,21 @@ private:
                              T, slang::ast::ConcurrentAssertionStatement>) {
       if (const slang::ast::Expression *disable = getCurrentDefaultDisable())
         disable->visit(*this);
-      // Keep the resolved default clock event in the executable semantic
-      // subtree.  The symbol reference above preserves declaration identity,
-      // while this clone makes the event's signal references ordinary frozen
-      // code-unit captures.  Explicit assertion clocks still take precedence
-      // during monitor compilation.
-      if (const slang::ast::Scope *scope = getCurrentScope())
-        if (const slang::ast::Symbol *clocking =
-                compilation.getDefaultClocking(*scope))
-          clocking->as<slang::ast::ClockingBlockSymbol>().getEvent().visit(
-              *this);
+      auto contextualClock = contextualAssertionClocks.find(&node);
+      if (contextualClock != contextualAssertionClocks.end()) {
+        contextualClock->second->visit(*this);
+      } else {
+        // Keep the resolved default clock event in the executable semantic
+        // subtree.  The symbol reference above preserves declaration identity,
+        // while this clone makes the event's signal references ordinary frozen
+        // code-unit captures.  Explicit assertion clocks still take precedence
+        // during monitor compilation.
+        if (const slang::ast::Scope *scope = getCurrentScope())
+          if (const slang::ast::Symbol *clocking =
+                  compilation.getDefaultClocking(*scope))
+            clocking->as<slang::ast::ClockingBlockSymbol>().getEvent().visit(
+                *this);
+      }
       this->visitDefault(node);
     } else if constexpr (std::same_as<T, slang::ast::ConstraintBlockSymbol>) {
       // Importing the body placeholder of a prototype would reject the whole
@@ -5048,6 +5176,8 @@ private:
     } else {
       this->visitDefault(node);
     }
+    if (pushedProcedure)
+      currentProcedures.pop_back();
     if constexpr (std::derived_from<Node, slang::ast::Scope>)
       currentScopes.pop_back();
     if constexpr (std::derived_from<Node, slang::ast::Symbol>)
@@ -5384,6 +5514,18 @@ private:
   llvm::DenseMap<const slang::ast::Symbol *, StringAttr> internalSymbolNames;
   llvm::DenseMap<const slang::ast::Symbol *, SmallVector<std::string, 8>>
       emittedSymbolPaths;
+  llvm::DenseMap<const slang::ast::ConcurrentAssertionStatement *,
+                 const slang::ast::TimingControl *>
+      contextualAssertionClocks;
+  llvm::SmallPtrSet<const slang::ast::ConcurrentAssertionStatement *, 16>
+      proceduralAssertions;
+  llvm::SmallPtrSet<const slang::ast::ConcurrentAssertionStatement *, 16>
+      proceduralAssertionsStartingOnCurrentClock;
+  llvm::SmallPtrSet<const slang::ast::Scope *, 16> indexedAnalysisScopes;
+  llvm::DenseMap<const slang::ast::Symbol *,
+                 const slang::analysis::AnalyzedProcedure *>
+      analyzedProcedures;
+  llvm::SmallPtrSet<const slang::ast::Symbol *, 16> analyzedAssertionProcedures;
   llvm::DenseMap<const slang::ast::Symbol *, Operation *>
       emittedSymbolOperations;
   llvm::DenseMap<const slang::syntax::SyntaxNode *, SmallVector<Operation *, 1>>
@@ -5391,6 +5533,7 @@ private:
   bool dpiExportSyntaxIndexBuilt = false;
   SmallVector<std::string, 8> currentSymbolPath;
   SmallVector<const slang::ast::Scope *, 8> currentScopes;
+  SmallVector<const slang::ast::Symbol *, 4> currentProcedures;
   SmallVector<PendingReference, 0> pendingReferences;
   SmallVector<PendingReferenceArray, 0> pendingReferenceArrays;
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;

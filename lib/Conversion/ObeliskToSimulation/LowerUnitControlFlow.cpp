@@ -833,7 +833,8 @@ UnitLowering::outlineForkBranch(
     Operation *branch, uint64_t forkNode, unsigned branchIndex,
     bool captureReferences,
     ArrayRef<std::pair<Operation *, Value>> expressionCaptures,
-    ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures) {
+    ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures,
+    ArrayRef<std::pair<StringRef, Value>> explicitCaptures) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -852,16 +853,21 @@ UnitLowering::outlineForkBranch(
   argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
 
   DenseMap<Operation *, unsigned> expressionCaptureArguments;
+  DenseMap<Value, unsigned> expressionValueArguments;
   DenseMap<Operation *, unsigned> globalFutureCurrentCaptureArguments;
   DenseSet<Operation *> expressionCaptureTrees;
   for (auto [expression, capture] : expressionCaptures) {
-    if (!expression || !capture ||
-        !expressionCaptureArguments.try_emplace(expression, inputs.size())
-             .second)
+    if (!expression || !capture || expressionCaptureArguments.count(expression))
       continue;
-    inputs.push_back(capture.getType());
-    captures.push_back(capture);
-    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
+    auto [valueArgument, inserted] =
+        expressionValueArguments.try_emplace(capture, inputs.size());
+    expressionCaptureArguments.try_emplace(expression, valueArgument->second);
+    if (inserted) {
+      inputs.push_back(capture.getType());
+      captures.push_back(capture);
+      argumentAttrs.push_back(
+          captureMetadata(builder, sim::CaptureKind::Formal));
+    }
     expression->walk(
         [&](Operation *nested) { expressionCaptureTrees.insert(nested); });
   }
@@ -877,13 +883,9 @@ UnitLowering::outlineForkBranch(
 
   llvm::StringSet<> capturedPaths;
   llvm::StringSet<> branchDeclarations;
-  auto addCapture = [&](StringRef path) {
+  auto addCaptureValue = [&](StringRef path, Value capture) {
     if (!capturedPaths.insert(path).second)
       return;
-    Value capture =
-        captureReferences ? lvalues.lookup(path) : values.lookup(path);
-    if (!capture)
-      capture = captureReferences ? values.lookup(path) : lvalues.lookup(path);
     if (!capture)
       return;
     unsigned argument = inputs.size();
@@ -913,6 +915,15 @@ UnitLowering::outlineForkBranch(
         sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
         /*copyIn=*/true));
   };
+  auto addCapture = [&](StringRef path) {
+    Value capture =
+        captureReferences ? lvalues.lookup(path) : values.lookup(path);
+    if (!capture)
+      capture = captureReferences ? values.lookup(path) : lvalues.lookup(path);
+    addCaptureValue(path, capture);
+  };
+  for (auto [path, capture] : explicitCaptures)
+    addCaptureValue(path, capture);
   ArrayAttr parentBindings =
       function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   llvm::StringSet<> thisBindingPaths;
@@ -1122,6 +1133,10 @@ UnitLowering::outlineForkBranch(
   // because nested lowering is completed inside this routine.
   if (branch->hasAttr("obelisk_sim.global_future_resolver"))
     outlined->setAttr("obelisk_sim.global_future_resolver",
+                      outlineBuilder.getUnitAttr());
+  if (branch->hasAttr("obelisk_sim.procedural_assertion_attempt") &&
+      !branch->hasAttr("obelisk_sim.default_assertion_failure"))
+    outlined->setAttr("obelisk_sim.procedural_assertion_attempt",
                       outlineBuilder.getUnitAttr());
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());

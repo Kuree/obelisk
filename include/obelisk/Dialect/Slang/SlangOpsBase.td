@@ -723,6 +723,10 @@ class SlangConcurrentAssertionStatementASTNodeOp<string mnemonic>
         SlangAssertionKind:$assertion_kind,
         BoolAttr:$has_pass_action,
         BoolAttr:$has_fail_action,
+        OptionalAttr<BoolAttr>:$is_procedural,
+        OptionalAttr<BoolAttr>:$has_contextual_clock,
+        OptionalAttr<BoolAttr>:$starts_on_current_clock,
+        OptionalAttr<BoolAttr>:$is_static_time_zero_equivalent,
         OptionalAttr<SymbolRefAttr>:$default_clocking_symbol,
         OptionalAttr<StrAttr>:$default_clocking_path,
         BoolAttr:$has_default_disable
