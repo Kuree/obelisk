@@ -222,6 +222,11 @@ OPTIONAL_WARNING_GOLD_PREFIXES: dict[str, OptionalWarningGoldOracle] = {
     # Icarus-only -Wsensitivity-entire-array switch.
     "pr2043585": OptionalWarningGoldOracle(
         "warning: @* is sensitive to all 4 words in array 'Data'.", 4),
+    # Clause 9.4.2.2 requires the selected vector to contribute all of its
+    # bits to @* sensitivity but does not require a diagnostic announcing it.
+    # Preserve the complete monitor trace as the exact oracle.
+    "pr751": OptionalWarningGoldOracle(
+        "warning: @* is sensitive to all bits in 'in[0:3]'.", prefix_lines=1),
     # Clause 23.3.3.1 permits coercing a direction-mismatched net port to
     # inout and requires a warning only when the port is not coerced. Icarus's
     # gold begins with eight vendor-formatted warnings plus two continuation
