@@ -431,6 +431,11 @@ WIDE_ARRAY_INDEX_TRUNCATION = Exclusion(
     "an array address may be any integer expression and an out-of-bounds "
     "address is invalid; the test expects a set bit at position 120 of a "
     "128-bit address to be discarded by Icarus's narrower internal index")
+OUT_OF_RANGE_PACKED_SELECT_DIAGNOSTIC = Exclusion(
+    "IEEE 1800-2017 11.5.1",
+    "an out-of-range packed bit-select reads as x and has no effect when "
+    "written, and the clause says tools may flag it at compile time; the "
+    "test instead requires the optional diagnostic to be a compile error")
 NONSTANDARD_IS_SIGNED_SYSTEM_FUNCTION = Exclusion(
     "IEEE 1800-2017 20.1",
     "the standard utility-system-function inventory includes $signed and "
@@ -631,6 +636,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "br_gh1223a": NONFINITE_REAL_TO_INTEGER_RESULT,
     "br_gh1223b": NONFINITE_REAL_TO_INTEGER_RESULT,
     "br_gh1223c": NONFINITE_REAL_TO_INTEGER_RESULT,
+    "br_gh840a": OUT_OF_RANGE_PACKED_SELECT_DIAGNOSTIC,
+    "br_gh840b": OUT_OF_RANGE_PACKED_SELECT_DIAGNOSTIC,
     "br960a": MISSING_SDF_VERSION,
     "br960b": MISSING_SDF_VERSION,
     "br960c": MISSING_SDF_VERSION,
