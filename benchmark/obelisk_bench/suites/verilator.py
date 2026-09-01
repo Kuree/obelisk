@@ -62,6 +62,10 @@ KNOWN_SLANG_BUGS = {
         "immediate assertions; pinned Slang analyzes their four synthetic "
         "assertion procedures as user-written time-free always loops and "
         "rejects them as simulation deadlocks"),
+    "t_assert_seq_clocking": (
+        "IEEE 1800-2017 16.8 Syntax 16-5 makes the semicolon after a "
+        "sequence_expr optional; pinned Slang rejects the two legal "
+        "semicolon-free clocked sequence declarations"),
     "t_array_pattern_default_recursive": (
         "IEEE 1800-2017 10.9.1 requires a default key that does not directly "
         "match an unmatched subarray to descend recursively; pinned Slang "
