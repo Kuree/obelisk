@@ -362,6 +362,12 @@ TIMESCALE_DIRECTIVE_LOCATION = Exclusion(
     "no restriction on appearing within a design element; unlike resetall in "
     "22.3, this placement is not an error, and this source has no later design "
     "element for the replacement timescale to affect")
+INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC = Exclusion(
+    "IEEE 1800-2017 21.3.2",
+    "file and multichannel descriptors are defined by 21.3.1, but this clause "
+    "does not prescribe a diagnostic or its wording when a file output task "
+    "receives a bit pattern that names no open file; this gold file requires "
+    "Icarus's exact warning text")
 
 # Dependency failures whose source and deciding LRM clause have both been
 # audited. Keep these as failures: they are useful upstream Slang patch cases,
@@ -406,6 +412,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "force_lval_part": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "force_release_reg_pv": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "function4": EMPTY_FUNCTION_FORMAL_LIST,
+    "fdisplay_fail_fd": INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC,
+    "fdisplay_fail_mcd": INVALID_OUTPUT_DESCRIPTOR_DIAGNOSTIC,
     "fscanf_u": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_u_warn": WIDTHLESS_SUPPRESSED_RAW_SCAN,
     "fscanf_z": WIDTHLESS_SUPPRESSED_RAW_SCAN,
