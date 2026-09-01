@@ -781,11 +781,26 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
   auto materializePathKnownProbe =
       [&](sim::SimFuncOp source, StringRef name, uint64_t codeUnit,
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
+    llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
+    source.walk([&](Operation *operation) {
+      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
+              sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(operation))
+        coldCheckpointBlocks.insert(operation->getBlock());
+    });
+
     bool supported = true;
     source.walk([&](Operation *operation) {
       if (!supported)
         return;
       if (operation == source.getOperation())
+        return;
+      // The probe replaces a cold checkpoint block at its entry and never
+      // executes any operation from that block. The Tier-3 callback executes
+      // the original block exactly once, including scheduler reads and state
+      // publications, so those operations neither require a dry-run overlay
+      // nor belong to the generated evaluator's call closure.
+      if (coldCheckpointBlocks.contains(operation->getBlock()))
         return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
         supported = false;
@@ -1945,13 +1960,16 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
         failed(collectFusionGroup(pending.actor)))
       return failure();
     result.push_back(
-        {pending.actorSlot, pending.continuation, std::move(pending.wrapper),
+        {pending.actorSlot, pending.continuation,
+         pending.body.getSymName().str(), std::move(pending.wrapper),
          std::move(pending.twoStateWrapper),
          pending.twoStateBody ? pending.twoStateBody.getSymName().str()
                               : std::string{},
          std::move(sourceOwners), std::move(sourceCodeUnits),
          std::move(pending.fragmentIDs), std::move(localPromotionRanges),
-         fusionGroup, initialActivation});
+         fusionGroup,
+         pending.body->hasAttr("obelisk.eval.instance_coordinator"),
+         initialActivation});
   }
   if (!checkpointRoutes.empty())
     module->setAttr(sim::metadata::evalCheckpointRoutes,
@@ -2756,7 +2774,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                 "direct eval body crosses multiple fusion groups");
           direct.fusionGroup = group->second;
         }
-    if (direct.fusionGroup != UINT32_MAX)
+    // Only the outlined instance coordinator executes the complete fusion
+    // group. Helpers referenced by that coordinator may retain the same group
+    // provenance, but expanding each helper to all physical source owners
+    // would make several distinct bodies claim every fused fragment.
+    if (direct.instanceCoordinator && direct.fusionGroup != UINT32_MAX)
       for (const auto &[sourceOwner, group] : aotFusionGroups)
         if (group == direct.fusionGroup)
           direct.sourceOwners.push_back(sourceOwner);

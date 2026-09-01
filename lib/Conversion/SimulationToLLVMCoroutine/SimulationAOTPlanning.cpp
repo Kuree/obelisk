@@ -1087,10 +1087,46 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
                ? ArrayRef<uint32_t>{}
                : ArrayRef<uint32_t>(fragments->second);
   };
-  auto ownsFragment = [](const NativeDirectFragment &candidate,
-                         uint32_t fragment) {
-    return llvm::is_contained(candidate.fragmentIDs, fragment);
-  };
+  // A fused instance coordinator replaces each physical source activation in
+  // its certified fragment set. Other direct bodies from those source actors
+  // can remain as callable helpers, but must not independently own fanout.
+  // Index coordinator coverage once so the common ownership path is linear.
+  DenseMap<uint32_t, unsigned> coordinatorOwners;
+  for (auto [index, candidate] : llvm::enumerate(directFragments)) {
+    if (!candidate.instanceCoordinator)
+      continue;
+    for (uint32_t fragment : candidate.fragmentIDs) {
+      auto [entry, inserted] =
+          coordinatorOwners.try_emplace(fragment, static_cast<unsigned>(index));
+      if (!inserted && entry->second != index)
+        return module.emitError(
+                   "eval fragment belongs to multiple instance coordinators"),
+               failure();
+    }
+  }
+
+  // Index the remaining graph certificates by fragment. Each physical owner
+  // is resolved once below by counting only candidates mentioned by its
+  // fragments; this avoids the previous fanout x body x fragment scan.
+  DenseMap<uint32_t, SmallVector<unsigned>> fragmentCandidates;
+  for (auto [index, candidate] : llvm::enumerate(directFragments))
+    for (uint32_t fragment : candidate.fragmentIDs)
+      fragmentCandidates[fragment].push_back(index);
+  DenseMap<std::pair<uint32_t, uint32_t>, NativeEvalFanoutOwner> fallbackOwners;
+
+  // Preserve physical actor/site identity when fusion did not absorb the
+  // activation. This avoids comparing every ordinary fanout entry with every
+  // generated body.
+  DenseMap<std::pair<uint32_t, uint32_t>, unsigned> exactOwners;
+  for (auto [index, candidate] : llvm::enumerate(directFragments)) {
+    auto key = std::pair{candidate.actorSlot, candidate.continuation};
+    auto [entry, inserted] =
+        exactOwners.try_emplace(key, static_cast<unsigned>(index));
+    if (!inserted && entry->second != index)
+      return module.emitError(
+                 "physical scheduler owner maps to multiple generated bodies"),
+             failure();
+  }
 
   for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
     if (isPeriodicAlias(entry)) {
@@ -1104,37 +1140,60 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
       result.fanoutOwners.emplace_back();
       continue;
     }
+    std::optional<unsigned> coordinator;
+    bool coordinatorCovers = true;
+    for (uint32_t fragment : plannedFragments) {
+      auto owner = coordinatorOwners.find(fragment);
+      if (owner == coordinatorOwners.end()) {
+        coordinatorCovers = false;
+        break;
+      }
+      if (coordinator && *coordinator != owner->second)
+        return module.emitError(
+                   "typed scheduler owner crosses instance coordinators"),
+               failure();
+      coordinator = owner->second;
+    }
+    if (coordinatorCovers && coordinator) {
+      result.fanoutOwners.push_back({NativeEvalFanoutOwnerKind::Direct,
+                                     static_cast<uint32_t>(*coordinator)});
+      continue;
+    }
+    if (auto exact = exactOwners.find({entry.actor_slot, entry.continuation});
+        exact != exactOwners.end()) {
+      result.fanoutOwners.push_back({NativeEvalFanoutOwnerKind::Direct,
+                                     static_cast<uint32_t>(exact->second)});
+      continue;
+    }
+    auto physicalOwner = std::pair{entry.actor_slot, entry.continuation};
+    if (auto cached = fallbackOwners.find(physicalOwner);
+        cached != fallbackOwners.end()) {
+      result.fanoutOwners.push_back(cached->second);
+      continue;
+    }
+    DenseMap<unsigned, unsigned> coverage;
+    for (uint32_t fragment : plannedFragments)
+      for (unsigned candidate : fragmentCandidates.lookup(fragment))
+        ++coverage[candidate];
     std::optional<unsigned> direct;
-    for (auto [index, candidate] : llvm::enumerate(directFragments)) {
-      bool exactPhysicalOwner = candidate.actorSlot == entry.actor_slot &&
-                                candidate.continuation == entry.continuation;
-      bool graphCertificate =
-          llvm::all_of(plannedFragments, [&](uint32_t fragment) {
-            return ownsFragment(candidate, fragment);
-          });
-      // The compute graph is already elaborated per module instance, and its
-      // fragment IDs are the stable physical identity used by fanout. Require
-      // complete graph coverage and a unique candidate. Process/code-unit
-      // identities are deliberately not required here: legal body fusion may
-      // erase or combine those source symbols and renumber continuations.
-      // Unfused bodies retain their exact physical actor/continuation.  Body
-      // fusion may erase that identity, in which case complete coverage in
-      // the current compute-graph generation is the only accepted fallback.
-      // Neither path compares ordinals from FragmentABI or an older graph.
-      if (!exactPhysicalOwner && !graphCertificate)
+    for (auto [candidate, count] : coverage) {
+      if (count != plannedFragments.size())
         continue;
-      if (direct && *direct != index)
+      if (direct && *direct != candidate)
         return module.emitError(
                    "typed scheduler owner maps to multiple generated bodies"),
                failure();
-      direct = static_cast<unsigned>(index);
+      direct = candidate;
     }
-    if (!direct) {
-      result.fanoutOwners.emplace_back();
-      continue;
-    }
-    result.fanoutOwners.push_back(
-        {NativeEvalFanoutOwnerKind::Direct, static_cast<uint32_t>(*direct)});
+    // Complete coverage in the current graph generation is the only fallback
+    // after coordinator and exact physical identity. No FragmentABI ordinal
+    // or erased source symbol participates in this decision.
+    NativeEvalFanoutOwner owner =
+        direct ? NativeEvalFanoutOwner{NativeEvalFanoutOwnerKind::Direct,
+                                       static_cast<uint32_t>(*direct)}
+               : NativeEvalFanoutOwner{};
+    fallbackOwners.try_emplace(physicalOwner, owner);
+    result.fanoutOwners.push_back(owner);
   }
   return result;
 }

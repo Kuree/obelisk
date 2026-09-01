@@ -97,6 +97,7 @@ module attributes {
       obelisk_sim.nba.enqueue %unknown to %destination :
           (!obelisk_sim.logic<1>,
            !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
+      %now = obelisk_sim.time.now %ctx
       %stdout = arith.constant -2147483647 : i32
       %message = obelisk_sim.bytes.constant "checkpoint"
       obelisk_sim.display %ctx to %stdout(%message) newline = true radix = 10
@@ -132,6 +133,7 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
 // CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_time
 // CHECK: llvm.call @obelisk_rt_v1_display
 // CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
 // CHECK: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1

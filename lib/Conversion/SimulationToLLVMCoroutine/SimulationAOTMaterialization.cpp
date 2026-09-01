@@ -1019,20 +1019,69 @@ LogicalResult makeNativeEvalPlan(
   // runtime callback remains on this path; records without a generated body
   // are intentionally outside this generated boundary.
   if (!clockKernels.empty()) {
+    // Resolve the generated body that executes under each compact ready bit.
+    // Fusion helpers inherit the identity of their instance coordinator: the
+    // coordinator executes the complete group before its ready bit is
+    // consumed, so intra-group publications are already represented by its
+    // statically ordered body.
+    llvm::StringMap<unsigned> directByWrapper;
+    llvm::DenseMap<uint32_t, SmallVector<unsigned>> fusionMembers;
+    for (auto [index, direct] : llvm::enumerate(directFragments)) {
+      directByWrapper.try_emplace(direct.wrapper, index);
+      if (direct.fusionGroup != UINT32_MAX)
+        fusionMembers[direct.fusionGroup].push_back(index);
+    }
+    llvm::StringMap<uint32_t> activeOwnerBits;
+    auto mapActiveBody = [&](StringRef name, uint32_t bit) -> LogicalResult {
+      if (name.empty())
+        return success();
+      auto [entry, inserted] = activeOwnerBits.try_emplace(name, bit);
+      if (!inserted && entry->second != bit)
+        return module.emitError("generated eval body has multiple active "
+                                "owner identities: ")
+               << name;
+      return success();
+    };
+    for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
+      auto selected = directByWrapper.find(executor);
+      if (selected == directByWrapper.end())
+        continue;
+      const NativeDirectFragment &direct = directFragments[selected->second];
+      SmallVector<unsigned, 1> members{selected->second};
+      if (direct.instanceCoordinator && direct.fusionGroup != UINT32_MAX)
+        members = fusionMembers.lookup(direct.fusionGroup);
+      for (unsigned member : members) {
+        if (failed(mapActiveBody(directFragments[member].body,
+                                 mergedFragments[recordIndex].bit)) ||
+            failed(mapActiveBody(directFragments[member].twoStateBody,
+                                 mergedFragments[recordIndex].bit)))
+          return failure();
+      }
+    }
     auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
       return function->hasAttr("obelisk.eval.raw_captures") ||
              function->hasAttr("obelisk.eval.selected_two_state");
     };
-    SmallVector<std::pair<LLVM::CallOp, bool>> transitions;
+    struct GeneratedTransition {
+      LLVM::CallOp call;
+      bool periodicTwoState;
+      std::optional<uint32_t> activeOwnerBit;
+    };
+    SmallVector<GeneratedTransition> transitions;
     module.walk([&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function))
         return;
       bool periodicTwoState =
           function->hasAttr("obelisk.eval.selected_two_state");
+      auto activeOwner = activeOwnerBits.find(function.getSymName());
+      std::optional<uint32_t> activeOwnerBit =
+          activeOwner == activeOwnerBits.end()
+              ? std::nullopt
+              : std::optional<uint32_t>{activeOwner->second};
       function.walk([&](LLVM::CallOp call) {
         if (call.getCallee() &&
             *call.getCallee() == "obelisk_rt_v1_scheduler_static_transition")
-          transitions.push_back({call, periodicTwoState});
+          transitions.push_back({call, periodicTwoState, activeOwnerBit});
       });
     });
     auto constantU64 = [](Value value) -> std::optional<uint64_t> {
@@ -1046,7 +1095,7 @@ LogicalResult makeNativeEvalPlan(
     auto packedMask = [](uint64_t width) {
       return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     };
-    for (auto [call, periodicTwoState] : transitions) {
+    for (auto [call, periodicTwoState, activeOwnerBit] : transitions) {
       ValueRange arguments = call.getArgOperands();
       if (arguments.size() != 8)
         return call.emitError("malformed static transition ABI"), failure();
@@ -1076,11 +1125,12 @@ LogicalResult makeNativeEvalPlan(
       };
       SmallVector<MergedPublication, 4> publications;
       uint64_t rangeEnd = *lowBit + *bitWidth;
-      // Direct ingress publication has no logical-process identity with which
-      // to distinguish an external producer from the controlled statement
-      // that owns a source event control. Keep this uncommon, marked case on
-      // the runtime publication path, which performs that exact identity
-      // check. All ordinary generated eval writes retain direct ingress.
+      // A source event control is inactive while its controlled statement is
+      // executing. Suppress only the publication back to the current compact
+      // owner. Other owners watching the same range must still be activated.
+      // The generated coordinator consumes this owner bit on the appropriate
+      // side of execution, matching the source logical-process identity
+      // without adding a runtime token lookup to the hot path.
       bool needsActiveSelfCheck = false;
       for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
         if (entry.static_state != *staticState)
@@ -1090,10 +1140,6 @@ LogicalResult makeNativeEvalPlan(
             std::min(rangeEnd, entry.low_bit + entry.bit_width);
         if (overlapLow >= overlapHigh)
           continue;
-        if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
-          needsActiveSelfCheck = true;
-          continue;
-        }
         if (periodicTwoState && !periodicClosureRecords.empty() &&
             !llvm::is_contained(periodicClosureRecords,
                                 static_cast<unsigned>(entry.merged_bit)))
@@ -1101,6 +1147,14 @@ LogicalResult makeNativeEvalPlan(
         if (fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
             entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
           continue;
+        if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
+          if (!activeOwnerBit) {
+            needsActiveSelfCheck = true;
+            continue;
+          }
+          if (entry.merged_bit == *activeOwnerBit)
+            continue;
+        }
         uint64_t overlapMask = packedMask(overlapHigh - overlapLow)
                                << (overlapLow - *lowBit);
         auto publication = llvm::find_if(
@@ -1349,6 +1403,19 @@ LogicalResult makeNativeEvalPlan(
       if (handleOffsetToErase && handleOffsetToErase->use_empty())
         handleOffsetToErase.erase();
     }
+    SmallVector<arith::SelectOp> deadDynamicHandles;
+    module.walk([&](sim::SimFuncOp function) {
+      if (!isGeneratedEvalBody(function))
+        return;
+      function.walk([&](arith::SelectOp selected) {
+        auto offset = selected.getTrueValue().getDefiningOp<LLVM::CallOp>();
+        if (selected->use_empty() && offset && offset.getCallee() &&
+            *offset.getCallee() == "obelisk_rt_v1_native_handle_offset")
+          deadDynamicHandles.push_back(selected);
+      });
+    });
+    for (arith::SelectOp selected : deadDynamicHandles)
+      selected.erase();
     SmallVector<LLVM::CallOp> deadHandleOffsets;
     module.walk([&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function))

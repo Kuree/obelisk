@@ -19,6 +19,7 @@ module attributes {
         hierarchy "aot_dynamic_nba.process"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<64> design
+    obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<64> design
 
     obelisk_sim.func @root(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -37,6 +38,19 @@ module attributes {
           !obelisk_sim.ref<!obelisk_sim.logic<64>>
       %low = obelisk_sim.ref.load %low_storage :
           !obelisk_sim.ref<!obelisk_sim.logic<64>> -> !obelisk_sim.logic<64>
+      %read_slice = obelisk_sim.ref.dyn_extract %low_storage from %low :
+          (!obelisk_sim.ref<!obelisk_sim.logic<64>>,
+           !obelisk_sim.logic<64>) -> !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      %read_value = obelisk_sim.ref.load %read_slice :
+          !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
+      %wide_destination = obelisk_sim.context.storage %ctx[2] :
+          !obelisk_sim.ref<!obelisk_sim.logic<64>>
+      %write_slice = obelisk_sim.ref.dyn_extract %wide_destination from %low :
+          (!obelisk_sim.ref<!obelisk_sim.logic<64>>,
+           !obelisk_sim.logic<64>) -> !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      obelisk_sim.nba.enqueue %read_value to %write_slice :
+          (!obelisk_sim.logic<32>,
+           !obelisk_sim.ref<!obelisk_sim.logic<32>>) -> ()
       %slice = obelisk_sim.ref.dyn_extract %destination from %low :
           (!obelisk_sim.ref<!obelisk_sim.logic<8>>,
            !obelisk_sim.logic<64>) -> !obelisk_sim.ref<!obelisk_sim.logic<12>>
@@ -53,6 +67,14 @@ module attributes {
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_accumulator_0
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1
 // CHECK-LABEL: llvm.func @process(
+// A fixed packed root uses a bounds-checked direct load. The invalid-handle
+// branch preserves zero/X fallback for an unknown or out-of-range selection.
+// CHECK: llvm.cond_br
+// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK: llvm.load
+// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.load
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
 // CHECK: llvm.icmp "sgt"
 // CHECK: llvm.icmp "slt"
 // CHECK: llvm.shl

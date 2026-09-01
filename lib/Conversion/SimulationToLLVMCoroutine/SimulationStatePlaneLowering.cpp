@@ -125,6 +125,236 @@ struct DirectPackedPlane {
   unsigned bitOffset;
 };
 
+struct DirectDynamicStateRange {
+  Value valid;
+  Value bitOffset;
+  uint64_t rootOffset;
+  uint64_t localOffset;
+  uint64_t rootWidth;
+  uint32_t staticID;
+  bool guarded;
+};
+
+std::optional<DirectDynamicStateRange>
+resolveDirectDynamicStateRange(Value handle, unsigned width,
+                               const NativeStateLayout *layout) {
+  if (!layout || width == 0 || width > 64)
+    return std::nullopt;
+  auto selected = handle.getDefiningOp<arith::SelectOp>();
+  if (!selected || resolveCFGConstantInteger(selected.getFalseValue()) !=
+                       std::optional<uint64_t>{UINT64_MAX})
+    return std::nullopt;
+  auto offset = selected.getTrueValue().getDefiningOp<LLVM::CallOp>();
+  if (!offset || !offset.getCallee() ||
+      *offset.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
+      offset.getArgOperands().size() != 2)
+    return std::nullopt;
+  std::optional<uint64_t> base =
+      resolveCFGConstantInteger(offset.getArgOperands()[0]);
+  obelisk_rt_stable_handle_v1 decoded{};
+  if (!base || !obelisk_rt_stable_handle_decode(*base, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+    return std::nullopt;
+  bool direct = layout->directHandles.contains(decoded.id);
+  bool guarded = layout->guardedHandles.contains(decoded.id);
+  if (!direct && !guarded)
+    return std::nullopt;
+  auto bound = llvm::find_if(layout->bounds, [&](const auto &candidate) {
+    return candidate.handleID == decoded.id;
+  });
+  uint64_t localOffset = static_cast<uint64_t>(decoded.offset);
+  if (bound == layout->bounds.end() || localOffset != 0 ||
+      localOffset > bound->width || width > bound->width - localOffset)
+    return std::nullopt;
+  return DirectDynamicStateRange{selected.getCondition(),
+                                 offset.getArgOperands()[1],
+                                 bound->offset,
+                                 localOffset,
+                                 bound->width,
+                                 decoded.id,
+                                 guarded};
+}
+
+Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
+                                   Location location, StringRef globalName,
+                                   IntegerType resultType,
+                                   const DirectDynamicStateRange &range,
+                                   bool unknownFallback) {
+  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+  IntegerType i8 = rewriter.getI8Type();
+  IntegerType i64 = rewriter.getI64Type();
+  Value zero = llvmConstant(rewriter, location, i64, 0);
+  Value minimum = llvmConstant(
+      rewriter, location, i64,
+      static_cast<uint64_t>(-static_cast<int64_t>(resultType.getWidth() - 1)));
+  Value maximum = llvmConstant(rewriter, location, i64, range.rootWidth - 1);
+  Value overlapsLow = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::sge, range.bitOffset, minimum);
+  Value overlapsHigh = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::sle, range.bitOffset, maximum);
+  Value encodesLow = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::sge, range.bitOffset,
+      llvmConstant(rewriter, location, i64, static_cast<uint64_t>(INT32_MIN)));
+  Value encodesHigh = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::sle, range.bitOffset,
+      llvmConstant(rewriter, location, i64, INT32_MAX));
+  Value valid = arith::AndIOp::create(
+      rewriter, location, range.valid,
+      arith::AndIOp::create(
+          rewriter, location,
+          arith::AndIOp::create(rewriter, location, overlapsLow, overlapsHigh),
+          arith::AndIOp::create(rewriter, location, encodesLow, encodesHigh)));
+
+  Block *head = rewriter.getInsertionBlock();
+  Block *continuation = rewriter.splitBlock(head, rewriter.getInsertionPoint());
+  BlockArgument result = continuation->addArgument(resultType, location);
+  Region *region = head->getParent();
+  Block *load = rewriter.createBlock(region, continuation->getIterator());
+  Block *fallback = rewriter.createBlock(region, continuation->getIterator());
+  unsigned minimumSpanWidth = ((resultType.getWidth() + 7) / 8) * 8;
+  unsigned maximumSpanWidth = ((7 + resultType.getWidth() + 7) / 8) * 8;
+  recordStaticSpecializationCFGBlocks(
+      rewriter, head, minimumSpanWidth == maximumSpanWidth ? 3 : 6);
+  rewriter.setInsertionPointToEnd(head);
+  cf::CondBranchOp::create(rewriter, location, valid, load, ValueRange{},
+                           fallback, ValueRange{});
+
+  rewriter.setInsertionPointToEnd(load);
+  Value negative = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::slt, range.bitOffset, zero);
+  Value nonnegative = arith::SelectOp::create(rewriter, location, negative,
+                                              zero, range.bitOffset);
+  Value lastFullStart = llvmConstant(rewriter, location, i64,
+                                     range.rootWidth - resultType.getWidth());
+  Value aboveLastFullStart =
+      arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::ugt,
+                            nonnegative, lastFullStart);
+  Value clamped = arith::SelectOp::create(
+      rewriter, location, aboveLastFullStart, lastFullStart, nonnegative);
+  Value delta =
+      arith::SubIOp::create(rewriter, location, range.bitOffset, clamped);
+  Value deltaNegative = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::slt, delta, zero);
+  Value negatedDelta = arith::SubIOp::create(rewriter, location, zero, delta);
+  Value absoluteDelta = arith::SelectOp::create(
+      rewriter, location, deltaNegative, negatedDelta, delta);
+  Value absolute =
+      arith::AddIOp::create(rewriter, location, clamped,
+                            llvmConstant(rewriter, location, i64,
+                                         range.rootOffset + range.localOffset));
+  Value byteOffset = arith::ShRUIOp::create(
+      rewriter, location, absolute,
+      llvmConstant(rewriter, location, i64, uint64_t{3}));
+  Value firstBit =
+      arith::AndIOp::create(rewriter, location, absolute,
+                            llvmConstant(rewriter, location, i64, uint64_t{7}));
+  Value base =
+      LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
+  Value address = LLVM::GEPOp::create(rewriter, location, pointer, i8, base,
+                                      ValueRange{byteOffset});
+  auto loadSpan = [&](unsigned spanWidth) {
+    IntegerType spanType = rewriter.getIntegerType(spanWidth);
+    Value span = LLVM::LoadOp::create(rewriter, location, spanType, address, 1);
+    Value firstBitShift =
+        spanWidth == 64 ? firstBit
+        : spanWidth < 64
+            ? LLVM::TruncOp::create(rewriter, location, spanType, firstBit)
+                  .getResult()
+            : LLVM::ZExtOp::create(rewriter, location, spanType, firstBit)
+                  .getResult();
+    Value shifted =
+        arith::ShRUIOp::create(rewriter, location, span, firstBitShift);
+    return spanType == resultType
+               ? shifted
+               : LLVM::TruncOp::create(rewriter, location, resultType, shifted)
+                     .getResult();
+  };
+  Value loaded;
+  if (minimumSpanWidth == maximumSpanWidth) {
+    loaded = loadSpan(minimumSpanWidth);
+  } else {
+    Block *narrow = rewriter.createBlock(region, continuation->getIterator());
+    Block *wide = rewriter.createBlock(region, continuation->getIterator());
+    Block *loadedJoin =
+        rewriter.createBlock(region, continuation->getIterator());
+    BlockArgument joined = loadedJoin->addArgument(resultType, location);
+    rewriter.setInsertionPointToEnd(load);
+    Value useNarrow = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ule, firstBit,
+        llvmConstant(rewriter, location, i64,
+                     minimumSpanWidth - resultType.getWidth()));
+    cf::CondBranchOp::create(rewriter, location, useNarrow, narrow,
+                             ValueRange{}, wide, ValueRange{});
+    rewriter.setInsertionPointToEnd(narrow);
+    Value narrowValue = loadSpan(minimumSpanWidth);
+    cf::BranchOp::create(rewriter, location, loadedJoin,
+                         ValueRange{narrowValue});
+    rewriter.setInsertionPointToEnd(wide);
+    Value wideValue = loadSpan(maximumSpanWidth);
+    cf::BranchOp::create(rewriter, location, loadedJoin, ValueRange{wideValue});
+    rewriter.setInsertionPointToStart(loadedJoin);
+    loaded = joined;
+  }
+  Value resultShift =
+      resultType.getWidth() == 64
+          ? absoluteDelta
+          : LLVM::TruncOp::create(rewriter, location, resultType, absoluteDelta)
+                .getResult();
+  Value alignedLeft =
+      arith::ShLIOp::create(rewriter, location, loaded, resultShift);
+  Value alignedRight =
+      arith::ShRUIOp::create(rewriter, location, loaded, resultShift);
+  Value aligned = arith::SelectOp::create(rewriter, location, deltaNegative,
+                                          alignedLeft, alignedRight);
+
+  IntegerType maskType = rewriter.getIntegerType(resultType.getWidth() + 1);
+  Value maskWidth =
+      maskType.getWidth() == 64 ? absoluteDelta
+      : maskType.getWidth() < 64
+          ? LLVM::TruncOp::create(rewriter, location, maskType, absoluteDelta)
+                .getResult()
+          : LLVM::ZExtOp::create(rewriter, location, maskType, absoluteDelta)
+                .getResult();
+  Value overlapWidth = arith::SubIOp::create(
+      rewriter, location,
+      llvmConstant(rewriter, location, maskType, resultType.getWidth()),
+      maskWidth);
+  Value lowMask = arith::SubIOp::create(
+      rewriter, location,
+      arith::ShLIOp::create(rewriter, location,
+                            llvmConstant(rewriter, location, maskType, 1),
+                            overlapWidth),
+      llvmConstant(rewriter, location, maskType, 1));
+  Value outputStart =
+      arith::SelectOp::create(rewriter, location, deltaNegative, maskWidth,
+                              llvmConstant(rewriter, location, maskType, 0));
+  Value mask = LLVM::TruncOp::create(
+      rewriter, location, resultType,
+      arith::ShLIOp::create(rewriter, location, lowMask, outputStart));
+  Value masked = arith::AndIOp::create(rewriter, location, aligned, mask);
+  if (unknownFallback)
+    masked = arith::OrIOp::create(
+        rewriter, location, masked,
+        arith::XOrIOp::create(
+            rewriter, location, mask,
+            arith::ConstantOp::create(
+                rewriter, location, resultType,
+                rewriter.getIntegerAttr(
+                    resultType, APInt::getAllOnes(resultType.getWidth())))));
+  cf::BranchOp::create(rewriter, location, continuation, ValueRange{masked});
+
+  rewriter.setInsertionPointToEnd(fallback);
+  APInt fallbackValue = unknownFallback
+                            ? APInt::getAllOnes(resultType.getWidth())
+                            : APInt(resultType.getWidth(), 0);
+  Value invalid = arith::ConstantOp::create(
+      rewriter, location, resultType,
+      rewriter.getIntegerAttr(resultType, fallbackValue));
+  cf::BranchOp::create(rewriter, location, continuation, ValueRange{invalid});
+  rewriter.setInsertionPointToStart(continuation);
+  return result;
+}
+
 DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
                                         StringRef globalName,
                                         uint64_t bitOffset, unsigned width) {
@@ -214,6 +444,13 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
         loadDirectPackedPlane(rewriter, location, globalName, range->offset,
                               resultType.getWidth()),
         resultType);
+  std::optional<DirectDynamicStateRange> dynamicRange =
+      resolveDirectDynamicStateRange(handle, resultType.getWidth(),
+                                     directLayout);
+  if (dynamicRange && (!dynamicRange->guarded || assumeClean))
+    return loadDirectDynamicPackedPlane(rewriter, location, globalName,
+                                        resultType, *dynamicRange,
+                                        unknownFallback);
 
   auto emitGeneric = [&]() -> Value {
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());

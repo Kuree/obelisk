@@ -48,8 +48,7 @@ resolveNativeEvalPlan(ModuleOp module,
                               staticFanoutPlan.entries.end());
   auto setFanoutRoute = [](obelisk_rt_static_fanout_entry &entry,
                            uint32_t route) {
-    entry.reserved =
-        (entry.reserved & ~OBELISK_RT_FANOUT_ROUTE_MASK) | route;
+    entry.reserved = (entry.reserved & ~OBELISK_RT_FANOUT_ROUTE_MASK) | route;
   };
   for (obelisk_rt_static_fanout_entry &entry : result.fanoutEntries) {
     auto node = llvm::find_if(executableNodes, [&](const auto &candidate) {
@@ -290,7 +289,9 @@ resolveNativeEvalPlan(ModuleOp module,
       auto [fragment, firstOwner, secondOwner] = *overlap;
       return module.emitError("eval fragment ")
              << fragment << " is covered by distinct direct owners "
-             << firstOwner << " and " << secondOwner;
+             << firstOwner << " (" << result.mergedExecutors[firstOwner]
+             << ") and " << secondOwner << " ("
+             << result.mergedExecutors[secondOwner] << ")";
     }
 
     llvm::SmallDenseSet<uint32_t, 64> reachableNodes;

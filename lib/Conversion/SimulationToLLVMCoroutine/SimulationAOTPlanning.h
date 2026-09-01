@@ -44,6 +44,7 @@ struct NativePromotionRange {
 struct NativeDirectFragment {
   uint32_t actorSlot;
   uint32_t continuation;
+  std::string body;
   std::string wrapper;
   std::string twoStateWrapper;
   std::string twoStateBody;
@@ -61,6 +62,7 @@ struct NativeDirectFragment {
   llvm::SmallVector<uint32_t, 0> fragmentIDs;
   llvm::SmallVector<NativePromotionRange, 0> promotionRanges;
   uint32_t fusionGroup = UINT32_MAX;
+  bool instanceCoordinator = false;
   bool initialActivation = false;
   bool tier2Convergence = false;
 };

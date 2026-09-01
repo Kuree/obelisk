@@ -14,6 +14,13 @@
 // RUN:   | not obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=UNCERTIFIED-REGION
+// RUN: sed 's/{site = #obelisk_sim.continuation<id = 1>}/{obelisk_sim.procedural_event_wait, site = #obelisk_sim.continuation<id = 1>}/' %s \
+// RUN:   | obelisk-opt - -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)'
+
+// A source event control is inactive while its controlled statement runs.
+// The generated coordinator must suppress only that compact owner's self
+// publication without retaining a runtime transition callback.
 
 // Exercise the production Tier-1 -> Tier-2 path.  The hand-authored graph
 // keeps the convergence ownership stable so this test characterizes lowering,
