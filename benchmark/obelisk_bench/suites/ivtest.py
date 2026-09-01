@@ -404,6 +404,12 @@ WIDTHLESS_SUPPRESSED_RAW_SCAN = Exclusion(
     "raw %u and %z input reads enough data to fill their destination, but "
     "assignment suppression provides no destination from which to obtain a "
     "size; the test requires Icarus's implicit 32-bit suppressed element")
+PLUSARG_TRAILING_REAL_CHARACTERS = Exclusion(
+    "IEEE 1800-2017 21.6",
+    "characters that are illegal for the requested $value$plusargs "
+    "conversion require the destination to be written with 'bx; the test "
+    "instead requires Icarus to parse the numeric prefix of 9.825units and "
+    "store 9.825")
 EMPTY_FUNCTION_FORMAL_LIST = Exclusion(
     "IEEE 1800-2017 13.4",
     "the function grammar permits an empty parenthesized formal list and the "
@@ -565,6 +571,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "pr1787423": PULL_GATE_ARITY,
     "pr1787423b": PULL_GATE_ARITY,
     "pr2001162": COINCIDENT_TASK_EVENT_CONTROL_RACE,
+    "pr2202706c": PLUSARG_TRAILING_REAL_CHARACTERS,
     "pr2943394": PROCEDURAL_FORCE_VARIABLE_SELECT,
     "pr1403406": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
     "pr1403406a": MIXED_SPECIFIED_AND_DEFAULT_TIMESCALES,
