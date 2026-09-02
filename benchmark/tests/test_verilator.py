@@ -888,6 +888,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("prog1.run", excluded.reason)
         self.assertIn("prog1.v", excluded.reason)
 
+    def test_associative_array_indices_must_be_equivalent(self):
+        excluded = verilator.EXCLUDED["t_cast_types"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.22.2")
+        self.assertIn("int index is signed", excluded.reason)
+        self.assertIn("bit [31:0] index is unsigned", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")

@@ -840,6 +840,12 @@ DESIGN_REFERENCES_PROGRAM_INSTANCE = Exclusion(
     "calling program subroutines from a design module is illegal; module t "
     "calls prog1.run and prog1.stop, while its reads of prog1.v are also "
     "forbidden program-signal references under 24.3")
+ASSOCIATIVE_INDEX_SIGNEDNESS = Exclusion(
+    "IEEE 1800-2017 6.22.2",
+    "associative arrays are equivalent only when their index types are "
+    "equivalent; the int index is signed while the bit [31:0] index is "
+    "unsigned, so 6.22.2(c) makes the index types nonequivalent and 7.9.9 "
+    "does not permit assignment between the arrays")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -855,6 +861,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_config_rules": MULTIPLE_CONFIG_DEFAULT_CLAUSES,
     "t_constraint_operators": STACKED_UNARY_OPERATOR,
     "t_coroutine_lambda": FUNCTION_ENABLES_TASK,
+    "t_cast_types": ASSOCIATIVE_INDEX_SIGNEDNESS,
     "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
