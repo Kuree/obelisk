@@ -839,6 +839,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("no name usable in a hierarchical name", excluded.reason)
         self.assertIn("genblkN", excluded.reason)
 
+    def test_packed_concat_to_unpacked_port_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_hier_block_struct"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 23.3.3.5")
+        self.assertIn("same unpacked dimensions", excluded.reason)
+        self.assertIn("packed nested concatenation", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

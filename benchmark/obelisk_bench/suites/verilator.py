@@ -919,6 +919,12 @@ UNNAMED_GENERATE_EXTERNAL_NAME = Exclusion(
     "an unnamed generate block has no name usable in a hierarchical name; "
     "genblkN is assigned so external interfaces can identify it, but the test "
     "requires source-level hierarchical references to that generated name")
+PACKED_CONCAT_TO_UNPACKED_PORT = Exclusion(
+    "IEEE 1800-2017 23.3.3.5",
+    "an unpacked-array port and its connected array shall have the same "
+    "unpacked dimensions and sizes, and 7.6 forbids directly assigning a "
+    "packed array to an unpacked array; the test connects out1's unpacked "
+    "array to one packed nested concatenation")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -952,6 +958,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_function_shadow_class": METHOD_SHADOWS_OUTER_CLASS,
     "t_gate_basic": N_INPUT_GATE_THREE_DELAYS,
     "t_gen_intdot2": UNNAMED_GENERATE_EXTERNAL_NAME,
+    "t_hier_block_struct": PACKED_CONCAT_TO_UNPACKED_PORT,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
