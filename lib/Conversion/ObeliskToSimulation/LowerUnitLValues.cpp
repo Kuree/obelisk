@@ -2588,11 +2588,23 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
           });
     SmallVector<Operation *> declarationChildren =
         declaration ? getChildren(declaration) : SmallVector<Operation *>{};
-    if (declarationChildren.size() != 1)
+    Operation *outputExpression = nullptr;
+    for (Operation *child : declarationChildren) {
+      // A clockvar with an explicit skew retains the delay control beside its
+      // output expression. Only semantic expressions carry a semantic type;
+      // select that one lvalue without mistaking #0 for a second target.
+      if (!child->getAttrOfType<TypeAttr>("semantic_type"))
+        continue;
+      if (outputExpression)
+        return emitError(location)
+               << "clocking output has multiple output expressions";
+      outputExpression = child;
+    }
+    if (!outputExpression)
       return emitError(location)
              << "clocking output has no addressable output expression";
     FailureOr<CapturedLValue> captured =
-        captureLValue(declarationChildren.front(), location);
+        captureLValue(outputExpression, location);
     if (failed(captured))
       return failure();
     expressionTarget = std::move(*captured);
