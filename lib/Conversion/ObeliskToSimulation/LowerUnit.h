@@ -279,7 +279,8 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerBinary(semantic::SVBinaryExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
-  lowerConditionalExpression(semantic::SVConditionalExpressionOp op);
+  lowerConditionalExpression(semantic::SVConditionalExpressionOp op,
+                             ::mlir::Type contextType = {});
   ::mlir::FailureOr<::mlir::Value>
   conditionalPredicate(::mlir::Value value, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>

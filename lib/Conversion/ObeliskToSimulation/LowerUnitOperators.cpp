@@ -1909,8 +1909,9 @@ FailureOr<Value> UnitLowering::mergeConditionalValues(Value condition,
       .getResult();
 }
 
-FailureOr<Value> UnitLowering::lowerConditionalExpression(
-    semantic::SVConditionalExpressionOp op) {
+FailureOr<Value>
+UnitLowering::lowerConditionalExpression(semantic::SVConditionalExpressionOp op,
+                                         Type contextType) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   ArrayRef<int64_t> patternFlags = op.getConditionPatternFlags();
@@ -1932,9 +1933,18 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
     emitError(location) << "malformed conditional-expression inventory";
     return failure();
   }
-  FailureOr<Type> resultType = getNormalizedSemanticType(op);
-  if (failed(resultType))
-    return failure();
+  Type resultType;
+  if (contextType) {
+    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    if (semanticType && isa<semantic::NullType>(semanticType.getValue()))
+      resultType = contextType;
+  }
+  if (!resultType) {
+    FailureOr<Type> normalized = getNormalizedSemanticType(op);
+    if (failed(normalized))
+      return failure();
+    resultType = *normalized;
+  }
 
   ArrayRef<Operation *> conditions =
       ArrayRef<Operation *>(children).take_front(conditionChildren);
@@ -1954,16 +1964,16 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   // trueBlock(ambiguous), falseBlock(trueArmValue, ambiguous). The saved true
   // value is only meaningful when the ambiguous flag is set.
   trueBlock->addArgument(i1Type, location);
-  falseBlock->addArgument(*resultType, location);
+  falseBlock->addArgument(resultType, location);
   falseBlock->addArgument(i1Type, location);
-  ambiguousBlock->addArgument(*resultType, location);
-  ambiguousBlock->addArgument(*resultType, location);
-  mergeBlock->addArgument(*resultType, location);
+  ambiguousBlock->addArgument(resultType, location);
+  ambiguousBlock->addArgument(resultType, location);
+  mergeBlock->addArgument(resultType, location);
 
   Value sawUnknown = arith::ConstantOp::create(
       builder, location, builder.getI1Type(), builder.getBoolAttr(false));
   // Placeholder for the true-arm slot on the paths that never evaluate it.
-  Value unusedArm = createDefaultValue(builder, location, *resultType);
+  Value unusedArm = createDefaultValue(builder, location, resultType);
   if (!unusedArm)
     return failure();
   Value notAmbiguous = arith::ConstantOp::create(builder, location, i1Type,
@@ -2032,7 +2042,7 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
   auto lowerArm = [&](Operation *expression) -> FailureOr<Value> {
     if (isa<semantic::SVNullLiteralOp>(expression)) {
       Value value = createDefaultValue(builder, getSemanticLocation(expression),
-                                       *resultType);
+                                       resultType);
       return value ? FailureOr<Value>(value) : FailureOr<Value>(failure());
     }
     // Both arms are context-determined operands of the conditional, so a
@@ -2041,7 +2051,7 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
     FailureOr<Value> value = lowerContextDeterminedExpression(expression);
     if (failed(value))
       return failure();
-    return convert(*value, *resultType, isSignedNode(expression),
+    return convert(*value, resultType, isSignedNode(expression),
                    getSemanticLocation(expression), isSignedNode(op));
   };
 
@@ -2071,7 +2081,7 @@ FailureOr<Value> UnitLowering::lowerConditionalExpression(
       builder.getIntegerAttr(i1, 1));
   FailureOr<Value> merged = mergeConditionalValues(
       ambiguousCondition, ambiguousBlock->getArgument(0),
-      ambiguousBlock->getArgument(1), *resultType, location);
+      ambiguousBlock->getArgument(1), resultType, location);
   if (failed(merged))
     return failure();
   cf::BranchOp::create(builder, location, mergeBlock, ValueRange{*merged});

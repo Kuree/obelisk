@@ -2757,6 +2757,17 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         return sim::SimChandleNullOp::create(builder, getSemanticLocation(op))
             .getResult();
     }
+    // IEEE 1800-2017 11.4.11 leaves a null/null conditional typed as the
+    // literal null. The surrounding conversion is what supplies a concrete
+    // handle representation for both arms and the merge block.
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalExpressionOp>(children.front())) {
+      auto conditionalType =
+          conditional->getAttrOfType<TypeAttr>("semantic_type");
+      if (conditionalType &&
+          isa<semantic::NullType>(conditionalType.getValue()))
+        return lowerConditionalExpression(conditional, *target);
+    }
     if (auto streaming =
             dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
                 children.front()))
