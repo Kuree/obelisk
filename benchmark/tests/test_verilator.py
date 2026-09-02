@@ -831,6 +831,16 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
+    def test_interface_parameter_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_interface_modport_param",
+            "hierarchical name is not allowed in a constant expression\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 11.2.1", log)
+        self.assertIn("25.10", log)
+        self.assertTrue(log.endswith(
+            "hierarchical name is not allowed in a constant expression\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

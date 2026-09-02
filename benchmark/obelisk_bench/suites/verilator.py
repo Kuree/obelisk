@@ -172,6 +172,12 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
+    "t_interface_modport_param": (
+        "IEEE 1800-2017 11.2.1 includes parameters among the permitted "
+        "operands of a constant expression, and 25.10 keeps interface "
+        "objects that cannot be listed in a modport accessible through that "
+        "port; pinned Slang rejects the hierarchically qualified interface "
+        "parameter ITEM_QTY in generate constant expressions"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "
