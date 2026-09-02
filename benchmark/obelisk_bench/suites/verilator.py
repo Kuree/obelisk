@@ -725,6 +725,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
     "t_display_class": CLASS_PATTERN,
+    "t_process": CLASS_PATTERN,
     "t_always_nosplit": TWO_STATE_INITIALIZATION,
     "t_assign_dff": ACTIVE_REGION_READ_WRITE_RACE,
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
