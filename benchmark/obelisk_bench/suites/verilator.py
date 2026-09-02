@@ -789,6 +789,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,
     "t_queue_slice": BOUNDED_QUEUE_CAPACITY,
     "t_sys_readmem": READMEM_HASH_COMMENT,
+    "t_sys_readmem_assoc": READMEM_HASH_COMMENT,
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
