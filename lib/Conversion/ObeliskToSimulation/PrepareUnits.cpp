@@ -180,21 +180,32 @@ PreparedUnits::resolveVirtualInterfaceCallees(
     return result;
   };
   semantic::SVInstanceSymbolOp callerDesign = topInstance(call);
-  if (!callerDesign)
-    return {};
-  StringRef design = getHierarchyName(callerDesign);
-  auto methodCandidates =
-      virtualInterfaceCalleeIndex.find(call.getCalleeName());
-  if (methodCandidates == virtualInterfaceCalleeIndex.end())
-    return {};
-  auto designCandidates = methodCandidates->second.find(design);
-  if (designCandidates == methodCandidates->second.end())
-    return {};
-  auto identityCandidates = designCandidates->second.find(identity);
-  if (identityCandidates == designCandidates->second.end())
-    return {};
+  const SmallVector<unsigned> *candidateIndices = nullptr;
+  if (callerDesign) {
+    auto methodCandidates =
+        virtualInterfaceCalleeIndex.find(call.getCalleeName());
+    if (methodCandidates == virtualInterfaceCalleeIndex.end())
+      return {};
+    auto designCandidates =
+        methodCandidates->second.find(getHierarchyName(callerDesign));
+    if (designCandidates == methodCandidates->second.end())
+      return {};
+    auto identityCandidates = designCandidates->second.find(identity);
+    if (identityCandidates == designCandidates->second.end())
+      return {};
+    candidateIndices = &identityCandidates->second;
+  } else {
+    auto methodCandidates =
+        globalVirtualInterfaceCalleeIndex.find(call.getCalleeName());
+    if (methodCandidates == globalVirtualInterfaceCalleeIndex.end())
+      return {};
+    auto identityCandidates = methodCandidates->second.find(identity);
+    if (identityCandidates == methodCandidates->second.end())
+      return {};
+    candidateIndices = &identityCandidates->second;
+  }
   SmallVector<const PreparedVirtualInterfaceCallee *> result;
-  for (unsigned index : identityCandidates->second) {
+  for (unsigned index : *candidateIndices) {
     const PreparedVirtualInterfaceCallee &candidate =
         virtualInterfaceCallees[index];
     // An import modport consumes either an ordinary interface method or an
@@ -585,16 +596,21 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       invalid = true;
   }
   for (auto [index, candidate] :
-       llvm::enumerate(result.virtualInterfaceCallees))
+       llvm::enumerate(result.virtualInterfaceCallees)) {
     result
         .virtualInterfaceCalleeIndex[candidate.method][candidate.design]
                                     [candidate.interfaceIdentity]
         .push_back(index);
+    result
+        .globalVirtualInterfaceCalleeIndex[candidate.method]
+                                          [candidate.interfaceIdentity]
+        .push_back(index);
+  }
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
     const SmallVector<unsigned> &candidateIndices =
-        result.virtualInterfaceCalleeIndex[lhsRecord.method][lhsRecord.design]
-                                          [lhsRecord.interfaceIdentity];
+        result.globalVirtualInterfaceCalleeIndex[lhsRecord.method]
+                                                [lhsRecord.interfaceIdentity];
     // Each candidate appears in exactly one group and groups retain insertion
     // order. Compare every member with the first normalized ABI once instead
     // of performing a quadratic all-pairs scan.
