@@ -523,7 +523,7 @@ def compile_preprocessor(obelisk: str, sources: list[str], output: str,
 
 def execute(binary: str, timeout: float, args: list[str] | None = None,
             cwd: str | None = None) -> ExecResult:
-    """Run a compiled test executable and capture its stdout.
+    """Run a compiled test executable and capture its ordered output.
 
     This is the step the upstream harnesses perform by calling `vvp`; because
     Obelisk emits native code, we exec the binary directly. A wall-clock timeout
@@ -535,20 +535,18 @@ def execute(binary: str, timeout: float, args: list[str] | None = None,
     for attempt in range(2):
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, errors="replace",
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, errors="replace",
                 timeout=timeout, check=False, cwd=cwd)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
-                              timed_out=False, stderr=result.stderr,
+                              timed_out=False, stderr="",
                               returncode=result.returncode)
         except subprocess.TimeoutExpired as expired:
             stdout = expired.stdout or b""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
-            stderr = expired.stderr or b""
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
             return ExecResult(
-                ok=False, stdout=stdout, timed_out=True, stderr=stderr)
+                ok=False, stdout=stdout, timed_out=True, stderr="")
         except OSError as error:
             if attempt == 0:
                 time.sleep(0.2)

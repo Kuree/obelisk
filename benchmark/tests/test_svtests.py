@@ -766,13 +766,17 @@ class BenchmarkRunnerTest(unittest.TestCase):
 
     def test_execute_preserves_process_returncode(self):
         completed = subprocess.CompletedProcess(
-            args=[], returncode=19, stdout="diagnostic\n", stderr="")
+            args=[], returncode=19, stdout="diagnostic\n", stderr=None)
         with mock.patch.object(
                 runner.subprocess, "run", return_value=completed) as run:
             result = runner.execute("sim", 10)
 
         self.assertFalse(result.ok)
         self.assertEqual(result.returncode, 19)
+        self.assertEqual(result.stdout, "diagnostic\n")
+        self.assertEqual(result.stderr, "")
+        self.assertIs(run.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(run.call_args.kwargs["stderr"], subprocess.STDOUT)
         self.assertEqual(run.call_args.kwargs["errors"], "replace")
 
     def test_compile_frontend_uses_emit_slang_phase_boundary(self):
