@@ -184,12 +184,11 @@ SourceRangeType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 static LogicalResult verifyBindingProvenance(
-    Operation *op, std::optional<bool> isFromBind,
-    std::optional<bool> isBelowBind, std::optional<bool> isBindTarget,
-    std::optional<StringRef> selectedCell, bool hasConfiguration = false) {
-  auto requireTrue = [&](std::optional<bool> value,
-                         StringRef name) -> LogicalResult {
-    if (value && !*value)
+    Operation *op, BoolAttr isFromBind, BoolAttr isBelowBind,
+    BoolAttr isBindTarget, StringAttr selectedCell,
+    bool hasConfiguration = false) {
+  auto requireTrue = [&](BoolAttr value, StringRef name) -> LogicalResult {
+    if (value && !value.getValue())
       return op->emitOpError() << name << " must be true when present";
     return success();
   };
@@ -197,28 +196,27 @@ static LogicalResult verifyBindingProvenance(
       failed(requireTrue(isBelowBind, "is_below_bind")) ||
       failed(requireTrue(isBindTarget, "is_bind_target")))
     return failure();
-  unsigned provenanceCount = isFromBind.value_or(false) +
-                             isBelowBind.value_or(false) +
-                             isBindTarget.value_or(false);
+  unsigned provenanceCount =
+      static_cast<bool>(isFromBind) + static_cast<bool>(isBelowBind) +
+      static_cast<bool>(isBindTarget);
   if (provenanceCount > 1)
     return op->emitOpError()
            << "bind provenance flags must be mutually exclusive";
 
   bool hasBindProvenance = provenanceCount != 0;
-  if ((hasBindProvenance || hasConfiguration) != selectedCell.has_value())
+  if ((hasBindProvenance || hasConfiguration) !=
+      static_cast<bool>(selectedCell))
     return op->emitOpError()
            << "requires selected_cell exactly for bind or configuration "
               "provenance";
-  if (selectedCell && selectedCell->empty())
+  if (selectedCell && selectedCell.getValue().empty())
     return op->emitOpError() << "selected_cell must be nonempty";
   return success();
 }
 
 LogicalResult InstanceSymbolOp::verify() {
-  auto getBool = [&](StringRef name) -> std::optional<bool> {
-    if (auto attr = (*this)->getAttrOfType<BoolAttr>(name))
-      return attr.getValue();
-    return std::nullopt;
+  auto getBool = [&](StringRef name) {
+    return (*this)->getAttrOfType<BoolAttr>(name);
   };
   auto getString = [&](StringRef name) -> std::optional<StringRef> {
     if (auto attr = (*this)->getAttrOfType<StringAttr>(name))
@@ -236,7 +234,8 @@ LogicalResult InstanceSymbolOp::verify() {
   bool hasConfiguration = configuration.has_value();
   if (failed(verifyBindingProvenance(
           *this, getBool("is_from_bind"), getBool("is_below_bind"),
-          getBool("is_bind_target"), getString("selected_cell"),
+          getBool("is_bind_target"),
+          (*this)->getAttrOfType<StringAttr>("selected_cell"),
           hasConfiguration)))
     return failure();
 
@@ -278,14 +277,11 @@ LogicalResult InstanceSymbolOp::verify() {
 }
 
 LogicalResult CheckerInstanceSymbolOp::verify() {
-  auto getBool = [&](StringRef name) -> std::optional<bool> {
-    if (auto attr = (*this)->getAttrOfType<BoolAttr>(name))
-      return attr.getValue();
-    return std::nullopt;
+  auto getBool = [&](StringRef name) {
+    return (*this)->getAttrOfType<BoolAttr>(name);
   };
-  std::optional<StringRef> selectedCell;
-  if (auto attr = (*this)->getAttrOfType<StringAttr>("selected_cell"))
-    selectedCell = attr.getValue();
+  StringAttr selectedCell =
+      (*this)->getAttrOfType<StringAttr>("selected_cell");
   return verifyBindingProvenance(*this, getBool("is_from_bind"),
                                  getBool("is_below_bind"),
                                  getBool("is_bind_target"), selectedCell);
