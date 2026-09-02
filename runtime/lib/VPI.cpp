@@ -43,12 +43,20 @@ namespace {
 
 struct VPIState;
 
+enum class VPIHandleKind : uint8_t {
+  Object,
+  Iterator,
+  Callback,
+  ScheduledEvent,
+  SystemTf
+};
+
 } // namespace
 
 struct __vpiHandle {
   VPIState *owner = nullptr;
   bool alive = true;
-  bool iterator = false;
+  VPIHandleKind kind = VPIHandleKind::Object;
   obelisk_rt_design_cursor_v1 cursor{};
   bool hasInfo = false;
   obelisk_rt_design_info_v1 info{};
@@ -100,14 +108,23 @@ VPIState *requireState() {
   return activeState;
 }
 
-__vpiHandle *validate(vpiHandle opaque, bool iterator = false) {
+__vpiHandle *findHandle(vpiHandle opaque) {
   VPIState *state = requireState();
   auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
   if (!state || !handle ||
       state->handles.find(handle) == state->handles.end() ||
-      handle->owner != state || !handle->alive ||
-      handle->iterator != iterator) {
-    setError(state, "invalid, released, or wrong-kind VPI handle");
+      handle->owner != state || !handle->alive) {
+    setError(state, "invalid or released VPI handle");
+    return nullptr;
+  }
+  return handle;
+}
+
+__vpiHandle *validate(vpiHandle opaque,
+                      VPIHandleKind kind = VPIHandleKind::Object) {
+  __vpiHandle *handle = findHandle(opaque);
+  if (!handle || handle->kind != kind) {
+    setError(requireState(), "wrong-kind VPI handle");
     return nullptr;
   }
   return handle;
@@ -123,6 +140,7 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor) {
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
+    handle->kind = VPIHandleKind::Object;
     handle->cursor = cursor;
     return keepHandle(state, std::move(handle));
   }
@@ -163,6 +181,22 @@ int vpiTypeFor(uint32_t kind) {
   default:
     return vpiUndefined;
   }
+}
+
+PLI_INT32 vpiTypeForHandle(VPIHandleKind kind) {
+  switch (kind) {
+  case VPIHandleKind::Iterator:
+    return vpiIterator;
+  case VPIHandleKind::Callback:
+    return vpiCallback;
+  case VPIHandleKind::ScheduledEvent:
+    return vpiSchedEvent;
+  case VPIHandleKind::SystemTf:
+    return vpiUserSystf;
+  case VPIHandleKind::Object:
+    return vpiUndefined;
+  }
+  return vpiUndefined;
 }
 
 bool matchesType(uint32_t kind, int requested) {
@@ -506,7 +540,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   OBELISK_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = state;
-    iterator->iterator = true;
+    iterator->kind = VPIHandleKind::Iterator;
     iterator->items = std::move(items);
     return keepHandle(state, std::move(iterator));
   }
@@ -517,7 +551,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
-  __vpiHandle *iterator = validate(opaque, true);
+  __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
     return nullptr;
   if (iterator->next == iterator->items.size()) {
@@ -529,9 +563,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
-  __vpiHandle *handle = validate(opaque);
+  __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
+  if (property == vpiType && handle->kind != VPIHandleKind::Object)
+    return vpiTypeForHandle(handle->kind);
+  if (handle->kind != VPIHandleKind::Object) {
+    setError(handle->owner, "unsupported property for VPI handle kind",
+             vpiNotice);
+    return vpiUndefined;
+  }
   obelisk_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return vpiUndefined;

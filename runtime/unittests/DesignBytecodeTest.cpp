@@ -3948,6 +3948,9 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
 
   vpiHandle iterator = vpi_iterate(vpiReg, root);
   ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, iterator), vpiIterator);
+  EXPECT_EQ(vpi_get_str(vpiName, iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   vpiHandle scanned = vpi_scan(iterator);
   ASSERT_NE(scanned, nullptr);
   EXPECT_EQ(vpi_compare_objects(value, scanned), 1);
