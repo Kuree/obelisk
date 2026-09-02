@@ -747,6 +747,17 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertTrue(log.endswith(
             "lvalue of force/release must be a net or variable\n"))
 
+    def test_struct_member_force_slang_bugs_stay_visible(self):
+        for name in ("t_force_struct_partial", "t_force_unpacked_struct"):
+            with self.subTest(name=name):
+                log = verilator.classify_dependency_failure(
+                    name, "lvalue of force/release must be a variable\n")
+                self.assertIn("known Slang bug:", log)
+                self.assertIn("IEEE 1800-2017 7.2", log)
+                self.assertIn("10.6.2", log)
+                self.assertTrue(log.endswith(
+                    "lvalue of force/release must be a variable\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),
@@ -754,6 +765,15 @@ class DependencyFailureTest(unittest.TestCase):
 
 
 class ExcludedTest(unittest.TestCase):
+    def test_variable_force_select_extensions_are_not_compiler_failures(self):
+        for name in ("t_force_unpacked", "t_force_unpacked_bitsel",
+                     "t_force_wide_sel"):
+            with self.subTest(name=name):
+                excluded = verilator.EXCLUDED[name]
+                self.assertEqual(excluded.clause, "IEEE 1800-2017 10.6.2")
+                self.assertIn("shall not be a bit-select or part-select",
+                              excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

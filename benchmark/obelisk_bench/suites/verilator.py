@@ -145,6 +145,16 @@ KNOWN_SLANG_BUGS = {
         "variable "
         "reference as a force/release lvalue; pinned Slang rejects each "
         "unpacked-array element before emitting IR"),
+    "t_force_struct_partial": (
+        "IEEE 1800-2017 7.2 permits structure fields to be referenced by "
+        "name, and 6.4 and 10.6.2 permit each integral field as a singular "
+        "variable force lvalue; pinned Slang rejects packed-structure member "
+        "references before emitting IR"),
+    "t_force_unpacked_struct": (
+        "IEEE 1800-2017 7.2 permits individual structure members to be "
+        "referenced by name, and 6.4 and 10.6.2 permit the selected integral "
+        "members as singular variable force/release lvalues; pinned Slang "
+        "rejects them before emitting IR"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
@@ -872,6 +882,10 @@ DYNAMIC_OUTPUT_PORT_NET_SELECT = Exclusion(
     "an output-port connection drives its outside net as a continuous "
     "assignment, whose net lvalue can use only A.8.5's constant_select; the "
     "test connects the output directly to the runtime slice e[idx +: 8]")
+VARIABLE_FORCE_SELECT = Exclusion(
+    "IEEE 1800-2017 10.6.2",
+    "a force/release lvalue shall not be a bit-select or part-select of a "
+    "variable; the test requires Verilator's extension for variable selects")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -895,6 +909,9 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
     "t_eq_wild": STRING_WILDCARD_EQUALITY,
     "t_force_immediate_release_port_net": DYNAMIC_OUTPUT_PORT_NET_SELECT,
+    "t_force_unpacked": VARIABLE_FORCE_SELECT,
+    "t_force_unpacked_bitsel": VARIABLE_FORCE_SELECT,
+    "t_force_wide_sel": VARIABLE_FORCE_SELECT,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
