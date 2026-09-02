@@ -666,6 +666,10 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1.2")
         self.assertIn("shorter %g representation", excluded.reason)
 
+    def test_elaboration_pattern_radix_is_not_a_compiler_failure(self):
+        self.assertIs(verilator.EXCLUDED["t_display_p_elab"],
+                      verilator.PATTERN_RADIX)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):

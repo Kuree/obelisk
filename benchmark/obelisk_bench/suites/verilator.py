@@ -706,6 +706,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
+    "t_display_p_elab": PATTERN_RADIX,
     "t_display_signed": PATTERN_RADIX,
     "t_gen_genblk": DECIMAL_FIELD_ZERO_PADDING,
     "t_dynarray": PATTERN_RADIX,
