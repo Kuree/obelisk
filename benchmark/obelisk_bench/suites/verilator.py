@@ -503,6 +503,12 @@ NULL_OBJECT_MEMBER_EVENT_CONTROL = Exclusion(
     "`always @(drv.my_event)` is encountered while `drv` still has its "
     "default null value, but the test requires Verilator's deferred trigger "
     "binding to fall through after the handle is assigned")
+CONCURRENT_NBA_TRISTATE_RESOLUTION = Exclusion(
+    "IEEE 1800-2017 10.4.2",
+    "concurrent procedural blocks making nonblocking assignments to the same "
+    "variable leave its final value indeterminate; the test instead treats "
+    "the `logic` variable as a resolved tristate net, requiring a data write "
+    "to win over the other block's `z` write")
 UNTYPED_PATTERN_COMPARISON = Exclusion(
     "IEEE 1800-2017 10.9",
     "an untyped assignment pattern has no self-determined type and may only "
@@ -589,6 +595,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_string_to_bit": DYNAMIC_BITSTREAM_SIZE_MISMATCH,
     "t_math_width": UNTYPED_UNSIZED_PARAMETER_WIDTH,
     "t_class_trigger_null": NULL_OBJECT_MEMBER_EVENT_CONTROL,
+    "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
