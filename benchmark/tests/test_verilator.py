@@ -738,6 +738,15 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertTrue(log.endswith(
             "sequence must not admit an empty match\n"))
 
+    def test_unpacked_element_force_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_force", "lvalue of force/release must be a net or variable\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 6.4", log)
+        self.assertIn("IEEE 1800-2017 10.6.2", log)
+        self.assertTrue(log.endswith(
+            "lvalue of force/release must be a net or variable\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

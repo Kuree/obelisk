@@ -139,6 +139,12 @@ KNOWN_SLANG_BUGS = {
         "16.14.3 defines cover sequence through exactly that implication, "
         "but pinned Slang applies the stricter sequence-property rule and "
         "rejects both forms before emitting IR"),
+    "t_force": (
+        "IEEE 1800-2017 6.4 defines the selected 8-bit integral element as "
+        "a singular variable, and IEEE 1800-2017 10.6.2 permits a singular "
+        "variable "
+        "reference as a force/release lvalue; pinned Slang rejects each "
+        "unpacked-array element before emitting IR"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
