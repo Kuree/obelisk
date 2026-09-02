@@ -841,6 +841,16 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
+    def test_explicit_package_export_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_package_export",
+            "no member named 'PARAM2' in package 'pkg31'\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 26.6", log)
+        self.assertIn("explicit exports", log)
+        self.assertTrue(log.endswith(
+            "no member named 'PARAM2' in package 'pkg31'\n"))
+
     def test_terminating_always_slang_bug_stays_visible(self):
         log = verilator.classify_dependency_failure(
             "t_process_always",

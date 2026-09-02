@@ -178,6 +178,12 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
+    "t_package_export": (
+        "IEEE 1800-2017 26.6 makes an explicit package export of an "
+        "unreferenced wildcard-import candidate import that declaration and "
+        "make it visible through subsequent imports; pinned Slang loses "
+        "pkg1::PARAM2 and pkg1::PARAM3 after their legal explicit exports "
+        "from pkg30"),
     "t_process_always": (
         "IEEE 1800-2017 9.2.2.1 describes a time-free always procedure as a "
         "simulation deadlock rather than a compile error, while 20.2 makes "
