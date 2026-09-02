@@ -919,6 +919,19 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("23.3.3.3", excluded.reason)
         self.assertIn("literals 87 and 73", excluded.reason)
 
+    def test_child_interface_modport_members_are_not_compiler_failures(self):
+        names = (
+            "t_interface_modport_expr_array",
+            "t_interface_modport_expr_hier",
+            "t_interface_modport_expr_nested",
+        )
+        excluded = verilator.EXCLUDED[names[0]]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.5")
+        self.assertIn("same interface as the modport", excluded.reason)
+        self.assertIn("child interface", excluded.reason)
+        for name in names[1:]:
+            self.assertIs(verilator.EXCLUDED[name], excluded)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

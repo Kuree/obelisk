@@ -969,6 +969,11 @@ CONSTANT_TO_IMPLICIT_INOUT_PORT = Exclusion(
     "an ANSI port whose direction is omitted defaults to inout, and following "
     "ports inherit that direction; 23.3.3.3 requires an inout actual to be a "
     "net, but the test connects the literals 87 and 73")
+CHILD_INTERFACE_MODPORT_MEMBER = Exclusion(
+    "IEEE 1800-2017 25.5",
+    "every name used in a modport declaration shall be declared by the same "
+    "interface as the modport itself; the test requires an outer interface's "
+    "modport expression to select a member declared by a child interface")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1095,6 +1100,9 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_inside_unbounded_both": BOTH_BOUNDS_UNBOUNDED_RANGE,
     "t_interface_func_no_paren": PARENLESS_INTERFACE_FUNCTION,
     "t_interface_generic2": CONSTANT_TO_IMPLICIT_INOUT_PORT,
+    "t_interface_modport_expr_array": CHILD_INTERFACE_MODPORT_MEMBER,
+    "t_interface_modport_expr_hier": CHILD_INTERFACE_MODPORT_MEMBER,
+    "t_interface_modport_expr_nested": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
