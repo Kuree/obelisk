@@ -238,6 +238,12 @@ PARTIAL_TIMEFORMAT_ARGUMENTS = Exclusion(
     "Syntax 20-4 permits $timeformat either without an argument list or with "
     "all four arguments; the test requires Verilator's partial and "
     "hole-filled argument-list extensions")
+NONSTANDARD_DISPLAY_FORMS = Exclusion(
+    "IEEE 1800-2017 21.2.1",
+    "an unpacked expression without a format is legal only for a string or "
+    "unpacked byte array, and 21.2.1.3 defines field width for radix formats; "
+    "the test requires an unformatted associative array plus Verilator's "
+    "%0c, %0v, and %0u extensions")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -710,6 +716,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
+    "t_display": NONSTANDARD_DISPLAY_FORMS,
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
     "t_display_p_elab": PATTERN_RADIX,
     "t_display_signed": PATTERN_RADIX,
