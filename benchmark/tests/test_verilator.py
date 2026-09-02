@@ -851,6 +851,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("virtual method implementation", excluded.reason)
         self.assertIn("without virtual", excluded.reason)
 
+    def test_task_randomize_callback_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_infinite_recursion"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 18.6.2")
+        self.assertIn("function void pre_randomize()", excluded.reason)
+        self.assertIn("as a task", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
