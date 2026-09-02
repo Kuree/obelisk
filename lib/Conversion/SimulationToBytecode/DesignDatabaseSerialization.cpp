@@ -7,6 +7,7 @@
 
 #include "BytecodeSerialization.h"
 
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -27,6 +28,7 @@ namespace obelisk::bytecode {
 namespace {
 
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
+using namespace obelisk::reflection;
 
 } // namespace
 
@@ -403,32 +405,34 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (const TypeRecord &type : types)
     intern(type.name);
 
-  SmallVector<uint8_t> output(128, 0);
+  SmallVector<uint8_t> output(HeaderLayout.size, 0);
   uint64_t scopeOffset = output.size();
   DenseMap<uint64_t, uint64_t> scopeOffsets;
   for (auto [index, scope] : llvm::enumerate(scopes))
-    scopeOffsets[scope.getId()] = scopeOffset + index * 64;
-  uint64_t objectOffset = scopeOffset + scopes.size() * 64;
-  uint64_t typeOffset = objectOffset + objects.size() * 96;
-  uint64_t stringOffset = typeOffset + types.size() * 80;
+    scopeOffsets[scope.getId()] = scopeOffset + index * ScopeLayout.size;
+  uint64_t objectOffset = scopeOffset + scopes.size() * ScopeLayout.size;
+  uint64_t typeOffset = objectOffset + objects.size() * ObjectLayout.size;
+  uint64_t stringOffset = typeOffset + types.size() * TypeLayout.size;
   uint64_t indexOffset = 0;
+  output.resize(stringOffset, 0);
 
   DenseMap<uint64_t, SmallVector<uint64_t>> children;
   for (auto scope : scopes)
     if (auto parent = scope.getParent())
       children[*parent].push_back(scopeOffsets.lookup(scope.getId()));
   for (auto [index, object] : llvm::enumerate(objects))
-    children[object.scope].push_back(objectOffset + index * 96);
+    children[object.scope].push_back(objectOffset + index * ObjectLayout.size);
 
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
-    append32(output, 1);
-    append32(output, 4);
-    append64(output, scope.getId());
-    append64(output,
-             scope.getParent() ? scopeOffsets.lookup(*scope.getParent()) : 0);
-    append64(output,
-             children[scope.getId()].empty() ? 0 : children[scope.getId()][0]);
+    ScopeWriter writer(output.data() + self);
+    writer.setKind(static_cast<uint32_t>(RecordKind::Scope));
+    writer.setCaps(OBELISK_RT_DESIGN_CAP_ITERATE);
+    writer.setID(scope.getId());
+    writer.setParent(scope.getParent() ? scopeOffsets.lookup(*scope.getParent())
+                                       : 0);
+    writer.setFirstChild(
+        children[scope.getId()].empty() ? 0 : children[scope.getId()][0]);
     uint64_t sibling = 0;
     if (scope.getParent()) {
       ArrayRef<uint64_t> peers = children[*scope.getParent()];
@@ -436,40 +440,42 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (found != peers.end() && std::next(found) != peers.end())
         sibling = *std::next(found);
     }
-    append64(output, sibling);
+    writer.setNextSibling(sibling);
     std::string generatedName = fallbackName("scope", scope.getId());
     StringRef name = scope.getHierarchicalName().value_or(
         scope.getDebugName().value_or(generatedName));
-    append64(output, stringOffset + intern(name));
+    writer.setName(stringOffset + intern(name));
     Source source = sourceFor(scope);
-    append64(output,
-             source.file.empty() ? 0 : stringOffset + intern(source.file));
-    append64(output, source.lineColumn);
+    writer.setSourceFile(
+        source.file.empty() ? 0 : stringOffset + intern(source.file));
+    writer.setSourceLineColumn(source.lineColumn);
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
-    append32(output, object.kind);
-    append32(output, object.caps);
-    append64(output, object.id);
-    append64(output, scopeOffsets.lookup(object.scope));
+    uint64_t self = objectOffset + index * ObjectLayout.size;
+    ObjectWriter writer(output.data() + self);
+    writer.setKind(object.kind);
+    writer.setCaps(object.caps);
+    writer.setID(object.id);
+    writer.setOwner(scopeOffsets.lookup(object.scope));
     ArrayRef<uint64_t> peers = children[object.scope];
-    uint64_t self = objectOffset + index * 96;
     auto found = llvm::find(peers, self);
-    append64(output, found != peers.end() && std::next(found) != peers.end()
-                         ? *std::next(found)
-                         : 0);
-    append64(output, object.source.file.empty()
-                         ? 0
-                         : stringOffset + intern(object.source.file));
-    append64(output, stringOffset + intern(object.name));
+    writer.setNextSibling(found != peers.end() &&
+                                  std::next(found) != peers.end()
+                              ? *std::next(found)
+                              : 0);
+    writer.setSourceFile(object.source.file.empty()
+                             ? 0
+                             : stringOffset + intern(object.source.file));
+    writer.setName(stringOffset + intern(object.name));
     uint64_t width = 0;
     if (object.type) {
       uint32_t typeIndex = typeIndices.lookup(object.type);
       width = *simulationWidth(object.type);
-      append64(output, typeOffset + uint64_t{typeIndex} * 80);
+      writer.setType(typeOffset + uint64_t{typeIndex} * TypeLayout.size);
     } else {
-      append64(output, 0);
+      writer.setType(0);
     }
-    append64(output, width);
+    writer.setWidth(width);
     int64_t left = width == 0 ? 0 : static_cast<int64_t>(width - 1);
     int64_t right = 0;
     if (auto array = dyn_cast_if_present<sim::PackedArrayType>(object.type)) {
@@ -480,27 +486,30 @@ SmallVector<uint8_t> serializeDesignDatabase(
       left = array.getLeft();
       right = array.getRight();
     }
-    append64(output, static_cast<uint64_t>(left));
-    append64(output, static_cast<uint64_t>(right));
-    append64(output, object.stateOffset);
-    append64(output, object.source.lineColumn);
+    writer.setLeft(left);
+    writer.setRight(right);
+    writer.setStateOffset(object.stateOffset);
+    writer.setSourceLineColumn(object.source.lineColumn);
   }
-  for (const TypeRecord &entry : types) {
-    append32(output, 6);
-    append32(output, entry.kind | (entry.flags << 8));
-    append64(output, entry.width);
-    append64(output, static_cast<uint64_t>(entry.left));
-    append64(output, static_cast<uint64_t>(entry.right));
-    append64(output, entry.element == UINT32_MAX
-                         ? 0
-                         : typeOffset + uint64_t{entry.element} * 80);
-    append64(output, entry.firstChild == UINT32_MAX
-                         ? 0
-                         : typeOffset + uint64_t{entry.firstChild} * 80);
-    append64(output, entry.childCount);
-    append64(output, entry.ordinal);
-    append64(output, entry.packedOffset);
-    append64(output, stringOffset + intern(entry.name));
+  for (auto [index, entry] : llvm::enumerate(types)) {
+    TypeWriter writer(output.data() + typeOffset + index * TypeLayout.size);
+    writer.setRecordKind(static_cast<uint32_t>(RecordKind::Type));
+    writer.setKindAndFlags(entry.kind | (entry.flags << 8));
+    writer.setWidth(entry.width);
+    writer.setLeft(entry.left);
+    writer.setRight(entry.right);
+    writer.setElement(entry.element == UINT32_MAX
+                          ? 0
+                          : typeOffset +
+                                uint64_t{entry.element} * TypeLayout.size);
+    writer.setFirstChild(entry.firstChild == UINT32_MAX
+                             ? 0
+                             : typeOffset + uint64_t{entry.firstChild} *
+                                                TypeLayout.size);
+    writer.setChildCount(entry.childCount);
+    writer.setOrdinal(entry.ordinal);
+    writer.setPackedOffset(entry.packedOffset);
+    writer.setName(stringOffset + intern(entry.name));
   }
   llvm::append_range(output, strings);
   alignTo(output, 8);
@@ -520,7 +529,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, object] : llvm::enumerate(objects))
     names.push_back({stableHash(object.name),
                      stringOffset + intern(object.name),
-                     objectOffset + index * 96, object.name});
+                     objectOffset + index * ObjectLayout.size, object.name});
   llvm::sort(names, [](const Index &left, const Index &right) {
     return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
   });
@@ -530,36 +539,35 @@ SmallVector<uint8_t> serializeDesignDatabase(
                            << names[index].text << "'";
       return {};
     }
-  for (const Index &entry : names) {
-    append64(output, entry.hash);
-    append64(output, entry.name);
-    append64(output, entry.record);
+  output.resize(indexOffset + names.size() * IndexLayout.size, 0);
+  for (auto [index, entry] : llvm::enumerate(names)) {
+    IndexWriter writer(output.data() + indexOffset + index * IndexLayout.size);
+    writer.setHash(entry.hash);
+    writer.setName(entry.name);
+    writer.setRecord(entry.record);
   }
   using Header = obelisk_rt_design_database_header_v1;
   static constexpr char magic[] = OBELISK_RT_DESIGN_DATABASE_MAGIC;
   static_assert(sizeof(magic) == sizeof(Header::magic));
-  std::copy(std::begin(magic), std::end(magic),
-            output.begin() + offsetof(Header, magic));
-  write32(output, offsetof(Header, version), OBELISK_RT_VERSION);
-  write32(output, offsetof(Header, reserved), 0);
-  write32(output, offsetof(Header, profile), profile);
-  write32(output, offsetof(Header, header_size),
-          OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
-  write64(output, offsetof(Header, image_size), output.size());
-  write64(output, offsetof(Header, root_offset),
-          scopeOffsets.lookup(root.getId()));
-  write64(output, offsetof(Header, scope_offset), scopeOffset);
-  write64(output, offsetof(Header, scope_count), scopes.size());
-  write64(output, offsetof(Header, object_offset), objectOffset);
-  write64(output, offsetof(Header, object_count), objects.size());
-  write64(output, offsetof(Header, type_offset), typeOffset);
-  write64(output, offsetof(Header, type_count), types.size());
-  write64(output, offsetof(Header, string_offset), stringOffset);
-  write64(output, offsetof(Header, string_size), strings.size());
-  write64(output, offsetof(Header, index_offset), indexOffset);
-  write64(output, offsetof(Header, index_count), names.size());
-  write64(output, offsetof(Header, checksum),
-          checksum(output, offsetof(Header, checksum)));
+  HeaderWriter writer(output.data());
+  writer.setMagic(reinterpret_cast<const uint8_t *>(magic));
+  writer.setVersion(OBELISK_RT_VERSION);
+  writer.setReserved(0);
+  writer.setProfile(profile);
+  writer.setHeaderSize(HeaderLayout.size);
+  writer.setImageSize(output.size());
+  writer.setRoot(scopeOffsets.lookup(root.getId()));
+  writer.setScopeOffset(scopeOffset);
+  writer.setScopeCount(scopes.size());
+  writer.setObjectOffset(objectOffset);
+  writer.setObjectCount(objects.size());
+  writer.setTypeOffset(typeOffset);
+  writer.setTypeCount(types.size());
+  writer.setStringOffset(stringOffset);
+  writer.setStringSize(strings.size());
+  writer.setIndexOffset(indexOffset);
+  writer.setIndexCount(names.size());
+  writer.setChecksum(checksum(output, field::HeaderChecksum));
   return output;
 }
 

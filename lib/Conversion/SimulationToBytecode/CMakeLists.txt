@@ -20,6 +20,7 @@ add_mlir_library(ObeliskSimulationToBytecode
 
   DEPENDS
   ObeliskConversionPassIncGen
+  ObeliskDesignReflectionIncGen
   ObeliskSimulationOpsIncGen
 
   LINK_LIBS PUBLIC

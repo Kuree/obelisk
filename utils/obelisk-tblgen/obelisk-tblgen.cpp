@@ -24,9 +24,20 @@ namespace {
 constexpr int64_t maxU32 = std::numeric_limits<uint32_t>::max();
 
 struct Encoding {
+  enum class Kind { Bytes, U32LE, U64LE, I64LE } kind;
   StringRef name;
   uint32_t width;
 };
+
+StringRef getCppType(Encoding::Kind encoding) {
+  if (encoding == Encoding::Kind::U32LE)
+    return "uint32_t";
+  if (encoding == Encoding::Kind::U64LE)
+    return "uint64_t";
+  if (encoding == Encoding::Kind::I64LE)
+    return "int64_t";
+  return "const uint8_t *";
+}
 
 bool isCppIdentifier(StringRef name) {
   if (name.empty() || !(isAlpha(name.front()) || name.front() == '_'))
@@ -65,7 +76,28 @@ bool getEncoding(const Record &field, Encoding &result) {
   if (!getCppName(*encoding, "reflection encoding", name) ||
       !getU32(*encoding, "width", 1, width))
     return false;
-  result = {name, width};
+  Encoding::Kind kind;
+  uint32_t expectedWidth = width;
+  if (name == "Bytes")
+    kind = Encoding::Kind::Bytes;
+  else if (name == "U32LE") {
+    kind = Encoding::Kind::U32LE;
+    expectedWidth = 4;
+  } else if (name == "U64LE") {
+    kind = Encoding::Kind::U64LE;
+    expectedWidth = 8;
+  } else if (name == "I64LE") {
+    kind = Encoding::Kind::I64LE;
+    expectedWidth = 8;
+  } else {
+    PrintError(encoding->getLoc(), "unsupported reflection encoding");
+    return false;
+  }
+  if (width != expectedWidth) {
+    PrintError(encoding->getLoc(), "reflection encoding has invalid width");
+    return false;
+  }
+  result = {kind, name, width};
   return true;
 }
 
@@ -176,6 +208,29 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
   os << "#include <cstddef>\n#include <cstdint>\n\n";
   os << "namespace obelisk::reflection {\n\n";
 
+  os << "namespace detail {\n"
+        "inline uint32_t readU32LE(const uint8_t *data) {\n"
+        "  uint32_t value = 0;\n"
+        "  for (unsigned byte = 0; byte != 4; ++byte)\n"
+        "    value |= uint32_t{data[byte]} << (byte * 8);\n"
+        "  return value;\n"
+        "}\n"
+        "inline uint64_t readU64LE(const uint8_t *data) {\n"
+        "  uint64_t value = 0;\n"
+        "  for (unsigned byte = 0; byte != 8; ++byte)\n"
+        "    value |= uint64_t{data[byte]} << (byte * 8);\n"
+        "  return value;\n"
+        "}\n"
+        "inline void writeU32LE(uint8_t *data, uint32_t value) {\n"
+        "  for (unsigned byte = 0; byte != 4; ++byte)\n"
+        "    data[byte] = static_cast<uint8_t>(value >> (byte * 8));\n"
+        "}\n"
+        "inline void writeU64LE(uint8_t *data, uint64_t value) {\n"
+        "  for (unsigned byte = 0; byte != 8; ++byte)\n"
+        "    data[byte] = static_cast<uint8_t>(value >> (byte * 8));\n"
+        "}\n"
+        "} // namespace detail\n\n";
+
   auto encodingRecords = records.getAllDerivedDefinitions("ReflectionEncoding");
   SmallVector<const Record *> encodings(encodingRecords.begin(),
                                         encodingRecords.end());
@@ -235,6 +290,63 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
     os << formatv("\"{0}\", {1}, {0}Fields, {2}", name,
                   layout->getValueAsInt("size"), fields.size());
     os << "};\n\n";
+
+    os << formatv("class {0}View {{\n", name);
+    os << "public:\n";
+    os << formatv("  explicit {0}View(const uint8_t *data) : data(data)", name);
+    os << " {}\n";
+    os << "  const uint8_t *getData() const { return data; }\n";
+    for (const Record *field : fields) {
+      Encoding encoding;
+      if (!getEncoding(*field, encoding))
+        return true;
+      StringRef fieldName = field->getValueAsString("cppName");
+      os << formatv("  {0} get{1}() const {{ ", getCppType(encoding.kind),
+                    fieldName);
+      if (encoding.kind == Encoding::Kind::Bytes)
+        os << formatv("return data + field::{0}{1};", name, fieldName);
+      else if (encoding.kind == Encoding::Kind::I64LE)
+        os << formatv("return static_cast<int64_t>(detail::readU64LE(data + "
+                      "field::{0}{1}));",
+                      name, fieldName);
+      else
+        os << formatv("return detail::read{0}(data + field::{1}{2});",
+                      encoding.name, name, fieldName);
+      os << " }\n";
+    }
+    os << "private:\n  const uint8_t *data;\n};\n\n";
+
+    os << formatv("class {0}Writer {{\n", name);
+    os << "public:\n";
+    os << formatv("  explicit {0}Writer(uint8_t *data) : data(data)", name);
+    os << " {}\n";
+    os << "  uint8_t *getData() const { return data; }\n";
+    for (const Record *field : fields) {
+      Encoding encoding;
+      if (!getEncoding(*field, encoding))
+        return true;
+      StringRef fieldName = field->getValueAsString("cppName");
+      if (encoding.kind == Encoding::Kind::Bytes) {
+        os << formatv("  void set{0}(const uint8_t *value) {{\n", fieldName);
+        os << formatv("    for (uint32_t byte = 0; byte != {0}; ++byte)\n",
+                      encoding.width);
+        os << formatv("      data[field::{0}{1} + byte] = value[byte];\n", name,
+                      fieldName);
+        os << "  }\n";
+        continue;
+      }
+      os << formatv("  void set{0}({1} value) {{ ", fieldName,
+                    getCppType(encoding.kind));
+      if (encoding.kind == Encoding::Kind::I64LE)
+        os << formatv("detail::writeU64LE(data + field::{0}{1}, "
+                      "static_cast<uint64_t>(value));",
+                      name, fieldName);
+      else
+        os << formatv("detail::write{0}(data + field::{1}{2}, value);",
+                      encoding.name, name, fieldName);
+      os << " }\n";
+    }
+    os << "private:\n  uint8_t *data;\n};\n\n";
   }
 
   auto kindRecords = records.getAllDerivedDefinitions("ReflectionRecordKind");
