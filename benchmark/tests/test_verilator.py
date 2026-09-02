@@ -546,6 +546,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("PLI callback registry", excluded.reason)
         self.assertIs(verilator.EXCLUDED["t_dpi_display"], excluded)
 
+    def test_wrong_scope_dpi_export_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_dpi_export_scope_flat"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 35.5.3")
+        self.assertIn("without first selecting that scope", excluded.reason)
+
     def test_an_excluded_test_is_skipped_without_compiling(self):
         # The skip has to come before the test file is even read, so that
         # judging one costs nothing and needs no checkout.

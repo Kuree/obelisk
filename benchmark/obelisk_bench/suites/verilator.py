@@ -613,6 +613,11 @@ DPI_PACKED_EXPORT_RESULT = Exclusion(
     "IEEE 1800-2017 35.5.5",
     "an exported DPI function result may use scalar bit or logic but not a "
     "packed array; the test exports dpix_f_bit15 with a bit [14:0] result")
+DPI_EXPORT_FROM_WRONG_SCOPE = Exclusion(
+    "IEEE 1800-2017 35.5.3",
+    "a context import can directly call only exported subroutines from the "
+    "same scope; the test's import in t calls dpix_task exported from t.s "
+    "without first selecting that scope with svSetScope")
 VERILATOR_DPI_DECLARATION_COMMENT = Exclusion(
     "IEEE 1800-2017 5.4",
     "a block comment has no DPI declaration semantics; the test requires "
@@ -622,6 +627,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
     "t_dpi_display": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
+    "t_dpi_export_scope_flat": DPI_EXPORT_FROM_WRONG_SCOPE,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
