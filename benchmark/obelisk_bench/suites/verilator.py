@@ -787,6 +787,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_array7": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_param_in_func": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sc_vl_assign_sbw": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_scheduling_7": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_struct_cons_cast": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_struct_unpacked_clean": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
