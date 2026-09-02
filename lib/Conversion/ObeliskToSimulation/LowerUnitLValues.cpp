@@ -295,16 +295,16 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         FailureOr<Value> container = succeeded(base)
                                          ? loadCapturedLValue(*base, location)
                                          : FailureOr<Value>(failure());
-        FailureOr<Value> index = lowerExpression(selection[1]);
+        FailureOr<Value> index =
+            succeeded(container)
+                ? lowerSequentialContainerIndex(selection[1], *baseType,
+                                                *container, location)
+                : FailureOr<Value>(failure());
         if (failed(base) || failed(container) || failed(index))
-          return failure();
-        FailureOr<Value> index64 =
-            toContainerIndex(*index, isSignedNode(selection[1]), location);
-        if (failed(index64))
           return failure();
         captured.kind = CapturedLValue::Kind::ContainerElement;
         captured.container = *container;
-        captured.index = *index64;
+        captured.index = *index;
         captured.children.push_back(std::move(*base));
         return captured;
       }

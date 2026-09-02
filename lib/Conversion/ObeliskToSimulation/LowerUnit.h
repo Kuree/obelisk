@@ -210,6 +210,11 @@ private:
   ::mlir::FailureOr<::mlir::Value> lowerNewArray(::mlir::Operation *op);
   ::mlir::FailureOr<::mlir::Value> lowerSelection(::mlir::Operation *op,
                                                   bool lvalue);
+  /// Lower one dynamic-array or queue index. Queue `$` expressions observe
+  /// `container`'s current last index for reads and captured lvalues alike.
+  ::mlir::FailureOr<::mlir::Value> lowerSequentialContainerIndex(
+      ::mlir::Operation *index, ::mlir::Type containerType,
+      ::mlir::Value container, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerAssignment(semantic::SVAssignmentExpressionOp op);
   ::mlir::FailureOr<::mlir::Value> lowerStreamingAssignment(

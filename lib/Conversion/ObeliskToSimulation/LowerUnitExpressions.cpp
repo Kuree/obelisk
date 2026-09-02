@@ -8,6 +8,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -4805,6 +4806,31 @@ UnitLowering::lowerQueueSliceAddress(semantic::SVRangeSelectExpressionOp range,
   return QueueSliceAddress{start, count, valid};
 }
 
+FailureOr<Value> UnitLowering::lowerSequentialContainerIndex(
+    Operation *index, Type containerType, Value container, Location location) {
+  Value previousPlaceholder = unboundedPlaceholder;
+  llvm::scope_exit restorePlaceholder(
+      [&] { unboundedPlaceholder = previousPlaceholder; });
+  if (isa<sim::QueueType>(containerType) && containsUnboundedLiteral(index)) {
+    Value size = sim::SimContainerSizeOp::create(
+        builder, location, builder.getI64Type(), container);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    unboundedPlaceholder = arith::SubIOp::create(builder, location, size, one);
+  }
+  if (isUnboundedEndpoint(index)) {
+    if (!unboundedPlaceholder)
+      return emitError(location)
+                 << "unbounded index requires a queue container",
+             failure();
+    return unboundedPlaceholder;
+  }
+  FailureOr<Value> lowered = lowerExpression(index);
+  if (failed(lowered))
+    return failure();
+  return toContainerIndex(*lowered, isSignedNode(index), location);
+}
+
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Location location = getSemanticLocation(op);
   if (auto leafPath =
@@ -5027,36 +5053,10 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         return failure();
       container = *loaded;
     }
-    bool hasUnboundedIndex = containsUnboundedLiteral(children[1]);
-    Value previousPlaceholder = unboundedPlaceholder;
-    if (hasUnboundedIndex && isa<sim::QueueType>(sourceValueType)) {
-      Value size = sim::SimContainerSizeOp::create(
-          builder, location, builder.getI64Type(), container);
-      Value one =
-          arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                    builder.getI64IntegerAttr(1));
-      unboundedPlaceholder =
-          arith::SubIOp::create(builder, location, size, one);
-    }
-    Value resolvedIndex;
-    if (isUnboundedEndpoint(children[1]))
-      resolvedIndex = unboundedPlaceholder;
-    else {
-      FailureOr<Value> index = lowerExpression(children[1]);
-      unboundedPlaceholder = previousPlaceholder;
-      if (failed(index))
-        return failure();
-      FailureOr<Value> index64 =
-          toContainerIndex(*index, isSignedNode(children[1]), location);
-      if (failed(index64))
-        return failure();
-      resolvedIndex = *index64;
-    }
-    unboundedPlaceholder = previousPlaceholder;
-    if (!resolvedIndex)
-      return emitError(location)
-                 << "unbounded index requires a queue container",
-             failure();
+    FailureOr<Value> resolvedIndex = lowerSequentialContainerIndex(
+        children[1], sourceValueType, container, location);
+    if (failed(resolvedIndex))
+      return failure();
     if (lvalue) {
       if (!isReference)
         return emitError(location)
@@ -5094,12 +5094,12 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       return sim::SimReferencePathIndexOp::create(
                  builder, location, pathType,
                  function.getBody().front().getArgument(0), owner,
-                 resolvedIndex, *ownerReference)
+                 *resolvedIndex, *ownerReference)
           .getResult();
     }
     recordContainerSizeRead(container, location);
     return sim::SimContainerReadOp::create(builder, location, *resultType,
-                                           container, resolvedIndex)
+                                           container, *resolvedIndex)
         .getResult();
   }
 
