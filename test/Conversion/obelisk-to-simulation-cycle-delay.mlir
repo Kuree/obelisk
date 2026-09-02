@@ -76,9 +76,9 @@ module {
 // it, so it waits for one; one, constant-many, and dynamic-many each need only
 // one static suspension site, all resuming in Reactive.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.31
-// CHECK-SAME: %arg4: i1
+// CHECK-SAME: %arg3: i1
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: cf.cond_br %arg4
+// CHECK: cf.cond_br %arg3
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK: obelisk_sim.nba.enqueue
 

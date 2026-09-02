@@ -130,7 +130,9 @@ module {
 // CHECK-SAME: obelisk_sim.control_target_id = [[ACTRL:[0-9]+]]
 // CHECK-SAME: obelisk_sim.hierarchical_name = "top.x.work"
 // CHECK: obelisk_sim.spawn @[[B0:[^ (]+]]({{.*}}%[[PCAP]]) :
-// CHECK-NEXT: obelisk_sim.spawn @[[B1:[^ (]+]]({{.*}}%[[QCAP]]) :
+// The q implementation does not read its interface net, so the branch-local
+// capture is pruned while the aggregate ABI still accepts every candidate.
+// CHECK-NEXT: obelisk_sim.spawn @[[B1:[^ (]+]](%arg0, %arg2, %arg3, %arg4) :
 // CHECK-NEXT: obelisk_sim.suspend.join all
 // CHECK-SAME: processes 2 to
 // CHECK: obelisk_sim.func private @[[P:unit_[0-9]+]]
@@ -146,10 +148,10 @@ module {
 // CHECK: %[[B0CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
 // CHECK: obelisk_sim.control.boundary %[[B0CTRL]]
 // CHECK: obelisk_sim.task.call @[[P]]({{.*}}%[[B0CAP]], %{{[^,)]+}}) arguments 7 to
-// CHECK: obelisk_sim.func private @[[B1]]({{.*}}%[[B1CAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>{{[^)]*}}) attributes
+// CHECK: obelisk_sim.func private @[[B1]](%arg0: !obelisk_sim.context{{.*}}, %arg1: !obelisk_sim.ref<i32>{{.*}}, %arg2: i32{{.*}}, %arg3: !obelisk_sim.ref<i32>{{.*}}) attributes
 // CHECK: %[[B1CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
 // CHECK: obelisk_sim.control.boundary %[[B1CTRL]]
-// CHECK: obelisk_sim.task.call @[[Q]]({{.*}}%[[B1CAP]], %{{[^,)]+}}) arguments 7 to
+// CHECK: obelisk_sim.task.call @[[Q]](%arg0, %arg1, %arg2, %arg3, %[[B1CTRL]]) arguments 4 to
 
 // ZERO: obelisk_sim.func private @{{unit_[0-9]+}}
 // ZERO-SAME: obelisk_sim.hierarchical_name = "top.x.work"

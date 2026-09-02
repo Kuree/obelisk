@@ -190,21 +190,20 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-DAG: !obelisk_sim.assoc_array<i32, !obelisk_sim.virtual_interface
 // CHECK-DAG: !obelisk_sim.unpacked_array<0 : 1 x !obelisk_sim.virtual_interface
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
-// Input is a value, output is default-initialized and copied out, inout uses
-// an isolated copy-in/out temporary, and ref remains a live argument reference
-// to the selected container element.
+// IEEE 1800-2017 13.5 gives input copy-in, output copy-out, inout copy-in/out,
+// and ref aliasing semantics. The unused output copy-in value is pruned while
+// its copy-out destination remains live.
 // CHECK-SAME: %arg1: !obelisk_sim.virtual_interface
+// CHECK-SAME: %arg2: !obelisk_sim.ref<!obelisk_sim.virtual_interface
 // CHECK-SAME: %arg3: !obelisk_sim.ref<!obelisk_sim.virtual_interface
-// CHECK-SAME: %arg5: !obelisk_sim.ref<!obelisk_sim.virtual_interface
-// CHECK-SAME: %arg6: !obelisk_sim.argument_ref<!obelisk_sim.virtual_interface
-// CHECK: [[REF:%.*]] = obelisk_sim.argument_ref.load %arg6
-// CHECK: obelisk_sim.argument_ref.store %arg1 to %arg6
-// CHECK: obelisk_sim.ref.store %arg1 to %arg3
-// CHECK: obelisk_sim.ref.store [[REF]] to %arg5
+// CHECK-SAME: %arg4: !obelisk_sim.argument_ref<!obelisk_sim.virtual_interface
+// CHECK: [[REF:%.*]] = obelisk_sim.argument_ref.load %arg4
+// CHECK: obelisk_sim.argument_ref.store %arg1 to %arg4
+// CHECK: obelisk_sim.ref.store %arg1 to %arg2
+// CHECK: obelisk_sim.ref.store [[REF]] to %arg3
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// Distinct elaborated instances and the output formal's null default must not
-// be commoned merely because bind/null are pure handle constants.
-// CHECK: obelisk_sim.virtual_interface.null
+// Distinct elaborated instances must not be commoned merely because binds are
+// pure handle constants.
 // CHECK: obelisk_sim.virtual_interface.bind 2
 // CHECK: obelisk_sim.virtual_interface.bind 3
 // CHECK: obelisk_sim.container.create {{.*}}bit_width = 64 : i64{{.*}}element_kind = 1 : i32
@@ -212,8 +211,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.assoc.write
 // CHECK: obelisk_sim.reference_path.index
 // CHECK: obelisk_sim.reference_path.assoc
-// CHECK: [[OUTNULL:%.*]] = obelisk_sim.virtual_interface.null
-// CHECK: obelisk_sim.task.call @unit_0({{.*}}, [[OUTNULL]], {{.*}})
+// CHECK: obelisk_sim.task.call @unit_0
 // CHECK: obelisk_sim.argument_ref.store
 // CHECK-NOT: obelisk.sv.
 // BYTECODE: obelisk.bytecode.image = array<i8:

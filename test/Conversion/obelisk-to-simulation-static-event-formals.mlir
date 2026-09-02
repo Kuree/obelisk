@@ -3,8 +3,8 @@
 // IEEE 1800-2017 13.3.2 makes static-task formals persistent variables and
 // initializes them to the type's default value. For event formals, 6.17 makes
 // that value a fresh synchronization object. Copy-in, assignment, and copy-out
-// then replace handles in those static cells. An output's ignored call operand
-// is null rather than an unused newly allocated event.
+// then replace handles in those static cells. Per 13.5, an output argument is
+// copied back on return, so an unused copy-in value need not cross the boundary.
 
 // CHECK: obelisk_sim.storage.decl 2 in 1 : !obelisk_sim.event static hierarchy "event_formal.copy_event.incoming"
 // CHECK: obelisk_sim.storage.decl 3 in 1 : !obelisk_sim.event static hierarchy "event_formal.copy_event.outgoing"
@@ -23,12 +23,11 @@
 // CHECK: %[[COPIED:.*]] = obelisk_sim.ref.load %[[STATIC_IN]]
 // CHECK: obelisk_sim.ref.store %[[COPIED]] to %[[STATIC_OUT]]
 // CHECK: %[[RESULT:.*]] = obelisk_sim.ref.load %[[STATIC_OUT]]
-// CHECK: obelisk_sim.ref.store %[[RESULT]] to %arg3
+// CHECK: obelisk_sim.ref.store %[[RESULT]] to %arg2
 
 // CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[IGNORED:.*]] = obelisk_sim.event.null
 // CHECK: %[[ACTUAL:.*]] = obelisk_sim.ref.load %arg1
-// CHECK: obelisk_sim.task.call @unit_0(%arg0, %[[ACTUAL]], %[[IGNORED]], %arg2)
+// CHECK: obelisk_sim.task.call @unit_0(%arg0, %[[ACTUAL]], %arg2)
 // CHECK-NOT: obelisk.sv.
 
 module {

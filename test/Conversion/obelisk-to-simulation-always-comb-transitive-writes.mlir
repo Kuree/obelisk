@@ -3,12 +3,16 @@
 // IEEE 1800-2017 9.2.2.2.1 excludes a variable written by a called function
 // from the caller's always_comb sensitivity set. The helper deliberately also
 // reads the written variable; only source may wake the process.
+// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK: %[[HELPER_SOURCE:.*]] = obelisk_sim.context.storage %arg0[0]
+// CHECK: %[[HELPER_SCRATCH:.*]] = obelisk_sim.context.storage %arg0[1]
+// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %[[HELPER_SOURCE]]
+// CHECK: obelisk_sim.ref.store %[[VALUE]] to %[[HELPER_SCRATCH]]
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
 // CHECK-SAME: %[[SOURCE:[a-zA-Z0-9_]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %[[SCRATCH:[a-zA-Z0-9_]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+// CHECK-SAME: ) attributes
 // CHECK: obelisk_sim.call @unit_0
 // CHECK: obelisk_sim.suspend.change %[[SOURCE]]
-// CHECK-NOT: obelisk_sim.suspend{{.*}}%[[SCRATCH]]
 
 module {
   obelisk.sv.symbol.definition attributes {
