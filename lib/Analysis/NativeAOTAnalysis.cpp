@@ -42,6 +42,45 @@ bool isManagedType(Type type) {
   return false;
 }
 
+/// Certify the lifecycle CFG emitted for a persistent $monitor/$fmonitor
+/// callback. The marker provides compiler provenance; the structural checks
+/// ensure this is one bounded actor which either waits for its next argument
+/// change or terminates after being replaced.
+bool isPersistentMonitorActor(sim::SimFuncOp function) {
+  if (!function || !function->hasAttr("obelisk_sim.persistent_monitor") ||
+      !function->hasAttr("internal") ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      function.getEntryKind() != sim::EntryKind::Fork ||
+      function.getHomeRegion() != sim::EventRegion::Postponed ||
+      function.getDomain() != sim::ExecutionDomain::Design ||
+      function.getBody().getBlocks().size() != 4)
+    return false;
+
+  Block &entry = function.getBody().front();
+  Block &dispatch = *std::next(function.getBody().begin());
+  Block &body = *std::next(function.getBody().begin(), 2);
+  Block &stale = function.getBody().back();
+  auto entryBranch = dyn_cast<cf::BranchOp>(entry.getTerminator());
+  auto monitor = dispatch.empty()
+                     ? sim::SimMonitorCurrentOp{}
+                     : dyn_cast<sim::SimMonitorCurrentOp>(dispatch.front());
+  auto choose = dyn_cast<cf::CondBranchOp>(dispatch.getTerminator());
+  auto terminate = dyn_cast<sim::SimReturnOp>(stale.getTerminator());
+  Operation *wait = body.getTerminator();
+  bool fixedWait =
+      isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp,
+          sim::SimSuspendObserveOp, sim::SimSuspendForeverOp>(wait);
+  return entryBranch && entryBranch.getDest() == &dispatch && monitor &&
+         std::distance(dispatch.begin(), dispatch.end()) == 2 && choose &&
+         choose.getCondition() == monitor.getResult() &&
+         choose.getTrueDest() == &body && choose.getFalseDest() == &stale &&
+         stale.getNumArguments() == 0 &&
+         std::distance(stale.begin(), stale.end()) == 1 && terminate &&
+         terminate.getOperands().empty() && fixedWait &&
+         wait->getNumSuccessors() == 1 && wait->getSuccessor(0) == &dispatch;
+}
+
 } // namespace
 
 bool isNegativeTimingDelayCommit(sim::SimFuncOp function) {
@@ -690,7 +729,6 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
   }
 
-  DenseMap<StringRef, unsigned> rootSpawnCounts;
   sim::SimFuncOp root;
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
@@ -698,10 +736,38 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   });
   if (!root)
     rejectPlan("missing root initializer");
+  DenseMap<StringRef, unsigned> rootSpawnCounts;
+  DenseMap<StringRef, unsigned> totalSpawnCounts;
+  if (root)
+    root.walk(
+        [&](sim::SimSpawnOp spawn) { ++rootSpawnCounts[spawn.getCallee()]; });
+  module.walk(
+      [&](sim::SimSpawnOp spawn) { ++totalSpawnCounts[spawn.getCallee()]; });
+  SmallVector<sim::SimFuncOp> staticNestedActors;
+  auto isStaticPersistentMonitorSpawn = [&](sim::SimSpawnOp spawn,
+                                            sim::SimFuncOp owner,
+                                            sim::SimFuncOp target) {
+    if (!isPersistentMonitorActor(target) ||
+        owner.getEntryKind() != sim::EntryKind::Initial ||
+        rootSpawnCounts.lookup(owner.getSymName()) != 1 ||
+        totalSpawnCounts.lookup(target.getSymName()) != 1 ||
+        spawn->getBlock() != &owner.getBody().front() ||
+        !spawn.getResult().hasOneUse())
+      return false;
+    auto registration =
+        dyn_cast<sim::SimMonitorRegisterOp>(*spawn.getResult().user_begin());
+    return registration && registration.getProcess() == spawn.getResult();
+  };
   module.walk([&](sim::SimSpawnOp spawn) {
     sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
     if (!owner || owner != root) {
       sim::SimFuncOp target = lookupFunction(spawn.getCallee());
+      if (owner && target &&
+          isStaticPersistentMonitorSpawn(spawn, owner, target)) {
+        if (!llvm::is_contained(staticNestedActors, target))
+          staticNestedActors.push_back(target);
+        return;
+      }
       bool concurrentCold = target && isConcurrentColdActor(target);
       if (isNegativeTimingDelayMonitorSpawn(spawn, target)) {
         // IEEE 1800-2017 31.9.1 transport commits must execute their first
@@ -720,7 +786,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         dynamicActors.insert(target.getOperation());
       return;
     }
-    if (++rootSpawnCounts[spawn.getCallee()] != 1) {
+    if (rootSpawnCounts.lookup(spawn.getCallee()) != 1) {
       result.reasons.emplace_back("duplicate statically spawned process");
       onlyConcurrentColdBoundaries = false;
       if (sim::SimFuncOp target = lookupFunction(spawn.getCallee()))
@@ -730,7 +796,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
 
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() == sim::EntryKind::Task ||
-        function.getEntryKind() == sim::EntryKind::Fork) {
+        (function.getEntryKind() == sim::EntryKind::Fork &&
+         !llvm::is_contained(staticNestedActors, function))) {
       result.reasons.emplace_back("task, await, or join control is present");
       onlyConcurrentColdBoundaries &= isConcurrentColdActor(function);
       dynamicActors.insert(function.getOperation());
@@ -931,6 +998,13 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (result.actorSlots.try_emplace(target.getOperation(), slot).second)
       ++slot;
   });
+  for (sim::SimFuncOp function : staticNestedActors) {
+    if (dynamicActors.contains(function.getOperation()) ||
+        bytecodeActors.contains(function.getOperation()))
+      continue;
+    if (result.actorSlots.try_emplace(function.getOperation(), slot).second)
+      ++slot;
+  }
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();
   // Forced hybrid admission is actor/block-provenance based. Every bytecode
