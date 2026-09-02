@@ -204,7 +204,9 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode, uint32_t optLevel,
                                       StringRef staticSpecialization,
                                       bool earlySymbolDCE) {
-  manager.addPass(createObeliskSimPreparePass());
+  ObeliskSimPreparePassOptions prepareOptions;
+  prepareOptions.pruneUnusedCoverage = earlySymbolDCE && vpiMode == "off";
+  manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
   OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable

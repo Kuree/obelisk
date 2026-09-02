@@ -21,6 +21,10 @@ def ConvertSlangToObeliskPass
 def ObeliskSimPreparePass
     : Pass<"obelisk-sim-prepare", "mlir::ModuleOp"> {
   let summary = "Resolve and freeze semantic IR into isolated simulation units";
+  let options = [
+    Option<"pruneUnusedCoverage", "prune-unused-coverage", "bool", "true",
+           "Prune unreferenced embedded covergroups before declaration materialization">
+  ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::arith::ArithDialect",

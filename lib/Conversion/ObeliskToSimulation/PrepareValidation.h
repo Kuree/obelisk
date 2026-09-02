@@ -12,6 +12,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 
 namespace obelisk::simlowering {
@@ -20,11 +21,12 @@ namespace obelisk::simlowering {
 struct ValidatedSemanticDesign {
   ir::SVRootSymbolOp root;
   llvm::StringMap<mlir::Operation *> symbols;
+  llvm::DenseSet<mlir::Type> unusedEmbeddedCovergroupTypes;
 };
 
 /// Validate the complete elaborated semantic tree before target IR is built.
 mlir::FailureOr<ValidatedSemanticDesign>
-validateSemanticDesign(mlir::ModuleOp module);
+validateSemanticDesign(mlir::ModuleOp module, bool pruneUnusedCoverage);
 
 } // namespace obelisk::simlowering
 

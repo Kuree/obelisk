@@ -82,7 +82,8 @@ bool isSupportedAssertionNode(Operation *op) {
 
 } // namespace
 
-FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
+FailureOr<ValidatedSemanticDesign>
+validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
   ValidatedSemanticDesign result;
   llvm::DenseMap<uint64_t, Operation *> nodeIds;
   bool invalid = false;
@@ -140,6 +141,58 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
     }
   });
 
+  // Embedded covergroup declarations contribute no behavior until a handle is
+  // constructed or referenced. Inventory those uses once, before rejecting
+  // unsupported live coverage semantics, so dead UVM metadata does not block
+  // or inflate an otherwise unrelated class. This is two linear walks over
+  // the semantic tree; every lookup below is O(1).
+  llvm::DenseMap<Operation *, Type> embeddedCoverageOwnerByOperation;
+  if (pruneUnusedCoverage) {
+    llvm::DenseSet<Type> candidates;
+    result.root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+      if (isa<semantic::SVClassTypeOp>(covergroup->getParentOp())) {
+        candidates.insert(covergroup.getSemanticType());
+        covergroup->walk([&](Operation *nested) {
+          embeddedCoverageOwnerByOperation.try_emplace(
+              nested, covergroup.getSemanticType());
+        });
+      }
+    });
+
+    llvm::DenseSet<Type> live;
+    bool preserveAll = false;
+    result.root->walk([&](Operation *op) {
+      if (!op->getName().getStringRef().starts_with("obelisk.sv.expression."))
+        return;
+
+      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op);
+          call && call.getIsSystemCall() &&
+          call.getCalleeName().contains("coverage"))
+        preserveAll = true;
+
+      if (auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type"))
+        if (auto handle = dyn_cast<semantic::CovergroupHandleType>(
+                semanticType.getValue()))
+          if (candidates.contains(handle))
+            live.insert(handle);
+
+      auto reference = op->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      if (!reference)
+        return;
+      auto target = result.symbols.find(reference.getLeafReference());
+      if (target == result.symbols.end())
+        return;
+      auto owner = embeddedCoverageOwnerByOperation.find(target->second);
+      if (owner != embeddedCoverageOwnerByOperation.end())
+        live.insert(owner->second);
+    });
+
+    if (!preserveAll)
+      for (Type candidate : candidates)
+        if (!live.contains(candidate))
+          result.unusedEmbeddedCovergroupTypes.insert(candidate);
+  }
+
   std::function<bool(Operation *)> isCoverageConstant = [&](Operation
                                                                 *expression) {
     if (isa<semantic::SVIntegerLiteralOp,
@@ -170,6 +223,10 @@ FailureOr<ValidatedSemanticDesign> validateSemanticDesign(ModuleOp module) {
   // semantics.
   module.walk([&](Operation *op) {
     if (!isSemanticOp(op))
+      return;
+    if (auto owner = embeddedCoverageOwnerByOperation.find(op);
+        owner != embeddedCoverageOwnerByOperation.end() &&
+        result.unusedEmbeddedCovergroupTypes.contains(owner->second))
       return;
     if (isa<semantic::SVCheckerInstanceSymbolOp>(op)) {
       emitError(getSemanticLocation(op))

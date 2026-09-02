@@ -407,6 +407,9 @@ static bool isProgramCodeUnit(Operation *op) {
 class ObeliskSimPreparePass
     : public impl::ObeliskSimPreparePassBase<ObeliskSimPreparePass> {
 public:
+  using Base = impl::ObeliskSimPreparePassBase<ObeliskSimPreparePass>;
+  using Base::Base;
+
   void runOnOperation() override;
 };
 
@@ -414,7 +417,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *context = &getContext();
 
-  FailureOr<ValidatedSemanticDesign> validated = validateSemanticDesign(module);
+  FailureOr<ValidatedSemanticDesign> validated =
+      validateSemanticDesign(module, pruneUnusedCoverage);
   if (failed(validated)) {
     signalPassFailure();
     return;
@@ -1595,13 +1599,15 @@ void ObeliskSimPreparePass::runOnOperation() {
     signalPassFailure();
   };
 
-  if (failed(materializeCovergroupDeclarations(semanticRoot, builder))) {
+  if (failed(materializeCovergroupDeclarations(
+          semanticRoot, builder, validated->unusedEmbeddedCovergroupTypes))) {
     abort();
     return;
   }
 
   FailureOr<PreparedClassDeclarations> classes = materializeClassDeclarations(
-      module, design, semanticRoot, builder, semanticSymbols);
+      module, design, semanticRoot, builder, semanticSymbols,
+      validated->unusedEmbeddedCovergroupTypes);
   if (failed(classes)) {
     abort();
     return;

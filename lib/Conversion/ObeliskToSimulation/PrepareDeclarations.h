@@ -16,6 +16,7 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 
 namespace obelisk::simlowering {
@@ -49,15 +50,16 @@ struct PreparedScopeDeclarations {
 ir::SVSubroutineSymbolOp getClassMethod(mlir::Operation *member);
 
 /// Materialize deterministic covergroup declarations into `design`.
-mlir::LogicalResult
-materializeCovergroupDeclarations(ir::SVRootSymbolOp semanticRoot,
-                                  mlir::OpBuilder &builder);
+mlir::LogicalResult materializeCovergroupDeclarations(
+    ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,
+    const llvm::DenseSet<mlir::Type> &unusedEmbeddedCovergroupTypes);
 
 /// Materialize the complete executable class inventory into `design`.
 mlir::FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     mlir::ModuleOp module, sim::SimDesignOp design,
     ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,
-    const llvm::StringMap<mlir::Operation *> &semanticSymbols);
+    const llvm::StringMap<mlir::Operation *> &semanticSymbols,
+    const llvm::DenseSet<mlir::Type> &unusedEmbeddedCovergroupTypes);
 
 /// Materialize hierarchical scopes and their DPI time-scale metadata.
 mlir::FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(

@@ -385,12 +385,13 @@ semantic::SVSubroutineSymbolOp getClassMethod(Operation *member) {
   return {};
 }
 
-LogicalResult
-materializeCovergroupDeclarations(semantic::SVRootSymbolOp semanticRoot,
-                                  OpBuilder &builder) {
+LogicalResult materializeCovergroupDeclarations(
+    semantic::SVRootSymbolOp semanticRoot, OpBuilder &builder,
+    const llvm::DenseSet<Type> &unusedEmbeddedCovergroupTypes) {
   SmallVector<semantic::SVCovergroupTypeOp> covergroupSources;
   semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
-    covergroupSources.push_back(covergroup);
+    if (!unusedEmbeddedCovergroupTypes.contains(covergroup.getSemanticType()))
+      covergroupSources.push_back(covergroup);
   });
   llvm::sort(covergroupSources, [](semantic::SVCovergroupTypeOp lhs,
                                    semantic::SVCovergroupTypeOp rhs) {
@@ -449,7 +450,8 @@ materializeCovergroupDeclarations(semantic::SVRootSymbolOp semanticRoot,
 FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     ModuleOp module, sim::SimDesignOp design,
     semantic::SVRootSymbolOp semanticRoot, OpBuilder &builder,
-    const llvm::StringMap<Operation *> &semanticSymbols) {
+    const llvm::StringMap<Operation *> &semanticSymbols,
+    const llvm::DenseSet<Type> &unusedEmbeddedCovergroupTypes) {
   MLIRContext *context = module.getContext();
   PreparedClassDeclarations result;
   // Inventory classes and detect the feature in one traversal. Designs that
@@ -694,6 +696,9 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     for (Operation *child : getChildren(classType)) {
       auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
       if (!property)
+        continue;
+      if (std::optional<Type> type = property.getSemanticType();
+          type && unusedEmbeddedCovergroupTypes.contains(*type))
         continue;
       FailureOr<Type> type = getNormalizedSemanticType(property);
       if (failed(type)) {
