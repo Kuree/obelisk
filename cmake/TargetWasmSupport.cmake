@@ -42,10 +42,18 @@ endforeach()
 set(_obelisk_target_runtime_dir "${CMAKE_BINARY_DIR}/target-runtime")
 set(OBELISK_TARGET_RUNTIME_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt.a")
+set(_obelisk_vpi_include_dir
+    "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800")
 
 file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
-  "${_obelisk_runtime_source_dir}/lib/*.h")
+  "${_obelisk_runtime_source_dir}/lib/*.h"
+  "${_obelisk_vpi_include_dir}/*.h")
+set(_obelisk_target_reflection_headers
+  "${_obelisk_source_dir}/include/obelisk/Reflection/DesignReflection.h"
+  "${_obelisk_source_dir}/include/obelisk/Reflection/VPIObjectModel.h"
+  "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/DesignReflectionLayout.h.inc"
+  "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/VPIObjectModel.h.inc")
 
 set(_obelisk_target_runtime_definitions
   -DOBELISK_RT_IGNORE_EXCEPTIONS=1)
@@ -73,8 +81,11 @@ set(_obelisk_wasm_flags
   "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
   "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
   ${_obelisk_target_runtime_definitions}
+  -I "${_obelisk_source_dir}/include"
+  -I "${CMAKE_BINARY_DIR}/include"
   -I "${_obelisk_runtime_source_dir}/include"
-  -I "${_obelisk_runtime_source_dir}/lib")
+  -I "${_obelisk_runtime_source_dir}/lib"
+  -I "${_obelisk_vpi_include_dir}")
 
 set(_obelisk_target_runtime_common_sources
     ABI Bytecode Containers Coverage DesignBytecode DesignBytecodeImage
@@ -88,9 +99,13 @@ set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
     ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport
     DPIExportBytecode)
+set(_obelisk_target_runtime_check_sources
+    DesignReflectionABI VPIObjectModelABI)
 set(_obelisk_target_runtime_objects)
+set(_obelisk_target_runtime_check_objects)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
-                        _obelisk_target_runtime_cold_tail_sources)
+                        _obelisk_target_runtime_cold_tail_sources
+                        _obelisk_target_runtime_check_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(source_dependencies
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
@@ -98,7 +113,15 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     list(APPEND source_dependencies
       "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
   endif()
-  list(APPEND _obelisk_target_runtime_objects "${object}")
+  if(source STREQUAL "DesignDatabase" OR
+     source IN_LIST _obelisk_target_runtime_check_sources)
+    list(APPEND source_dependencies ${_obelisk_target_reflection_headers})
+  endif()
+  if(source IN_LIST _obelisk_target_runtime_check_sources)
+    list(APPEND _obelisk_target_runtime_check_objects "${object}")
+  else()
+    list(APPEND _obelisk_target_runtime_objects "${object}")
+  endif()
   add_custom_command(
     OUTPUT "${object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -122,6 +145,9 @@ add_custom_command(
   VERBATIM)
 add_custom_target(obelisk_target_runtime
   DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}")
+add_custom_target(obelisk_target_runtime_abi_checks
+  DEPENDS ${_obelisk_target_runtime_check_objects})
+add_dependencies(obelisk_target_runtime obelisk_target_runtime_abi_checks)
 
 # Staged where the driver looks for target support, matching the native
 # layout so the lookup in tools/driver/NativeBackend.cpp needs no special case.
