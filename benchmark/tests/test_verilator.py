@@ -965,6 +965,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("read-only", excluded.reason)
         self.assertIn("pa.addr and pb.addr", excluded.reason)
 
+    def test_virtual_modport_member_selection_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_interface_virtual_modport_sel"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.5 and 25.9")
+        self.assertIn("unselected virtual interface", excluded.reason)
+        self.assertIn("virtual_handle.modport", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

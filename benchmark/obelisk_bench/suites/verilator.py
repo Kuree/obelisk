@@ -996,6 +996,12 @@ WRITE_THROUGH_INPUT_MODPORT = Exclusion(
     "modport directions are those seen from the module using the interface, "
     "so a member listed as input is read-only through that selected modport; "
     "the test writes pa.addr and pb.addr through virtual PBus.phy handles")
+VIRTUAL_INTERFACE_MODPORT_MEMBER_SELECTION = Exclusion(
+    "IEEE 1800-2017 25.5 and 25.9",
+    "25.5 defines instance.modport selection for an interface-instance port "
+    "connection, while 25.9 instead makes an unselected virtual interface "
+    "directly assignment-compatible with a selected-modport virtual variable; "
+    "the test requires Verilator's virtual_handle.modport expression extension")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1132,6 +1138,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_parameter_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_star": ALWAYS_FF_MULTIPLE_WRITER,
     "t_interface_virtual": WRITE_THROUGH_INPUT_MODPORT,
+    "t_interface_virtual_modport_sel": (
+        VIRTUAL_INTERFACE_MODPORT_MEMBER_SELECTION),
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
