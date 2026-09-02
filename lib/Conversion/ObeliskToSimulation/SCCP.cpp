@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -600,22 +601,28 @@ void ObeliskSimSCCPPass::runOnOperation() {
   }
 
   // Resolved nets are ordinary scheduler state, so most reads are not SCCP
-  // boundaries.  A narrow exception is an invisible, full-width connected
-  // component with exactly one full-width driver and one exact value at every
-  // executable drive site.  Such a component is immutable after its
+  // boundaries.  A narrow exception is a non-externally-writable, full-width
+  // connected component with exactly one full-width driver and one exact value
+  // at every executable drive site. Such a component is immutable after its
   // continuous assignment initializes, and seeding its reads lets local SCCP
-  // erase configuration-disabled RTL before compute-graph fusion.  Writable
-  // VPI and language overrides deliberately disable this specialization, and
+  // erase configuration-disabled RTL before compute-graph fusion. Writable VPI
+  // and language overrides deliberately disable this specialization, and
   // so does a resolution kind that contributes a driver of its own: IEEE
   // 1800-2017 6.6.6 gives a supply net supply strength, 6.6.4 gives tri0 and
   // tri1 a pull, and 28.16.2 lets a trireg resolve retained charge, none of
   // which the component's one `driver.decl` accounts for.
   DenseMap<uint64_t, BoundaryFact> netFacts;
-  if (vpi == "off") {
+  std::optional<sim::ComputeVPIMode> vpiMode =
+      sim::symbolizeComputeVPIMode(vpi);
+  if (!vpiMode) {
+    design.emitOpError("VPI mode must be off, read, or full");
+    return signalPassFailure();
+  }
+  if (!analysis::SimulationVPIAnalysis::forMode(*vpiMode).allowsWrite()) {
     struct NetInfo {
       Type type;
       uint64_t width = 0;
-      bool visible = false;
+      bool externallyWritable = false;
       // Whether the resolution kind's implicit contribution is high impedance,
       // which 28.12 resolves away against any one explicit driver. Wired logic
       // (wand/wor) qualifies too: 28.12.4 only decides equal-strength
@@ -634,9 +641,10 @@ void ObeliskSimSCCPPass::runOnOperation() {
         std::optional<uint64_t> width = sim::getProvenanceSpan(net.getType());
         if (!width)
           continue;
-        bool visible =
+        bool externallyWritable =
             net.getObservability() &&
-            *net.getObservability() != sim::ComputeObservabilityKind::Invisible;
+            *net.getObservability() ==
+                sim::ComputeObservabilityKind::ExternallyWritable;
         bool implicitlyHighImpedance = true;
         switch (net.getResolutionKind()) {
         case sim::NetResolutionKind::Tri0:
@@ -653,7 +661,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
         case sim::NetResolutionKind::WOr:
           break;
         }
-        nets[net.getId()] = {net.getType(), *width, visible,
+        nets[net.getId()] = {net.getType(), *width, externallyWritable,
                              implicitlyHighImpedance};
         connections[net.getId()];
         continue;
@@ -695,8 +703,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
       }
     }
     design.walk([&](Operation *operation) {
-      hasOverride |=
-          isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp>(operation);
+      hasOverride |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
+                         sim::SimReleaseOverrideOp>(operation);
     });
 
     DenseMap<uint64_t, SmallVector<uint64_t>> components;
@@ -715,7 +723,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
           uint64_t member = members[index];
           representative = std::min(representative, member);
           auto info = nets.find(member);
-          eligible &= info != nets.end() && !info->second.visible &&
+          eligible &= info != nets.end() && !info->second.externallyWritable &&
                       info->second.implicitlyHighImpedance &&
                       !invalid.contains(member);
           drivers += driverCounts.lookup(member);
