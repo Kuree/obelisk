@@ -727,13 +727,12 @@ module {
 // FINAL-NOT: obelisk_sim.ref.alloc
 // FINAL-NOT: obelisk_sim.func @unit_
 
-// SCCP: obelisk_sim.func private @[[IDENTITY:unit_[0-9]+]]({{.*}}%arg1: i1
-// SCCP-SAME: -> i1
+// SCCP: obelisk_sim.func private @[[IDENTITY:unit_[0-9]+]](%arg0: !obelisk_sim.context{{.*}}) -> i1 attributes
 // SCCP: %[[IDENTITY_RESULT:.*]] = arith.constant true
 // SCCP: obelisk_sim.return %[[IDENTITY_RESULT]] : i1
 // SCCP: obelisk_sim.func private @[[CALLER:unit_[0-9]+]]({{.*}}!obelisk_sim.ref<i1>
-// SCCP: %[[FOLDED:.*]] = arith.constant true
 // SCCP: obelisk_sim.call @[[IDENTITY]]
+// SCCP: %[[FOLDED:.*]] = arith.constant {obelisk_sim.rematerialized} true
 // SCCP: obelisk_sim.ref.store %[[FOLDED]]
 
 // Input arguments are value-only. Only output and inout results are copied

@@ -1006,8 +1006,9 @@ module {
 // CHECK: %[[HYPOT_SUM:.*]] = arith.addf %[[HYPOT_X_SQUARED]], %[[HYPOT_Y_SQUARED]] : f64
 // CHECK: %[[HYPOT_RESULT:.*]] = math.sqrt %[[HYPOT_SUM]] : f64
 // CHECK: obelisk_sim.display {{.*}}(%[[HYPOT_RESULT]])
-// CHECK: %[[ITOR_INPUT:.*]] = obelisk_sim.random.next
-// CHECK: %[[ITOR_RESULT:.*]] = obelisk_sim.real.from_integer
+// IEEE 1800-2017 20.15.1 defines $random as a signed 32-bit integer.
+// CHECK: %[[ITOR_INPUT:.*]] = obelisk_sim.random.legacy
+// CHECK: %[[ITOR_RESULT:.*]] = obelisk_sim.real.from_integer %[[ITOR_INPUT]] signed = true : i32 -> f64
 // CHECK: obelisk_sim.display {{.*}}(%[[ITOR_RESULT]])
 // CHECK: %[[RTOI_REAL:.*]] = obelisk_sim.real.from_integer
 // CHECK: %[[RTOI_TRUNCATED:.*]] = math.trunc %[[RTOI_REAL]] : f64

@@ -1,4 +1,8 @@
-// RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+
+// IEEE 1800-2017 19.4 defines an embedded covergroup as an anonymous type and
+// class member. The unused member is outside the executable closure, so it is
+// removed before unsupported executable lowering while its owner class stays.
 
 module {
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "root"} {
@@ -13,5 +17,7 @@ module {
   }
 }
 
-// CHECK: covergroup type inheritance is not executable
-
+// CHECK: obelisk_sim.class.decl @__obelisk_class_covergroup_owner
+// CHECK: obelisk_sim.func private @__obelisk_class_covergroup_owner_implicit_new
+// CHECK-NOT: obelisk_sim.covergroup
+// CHECK-NOT: obelisk.sv.

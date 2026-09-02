@@ -4,9 +4,12 @@
 // unqualified names from beginning lookup in the randomized object's class.
 // The semantic frontend must therefore resolve both shadowed bounds to these
 // function formals. Verify that lowering specializes both captured formals to
-// the call arguments 1 and 9 rather than loading the class property named
-// "lo", whose value is -100.
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}%arg2: i32{{.*}}%arg3: i32{{.*}}obelisk_sim.hierarchical_name = "restricted_empty"
+// the call arguments 1 and 9, prunes their dead boundary arguments, and does
+// not load the class property named "lo", whose value is -100.
+// CHECK-LABEL: obelisk_sim.func private @{{.*}}(%arg0: !obelisk_sim.context
+// CHECK-SAME: %arg1: !obelisk_sim.class_handle<@__obelisk_class_s3_C>
+// CHECK-SAME: ) -> i32 attributes
+// CHECK-SAME: obelisk_sim.hierarchical_name = "restricted_empty"
 // CHECK-NOT: arith.constant -100
 // CHECK: arith.constant {obelisk_sim.rematerialized} 1 : i64
 // CHECK: arith.constant {obelisk_sim.rematerialized} 9 : i64
