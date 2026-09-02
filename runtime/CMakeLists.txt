@@ -11,6 +11,7 @@ set(_obelisk_runtime_common_sources
   lib/DesignBytecodeObservers.cpp
   lib/DesignBytecodeRoots.cpp
   lib/DesignDatabase.cpp
+  lib/DesignReflectionABI.cpp
   lib/DPI.cpp
   lib/FileIO.cpp
   lib/Format.cpp
@@ -60,6 +61,7 @@ add_library(obelisk_rt STATIC
 )
 
 add_library(ObeliskRuntime ALIAS obelisk_rt)
+add_dependencies(obelisk_rt ObeliskDesignReflectionIncGen)
 
 target_include_directories(obelisk_rt
   PUBLIC

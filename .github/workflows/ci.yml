@@ -97,6 +97,17 @@ jobs:
       - name: Build
         run: cmake --build build -j "$(nproc)"
 
+      # Host generators run in the native build. Their architecture-independent
+      # outputs are the only build artifact the wasm compiler consumes from
+      # this stage; future generators extend the same generated/ tree.
+      - name: Upload generated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: obelisk-generated-files
+          path: build/generated
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Compiler cache stats
         if: always()
         run: ccache --show-stats --verbose
@@ -120,13 +131,13 @@ jobs:
   # uploads the tested page for the deploy job below, so pull requests cannot
   # merge wasm-only regressions.
   #
-  # Deliberately not gated on the native job. The two share no build output, so
-  # sequencing them only delayed the page by a full native build -- and while
-  # the native suite was red the wasm job never ran, so its compiler cache
-  # could never be repopulated and every eventual run started cold.
+  # Project-owned generators are native executables. The native stage publishes
+  # their architecture-independent output tree and the wasm stage consumes it;
+  # no host tool or generated source is baked into the LLVM SDK.
   # ---------------------------------------------------------------------------
   wasm-build-and-test:
     name: Build and test wasm
+    needs: build-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 300
     # The SDK image is built only when its Dockerfile or LLVM pin changes.
@@ -136,6 +147,12 @@ jobs:
       WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download generated files
+        uses: actions/download-artifact@v4
+        with:
+          name: obelisk-generated-files
+          path: build-host-generated
 
       - name: Pull wasm32 SDK image
         run: docker pull "$WASM_IMAGE"
@@ -162,6 +179,7 @@ jobs:
       - name: Build obelisk for wasm32
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
+            -v "$PWD/build-host-generated:/obelisk-generated:ro" \
             -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
               set -euo pipefail
               SHA=$(cat "$OBELISK_LLVM_WASM_SHA256_FILE")
@@ -170,6 +188,7 @@ jobs:
                 -DOBELISK_INCLUDE_TESTS=OFF \
                 -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
                 -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
+                -DOBELISK_GENERATED_DIR=/obelisk-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
               cmake --build build-wasm -j "$(nproc)" --target obelisk

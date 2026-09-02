@@ -492,8 +492,10 @@ if(OBELISK_INCLUDE_TESTS)
   message(STATUS "Using lit: ${LLVM_EXTERNAL_LIT}")
 endif()
 
-add_subdirectory(runtime)
+add_custom_target(obelisk-generated-files)
+add_subdirectory(utils/obelisk-tblgen)
 add_subdirectory(include)
+add_subdirectory(runtime)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
