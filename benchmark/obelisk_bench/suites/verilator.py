@@ -869,6 +869,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_modscope": USE_BEFORE_DECLARATION,
     "t_class_param": USE_BEFORE_DECLARATION,
     "t_class_param_mod": USE_BEFORE_DECLARATION,
+    "t_class_param_pkg": USE_BEFORE_DECLARATION,
     "t_select_param": USE_BEFORE_DECLARATION,
     "t_func_const": USE_BEFORE_DECLARATION,
     "t_var_overcmp": USE_BEFORE_DECLARATION,
