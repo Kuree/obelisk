@@ -324,6 +324,15 @@ class CompileDefinesDescriptorTest(unittest.TestCase):
             ["-DONE", "-DTWO=2", "-UOLD", "-DNEW"],
         )
 
+    def test_nonbenchmark_cycle_define_is_recovered_without_execution(self):
+        self.assertEqual(
+            self.defines(
+                "test.cycles = (100000000 if test.benchmark else 100)\n"
+                "test.compile(v_flags2=[\"+define+SIM_CYCLES=\" + "
+                "str(test.cycles)])\n"),
+            ["-DSIM_CYCLES=100"],
+        )
+
 
 class CompileTopDescriptorTest(unittest.TestCase):
     def top(self, text: str) -> str | None:

@@ -181,6 +181,9 @@ SIM_TIME_CYCLES = re.compile(
 CYCLES_DEFAULT = re.compile(
     r"^\s*test\.cycles\s*=\s*\(.*?\bif\s+test\.benchmark\s+else\s+(\d+)\s*\)\s*$",
     re.MULTILINE)
+DYNAMIC_CYCLES_DEFINE = re.compile(
+    r'''["']\+define\+([A-Za-z_][A-Za-z0-9_$]*)=["']\s*\+\s*'''
+    r"str\(test\.cycles\)")
 # `test.compile(timing_loop=True)` asks driver.py for a main loop that clocks
 # the design once per time unit and lets pending events set the next time slot,
 # instead of the five-substep loop below. That clock runs five times faster, so
@@ -1554,6 +1557,10 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 library_flags.extend(
                     ("-v", f"{current_work_library}={path}"))
         index += 1
+    if cycles := CYCLES_DEFAULT.search(text):
+        defines.extend(
+            f"-D{name}={cycles.group(1)}"
+            for name in DYNAMIC_CYCLES_DEFINE.findall(text))
     return CompileSettings(defines, selected_top, library_flags,
                            frontend_flags)
 
