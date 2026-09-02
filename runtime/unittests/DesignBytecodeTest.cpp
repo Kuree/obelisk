@@ -17,6 +17,11 @@
 #include <tuple>
 #include <vector>
 
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include "VPICallbackTestConfig.h"
+#include <dlfcn.h>
+#endif
+
 namespace {
 
 void put16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
@@ -3886,6 +3891,73 @@ TEST(DesignBytecode, SupplyDominanceDisablesCollapsedUWireDriverLimit) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+struct VPILifecycleProbe {
+  int calls = 0;
+  int lastReason = 0;
+  p_cb_data registration = nullptr;
+  p_cb_data invocation = nullptr;
+  bool actionFieldsWereNull = false;
+  bool mutateInvocation = false;
+  bool removeSelf = false;
+  bool removePeer = false;
+  bool registerSameReason = false;
+  vpiHandle self = nullptr;
+  vpiHandle peer = nullptr;
+  vpiHandle registered = nullptr;
+};
+
+PLI_INT32 lifecycleProbeCallback(p_cb_data data) {
+  auto *probe = reinterpret_cast<VPILifecycleProbe *>(data->user_data);
+  ++probe->calls;
+  probe->lastReason = data->reason;
+  probe->invocation = data;
+  probe->actionFieldsWereNull = data->obj == nullptr && data->time == nullptr &&
+                                data->value == nullptr && data->index == 0;
+  if (probe->removePeer) {
+    EXPECT_EQ(vpi_remove_cb(probe->peer), 1);
+  }
+  if (probe->removeSelf) {
+    EXPECT_EQ(vpi_remove_cb(probe->self), 1);
+  }
+  if (probe->registerSameReason) {
+    s_cb_data nested{};
+    nested.reason = data->reason;
+    nested.cb_rtn = lifecycleProbeCallback;
+    nested.user_data = reinterpret_cast<PLI_BYTE8 *>(probe);
+    probe->registered = vpi_register_cb(&nested);
+  }
+  if (probe->mutateInvocation) {
+    data->reason = -1;
+    data->cb_rtn = nullptr;
+    data->user_data = nullptr;
+  }
+  return 73;
+}
+
+struct VPIRegistrationProbe {
+  std::vector<int> reasons;
+  VPILifecycleProbe start;
+  VPILifecycleProbe end;
+};
+
+PLI_INT32 registerLaterLifecycleCallbacks(p_cb_data data) {
+  auto *probe = reinterpret_cast<VPIRegistrationProbe *>(data->user_data);
+  probe->reasons.push_back(data->reason);
+  s_cb_data start{};
+  start.reason = cbStartOfSimulation;
+  start.cb_rtn = lifecycleProbeCallback;
+  start.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe->start);
+  probe->start.self = vpi_register_cb(&start);
+  s_cb_data end{};
+  end.reason = cbEndOfSimulation;
+  end.cb_rtn = lifecycleProbeCallback;
+  end.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe->end);
+  probe->end.self = vpi_register_cb(&end);
+  char rootName[] = "$root";
+  EXPECT_NE(vpi_handle_by_name(rootName, nullptr), nullptr);
+  return 0;
+}
+
 TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
   EXPECT_EQ(obelisk_rt_v1_vpi_startup(nullptr, nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
@@ -3905,10 +3977,258 @@ TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_vpi_end_simulation(context);
+  obelisk_rt_v1_vpi_end_simulation(context);
   obelisk_rt_v1_vpi_shutdown(context);
 
   char rootName[] = "$root";
   EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+#if defined(OBELISK_VPI_CALLBACK_TEST_MODULE)
+TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
+  void *module =
+      dlopen(OBELISK_VPI_CALLBACK_TEST_MODULE, RTLD_NOW | RTLD_LOCAL);
+  ASSERT_NE(module, nullptr) << dlerror();
+  using Reset = void (*)(int);
+  using Query = int (*)(int);
+  auto reset =
+      reinterpret_cast<Reset>(dlsym(module, "obelisk_vpi_callback_test_reset"));
+  auto query =
+      reinterpret_cast<Query>(dlsym(module, "obelisk_vpi_callback_test_query"));
+  ASSERT_NE(reset, nullptr);
+  ASSERT_NE(query, nullptr);
+  const char *modules[] = {OBELISK_VPI_CALLBACK_TEST_MODULE};
+
+  Fixture passiveFixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&passiveFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  reset(0);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  EXPECT_EQ(query(0), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_EQ(query(1), 0);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture activeFixture;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&activeFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  reset(1);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  EXPECT_EQ(query(0), 1);
+  EXPECT_EQ(query(2), 1);
+  EXPECT_EQ(query(3), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  EXPECT_EQ(query(1), 1);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  obelisk_rt_v1_vpi_end_simulation(context);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture failingFixture;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&failingFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  reset(2);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context->vpiState, nullptr);
+  EXPECT_EQ(query(0), 1);
+  EXPECT_EQ(query(1), 0);
+  // A failed module transaction leaves neither active state nor callbacks.
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  EXPECT_EQ(query(1), 0);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  obelisk_rt_v1_vpi_end_simulation(context);
+  obelisk_rt_v1_context_destroy(context);
+
+  EXPECT_EQ(dlclose(module), 0);
+}
+#endif
+
+TEST(VPI, CopiesAndDispatchesLifecycleCallbackData) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  VPILifecycleProbe probe;
+  probe.mutateInvocation = true;
+  s_vpi_time ignoredTime{};
+  s_vpi_value ignoredValue{};
+  s_cb_data registration{};
+  registration.reason = cbStartOfSimulation;
+  registration.cb_rtn = lifecycleProbeCallback;
+  registration.obj = reinterpret_cast<vpiHandle>(uintptr_t{1});
+  registration.time = &ignoredTime;
+  registration.value = &ignoredValue;
+  registration.index = 91;
+  registration.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  probe.registration = &registration;
+  probe.self = vpi_register_cb(&registration);
+  ASSERT_NE(probe.self, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, probe.self), vpiCallback);
+  registration = {};
+
+  s_cb_data copied{};
+  vpi_get_cb_info(probe.self, &copied);
+  EXPECT_EQ(copied.reason, cbStartOfSimulation);
+  EXPECT_EQ(copied.cb_rtn, lifecycleProbeCallback);
+  EXPECT_EQ(copied.user_data, reinterpret_cast<PLI_BYTE8 *>(&probe));
+  EXPECT_EQ(copied.obj, nullptr);
+  EXPECT_EQ(copied.time, nullptr);
+  EXPECT_EQ(copied.value, nullptr);
+  EXPECT_EQ(copied.index, 0);
+
+  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(probe.calls, 1);
+  EXPECT_EQ(probe.lastReason, cbStartOfSimulation);
+  EXPECT_NE(probe.invocation, probe.registration);
+  EXPECT_TRUE(probe.actionFieldsWereNull);
+  vpi_get_cb_info(probe.self, &copied);
+  EXPECT_EQ(copied.reason, cbStartOfSimulation);
+  EXPECT_EQ(copied.cb_rtn, lifecycleProbeCallback);
+  EXPECT_EQ(copied.user_data, reinterpret_cast<PLI_BYTE8 *>(&probe));
+
+  obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_EQ(probe.calls, 1);
+  EXPECT_EQ(vpi_remove_cb(probe.self), 1);
+  EXPECT_EQ(vpi_remove_cb(probe.self), 0);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  VPIRegistrationProbe probe;
+  s_cb_data callback{};
+  callback.reason = cbEndOfCompile;
+  callback.cb_rtn = registerLaterLifecycleCallbacks;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  vpiHandle endCompile = vpi_register_cb(&callback);
+  ASSERT_NE(endCompile, nullptr);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(probe.reasons, std::vector<int>({cbEndOfCompile}));
+  ASSERT_NE(probe.start.self, nullptr);
+  ASSERT_NE(probe.end.self, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(probe.start.calls, 1);
+  EXPECT_EQ(probe.start.lastReason, cbStartOfSimulation);
+  EXPECT_TRUE(probe.start.actionFieldsWereNull);
+  obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_EQ(probe.end.calls, 1);
+  EXPECT_EQ(probe.end.lastReason, cbEndOfSimulation);
+  EXPECT_TRUE(probe.end.actionFieldsWereNull);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  obelisk_rt_v1_vpi_shutdown(context);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  VPILifecycleProbe duplicate;
+  s_cb_data data{};
+  EXPECT_EQ(vpi_register_cb(nullptr), nullptr);
+  EXPECT_EQ(vpi_register_cb(&data), nullptr);
+  data.reason = cbValueChange;
+  data.cb_rtn = lifecycleProbeCallback;
+  EXPECT_EQ(vpi_register_cb(&data), nullptr);
+  data.reason = cbStartOfSimulation;
+  data.user_data = reinterpret_cast<PLI_BYTE8 *>(&duplicate);
+  vpiHandle first = vpi_register_cb(&data);
+  vpiHandle second = vpi_register_cb(&data);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(vpi_compare_objects(first, second), 0);
+  EXPECT_EQ(vpi_release_handle(first), 1);
+
+  vpiHandle iterator = vpi_iterate(vpiCallback, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle firstEquivalent = nullptr;
+  vpiHandle scanned = nullptr;
+  while ((scanned = vpi_scan(iterator)) != nullptr) {
+    if (!vpi_compare_objects(scanned, second))
+      firstEquivalent = scanned;
+  }
+  ASSERT_NE(firstEquivalent, nullptr);
+
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  // Duplicate registration is multiplicative, and releasing the first handle
+  // does not remove its underlying registration.
+  EXPECT_EQ(duplicate.calls, 2);
+  EXPECT_EQ(vpi_remove_cb(firstEquivalent), 1);
+  EXPECT_EQ(vpi_remove_cb(firstEquivalent), 0);
+  EXPECT_EQ(vpi_remove_cb(second), 1);
+
+  VPILifecycleProbe peerRemover;
+  VPILifecycleProbe peer;
+  VPILifecycleProbe selfRemover;
+  VPILifecycleProbe nested;
+  data.reason = cbEndOfSimulation;
+  data.user_data = reinterpret_cast<PLI_BYTE8 *>(&peerRemover);
+  peerRemover.self = vpi_register_cb(&data);
+  data.user_data = reinterpret_cast<PLI_BYTE8 *>(&peer);
+  peer.self = vpi_register_cb(&data);
+  peerRemover.removePeer = true;
+  peerRemover.peer = peer.self;
+  data.user_data = reinterpret_cast<PLI_BYTE8 *>(&selfRemover);
+  selfRemover.removeSelf = true;
+  selfRemover.self = vpi_register_cb(&data);
+  data.user_data = reinterpret_cast<PLI_BYTE8 *>(&nested);
+  nested.registerSameReason = true;
+  nested.self = vpi_register_cb(&data);
+  ASSERT_NE(peerRemover.self, nullptr);
+  ASSERT_NE(peer.self, nullptr);
+  ASSERT_NE(selfRemover.self, nullptr);
+  ASSERT_NE(nested.self, nullptr);
+
+  obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_EQ(peerRemover.calls, 1);
+  EXPECT_EQ(peer.calls, 0);
+  EXPECT_EQ(selfRemover.calls, 1);
+  EXPECT_EQ(nested.calls, 1);
+  ASSERT_NE(nested.registered, nullptr);
+  EXPECT_EQ(vpi_remove_cb(selfRemover.self), 0);
+  char rootName[] = "$root";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_remove_cb(root), 0);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  EXPECT_EQ(vpi_remove_cb(peerRemover.self), 1);
+  EXPECT_EQ(vpi_remove_cb(nested.self), 1);
+  EXPECT_EQ(vpi_remove_cb(nested.registered), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -3919,6 +4239,8 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
 
   char rootName[] = "$root";
   char valueName[] = "value";
@@ -3983,6 +4305,8 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
 
   char objectName[] = "top.value";
   vpiHandle object = vpi_handle_by_name(objectName, nullptr);
@@ -4063,6 +4387,8 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
       obelisk_rt_v1_context_create_for_design(&readOnly.execution, &context),
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
   object = vpi_handle_by_name(objectName, nullptr);
   ASSERT_NE(object, nullptr);
   value = {};
@@ -4082,6 +4408,8 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
       obelisk_rt_v1_context_create_for_design(&noSource.execution, &context),
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
   object = vpi_handle_by_name(objectName, nullptr);
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(vpi_get_str(vpiFile, object), nullptr);

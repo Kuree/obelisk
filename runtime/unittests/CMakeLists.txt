@@ -33,6 +33,29 @@ add_executable(ObeliskRuntimeTests
   VPIObjectModelTest.cpp
   $<TARGET_OBJECTS:ObeliskRuntimeCAPISmoke>
 )
+if(UNIX AND NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+  add_library(ObeliskVPICallbackTestModule MODULE
+    Inputs/VPICallbackModule.c
+  )
+  target_include_directories(ObeliskVPICallbackTestModule SYSTEM PRIVATE
+    ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+  )
+  set_target_properties(ObeliskVPICallbackTestModule PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    PREFIX ""
+  )
+  add_dependencies(ObeliskRuntimeTests ObeliskVPICallbackTestModule)
+  file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/VPICallbackTestConfig.h"
+    CONTENT "#define OBELISK_VPI_CALLBACK_TEST_MODULE \"$<TARGET_FILE:ObeliskVPICallbackTestModule>\"\n"
+  )
+  target_include_directories(ObeliskRuntimeTests PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_target_properties(ObeliskRuntimeTests PROPERTIES ENABLE_EXPORTS ON)
+endif()
 target_link_libraries(ObeliskRuntimeTests PRIVATE
   obelisk_rt
   GTest::gtest_main

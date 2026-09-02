@@ -53,6 +53,8 @@ module vpi_top;
     $display("vpi assign restore=%0d", vpi_force_release_value());
     deassign value;
   end
+
+  final $display("final marker");
 endmodule
 
 // OFF: exports vlog_startup_routines but --vpi=off
@@ -60,12 +62,15 @@ endmodule
 // OUTPUT-NEXT: startup vpi_top.value size=64 aval=ffffffff bval=ffffffff
 // OUTPUT-NEXT: binary underscore=9
 // OUTPUT-NEXT: startup second
+// OUTPUT-NEXT: start simulation
 // OUTPUT-NEXT: run value=7
 // OUTPUT-NEXT: forced net=1
 // OUTPUT-NEXT: released value=7
 // OUTPUT-NEXT: released net=0
 // OUTPUT-NEXT: after value=9
 // OUTPUT-NEXT: vpi assign restore=1311
+// OUTPUT-NEXT: final marker
+// OUTPUT-NEXT: end simulation
 // DYNAMIC: (RUNPATH)      Library runpath: [$ORIGIN/../lib]
 // DYNAMIC: (NEEDED)       Shared library: [libobelisk_vpi_test.so]
 // DYNAMIC: (NEEDED)       Shared library: [libobelisk_vpi_second.so]

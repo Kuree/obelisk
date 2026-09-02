@@ -2909,6 +2909,12 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
                                             const char *const *modules,
                                             uint64_t module_count);
+// Complete elaboration, enter time zero, and finish simulation respectively.
+// These are cold lifecycle boundaries; they never add scheduler polling.
+obelisk_rt_status obelisk_rt_v1_vpi_end_compile(obelisk_rt_context *context);
+obelisk_rt_status
+obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context);
 void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 
 // Generated single-threaded schedule ABI.  The plan is immutable; mutable
