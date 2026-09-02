@@ -878,6 +878,11 @@ ALWAYS_COMB_MULTIPLE_WRITER = Exclusion(
     "a variable written within always_comb cannot be written by any other "
     "process; the initial assignment to all of aux overlaps the always_comb "
     "assignment to aux[0]")
+ALWAYS_FF_MULTIPLE_WRITER = Exclusion(
+    "IEEE 1800-2017 9.2.2.4",
+    "a variable assigned within always_ff shall not be written by any other "
+    "process; counter_ansi is instantiated twice with the same interface, so "
+    "both always_ff processes write c_data.value")
 MIXED_CONTINUOUS_PROCEDURAL_MEMBER = Exclusion(
     "IEEE 1800-2017 6.5",
     "a mixture of procedural and continuous assignments is illegal when "
@@ -1120,6 +1125,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_param_dependency": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_param_local_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_parameter_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
+    "t_interface_star": ALWAYS_FF_MULTIPLE_WRITER,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,

@@ -952,6 +952,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("outside its body", excluded.reason)
         self.assertIn("virtual backdoor_if", excluded.reason)
 
+    def test_shared_interface_always_ff_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_interface_star"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 9.2.2.4")
+        self.assertIn("shall not be written by any other process",
+                      excluded.reason)
+        self.assertIn("both always_ff processes", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
