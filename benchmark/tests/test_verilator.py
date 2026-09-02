@@ -123,6 +123,13 @@ class GeneratedFixtureTest(unittest.TestCase):
         self.assertEqual(len(data), 32 * 256)
         self.assertEqual(data, bytes(range(256)) * 32)
 
+    def test_readmem_eof_fixture_has_no_trailing_newline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            verilator.prepare_generated_fixtures("t_sys_readmem_eof",
+                                                 directory)
+            data = (Path(directory) / "dat.mem").read_bytes()
+        self.assertEqual(data, b"1\n10\n20\n30")
+
 
 class ShellModuleNameTest(unittest.TestCase):
     def test_a_design_without_its_own_top_keeps_driver_pys_name(self):

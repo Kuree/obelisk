@@ -1140,6 +1140,9 @@ def prepare_generated_fixtures(name: str, directory: str | Path) -> None:
         # Upstream writes byte values 0..255 in order, repeated 32 times.
         (Path(directory) / "t_sys_fread.mem").write_bytes(
             bytes(range(256)) * 32)
+    elif name == "t_sys_readmem_eof":
+        # The missing trailing newline is the behavior this scenario tests.
+        (Path(directory) / "dat.mem").write_bytes(b"1\n10\n20\n30")
 
 
 def classify_dependency_failure(name: str, log: str) -> str:
