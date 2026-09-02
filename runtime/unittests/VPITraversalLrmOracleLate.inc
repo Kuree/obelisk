@@ -1,15 +1,15 @@
 add("37.70", S({vpiCase}), vpiCaseItem, Mode::Iterate, S({vpiCaseItem}),
-    Order::None);
+    Order::None, true);
 add("37.83", S({vpiGenScope}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
-    Order::None);
+    Order::None, true);
 add("37.83", S({vpiGenScope}), vpiDefParam, Mode::Iterate, S({vpiDefParam}),
     Order::None);
 add("37.62", S({vpiAssignment}), vpiDelayControl, Mode::Handle,
-    S({vpiDelayControl}), Order::None);
+    S({vpiDelayControl}), Order::None, true);
 add("37.62", S({vpiAssignment}), vpiEventControl, Mode::Handle,
-    S({vpiEventControl}), Order::None);
+    S({vpiEventControl}), Order::None, true);
 add("37.67", S({vpiRepeatControl}), vpiEventControl, Mode::Handle,
-    S({vpiEventControl}), Order::None);
+    S({vpiEventControl}), Order::None, true);
 add("37.61", S({vpiAlways, vpiInitial, vpiFinal}), vpiModule, Mode::Handle,
     S({vpiModule}), Order::None);
 add("37.83", S({vpiGenScope}), vpiModule, Mode::Iterate, S({vpiModule}),
@@ -23,7 +23,7 @@ add("37.83", S({vpiGenScope}), vpiNet, Mode::Iterate,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     Order::None);
 add("37.62", S({vpiAssignment}), vpiRepeatControl, Mode::Handle,
-    S({vpiRepeatControl}), Order::None);
+    S({vpiRepeatControl}), Order::None, true);
 // IEEE 1800-2017 clauses 37.49-37.83.  Entries deliberately name concrete
 // VPI objects instead of production relation-model sets; see the early
 // oracle for the maintenance contract.
@@ -643,7 +643,7 @@ add("37.69", S({vpiIfElse}), vpiElseStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.65", S({vpiOrderedWait}), vpiElseStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -683,7 +683,7 @@ add("37.65", S({vpiOrderedWait}), vpiElseStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.53", S({vpiImmediateAssert, vpiImmediateAssume}), vpiElseStmt,
     Mode::Handle,
     S({vpiAssignStmt,
@@ -724,7 +724,7 @@ add("37.53", S({vpiImmediateAssert, vpiImmediateAssume}), vpiElseStmt,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.71", S({vpiExpectStmt}), vpiElseStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -764,7 +764,7 @@ add("37.71", S({vpiExpectStmt}), vpiElseStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.72", S({vpiFor}), vpiForIncStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -804,7 +804,7 @@ add("37.72", S({vpiFor}), vpiForIncStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.72", S({vpiFor}), vpiForIncStmt, Mode::Iterate,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -844,7 +844,7 @@ add("37.72", S({vpiFor}), vpiForIncStmt, Mode::Iterate,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.72", S({vpiFor}), vpiForInitStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -884,7 +884,7 @@ add("37.72", S({vpiFor}), vpiForInitStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.72", S({vpiFor}), vpiForInitStmt, Mode::Iterate,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -924,7 +924,7 @@ add("37.72", S({vpiFor}), vpiForInitStmt, Mode::Iterate,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.62", S({vpiAssignment}), vpiLhs, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
@@ -2706,7 +2706,7 @@ add("37.61", S({vpiAlways, vpiInitial, vpiFinal}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.70", S({vpiCaseItem}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2746,7 +2746,7 @@ add("37.70", S({vpiCaseItem}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.66", S({vpiDelayControl}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2786,7 +2786,7 @@ add("37.66", S({vpiDelayControl}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.63", S({vpiEventControl}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2826,7 +2826,7 @@ add("37.63", S({vpiEventControl}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.72", S({vpiFor}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2866,7 +2866,7 @@ add("37.72", S({vpiFor}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.68", S({vpiForever}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2906,7 +2906,7 @@ add("37.68", S({vpiForever}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.69", S({vpiIf, vpiIfElse}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2946,7 +2946,7 @@ add("37.69", S({vpiIf, vpiIfElse}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.64", S({vpiRepeat, vpiWhile}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -2986,7 +2986,7 @@ add("37.64", S({vpiRepeat, vpiWhile}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.65", S({vpiWait, vpiOrderedWait}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -3026,7 +3026,7 @@ add("37.65", S({vpiWait, vpiOrderedWait}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.53", S({vpiImmediateAssert, vpiImmediateAssume, vpiImmediateCover}),
     vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
@@ -3067,7 +3067,7 @@ add("37.53", S({vpiImmediateAssert, vpiImmediateAssume, vpiImmediateCover}),
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.73", S({vpiDoWhile, vpiForeachStmt}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -3107,7 +3107,7 @@ add("37.73", S({vpiDoWhile, vpiForeachStmt}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.71", S({vpiExpectStmt}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -3147,7 +3147,7 @@ add("37.71", S({vpiExpectStmt}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.81",
     S({vpiAlways,
        vpiAssignStmt,
@@ -3521,7 +3521,7 @@ add("37.51", S({vpiSeqFormalDecl}), vpiTypespec, Mode::Handle,
        vpiEventTypespec,       vpiInterfaceTypespec}),
     Order::None);
 add("37.83", S({vpiGenScope}), vpiAliasStmt, Mode::Iterate, S({vpiAliasStmt}),
-    Order::None);
+    Order::None, true);
 add("37.83", S({vpiGenScope}), vpiClockingBlock, Mode::Iterate,
     S({vpiClockingBlock}), Order::None);
 add("37.49", S({vpiPropertyInst}), vpiPropertyDecl, Mode::Handle,

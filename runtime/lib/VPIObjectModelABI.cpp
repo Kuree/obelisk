@@ -14,6 +14,8 @@ OBELISK_FOR_EACH_VPI_RELATION(OBELISK_CHECK_VPI_VALUE)
 
 using namespace obelisk::reflection;
 
+static_assert(vpiObjectModelImageTraversalSize == 8);
+
 static_assert(findVPIObjectKind(vpiModule)->role == VPIObjectRole::Concrete);
 static_assert(findVPIObjectKind(vpiReturn) == nullptr);
 static_assert(findVPIObjectSelector(vpiReturn)->role ==
@@ -84,6 +86,16 @@ static_assert(hasVPITraversal(vpiFor, vpiForInitStmt,
                               VPITraversalMode::Handle));
 static_assert(hasVPITraversal(vpiFor, vpiForInitStmt,
                               VPITraversalMode::Iterate));
+static_assert(isVPIStatementContainment(vpiFor, vpiForInitStmt,
+                                        VPITraversalMode::Handle));
+static_assert(isVPIStatementContainment(vpiFor, vpiForInitStmt,
+                                        VPITraversalMode::Iterate));
+static_assert(isVPIStatementContainment(vpiBegin, vpiStmt,
+                                        VPITraversalMode::Iterate));
+static_assert(!isVPIStatementContainment(vpiFrame, vpiStmt,
+                                         VPITraversalMode::Handle));
+static_assert(!isVPIStatementContainment(vpiNet, vpiContAssign,
+                                         VPITraversalMode::Iterate));
 static_assert(findVPITraversal(vpiOrderedWait, vpiCondition,
                                VPITraversalMode::Handle) == nullptr);
 static_assert(hasVPITraversal(vpiOrderedWait, vpiCondition,

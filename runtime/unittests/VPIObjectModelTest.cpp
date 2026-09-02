@@ -42,6 +42,7 @@ struct OracleKey {
 struct OracleEdge {
   KindSet targets;
   Order order;
+  bool statementContainment;
   const char *clause;
 };
 
@@ -75,6 +76,7 @@ const VPITraversalDescriptor &requireTraversal(uint32_t source,
       Mode::Handle,
       Order::None,
       static_cast<VPIObjectSetID>(0),
+      false,
       "missing",
       "missing"};
   return edge ? *edge : missing;
@@ -159,11 +161,12 @@ OracleGraph buildLrmOracle() {
     return KindSet(kinds.begin(), kinds.end());
   };
   auto add = [&](const char *clause, const KindSet &sources, uint32_t selector,
-                 Mode mode, const KindSet &targets, Order order) {
+                 Mode mode, const KindSet &targets, Order order,
+                 bool statementContainment = false) {
     for (uint32_t source : sources) {
-      auto [iterator, inserted] =
-          graph.emplace(OracleKey{source, selector, mode},
-                        OracleEdge{targets, order, clause});
+      auto [iterator, inserted] = graph.emplace(
+          OracleKey{source, selector, mode},
+          OracleEdge{targets, order, statementContainment, clause});
       if (!inserted)
         ADD_FAILURE() << "duplicate LRM oracle key "
                       << keyName(source, selector, mode) << " in " << clause
@@ -196,6 +199,9 @@ TEST(VPIObjectModel, TraversalGraphExactlyMatchesIndependentLrmOracle) {
     EXPECT_EQ(edge.order, iterator->second.order)
         << keyName(edge.sourceType, edge.selector, edge.mode)
         << " differs from LRM " << iterator->second.clause;
+    EXPECT_EQ(edge.statementContainment, iterator->second.statementContainment)
+        << keyName(edge.sourceType, edge.selector, edge.mode)
+        << " has incorrect statement-containment semantics";
   }
 
   EXPECT_EQ(actualKeys.size(), expected.size());
@@ -278,6 +284,48 @@ TEST(VPIObjectModel, BlocksIterateStatementsWithoutAnLrmOrderGuarantee) {
   }
 }
 
+TEST(VPIObjectModel, StatementContainmentIsDistinctFromCrossReferences) {
+  struct Key {
+    uint32_t source;
+    uint32_t selector;
+    Mode mode;
+  };
+  constexpr Key containment[] = {
+      {vpiModule, vpiContAssign, Mode::Iterate},
+      {vpiModule, vpiAliasStmt, Mode::Iterate},
+      {vpiContAssign, vpiBit, Mode::Iterate},
+      {vpiTask, vpiStmt, Mode::Handle},
+      {vpiBegin, vpiStmt, Mode::Iterate},
+      {vpiInitial, vpiStmt, Mode::Handle},
+      {vpiAssignment, vpiDelayControl, Mode::Handle},
+      {vpiRepeatControl, vpiEventControl, Mode::Handle},
+      {vpiIfElse, vpiElseStmt, Mode::Handle},
+      {vpiCase, vpiCaseItem, Mode::Iterate},
+      {vpiFor, vpiForInitStmt, Mode::Handle},
+      {vpiFor, vpiForInitStmt, Mode::Iterate},
+      {vpiImmediateAssert, vpiStmt, Mode::Handle},
+      {vpiAssert, vpiElseStmt, Mode::Handle},
+  };
+  for (const auto &key : containment)
+    EXPECT_TRUE(isVPIStatementContainment(key.source, key.selector, key.mode))
+        << keyName(key.source, key.selector, key.mode);
+
+  constexpr Key crossReferences[] = {
+      {vpiNet, vpiContAssign, Mode::Iterate},
+      {vpiFrame, vpiStmt, Mode::Handle},
+      {vpiThread, vpiOrigin, Mode::Handle},
+      {vpiContAssignBit, vpiParent, Mode::Handle},
+      {vpiClockingBlock, vpiClockingEvent, Mode::Handle},
+      {vpiIfElse, vpiScope, Mode::Handle},
+  };
+  for (const auto &key : crossReferences) {
+    ASSERT_NE(findVPITraversal(key.source, key.selector, key.mode), nullptr)
+        << keyName(key.source, key.selector, key.mode);
+    EXPECT_FALSE(isVPIStatementContainment(key.source, key.selector, key.mode))
+        << keyName(key.source, key.selector, key.mode);
+  }
+}
+
 TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   KindSet expectedSources;
   for (const auto &edge : vpiTraversals)
@@ -344,6 +392,7 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
                                                  edge.sourceType, edge.selector,
                                                  edge.mode, imageEdge));
     EXPECT_EQ(imageEdge.order, edge.order);
+    EXPECT_EQ(imageEdge.statementContainment, edge.statementContainment);
     for (const auto &object : vpiObjectKinds) {
       if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
         continue;

@@ -4,7 +4,7 @@
 // ordering.  Do not replace these relations with production TableGen sets;
 // that would make a broadened or omitted production relation self-validating.
 add("37.5", S({vpiModule}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
-    Order::None);
+    Order::None, true);
 add("37.17",
     S({vpiIntegerVar,
        vpiRealVar,
@@ -34,9 +34,9 @@ add("37.16",
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiContAssign, Mode::Iterate, S({vpiContAssign}), Order::None);
 add("37.6", S({vpiInterface}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
-    Order::None);
+    Order::None, true);
 add("37.9", S({vpiProgram}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
-    Order::None);
+    Order::None, true);
 add("37.5", S({vpiModule}), vpiDefParam, Mode::Iterate, S({vpiDefParam}),
     Order::None);
 add("37.39; 37.40", S({vpiFuncCall, vpiMethodFuncCall}), vpiFunction,
@@ -718,7 +718,7 @@ add("37.48", S({vpiAssert}), vpiElseStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.14", S({vpiPort}), vpiHighConn, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
@@ -3011,7 +3011,7 @@ add("37.29", S({vpiExtends}), vpiArgument, Mode::Iterate,
        vpiLetExpr}),
     Order::None);
 add("37.45", S({vpiContAssign}), vpiBit, Mode::Iterate, S({vpiContAssignBit}),
-    Order::Index);
+    Order::Index, true);
 add("37.16",
     S({vpiNet, vpiUnionNet, vpiShortRealNet, vpiRealNet, vpiByteNet,
        vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet, vpiInterconnectNet,
@@ -3862,7 +3862,7 @@ add("37.12", S({vpiFunction, vpiTask}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.12", S({vpiBegin, vpiNamedBegin, vpiFork, vpiNamedFork}), vpiStmt,
     Mode::Iterate,
     S({vpiAssignStmt,
@@ -3903,7 +3903,7 @@ add("37.12", S({vpiBegin, vpiNamedBegin, vpiFork, vpiNamedFork}), vpiStmt,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.48", S({vpiAssert, vpiAssume, vpiCover}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
        vpiAssignment,
@@ -3943,7 +3943,7 @@ add("37.48", S({vpiAssert, vpiAssume, vpiCover}), vpiStmt, Mode::Handle,
        vpiReturnStmt,
        vpiImmediateAssume,
        vpiImmediateCover}),
-    Order::None);
+    Order::None, true);
 add("37.41", S({0}), vpiFrame, Mode::Handle, S({vpiFrame}), Order::None);
 add("37.41; 37.42", S({vpiThread}), vpiFrame, Mode::Handle, S({vpiFrame}),
     Order::None);
@@ -4230,7 +4230,7 @@ add("37.23", S({vpiStructTypespec, vpiUnionTypespec}), vpiTypespecMember,
 add("37.32", S({vpiDistribution}), vpiDistItem, Mode::Iterate, S({vpiDistItem}),
     Order::None);
 add("37.5", S({vpiModule}), vpiAliasStmt, Mode::Iterate, S({vpiAliasStmt}),
-    Order::None);
+    Order::None, true);
 add("37.41", S({vpiFrame}), vpiThread, Mode::Handle, S({vpiThread}),
     Order::None);
 add("37.42", S({0, vpiThread}), vpiThread, Mode::Iterate, S({vpiThread}),

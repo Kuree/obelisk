@@ -300,9 +300,9 @@ def VPIEarlyPrimitiveArrayDelay : VPITraversalEdge<PrimitiveArrayObjects,
 
 // 37.12 Scope.  Existing right-hand declaration iterations are not repeated.
 def VPIEarlyScopeStatement : VPITraversalEdge<TaskFunctionDeclObjects,
-  StmtRel, HandleMode, StatementObjects, NoOrder, "37.12">;
+  StmtRel, HandleMode, StatementObjects, NoOrder, "37.12", 1>;
 def VPIEarlyBlockStatements : VPITraversalEdge<VPIEarlyBlockScopes, StmtRel,
-  IterateMode, StatementObjects, NoOrder, "37.12">;
+  IterateMode, StatementObjects, NoOrder, "37.12", 1>;
 def VPIEarlyScopeRegs : VPITraversalEdge<NonInstanceScopeObjects, Reg,
   IterateMode, RegObjects, NoOrder, "37.12; 37.83">;
 def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,
@@ -898,7 +898,7 @@ def VPIEarlyContAssignDelay : VPITraversalEdge<ContAssignObjects, DelayRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.45">;
 def VPIEarlyContAssignBits : VPITraversalEdge<ContAssignObjects, BitRel,
   IterateMode, VPIObjectSet<"EarlyContAssignBitTargets", [ContAssignBit]>,
-  IndexOrder, "37.45">;
+  IndexOrder, "37.45", 1>;
 def VPIEarlyContAssignBitParent : VPITraversalEdge<
   VPIObjectSet<"EarlyContAssignBitSources", [ContAssignBit]>, ParentRel,
   HandleMode, ContAssignObjects, NoOrder, "37.45">;
@@ -939,10 +939,10 @@ def VPIEarlyConcurrentClockingEvent : VPITraversalEdge<
   VPIEarlyOrdinaryExpressions, NoOrder, "37.48">;
 def VPIEarlyConcurrentStmt : VPITraversalEdge<
   VPIObjectSet<"EarlyConcurrentStatementSources", [Assert, Assume, Cover]>,
-  StmtRel, HandleMode, StatementObjects, NoOrder, "37.48">;
+  StmtRel, HandleMode, StatementObjects, NoOrder, "37.48", 1>;
 def VPIEarlyConcurrentElseStmt : VPITraversalEdge<
   VPIObjectSet<"EarlyConcurrentElseSources", [Assert]>, ElseStmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.48">;
+  HandleMode, StatementObjects, NoOrder, "37.48", 1>;
 def VPIEarlyConcurrentProperty : VPITraversalEdge<
   VPIEarlyConcurrentAssertions, PropertyRel, HandleMode,
   VPIEarlyPropertyTargets, NoOrder, "37.48">;

@@ -311,10 +311,10 @@ def LateImmediateAssertionExpr : VPITraversalEdge<
   LateOrdinaryExpressionTargets, NoOrder, "37.53">;
 def LateImmediateAssertionStmt : VPITraversalEdge<
   LateImmediateAssertionSource, StmtRel, HandleMode, StatementObjects,
-  NoOrder, "37.53">;
+  NoOrder, "37.53", 1>;
 def LateImmediateAssertionElse : VPITraversalEdge<
   LateImmediateAssertAssumeSource, ElseStmtRel, HandleMode, StatementObjects,
-  NoOrder, "37.53">;
+  NoOrder, "37.53", 1>;
 
 // 37.54 Multiclock sequence expression.
 def LateMulticlockSequences : VPITraversalEdge<LateMulticlockSource,
@@ -374,7 +374,7 @@ def LateProcessModule : VPITraversalEdge<LateProcessSource, Module,
 def LateProcessScope : VPITraversalEdge<LateProcessSource, ScopeRel,
   HandleMode, ScopeObjects, NoOrder, "37.61">;
 def LateProcessStmt : VPITraversalEdge<LateProcessSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.61">;
+  StatementObjects, NoOrder, "37.61", 1>;
 
 // 37.62 Assignment.
 def LateAssignmentLhs : VPITraversalEdge<LateAssignmentSource, LhsRel,
@@ -382,106 +382,106 @@ def LateAssignmentLhs : VPITraversalEdge<LateAssignmentSource, LhsRel,
 def LateAssignmentRhs : VPITraversalEdge<LateAssignmentSource, RhsRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.62">;
 def LateAssignmentDelayControl : VPITraversalEdge<LateAssignmentSource,
-  DelayControl, HandleMode, DelayControlObjects, NoOrder, "37.62">;
+  DelayControl, HandleMode, DelayControlObjects, NoOrder, "37.62", 1>;
 def LateAssignmentEventControl : VPITraversalEdge<LateAssignmentSource,
-  EventControl, HandleMode, EventControlObjects, NoOrder, "37.62">;
+  EventControl, HandleMode, EventControlObjects, NoOrder, "37.62", 1>;
 def LateAssignmentRepeatControl : VPITraversalEdge<LateAssignmentSource,
-  RepeatControl, HandleMode, RepeatControlObjects, NoOrder, "37.62">;
+  RepeatControl, HandleMode, RepeatControlObjects, NoOrder, "37.62", 1>;
 
 // 37.63 Event control.
 def LateEventControlCondition : VPITraversalEdge<LateEventControlSource,
   ConditionRel, HandleMode, LateEventConditionTargets, NoOrder, "37.63">;
 def LateEventControlStmt : VPITraversalEdge<LateEventControlSource, StmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.63">;
+  HandleMode, StatementObjects, NoOrder, "37.63", 1>;
 
 // 37.64 While and repeat.
 def LateWhileRepeatCondition : VPITraversalEdge<LateWhileRepeatSource,
   ConditionRel, HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.64">;
 def LateWhileRepeatStmt : VPITraversalEdge<LateWhileRepeatSource, StmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.64">;
+  HandleMode, StatementObjects, NoOrder, "37.64", 1>;
 
 // 37.65 Waits.
 def LateWaitCondition : VPITraversalEdge<LateWaitSource, ConditionRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.65">;
 def LateWaitStmt : VPITraversalEdge<LateWaitSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.65">;
+  StatementObjects, NoOrder, "37.65", 1>;
 def LateOrderedWaitConditions : VPITraversalEdge<LateOrderedWaitSource,
   ConditionRel, IterateMode, LateOrderedWaitConditionTargets, NoOrder,
   "37.65">;
 def LateOrderedWaitStmt : VPITraversalEdge<LateOrderedWaitSource, StmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.65">;
+  HandleMode, StatementObjects, NoOrder, "37.65", 1>;
 def LateOrderedWaitElse : VPITraversalEdge<LateOrderedWaitSource,
-  ElseStmtRel, HandleMode, StatementObjects, NoOrder, "37.65">;
+  ElseStmtRel, HandleMode, StatementObjects, NoOrder, "37.65", 1>;
 
 // 37.66 Delay control.
 def LateDelayControlDelay : VPITraversalEdge<LateDelayControlSource, DelayRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.66">;
 def LateDelayControlStmt : VPITraversalEdge<LateDelayControlSource, StmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.66">;
+  HandleMode, StatementObjects, NoOrder, "37.66", 1>;
 
 // 37.67 Repeat control.
 def LateRepeatControlExpr : VPITraversalEdge<LateRepeatControlSource, ExprRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.67">;
 def LateRepeatControlEvent : VPITraversalEdge<LateRepeatControlSource,
-  EventControl, HandleMode, EventControlObjects, NoOrder, "37.67">;
+  EventControl, HandleMode, EventControlObjects, NoOrder, "37.67", 1>;
 
 // 37.68 Forever.
 def LateForeverStmt : VPITraversalEdge<LateForeverSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.68">;
+  StatementObjects, NoOrder, "37.68", 1>;
 
 // 37.69 If and if-else.
 def LateIfCondition : VPITraversalEdge<LateIfSource, ConditionRel, HandleMode,
   LateOrdinaryExpressionTargets, NoOrder, "37.69">;
 def LateIfStmt : VPITraversalEdge<LateIfSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.69">;
+  StatementObjects, NoOrder, "37.69", 1>;
 def LateIfElseStmt : VPITraversalEdge<LateIfElseSource, ElseStmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.69">;
+  HandleMode, StatementObjects, NoOrder, "37.69", 1>;
 
 // 37.70 Case and pattern.
 def LateCaseCondition : VPITraversalEdge<LateCaseSource, ConditionRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.70">;
 def LateCaseItems : VPITraversalEdge<LateCaseSource, CaseItem, IterateMode,
-  CaseItemObjects, NoOrder, "37.70">;
+  CaseItemObjects, NoOrder, "37.70", 1>;
 def LateCaseItemExprs : VPITraversalEdge<LateCaseItemSource, ExprRel,
   IterateMode, LateCaseExprTargets, NoOrder, "37.70">;
 def LateCaseItemStmt : VPITraversalEdge<LateCaseItemSource, StmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.70">;
+  HandleMode, StatementObjects, NoOrder, "37.70", 1>;
 def LatePatternChild : VPITraversalEdge<LatePatternSource, PatternRel,
   HandleMode, PatternObjects, NoOrder, "37.70">;
 // 37.71 Expect.
 def LateExpectProperty : VPITraversalEdge<LateExpectSource, PropertySpec,
   HandleMode, PropertySpecObjects, NoOrder, "37.71">;
 def LateExpectStmt : VPITraversalEdge<LateExpectSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.71">;
+  StatementObjects, NoOrder, "37.71", 1>;
 def LateExpectElse : VPITraversalEdge<LateExpectSource, ElseStmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.71">;
+  HandleMode, StatementObjects, NoOrder, "37.71", 1>;
 
 // 37.72 For.  SystemVerilog permits lists, while the legacy singular
 // traversal remains legal; hence both modes are recorded.
 def LateForInit : VPITraversalEdge<LateForSource, ForInitStmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.72">;
+  StatementObjects, NoOrder, "37.72", 1>;
 def LateForInits : VPITraversalEdge<LateForSource, ForInitStmtRel, IterateMode,
-  StatementObjects, NoOrder, "37.72">;
+  StatementObjects, NoOrder, "37.72", 1>;
 def LateForCondition : VPITraversalEdge<LateForSource, ConditionRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.72">;
 def LateForInc : VPITraversalEdge<LateForSource, ForIncStmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.72">;
+  StatementObjects, NoOrder, "37.72", 1>;
 def LateForIncs : VPITraversalEdge<LateForSource, ForIncStmtRel, IterateMode,
-  StatementObjects, NoOrder, "37.72">;
+  StatementObjects, NoOrder, "37.72", 1>;
 def LateForStmt : VPITraversalEdge<LateForSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.72">;
+  StatementObjects, NoOrder, "37.72", 1>;
 
 // 37.73 Do-while and foreach.
 def LateDoWhileCondition : VPITraversalEdge<LateDoWhileSource, ConditionRel,
   HandleMode, LateOrdinaryExpressionTargets, NoOrder, "37.73">;
 def LateDoWhileStmt : VPITraversalEdge<LateDoWhileSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.73">;
+  StatementObjects, NoOrder, "37.73", 1>;
 def LateForeachLoopVars : VPITraversalEdge<LateForeachSource, LoopVarsRel,
   IterateMode, LateForeachLoopTargets, SourceOrder, "37.73">;
 def LateForeachVariables : VPITraversalEdge<LateForeachSource, VariablesRel,
   IterateMode, LateForeachIndexedTargets, NoOrder, "37.73">;
 def LateForeachStmt : VPITraversalEdge<LateForeachSource, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.73">;
+  StatementObjects, NoOrder, "37.73", 1>;
 
 // 37.74 Alias statement.
 def LateAliasLhs : VPITraversalEdge<LateAliasSource, LhsRel, HandleMode,
@@ -537,7 +537,7 @@ def LateGenScopeNetArrays : VPITraversalEdge<LateGenScopeSource, NetArray,
 def LateGenScopeProcesses : VPITraversalEdge<LateGenScopeSource, ProcessRel,
   IterateMode, StaticProcessObjects, NoOrder, "37.83">;
 def LateGenScopeContAssigns : VPITraversalEdge<LateGenScopeSource, ContAssign,
-  IterateMode, ContAssignObjects, NoOrder, "37.83">;
+  IterateMode, ContAssignObjects, NoOrder, "37.83", 1>;
 def LateGenScopeModules : VPITraversalEdge<LateGenScopeSource, Module,
   IterateMode, ModuleTarget, NoOrder, "37.83">;
 def LateGenScopeModuleArrays : VPITraversalEdge<LateGenScopeSource,
@@ -561,6 +561,6 @@ def LateGenScopeInterfaces : VPITraversalEdge<LateGenScopeSource, Interface,
 def LateGenScopeInterfaceArrays : VPITraversalEdge<LateGenScopeSource,
   InterfaceArray, IterateMode, InterfaceArrayObjects, NoOrder, "37.83">;
 def LateGenScopeAliases : VPITraversalEdge<LateGenScopeSource, AliasStmt,
-  IterateMode, AliasStmtObjects, NoOrder, "37.83">;
+  IterateMode, AliasStmtObjects, NoOrder, "37.83", 1>;
 def LateGenScopeClockingBlocks : VPITraversalEdge<LateGenScopeSource,
   ClockingBlock, IterateMode, ClockingBlockObjects, NoOrder, "37.83">;
