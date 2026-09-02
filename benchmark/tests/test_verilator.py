@@ -439,6 +439,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
         self.assertIn("int return type", excluded.reason)
 
+    def test_post_2017_dpi_results_are_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_dpi_result_type"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 35.5.5")
+        self.assertIn("IEEE 1800-2023 extension", excluded.reason)
+
     def test_an_excluded_test_is_skipped_without_compiling(self):
         # The skip has to come before the test file is even read, so that
         # judging one costs nothing and needs no checkout.

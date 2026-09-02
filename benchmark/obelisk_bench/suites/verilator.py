@@ -577,6 +577,11 @@ DPI_EXPORTED_TASK_VOID_RETURN = Exclusion(
     "IEEE 1800-2017 H.8.2",
     "an exported task has an int return type in C for the DPI disable "
     "protocol, but the test's foreign source declares set_value as void")
+POST_2017_DPI_RESULT_TYPES = Exclusion(
+    "IEEE 1800-2017 35.5.5",
+    "DPI function results may use the listed basic types or scalar bit and "
+    "logic; the test explicitly requires the IEEE 1800-2023 extension for "
+    "packed array, structure, and union results")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -609,6 +614,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_clocking_timing": USE_BEFORE_DECLARATION,
     "t_dpi_lib": DPI_PART_SELECT_EXTENSION,
     "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
+    "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
