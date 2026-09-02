@@ -1432,6 +1432,7 @@ class CompileSettings(NamedTuple):
     defines: list[str]
     top: str | None
     library_flags: list[str]
+    frontend_flags: list[str]
 
 
 def detect_compile_settings(descriptor: Path) -> CompileSettings:
@@ -1439,12 +1440,13 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
 
     ``v_flags2`` and ``verilator_flags2`` mix portable source configuration
     with Verilator-only optimization and code-generation switches. Forward
-    only literal preprocessor, top-selection, and logical-library tokens whose
-    inputs resolve inside the checkout; expressions involving driver state are
-    deliberately ignored instead of being evaluated.
+    only literal preprocessor, top-selection, logical-library, and equivalent
+    frontend resource-limit tokens whose inputs resolve inside the checkout;
+    expressions involving driver state are deliberately ignored instead of
+    being evaluated.
     """
     if not descriptor.exists():
-        return CompileSettings([], None, [])
+        return CompileSettings([], None, [], [])
     text = descriptor.read_text(encoding="utf-8", errors="replace")
     tokens: list[str] = []
 
@@ -1471,6 +1473,7 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
     defines: list[str] = []
     selected_top = None
     library_flags: list[str] = []
+    frontend_flags: list[str] = []
     current_work_library = None
     regress = descriptor.parent.parent.resolve()
 
@@ -1485,6 +1488,14 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
             if resolved == regress or regress in resolved.parents:
                 return resolved
         return None
+
+    def add_recursion_depth(spelling: str) -> None:
+        if not spelling.isdecimal():
+            return
+        depth = int(spelling)
+        if 0 < depth <= 0xffffffff:
+            frontend_flags.extend(
+                ("-Xslang", f"--max-constexpr-depth={depth}"))
 
     index = 0
     while index < len(tokens):
@@ -1502,6 +1513,12 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 index += 1
         elif token.startswith(("--top=", "--top-module=")):
             selected_top = token.split("=", 1)[1] or selected_top
+        elif token == "--func-recursion-depth":
+            if index + 1 < len(tokens):
+                add_recursion_depth(tokens[index + 1])
+                index += 1
+        elif token.startswith("--func-recursion-depth="):
+            add_recursion_depth(token.split("=", 1)[1])
         elif token == "--work":
             if index + 1 < len(tokens):
                 current_work_library = tokens[index + 1]
@@ -1522,7 +1539,8 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 library_flags.extend(
                     ("-v", f"{current_work_library}={path}"))
         index += 1
-    return CompileSettings(defines, selected_top, library_flags)
+    return CompileSettings(defines, selected_top, library_flags,
+                           frontend_flags)
 
 
 def detect_compile_defines(descriptor: Path) -> list[str]:
@@ -1940,6 +1958,7 @@ def judge_one(
         compile_settings = detect_compile_settings(descriptor)
         descriptor_defines = compile_settings.defines
         descriptor_library_flags = compile_settings.library_flags
+        descriptor_frontend_flags = compile_settings.frontend_flags
         configuration_texts = []
         for index, flag in enumerate(descriptor_library_flags[:-1]):
             if flag == "--libmap":
@@ -1953,7 +1972,7 @@ def judge_one(
             header_flags = [
                 "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
                 "-I", str(top.parent), *descriptor_defines,
-                *descriptor_library_flags,
+                *descriptor_library_flags, *descriptor_frontend_flags,
             ]
             header_flags.extend(
                 "-D" + definition
@@ -2013,6 +2032,7 @@ def judge_one(
         ]
         extra.extend(descriptor_defines)
         extra.extend(descriptor_library_flags)
+        extra.extend(descriptor_frontend_flags)
         extra.extend("-D" + definition
                      for definition in compatibility_defines)
         if selected_top:

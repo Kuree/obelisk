@@ -344,6 +344,28 @@ class CompileTopDescriptorTest(unittest.TestCase):
             "test.compile(verilator_flags2=['--top ' + selected])\n"))
 
 
+class CompileFrontendDescriptorTest(unittest.TestCase):
+    def flags(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_compile_settings(path).frontend_flags
+
+    def test_literal_function_recursion_depth_is_forwarded_to_slang(self):
+        self.assertEqual(
+            self.flags("test.compile(verilator_flags2=["
+                       "'--func-recursion-depth 2000'])\n"),
+            ["-Xslang", "--max-constexpr-depth=2000"],
+        )
+
+    def test_invalid_function_recursion_depth_is_not_forwarded(self):
+        self.assertEqual(
+            self.flags("test.compile(verilator_flags2=["
+                       "'--func-recursion-depth unlimited'])\n"),
+            [],
+        )
+
+
 class CompileLibraryDescriptorTest(unittest.TestCase):
     def settings(self, descriptor_text: str,
                  files: tuple[str, ...]) -> verilator.CompileSettings:
