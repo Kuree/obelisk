@@ -845,6 +845,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("same unpacked dimensions", excluded.reason)
         self.assertIn("packed nested concatenation", excluded.reason)
 
+    def test_nonvirtual_interface_implementation_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_implements_typed"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 8.26")
+        self.assertIn("virtual method implementation", excluded.reason)
+        self.assertIn("without virtual", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

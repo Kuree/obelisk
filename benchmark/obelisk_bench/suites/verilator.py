@@ -926,6 +926,12 @@ PACKED_CONCAT_TO_UNPACKED_PORT = Exclusion(
     "unpacked dimensions and sizes, and 7.6 forbids directly assigning a "
     "packed array to an unpacked array; the test connects out1's unpacked "
     "array to one packed nested concatenation")
+NONVIRTUAL_INTERFACE_IMPLEMENTATION = Exclusion(
+    "IEEE 1800-2017 8.26",
+    "each pure virtual interface-class method requires a virtual method "
+    "implementation in a non-abstract implementing class, and the virtual "
+    "keyword shall be used unless the implementation is inherited; the test "
+    "declares IclsImp::ifunc without virtual")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1047,6 +1053,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_math_shortreal": SHORTREAL_COMPARISON_PRECISION,
     "t_math_signed_calc": IMPLICIT_NAME_TYPE_MISMATCH,
     "t_iff": IMPLICIT_NAME_TYPE_MISMATCH,
+    "t_implements_typed": NONVIRTUAL_INTERFACE_IMPLEMENTATION,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
