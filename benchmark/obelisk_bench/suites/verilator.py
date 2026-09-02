@@ -947,6 +947,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_queue_back": STATIC_REF_ARGUMENT,
     "t_func_complex": STATIC_REF_ARGUMENT,
+    "t_func_ref": STATIC_REF_ARGUMENT,
+    "t_func_ref_arg": STATIC_REF_ARGUMENT,
     "t_queue_inherit_call": ARRAY_ELEMENT_CLASS_COVARIANCE,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
