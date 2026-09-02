@@ -996,6 +996,7 @@ class ExcludedTest(unittest.TestCase):
         excluded = verilator.EXCLUDED["t_queue_back"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.5.2")
         self.assertIn("defaults static", excluded.reason)
+        self.assertIs(verilator.EXCLUDED["t_func_complex"], excluded)
 
     def test_array_class_covariance_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_queue_inherit_call"]

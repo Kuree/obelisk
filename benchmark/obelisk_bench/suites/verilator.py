@@ -351,8 +351,8 @@ ZERO_STRING_MINIMUM_FIELD = Exclusion(
 STATIC_REF_ARGUMENT = Exclusion(
     "IEEE 1800-2017 13.5.2",
     "passing an argument by ref is illegal for a static-lifetime subroutine; "
-    "the module function defaults static and the test requires its ref queue "
-    "element argument to compile")
+    "each module function defaults static and the test requires its ref "
+    "queue arguments to compile")
 ARRAY_ELEMENT_CLASS_COVARIANCE = Exclusion(
     "IEEE 1800-2017 7.6",
     "fixed, dynamic, and queue array assignment compatibility requires "
@@ -946,6 +946,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_queue_back": STATIC_REF_ARGUMENT,
+    "t_func_complex": STATIC_REF_ARGUMENT,
     "t_queue_inherit_call": ARRAY_ELEMENT_CLASS_COVARIANCE,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
