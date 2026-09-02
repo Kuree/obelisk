@@ -103,6 +103,11 @@ KNOWN_SLANG_BUGS = {
         "IEEE 1800-2017 7.12.1 permits this locator-method use; pinned Slang "
         "v11 crashes during speculative constant evaluation before emitting "
         "IR"),
+    "t_class_reference_name_colision": (
+        "IEEE 1800-2017 3.13 places the already-declared setup_coefficients "
+        "class type in compilation-unit scope, and 8.23 requires the left "
+        "operand of :: to resolve as a class type; pinned Slang stops at the "
+        "later same-named class method instead of resolving the outer type"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
