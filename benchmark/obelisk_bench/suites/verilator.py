@@ -166,6 +166,12 @@ KNOWN_SLANG_BUGS = {
         "23.3.3.5 maps equal-size unpacked port connections left-index to "
         "left-index; pinned Slang rejects the legal reverse-direction slice "
         "primsig[2:0] from the ascending array primsig[0:2]"),
+    "t_interface_func_no_paren": (
+        "IEEE 1800-2017 25.7 defines interface subroutines as methods, and "
+        "A.8.2 makes the parenthesized argument list optional in a "
+        "method_call_body; pinned Slang instead treats the legal "
+        "i.get_status expression as a non-method function call and requires "
+        "parentheses before emitting IR"),
     "t_interface_input_port_assign": (
         "IEEE 1800-2017 23.2.2.3 makes an input port whose kind is omitted "
         "a net of the default net type even when it has an explicit logic "

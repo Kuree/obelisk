@@ -822,6 +822,16 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertTrue(log.endswith(
             "range of selection [2:0] is reversed\n"))
 
+    def test_interface_method_without_parentheses_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_interface_func_no_paren",
+            "parentheses are required when invoking function 'get_status'\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 25.7", log)
+        self.assertIn("A.8.2", log)
+        self.assertTrue(log.endswith(
+            "parentheses are required when invoking function 'get_status'\n"))
+
     def test_explicit_type_input_net_slang_bug_stays_visible(self):
         log = verilator.classify_dependency_failure(
             "t_interface_input_port_assign",
