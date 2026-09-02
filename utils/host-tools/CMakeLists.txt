@@ -44,14 +44,24 @@ function(obelisk_add_generated_file relative_output)
   set_property(GLOBAL APPEND PROPERTY OBELISK_HOST_GENERATED_FILES "${output}")
 endfunction()
 
-obelisk_add_generated_file(
-  "include/obelisk/Reflection/DesignReflectionLayout.h.inc"
-  TOOL obelisk-tblgen
-  INPUT
-    "${OBELISK_SOURCE_DIR}/include/obelisk/Reflection/DesignReflection.td"
-  ARGS -gen-obelisk-reflection-layout
-  DEPENDS
-    "${OBELISK_SOURCE_DIR}/utils/obelisk-tblgen/obelisk-tblgen.cpp")
+function(obelisk_register_generated_file)
+  cmake_parse_arguments(ARG "" "NAME;OUTPUT;TOOL;INPUT" "ARGS;DEPENDS" ${ARGN})
+  if(NOT ARG_NAME OR NOT ARG_OUTPUT OR NOT ARG_TOOL OR NOT ARG_INPUT)
+    message(FATAL_ERROR
+      "generated-file manifest entries need NAME, OUTPUT, TOOL, and INPUT")
+  endif()
+  set(depends)
+  foreach(dependency IN LISTS ARG_DEPENDS)
+    list(APPEND depends "${OBELISK_SOURCE_DIR}/${dependency}")
+  endforeach()
+  obelisk_add_generated_file("${ARG_OUTPUT}"
+    TOOL "${ARG_TOOL}"
+    INPUT "${OBELISK_SOURCE_DIR}/${ARG_INPUT}"
+    ARGS ${ARG_ARGS}
+    DEPENDS ${depends})
+endfunction()
+
+include("${OBELISK_SOURCE_DIR}/cmake/ObeliskGeneratedFiles.cmake")
 
 get_property(_obelisk_generated_files GLOBAL
   PROPERTY OBELISK_HOST_GENERATED_FILES)

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <tuple>
 
 using namespace llvm;
 
@@ -379,10 +380,341 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
   return false;
 }
 
+bool validateVPIObjectModel(const RecordKeeper &records) {
+  auto families = records.getAllDerivedDefinitions("VPIObjectFamily");
+  auto roles = records.getAllDerivedDefinitions("VPIObjectRole");
+  auto objects = records.getAllDerivedDefinitions("VPIObjectKind");
+  auto relations = records.getAllDerivedDefinitions("VPIRelation");
+  if (families.empty() || roles.empty() || objects.empty() ||
+      relations.empty()) {
+    PrintError(
+        "VPI object model needs families, roles, objects, and relations");
+    return false;
+  }
+  if (families.size() > 64) {
+    PrintError("VPI object model supports at most 64 families");
+    return false;
+  }
+
+  StringMap<const Record *> familyNames;
+  for (const Record *family : families) {
+    StringRef name;
+    if (!getCppName(*family, "VPI object family", name))
+      return false;
+    if (!familyNames.try_emplace(name, family).second) {
+      PrintError(family->getLoc(), "duplicate VPI object family name");
+      return false;
+    }
+  }
+
+  StringSet<> supportedRoles{"Concrete", "AbstractSelector", "RelationOnly",
+                             "CompatibilitySelector"};
+  StringMap<const Record *> roleNames;
+  for (const Record *role : roles) {
+    StringRef name;
+    if (!getCppName(*role, "VPI object role", name))
+      return false;
+    if (!supportedRoles.contains(name)) {
+      PrintError(role->getLoc(), "unsupported VPI object role");
+      return false;
+    }
+    if (!roleNames.try_emplace(name, role).second) {
+      PrintError(role->getLoc(), "duplicate VPI object role name");
+      return false;
+    }
+  }
+  if (roleNames.size() != supportedRoles.size()) {
+    PrintError("VPI object model must define every supported object role");
+    return false;
+  }
+
+  auto validateInventory = [&](ArrayRef<const Record *> inventory,
+                               StringRef description,
+                               StringMap<const Record *> &apiNames) {
+    DenseMap<uint32_t, const Record *> canonicalValues;
+    for (const Record *record : inventory) {
+      StringRef apiName = record->getValueAsString("apiName");
+      uint32_t value = 0;
+      if (!isCppIdentifier(apiName) || !apiName.starts_with("vpi")) {
+        PrintError(record->getLoc(),
+                   Twine(description) + " apiName must be a vpi C identifier");
+        return false;
+      }
+      if (!getU32(*record, "value", 1, value))
+        return false;
+      if (!apiNames.try_emplace(apiName, record).second) {
+        PrintError(record->getLoc(),
+                   Twine("duplicate ") + description + " API name");
+        return false;
+      }
+      StringRef aliasOf = record->getValueAsString("aliasOf");
+      if (aliasOf.empty()) {
+        if (!canonicalValues.try_emplace(value, record).second) {
+          PrintError(record->getLoc(),
+                     Twine("duplicate canonical ") + description + " value");
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  StringMap<const Record *> objectApiNames;
+  StringMap<const Record *> relationApiNames;
+  if (!validateInventory(objects, "VPI object", objectApiNames) ||
+      !validateInventory(relations, "VPI relation", relationApiNames))
+    return false;
+
+  auto validateAliases = [&](ArrayRef<const Record *> inventory,
+                             StringRef description,
+                             const StringMap<const Record *> &apiNames,
+                             const StringMap<const Record *> *externalNames) {
+    for (const Record *record : inventory) {
+      StringRef aliasOf = record->getValueAsString("aliasOf");
+      if (aliasOf.empty())
+        continue;
+      auto target = apiNames.find(aliasOf);
+      const Record *targetRecord =
+          target == apiNames.end() ? nullptr : target->second;
+      if (!targetRecord && externalNames) {
+        auto externalTarget = externalNames->find(aliasOf);
+        if (externalTarget != externalNames->end())
+          targetRecord = externalTarget->second;
+      }
+      if (!targetRecord || !targetRecord->getValueAsString("aliasOf").empty() ||
+          targetRecord->getValueAsInt("value") !=
+              record->getValueAsInt("value")) {
+        PrintError(record->getLoc(), Twine(description) +
+                                         " alias must name a canonical entry "
+                                         "with the same value");
+        return false;
+      }
+      if (record->isSubClassOf("VPIObjectKind")) {
+        DenseSet<const Record *> aliasFamilies;
+        DenseSet<const Record *> targetFamilies;
+        auto recordFamilies = record->getValueAsListOfDefs("families");
+        auto canonicalFamilies = targetRecord->getValueAsListOfDefs("families");
+        aliasFamilies.insert(recordFamilies.begin(), recordFamilies.end());
+        targetFamilies.insert(canonicalFamilies.begin(),
+                              canonicalFamilies.end());
+        if (aliasFamilies != targetFamilies) {
+          PrintError(record->getLoc(),
+                     "VPI object alias must preserve target families");
+          return false;
+        }
+      }
+      if (record->isSubClassOf("VPIRelation") &&
+          targetRecord->isSubClassOf("VPIRelation") &&
+          record->getValueAsDef("cardinality") !=
+              targetRecord->getValueAsDef("cardinality")) {
+        PrintError(record->getLoc(),
+                   "VPI relation alias must preserve target cardinality");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!validateAliases(objects, "VPI object", objectApiNames, nullptr) ||
+      !validateAliases(relations, "VPI relation", relationApiNames,
+                       &objectApiNames))
+    return false;
+
+  for (const Record *object : objects) {
+    const Record *role = object->getValueAsDef("role");
+    if (!roleNames.contains(role->getValueAsString("cppName"))) {
+      PrintError(object->getLoc(), "unknown role on VPI object");
+      return false;
+    }
+    DenseSet<const Record *> seenFamilies;
+    auto objectFamilies = object->getValueAsListOfDefs("families");
+    if (objectFamilies.empty()) {
+      PrintError(object->getLoc(), "VPI object needs at least one family");
+      return false;
+    }
+    for (const Record *family : objectFamilies)
+      if (!seenFamilies.insert(family).second) {
+        PrintError(object->getLoc(), "duplicate family on VPI object");
+        return false;
+      }
+  }
+
+  for (const Record *relation : relations) {
+    StringRef cardinality =
+        relation->getValueAsDef("cardinality")->getValueAsString("cppName");
+    if (cardinality != "One" && cardinality != "Many" &&
+        cardinality != "OneOrMany") {
+      PrintError(relation->getLoc(), "unsupported VPI relation cardinality");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
+  if (!validateVPIObjectModel(records))
+    return true;
+
+  os << "//===- VPIObjectModel.h.inc - generated; do not edit -*- C++ "
+        "-*-===//\n\n";
+  os << "#ifndef OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n";
+  os << "#define OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n\n";
+  os << "#include <cstddef>\n#include <cstdint>\n\n";
+  os << "namespace obelisk::reflection {\n\n";
+
+  auto familyRecords = records.getAllDerivedDefinitions("VPIObjectFamily");
+  SmallVector<const Record *> families(familyRecords.begin(),
+                                       familyRecords.end());
+  llvm::sort(families, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  DenseMap<const Record *, unsigned> familyBits;
+  os << "enum class VPIObjectFamily : uint8_t {\n";
+  for (auto [index, family] : llvm::enumerate(families)) {
+    familyBits[family] = index;
+    os << formatv("  {0} = {1},\n", family->getValueAsString("cppName"), index);
+  }
+  os << "};\n\n";
+  os << "constexpr uint64_t vpiFamilyMask(VPIObjectFamily family) {\n"
+        "  return uint64_t{1} << static_cast<unsigned>(family);\n"
+        "}\n\n";
+
+  auto roleRecords = records.getAllDerivedDefinitions("VPIObjectRole");
+  SmallVector<const Record *> roles(roleRecords.begin(), roleRecords.end());
+  llvm::sort(roles, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  os << "enum class VPIObjectRole : uint8_t {\n";
+  for (const Record *role : roles)
+    os << formatv("  {0},\n", role->getValueAsString("cppName"));
+  os << "  Alias,\n};\n\n";
+
+  auto objectRecords = records.getAllDerivedDefinitions("VPIObjectKind");
+  SmallVector<const Record *> objects(objectRecords.begin(),
+                                      objectRecords.end());
+  llvm::sort(objects, [](const Record *left, const Record *right) {
+    auto leftKey = std::make_tuple(left->getValueAsInt("value"),
+                                   !left->getValueAsString("aliasOf").empty(),
+                                   left->getValueAsString("apiName"));
+    auto rightKey = std::make_tuple(right->getValueAsInt("value"),
+                                    !right->getValueAsString("aliasOf").empty(),
+                                    right->getValueAsString("apiName"));
+    return leftKey < rightKey;
+  });
+  os << "struct VPIObjectKindDescriptor {\n"
+        "  const char *apiName;\n"
+        "  uint32_t value;\n"
+        "  uint64_t families;\n"
+        "  VPIObjectRole role;\n"
+        "  const char *aliasOf;\n"
+        "};\n\n";
+  os << "inline constexpr VPIObjectKindDescriptor vpiObjectKinds[] = {\n";
+  for (const Record *object : objects) {
+    uint64_t mask = 0;
+    for (const Record *family : object->getValueAsListOfDefs("families"))
+      mask |= uint64_t{1} << familyBits.lookup(family);
+    StringRef aliasOf = object->getValueAsString("aliasOf");
+    os << formatv(
+        "  {{\"{0}\", {1}, UINT64_C({2}), VPIObjectRole::{3}, ",
+        object->getValueAsString("apiName"), object->getValueAsInt("value"),
+        mask,
+        aliasOf.empty()
+            ? object->getValueAsDef("role")->getValueAsString("cppName")
+            : StringRef("Alias"));
+    if (aliasOf.empty())
+      os << "nullptr";
+    else
+      os << formatv("\"{0}\"", aliasOf);
+    os << "},\n";
+  }
+  os << "};\n\n";
+
+  os << "inline constexpr const VPIObjectKindDescriptor *\n"
+        "findVPIObjectSelector(uint32_t value) {\n"
+        "  for (const auto &kind : vpiObjectKinds)\n"
+        "    if (kind.value == value && kind.aliasOf == nullptr)\n"
+        "      return &kind;\n"
+        "  return nullptr;\n"
+        "}\n\n";
+
+  os << "inline constexpr const VPIObjectKindDescriptor *\n"
+        "findVPIObjectKind(uint32_t value) {\n"
+        "  const auto *kind = findVPIObjectSelector(value);\n"
+        "  return kind && kind->role == VPIObjectRole::Concrete ? kind\n"
+        "                                                        : nullptr;\n"
+        "}\n\n";
+
+  os << "enum class VPIRelationCardinality : uint8_t {\n"
+        "  One,\n  Many,\n  OneOrMany,\n};\n\n";
+  os << "struct VPIRelationDescriptor {\n"
+        "  const char *apiName;\n"
+        "  uint32_t value;\n"
+        "  VPIRelationCardinality cardinality;\n"
+        "  const char *aliasOf;\n"
+        "};\n\n";
+
+  auto relationRecords = records.getAllDerivedDefinitions("VPIRelation");
+  SmallVector<const Record *> relations(relationRecords.begin(),
+                                        relationRecords.end());
+  llvm::sort(relations, [](const Record *left, const Record *right) {
+    auto leftKey = std::make_tuple(left->getValueAsInt("value"),
+                                   !left->getValueAsString("aliasOf").empty(),
+                                   left->getValueAsString("apiName"));
+    auto rightKey = std::make_tuple(right->getValueAsInt("value"),
+                                    !right->getValueAsString("aliasOf").empty(),
+                                    right->getValueAsString("apiName"));
+    return leftKey < rightKey;
+  });
+  os << "inline constexpr VPIRelationDescriptor vpiRelations[] = {\n";
+  for (const Record *relation : relations) {
+    StringRef aliasOf = relation->getValueAsString("aliasOf");
+    os << formatv(
+        "  {{\"{0}\", {1}, VPIRelationCardinality::{2}, ",
+        relation->getValueAsString("apiName"), relation->getValueAsInt("value"),
+        relation->getValueAsDef("cardinality")->getValueAsString("cppName"));
+    if (aliasOf.empty())
+      os << "nullptr";
+    else
+      os << formatv("\"{0}\"", aliasOf);
+    os << "},\n";
+  }
+  os << "};\n\n";
+  os << "inline constexpr const VPIRelationDescriptor *findVPIRelation(\n"
+        "    uint32_t value) {\n"
+        "  for (const auto &relation : vpiRelations)\n"
+        "    if (relation.value == value && relation.aliasOf == nullptr)\n"
+        "      return &relation;\n"
+        "  return nullptr;\n"
+        "}\n\n";
+
+  os << "} // namespace obelisk::reflection\n\n";
+  os << "#define OBELISK_FOR_EACH_VPI_OBJECT_KIND(M) \\\n";
+  for (auto [index, object] : llvm::enumerate(objects)) {
+    os << formatv("  M({0}, {1})", object->getValueAsString("apiName"),
+                  object->getValueAsInt("value"));
+    os << (index + 1 == objects.size() ? "\n\n" : " \\\n");
+  }
+  os << "#define OBELISK_FOR_EACH_VPI_RELATION(M) \\\n";
+  for (auto [index, relation] : llvm::enumerate(relations)) {
+    os << formatv("  M({0}, {1})", relation->getValueAsString("apiName"),
+                  relation->getValueAsInt("value"));
+    os << (index + 1 == relations.size() ? "\n\n" : " \\\n");
+  }
+  os << "#endif // OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n";
+  return false;
+}
+
 mlir::GenRegistration reflectionLayoutGen(
     "gen-obelisk-reflection-layout",
     "Generate Obelisk design-reflection layouts and record kinds",
     emitReflectionLayouts);
+
+mlir::GenRegistration vpiObjectModelGen(
+    "gen-obelisk-vpi-object-model",
+    "Generate Obelisk VPI object and relationship descriptors",
+    emitVPIObjectModel);
 
 } // namespace
 
