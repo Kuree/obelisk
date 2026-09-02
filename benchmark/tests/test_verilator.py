@@ -714,6 +714,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.16")
         self.assertIn("IEEE 1800-2023 extension", excluded.reason)
 
+    def test_zero_string_minimum_field_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_string_dyn_num"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1.8")
+        self.assertIn("one-space minimum", excluded.reason)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):

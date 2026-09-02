@@ -271,6 +271,11 @@ POST_2017_MIXED_STRING_EQUALITY = Exclusion(
     "Table 6-9 permits a string expression to compare with another string "
     "expression or a string literal; the test explicitly requires the "
     "IEEE 1800-2023 extension for comparison with an integral variable")
+ZERO_STRING_MINIMUM_FIELD = Exclusion(
+    "IEEE 1800-2017 21.2.1.8",
+    "%s never prints leading zero characters and %0s requests the minimum "
+    "field, so an all-zero integral argument is empty; the golden requires "
+    "Verilator's one-space minimum")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -814,6 +819,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_typename": VERILATOR_TYPENAME_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
     "t_string_byte": STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION,
+    "t_string_dyn_num": ZERO_STRING_MINIMUM_FIELD,
     "t_string_size": POST_2017_MIXED_STRING_EQUALITY,
     "t_mem_multi_io": MIXED_VARIABLE_DRIVERS,
     "t_math_pow3": CONTEXT_DETERMINED_POWER_BASE,
