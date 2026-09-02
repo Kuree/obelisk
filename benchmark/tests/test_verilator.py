@@ -67,6 +67,13 @@ class DetectInputsTest(unittest.TestCase):
                         '  import "DPI-C" function void print(input string s);'),
             [])
 
+    def test_multiline_imported_formals_are_not_ports(self):
+        self.assertEqual(
+            self.detect("module t;",
+                        '  import "DPI-C" function void transform(',
+                        "    input int i[]);"),
+            [])
+
     def test_clocking_block_inputs_are_not_ports(self):
         self.assertEqual(
             self.detect("module t;",

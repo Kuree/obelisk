@@ -148,7 +148,8 @@ MODULE_TOP = re.compile(r"^\s*module\s+top\b", re.MULTILINE)
 SHELL_ALTERNATE_NAME = "obelisk_bench_top"
 # `clocking` joins driver.py's list because a clocking block's `input` lines sit
 # at the start of a line just as a non-ANSI port declaration does.
-STOP_SCANNING = re.compile(r"^\s*(function|task|clocking|endmodule)")
+STOP_SCANNING = re.compile(
+    r'^\s*(?:function|task|clocking|endmodule|import\s+"DPI(?:-C)?")')
 MODULE_T_LINE = re.compile(r"^\s*module\s+t\b")
 
 # Port-declaration scanning. driver.py takes the first identifier after an
