@@ -361,6 +361,12 @@ UNNAMED_TYPE_SPELLING = Exclusion(
     "IEEE 1800-2017 20.6.1",
     "$typename spells an unnamed type in an implementation-dependent way, and "
     "the test expects Verilator's internal \"MEMBERDTYPE 'a'\" rendering")
+VERILATOR_TYPENAME_SPELLING = Exclusion(
+    "IEEE 1800-2017 20.6.1",
+    "$typename creates system-generated names for anonymous structs, unions, "
+    "and enums and prefixes user-defined names with their defining scope; the "
+    "test's checks accept alternate anonymous names, but its golden requires "
+    "Verilator's internal __typeimpmod1 name and synthetic top scope")
 
 # Tests whose expectation rests on Verilator-specific behavior rather than on
 # what the language requires. Each names the clause that settles it, so a reader
@@ -733,6 +739,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
     "t_param_type5": UNNAMED_TYPE_SPELLING,
+    "t_typename": VERILATOR_TYPENAME_SPELLING,
     "t_emit_constw": OUT_OF_RANGE_PART_SELECT_READ,
     "t_string_byte": STRING_LITERAL_BYTE_ARRAY_JUSTIFICATION,
     "t_mem_multi_io": MIXED_VARIABLE_DRIVERS,
