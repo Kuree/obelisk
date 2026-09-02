@@ -412,6 +412,16 @@ class CompileLibraryDescriptorTest(unittest.TestCase):
         self.assertEqual(settings.library_flags[0], "--libmap")
         self.assertEqual(Path(settings.library_flags[1]).name, "lib.map")
 
+    def test_literal_library_extensions_are_forwarded(self):
+        settings = self.settings(
+            "test.compile(v_flags2=['+libext+.vi+.extranoneed+'])\n",
+            (),
+        )
+        self.assertEqual(
+            settings.library_flags,
+            ["-Y", ".vi", "-Y", ".extranoneed"],
+        )
+
 
 class DescriptorDPISourcesTest(unittest.TestCase):
     def sources(self, descriptor_text: str, sources: dict[str, str]):

@@ -1563,6 +1563,13 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 index += 1
         elif token.startswith(("--top=", "--top-module=")):
             selected_top = token.split("=", 1)[1] or selected_top
+        elif token.startswith("+libext+"):
+            library_flags.extend(
+                option
+                for extension in token.removeprefix("+libext+").split("+")
+                if extension
+                for option in ("-Y", extension)
+            )
         elif token == "--func-recursion-depth":
             if index + 1 < len(tokens):
                 add_recursion_depth(tokens[index + 1])
