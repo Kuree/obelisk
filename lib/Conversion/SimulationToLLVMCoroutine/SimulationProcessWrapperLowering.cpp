@@ -17,6 +17,43 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+LogicalResult materializeEvalCheckpointHandoffGlobals(ModuleOp module) {
+  OpBuilder builder(module.getContext());
+  Location location = module.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(module.getContext());
+  Type i32 = builder.getI32Type();
+  auto ensureInteger = [&](StringRef name, IntegerAttr initial) {
+    if (LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name))
+      return global.getGlobalType() == i32;
+    builder.setInsertionPointToStart(module.getBody());
+    LLVM::GlobalOp::create(builder, location, i32, false,
+                           LLVM::Linkage::Internal, name, initial, 4);
+    return true;
+  };
+  auto ensurePointer = [&](StringRef name) {
+    if (LLVM::GlobalOp global = module.lookupSymbol<LLVM::GlobalOp>(name))
+      return global.getGlobalType() == pointer;
+    builder.setInsertionPointToStart(module.getBody());
+    auto global = LLVM::GlobalOp::create(builder, location, pointer, false,
+                                         LLVM::Linkage::Internal, name,
+                                         Attribute{}, 8);
+    Block *initializer = new Block;
+    global.getInitializerRegion().push_back(initializer);
+    builder.setInsertionPointToStart(initializer);
+    LLVM::ReturnOp::create(builder, location,
+                           LLVM::ZeroOp::create(builder, location, pointer));
+    return true;
+  };
+  if (!ensureInteger(evalCheckpointActorName,
+                     builder.getI32IntegerAttr(UINT32_MAX)) ||
+      !ensureInteger(evalCheckpointContinuationName,
+                     builder.getI32IntegerAttr(0)) ||
+      !ensurePointer(evalCheckpointCallbackName) ||
+      !ensurePointer(evalCheckpointMutableStateName))
+    return module.emitError("eval checkpoint handoff symbol has wrong type");
+  return success();
+}
+
 void publishAction(OpBuilder &builder, Location location, Value instance,
                    uint32_t actionKind, uint32_t suspendKind,
                    uint32_t continuation, uint32_t flags, Value payload,
@@ -453,6 +490,16 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   auto functionType = LLVM::LLVMFunctionType::get(i32, {pointer}, false);
+
+  if (failed(materializeEvalCheckpointHandoffGlobals(module)))
+    return failure();
+
+  // This wrapper can survive a conservative late handoff from Eval to the
+  // legacy AOT scheduler.  Declare its runtime dependency at the point where
+  // the reference is created instead of relying on accepted-Eval plan
+  // materialization to do so later.
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_execute_aot_actor",
+                           i32, {pointer, i32});
 
   std::string callbackName = (Twine(wrapperName) + ".checkpoint").str();
   auto callback =

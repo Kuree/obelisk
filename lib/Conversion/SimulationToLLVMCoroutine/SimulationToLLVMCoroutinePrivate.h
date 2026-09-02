@@ -79,6 +79,10 @@ inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
     "__obelisk_eval_checkpoint_mutable_state_v1";
 inline constexpr llvm::StringLiteral evalHybridCoordinatorName =
     "__obelisk_eval_fast_coordinator_hybrid_v1";
+inline constexpr llvm::StringLiteral evalRuntimeNBARequiredAttr =
+    "obelisk.eval.runtime_nba_required";
+inline constexpr llvm::StringLiteral evalRuntimeNBAFallbackAttr =
+    "obelisk.eval.runtime_nba_fallback";
 
 enum class NativeReturnLowering {
   None,
@@ -247,6 +251,11 @@ mlir::LLVM::LLVMFuncOp
 getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,
                          mlir::Type result,
                          mlir::ArrayRef<mlir::Type> arguments);
+
+/// Materialize the checkpoint handoff tuple referenced by Eval checkpoint
+/// wrappers. Safe to call from both wrapper and accepted-plan construction.
+mlir::LogicalResult
+materializeEvalCheckpointHandoffGlobals(mlir::ModuleOp module);
 
 /// Preserve the stable semantic native-partition boundary while replacing or
 /// outlining executable functions during native lowering.

@@ -252,7 +252,7 @@ mlir::LogicalResult makeNativeAOTPlanLegacy(
     bool enableDirectState, bool enableStaticNBA, bool enableStaticControl,
     bool enableStaticFanout, bool enableCleanSuperstep, bool fullyStatic,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);
-mlir::LogicalResult makeNativeEvalPlan(
+mlir::FailureOr<bool> makeNativeEvalPlan(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     uint32_t actorCount,
     mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,

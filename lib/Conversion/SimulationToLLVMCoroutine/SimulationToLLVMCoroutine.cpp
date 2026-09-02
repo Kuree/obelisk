@@ -43,11 +43,13 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -131,6 +133,8 @@ using detail::buildNativeStaticNBAPlan;
 using detail::buildNativeThreeTierPlan;
 using detail::convertProcessType;
 using detail::declareNativeRuntimeABI;
+using detail::evalRuntimeNBAFallbackAttr;
+using detail::evalRuntimeNBARequiredAttr;
 using detail::finishPreparedPlainNativeProcess;
 using detail::finishPreparedSuspendableProcess;
 using detail::insertAutomaticOwnerReleases;
@@ -180,9 +184,6 @@ using detail::prepareSuspendableProcess;
 using detail::specializeNativeAOTCaptures;
 using detail::stableProcessID;
 using detail::threadProcessStateThroughCFG;
-
-constexpr StringLiteral evalRuntimeNBARequiredAttr =
-    "obelisk.eval.runtime_nba_required";
 
 /// Preserve the compact-NBA conversion proof on the operation that consumes
 /// it. Function and NBA conversion patterns may run in either order, so the
@@ -1265,6 +1266,117 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         call.setCalleeAttr(
             FlatSymbolRefAttr::get(module.getContext(), replacement->second));
     });
+
+  // Four-state Eval bodies and ordinary coroutines initially share value
+  // helpers. Later transition materialization replaces runtime publication
+  // inside the generated call closure with direct ingress stores, so mutating
+  // a shared definition would make the coroutine publish to the wrong queue
+  // after external disturbance. Give the four-state Eval roots a private
+  // helper graph. The independently generated two-state roots already call
+  // their private inductive variants and need no second clone here.
+  SmallVector<sim::SimFuncOp> helperSources;
+  llvm::SmallPtrSet<Operation *, 16> helperSet;
+  SmallVector<sim::SimFuncOp> pending(roots.begin(), roots.end());
+  llvm::SmallPtrSet<Operation *, 16> visitedHelpers;
+  while (!pending.empty()) {
+    sim::SimFuncOp function = pending.pop_back_val();
+    if (!visitedHelpers.insert(function.getOperation()).second)
+      continue;
+    function.walk([&](sim::SimCallOp call) {
+      sim::SimFuncOp callee =
+          design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+      if (!callee || callee.isExternal() ||
+          callee->hasAttr("obelisk.eval.raw_captures"))
+        return;
+      if (helperSet.insert(callee.getOperation()).second)
+        helperSources.push_back(callee);
+      pending.push_back(callee);
+    });
+  }
+  llvm::SmallPtrSet<Operation *, 16> privateHelperSet;
+  for (sim::SimFuncOp helper : helperSources)
+    helper.walk([&](Operation *operation) {
+      // Every immediate source update below may publish a static scheduler
+      // transition when it is lowered.  Transition materialization rewrites
+      // that publication to Eval ingress, so keep shared coroutine helpers
+      // out of the rewrite closure for all source kinds, not just variables.
+      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp,
+              sim::SimDriverDriveOp, sim::SimDriverDriveDelayedNetOp,
+              sim::SimDriverDriveChangedOp>(operation))
+        privateHelperSet.insert(helper.getOperation());
+    });
+  bool addedPrivateAncestor;
+  do {
+    addedPrivateAncestor = false;
+    for (sim::SimFuncOp helper : helperSources) {
+      if (privateHelperSet.contains(helper.getOperation()))
+        continue;
+      helper.walk([&](sim::SimCallOp call) {
+        sim::SimFuncOp callee =
+            design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+        if (callee && privateHelperSet.contains(callee.getOperation()))
+          addedPrivateAncestor |=
+              privateHelperSet.insert(helper.getOperation()).second;
+      });
+    }
+  } while (addedPrivateAncestor);
+  llvm::StringMap<std::string> privateHelperNames;
+  SmallVector<sim::SimFuncOp> privateHelpers;
+  for (sim::SimFuncOp source : helperSources) {
+    if (!privateHelperSet.contains(source.getOperation()))
+      continue;
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    SmallString<112> base;
+    (source.getSymName() + ".__obelisk_eval_private").toVector(base);
+    unsigned counter = 0;
+    SmallString<112> name = SymbolTable::generateSymbolName<112>(
+        base,
+        [&](StringRef candidate) {
+          return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+        },
+        counter);
+    uint64_t codeUnit = allocateCodeUnit();
+    uint64_t sourceScope = 0;
+    if (auto sourceCodeUnit =
+            source->getAttrOfType<IntegerAttr>("code_unit_id")) {
+      auto scope = codeUnitScopes.find(sourceCodeUnit.getUInt());
+      if (scope == codeUnitScopes.end())
+        return source.emitError(
+                   "Eval helper source has no code-unit declaration"),
+               failure();
+      sourceScope = scope->second;
+    }
+    sim::SimCodeUnitDeclOp::create(
+        builder, source.getLoc(), codeUnit, sourceScope,
+        sim::EntryKind::Function, builder.getStringAttr(name),
+        builder.getStringAttr("private four-state native eval helper"),
+        builder.getUnitAttr());
+    Operation *detached = source->clone();
+    auto clone = cast<sim::SimFuncOp>(detached);
+    clone.setSymName(name);
+    clone->setAttr("code_unit_id", builder.getI64IntegerAttr(codeUnit));
+    clone->setAttr("obelisk.eval.private_helper", builder.getUnitAttr());
+    clone->removeAttr(sim::metadata::evalTwoStateVariant);
+    clone->removeAttr("obelisk.eval.conditionally_two_state");
+    clone->removeAttr("obelisk.eval.local_promotion_ranges");
+    SymbolTable::setSymbolVisibility(clone, SymbolTable::Visibility::Private);
+    SymbolTable(design).insert(detached, design.getBody().front().end());
+    privateHelperNames[source.getSymName()] = name.str().str();
+    privateHelpers.push_back(clone);
+  }
+  auto redirectPrivateHelpers = [&](sim::SimFuncOp function) {
+    function.walk([&](sim::SimCallOp call) {
+      auto replacement = privateHelperNames.find(call.getCallee());
+      if (replacement != privateHelperNames.end())
+        call.setCalleeAttr(
+            FlatSymbolRefAttr::get(module.getContext(), replacement->second));
+    });
+  };
+  for (sim::SimFuncOp root : roots)
+    redirectPrivateHelpers(root);
+  for (sim::SimFuncOp helper : privateHelpers)
+    redirectPrivateHelpers(helper);
+
   if (!pathProbeRoutes.empty())
     module->setAttr("obelisk.eval.path_probe_routes",
                     builder.getArrayAttr(pathProbeRoutes));
@@ -2487,12 +2599,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     staticNBAPlan = std::move(*plan);
     staticNBA = !staticNBAPlan.roots.empty();
-    // A scalar wide-root latch can represent compiler clones of one semantic
-    // statement, but not distinct NBA statements whose selected ranges may
-    // overlap. Mark every affected eval body before packed lowering erases
-    // the source enqueue operations. The ordinary coroutine/runtime path then
-    // preserves LRM source ordering while unrelated roots remain eligible for
-    // direct generated state.
+    // A scalar wide-root latch can represent one at-most-once semantic
+    // statement, but not distinct NBA statements or one statement that may
+    // execute repeatedly. Mark every affected eval body before packed
+    // lowering erases the source enqueue operations. The ordinary
+    // coroutine/runtime path then preserves LRM source ordering while
+    // unrelated roots remain eligible for direct generated state.
     SmallVector<llvm::SmallDenseSet<uint64_t, 4>> semanticOriginsByRoot(
         staticNBAPlan.roots.size());
     for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites) {
@@ -2505,24 +2617,94 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           origin == staticNBAPlan.siteSemanticOrigins.end() ? site.site
                                                             : origin->second);
     }
-    llvm::SmallDenseSet<uint32_t, 4> runtimeOrderedWideRoots;
-    for (auto [index, root] : llvm::enumerate(staticNBAPlan.roots))
-      if (root.bit_width > 64 && semanticOriginsByRoot[index].size() > 1)
-        runtimeOrderedWideRoots.insert(static_cast<uint32_t>(index));
-    if (!runtimeOrderedWideRoots.empty())
-      module.walk([&](sim::SimFuncOp function) {
-        bool requiresRuntimeNBA = false;
-        function.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    module.walk([&](sim::SimFuncOp function) {
+      // Only outlined Eval bodies are ownership candidates. Process CFG
+      // successors cross scheduler suspensions and therefore do not describe
+      // one activation; the authoritative LLVM preflight below certifies the
+      // final outlined control flow and ingress set.
+      if (!function->hasAttr("obelisk.eval.raw_captures"))
+        return;
+      SmallVector<sim::SimFuncOp> callClosure;
+      SmallVector<sim::SimFuncOp> pending{function};
+      llvm::SmallPtrSet<Operation *, 8> closureSeen;
+      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+      while (!pending.empty()) {
+        sim::SimFuncOp current = pending.pop_back_val();
+        if (!closureSeen.insert(current.getOperation()).second)
+          continue;
+        callClosure.push_back(current);
+        current.walk([&](sim::SimCallOp call) {
+          if (design)
+            if (sim::SimFuncOp callee =
+                    design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+              pending.push_back(callee);
+        });
+      }
+      llvm::SmallDenseMap<uint64_t, unsigned, 4> semanticSiteCounts;
+      for (sim::SimFuncOp current : callClosure)
+        current.walk([&](sim::SimNBAEnqueueOp enqueue) {
+          sim::NBASiteAttr site = enqueue.getSiteAttr();
+          if (!site)
+            return;
+          auto origin = staticNBAPlan.siteSemanticOrigins.find(site.getId());
+          ++semanticSiteCounts[origin == staticNBAPlan.siteSemanticOrigins.end()
+                                   ? site.getId()
+                                   : origin->second];
+        });
+      auto siteExecutesAtMostOnce = [&](sim::SimNBAEnqueueOp enqueue) {
+        sim::NBASiteAttr site = enqueue.getSiteAttr();
+        if (!site)
+          return false;
+        auto origin = staticNBAPlan.siteSemanticOrigins.find(site.getId());
+        uint64_t semanticSite =
+            origin == staticNBAPlan.siteSemanticOrigins.end() ? site.getId()
+                                                              : origin->second;
+        if (semanticSiteCounts.lookup(semanticSite) != 1)
+          return false;
+        // A helper can be reached through multiple calls, recursion, or an
+        // enclosing loop. Until call-count/path exclusivity is certified,
+        // retain its ordered NBA executions in the runtime scheduler.
+        if (enqueue->getParentOfType<sim::SimFuncOp>() != function)
+          return false;
+        for (Operation *ancestor = enqueue->getParentOp();
+             ancestor && ancestor != function.getOperation();
+             ancestor = ancestor->getParentOp())
+          if (isa<LoopLikeOpInterface>(ancestor))
+            return false;
+        Block *originBlock = enqueue->getBlock();
+        SmallVector<Block *, 8> worklist;
+        for (Block *successor : originBlock->getTerminator()->getSuccessors())
+          worklist.push_back(successor);
+        llvm::SmallPtrSet<Block *, 16> visited;
+        while (!worklist.empty()) {
+          Block *block = worklist.pop_back_val();
+          if (block == originBlock)
+            return false;
+          if (!visited.insert(block).second)
+            continue;
+          for (Block *successor : block->getTerminator()->getSuccessors())
+            worklist.push_back(successor);
+        }
+        return true;
+      };
+      bool requiresRuntimeNBA = false;
+      for (sim::SimFuncOp current : callClosure)
+        current.walk([&](sim::SimNBAEnqueueOp enqueue) {
           sim::NBASiteAttr site = enqueue.getSiteAttr();
           auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
                            : staticNBAPlan.siteRoots.end();
-          requiresRuntimeNBA |= root != staticNBAPlan.siteRoots.end() &&
-                                runtimeOrderedWideRoots.contains(root->second);
+          if (root == staticNBAPlan.siteRoots.end() ||
+              root->second >= staticNBAPlan.roots.size() ||
+              staticNBAPlan.roots[root->second].bit_width <= 64)
+            return;
+          requiresRuntimeNBA |=
+              semanticOriginsByRoot[root->second].size() != 1 ||
+              !siteExecutesAtMostOnce(enqueue);
         });
-        if (requiresRuntimeNBA)
-          function->setAttr(evalRuntimeNBARequiredAttr,
-                            UnitAttr::get(module.getContext()));
-      });
+      if (requiresRuntimeNBA)
+        function->setAttr(evalRuntimeNBARequiredAttr,
+                          UnitAttr::get(module.getContext()));
+    });
     if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
       return failure();
     directStaticState |=
@@ -3198,8 +3380,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             !certifiedRuntimeNBAFallback)
           return failure();
         if (certifiedRuntimeNBAFallback)
-          module->setAttr("obelisk.eval.runtime_nba_fallback",
-                          UnitAttr::get(context));
+          module->setAttr(evalRuntimeNBAFallbackAttr, UnitAttr::get(context));
         evalScheduler = false;
         break;
       }
@@ -3351,21 +3532,33 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                  entry.second == 0;
         });
     if (evalScheduler) {
-      if (failed(makeNativeEvalPlan(
-              module, dataLayout, aotEligibility.getActorSlots().size(),
-              executableNodes, *stateLayout, staticNBAPlan, staticFanoutPlan,
-              staticActorRoots, *directFragments, evalOwnership,
-              threeTierPlan.sourceGraph, periodicClocks, periodicAliases,
-              directStaticState, staticNBA, staticControl, staticFanout,
-              cleanSuperstep, aotEligibility.isFullyEligible(),
-              staticEvalIsland, rootSlotZero, vpi)))
+      FailureOr<bool> evalPlan = makeNativeEvalPlan(
+          module, dataLayout, aotEligibility.getActorSlots().size(),
+          executableNodes, *stateLayout, staticNBAPlan, staticFanoutPlan,
+          staticActorRoots, *directFragments, evalOwnership,
+          threeTierPlan.sourceGraph, periodicClocks, periodicAliases,
+          directStaticState, staticNBA, staticControl, staticFanout,
+          cleanSuperstep, aotEligibility.isFullyEligible(), staticEvalIsland,
+          rootSlotZero, vpi);
+      if (failed(evalPlan))
         return failure();
-    } else if (failed(makeNativeAOTPlanLegacy(
-                   module, dataLayout, aotEligibility.getActorSlots().size(),
-                   executableNodes, *stateLayout, staticNBAPlan,
-                   staticFanoutPlan, staticActorRoots, directStaticState,
-                   staticNBA, staticControl, staticFanout, cleanSuperstep,
-                   aotEligibility.isFullyEligible(), rootSlotZero, vpi))) {
+      if (!*evalPlan) {
+        // Direct fragments and their four-/two-state route shells are
+        // materialized before the final LLVM-level eligibility proof.  A
+        // declined proof therefore takes the same certified legacy handoff
+        // as a source-level ordered-NBA owner: the ordinary coroutine keeps
+        // the runtime NBA call, and unused Eval route shells are ignored.
+        module->setAttr(evalRuntimeNBAFallbackAttr, UnitAttr::get(context));
+        evalScheduler = false;
+      }
+    }
+    if (!evalScheduler &&
+        failed(makeNativeAOTPlanLegacy(
+            module, dataLayout, aotEligibility.getActorSlots().size(),
+            executableNodes, *stateLayout, staticNBAPlan, staticFanoutPlan,
+            staticActorRoots, directStaticState, staticNBA, staticControl,
+            staticFanout, cleanSuperstep, aotEligibility.isFullyEligible(),
+            rootSlotZero, vpi))) {
       return failure();
     }
   }
@@ -3680,8 +3873,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
         "obelisk.native_scheduler");
     if ((scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Auto) ||
-        module->hasAttr("obelisk.eval.runtime_nba_fallback")) {
-      module->removeAttr("obelisk.eval.runtime_nba_fallback");
+        module->hasAttr(evalRuntimeNBAFallbackAttr)) {
+      module->removeAttr(evalRuntimeNBAFallbackAttr);
       return success();
     }
     return run.emitError("eval function routes have no Tier-2 handoff");

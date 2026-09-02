@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s
+// RUN:   | FileCheck %s --implicit-check-not=obelisk.eval.tier2_convergence
 
 // This fixture is already at the coroutine-conversion boundary: its compute
 // graph, static state plan, superstep, and three-tier schedule are explicit.
@@ -55,22 +55,33 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // One clock-sensitive activation owns the whole group.  The four-state,
 // provisional two-state, and trusted steady-state coordinators must all call
 // that direct owner without entering the runtime.
-// CHECK-COUNT-1: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
-// CHECK-NOT: obelisk.eval.tier2_convergence
+// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
+// CHECK-SAME: attributes {obelisk.eval.infallible, passthrough = ["alwaysinline"]}
+// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(
+// CHECK-SAME: attributes {obelisk.eval.infallible, obelisk.eval.two_state_variant, passthrough = ["alwaysinline"]}
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1(
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-COUNT-1: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_two_state_v1(
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-COUNT-1: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1(
 // CHECK-SAME: obelisk.eval.trusted_two_state_coordinator
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-COUNT-1: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1(
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted(
-// CHECK-SAME: obelisk.eval.trusted_two_state_closure
+// CHECK-SAME: attributes {obelisk.eval.infallible, obelisk.eval.trusted_two_state_closure, obelisk.eval.two_state_variant, passthrough = ["alwaysinline"]}
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0
 // CHECK: llvm.return

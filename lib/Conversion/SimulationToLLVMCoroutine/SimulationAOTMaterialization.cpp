@@ -25,7 +25,398 @@ static uint32_t fanoutRoute(const obelisk_rt_static_fanout_entry &entry) {
   return entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
 }
 
-LogicalResult makeNativeEvalPlan(
+using GeneratedTransitionRange =
+    std::tuple<uint32_t, uint64_t, uint64_t, unsigned>;
+
+static std::optional<uint64_t> constantU64(Value value) {
+  IntegerAttr integer;
+  if (auto constant = value.getDefiningOp<LLVM::ConstantOp>())
+    integer = dyn_cast<IntegerAttr>(constant.getValue());
+  else if (auto constant = value.getDefiningOp<arith::ConstantOp>())
+    integer = dyn_cast<IntegerAttr>(constant.getValue());
+  return integer ? std::optional<uint64_t>{integer.getValue().getZExtValue()}
+                 : std::nullopt;
+}
+
+static bool isGeneratedEvalBody(sim::SimFuncOp function) {
+  return !function->hasAttr(evalRuntimeNBARequiredAttr) &&
+         (function->hasAttr("obelisk.eval.raw_captures") ||
+          function->hasAttr("obelisk.eval.selected_two_state"));
+}
+
+static SmallVector<sim::SimFuncOp>
+collectGeneratedEvalCallClosure(ModuleOp module) {
+  SmallVector<sim::SimFuncOp> closure;
+  SmallVector<sim::SimFuncOp> pending;
+  llvm::SmallPtrSet<Operation *, 16> visited;
+  module.walk([&](sim::SimFuncOp function) {
+    if (isGeneratedEvalBody(function))
+      pending.push_back(function);
+  });
+  while (!pending.empty()) {
+    sim::SimFuncOp function = pending.pop_back_val();
+    if (!visited.insert(function.getOperation()).second)
+      continue;
+    closure.push_back(function);
+    sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+    function.walk([&](sim::SimCallOp call) {
+      if (design)
+        if (sim::SimFuncOp callee =
+                design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+          pending.push_back(callee);
+    });
+  }
+  return closure;
+}
+
+static FailureOr<SmallVector<GeneratedTransitionRange>>
+collectGeneratedTransitionRanges(ModuleOp module,
+                                 ArrayRef<NativeDirectFragment> fragments) {
+  SmallVector<GeneratedTransitionRange> ranges;
+  LogicalResult valid = success();
+  for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
+    if (failed(valid))
+      break;
+    unsigned directFragment = UINT_MAX;
+    if (auto identity = function->getAttrOfType<IntegerAttr>(
+            "obelisk.eval.direct_fragment");
+        identity && identity.getInt() >= 0 &&
+        static_cast<uint64_t>(identity.getInt()) < fragments.size())
+      directFragment = static_cast<unsigned>(identity.getUInt());
+    function.walk([&](LLVM::CallOp call) {
+      if (failed(valid) || !call.getCallee() ||
+          *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
+        return;
+      ValueRange arguments = call.getArgOperands();
+      if (arguments.size() != 8) {
+        valid = call.emitError("malformed static transition ABI");
+        return;
+      }
+      std::optional<uint64_t> staticState = constantU64(arguments[1]);
+      std::optional<uint64_t> lowBit = constantU64(arguments[2]);
+      std::optional<uint64_t> bitWidth = constantU64(arguments[3]);
+      if (!staticState || !lowBit || !bitWidth || *bitWidth == 0 ||
+          *bitWidth > 64) {
+        valid = call.emitError("eval transition is not a fixed scalar range");
+        return;
+      }
+      ranges.emplace_back(static_cast<uint32_t>(*staticState), *lowBit,
+                          *bitWidth, directFragment);
+    });
+  }
+  if (failed(valid))
+    return failure();
+  return ranges;
+}
+
+struct DynamicEvalNBAProofContext {
+  const NativeStateLayout &stateLayout;
+  const NativeStaticNBAPlan &staticNBAPlan;
+  ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries;
+  ArrayRef<NativeDirectFragment> directFragments;
+  ArrayRef<std::string> mergedExecutors;
+  ArrayRef<unsigned> periodicEntryRecords;
+  ArrayRef<NativePeriodicClock> periodicClocks;
+  ArrayRef<NativePeriodicAlias> periodicAliases;
+  ArrayRef<GeneratedTransitionRange> generatedTransitionRanges;
+  sim::ComputeGraphAttr computeGraph;
+};
+
+struct DynamicEvalNBAProof {
+  bool eligible = false;
+  bool periodicWideLatch = false;
+  uint32_t commitRegion = UINT32_MAX;
+  std::optional<unsigned> periodicRecord;
+  bool exclusivePeriodicIngress = false;
+  unsigned periodicIngressCount = 0;
+  unsigned nonPeriodicIngressCount = 0;
+  unsigned periodicIngressTransitionConflicts = 0;
+  bool uniqueSemanticRootSite = false;
+  size_t rootSiteCount = 0;
+  size_t semanticRootSiteCount = 0;
+  uint64_t firstRootSite = UINT64_MAX;
+  uint64_t lastRootSite = UINT64_MAX;
+  bool siteExecutesAtMostOnce = false;
+};
+
+static uint32_t
+getDynamicNBACommitRegion(sim::SimFuncOp function,
+                          const DynamicEvalNBAProofContext &proofContext) {
+  if (auto identity =
+          function->getAttrOfType<IntegerAttr>("obelisk.eval.direct_fragment");
+      identity && identity.getInt() >= 0 &&
+      static_cast<uint64_t>(identity.getInt()) <
+          proofContext.directFragments.size() &&
+      proofContext.computeGraph) {
+    uint32_t graphRegion = UINT32_MAX;
+    const NativeDirectFragment &direct =
+        proofContext.directFragments[identity.getUInt()];
+    for (uint32_t fragmentID : direct.fragmentIDs) {
+      if (fragmentID >= proofContext.computeGraph.getNodes().size())
+        return UINT32_MAX;
+      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+          proofContext.computeGraph.getNodes()[fragmentID]);
+      if (!fragment)
+        continue;
+      uint32_t region = UINT32_MAX;
+      if (fragment.getRegion() == sim::ComputeRegionKind::Active)
+        region = OBELISK_RT_REGION_ACTIVE;
+      else if (fragment.getRegion() == sim::ComputeRegionKind::Reactive)
+        region = OBELISK_RT_REGION_REACTIVE;
+      if (region == UINT32_MAX)
+        return UINT32_MAX;
+      if (graphRegion != UINT32_MAX && graphRegion != region)
+        return UINT32_MAX;
+      graphRegion = region;
+    }
+    if (graphRegion != UINT32_MAX)
+      return graphRegion + 2;
+  }
+
+  uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
+  ArrayAttr owners =
+      function->getAttrOfType<ArrayAttr>("obelisk.eval.source_owners");
+  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+  if (!owners || !design)
+    return homeRegion == OBELISK_RT_REGION_ACTIVE ||
+                   homeRegion == OBELISK_RT_REGION_REACTIVE
+               ? homeRegion + 2
+               : UINT32_MAX;
+
+  uint32_t semanticRegion = UINT32_MAX;
+  for (Attribute attribute : owners) {
+    auto owner = dyn_cast<DictionaryAttr>(attribute);
+    auto codeUnit =
+        owner ? owner.getAs<IntegerAttr>("code_unit") : IntegerAttr{};
+    if (!codeUnit || codeUnit.getInt() < 0)
+      return UINT32_MAX;
+    sim::SimFuncOp source;
+    design.walk([&](sim::SimFuncOp candidate) {
+      if (!source && candidate.getCodeUnitIdAttr() &&
+          candidate.getCodeUnitIdAttr().getUInt() == codeUnit.getUInt())
+        source = candidate;
+    });
+    uint32_t sourceRegion =
+        source ? getRuntimeEventRegion(source.getHomeRegion()) : UINT32_MAX;
+    if (sourceRegion != OBELISK_RT_REGION_ACTIVE &&
+        sourceRegion != OBELISK_RT_REGION_REACTIVE)
+      return UINT32_MAX;
+    sourceRegion += 2;
+    if (semanticRegion != UINT32_MAX && semanticRegion != sourceRegion)
+      return UINT32_MAX;
+    semanticRegion = sourceRegion;
+  }
+  return semanticRegion;
+}
+
+static FailureOr<DynamicEvalNBAProof>
+proveDynamicEvalNBA(LLVM::CallOp call,
+                    const DynamicEvalNBAProofContext &proofContext) {
+  ValueRange arguments = call.getArgOperands();
+  if (arguments.size() != 9)
+    return call.emitError("malformed static NBA ABI"), failure();
+  const NativeStateLayout &stateLayout = proofContext.stateLayout;
+  const NativeStaticNBAPlan &staticNBAPlan = proofContext.staticNBAPlan;
+  ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
+  std::optional<uint64_t> site = constantU64(arguments[1]);
+  std::optional<uint64_t> width = constantU64(arguments[6]);
+  auto root = site ? staticNBAPlan.siteRoots.find(*site)
+                   : staticNBAPlan.siteRoots.end();
+  auto offsetCall = arguments[5].getDefiningOp<LLVM::CallOp>();
+  if (!offsetCall) {
+    Operation *selected = arguments[5].getDefiningOp();
+    if (isa_and_nonnull<arith::SelectOp, LLVM::SelectOp>(selected)) {
+      std::optional<uint64_t> trueConstant =
+          constantU64(selected->getOperand(1));
+      std::optional<uint64_t> falseConstant =
+          constantU64(selected->getOperand(2));
+      if (falseConstant && *falseConstant == UINT64_MAX)
+        offsetCall = selected->getOperand(1).getDefiningOp<LLVM::CallOp>();
+      else if (trueConstant && *trueConstant == UINT64_MAX)
+        offsetCall = selected->getOperand(2).getDefiningOp<LLVM::CallOp>();
+    }
+  }
+
+  DynamicEvalNBAProof proof;
+  sim::SimFuncOp enclosing = call->getParentOfType<sim::SimFuncOp>();
+  proof.commitRegion = enclosing
+                           ? getDynamicNBACommitRegion(enclosing, proofContext)
+                           : UINT32_MAX;
+  if (enclosing)
+    if (auto identity = enclosing->getAttrOfType<IntegerAttr>(
+            "obelisk.eval.direct_fragment");
+        identity && identity.getInt() >= 0 &&
+        static_cast<uint64_t>(identity.getInt()) <
+            proofContext.directFragments.size()) {
+      const NativeDirectFragment &direct =
+          proofContext.directFragments[identity.getUInt()];
+      auto record = llvm::find_if(
+          proofContext.periodicEntryRecords, [&](unsigned candidate) {
+            return candidate < proofContext.mergedExecutors.size() &&
+                   proofContext.mergedExecutors[candidate] == direct.wrapper;
+          });
+      if (record != proofContext.periodicEntryRecords.end())
+        proof.periodicRecord = *record;
+    }
+
+  auto periodicLocalBit = [&](uint32_t staticState,
+                              uint64_t physicalBit) -> std::optional<uint64_t> {
+    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+      return candidate.handleID == staticState;
+    });
+    if (bound == stateLayout.bounds.end() || physicalBit < bound->offset ||
+        physicalBit - bound->offset >= bound->width)
+      return std::nullopt;
+    return physicalBit - bound->offset;
+  };
+  auto isExactPeriodicIngress = [&](const auto &fanout) {
+    if (fanout.bit_width != 1 ||
+        fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
+        fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
+      return false;
+    bool clockIngress = llvm::any_of(
+        proofContext.periodicClocks, [&](const NativePeriodicClock &clock) {
+          std::optional<uint64_t> bit =
+              periodicLocalBit(clock.staticState, clock.bitOffset);
+          return bit && fanout.static_state == clock.staticState &&
+                 fanout.low_bit == *bit;
+        });
+    bool aliasIngress = llvm::any_of(
+        proofContext.periodicAliases, [&](const NativePeriodicAlias &alias) {
+          std::optional<uint64_t> bit =
+              periodicLocalBit(alias.targetStaticState, alias.targetBitOffset);
+          return bit && fanout.static_state == alias.targetStaticState &&
+                 fanout.low_bit == *bit;
+        });
+    return clockIngress || aliasIngress;
+  };
+  if (proof.periodicRecord) {
+    bool sawIngress = false;
+    proof.exclusivePeriodicIngress =
+        llvm::all_of(proofContext.fanoutEntries, [&](const auto &fanout) {
+          if (fanout.merged_bit != *proof.periodicRecord)
+            return true;
+          sawIngress = true;
+          if (!isExactPeriodicIngress(fanout)) {
+            ++proof.nonPeriodicIngressCount;
+            return false;
+          }
+          ++proof.periodicIngressCount;
+          uint64_t end = fanout.low_bit + fanout.bit_width;
+          bool conflict = llvm::any_of(
+              proofContext.generatedTransitionRanges, [&](const auto &range) {
+                auto [state, low, rangeWidth, sourceIndex] = range;
+                bool periodicKernelSource = false;
+                if (sourceIndex < proofContext.directFragments.size()) {
+                  const NativeDirectFragment &source =
+                      proofContext.directFragments[sourceIndex];
+                  periodicKernelSource = llvm::any_of(
+                      proofContext.periodicClocks,
+                      [&](const NativePeriodicClock &clock) {
+                        return source.actorSlot == clock.actorSlot &&
+                               source.continuation == clock.continuation;
+                      });
+                  periodicKernelSource |= llvm::any_of(
+                      proofContext.periodicAliases,
+                      [&](const NativePeriodicAlias &alias) {
+                        return source.actorSlot == alias.forwardingActorSlot &&
+                               source.continuation ==
+                                   alias.forwardingContinuation;
+                      });
+                }
+                if (periodicKernelSource)
+                  return false;
+                return state == fanout.static_state && low < end &&
+                       fanout.low_bit < low + rangeWidth;
+              });
+          proof.periodicIngressTransitionConflicts += conflict;
+          return !conflict;
+        });
+    proof.exclusivePeriodicIngress &= sawIngress;
+  }
+
+  auto siteBlockIsAcyclic = [&] {
+    Block *origin = call->getBlock();
+    SmallVector<Block *, 8> worklist;
+    for (Block *successor : origin->getTerminator()->getSuccessors())
+      worklist.push_back(successor);
+    llvm::SmallPtrSet<Block *, 16> visited;
+    while (!worklist.empty()) {
+      Block *block = worklist.pop_back_val();
+      if (block == origin)
+        return false;
+      if (!visited.insert(block).second)
+        continue;
+      for (Block *successor : block->getTerminator()->getSuccessors())
+        worklist.push_back(successor);
+    }
+    return true;
+  };
+  bool outsideStructuredLoop = true;
+  for (Operation *ancestor = call->getParentOp();
+       ancestor && ancestor != enclosing.getOperation();
+       ancestor = ancestor->getParentOp())
+    if (isa<LoopLikeOpInterface>(ancestor)) {
+      outsideStructuredLoop = false;
+      break;
+    }
+  unsigned matchingSiteCalls = 0;
+  if (site && enclosing)
+    enclosing.walk([&](LLVM::CallOp other) {
+      if (!other.getCallee() ||
+          *other.getCallee() != "obelisk_rt_v1_scheduler_static_nba" ||
+          other.getArgOperands().size() != 9)
+        return;
+      std::optional<uint64_t> otherSite =
+          constantU64(other.getArgOperands()[1]);
+      matchingSiteCalls += otherSite && *otherSite == *site;
+    });
+  proof.siteExecutesAtMostOnce =
+      matchingSiteCalls == 1 && outsideStructuredLoop && siteBlockIsAcyclic();
+
+  bool commonDynamicRoot =
+      site && width && *width != 0 && *width <= 64 &&
+      root != staticNBAPlan.siteRoots.end() &&
+      root->second < staticNBAPlan.roots.size() &&
+      *width <= staticNBAPlan.roots[root->second].bit_width &&
+      root->second < staticNBAPlan.generatedOffsets.size() && offsetCall &&
+      offsetCall.getCallee() &&
+      *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+      offsetCall.getArgOperands().size() == 2 &&
+      (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
+      proof.commitRegion != UINT32_MAX;
+  bool directAccumulator =
+      commonDynamicRoot &&
+      root->second < staticNBAPlan.generatedAccumulators.size() &&
+      !staticNBAPlan.generatedAccumulators[root->second].empty() &&
+      staticNBAPlan.roots[root->second].bit_width <= 64;
+  llvm::SmallDenseSet<uint64_t, 4> semanticRootSites;
+  if (root != staticNBAPlan.siteRoots.end())
+    for (const auto &candidate : nbaSites)
+      if (candidate.root == root->second) {
+        ++proof.rootSiteCount;
+        if (proof.firstRootSite == UINT64_MAX)
+          proof.firstRootSite = candidate.site;
+        proof.lastRootSite = candidate.site;
+        auto origin = staticNBAPlan.siteSemanticOrigins.find(candidate.site);
+        semanticRootSites.insert(
+            origin == staticNBAPlan.siteSemanticOrigins.end() ? candidate.site
+                                                              : origin->second);
+      }
+  proof.semanticRootSiteCount = semanticRootSites.size();
+  proof.uniqueSemanticRootSite = site && semanticRootSites.size() == 1;
+  // The periodic fast loop owns the design-side NBA handoff only. Reactive
+  // owners require the later Re-NBA phase, which remains runtime scheduled.
+  proof.periodicWideLatch = commonDynamicRoot && proof.uniqueSemanticRootSite &&
+                            proof.exclusivePeriodicIngress &&
+                            proof.siteExecutesAtMostOnce &&
+                            proof.commitRegion == OBELISK_RT_REGION_NBA &&
+                            staticNBAPlan.roots[root->second].bit_width > 64;
+  proof.eligible = directAccumulator || proof.periodicWideLatch;
+  return proof;
+}
+
+FailureOr<bool> makeNativeEvalPlan(
     ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
@@ -41,20 +432,106 @@ LogicalResult makeNativeEvalPlan(
     bool enableCleanSuperstep, bool fullyStatic, bool staticEvalIsland,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi) {
   if (actorCount == 0 || executableNodes.empty())
-    return module.emitError("AOT schedule has no executable actor nodes");
-  module->setAttr("obelisk.eval.generated", UnitAttr::get(module.getContext()));
+    return module.emitError("AOT schedule has no executable actor nodes"),
+           failure();
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location location = module.getLoc();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
+
+  // Route shells and runtime checkpoint wrappers can both reference this
+  // tuple, including across a conservative late Eval handoff.
+  if (failed(materializeEvalCheckpointHandoffGlobals(module)))
+    return failure();
+
   FailureOr<ResolvedNativeEvalPlan> resolved =
       resolveNativeEvalPlan(module, executableNodes, stateLayout, staticNBAPlan,
                             staticFanoutPlan, directFragments, evalOwnership,
                             computeGraph, periodicClocks, periodicAliases);
   if (failed(resolved))
     return failure();
+  SmallVector<GeneratedTransitionRange> generatedTransitionRanges;
+  llvm::DenseMap<Operation *, DynamicEvalNBAProof> dynamicNBAProofs;
+  if (!resolved->clockKernels.empty()) {
+    FailureOr<SmallVector<GeneratedTransitionRange>> transitionRanges =
+        collectGeneratedTransitionRanges(module, directFragments);
+    if (failed(transitionRanges))
+      return failure();
+    generatedTransitionRanges = std::move(*transitionRanges);
+    // An ordinary helper has no single logical-process identity. Most of its
+    // fixed transitions can still publish directly into generated ingress,
+    // but an active-self-suppressed route needs the runtime's exact current
+    // actor check. Reject only that overlap; all other helper transitions are
+    // rewritten with the rest of the generated call closure below.
+    bool unownedTransitionNeedsActiveSelfCheck = llvm::any_of(
+        generatedTransitionRanges, [&](const auto &range) {
+          auto [state, low, width, sourceIndex] = range;
+          if (sourceIndex != UINT_MAX)
+            return false;
+          uint64_t end = low + width;
+          return llvm::any_of(resolved->fanoutEntries, [&](const auto &entry) {
+            return entry.static_state == state && entry.low_bit < end &&
+                   low < entry.low_bit + entry.bit_width &&
+                   (entry.reserved &
+                    OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0;
+          });
+        });
+    if (unownedTransitionNeedsActiveSelfCheck)
+      return false;
+    DynamicEvalNBAProofContext proofContext{stateLayout,
+                                            staticNBAPlan,
+                                            resolved->fanoutEntries,
+                                            directFragments,
+                                            resolved->mergedExecutors,
+                                            resolved->periodicEntryRecords,
+                                            periodicClocks,
+                                            periodicAliases,
+                                            generatedTransitionRanges,
+                                            computeGraph};
+    LogicalResult valid = success();
+    bool needsRuntimeFallback = false;
+    for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
+      if (failed(valid))
+        break;
+      bool directBody = function->hasAttr("obelisk.eval.direct_fragment");
+      function.walk([&](LLVM::CallOp call) {
+        if (failed(valid) || !call.getCallee() ||
+            *call.getCallee() != "obelisk_rt_v1_scheduler_static_nba")
+          return;
+        if (!directBody) {
+          // Shared helpers may execute through multiple call sites or the
+          // ordinary coroutine fallback. Keep their ordered NBA staging in
+          // the runtime scheduler until an interprocedural path/count proof
+          // and a private Eval clone both exist.
+          needsRuntimeFallback = true;
+          return;
+        }
+        FailureOr<DynamicEvalNBAProof> proof =
+            proveDynamicEvalNBA(call, proofContext);
+        if (failed(proof)) {
+          valid = failure();
+          return;
+        }
+        if (!proof->eligible)
+          call.emitRemark("dynamic NBA is ineligible for generated eval")
+              << " (commit-region=" << proof->commitRegion
+              << ", periodic-entry=" << static_cast<bool>(proof->periodicRecord)
+              << ", exclusive-periodic-ingress="
+              << proof->exclusivePeriodicIngress
+              << ", unique-semantic-root-site=" << proof->uniqueSemanticRootSite
+              << ", site-once=" << proof->siteExecutesAtMostOnce << ")";
+        needsRuntimeFallback |= !proof->eligible;
+        dynamicNBAProofs.try_emplace(call.getOperation(), std::move(*proof));
+      });
+    }
+    if (failed(valid))
+      return failure();
+    if (needsRuntimeFallback)
+      return false;
+  }
+  module->setAttr("obelisk.eval.generated", UnitAttr::get(module.getContext()));
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
   SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries =
@@ -229,38 +706,6 @@ LogicalResult makeNativeEvalPlan(
   uint64_t pathGuardedOwnerMask = 0;
   bool periodicEntryPromotionComplete = false;
   uint64_t periodicEntryPromotionMask = 0;
-
-  // Path-sensitive generated owners publish an exact cold continuation here
-  // before returning AOT_GENERATED_CHECKPOINT. The periodic handoff consumes
-  // this tuple only after leaving the coordinator call graph.
-  builder.setInsertionPointToStart(module.getBody());
-  LLVM::GlobalOp::create(builder, location, i32, false, LLVM::Linkage::Internal,
-                         evalCheckpointActorName,
-                         builder.getI32IntegerAttr(UINT32_MAX), 4);
-  builder.setInsertionPointToStart(module.getBody());
-  LLVM::GlobalOp::create(builder, location, i32, false, LLVM::Linkage::Internal,
-                         evalCheckpointContinuationName,
-                         builder.getI32IntegerAttr(0), 4);
-  builder.setInsertionPointToStart(module.getBody());
-  auto checkpointCallback = LLVM::GlobalOp::create(
-      builder, location, pointer, false, LLVM::Linkage::Internal,
-      evalCheckpointCallbackName, Attribute{}, 8);
-  Block *checkpointCallbackInitializer = new Block;
-  checkpointCallback.getInitializerRegion().push_back(
-      checkpointCallbackInitializer);
-  builder.setInsertionPointToStart(checkpointCallbackInitializer);
-  LLVM::ReturnOp::create(builder, location,
-                         LLVM::ZeroOp::create(builder, location, pointer));
-  builder.setInsertionPointToStart(module.getBody());
-  auto checkpointMutableState = LLVM::GlobalOp::create(
-      builder, location, pointer, false, LLVM::Linkage::Internal,
-      evalCheckpointMutableStateName, Attribute{}, 8);
-  Block *checkpointMutableStateInitializer = new Block;
-  checkpointMutableState.getInitializerRegion().push_back(
-      checkpointMutableStateInitializer);
-  builder.setInsertionPointToStart(checkpointMutableStateInitializer);
-  LLVM::ReturnOp::create(builder, location,
-                         LLVM::ZeroOp::create(builder, location, pointer));
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -1024,8 +1469,6 @@ LogicalResult makeNativeEvalPlan(
   // can reactivate a sensitivity owner before the NBA barrier.  Retain their
   // ranges after replacing the runtime calls so later one-entry NBA staging
   // can prove that its periodic ingress is not written by another eval body.
-  SmallVector<std::tuple<uint32_t, uint64_t, uint64_t, unsigned>, 16>
-      generatedTransitionRanges;
   if (!clockKernels.empty()) {
     // Resolve the generated body that executes under each compact ready bit.
     // Fusion helpers inherit the identity of their instance coordinator: the
@@ -1078,9 +1521,7 @@ LogicalResult makeNativeEvalPlan(
       std::optional<uint32_t> activeOwnerBit;
     };
     SmallVector<GeneratedTransition> transitions;
-    module.walk([&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function))
-        return;
+    for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
       bool periodicTwoState =
           function->hasAttr("obelisk.eval.selected_two_state");
       auto activeOwner = activeOwnerBits.find(function.getSymName());
@@ -1100,17 +1541,7 @@ LogicalResult makeNativeEvalPlan(
           transitions.push_back(
               {call, directFragment, periodicTwoState, activeOwnerBit});
       });
-    });
-    auto constantU64 = [](Value value) -> std::optional<uint64_t> {
-      IntegerAttr integer;
-      if (auto constant = value.getDefiningOp<LLVM::ConstantOp>())
-        integer = dyn_cast<IntegerAttr>(constant.getValue());
-      else if (auto constant = value.getDefiningOp<arith::ConstantOp>())
-        integer = dyn_cast<IntegerAttr>(constant.getValue());
-      return integer
-                 ? std::optional<uint64_t>{integer.getValue().getZExtValue()}
-                 : std::nullopt;
-    };
+    }
     auto packedMask = [](uint64_t width) {
       return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     };
@@ -1129,9 +1560,6 @@ LogicalResult makeNativeEvalPlan(
           *bitWidth > 64)
         return call.emitError("eval transition is not a fixed scalar range"),
                failure();
-      generatedTransitionRanges.emplace_back(
-          static_cast<uint32_t>(*staticState), *lowBit, *bitWidth,
-          directFragment);
       OpBuilder transitionBuilder(call);
       Value oldValue = arguments[4];
       Value oldUnknown = arguments[5];
@@ -1350,205 +1778,11 @@ LogicalResult makeNativeEvalPlan(
             }
           }
         }
-        sim::SimFuncOp enclosing = call->getParentOfType<sim::SimFuncOp>();
-        uint32_t homeRegion =
-            enclosing ? getRuntimeEventRegion(enclosing.getHomeRegion())
-                      : UINT32_MAX;
-        uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
-                                        homeRegion == OBELISK_RT_REGION_REACTIVE
-                                    ? homeRegion + 2
-                                    : UINT32_MAX;
-        std::optional<unsigned> periodicRecord;
-        if (enclosing)
-          if (auto identity = enclosing->getAttrOfType<IntegerAttr>(
-                  "obelisk.eval.direct_fragment");
-              identity && identity.getInt() >= 0 &&
-              static_cast<uint64_t>(identity.getInt()) <
-                  directFragments.size()) {
-            const NativeDirectFragment &direct =
-                directFragments[identity.getUInt()];
-            auto record =
-                llvm::find_if(periodicEntryRecords, [&](unsigned candidate) {
-                  return candidate < mergedExecutors.size() &&
-                         mergedExecutors[candidate] == direct.wrapper;
-                });
-            if (record != periodicEntryRecords.end())
-              periodicRecord = *record;
-          }
-        auto periodicLocalBit =
-            [&](uint32_t staticState,
-                uint64_t physicalBit) -> std::optional<uint64_t> {
-          auto bound =
-              llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-                return candidate.handleID == staticState;
-              });
-          if (bound == stateLayout.bounds.end() ||
-              physicalBit < bound->offset ||
-              physicalBit - bound->offset >= bound->width)
-            return std::nullopt;
-          return physicalBit - bound->offset;
-        };
-        auto isExactPeriodicIngress = [&](const auto &fanout) {
-          if (fanout.bit_width != 1 ||
-              fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
-              fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
-            return false;
-          bool clockIngress = llvm::any_of(
-              periodicClocks, [&](const NativePeriodicClock &clock) {
-                std::optional<uint64_t> bit =
-                    periodicLocalBit(clock.staticState, clock.bitOffset);
-                return bit && fanout.static_state == clock.staticState &&
-                       fanout.low_bit == *bit;
-              });
-          bool aliasIngress = llvm::any_of(
-              periodicAliases, [&](const NativePeriodicAlias &alias) {
-                std::optional<uint64_t> bit = periodicLocalBit(
-                    alias.targetStaticState, alias.targetBitOffset);
-                return bit && fanout.static_state == alias.targetStaticState &&
-                       fanout.low_bit == *bit;
-              });
-          return clockIngress || aliasIngress;
-        };
-        bool exclusivePeriodicIngress = false;
-        unsigned periodicIngressCount = 0;
-        unsigned nonPeriodicIngressCount = 0;
-        unsigned periodicIngressTransitionConflicts = 0;
-        if (periodicRecord) {
-          bool sawIngress = false;
-          exclusivePeriodicIngress =
-              llvm::all_of(fanoutEntries, [&](const auto &fanout) {
-                if (fanout.merged_bit != *periodicRecord)
-                  return true;
-                sawIngress = true;
-                if (!isExactPeriodicIngress(fanout)) {
-                  ++nonPeriodicIngressCount;
-                  return false;
-                }
-                ++periodicIngressCount;
-                uint64_t end = fanout.low_bit + fanout.bit_width;
-                bool conflict = llvm::any_of(
-                    generatedTransitionRanges, [&](const auto &range) {
-                      auto [state, low, width, sourceIndex] = range;
-                      bool periodicKernelSource = false;
-                      if (sourceIndex < directFragments.size()) {
-                        const NativeDirectFragment &source =
-                            directFragments[sourceIndex];
-                        periodicKernelSource = llvm::any_of(
-                            periodicClocks,
-                            [&](const NativePeriodicClock &clock) {
-                              return source.actorSlot == clock.actorSlot &&
-                                     source.continuation == clock.continuation;
-                            });
-                        periodicKernelSource |= llvm::any_of(
-                            periodicAliases,
-                            [&](const NativePeriodicAlias &alias) {
-                              return source.actorSlot ==
-                                         alias.forwardingActorSlot &&
-                                     source.continuation ==
-                                         alias.forwardingContinuation;
-                            });
-                      }
-                      if (periodicKernelSource)
-                        return false;
-                      return state == fanout.static_state && low < end &&
-                             fanout.low_bit < low + width;
-                    });
-                periodicIngressTransitionConflicts += conflict;
-                return !conflict;
-              });
-          exclusivePeriodicIngress &= sawIngress;
-        }
-        auto siteBlockIsAcyclic = [&] {
-          Block *origin = call->getBlock();
-          SmallVector<Block *, 8> worklist;
-          for (Block *successor : origin->getTerminator()->getSuccessors())
-            worklist.push_back(successor);
-          llvm::SmallPtrSet<Block *, 16> visited;
-          while (!worklist.empty()) {
-            Block *block = worklist.pop_back_val();
-            if (block == origin)
-              return false;
-            if (!visited.insert(block).second)
-              continue;
-            for (Block *successor : block->getTerminator()->getSuccessors())
-              worklist.push_back(successor);
-          }
-          return true;
-        };
-        bool outsideStructuredLoop = true;
-        for (Operation *ancestor = call->getParentOp();
-             ancestor && ancestor != enclosing.getOperation();
-             ancestor = ancestor->getParentOp())
-          if (isa<LoopLikeOpInterface>(ancestor)) {
-            outsideStructuredLoop = false;
-            break;
-          }
-        bool uniqueSiteCall =
-            site && enclosing &&
-            llvm::count_if(enclosing.getOps<LLVM::CallOp>(),
-                           [&](LLVM::CallOp other) {
-                             if (!other.getCallee() ||
-                                 *other.getCallee() !=
-                                     "obelisk_rt_v1_scheduler_static_nba" ||
-                                 other.getArgOperands().size() != 9)
-                               return false;
-                             std::optional<uint64_t> otherSite =
-                                 constantU64(other.getArgOperands()[1]);
-                             return otherSite && *otherSite == *site;
-                           }) == 1;
-        bool siteExecutesAtMostOnce =
-            uniqueSiteCall && outsideStructuredLoop && siteBlockIsAcyclic();
-        bool commonDynamicRoot =
-            site && width && *width != 0 && *width <= 64 &&
-            root != staticNBAPlan.siteRoots.end() &&
-            root->second < staticNBAPlan.roots.size() &&
-            *width <= staticNBAPlan.roots[root->second].bit_width &&
-            root->second < staticNBAPlan.generatedOffsets.size() &&
-            offsetCall && offsetCall.getCallee() &&
-            *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
-            offsetCall.getArgOperands().size() == 2 &&
-            (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
-            commitRegion != UINT32_MAX;
-        bool directAccumulator =
-            commonDynamicRoot &&
-            root->second < staticNBAPlan.generatedAccumulators.size() &&
-            !staticNBAPlan.generatedAccumulators[root->second].empty() &&
-            staticNBAPlan.roots[root->second].bit_width <= 64;
-        size_t rootSiteCount =
-            root == staticNBAPlan.siteRoots.end()
-                ? 0
-                : llvm::count_if(nbaSites, [&](const auto &candidate) {
-                    return candidate.root == root->second;
-                  });
-        uint64_t firstRootSite = UINT64_MAX;
-        uint64_t lastRootSite = UINT64_MAX;
-        llvm::SmallDenseSet<uint64_t, 4> semanticRootSites;
-        if (root != staticNBAPlan.siteRoots.end())
-          for (const auto &candidate : nbaSites)
-            if (candidate.root == root->second) {
-              if (firstRootSite == UINT64_MAX)
-                firstRootSite = candidate.site;
-              lastRootSite = candidate.site;
-              auto origin =
-                  staticNBAPlan.siteSemanticOrigins.find(candidate.site);
-              semanticRootSites.insert(
-                  origin == staticNBAPlan.siteSemanticOrigins.end()
-                      ? candidate.site
-                      : origin->second);
-            }
-        bool uniqueSemanticRootSite = site && semanticRootSites.size() == 1;
-        // A wide root may use one scalar latch only when the enclosing site is
-        // structurally at-most-once and every ingress to its owner is one
-        // exact periodic bit that no generated eval transition can write.
-        // This excludes source loops, async-reset/multi-sensitivity owners,
-        // fused ingress, and pre-barrier feedback without recognizing any
-        // design-specific register-file shape.
-        bool periodicWideLatch =
-            commonDynamicRoot && uniqueSemanticRootSite &&
-            exclusivePeriodicIngress && siteExecutesAtMostOnce &&
-            staticNBAPlan.roots[root->second].bit_width > 64;
-        bool dynamicRoot = directAccumulator || periodicWideLatch;
-        if (!dynamicRoot) {
+        auto proof = dynamicNBAProofs.find(call.getOperation());
+        if (proof == dynamicNBAProofs.end() || !proof->second.eligible) {
+          const DynamicEvalNBAProof emptyProof;
+          const DynamicEvalNBAProof &details =
+              proof == dynamicNBAProofs.end() ? emptyProof : proof->second;
           auto diagnostic =
               call.emitError("runtime-free eval cannot lower dynamic NBA site");
           diagnostic
@@ -1569,21 +1803,26 @@ LogicalResult makeNativeEvalPlan(
                           root->second < staticNBAPlan.roots.size()
                       ? staticNBAPlan.roots[root->second].bit_width
                       : 0)
-              << ", commit-region=" << commitRegion
-              << ", periodic-entry=" << static_cast<bool>(periodicRecord)
-              << ", exclusive-periodic-ingress=" << exclusivePeriodicIngress
-              << ", periodic-ingress-count=" << periodicIngressCount
-              << ", non-periodic-ingress-count=" << nonPeriodicIngressCount
+              << ", commit-region=" << details.commitRegion
+              << ", periodic-entry="
+              << static_cast<bool>(details.periodicRecord)
+              << ", exclusive-periodic-ingress="
+              << details.exclusivePeriodicIngress
+              << ", periodic-ingress-count=" << details.periodicIngressCount
+              << ", non-periodic-ingress-count="
+              << details.nonPeriodicIngressCount
               << ", periodic-ingress-transition-conflicts="
-              << periodicIngressTransitionConflicts
-              << ", unique-semantic-root-site=" << uniqueSemanticRootSite
-              << ", root-site-count=" << rootSiteCount
-              << ", semantic-root-site-count=" << semanticRootSites.size()
-              << ", first-root-site=" << firstRootSite
-              << ", last-root-site=" << lastRootSite
-              << ", site-once=" << siteExecutesAtMostOnce << ")";
+              << details.periodicIngressTransitionConflicts
+              << ", unique-semantic-root-site="
+              << details.uniqueSemanticRootSite
+              << ", root-site-count=" << details.rootSiteCount
+              << ", semantic-root-site-count=" << details.semanticRootSiteCount
+              << ", first-root-site=" << details.firstRootSite
+              << ", last-root-site=" << details.lastRootSite
+              << ", site-once=" << details.siteExecutesAtMostOnce << ")";
           return failure();
         }
+        bool periodicWideLatch = proof->second.periodicWideLatch;
         handleOffsetToErase = offsetCall;
         OpBuilder nbaBuilder(call);
         Value dynamicBit = offsetCall.getArgOperands()[1];
@@ -1814,7 +2053,8 @@ LogicalResult makeNativeEvalPlan(
               validAddress, 4);
           LLVM::StoreOp::create(
               nbaBuilder, call.getLoc(),
-              llvmConstant(nbaBuilder, call.getLoc(), i32, commitRegion),
+              llvmConstant(nbaBuilder, call.getLoc(), i32,
+                           proof->second.commitRegion),
               byteGEP(nbaBuilder, call.getLoc(), accumulator,
                       offsetof(obelisk_rt_generated_nba_accumulator_256,
                                exec_region)),
@@ -5293,7 +5533,7 @@ LogicalResult makeNativeEvalPlan(
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_scheduler_queue_aot_checkpoint", i32,
                            {pointer, i32, i32, pointer});
-  return success();
+  return true;
 }
 
 } // namespace obelisk::detail
