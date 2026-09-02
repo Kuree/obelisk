@@ -1130,6 +1130,407 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  return findVPITraversal(sourceType, selector, mode) != nullptr;\n"
         "}\n\n";
 
+  // Emit the same model as a compact, architecture-independent wire image.
+  // Only target sets are retained: source-set expansion has already produced
+  // the sorted dispatch table above and need not occupy the final ELF image.
+  SmallVector<const Record *> imageSets;
+  DenseSet<const Record *> selectedImageSets;
+  for (const EmittedTraversalEdge &edge : emittedEdges)
+    if (selectedImageSets.insert(edge.targets).second)
+      imageSets.push_back(edge.targets);
+  llvm::sort(imageSets, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  DenseMap<const Record *, uint16_t> imageSetIDs;
+  for (auto [index, set] : llvm::enumerate(imageSets)) {
+    if (index > std::numeric_limits<uint16_t>::max()) {
+      PrintError(set->getLoc(), "too many VPI image target sets");
+      return true;
+    }
+    imageSetIDs[set] = static_cast<uint16_t>(index);
+  }
+
+  auto requireU16 = [](const Record *record, uint64_t value,
+                       StringRef description) {
+    if (value <= std::numeric_limits<uint16_t>::max())
+      return true;
+    PrintError(record->getLoc(), Twine(description) + " exceeds 16 bits");
+    return false;
+  };
+  for (const Record *family : families)
+    if (!requireU16(family, family->getValueAsInt("value"),
+                    "VPI family ordinal"))
+      return true;
+  for (const Record *object : objects)
+    if (!requireU16(object, object->getValueAsInt("value"), "VPI object value"))
+      return true;
+  for (const Record *relation : relations)
+    if (!requireU16(relation, relation->getValueAsInt("value"),
+                    "VPI relation value"))
+      return true;
+  for (const EmittedTraversalEdge &edge : emittedEdges)
+    if (edge.source > std::numeric_limits<uint16_t>::max() ||
+        edge.selector > std::numeric_limits<uint16_t>::max()) {
+      PrintError("expanded VPI traversal key exceeds 16 bits");
+      return true;
+    }
+
+  constexpr uint32_t imageHeaderSize = 64;
+  constexpr uint32_t imageObjectSize = 12;
+  constexpr uint32_t imageRelationSize = 4;
+  constexpr uint32_t imageSetSize = 4;
+  constexpr uint32_t imageTraversalSize = 8;
+  SmallVector<uint8_t> image(imageHeaderSize, 0);
+  auto append16 = [&](uint16_t value) {
+    image.push_back(static_cast<uint8_t>(value));
+    image.push_back(static_cast<uint8_t>(value >> 8));
+  };
+  auto append64 = [&](uint64_t value) {
+    for (unsigned byte = 0; byte != 8; ++byte)
+      image.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+  };
+  auto write16 = [&](uint32_t offset, uint16_t value) {
+    image[offset] = static_cast<uint8_t>(value);
+    image[offset + 1] = static_cast<uint8_t>(value >> 8);
+  };
+  auto write32 = [&](uint32_t offset, uint32_t value) {
+    for (unsigned byte = 0; byte != 4; ++byte)
+      image[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+  };
+  auto write64 = [&](uint32_t offset, uint64_t value) {
+    for (unsigned byte = 0; byte != 8; ++byte)
+      image[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+  };
+  const uint8_t magic[8] = {'O', 'B', 'V', 'P', 'I', 0, 0, 0};
+  llvm::copy(magic, image.begin());
+  write16(12, imageHeaderSize);
+
+  size_t objectOffset = image.size();
+  uint32_t objectCount = 0;
+  for (const Record *object : objects) {
+    if (!object->getValueAsString("aliasOf").empty())
+      continue;
+    uint64_t mask = 0;
+    for (const Record *family : object->getValueAsListOfDefs("families"))
+      mask |= uint64_t{1} << familyBits.lookup(family);
+    append16(static_cast<uint16_t>(object->getValueAsInt("value")));
+    image.push_back(static_cast<uint8_t>(
+        object->getValueAsDef("role")->getValueAsInt("value")));
+    image.push_back(0);
+    append64(mask);
+    ++objectCount;
+  }
+
+  size_t relationOffset = image.size();
+  uint32_t relationCount = 0;
+  for (const Record *relation : relations) {
+    if (!relation->getValueAsString("aliasOf").empty())
+      continue;
+    append16(static_cast<uint16_t>(relation->getValueAsInt("value")));
+    StringRef cardinality =
+        relation->getValueAsDef("cardinality")->getValueAsString("cppName");
+    image.push_back(cardinality == "One" ? 0 : cardinality == "Many" ? 1 : 2);
+    image.push_back(0);
+    ++relationCount;
+  }
+
+  size_t setOffset = image.size();
+  uint32_t imageFirstKind = 0;
+  for (const Record *set : imageSets) {
+    ArrayRef<uint32_t> kinds = expandedSets.lookup(set);
+    if (imageFirstKind > std::numeric_limits<uint16_t>::max() ||
+        kinds.size() > std::numeric_limits<uint16_t>::max()) {
+      PrintError(set->getLoc(), "VPI image target set exceeds 16 bits");
+      return true;
+    }
+    append16(static_cast<uint16_t>(imageFirstKind));
+    append16(static_cast<uint16_t>(kinds.size()));
+    imageFirstKind += kinds.size();
+  }
+
+  size_t kindOffset = image.size();
+  for (const Record *set : imageSets)
+    for (uint32_t kind : expandedSets.lookup(set))
+      append16(static_cast<uint16_t>(kind));
+
+  size_t traversalOffset = image.size();
+  for (const EmittedTraversalEdge &edge : emittedEdges) {
+    append16(static_cast<uint16_t>(edge.source));
+    append16(static_cast<uint16_t>(edge.selector));
+    append16(imageSetIDs.lookup(edge.targets));
+    image.push_back(static_cast<uint8_t>(edge.mode->getValueAsInt("value")));
+    image.push_back(static_cast<uint8_t>(edge.order->getValueAsInt("value")));
+  }
+
+  if (image.size() > std::numeric_limits<uint32_t>::max()) {
+    PrintError("VPI object model image exceeds 32 bits");
+    return true;
+  }
+  uint32_t imageSize = static_cast<uint32_t>(image.size());
+  write32(8, imageSize);
+  write32(24, static_cast<uint32_t>(objectOffset));
+  write32(28, objectCount);
+  write32(32, static_cast<uint32_t>(relationOffset));
+  write32(36, relationCount);
+  write32(40, static_cast<uint32_t>(setOffset));
+  write32(44, static_cast<uint32_t>(imageSets.size()));
+  write32(48, static_cast<uint32_t>(kindOffset));
+  write32(52, imageFirstKind);
+  write32(56, static_cast<uint32_t>(traversalOffset));
+  write32(60, static_cast<uint32_t>(emittedEdges.size()));
+  uint64_t imageChecksum = UINT64_C(14695981039346656037);
+  for (uint8_t byte : image) {
+    imageChecksum ^= byte;
+    imageChecksum *= UINT64_C(1099511628211);
+  }
+  write64(16, imageChecksum);
+
+  os << "inline constexpr uint32_t vpiObjectModelImageHeaderSize = "
+     << imageHeaderSize << ";\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageObjectSize = "
+     << imageObjectSize << ";\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageRelationSize = "
+     << imageRelationSize << ";\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageSetSize = "
+     << imageSetSize << ";\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageTraversalSize = "
+     << imageTraversalSize << ";\n\n";
+  os << formatv("inline constexpr uint64_t "
+                "vpiObjectModelImageFingerprint = UINT64_C({0});\n\n",
+                imageChecksum);
+  os << "inline constexpr uint8_t vpiObjectModelImage[] = {\n";
+  for (auto [index, byte] : llvm::enumerate(image)) {
+    if (index % 12 == 0)
+      os << "  ";
+    os << formatv("0x{0:X-2}", byte);
+    os << (index + 1 == image.size() ? "\n" : ", ");
+    if (index % 12 == 11)
+      os << "\n";
+  }
+  os << "};\n\n";
+  os << R"cpp(inline constexpr uint16_t readVPIObjectModelImage16(
+    const uint8_t *data, size_t offset) {
+  return uint16_t{data[offset]} | uint16_t{data[offset + 1]} << 8;
+}
+
+inline constexpr uint32_t readVPIObjectModelImage32(const uint8_t *data,
+                                                     size_t offset) {
+  uint32_t value = 0;
+  for (unsigned byte = 0; byte != 4; ++byte)
+    value |= uint32_t{data[offset + byte]} << (byte * 8);
+  return value;
+}
+
+inline constexpr uint64_t readVPIObjectModelImage64(const uint8_t *data,
+                                                     size_t offset) {
+  uint64_t value = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    value |= uint64_t{data[offset + byte]} << (byte * 8);
+  return value;
+}
+
+inline constexpr uint64_t checksumVPIObjectModelImage(const uint8_t *data,
+                                                       size_t size) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (size_t index = 0; index != size; ++index) {
+    uint8_t byte = index >= 16 && index < 24 ? 0 : data[index];
+    hash ^= byte;
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
+                                                            size_t size) {
+  if (!data || size < vpiObjectModelImageHeaderSize || data[0] != 'O' ||
+      data[1] != 'B' || data[2] != 'V' || data[3] != 'P' ||
+      data[4] != 'I' || data[5] != 0 || data[6] != 0 || data[7] != 0 ||
+      readVPIObjectModelImage32(data, 8) != size ||
+      readVPIObjectModelImage16(data, 12) !=
+          vpiObjectModelImageHeaderSize ||
+      readVPIObjectModelImage16(data, 14) != 0 ||
+      readVPIObjectModelImage64(data, 16) == 0 ||
+      readVPIObjectModelImage64(data, 16) !=
+          checksumVPIObjectModelImage(data, size))
+    return false;
+  uint64_t objectOffset = readVPIObjectModelImage32(data, 24);
+  uint64_t objectCount = readVPIObjectModelImage32(data, 28);
+  uint64_t relationOffset = readVPIObjectModelImage32(data, 32);
+  uint64_t relationCount = readVPIObjectModelImage32(data, 36);
+  uint64_t setOffset = readVPIObjectModelImage32(data, 40);
+  uint64_t setCount = readVPIObjectModelImage32(data, 44);
+  uint64_t kindOffset = readVPIObjectModelImage32(data, 48);
+  uint64_t kindCount = readVPIObjectModelImage32(data, 52);
+  uint64_t traversalOffset = readVPIObjectModelImage32(data, 56);
+  uint64_t traversalCount = readVPIObjectModelImage32(data, 60);
+  if (objectOffset != vpiObjectModelImageHeaderSize ||
+      objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
+      relationOffset !=
+          objectOffset + objectCount * vpiObjectModelImageObjectSize ||
+      relationCount >
+          (size - relationOffset) / vpiObjectModelImageRelationSize ||
+      setOffset != relationOffset +
+                       relationCount * vpiObjectModelImageRelationSize ||
+      setCount > (size - setOffset) / vpiObjectModelImageSetSize ||
+      kindOffset != setOffset + setCount * vpiObjectModelImageSetSize ||
+      kindCount > (size - kindOffset) / 2 ||
+      traversalOffset != kindOffset + kindCount * 2 ||
+      traversalCount >
+          (size - traversalOffset) / vpiObjectModelImageTraversalSize ||
+      traversalOffset + traversalCount * vpiObjectModelImageTraversalSize !=
+          size)
+    return false;
+
+  uint16_t previousValue = 0;
+  for (uint32_t index = 0; index != objectCount; ++index) {
+    const uint8_t *record =
+        data + objectOffset + index * vpiObjectModelImageObjectSize;
+    uint16_t value = readVPIObjectModelImage16(record, 0);
+    uint64_t families = readVPIObjectModelImage64(record, 4);
+    if ((index != 0 && value <= previousValue) || record[2] > 3 ||
+        record[3] != 0 || families == 0)
+      return false;
+    previousValue = value;
+  }
+  previousValue = 0;
+  for (uint32_t index = 0; index != relationCount; ++index) {
+    const uint8_t *record =
+        data + relationOffset + index * vpiObjectModelImageRelationSize;
+    uint16_t value = readVPIObjectModelImage16(record, 0);
+    if ((index != 0 && value <= previousValue) || record[2] > 2 ||
+        record[3] != 0)
+      return false;
+    previousValue = value;
+  }
+  uint32_t expectedFirst = 0;
+  for (uint32_t index = 0; index != setCount; ++index) {
+    const uint8_t *record =
+        data + setOffset + index * vpiObjectModelImageSetSize;
+    uint16_t first = readVPIObjectModelImage16(record, 0);
+    uint16_t count = readVPIObjectModelImage16(record, 2);
+    if (first != expectedFirst || first > kindCount || count == 0 ||
+        count > kindCount - first)
+      return false;
+    uint16_t previousKind = 0;
+    for (uint32_t kindIndex = 0; kindIndex != count; ++kindIndex) {
+      uint16_t kind = readVPIObjectModelImage16(
+          data, kindOffset + (uint32_t{first} + kindIndex) * 2);
+      if (kindIndex != 0 && kind <= previousKind)
+        return false;
+      previousKind = kind;
+    }
+    expectedFirst += count;
+  }
+  if (expectedFirst != kindCount)
+    return false;
+  uint16_t previousSource = 0;
+  uint16_t previousSelector = 0;
+  uint8_t previousMode = 0;
+  for (uint32_t index = 0; index != traversalCount; ++index) {
+    const uint8_t *record =
+        data + traversalOffset + index * vpiObjectModelImageTraversalSize;
+    uint16_t source = readVPIObjectModelImage16(record, 0);
+    uint16_t selector = readVPIObjectModelImage16(record, 2);
+    uint16_t targets = readVPIObjectModelImage16(record, 4);
+    uint8_t mode = record[6];
+    uint8_t order = record[7];
+    bool ordered = index == 0 || previousSource < source ||
+                   (previousSource == source &&
+                    (previousSelector < selector ||
+                     (previousSelector == selector && previousMode < mode)));
+    if (!ordered || targets >= setCount || mode > 1 || order > 4 ||
+        (mode == 0 && order != 0))
+      return false;
+    previousSource = source;
+    previousSelector = selector;
+    previousMode = mode;
+  }
+  return true;
+}
+
+inline constexpr bool validateVPIObjectModelImage(const uint8_t *data,
+                                                   size_t size) {
+  return validateVPIObjectModelImageStructure(data, size) &&
+         readVPIObjectModelImage64(data, 16) ==
+             vpiObjectModelImageFingerprint;
+}
+
+struct VPIObjectModelImageTraversal {
+  uint16_t sourceType;
+  uint16_t selector;
+  uint16_t targets;
+  VPITraversalMode mode;
+  VPITraversalOrder order;
+};
+
+inline constexpr bool findVPIObjectModelImageTraversal(
+    const uint8_t *data, uint32_t sourceType, uint32_t selector,
+    VPITraversalMode mode, VPIObjectModelImageTraversal &result) {
+  if (sourceType > UINT16_MAX || selector > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 56);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 60);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageTraversalSize;
+    uint16_t recordSource = readVPIObjectModelImage16(record, 0);
+    uint16_t recordSelector = readVPIObjectModelImage16(record, 2);
+    auto recordMode = static_cast<VPITraversalMode>(record[6]);
+    bool less = recordSource < sourceType ||
+                (recordSource == sourceType &&
+                 (recordSelector < selector ||
+                  (recordSelector == selector &&
+                   static_cast<uint8_t>(recordMode) <
+                       static_cast<uint8_t>(mode))));
+    if (less)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 60))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageTraversalSize;
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage16(record, 2),
+            readVPIObjectModelImage16(record, 4),
+            static_cast<VPITraversalMode>(record[6]),
+            static_cast<VPITraversalOrder>(record[7])};
+  return result.sourceType == sourceType && result.selector == selector &&
+         result.mode == mode;
+}
+
+inline constexpr bool vpiObjectModelImageTargetContains(
+    const uint8_t *data, uint16_t setID, uint32_t kind) {
+  uint32_t setCount = readVPIObjectModelImage32(data, 44);
+  if (setID >= setCount || kind > UINT16_MAX)
+    return false;
+  uint32_t setOffset = readVPIObjectModelImage32(data, 40) +
+                       setID * vpiObjectModelImageSetSize;
+  uint16_t first = readVPIObjectModelImage16(data, setOffset);
+  uint16_t count = readVPIObjectModelImage16(data, setOffset + 2);
+  uint32_t kindOffset = readVPIObjectModelImage32(data, 48);
+  uint32_t low = 0;
+  uint32_t high = count;
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    uint16_t value = readVPIObjectModelImage16(
+        data, kindOffset + (uint32_t{first} + middle) * 2);
+    if (value < kind)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  return low != count &&
+         readVPIObjectModelImage16(
+             data, kindOffset + (uint32_t{first} + low) * 2) == kind;
+}
+
+)cpp";
+
   os << "} // namespace obelisk::reflection\n\n";
   os << "#define OBELISK_FOR_EACH_VPI_OBJECT_KIND(M) \\\n";
   for (auto [index, object] : llvm::enumerate(objects)) {
