@@ -914,6 +914,11 @@ N_INPUT_GATE_THREE_DELAYS = Exclusion(
     "Syntax 28-1 permits only delay2 on an n_input_gatetype such as nand; "
     "the test supplies three delay values, including a turn-off delay that "
     "only enable and switch primitive productions accept")
+UNNAMED_GENERATE_EXTERNAL_NAME = Exclusion(
+    "IEEE 1800-2017 27.6",
+    "an unnamed generate block has no name usable in a hierarchical name; "
+    "genblkN is assigned so external interfaces can identify it, but the test "
+    "requires source-level hierarchical references to that generated name")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -946,6 +951,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_fsm_register_wrapper_noinline": INTEGRAL_OUTPUT_TO_ENUM,
     "t_function_shadow_class": METHOD_SHADOWS_OUTER_CLASS,
     "t_gate_basic": N_INPUT_GATE_THREE_DELAYS,
+    "t_gen_intdot2": UNNAMED_GENERATE_EXTERNAL_NAME,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

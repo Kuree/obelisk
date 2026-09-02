@@ -833,6 +833,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("delay2", excluded.reason)
         self.assertIn("three delay values", excluded.reason)
 
+    def test_unnamed_generate_external_name_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_gen_intdot2"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 27.6")
+        self.assertIn("no name usable in a hierarchical name", excluded.reason)
+        self.assertIn("genblkN", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
