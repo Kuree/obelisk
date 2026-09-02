@@ -43,6 +43,18 @@ module {
               }
             }
           }
+          obelisk.sv.statement.conditional attributes {check_kind = 0 : i32, condition_count = 1 : i64, condition_pattern_flags = array<i64: 0>, has_else = false, node_id = 21 : i64} {
+            obelisk.sv.expression.binary_op attributes {folded_constant = "1'b1", is_signed = false, node_id = 22 : i64, operator_kind = 10 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
+              obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "accumulate", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, folded_constant = "32'd1", has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = false, node_id = 23 : i64, referenced_path = "static_function_return.accumulate", referenced_symbol = @s1.$root::@s3.static_function_return::@s4.static_function_return::@s5.accumulate, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32} {
+                obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 24 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+              obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 25 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+              }
+            }
+            obelisk.sv.statement.empty attributes {node_id = 26 : i64} {
+            }
+          }
         }
       }
     }
@@ -51,4 +63,5 @@ module {
 
 
 // CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "static_function_return.accumulate.accumulate"
+// CHECK-COUNT-2: obelisk_sim.call
 // CHECK-NOT: obelisk.sv.

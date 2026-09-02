@@ -467,6 +467,22 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     auto call = dyn_cast<semantic::SVCallExpressionOp>(operation);
 
+    // IEEE 1800-2017 13.4.2 gives locals in an ordinary static function
+    // persistent simulation state, while 13.4.3 initializes them afresh for
+    // each elaboration-time constant-function invocation. Slang can therefore
+    // cache a valid elaboration value on a call that has different run-time
+    // behavior. Preserve the call's cached value for consumers that explicitly
+    // require a constant operand (for example, a part-select width), but never
+    // let it fold an executable expression containing the call. A direct call
+    // condition has no expression parent, so invalidate the call itself there.
+    if (call && !call.getIsSystemCall()) {
+      Operation *parent = operation->getParentOp();
+      if (isSemanticExpression(parent))
+        staleFoldExpressions.insert(parent);
+      else
+        staleFold = true;
+    }
+
     // IEEE 1800-2017 20.7 expands intermediate typedefs before numbering
     // dimensions. Slang's cached value currently uses the flattened storage
     // order, and enclosing expressions can therefore carry stale folds too.
