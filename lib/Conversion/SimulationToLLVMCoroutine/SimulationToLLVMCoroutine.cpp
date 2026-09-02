@@ -907,11 +907,6 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     });
     for (auto [block, location] : checkpoints) {
       checkpointBlocks.insert(block);
-      block->clear();
-      builder.setInsertionPointToEnd(block);
-      Value checkpoint = arith::ConstantOp::create(
-          builder, location, builder.getI8Type(), builder.getI8IntegerAttr(2));
-      sim::SimReturnOp::create(builder, location, checkpoint);
     }
 
     llvm::SmallPtrSet<Block *, 16> reachable;
@@ -920,6 +915,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       Block *block = pending.pop_back_val();
       if (!reachable.insert(block).second || block->empty())
         continue;
+      // A checkpoint is replaced by a return below. Do not make its original
+      // successors reachable through an edge that the replacement removes.
+      if (checkpointBlocks.contains(block))
+        continue;
       for (Block *successor : block->getTerminator()->getSuccessors())
         pending.push_back(successor);
     }
@@ -927,12 +926,32 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     for (Block &block : probe.getBody())
       if (!reachable.contains(&block))
         unreachable.push_back(&block);
+
+    // Detach the complete removed subgraph before destroying any operation.
+    // A checkpoint can define values used in a now-unreachable successor, and
+    // unreachable blocks can reference one another cyclically. Clearing or
+    // erasing one block at a time would leave dangling SSA use-list links.
+    for (Block *block : checkpointBlocks)
+      if (reachable.contains(block))
+        block->dropAllReferences();
+    for (Block *block : unreachable)
+      block->dropAllReferences();
+    for (Block *block : checkpointBlocks)
+      if (reachable.contains(block))
+        block->dropAllDefinedValueUses();
     for (Block *block : unreachable)
       block->dropAllDefinedValueUses();
     for (Block *block : unreachable)
-      block->dropAllReferences();
-    for (Block *block : unreachable)
       block->erase();
+    for (auto [block, location] : checkpoints) {
+      if (!reachable.contains(block))
+        continue;
+      block->clear();
+      builder.setInsertionPointToEnd(block);
+      Value checkpoint = arith::ConstantOp::create(
+          builder, location, builder.getI8Type(), builder.getI8IntegerAttr(2));
+      sim::SimReturnOp::create(builder, location, checkpoint);
+    }
 
     // Validate the executable dry-run overlay, not the unpruned source body.
     // A checkpoint block is replaced above by a constant Tier-3 return, so

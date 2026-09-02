@@ -105,6 +105,11 @@ module attributes {
       %message = obelisk_sim.bytes.constant "checkpoint %0t"
       obelisk_sim.display %ctx to %stdout(%message, %now) newline = true radix = 10
           flags = [0, 0] : !obelisk_sim.bytes, i64
+      // Keep an SSA edge from the checkpoint into the tail that the path
+      // probe removes.  The probe must detach the complete removed subgraph
+      // before clearing this block; otherwise this use becomes dangling.
+      cf.br ^checkpoint_tail(%stdout : i32)
+    ^checkpoint_tail(%unused: i32):
       cf.br ^wait
     }
   }
