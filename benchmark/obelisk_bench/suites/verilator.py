@@ -906,6 +906,11 @@ METHOD_SHADOWS_OUTER_CLASS = Exclusion(
     "before their declarations; IEEE 1800-2017 3.13 puts methods and types in "
     "the same local namespace, so A's method B hides the outer class B and "
     "leaves no class type for B::new() as required by 8.23")
+N_INPUT_GATE_THREE_DELAYS = Exclusion(
+    "IEEE 1800-2017 28.3",
+    "Syntax 28-1 permits only delay2 on an n_input_gatetype such as nand; "
+    "the test supplies three delay values, including a turn-off delay that "
+    "only enable and switch primitive productions accept")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -937,6 +942,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_fsm_register_wrapper": INTEGRAL_OUTPUT_TO_ENUM,
     "t_fsm_register_wrapper_noinline": INTEGRAL_OUTPUT_TO_ENUM,
     "t_function_shadow_class": METHOD_SHADOWS_OUTER_CLASS,
+    "t_gate_basic": N_INPUT_GATE_THREE_DELAYS,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

@@ -818,6 +818,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 3.13", excluded.reason)
         self.assertIn("B::new()", excluded.reason)
 
+    def test_three_delay_nand_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_gate_basic"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 28.3")
+        self.assertIn("delay2", excluded.reason)
+        self.assertIn("three delay values", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
