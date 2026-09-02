@@ -812,6 +812,11 @@ FUNCTION_ENABLES_TASK = Exclusion(
     "contains timing control; WriterAdapter::write is a function that calls "
     "the task BlockingWriter::write, and the test suppresses Verilator's own "
     "FUNCTIMECTL diagnostic")
+ALWAYS_COMB_MULTIPLE_WRITER = Exclusion(
+    "IEEE 1800-2017 9.2.2.2.2",
+    "a variable written within always_comb cannot be written by any other "
+    "process; the initial assignment to all of aux overlaps the always_comb "
+    "assignment to aux[0]")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -827,6 +832,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_config_rules": MULTIPLE_CONFIG_DEFAULT_CLAUSES,
     "t_constraint_operators": STACKED_UNARY_OPERATOR,
     "t_coroutine_lambda": FUNCTION_ENABLES_TASK,
+    "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

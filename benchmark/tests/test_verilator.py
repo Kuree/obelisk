@@ -820,6 +820,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4")
         self.assertIn("WriterAdapter::write", excluded.reason)
 
+    def test_always_comb_target_cannot_have_an_initial_writer(self):
+        excluded = verilator.EXCLUDED["t_cover_fsm_case_next_ok_multi"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 9.2.2.2.2")
+        self.assertIn("aux[0]", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
