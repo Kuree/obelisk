@@ -115,6 +115,11 @@ KNOWN_SLANG_BUGS = {
         "definition to bind to its extern prototype, and A.2.2.1 permits a "
         "nested class_type such as Cls::SubCls in class_scope; pinned Slang "
         "rejects that qualified nested implementation before IR emission"),
+    "t_config_work": (
+        "IEEE 1800-2017 33.3.1 and 33.3.3 make library declarations mappings "
+        "for source files encountered by the compiler; pinned Slang eagerly "
+        "opens the unreferenced `none.sv` mapping and rejects the invocation "
+        "because that deliberately unmatched file does not exist"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "

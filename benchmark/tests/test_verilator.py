@@ -672,6 +672,13 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 8.24", log)
         self.assertTrue(log.endswith("expected subroutine name\n"))
 
+    def test_unreferenced_library_map_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_config_work", "none.sv: No such file\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 33.3.1", log)
+        self.assertTrue(log.endswith("none.sv: No such file\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),
