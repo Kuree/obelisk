@@ -195,9 +195,9 @@ LogicalResult verifyPostponedReadOnly(SimFuncOp root) {
         return WalkResult::skip();
       if (isa<SimManagedStoreOp, SimManagedNBAEnqueueOp,
               SimReferencePathNBAEnqueueOp, SimArgumentRefStoreOp,
-              SimRefStoreOp, SimDriverDriveOp, SimDriverDriveInertialOp,
-              SimDriverDriveInertialPathOp, SimRefStoreInertialPathOp,
-              SimDriverDriveInertialStrengthPairOp,
+              SimRefStoreOp, SimRefCopyOp, SimDriverDriveOp,
+              SimDriverDriveInertialOp, SimDriverDriveInertialPathOp,
+              SimRefStoreInertialPathOp, SimDriverDriveInertialStrengthPairOp,
               SimDriverDriveInertialPathStrengthPairOp,
               SimDriverDriveDelayedNetOp, SimDriverDriveChangedOp,
               SimMosDriveDelayedOp, SimNBAEnqueueOp, SimSpawnOp,

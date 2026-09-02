@@ -43,6 +43,8 @@ constexpr StringLiteral inductiveTwoStateAttr =
     "obelisk.eval.inductive_two_state";
 constexpr StringLiteral conditionalTwoStateAttr =
     "obelisk.eval.conditionally_two_state";
+constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
+    "obelisk.native.bulk_copy_source_assume_clean";
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -69,6 +71,39 @@ bool hasNoLogic(Operation *operation) {
         if (containsLogic(argument.getType()))
           return false;
   return true;
+}
+
+void fuseWideDynamicRefCopies(ModuleOp module,
+                              DenseSet<Operation *> &nativeTwoStateOperations) {
+  SmallVector<std::pair<sim::SimRefLoadOp, sim::SimRefStoreOp>> copies;
+  module.walk([&](sim::SimRefStoreOp store) {
+    auto load = store.getValue().getDefiningOp<sim::SimRefLoadOp>();
+    std::optional<unsigned> width =
+        nativeStateWidth(store.getValue().getType());
+    if (!load || !load->hasOneUse() || load->getNextNode() != store || !width ||
+        *width <= 64)
+      return;
+    auto destination = dyn_cast<BlockArgument>(store.getReference());
+    sim::SimFuncOp function = store->getParentOfType<sim::SimFuncOp>();
+    if (!destination || !function ||
+        destination.getOwner() != &function.getBody().front() ||
+        function.getArgAttr(destination.getArgNumber(),
+                            sim::metadata::descriptorId))
+      return;
+    copies.emplace_back(load, store);
+  });
+  IRRewriter rewriter(module.getContext());
+  for (auto [load, store] : copies) {
+    rewriter.setInsertionPoint(store);
+    auto copy = sim::SimRefCopyOp::create(
+        rewriter, store.getLoc(), load.getReference(), store.getReference());
+    copy->setAttrs(store->getAttrDictionary());
+    if (load->hasAttr(assumeCleanSpecializationAttr))
+      copy->setAttr(bulkCopySourceAssumeCleanAttr, rewriter.getUnitAttr());
+    nativeTwoStateOperations.erase(load.getOperation());
+    rewriter.eraseOp(store);
+    rewriter.eraseOp(load);
+  }
 }
 
 std::string makeElementTraceBytes(ArrayRef<int64_t> offsets,
@@ -328,6 +363,11 @@ LogicalResult lowerPackedSimulationOperations(
       continue;
     nativeTwoStateOperations.insert(result.getOwner());
   }
+  // State-domain analysis needs to see the original load and store. Once its
+  // facts have been attached, keep dynamic whole-vector copies byte-backed:
+  // representing their payload as one giant LLVM integer makes SelectionDAG
+  // scheduling superlinear.
+  fuseWideDynamicRefCopies(module, nativeTwoStateOperations);
 
   // Record the net driven by each operation before dialect conversion starts
   // rewriting function signatures and their block arguments.  Conversion
@@ -797,15 +837,15 @@ LogicalResult lowerPackedSimulationOperations(
     target.addIllegalOp<
         sim::SimContextStorageOp, sim::SimContextNetOp, sim::SimContextDriverOp,
         sim::SimContextEventOp, sim::SimRefAllocOp, sim::SimRefReleaseOwnerOp,
-        sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimOverrideOp,
-        sim::SimDynamicOverrideOp, sim::SimReleaseOverrideOp,
-        sim::SimNetExtractOp, sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-        sim::SimRefSubelementOp, sim::SimRefArrayElementOp, sim::SimNetReadOp,
-        sim::SimNetCountDriversOp, sim::SimPassSwitchControlOp,
-        sim::SimPassSwitchControlDelayedOp, sim::SimMosDriveDelayedOp,
-        sim::SimDriverDriveInertialOp, sim::SimDriverDriveInertialPathOp,
-        sim::SimRefStoreInertialPathOp, sim::SimDriverDriveOp,
-        sim::SimDriverDriveInertialStrengthPairOp,
+        sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimRefCopyOp,
+        sim::SimOverrideOp, sim::SimDynamicOverrideOp,
+        sim::SimReleaseOverrideOp, sim::SimNetExtractOp, sim::SimRefExtractOp,
+        sim::SimRefDynExtractOp, sim::SimRefSubelementOp,
+        sim::SimRefArrayElementOp, sim::SimNetReadOp, sim::SimNetCountDriversOp,
+        sim::SimPassSwitchControlOp, sim::SimPassSwitchControlDelayedOp,
+        sim::SimMosDriveDelayedOp, sim::SimDriverDriveInertialOp,
+        sim::SimDriverDriveInertialPathOp, sim::SimRefStoreInertialPathOp,
+        sim::SimDriverDriveOp, sim::SimDriverDriveInertialStrengthPairOp,
         sim::SimDriverDriveInertialPathStrengthPairOp,
         sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
         sim::SimDriverExtractOp, sim::SimDriverDynExtractOp,

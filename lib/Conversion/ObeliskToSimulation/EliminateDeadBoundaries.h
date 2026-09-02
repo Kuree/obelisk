@@ -18,6 +18,7 @@ struct EliminationStatistics {
   mlir::Pass::Statistic *resultsRemoved = nullptr;
   mlir::Pass::Statistic *callOperandsRemoved = nullptr;
   mlir::Pass::Statistic *spawnOperandsRemoved = nullptr;
+  mlir::Pass::Statistic *taskOperandsRemoved = nullptr;
   mlir::Pass::Statistic *returnOperandsRemoved = nullptr;
   mlir::Pass::Statistic *callsRebuilt = nullptr;
   mlir::Pass::Statistic *pureCallsErased = nullptr;

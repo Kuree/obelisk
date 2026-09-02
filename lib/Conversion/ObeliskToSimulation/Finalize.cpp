@@ -264,8 +264,15 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
-  if (optLevel > 0) {
+  if (optLevel > 0)
     designManager.addPass(createObeliskSimEliminateDeadBoundariesPass());
+  else
+    // Even -O0 must not preserve unused values across native ABI boundaries:
+    // a dead wide task argument becomes a giant LLVM value in every spawn and
+    // activation wrapper. Keep result/call elimination optimization-gated,
+    // but always run the semantics-preserving argument-only analysis.
+    designManager.addPass(createObeliskSimEliminateDeadCapturesPass());
+  {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());

@@ -3,6 +3,7 @@
 #include "SimulationDPILowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -10,6 +11,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -104,6 +106,7 @@ struct ExportSpec {
   ArrayAttr signature;
   ArrayAttr aggregateLayouts;
   SmallVector<DPIOperandABI> abi;
+  llvm::BitVector elidedInputs;
   bool isTask;
 };
 
@@ -140,6 +143,20 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
     abi.push_back(*parsed);
   }
   uint32_t inputCount = static_cast<uint32_t>(inputs.getValue().getZExtValue());
+  llvm::BitVector elidedInputs(inputCount);
+  if (auto elided = operation->getAttrOfType<DenseI64ArrayAttr>(
+          sim::metadata::dpiElidedInputs)) {
+    for (int64_t index : elided.asArrayRef()) {
+      if (index < 0 || static_cast<uint64_t>(index) >= inputCount ||
+          elidedInputs.test(index) ||
+          abi[index].direction !=
+              static_cast<uint32_t>(sim::DPIArgumentDirection::Output))
+        return operation->emitError(
+                   "has invalid elided DPI output-input metadata"),
+               failure();
+      elidedInputs.set(index);
+    }
+  }
   return ExportSpec{operation,
                     operation->getLoc(),
                     symbol.str(),
@@ -150,6 +167,7 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
                     signature,
                     aggregateLayouts,
                     std::move(abi),
+                    std::move(elidedInputs),
                     operation->hasAttr("obelisk_sim.dpi_task")};
 }
 
@@ -369,28 +387,27 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   };
 
   auto makePlanes = [&](const DPIOperandABI &abi) {
-    Type type = isVector(abi) ? Type(LLVM::LLVMArrayType::get(
-                                    i64, (uint64_t{abi.width} + 63) / 64))
-                              : planeType(context, abi);
+    uint64_t bytes = planeBytes(abi);
+    bool byteBacked = bytes > sizeof(uint64_t);
+    Type type =
+        byteBacked
+            ? Type(LLVM::LLVMArrayType::get(i64, bytes / sizeof(uint64_t)))
+            : planeType(context, abi);
     Value value = entryAlloca(builder, location, type, 1, 8);
-    if (isVector(abi))
+    if (byteBacked)
       LLVM::MemsetOp::create(
           builder, location, value, llvmConstant(builder, location, i8, 0),
-          llvmConstant(builder, location, i64,
-                       ((uint64_t{abi.width} + 63) / 64) * 8),
-          false);
+          llvmConstant(builder, location, i64, bytes), false);
     else
       LLVM::StoreOp::create(builder, location, zero(builder, location, type),
                             value, 8);
     Value unknown = null;
     if (abi.fourState) {
       unknown = entryAlloca(builder, location, type, 1, 8);
-      if (isVector(abi))
+      if (byteBacked)
         LLVM::MemsetOp::create(
             builder, location, unknown, llvmConstant(builder, location, i8, 0),
-            llvmConstant(builder, location, i64,
-                         ((uint64_t{abi.width} + 63) / 64) * 8),
-            false);
+            llvmConstant(builder, location, i64, bytes), false);
       else
         LLVM::StoreOp::create(builder, location, zero(builder, location, type),
                               unknown, 8);
@@ -1004,16 +1021,18 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   size_t handle = 0;
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    if (parameter >= activationParameters.size())
-      return activation.emitError("has too few exported-task arguments");
-    arguments.push_back(
-        loadFormalPlane(index, abi, false, activationParameters[parameter++]));
-    if (abi.fourState) {
+    if (!spec.elidedInputs.test(index)) {
       if (parameter >= activationParameters.size())
-        return activation.emitError(
-            "is missing an exported-task unknown argument");
-      arguments.push_back(
-          loadFormalPlane(index, abi, true, activationParameters[parameter++]));
+        return activation.emitError("has too few exported-task arguments");
+      arguments.push_back(loadFormalPlane(index, abi, false,
+                                          activationParameters[parameter++]));
+      if (abi.fourState) {
+        if (parameter >= activationParameters.size())
+          return activation.emitError(
+              "is missing an exported-task unknown argument");
+        arguments.push_back(loadFormalPlane(index, abi, true,
+                                            activationParameters[parameter++]));
+      }
     }
     if (abi.direction ==
         static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
@@ -1224,7 +1243,9 @@ LogicalResult materializeBytecodeTaskThunk(LLVM::LLVMFuncOp thunk,
     for (uint32_t index = 0; index != spec.inputCount; ++index)
       LLVM::StoreOp::create(
           builder, location,
-          llvmConstant(builder, location, i8, spec.abi[index].direction),
+          llvmConstant(builder, location, i8,
+                       spec.abi[index].direction |
+                           (spec.elidedInputs.test(index) ? 0x80u : 0u)),
           elementGEP(builder, location, directions, i8, index), 1);
     for (uint32_t index = 0; index != spec.inputCount; ++index) {
       Value plan = LLVM::ZeroOp::create(builder, location, pointer);

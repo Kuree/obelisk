@@ -13,6 +13,21 @@ from obelisk_bench import model  # noqa: E402
 from obelisk_bench.suites import verilator  # noqa: E402
 
 
+class SelectTest(unittest.TestCase):
+    def test_simulator_scenario_without_module_t_is_still_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            test_dir = Path(directory) / "test_regress" / "t"
+            test_dir.mkdir(parents=True)
+            descriptor = test_dir / "t_x.py"
+            descriptor.write_text("test.scenarios('simulator')\n",
+                                  encoding="utf-8")
+            top = descriptor.with_suffix(".v")
+            top.write_text("module tb; endmodule\n", encoding="utf-8")
+            selected = verilator.select(
+                Path(directory), mock.Mock(tests=[]))
+        self.assertEqual(selected, [top])
+
+
 class DetectInputsTest(unittest.TestCase):
     def detect(self, *lines: str) -> list[str]:
         return verilator.detect_inputs("\n".join(lines) + "\n")
@@ -90,6 +105,10 @@ class DetectInputsTest(unittest.TestCase):
 
 
 class TopShellTest(unittest.TestCase):
+    def test_only_the_driver_style_module_needs_a_shell(self):
+        self.assertTrue(verilator.needs_driver_shell("module t; endmodule\n"))
+        self.assertFalse(verilator.needs_driver_shell("module tb; endmodule\n"))
+
     def test_clock_period_matches_the_upstream_main_loop(self):
         # driver.py advances one time unit per sub-step and toggles clk on the
         # first of five, so a posedge lands every 10 units.
@@ -136,6 +155,13 @@ class GeneratedFixtureTest(unittest.TestCase):
                                                  directory)
             data = (Path(directory) / "dat.mem").read_bytes()
         self.assertEqual(data, b"1\n10\n20\n30")
+
+    def test_dpi_export_unpack_fixture_is_an_empty_readmem_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            verilator.prepare_generated_fixtures("t_dpi_export_unpack",
+                                                 directory)
+            data = (Path(directory) / "dummy").read_bytes()
+        self.assertEqual(data, b"")
 
 
 class ShellModuleNameTest(unittest.TestCase):

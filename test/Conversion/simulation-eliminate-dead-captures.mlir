@@ -23,6 +23,8 @@ module {
     obelisk_sim.code_unit.decl 52 in 0 function hierarchy "top.live_forwarder"
     obelisk_sim.code_unit.decl 53 in 0 function hierarchy "top.live_mid"
     obelisk_sim.code_unit.decl 54 in 0 function hierarchy "top.live_sink"
+    obelisk_sim.code_unit.decl 55 in 0 task hierarchy "top.task_sink"
+    obelisk_sim.code_unit.decl 56 in 0 initial hierarchy "top.task_caller"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<8> design
@@ -218,6 +220,39 @@ module {
         %consumed: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 54 : i64} {
       obelisk_sim.return %consumed : i32
+    }
+
+    // A dead task argument is removed without consuming or renumbering the
+    // continuation operand that follows the argument prefix.
+    // CHECK-LABEL: obelisk_sim.func private @task_sink(
+    // CHECK-SAME: %arg0: !obelisk_sim.context
+    // CHECK-SAME: %arg1: !obelisk_sim.ref<i32>
+    // CHECK-SAME: %arg2: i32
+    obelisk_sim.func private @task_sink(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %unused: i32 {obelisk_sim.capture_kind = 1 : i32},
+        %storage: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 1 : i32},
+        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 12 : i32, code_unit_id = 55 : i64} {
+      obelisk_sim.ref.store %value to %storage : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.return
+    }
+
+    // CHECK-LABEL: obelisk_sim.func @task_caller(
+    // CHECK: obelisk_sim.task.call @task_sink(%arg0, %arg2, %arg3, %arg3) arguments 3 to ^bb1 : !obelisk_sim.context, !obelisk_sim.ref<i32>, i32, i32
+    obelisk_sim.func @task_caller(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %forwarded_dead: i32 {obelisk_sim.capture_kind = 1 : i32},
+        %storage: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 1 : i32},
+        %live: i32 {obelisk_sim.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 56 : i64} {
+      obelisk_sim.task.call @task_sink(
+          %ctx, %forwarded_dead, %storage, %live, %live)
+          arguments 4 to ^done : !obelisk_sim.context, i32,
+          !obelisk_sim.ref<i32>, i32, i32
+    ^done(%resumed: i32):
+      obelisk_sim.ref.store %resumed to %storage : i32, !obelisk_sim.ref<i32>
+      obelisk_sim.return
     }
 
     // CHECK-LABEL: obelisk_sim.func @root(

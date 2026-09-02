@@ -32,7 +32,7 @@ constexpr StringLiteral kExportBridgeAttr = "obelisk_sim.dpi_export_bridge";
 constexpr StringLiteral kExportBodySymbolAttr =
     "obelisk_sim.dpi_export_body_symbol";
 constexpr StringLiteral kLogicalInputsAttr = "obelisk_sim.dpi_logical_inputs";
-constexpr std::array<StringLiteral, 7> kExportMetadata = {
+constexpr std::array<StringLiteral, 8> kExportMetadata = {
     kExportAttr,
     "obelisk_sim.dpi_c_identifier",
     "obelisk_sim.dpi_scope_id",
@@ -40,6 +40,7 @@ constexpr std::array<StringLiteral, 7> kExportMetadata = {
     "obelisk_sim.dpi_abi_signature",
     "obelisk_sim.dpi_aggregate_layouts",
     kLogicalInputsAttr,
+    sim::metadata::dpiElidedInputs,
 };
 
 FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,

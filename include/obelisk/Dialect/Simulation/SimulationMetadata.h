@@ -116,6 +116,10 @@ inline constexpr llvm::StringLiteral topLevelWildcardWait =
 /// the active logical process.
 inline constexpr llvm::StringLiteral proceduralEventWait =
     "obelisk_sim.procedural_event_wait";
+/// Logical DPI output-formal indices whose unused internal copy-in operands
+/// were removed while preserving the externally visible DPI signature.
+inline constexpr llvm::StringLiteral dpiElidedInputs =
+    "obelisk_sim.dpi_elided_inputs";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
@@ -207,7 +211,7 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == staticFusion || name == computeKernels ||
          name == threeTierSchedule || name == staticSpecialization ||
          name == staticSuperstep || name == topLevelWildcardWait ||
-         name == proceduralEventWait;
+         name == proceduralEventWait || name == dpiElidedInputs;
 }
 
 } // namespace obelisk::sim::metadata

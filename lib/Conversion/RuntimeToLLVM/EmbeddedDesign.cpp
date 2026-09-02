@@ -11,6 +11,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -72,6 +73,7 @@ struct ExportInfo {
   std::string cIdentifier;
   ArrayAttr abi;
   ArrayAttr aggregateLayouts;
+  DenseI64ArrayAttr elidedInputs;
   std::optional<uint32_t> bytecodeFunction;
   bool isTask;
 };
@@ -201,6 +203,21 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       invalid = true;
       return;
     }
+    auto elidedInputs = function->getAttrOfType<DenseI64ArrayAttr>(
+        sim::metadata::dpiElidedInputs);
+    llvm::BitVector seenElidedInputs(inputCount);
+    if (elidedInputs)
+      for (int64_t index : elidedInputs.asArrayRef()) {
+        if (index < 0 || static_cast<uint64_t>(index) >= inputCount ||
+            seenElidedInputs.test(index) ||
+            cast<sim::DPIABIAttr>(signature[index]).getDirection() !=
+                sim::DPIArgumentDirection::Output) {
+          function.emitOpError("has invalid elided DPI output metadata");
+          invalid = true;
+          return;
+        }
+        seenElidedInputs.set(index);
+      }
     if (importCIdentifiers.contains(identifier.getValue())) {
       function.emitOpError() << "DPI C identifier '" << identifier.getValue()
                              << "' is used by both an import and an export";
@@ -219,7 +236,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
          sim::getDPISignatureHash(signature, inputCount),
          static_cast<uint32_t>(inputCount), static_cast<uint32_t>(outputCount),
          function.getSymName().str(), bodySymbol.getValue().str(),
-         identifier.getValue().str(), signature, aggregateLayouts,
+         identifier.getValue().str(), signature, aggregateLayouts, elidedInputs,
          bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
                                 bytecodeFunction.getValue().getZExtValue()))
                           : std::nullopt,
@@ -289,6 +306,8 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
                    builder.getI32IntegerAttr(info.exportID));
     thunk->setAttr("obelisk_sim.dpi_abi_signature", info.abi);
     thunk->setAttr("obelisk_sim.dpi_aggregate_layouts", info.aggregateLayouts);
+    if (info.elidedInputs)
+      thunk->setAttr(sim::metadata::dpiElidedInputs, info.elidedInputs);
     thunk->setAttr("obelisk_sim.dpi_logical_inputs",
                    builder.getI32IntegerAttr(info.inputCount));
     if (info.isTask)

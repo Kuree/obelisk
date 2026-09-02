@@ -783,9 +783,9 @@ def _test_dir(root: Path) -> Path:
 def select(root: Path, args) -> list[Path]:
     """Return the `.v`/`.sv` top files of the simulator-scenario corpus.
 
-    Excludes tests whose top file defines no `module t`: the generated shell
-    instantiates `t` unconditionally, so those would fail for reasons unrelated
-    to Obelisk. (A cheap regex over the `.py`; the file is never executed.)
+    A cheap regex over each descriptor selects the scenario; the file is never
+    executed.  Tests without driver.py's conventional ``module t`` are still
+    valid: their uninstantiated modules are implicit tops under 23.3.1.
     """
     test_dir = _test_dir(root)
     if args.tests:
@@ -812,8 +812,6 @@ def select(root: Path, args) -> list[Path]:
         if not top.exists():
             top = py_file.with_suffix(".sv")
         if not top.exists():
-            continue
-        if not MODULE_T.search(top.read_text(encoding="utf-8", errors="replace")):
             continue
         selected.append(top)
     return selected
@@ -964,6 +962,11 @@ def shell_module_name(top_text: str) -> str:
     the compile on a duplicate definition that says nothing about Obelisk.
     """
     return SHELL_ALTERNATE_NAME if MODULE_TOP.search(top_text) else "top"
+
+
+def needs_driver_shell(top_text: str) -> bool:
+    """Whether driver.py's conventional ``module t`` needs our clock shell."""
+    return bool(MODULE_T.search(top_text))
 
 
 def detect_executes(descriptor: Path) -> bool:
@@ -1385,6 +1388,11 @@ def prepare_generated_fixtures(name: str, directory: str | Path) -> None:
     elif name == "t_sys_readmem_eof":
         # The missing trailing newline is the behavior this scenario tests.
         (Path(directory) / "dat.mem").write_bytes(b"1\n10\n20\n30")
+    elif name == "t_dpi_export_unpack":
+        # This compile-shape regression calls $readmemh on a placeholder file
+        # but does not inspect its contents. Keep the runtime setup valid so
+        # the verdict remains about the exported unpacked-array task.
+        (Path(directory) / "dummy").write_bytes(b"")
 
 
 def classify_dependency_failure(name: str, log: str) -> str:
@@ -1459,13 +1467,16 @@ def judge_one(
             if not descriptor_native.ok:
                 return model.Outcome(
                     model.COMPILE_FAIL, descriptor_native.stderr)
-        shell = Path(tmp) / "top.v"
-        shell.write_text(
-            make_top_shell(detect_inputs(top_text),
-                           detect_sim_time(descriptor),
-                           detect_timing_loop(descriptor),
-                           shell_module_name(top_text)),
-            encoding="utf-8")
+        design_sources = [str(top)]
+        if needs_driver_shell(top_text):
+            shell = Path(tmp) / "top.v"
+            shell.write_text(
+                make_top_shell(detect_inputs(top_text),
+                               detect_sim_time(descriptor),
+                               detect_timing_loop(descriptor),
+                               shell_module_name(top_text)),
+                encoding="utf-8")
+            design_sources.append(str(shell))
         binary = Path(tmp) / "sim"
         # -y/+libext lets separate submodule files resolve; +incdir for includes.
         # Upstream's driver defines this for trace tests. Without it, nested
@@ -1483,7 +1494,7 @@ def judge_one(
         if compile_threads is not None:
             extra.append(f"--compile-threads={compile_threads}")
         compiled = runner.compile_design(
-            obelisk, [str(top), str(shell)], str(binary), extra,
+            obelisk, design_sources, str(binary), extra,
             single_unit=SINGLE_UNIT,
             native_inputs=[*native.inputs, *descriptor_native.inputs],
             vpi=vpi_mode or ("full" if native.inputs else "off"),

@@ -11,6 +11,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <optional>
 #include <type_traits>
@@ -30,6 +31,7 @@ struct BoundarySite {
   Operation *operation;
   std::optional<unsigned> callee;
   bool isCall;
+  bool isTask;
   llvm::BitVector demandedResults;
   bool active = true;
 };
@@ -40,6 +42,7 @@ struct FunctionInfo {
   llvm::BitVector liveResults;
   llvm::BitVector eraseArguments;
   llvm::BitVector eraseResults;
+  llvm::BitVector dpiOutputArguments;
   SmallVector<sim::SimReturnOp> returns;
   bool pinned = false;
   StringRef pinReason;
@@ -51,14 +54,104 @@ static void addStatistic(Pass::Statistic *statistic, uint64_t amount = 1) {
     *statistic += amount;
 }
 
-static bool hasUnknownOperationMetadata(Operation *operation) {
+static bool isDPIExportMetadata(StringRef name) {
+  return name == "obelisk_sim.dpi_export" ||
+         name == "obelisk_sim.dpi_c_identifier" ||
+         name == "obelisk_sim.dpi_scope_id" ||
+         name == "obelisk_sim.dpi_export_id" ||
+         name == "obelisk_sim.dpi_abi_signature" ||
+         name == "obelisk_sim.dpi_aggregate_layouts" ||
+         name == "obelisk_sim.dpi_logical_inputs";
+}
+
+static bool hasUnknownOperationMetadata(Operation *operation,
+                                        bool allowDPIExport = false) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
     if (name.starts_with("obelisk_sim.") &&
-        !sim::metadata::isKnownOperation(name))
+        !sim::metadata::isKnownOperation(name) &&
+        !(allowDPIExport && isDPIExportMetadata(name)))
       return true;
   }
   return false;
+}
+
+/// Return output-formal value arguments that may participate in ordinary
+/// liveness analysis without changing the external DPI ABI.  The companion
+/// destination references and every input/inout value remain ABI-pinned.
+static std::optional<llvm::BitVector>
+getDPIOutputArguments(sim::SimFuncOp function) {
+  if (!function->hasAttr("obelisk_sim.dpi_export") ||
+      function->hasAttr(sim::metadata::dpiElidedInputs) ||
+      function.getEntryKind() != sim::EntryKind::Task ||
+      !function.getFunctionType().getResults().empty())
+    return std::nullopt;
+
+  auto identifier =
+      function->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
+  auto scope = function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_scope_id");
+  auto exportID =
+      function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_export_id");
+  auto logicalInputs =
+      function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+  auto signature =
+      function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+  if (!identifier || identifier.empty() || !scope || !exportID ||
+      !logicalInputs || logicalInputs.getValue().isNegative() || !signature)
+    return std::nullopt;
+  uint64_t inputCount = logicalInputs.getValue().getLimitedValue();
+  FunctionType type = function.getFunctionType();
+  if (inputCount > signature.size() || type.getNumInputs() <= inputCount ||
+      !isa<sim::ContextType>(type.getInput(0)))
+    return std::nullopt;
+  if (auto layouts = function->getAttrOfType<ArrayAttr>(
+          "obelisk_sim.dpi_aggregate_layouts");
+      layouts && layouts.size() != signature.size())
+    return std::nullopt;
+
+  SmallVector<sim::DPIABIAttr> entries;
+  entries.reserve(signature.size());
+  for (Attribute attribute : signature) {
+    auto entry = dyn_cast<sim::DPIABIAttr>(attribute);
+    if (!entry)
+      return std::nullopt;
+    entries.push_back(entry);
+  }
+
+  llvm::BitVector candidates(type.getNumInputs());
+  uint64_t copyOut = inputCount;
+  uint64_t destination = inputCount + 1;
+  for (uint64_t index = 0; index != inputCount; ++index) {
+    sim::DPIABIAttr input = entries[index];
+    if (input.getDirection() == sim::DPIArgumentDirection::Result)
+      return std::nullopt;
+    auto capture = dyn_cast_or_null<sim::CaptureKindAttr>(
+        function.getArgAttr(index + 1, sim::metadata::captureKind));
+    if (!capture || capture.getValue() != sim::CaptureKind::Formal)
+      return std::nullopt;
+    if (input.getDirection() == sim::DPIArgumentDirection::Input)
+      continue;
+    if (copyOut >= entries.size() || destination >= type.getNumInputs() ||
+        !isa<sim::RefType>(type.getInput(destination)))
+      return std::nullopt;
+    sim::DPIABIAttr output = entries[copyOut++];
+    auto destinationCapture = dyn_cast_or_null<sim::CaptureKindAttr>(
+        function.getArgAttr(destination, sim::metadata::captureKind));
+    if (!destinationCapture ||
+        destinationCapture.getValue() != sim::CaptureKind::Formal ||
+        output.getDirection() != sim::DPIArgumentDirection::Output ||
+        output.getKind() != input.getKind() ||
+        output.getWidth() != input.getWidth() ||
+        output.getFourState() != input.getFourState() ||
+        output.getIsSigned() != input.getIsSigned())
+      return std::nullopt;
+    if (input.getDirection() == sim::DPIArgumentDirection::Output)
+      candidates.set(index + 1);
+    ++destination;
+  }
+  if (copyOut != entries.size())
+    return std::nullopt;
+  return candidates;
 }
 
 static bool hasCompiledSiteMetadata(Operation *operation) {
@@ -136,8 +229,19 @@ static void updateBindings(sim::SimFuncOp function,
   auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
   if (!bindings)
     return;
+  llvm::DenseSet<StringAttr> deadCopyOutPaths;
+  for (Attribute attr : bindings) {
+    auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr);
+    if (argument && erase.test(argument.getArgument()) &&
+        argument.getKind() == sim::UnitArgumentKind::FormalLocal &&
+        argument.getCopyOut())
+      deadCopyOutPaths.insert(argument.getPath());
+  }
   SmallVector<Attribute> updated;
   updated.reserve(bindings.size());
+  SmallVector<uint64_t> removedBefore(erase.size() + 1);
+  for (unsigned index = 0; index != erase.size(); ++index)
+    removedBefore[index + 1] = removedBefore[index] + erase.test(index);
   for (Attribute attr : bindings) {
     auto argument = dyn_cast<sim::ArgumentBindingAttr>(attr);
     if (!argument) {
@@ -145,13 +249,11 @@ static void updateBindings(sim::SimFuncOp function,
       continue;
     }
     uint64_t oldIndex = argument.getArgument();
-    if (erase.test(oldIndex))
+    if (erase.test(oldIndex) ||
+        (argument.getKind() == sim::UnitArgumentKind::CopyOutDestination &&
+         deadCopyOutPaths.contains(argument.getPath())))
       continue;
-    uint64_t newIndex = oldIndex;
-    for (int64_t removed = erase.find_first();
-         removed >= 0 && uint64_t(removed) < oldIndex;
-         removed = erase.find_next(removed))
-      --newIndex;
+    uint64_t newIndex = oldIndex - removedBefore[oldIndex];
     updated.push_back(sim::ArgumentBindingAttr::get(
         function.getContext(), argument.getPath(), newIndex, argument.getKind(),
         argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn()));
@@ -189,9 +291,6 @@ public:
 private:
   void pin(unsigned index, StringRef reason);
   bool isSiteActive(const BoundarySite &site) const;
-  bool isDemandedUse(OpOperand &use, ArrayRef<llvm::BitVector> argumentSnapshot,
-                     ArrayRef<llvm::BitVector> resultSnapshot,
-                     ArrayRef<llvm::BitVector> callSnapshot) const;
   bool willRemoveUse(OpOperand &use) const;
   void classifyPurity();
   void solveDemand();
@@ -254,7 +353,8 @@ LogicalResult BoundaryEliminator::run() {
     functions.push_back({function, llvm::BitVector(type.getNumInputs()),
                          llvm::BitVector(type.getNumResults()),
                          llvm::BitVector(type.getNumInputs()),
-                         llvm::BitVector(type.getNumResults())});
+                         llvm::BitVector(type.getNumResults()),
+                         llvm::BitVector(type.getNumInputs())});
     functionIndices[function.getOperation()] = index;
   });
   addStatistic(statistics.functionsConsidered, functions.size());
@@ -300,20 +400,36 @@ LogicalResult BoundaryEliminator::run() {
         }
     }
 
-    if (hasUnknownOperationMetadata(function))
+    if (std::optional<llvm::BitVector> dpiOutputArguments =
+            getDPIOutputArguments(function))
+      info.dpiOutputArguments = std::move(*dpiOutputArguments);
+    bool canPruneDPIOutput = info.dpiOutputArguments.any();
+
+    if (hasUnknownOperationMetadata(function, canPruneDPIOutput))
       pin(index, "unknown obelisk_sim operation metadata");
-    else if (function->getParentOp() != design.getOperation())
+    else if (function->getParentOp() != design.getOperation() &&
+             !canPruneDPIOutput)
       pin(index, "nested function ABI");
     else if (function.isExternal())
       pin(index, "external declaration ABI");
     else if (function.getEntryKind() == sim::EntryKind::RootInitializer)
       pin(index, "root initializer ABI");
     else if (SymbolTable::getSymbolVisibility(function) ==
-             SymbolTable::Visibility::Nested)
+                 SymbolTable::Visibility::Nested &&
+             !canPruneDPIOutput)
       pin(index, "nested visibility ABI");
     else if (SymbolTable::getSymbolVisibility(function) !=
-             SymbolTable::Visibility::Private)
+                 SymbolTable::Visibility::Private &&
+             !canPruneDPIOutput)
       pin(index, "non-private ABI");
+
+    // A DPI export has a stable external ABI.  Permit ordinary demand to
+    // prove only output copy-ins dead; every other argument remains pinned.
+    if (canPruneDPIOutput && !info.pinned) {
+      info.liveArguments.set();
+      for (int64_t argument : info.dpiOutputArguments.set_bits())
+        info.liveArguments.reset(argument);
+    }
 
     // The executable dialect requires an explicit context at position zero.
     if (!function.isExternal() && !info.liveArguments.empty())
@@ -326,18 +442,20 @@ LogicalResult BoundaryEliminator::run() {
         pin(index, "unknown obelisk_sim operation metadata");
 
       auto recordSite = [&](auto site) -> LogicalResult {
-        ArrayAttr siteArgAttrs = site.getArgAttrsAttr();
-        if (failed(validateDictionaryArray(
-                site, siteArgAttrs, site.getNumOperands(),
-                isa<sim::SimCallOp>(site.getOperation())
-                    ? "call argument metadata"
-                    : "spawn argument metadata")) ||
-            failed(validateDictionaryArray(
-                site, site.getResAttrsAttr(), site->getNumResults(),
-                isa<sim::SimCallOp>(site.getOperation())
-                    ? "call result metadata"
-                    : "spawn result metadata")))
-          return failure();
+        if constexpr (!std::is_same_v<decltype(site), sim::SimTaskCallOp>) {
+          ArrayAttr siteArgAttrs = site.getArgAttrsAttr();
+          if (failed(validateDictionaryArray(
+                  site, siteArgAttrs, site.getNumOperands(),
+                  isa<sim::SimCallOp>(site.getOperation())
+                      ? "call argument metadata"
+                      : "spawn argument metadata")) ||
+              failed(validateDictionaryArray(
+                  site, site.getResAttrsAttr(), site->getNumResults(),
+                  isa<sim::SimCallOp>(site.getOperation())
+                      ? "call result metadata"
+                      : "spawn result metadata")))
+            return failure();
+        }
 
         sim::SimFuncOp callee =
             symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
@@ -350,18 +468,26 @@ LogicalResult BoundaryEliminator::run() {
         }
         unsigned siteIndex = sites.size();
         bool isCall = isa<sim::SimCallOp>(site.getOperation());
-        sites.push_back({site.getOperation(), calleeIndex, isCall,
+        bool isTask = isa<sim::SimTaskCallOp>(site.getOperation());
+        sites.push_back({site.getOperation(), calleeIndex, isCall, isTask,
                          llvm::BitVector(isCall ? site->getNumResults() : 0)});
         siteIndices[site.getOperation()] = siteIndex;
 
         if (!calleeIndex)
           return success();
         FunctionType calleeType = callee.getFunctionType();
-        bool valid = site.getOperandTypes() == calleeType.getInputs();
+        bool valid;
+        if constexpr (std::is_same_v<decltype(site), sim::SimTaskCallOp>)
+          valid = site.getArguments().getTypes() == calleeType.getInputs();
+        else
+          valid = site.getOperandTypes() == calleeType.getInputs();
         if constexpr (std::is_same_v<decltype(site), sim::SimCallOp>)
           valid &= site.getResultTypes() == calleeType.getResults() &&
                    (callee.getEntryKind() == sim::EntryKind::Function ||
                     callee.getEntryKind() == sim::EntryKind::Observer);
+        else if constexpr (std::is_same_v<decltype(site), sim::SimTaskCallOp>)
+          valid &= calleeType.getResults().empty() &&
+                   callee.getEntryKind() == sim::EntryKind::Task;
         else
           valid &= calleeType.getResults().empty() &&
                    callee.getEntryKind() != sim::EntryKind::Function &&
@@ -377,6 +503,9 @@ LogicalResult BoundaryEliminator::run() {
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         if (failed(recordSite(call)))
           invalidBoundary = true;
+      } else if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
+        if (failed(recordSite(task)))
+          invalidBoundary = true;
       } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation)) {
         if (failed(recordSite(spawn)))
           invalidBoundary = true;
@@ -390,8 +519,8 @@ LogicalResult BoundaryEliminator::run() {
   }
 
   // Complete symbol-use visibility is required before a private ABI can be
-  // changed. Only the canonical callee attribute of direct calls and spawns
-  // is accepted as an observable use.
+  // changed. Only the canonical callee attribute of direct calls, task calls,
+  // and spawns is accepted as an observable use.
   struct SymbolUseRecord {
     Operation *user;
     SymbolRefAttr reference;
@@ -424,10 +553,13 @@ LogicalResult BoundaryEliminator::run() {
       bool direct =
           site != siteIndices.end() && sites[site->second].callee == index;
       if (direct) {
-        SymbolRefAttr callee =
-            isa<sim::SimCallOp>(user)
-                ? cast<sim::SimCallOp>(user).getCalleeAttr()
-                : cast<sim::SimSpawnOp>(user).getCalleeAttr();
+        SymbolRefAttr callee;
+        if (auto call = dyn_cast<sim::SimCallOp>(user))
+          callee = call.getCalleeAttr();
+        else if (auto task = dyn_cast<sim::SimTaskCallOp>(user))
+          callee = task.getCalleeAttr();
+        else
+          callee = cast<sim::SimSpawnOp>(user).getCalleeAttr();
         direct =
             use.reference == callee && countSymbolReferences(user, callee) == 1;
       }
@@ -524,30 +656,26 @@ void BoundaryEliminator::classifyPurity() {
   for (auto [index, observation] : llvm::enumerate(observations))
     functions[index].discardable = observation.locallyDiscardable;
 
-  // This greatest fixed point intentionally accepts recursive SCCs containing
-  // only otherwise-discardable operations and calls within the SCC.
-  bool changed;
-  do {
-    SmallVector<uint8_t> snapshot;
-    snapshot.reserve(functions.size());
-    for (const FunctionInfo &info : functions)
-      snapshot.push_back(info.discardable);
-    SmallVector<uint8_t> wave(functions.size(), false);
-    parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
-      if (!snapshot[index])
-        return;
-      wave[index] =
-          llvm::all_of(observations[index].callees,
-                       [&](unsigned callee) { return snapshot[callee]; });
-    });
-    changed = false;
-    for (unsigned index = 0; index < functions.size(); ++index) {
-      if (functions[index].discardable && !wave[index]) {
-        functions[index].discardable = false;
-        changed = true;
-      }
+  // Propagate each local impurity once through the reverse call graph. This
+  // greatest fixed point intentionally leaves recursive SCCs discardable when
+  // every member has only discardable local effects.
+  SmallVector<SmallVector<unsigned>> callers(functions.size());
+  for (auto [caller, observation] : llvm::enumerate(observations))
+    for (unsigned callee : observation.callees)
+      callers[callee].push_back(caller);
+  SmallVector<unsigned> worklist;
+  for (unsigned index = 0; index != functions.size(); ++index)
+    if (!functions[index].discardable)
+      worklist.push_back(index);
+  while (!worklist.empty()) {
+    unsigned callee = worklist.pop_back_val();
+    for (unsigned caller : callers[callee]) {
+      if (!functions[caller].discardable)
+        continue;
+      functions[caller].discardable = false;
+      worklist.push_back(caller);
     }
-  } while (changed);
+  }
 }
 
 bool BoundaryEliminator::isSiteActive(const BoundarySite &site) const {
@@ -556,122 +684,156 @@ bool BoundaryEliminator::isSiteActive(const BoundarySite &site) const {
   return !functions[*site.callee].discardable || site.demandedResults.any();
 }
 
-bool BoundaryEliminator::isDemandedUse(
-    OpOperand &use, ArrayRef<llvm::BitVector> argumentSnapshot,
-    ArrayRef<llvm::BitVector> resultSnapshot,
-    ArrayRef<llvm::BitVector> callSnapshot) const {
-  Operation *user = use.getOwner();
-  auto found = siteIndices.find(user);
-  if (found != siteIndices.end()) {
-    const BoundarySite &site = sites[found->second];
-    bool active = !site.isCall || !eliminateResults || !site.callee ||
-                  !functions[*site.callee].discardable ||
-                  callSnapshot[found->second].any();
-    if (!active)
-      return false;
-    if (!site.callee ||
-        use.getOperandNumber() >= argumentSnapshot[*site.callee].size())
-      return true;
-    return argumentSnapshot[*site.callee].test(use.getOperandNumber());
-  }
-  if (isa<sim::SimReturnOp>(user)) {
-    auto function = user->getParentOfType<sim::SimFuncOp>();
-    auto index = functionIndices.find(function.getOperation());
-    if (index == functionIndices.end() ||
-        use.getOperandNumber() >= resultSnapshot[index->second].size())
-      return true;
-    return resultSnapshot[index->second].test(use.getOperandNumber());
-  }
-  return true;
-}
-
 void BoundaryEliminator::solveDemand() {
-  SmallVector<llvm::BitVector> callDemand;
-  callDemand.reserve(sites.size());
-  for (const BoundarySite &site : sites)
-    callDemand.emplace_back(site.demandedResults.size());
+  enum class NodeKind : uint8_t {
+    FunctionArgument,
+    FunctionResult,
+    CallResult
+  };
+  struct DemandNode {
+    NodeKind kind;
+    unsigned owner;
+    unsigned index;
+  };
+  SmallVector<DemandNode> nodes;
+  SmallVector<unsigned> argumentBases(functions.size());
+  SmallVector<unsigned> resultBases(functions.size());
+  DenseMap<Value, unsigned> valueNodes;
+  for (auto [functionIndex, info] : llvm::enumerate(functions)) {
+    argumentBases[functionIndex] = nodes.size();
+    for (unsigned index = 0; index != info.liveArguments.size(); ++index)
+      nodes.push_back(
+          {NodeKind::FunctionArgument, unsigned(functionIndex), index});
+    resultBases[functionIndex] = nodes.size();
+    for (unsigned index = 0; index != info.liveResults.size(); ++index)
+      nodes.push_back(
+          {NodeKind::FunctionResult, unsigned(functionIndex), index});
+    if (info.function.isExternal())
+      continue;
+    Block &entry = info.function.getBody().front();
+    for (BlockArgument argument : entry.getArguments())
+      valueNodes[argument] =
+          argumentBases[functionIndex] + argument.getArgNumber();
+  }
 
-  bool changed;
-  do {
-    SmallVector<llvm::BitVector> argumentSnapshot, resultSnapshot, callSnapshot;
-    argumentSnapshot.reserve(functions.size());
-    resultSnapshot.reserve(functions.size());
-    callSnapshot.reserve(sites.size());
-    for (const FunctionInfo &info : functions) {
-      argumentSnapshot.push_back(info.liveArguments);
-      resultSnapshot.push_back(info.liveResults);
+  constexpr unsigned noNode = std::numeric_limits<unsigned>::max();
+  SmallVector<unsigned> callResultBases(sites.size(), noNode);
+  for (auto [siteIndex, site] : llvm::enumerate(sites)) {
+    if (!site.isCall)
+      continue;
+    callResultBases[siteIndex] = nodes.size();
+    auto call = cast<sim::SimCallOp>(site.operation);
+    for (auto [resultIndex, result] : llvm::enumerate(call.getResults())) {
+      unsigned node = nodes.size();
+      nodes.push_back(
+          {NodeKind::CallResult, unsigned(siteIndex), unsigned(resultIndex)});
+      valueNodes[result] = node;
     }
-    for (const BoundarySite &site : sites)
-      callSnapshot.push_back(site.demandedResults);
+  }
 
-    SmallVector<llvm::BitVector> argumentWave;
-    argumentWave.reserve(functions.size());
-    for (const FunctionInfo &info : functions)
-      argumentWave.emplace_back(info.liveArguments.size());
-    for (auto [index, site] : llvm::enumerate(sites))
-      callDemand[index] = llvm::BitVector(site.demandedResults.size());
+  struct GatedArgument {
+    unsigned argument;
+    unsigned source;
+  };
+  SmallVector<SmallVector<unsigned>> dependents(nodes.size());
+  SmallVector<SmallVector<GatedArgument>> siteArguments(sites.size());
+  SmallVector<SmallVector<std::pair<unsigned, unsigned>>> argumentGates(
+      nodes.size());
+  SmallVector<unsigned> roots;
 
-    const DenseMap<Operation *, unsigned> &frozenSiteIndices = siteIndices;
-    parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
-      const FunctionInfo &info = functions[index];
-      sim::SimFuncOp function = info.function;
-      if (function.isExternal())
-        return;
-      Block &entry = function.getBody().front();
-      for (unsigned argumentIndex = 0; argumentIndex < entry.getNumArguments();
-           ++argumentIndex) {
-        if (argumentSnapshot[index].test(argumentIndex))
+  auto observeUses = [&](Value value, unsigned sourceNode) {
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      auto foundSite = siteIndices.find(user);
+      if (foundSite != siteIndices.end()) {
+        unsigned siteIndex = foundSite->second;
+        const BoundarySite &site = sites[siteIndex];
+        if (!site.callee || use.getOperandNumber() >=
+                                functions[*site.callee].liveArguments.size()) {
+          roots.push_back(sourceNode);
           continue;
-        for (OpOperand &use : entry.getArgument(argumentIndex).getUses())
-          if (isDemandedUse(use, argumentSnapshot, resultSnapshot,
-                            callSnapshot)) {
-            argumentWave[index].set(argumentIndex);
-            break;
-          }
-      }
-      walkFunctionBody(function, [&](Operation *operation) {
-        auto call = dyn_cast<sim::SimCallOp>(operation);
-        if (!call)
-          return;
-        auto found = frozenSiteIndices.find(operation);
-        if (found == frozenSiteIndices.end())
-          return;
-        unsigned siteIndex = found->second;
-        for (auto [resultIndex, result] : llvm::enumerate(call.getResults())) {
-          if (callSnapshot[siteIndex].test(resultIndex))
-            continue;
-          for (OpOperand &use : result.getUses())
-            if (isDemandedUse(use, argumentSnapshot, resultSnapshot,
-                              callSnapshot)) {
-              callDemand[siteIndex].set(resultIndex);
-              break;
-            }
         }
-      });
-    });
-
-    changed = false;
-    for (unsigned index = 0; index < functions.size(); ++index) {
-      unsigned before = functions[index].liveArguments.count();
-      functions[index].liveArguments |= argumentWave[index];
-      changed |= before != functions[index].liveArguments.count();
-    }
-    for (auto [index, site] : llvm::enumerate(sites)) {
-      unsigned before = site.demandedResults.count();
-      site.demandedResults |= callDemand[index];
-      changed |= before != site.demandedResults.count();
-      if (!site.isCall || !site.callee)
+        unsigned argument =
+            argumentBases[*site.callee] + use.getOperandNumber();
+        siteArguments[siteIndex].push_back({argument, sourceNode});
+        argumentGates[argument].push_back({siteIndex, sourceNode});
         continue;
-      FunctionInfo &callee = functions[*site.callee];
-      for (int64_t result = site.demandedResults.find_first(); result >= 0;
-           result = site.demandedResults.find_next(result)) {
-        if (!callee.liveResults.test(result)) {
-          callee.liveResults.set(result);
-          changed = true;
+      }
+      if (isa<sim::SimReturnOp>(user)) {
+        sim::SimFuncOp function = user->getParentOfType<sim::SimFuncOp>();
+        auto foundFunction = functionIndices.find(function.getOperation());
+        if (foundFunction != functionIndices.end() &&
+            use.getOperandNumber() <
+                functions[foundFunction->second].liveResults.size()) {
+          unsigned result =
+              resultBases[foundFunction->second] + use.getOperandNumber();
+          dependents[result].push_back(sourceNode);
+          continue;
         }
       }
+      roots.push_back(sourceNode);
     }
-  } while (changed);
+  };
+  for (auto [value, node] : valueNodes)
+    observeUses(value, node);
+
+  for (auto [siteIndex, site] : llvm::enumerate(sites)) {
+    if (!site.isCall || !site.callee)
+      continue;
+    unsigned callBase = callResultBases[siteIndex];
+    unsigned calleeBase = resultBases[*site.callee];
+    for (unsigned index = 0; index != site.demandedResults.size(); ++index)
+      dependents[callBase + index].push_back(calleeBase + index);
+  }
+
+  SmallVector<uint8_t> activeSites(sites.size());
+  for (auto [index, site] : llvm::enumerate(sites))
+    activeSites[index] = !site.isCall || !eliminateResults || !site.callee ||
+                         !functions[*site.callee].discardable;
+
+  SmallVector<uint8_t> live(nodes.size());
+  SmallVector<unsigned> worklist;
+  auto markLive = [&](unsigned node) {
+    if (live[node])
+      return;
+    live[node] = true;
+    const DemandNode &demand = nodes[node];
+    if (demand.kind == NodeKind::FunctionArgument)
+      functions[demand.owner].liveArguments.set(demand.index);
+    else if (demand.kind == NodeKind::FunctionResult)
+      functions[demand.owner].liveResults.set(demand.index);
+    else
+      sites[demand.owner].demandedResults.set(demand.index);
+    worklist.push_back(node);
+  };
+  for (auto [functionIndex, info] : llvm::enumerate(functions)) {
+    for (int64_t index : info.liveArguments.set_bits())
+      markLive(argumentBases[functionIndex] + index);
+    for (int64_t index : info.liveResults.set_bits())
+      markLive(resultBases[functionIndex] + index);
+  }
+  for (unsigned root : roots)
+    markLive(root);
+
+  auto activateSite = [&](unsigned siteIndex) {
+    if (activeSites[siteIndex])
+      return;
+    activeSites[siteIndex] = true;
+    for (GatedArgument gate : siteArguments[siteIndex])
+      if (live[gate.argument])
+        markLive(gate.source);
+  };
+  while (!worklist.empty()) {
+    unsigned node = worklist.pop_back_val();
+    for (unsigned dependent : dependents[node])
+      markLive(dependent);
+    for (auto [siteIndex, source] : argumentGates[node])
+      if (activeSites[siteIndex])
+        markLive(source);
+    const DemandNode &demand = nodes[node];
+    if (demand.kind == NodeKind::CallResult)
+      activateSite(demand.owner);
+  }
 }
 
 bool BoundaryEliminator::willRemoveUse(OpOperand &use) const {
@@ -776,6 +938,19 @@ void BoundaryEliminator::mutate() {
     if (!site.isCall) {
       if (eraseArguments.none())
         continue;
+      if (site.isTask) {
+        auto task = cast<sim::SimTaskCallOp>(site.operation);
+        int64_t oldArgumentCount = task.getArgumentCount();
+        llvm::BitVector eraseTaskOperands(task->getNumOperands());
+        for (int64_t index : eraseArguments.set_bits())
+          eraseTaskOperands.set(index);
+        task->eraseOperands(eraseTaskOperands);
+        task.setArgumentCountAttr(
+            IntegerAttr::get(task.getArgumentCountAttr().getType(),
+                             oldArgumentCount - eraseArguments.count()));
+        addStatistic(statistics.taskOperandsRemoved, eraseArguments.count());
+        continue;
+      }
       auto spawn = cast<sim::SimSpawnOp>(site.operation);
       if (ArrayAttr attrs = spawn.getArgAttrsAttr())
         spawn.setArgAttrsAttr(filterPositionalMetadata(design.getContext(),
@@ -858,6 +1033,14 @@ void BoundaryEliminator::mutate() {
   for (FunctionInfo &info : functions) {
     if (info.eraseArguments.none() && info.eraseResults.none())
       continue;
+    SmallVector<int64_t> elidedDPIInputs;
+    for (int64_t argument : info.eraseArguments.set_bits())
+      if (info.dpiOutputArguments.test(argument))
+        elidedDPIInputs.push_back(argument - 1);
+    if (!elidedDPIInputs.empty())
+      info.function->setAttr(
+          sim::metadata::dpiElidedInputs,
+          DenseI64ArrayAttr::get(design.getContext(), elidedDPIInputs));
     updateBindings(info.function, info.eraseArguments);
     if (failed(info.function.eraseArguments(info.eraseArguments)) ||
         failed(info.function.eraseResults(info.eraseResults)))
@@ -893,10 +1076,10 @@ public:
 
   void runOnOperation() override {
     EliminationStatistics statistics{
-        &functionsConsidered,  &abiPinnedFunctions,    &functionsPruned,
-        &argumentsRemoved,     &resultsRemoved,        &callOperandsRemoved,
-        &spawnOperandsRemoved, &returnOperandsRemoved, &callsRebuilt,
-        &pureCallsErased};
+        &functionsConsidered,  &abiPinnedFunctions,  &functionsPruned,
+        &argumentsRemoved,     &resultsRemoved,      &callOperandsRemoved,
+        &spawnOperandsRemoved, &taskOperandsRemoved, &returnOperandsRemoved,
+        &callsRebuilt,         &pureCallsErased};
     if (failed(eliminateDeadSimulationBoundaries(getOperation(),
                                                  /*eliminateResults=*/true,
                                                  missedRemarks, statistics)))
@@ -917,6 +1100,8 @@ private:
                                 "direct call operands removed"};
   Statistic spawnOperandsRemoved{this, "spawn-operands-removed",
                                  "direct spawn operands removed"};
+  Statistic taskOperandsRemoved{this, "task-operands-removed",
+                                "direct task-call operands removed"};
   Statistic returnOperandsRemoved{this, "return-operands-removed",
                                   "return operands removed"};
   Statistic callsRebuilt{this, "calls-rebuilt",

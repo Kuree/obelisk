@@ -3093,6 +3093,15 @@ def SimRefStoreOp : SimOp<"ref.store", [
   let assemblyFormat = "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
 }
 
+def SimRefCopyOp : SimOp<"ref.copy", [SameTypeOperands]> {
+  let summary = "copy a packed reference without materializing its value";
+  let arguments = (ins
+      Arg<SimRefType, "", [MemRead<SimStorageResource>]>:$source,
+      Arg<SimRefType, "", [MemWrite<SimStorageResource>]>:$destination);
+  let assemblyFormat =
+      "$source `to` $destination attr-dict `:` qualified(type($source))";
+}
+
 def SimOverrideOp : SimOp<"override", [
     MemoryEffects<[MemWrite<SimSchedulerResource>]>
   ]> {

@@ -3297,10 +3297,12 @@ obelisk_rt_status obelisk_rt_execute_design_export_task(
     uint32_t copiedOutputs = 0;
     uint64_t physicalArguments = 1;
     for (uint32_t index = 0; index != inputCount; ++index) {
-      if (directions[index] > 2)
+      uint8_t direction = directions[index] & 0x7fu;
+      bool elided = (directions[index] & 0x80u) != 0;
+      if (direction > 2 || (elided && direction != 1))
         return OBELISK_RT_INVALID_ARGUMENT;
-      physicalArguments += 1 + (directions[index] != 0);
-      copiedOutputs += directions[index] != 0;
+      physicalArguments += !elided + (direction != 0);
+      copiedOutputs += direction != 0;
     }
     if (function.id != descriptor.code_unit_id ||
         (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
@@ -3420,11 +3422,13 @@ obelisk_rt_status obelisk_rt_execute_design_export_task(
     };
     uint32_t argument = 1, output = 0;
     for (uint32_t index = 0; index != inputCount; ++index) {
-      if (!copyInput(argument++, inputs[index])) {
+      uint8_t direction = directions[index] & 0x7fu;
+      bool elided = (directions[index] & 0x80u) != 0;
+      if (!elided && !copyInput(argument++, inputs[index])) {
         releaseUnscheduled();
         return OBELISK_RT_INVALID_BYTECODE;
       }
-      if (directions[index] == 0)
+      if (direction == 0)
         continue;
       obelisk_rt_import_output_v1 &destination = outputs[output++];
       if (destination.kind != inputs[index].kind ||
