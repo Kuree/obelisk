@@ -779,6 +779,12 @@ LIBRARY_QUALIFIED_CELL_LIBLIST = Exclusion(
     "a cell selection clause that includes a library name cannot use a "
     "liblist expansion clause; the test requires `cell liba.m3 liblist "
     "libb` to compile and bind")
+CONFIG_MAP_IMPLICIT_LIBRARY_SEARCH = Exclusion(
+    "IEEE 1800-2017 33.4.1.5",
+    "a library map assigns cells to libraries but does not implicitly add "
+    "those libraries to a configuration's current liblist; cfg has no "
+    "liblist clause, so the test cannot require all mapped libraries to be "
+    "searched for t's children")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -790,6 +796,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_override": POST_2017_CLASS_OVERRIDE_CONTROLS,
     "t_config_inst": CONFIG_PARENT_LIBRARY_SEARCH,
     "t_config_liblist": LIBRARY_QUALIFIED_CELL_LIBLIST,
+    "t_config_libmap": CONFIG_MAP_IMPLICIT_LIBRARY_SEARCH,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

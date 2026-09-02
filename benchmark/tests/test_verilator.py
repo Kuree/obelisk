@@ -786,6 +786,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 33.4.1.4")
         self.assertIn("cell liba.m3 liblist libb", excluded.reason)
 
+    def test_library_map_does_not_extend_a_config_liblist(self):
+        excluded = verilator.EXCLUDED["t_config_libmap"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 33.4.1.5")
+        self.assertIn("does not implicitly add", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
