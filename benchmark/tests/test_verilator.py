@@ -890,6 +890,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("[expression:$]", excluded.reason)
         self.assertIn("[ $ : $ ]", excluded.reason)
 
+    def test_parenless_interface_function_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_interface_func_no_paren"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.2")
+        self.assertIn("footnote 37", excluded.reason)
+        self.assertIn("nonvoid interface function", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

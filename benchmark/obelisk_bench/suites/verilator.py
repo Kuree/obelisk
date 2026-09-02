@@ -950,6 +950,10 @@ BOTH_BOUNDS_UNBOUNDED_RANGE = Exclusion(
     "IEEE 1800-2017 A.8.3",
     "footnote 25 permits $ in an open value range only in [expression:$] or "
     "[$:expression]; the test requires Verilator's extension [ $ : $ ]")
+PARENLESS_INTERFACE_FUNCTION = Exclusion(
+    "IEEE 1800-2017 A.8.2",
+    "footnote 37 permits omitted call parentheses only for a task, void "
+    "function, or class method; i.get_status is a nonvoid interface function")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1074,6 +1078,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_implements_typed": NONVIRTUAL_INTERFACE_IMPLEMENTATION,
     "t_infinite_recursion": TASK_RANDOMIZE_CALLBACK,
     "t_inside_unbounded_both": BOTH_BOUNDS_UNBOUNDED_RANGE,
+    "t_interface_func_no_paren": PARENLESS_INTERFACE_FUNCTION,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
