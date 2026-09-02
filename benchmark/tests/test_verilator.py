@@ -831,16 +831,6 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
-    def test_interface_parameter_slang_bug_stays_visible(self):
-        log = verilator.classify_dependency_failure(
-            "t_interface_modport_param",
-            "hierarchical name is not allowed in a constant expression\n")
-        self.assertIn("known Slang bug:", log)
-        self.assertIn("IEEE 1800-2017 11.2.1", log)
-        self.assertIn("25.10", log)
-        self.assertTrue(log.endswith(
-            "hierarchical name is not allowed in a constant expression\n"))
-
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),
@@ -939,6 +929,20 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 25.5")
         self.assertIn("same interface as the modport", excluded.reason)
         self.assertIn("child interface", excluded.reason)
+        for name in names[1:]:
+            self.assertIs(verilator.EXCLUDED[name], excluded)
+
+    def test_local_interface_parameter_constants_are_not_compiler_failures(self):
+        names = (
+            "t_interface_modport_param",
+            "t_interface_param_dependency",
+            "t_interface_param_local_access",
+            "t_interface_parameter_access",
+        )
+        excluded = verilator.EXCLUDED[names[0]]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.4")
+        self.assertIn("locally instantiated interface", excluded.reason)
+        self.assertIn("HIERPARAM", excluded.reason)
         for name in names[1:]:
             self.assertIs(verilator.EXCLUDED[name], excluded)
 

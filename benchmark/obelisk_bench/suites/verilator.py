@@ -172,12 +172,6 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
-    "t_interface_modport_param": (
-        "IEEE 1800-2017 11.2.1 includes parameters among the permitted "
-        "operands of a constant expression, and 25.10 keeps interface "
-        "objects that cannot be listed in a modport accessible through that "
-        "port; pinned Slang rejects the hierarchically qualified interface "
-        "parameter ITEM_QTY in generate constant expressions"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "
@@ -980,6 +974,12 @@ CHILD_INTERFACE_MODPORT_MEMBER = Exclusion(
     "every name used in a modport declaration shall be declared by the same "
     "interface as the modport itself; the test requires an outer interface's "
     "modport expression to select a member declared by a child interface")
+LOCAL_INTERFACE_PARAMETER_CONSTANT = Exclusion(
+    "IEEE 1800-2017 A.8.4",
+    "constant_primary permits package- or class-qualified parameters and "
+    "generate-block-qualified parameters, but not a parameter selected by a "
+    "hierarchical name through a locally instantiated interface; the test "
+    "requires Verilator's waived HIERPARAM extension")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1109,6 +1109,10 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_modport_expr_array": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_expr_hier": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_expr_nested": CHILD_INTERFACE_MODPORT_MEMBER,
+    "t_interface_modport_param": LOCAL_INTERFACE_PARAMETER_CONSTANT,
+    "t_interface_param_dependency": LOCAL_INTERFACE_PARAMETER_CONSTANT,
+    "t_interface_param_local_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
+    "t_interface_parameter_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
