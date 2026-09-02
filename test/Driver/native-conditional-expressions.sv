@@ -204,13 +204,13 @@ endmodule
 // agree too, but an event-valued conditional still yields the null of Table 7-1.
 // CHECK: known-true value=0011 calls=1 order=1
 // CHECK-NEXT: known-false value=1100 calls=1 order=2
-// CHECK-NEXT: ambiguous value=10xz calls=2 order=12
+// CHECK-NEXT: ambiguous value=10xx calls=2 order=12
 // CHECK-NEXT: vector-true value=0101
 // CHECK-NEXT: nested value=10x0
 // CHECK-NEXT: mixed-width value=x000xxx1
 // CHECK-NEXT: enum value=xxx
-// CHECK-NEXT: packed-struct value=10xz,0x11
-// CHECK-NEXT: packed-union value=10xz0x11
+// CHECK-NEXT: packed-struct value=10xx,0x11
+// CHECK-NEXT: packed-union value=10xx0x11
 // CHECK-NEXT: unknown-and-false value=1100 calls=2 order=72
 // CHECK-NEXT: unknown-and-true value=xxxx calls=3 order=712
 // CHECK-NEXT: ambiguous-string value='same' len=4 calls=2 order=12

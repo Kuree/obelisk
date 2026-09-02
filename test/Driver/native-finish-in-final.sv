@@ -28,9 +28,11 @@ module native_finish_in_final;
 endmodule
 
 // STDOUT: body
-// STDOUT-DAG: final-request
-// STDOUT-DAG: final-other
+// STDOUT: final-request
 // STDOUT-NOT: final-after
+// IEEE 1800-2017 9.2.3: $finish in a final procedure ends simulation
+// immediately, so a later final procedure is not dispatched.
+// STDOUT-NOT: final-other
 // IEEE 1800-2017 20.2, Table 20-1: the default verbosity of 1 prints the
 // simulation time and the location of the call.
 // STDERR: $finish: {{.*}}native-finish-in-final.sv:23: simulation time 0
