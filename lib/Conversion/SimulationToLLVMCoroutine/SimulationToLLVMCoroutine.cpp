@@ -181,6 +181,9 @@ using detail::specializeNativeAOTCaptures;
 using detail::stableProcessID;
 using detail::threadProcessStateThroughCFG;
 
+constexpr StringLiteral evalRuntimeNBARequiredAttr =
+    "obelisk.eval.runtime_nba_required";
+
 /// Preserve the compact-NBA conversion proof on the operation that consumes
 /// it. Function and NBA conversion patterns may run in either order, so the
 /// NBA lowering must not depend on its parent function still being present.
@@ -1535,6 +1538,11 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           design.lookupSymbol<sim::SimFuncOp>(evalBodyRef.getValue());
       if (!evalBody)
         return actor.emitOpError("references a missing eval body");
+      // The body remains a valid Tier-2/runtime implementation, but it cannot
+      // be claimed by the closed Tier-1 coordinator when one of its dynamic
+      // NBA roots requires source-ordered runtime staging.
+      if (evalBody->hasAttr(evalRuntimeNBARequiredAttr))
+        continue;
       auto continuation =
           evalBody->getAttrOfType<IntegerAttr>("obelisk.eval.continuation");
       uint32_t continuationID = 0;
@@ -2479,6 +2487,42 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     staticNBAPlan = std::move(*plan);
     staticNBA = !staticNBAPlan.roots.empty();
+    // A scalar wide-root latch can represent compiler clones of one semantic
+    // statement, but not distinct NBA statements whose selected ranges may
+    // overlap. Mark every affected eval body before packed lowering erases
+    // the source enqueue operations. The ordinary coroutine/runtime path then
+    // preserves LRM source ordering while unrelated roots remain eligible for
+    // direct generated state.
+    SmallVector<llvm::SmallDenseSet<uint64_t, 4>> semanticOriginsByRoot(
+        staticNBAPlan.roots.size());
+    for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites) {
+      auto root = staticNBAPlan.siteRoots.find(site.site);
+      if (root == staticNBAPlan.siteRoots.end() ||
+          root->second >= semanticOriginsByRoot.size())
+        continue;
+      auto origin = staticNBAPlan.siteSemanticOrigins.find(site.site);
+      semanticOriginsByRoot[root->second].insert(
+          origin == staticNBAPlan.siteSemanticOrigins.end() ? site.site
+                                                            : origin->second);
+    }
+    llvm::SmallDenseSet<uint32_t, 4> runtimeOrderedWideRoots;
+    for (auto [index, root] : llvm::enumerate(staticNBAPlan.roots))
+      if (root.bit_width > 64 && semanticOriginsByRoot[index].size() > 1)
+        runtimeOrderedWideRoots.insert(static_cast<uint32_t>(index));
+    if (!runtimeOrderedWideRoots.empty())
+      module.walk([&](sim::SimFuncOp function) {
+        bool requiresRuntimeNBA = false;
+        function.walk([&](sim::SimNBAEnqueueOp enqueue) {
+          sim::NBASiteAttr site = enqueue.getSiteAttr();
+          auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
+                           : staticNBAPlan.siteRoots.end();
+          requiresRuntimeNBA |= root != staticNBAPlan.siteRoots.end() &&
+                                runtimeOrderedWideRoots.contains(root->second);
+        });
+        if (requiresRuntimeNBA)
+          function->setAttr(evalRuntimeNBARequiredAttr,
+                            UnitAttr::get(module.getContext()));
+      });
     if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
       return failure();
     directStaticState |=
@@ -3107,8 +3151,22 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               ? &(*directFragments)[owner.directFragment]
               : nullptr;
       if (!direct || direct->wrapper.empty()) {
+        bool certifiedRuntimeNBAFallback = false;
+        if (entry.actor_slot < actorsBySlot.size())
+          if (sim::SimFuncOp actor = actorsBySlot[entry.actor_slot])
+            if (auto body = actor->getAttrOfType<FlatSymbolRefAttr>(
+                    "obelisk.eval.body"))
+              if (sim::SimFuncOp evalBody =
+                      metadataDesign.lookupSymbol<sim::SimFuncOp>(
+                          body.getValue()))
+                certifiedRuntimeNBAFallback =
+                    evalBody->hasAttr(evalRuntimeNBARequiredAttr);
         auto diagnostic =
-            nativeScheduler == sim::NativeSchedulerMode::Auto
+            certifiedRuntimeNBAFallback
+                ? module.emitRemark(
+                      "generated eval disabled by runtime-ordered NBA owner: "
+                      "actor=")
+            : nativeScheduler == sim::NativeSchedulerMode::Auto
                 ? module.emitRemark("auto eval exact owner miss: actor=")
                 : module.emitError("eval exact owner miss: actor=");
         diagnostic << entry.actor_slot
@@ -3136,8 +3194,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               diagnostic << actor << "/" << continuation << ",";
             diagnostic << "]";
           }
-        if (nativeScheduler != sim::NativeSchedulerMode::Auto)
+        if (nativeScheduler != sim::NativeSchedulerMode::Auto &&
+            !certifiedRuntimeNBAFallback)
           return failure();
+        if (certifiedRuntimeNBAFallback)
+          module->setAttr("obelisk.eval.runtime_nba_fallback",
+                          UnitAttr::get(context));
         evalScheduler = false;
         break;
       }
@@ -3617,8 +3679,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   if (!prepare && !eventDrivenRun) {
     auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
         "obelisk.native_scheduler");
-    if (scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Auto)
+    if ((scheduler && scheduler.getValue() == sim::NativeSchedulerMode::Auto) ||
+        module->hasAttr("obelisk.eval.runtime_nba_fallback")) {
+      module->removeAttr("obelisk.eval.runtime_nba_fallback");
       return success();
+    }
     return run.emitError("eval function routes have no Tier-2 handoff");
   }
   Operation *tier2Handoff =

@@ -1067,8 +1067,9 @@ LogicalResult makeNativeEvalPlan(
       }
     }
     auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
-      return function->hasAttr("obelisk.eval.raw_captures") ||
-             function->hasAttr("obelisk.eval.selected_two_state");
+      return !function->hasAttr("obelisk.eval.runtime_nba_required") &&
+             (function->hasAttr("obelisk.eval.raw_captures") ||
+              function->hasAttr("obelisk.eval.selected_two_state"));
     };
     struct GeneratedTransition {
       LLVM::CallOp call;
