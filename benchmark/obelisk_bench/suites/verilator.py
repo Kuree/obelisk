@@ -234,6 +234,12 @@ TWO_STATE_INITIALIZATION = Exclusion(
     "it with (4.4.2.2 also leaves the time-zero order of initial and always "
     "blocks arbitrary, since the Active region's events \"can be processed "
     "in any order\")")
+VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP = Exclusion(
+    "IEEE 1800-2017 3.14.2.3",
+    "with no timeunit or `timescale, the default time unit and precision are "
+    "implementation-specific, so 20 and 20000 are both valid $time spellings; "
+    "the golden also requires Verilator's time-zero reports for interface "
+    "logic that 6.8 instead initializes to x")
 ACTIVE_REGION_READ_WRITE_RACE = Exclusion(
     "IEEE 1800-2017 4.7",
     "the testbench writes d with a blocking assignment in one posedge-clocked "
@@ -716,7 +722,12 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assign_dff": ACTIVE_REGION_READ_WRITE_RACE,
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
-    "t_interface_virtual_sched_act": TWO_STATE_INITIALIZATION,
+    "t_interface_virtual_sched_act": (
+        VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP),
+    "t_interface_virtual_sched_ico": (
+        VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP),
+    "t_interface_virtual_sched_nba": (
+        VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP),
     "t_math_cmp": TWO_STATE_INITIALIZATION,
     "t_multidriven_simple": ACTIVE_REGION_COMBINATIONAL_READ_RACE,
     "t_split_var_types": UNTIMED_ALWAYS,
