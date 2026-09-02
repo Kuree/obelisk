@@ -583,7 +583,33 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     StringRef path = getHierarchyName(port);
     StringRef base = getHierarchyName(interfaceBody);
     StringRef name = getDebugName(port);
-    if (!path.empty() && !base.empty() && !name.empty())
+    if (path.empty())
+      return;
+    if (Operation *expression = getSingleRegionRoot(port.getBody())) {
+      if (FailureOr<StaticStorageView> view = getStaticStorageView(expression);
+          succeeded(view)) {
+        result.interfaceAliases[path] = view->path;
+        if (!view->identity || view->offset != 0 || view->packedOffset != 0 ||
+            !view->indices.empty() || view->rootType != view->viewType)
+          result.interfaceViews[path] = *view;
+        return;
+      }
+      emitError(getSemanticLocation(port))
+          << "interface modport expression requires executable rather than "
+             "static-view lowering: "
+          << path;
+      invalid = true;
+      return;
+    }
+    // Older serialized semantic IR did not carry the resolved connection.
+    // Its implicit-port spelling aliases the identically named interface item.
+    if (port->hasAttr("modport_explicit_connection")) {
+      emitError(getSemanticLocation(port))
+          << "empty interface modport expression is not executable: " << path;
+      invalid = true;
+      return;
+    }
+    if (!base.empty() && !name.empty())
       result.interfaceAliases[path] = (base + Twine(".") + name).str();
   });
   if (invalid)
@@ -1140,6 +1166,61 @@ materializeDesignDescriptors(ModuleOp module,
       continue;
     }
     descriptors[path] = target->second;
+    auto view = portAliases.interfaceViews.find(path);
+    if (view == portAliases.interfaceViews.end())
+      continue;
+    if (target->second.kind != DescriptorInfo::Kind::Storage &&
+        target->second.kind != DescriptorInfo::Kind::Net) {
+      emitError(module.getLoc())
+          << "interface modport expression does not select storage or a net: "
+          << path;
+      invalid = true;
+      continue;
+    }
+    if (target->second.type != view->second.rootType) {
+      emitError(module.getLoc())
+          << "interface modport expression view has a mismatched root type: "
+          << path;
+      invalid = true;
+      continue;
+    }
+    if (view->second.offset > UINT64_MAX - target->second.viewOffset ||
+        view->second.packedOffset >
+            UINT64_MAX - target->second.packedViewOffset) {
+      emitError(module.getLoc())
+          << "interface modport expression view offset overflows: " << path;
+      invalid = true;
+      continue;
+    }
+    SmallVector<int64_t> viewIndices = target->second.viewIndices;
+    llvm::append_range(viewIndices, view->second.indices);
+    Type aggregateViewType = target->second.rootType;
+    for (int64_t index : viewIndices) {
+      if (index < 0 ||
+          static_cast<uint64_t>(index) > std::numeric_limits<unsigned>::max()) {
+        aggregateViewType = {};
+        break;
+      }
+      aggregateViewType = sim::getAggregateElementType(
+          aggregateViewType, static_cast<unsigned>(index));
+      if (!aggregateViewType)
+        break;
+    }
+    if (!aggregateViewType) {
+      emitError(module.getLoc())
+          << "interface modport expression has an invalid storage view: "
+          << path;
+      invalid = true;
+      continue;
+    }
+    descriptors[path].type = view->second.viewType;
+    descriptors[path].rootType = target->second.rootType;
+    descriptors[path].viewOffset =
+        target->second.viewOffset + view->second.offset;
+    descriptors[path].packedViewOffset =
+        target->second.packedViewOffset + view->second.packedOffset;
+    descriptors[path].viewIndices = std::move(viewIndices);
+    descriptors[path].aggregateViewType = aggregateViewType;
   }
   uint64_t nextPortId = 0;
   llvm::StringSet<> emittedPorts;

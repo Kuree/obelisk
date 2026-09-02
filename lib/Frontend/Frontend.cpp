@@ -4140,6 +4140,10 @@ private:
       attrs.set("direction",
                 slangir::ArgumentDirectionAttr::get(
                     builder.getContext(), convertEnum(node.direction)));
+      if (const slang::syntax::SyntaxNode *syntax = node.getSyntax();
+          syntax &&
+          syntax->kind == slang::syntax::SyntaxKind::ModportExplicitPort)
+        attrs.set("modport_explicit_connection", builder.getUnitAttr());
     } else if constexpr (std::same_as<T, slang::ast::ClockingBlockSymbol>) {
       SET_OP_ATTR(IsDefault, builder.getBoolAttr(node.isDefault));
       SET_OP_ATTR(IsGlobal, builder.getBoolAttr(node.isGlobal));
@@ -5079,6 +5083,12 @@ private:
       if (node.outputSkew.delay &&
           node.outputSkew.delay != node.inputSkew.delay)
         node.outputSkew.delay->visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::ModportPortSymbol>) {
+      // Slang keeps a modport port's resolved connection outside the symbol's
+      // ordinary ownership walk. Preserve it in the symbol body so topology
+      // analysis can distinguish `.alias(signal)` from an implicit `alias`.
+      if (const slang::ast::Expression *connection = node.getConnectionExpr())
+        connection->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::SequenceSymbol> ||
                          std::same_as<T, slang::ast::PropertySymbol>) {
       this->visitDefault(node);

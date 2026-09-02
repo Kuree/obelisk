@@ -49,6 +49,7 @@ struct PreparedPortAliases {
   llvm::StringMap<std::string> aliases;
   llvm::StringMap<StaticStorageView> refViews;
   llvm::StringMap<std::string> interfaceAliases;
+  llvm::StringMap<StaticStorageView> interfaceViews;
   llvm::StringSet<> eventCellPaths;
   mlir::SmallVector<ir::SVPortConnectionOp> connections;
 };
