@@ -884,7 +884,8 @@ class ExcludedTest(unittest.TestCase):
     def test_function_name_local_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_class_format"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4.1")
-        self.assertIn("local string other", excluded.reason)
+        self.assertIn("implicit result variable", excluded.reason)
+        self.assertIs(verilator.EXCLUDED["t_func_under"], excluded)
 
     def test_verilator_hierarchical_name_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_class_name"]

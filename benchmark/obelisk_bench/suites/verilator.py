@@ -306,7 +306,8 @@ PATTERN_FIELD_WIDTH = Exclusion(
 FUNCTION_NAME_LOCAL = Exclusion(
     "IEEE 1800-2017 13.4.1",
     "it is illegal to declare another object with the function's name inside "
-    "the function scope; function other declares a local string other")
+    "the function scope; the test redeclares the implicit result variable as "
+    "a local object")
 VERILATOR_HIERARCHICAL_NAME_SPELLING = Exclusion(
     "IEEE 1800-2017 21.2.1.6",
     "%m prints the invoking subroutine's hierarchical name, but 3.12.1 says "
@@ -905,6 +906,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_display": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_dpi_export_scope_flat": DPI_EXPORT_FROM_WRONG_SCOPE,
     "t_class_format": FUNCTION_NAME_LOCAL,
+    "t_func_under": FUNCTION_NAME_LOCAL,
     "t_class_name": VERILATOR_HIERARCHICAL_NAME_SPELLING,
     "t_class_new_default": POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT,
     "t_class_override": POST_2017_CLASS_OVERRIDE_CONTROLS,
