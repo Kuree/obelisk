@@ -1028,16 +1028,21 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
     top = descriptor.with_suffix(".v")
     if not top.exists():
         top = descriptor.with_suffix(".sv")
-    if not top.exists() or not re.search(
-            r"\b(?:import|export)\s+\"DPI(?:-C)?\"",
-            top.read_text(encoding="utf-8", errors="replace")):
+    if not top.exists():
+        return []
+    top_text = top.read_text(encoding="utf-8", errors="replace")
+    if not re.search(r'\b(?:import|export)\s+"DPI(?:-C)?"', top_text):
         return []
     try:
         module = ast.parse(text)
     except SyntaxError:
         return []
 
-    aliases: dict[str, str] = {}
+    root = descriptor.parent.parent.resolve()
+    aliases: dict[str, str] = {
+        "pli_filename": descriptor.with_suffix(".cpp").relative_to(
+            root).as_posix(),
+    }
     for statement in module.body:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             continue
@@ -1075,8 +1080,9 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
             for fragment in literal_strings(keyword.value):
                 spellings.extend(shlex.split(fragment))
 
-    root = descriptor.parent.parent.resolve()
     native_suffixes = {".c", ".cc", ".cpp", ".cxx"}
+    dpi_declarations = re.findall(
+        r'\b(?:import|export)\s+"DPI(?:-C)?"[^;]*;', top_text, re.DOTALL)
     result: list[Path] = []
     seen: set[Path] = set()
     for spelling in spellings:
@@ -1092,7 +1098,14 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
                 resolved in seen):
             continue
         source = resolved.read_text(encoding="utf-8", errors="replace")
-        if not re.search(r"#\s*include\s*[<\"]svdpi\.h[>\"]", source):
+        has_svdpi = re.search(r"#\s*include\s*[<\"]svdpi\.h[>\"]", source)
+        headerless_dpi_definition = any(
+            re.search(rf"\b{re.escape(name)}\b", declaration)
+            for name in re.findall(
+                r'extern\s+"C"\s+[^;{}]*?\b([A-Za-z_]\w*)\s*'
+                r'\([^;{}]*\)\s*\{', source)
+            for declaration in dpi_declarations)
+        if not has_svdpi and not headerless_dpi_definition:
             continue
         if ("Unknown simulator for DPI test" in source and
                 "define NEED_EXTERNS" not in source):

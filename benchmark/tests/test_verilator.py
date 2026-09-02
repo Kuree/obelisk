@@ -268,6 +268,22 @@ class DescriptorDPISourcesTest(unittest.TestCase):
         )
         self.assertEqual([path.name for path in sources], ["t_x_c.cpp"])
 
+    def test_default_pli_filename_can_supply_a_scalar_dpi_definition(self):
+        sources = self.sources(
+            'test.compile(verilator_flags2=["--binary", '
+            'test.pli_filename])\n',
+            {"t_x.cpp": 'extern "C" void dpi() {}\n'},
+        )
+        self.assertEqual([path.name for path in sources], ["t_x.cpp"])
+
+    def test_headerless_unrelated_native_source_is_not_attached(self):
+        sources = self.sources(
+            'test.compile(verilator_flags2=["--binary", '
+            'test.pli_filename])\n',
+            {"t_x.cpp": 'extern "C" void unrelated() {}\n'},
+        )
+        self.assertEqual(sources, [])
+
     def test_verilator_model_main_is_not_mistaken_for_dpi_code(self):
         sources = self.sources(
             'test.compile(v_flags2=["t/t_x_main.cpp"])\n',
