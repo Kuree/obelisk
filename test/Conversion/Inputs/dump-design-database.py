@@ -13,13 +13,15 @@ if not match:
     raise SystemExit("missing obelisk.design.database attribute")
 
 image = bytes(int(value) & 0xFF for value in re.findall(r"-?\d+", match.group(1)))
-if len(image) < 128 or image[:8] != b"OBDSGN1\0":
+if len(image) < 160 or image[:8] != b"OBDSGN1\0":
     raise SystemExit("invalid Obelisk design-database header")
 
 scope_offset, scope_count = struct.unpack_from("<QQ", image, 48)
 object_offset, object_count = struct.unpack_from("<QQ", image, 64)
 type_offset, type_count = struct.unpack_from("<QQ", image, 80)
 string_offset, string_size = struct.unpack_from("<QQ", image, 96)
+statement_offset, statement_count = struct.unpack_from("<QQ", image, 128)
+statement_site_offset, statement_site_count = struct.unpack_from("<QQ", image, 144)
 
 
 def checked_range(offset, count, size, description):
@@ -31,6 +33,8 @@ checked_range(scope_offset, scope_count, 64, "scope")
 checked_range(object_offset, object_count, 96, "object")
 checked_range(type_offset, type_count, 80, "type")
 checked_range(string_offset, string_size, 1, "string")
+checked_range(statement_offset, statement_count, 40, "statement")
+checked_range(statement_site_offset, statement_site_count, 16, "statement site")
 
 
 def string_at(offset):
@@ -73,4 +77,27 @@ for index in range(object_count):
         f"id={stable_id} scope={scope_names.get(scope, '?')} width={width} "
         f"range=[{left}:{right}] state={state} type_kind={type_kind} "
         f"type_flags=0x{type_flags:x} port_ordinal={ordinal}"
+    )
+
+for index in range(statement_count):
+    offset = statement_offset + index * 40
+    stable_id = struct.unpack_from("<Q", image, offset)[0]
+    owner, scope, parent, source_file, name = struct.unpack_from(
+        "<IIIII", image, offset + 8
+    )
+    line, column, vpi_kind, flags = struct.unpack_from("<IIHH", image, offset + 28)
+    source = string_at(string_offset + source_file) if source_file else ""
+    statement_name = string_at(string_offset + name) if name else ""
+    print(
+        f"statement id={stable_id} owner={owner} scope={scope} parent={parent} "
+        f"type={vpi_kind} flags=0x{flags:x} source={source}:{line}:{column} "
+        f"name={statement_name}"
+    )
+
+for index in range(statement_site_count):
+    offset = statement_site_offset + index * 16
+    stable_id, statement, phase, flags = struct.unpack_from("<QIHH", image, offset)
+    print(
+        f"statement_site id={stable_id} statement={statement} phase={phase} "
+        f"flags=0x{flags:x}"
     )

@@ -33,7 +33,7 @@ using namespace obelisk::reflection;
 } // namespace
 
 SmallVector<uint8_t> serializeDesignDatabase(
-    sim::SimDesignOp design, uint32_t profile,
+    sim::SimDesignOp design, uint32_t profile, bool includeStatements,
     const llvm::DenseMap<uint64_t, uint64_t> &storageOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &netOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &driverOffsets) {
@@ -60,8 +60,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t stateOffset;
     Source source;
   };
+  struct StatementRecord {
+    sim::SimStatementDeclOp declaration;
+    Source source;
+  };
+  struct StatementSiteRecord {
+    sim::SimStatementSiteDeclOp declaration;
+  };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
+  SmallVector<StatementRecord> statements;
+  SmallVector<StatementSiteRecord> statementSites;
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
@@ -135,7 +144,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (Operation &operation : design.getBody().front()) {
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation))
       scopes.push_back(scope);
-    else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+    else if (auto statement = dyn_cast<sim::SimStatementDeclOp>(operation)) {
+      if (includeStatements)
+        statements.push_back({statement, sourceFor(statement)});
+    } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
+      if (includeStatements)
+        statementSites.push_back({site});
+    } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (!isReflectableType(storage.getType()))
         continue;
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
@@ -210,6 +225,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return std::tie(left.scope, left.name, left.kind, left.id) <
            std::tie(right.scope, right.name, right.kind, right.id);
   });
+  llvm::sort(statements, [](StatementRecord left, StatementRecord right) {
+    return left.declaration.getId() < right.declaration.getId();
+  });
+  llvm::sort(statementSites,
+             [](StatementSiteRecord left, StatementSiteRecord right) {
+               return left.declaration.getId() < right.declaration.getId();
+             });
+  if (scopes.size() > UINT32_MAX || objects.size() > UINT32_MAX ||
+      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX) {
+    design.emitOpError("reflection table exceeds 32-bit compact indices");
+    return {};
+  }
   DenseSet<uint64_t> scopeIDs;
   sim::SimScopeDeclOp root;
   for (auto scope : scopes) {
@@ -402,6 +429,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (!object.source.file.empty())
       intern(object.source.file);
   }
+  for (StatementRecord statement : statements) {
+    if (!statement.source.file.empty())
+      intern(statement.source.file);
+    if (auto name = statement.declaration.getName())
+      intern(*name);
+  }
   for (const TypeRecord &type : types)
     intern(type.name);
 
@@ -412,7 +445,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     scopeOffsets[scope.getId()] = scopeOffset + index * ScopeLayout.size;
   uint64_t objectOffset = scopeOffset + scopes.size() * ScopeLayout.size;
   uint64_t typeOffset = objectOffset + objects.size() * ObjectLayout.size;
-  uint64_t stringOffset = typeOffset + types.size() * TypeLayout.size;
+  uint64_t statementOffset = typeOffset + types.size() * TypeLayout.size;
+  uint64_t statementSiteOffset =
+      statementOffset + statements.size() * StatementLayout.size;
+  uint64_t stringOffset =
+      statementSiteOffset + statementSites.size() * StatementSiteLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -422,6 +459,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
       children[*parent].push_back(scopeOffsets.lookup(scope.getId()));
   for (auto [index, object] : llvm::enumerate(objects))
     children[object.scope].push_back(objectOffset + index * ObjectLayout.size);
+
+  DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
+      statementIndices;
+  for (auto [index, scope] : llvm::enumerate(scopes))
+    scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+  for (auto [index, object] : llvm::enumerate(objects))
+    if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+        object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
+  for (auto [index, statement] : llvm::enumerate(statements))
+    statementIndices[statement.declaration.getId()] =
+        static_cast<uint32_t>(index);
 
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
@@ -511,6 +560,66 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setPackedOffset(entry.packedOffset);
     writer.setName(stringOffset + intern(entry.name));
   }
+  for (auto [index, entry] : llvm::enumerate(statements)) {
+    sim::SimStatementDeclOp statement = entry.declaration;
+    auto owner = codeUnitObjectIndices.find(statement.getCodeUnitId());
+    auto scope = scopeIndices.find(statement.getScopeId());
+    if (owner == codeUnitObjectIndices.end() || scope == scopeIndices.end()) {
+      statement.emitOpError(
+          "statement reflection owner or scope was not serialized");
+      return {};
+    }
+    StatementWriter writer(output.data() + statementOffset +
+                           index * StatementLayout.size);
+    writer.setID(statement.getId());
+    writer.setOwnerObjectIndex(owner->second);
+    writer.setScopeIndex(scope->second);
+    writer.setParentIndex(
+        statement.getParentId()
+            ? statementIndices.lookup(*statement.getParentId())
+            : UINT32_MAX);
+    if (entry.source.file.empty()) {
+      writer.setSourceFile(0);
+      writer.setSourceLine(0);
+      writer.setSourceColumn(0);
+    } else {
+      uint64_t relative = intern(entry.source.file);
+      if (relative > UINT32_MAX) {
+        statement.emitOpError("statement source string offset exceeds 32 bits");
+        return {};
+      }
+      writer.setSourceFile(static_cast<uint32_t>(relative));
+      writer.setSourceLine(
+          static_cast<uint32_t>(entry.source.lineColumn >> 32));
+      writer.setSourceColumn(static_cast<uint32_t>(entry.source.lineColumn));
+    }
+    if (auto name = statement.getName()) {
+      uint64_t relative = intern(*name);
+      if (relative > UINT32_MAX) {
+        statement.emitOpError("statement name string offset exceeds 32 bits");
+        return {};
+      }
+      writer.setName(static_cast<uint32_t>(relative));
+    } else {
+      writer.setName(0);
+    }
+    writer.setVPIKind(static_cast<uint16_t>(statement.getVpiKind()));
+    writer.setFlags(statement.getIsProtected() ? 1 : 0);
+  }
+  for (auto [index, entry] : llvm::enumerate(statementSites)) {
+    sim::SimStatementSiteDeclOp site = entry.declaration;
+    auto statement = statementIndices.find(site.getStatementId());
+    if (statement == statementIndices.end()) {
+      site.emitOpError("statement site target was not serialized");
+      return {};
+    }
+    StatementSiteWriter writer(output.data() + statementSiteOffset +
+                               index * StatementSiteLayout.size);
+    writer.setID(site.getId());
+    writer.setStatementIndex(statement->second);
+    writer.setPhase(static_cast<uint16_t>(site.getPhase()));
+    writer.setFlags(0);
+  }
   llvm::append_range(output, strings);
   alignTo(output, 8);
   indexOffset = output.size();
@@ -567,6 +676,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   writer.setStringSize(strings.size());
   writer.setIndexOffset(indexOffset);
   writer.setIndexCount(names.size());
+  writer.setStatementOffset(statementOffset);
+  writer.setStatementCount(statements.size());
+  writer.setStatementSiteOffset(statementSiteOffset);
+  writer.setStatementSiteCount(statementSites.size());
   writer.setChecksum(checksum(output, field::HeaderChecksum));
   return output;
 }

@@ -18,6 +18,7 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskSimulationAttrsIncGen
   ObeliskSimulationOpsIncGen
   ObeliskSimulationTypesIncGen
+  ObeliskVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
   ObeliskRuntimeIR

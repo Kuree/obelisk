@@ -8,6 +8,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -126,6 +127,51 @@ LogicalResult SimCodeUnitDeclOp::verify() {
     return emitOpError("code-unit ID must be nonzero");
   if (getHierarchicalName().empty())
     return emitOpError("requires a nonempty hierarchical name");
+  return success();
+}
+
+LogicalResult SimStatementDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "statement ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
+      (getParentIdAttr() && failed(verifyNonnegative(*this, getParentIdAttr(),
+                                                     "parent statement ID"))))
+    return failure();
+  if (getId() == 0)
+    return emitOpError("statement ID must be nonzero");
+  if (getCodeUnitId() == 0)
+    return emitOpError("code-unit ID must be nonzero");
+  if (getParentIdAttr() && *getParentId() == getId())
+    return emitOpError("cannot be its own parent");
+  const auto *kind = reflection::findVPIObjectKind(getVpiKind());
+  if (getVpiKind() > UINT16_MAX || !kind ||
+      kind->role != reflection::VPIObjectRole::Concrete ||
+      (kind->families &
+       reflection::vpiFamilyMask(reflection::VPIObjectFamily::Statement)) == 0)
+    return emitOpError("VPI kind is not a concrete statement object");
+  bool named = kind && (StringRef(kind->apiName) == "vpiNamedBegin" ||
+                        StringRef(kind->apiName) == "vpiNamedFork");
+  if (named != getName().has_value() || (getName() && getName()->empty()))
+    return emitOpError(named ? "named block requires a nonempty name"
+                             : "only named begin/fork may carry a name");
+  auto source = getLoc()->findInstanceOf<FileLineColLoc>();
+  if (!source || source.getLine() == 0 || source.getColumn() == 0)
+    return emitOpError("requires a concrete source file, line, and column");
+  return success();
+}
+
+LogicalResult SimStatementSiteDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "statement-site ID")) ||
+      failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")) ||
+      failed(verifyNonnegative(*this, getPhaseAttr(), "callback phase")))
+    return failure();
+  if (getId() == 0)
+    return emitOpError("statement-site ID must be nonzero");
+  if (getStatementId() == 0)
+    return emitOpError("statement ID must be nonzero");
+  if (getPhase() > UINT16_MAX)
+    return emitOpError("callback phase exceeds the reflection encoding");
   return success();
 }
 
@@ -1313,9 +1359,13 @@ LogicalResult SimDesignOp::verifyRegions() {
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
-  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, storageIds, netIds, driverIds,
-      portIds, connectionIds, covergroupIds, classIds;
+  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, statementIds,
+      statementSiteIds, storageIds, netIds, driverIds, portIds, connectionIds,
+      covergroupIds, classIds;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
+  llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
+  SmallVector<SimStatementDeclOp> statementInventory;
+  SmallVector<SimStatementSiteDeclOp> statementSites;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
@@ -1344,6 +1394,15 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(codeUnit.getIdAttr(), codeUnitIds, "code-unit")))
         return failure();
       codeUnits[codeUnit.getId()] = codeUnit;
+    } else if (auto statement = dyn_cast<SimStatementDeclOp>(op)) {
+      if (failed(addId(statement.getIdAttr(), statementIds, "statement")))
+        return failure();
+      statements[statement.getId()] = statement;
+      statementInventory.push_back(statement);
+    } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
+      if (failed(addId(site.getIdAttr(), statementSiteIds, "statement-site")))
+        return failure();
+      statementSites.push_back(site);
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (failed(addId(storage.getIdAttr(), storageIds, "storage")))
         return failure();
@@ -1377,6 +1436,66 @@ LogicalResult SimDesignOp::verifyRegions() {
       functions.push_back(function);
     }
   }
+
+  llvm::DenseMap<uint64_t, uint8_t> statementSiteMasks;
+  for (SimStatementSiteDeclOp site : statementSites) {
+    auto statement = statements.find(site.getStatementId());
+    if (statement == statements.end())
+      return site.emitOpError("references an unknown statement ID");
+    if (site.getPhase() > UINT16_MAX)
+      return site.emitOpError("callback phase exceeds the reflection encoding");
+    auto phase = static_cast<reflection::VPIStatementCallbackPhase>(
+        static_cast<uint16_t>(site.getPhase()));
+    if (!reflection::isVPIStatementCallbackPhase(statement->second.getVpiKind(),
+                                                 phase))
+      return site.emitOpError(
+          "phase is not legal for the statement's Table 38-6 policy");
+    uint8_t bit = uint8_t{1} << static_cast<unsigned>(phase);
+    uint8_t &mask = statementSiteMasks[site.getStatementId()];
+    if (mask & bit)
+      return site.emitOpError(
+          "duplicates a semantic callback phase for the statement");
+    mask |= bit;
+  }
+  for (SimStatementDeclOp statement : statementInventory) {
+    uint64_t id = statement.getId();
+    const auto *callback =
+        reflection::findVPIStatementCallback(statement.getVpiKind());
+    uint8_t expectedMask = callback ? callback->phaseMask : 0;
+    if (statementSiteMasks.lookup(id) != expectedMask)
+      return statement.emitOpError(
+          "does not declare exactly the callback sites required by its "
+          "Table 38-6 policy");
+  }
+  llvm::DenseMap<uint64_t, uint8_t> parentStates;
+  for (SimStatementDeclOp root : statementInventory) {
+    if (parentStates.lookup(root.getId()) == 2)
+      continue;
+    SmallVector<std::pair<SimStatementDeclOp, bool>> worklist{{root, false}};
+    while (!worklist.empty()) {
+      auto [statement, finish] = worklist.pop_back_val();
+      uint8_t &state = parentStates[statement.getId()];
+      if (finish) {
+        state = 2;
+        continue;
+      }
+      if (state == 2)
+        continue;
+      if (state == 1)
+        return statement.emitOpError("parent statements contain a cycle");
+      state = 1;
+      worklist.push_back({statement, true});
+      if (auto parentID = statement.getParentId()) {
+        auto parent = statements.find(*parentID);
+        if (parent == statements.end() ||
+            parent->second.getCodeUnitId() != statement.getCodeUnitId())
+          return statement.emitOpError(
+              "references an unknown or cross-code-unit parent statement");
+        worklist.push_back({parent->second, false});
+      }
+    }
+  }
+
   struct ElementShape {
     Type type;
     uint32_t kind;
@@ -1558,6 +1677,31 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto codeUnit = dyn_cast<SimCodeUnitDeclOp>(op)) {
       if (!scopeIds.count(codeUnit.getScopeId()))
         return codeUnit.emitOpError("references an unknown scope ID");
+    } else if (auto statement = dyn_cast<SimStatementDeclOp>(op)) {
+      auto owner = codeUnits.find(statement.getCodeUnitId());
+      if (owner == codeUnits.end() || !scopeIds.count(statement.getScopeId()))
+        return statement.emitOpError(
+            "references an unknown code-unit or scope ID");
+      if (owner->second.getScopeId() != statement.getScopeId())
+        return statement.emitOpError(
+            "scope ID must match the owning code unit's scope");
+      if (auto parentID = statement.getParentId()) {
+        auto parent = statements.find(*parentID);
+        if (parent == statements.end() ||
+            parent->second.getCodeUnitId() != statement.getCodeUnitId())
+          return statement.emitOpError(
+              "references an unknown or cross-code-unit parent statement");
+      }
+    } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
+      auto statement = statements.find(site.getStatementId());
+      if (statement == statements.end())
+        return site.emitOpError("references an unknown statement ID");
+      auto phase = static_cast<reflection::VPIStatementCallbackPhase>(
+          static_cast<uint16_t>(site.getPhase()));
+      if (!reflection::isVPIStatementCallbackPhase(
+              statement->second.getVpiKind(), phase))
+        return site.emitOpError(
+            "phase is not legal for the statement's Table 38-6 policy");
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (!scopeIds.count(storage.getScopeId()))
         return storage.emitOpError("references an unknown scope ID");

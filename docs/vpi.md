@@ -46,6 +46,23 @@ A clean generated region may retain the value in SSA between safe points; it
 must materialize before VPI can run. No separate VPI hierarchy or persistent
 VPI value copy is constructed at runtime.
 
+The reflection image also has compact, pointer-free statement and semantic
+callback-site tables. A statement identity is separate from its source
+location and from each site: this preserves distinct elaborated instances and
+the two Table 38-6 callback points of a `for` statement. The exact cbStmt
+eligibility and placement policy are generated from the VPI TableGen model.
+Static inventory includes concrete statement kinds that are not cbStmt-capable;
+those kinds have no callback-site records. A statement's hierarchy-scope index
+is exactly its owning process/function instance scope, while lexical statement
+nesting uses its parent-statement index. Per-design VPI relation edges (such as
+`vpiStmt`, `vpiElseStmt`, and ordered case/for children) are a separate future
+table rather than being overloaded onto either field.
+These immutable tables are emitted only for a VPI profile, not for VCD-only
+reflection, and do not install executable probes or change the scheduler.
+This chunk defines and validates the schema; production SV lowering, relation
+edges, tier/fragment/bytecode bindings, and cbStmt dispatch are not yet
+implemented.
+
 An immediate deposit with an exact descriptor/root mapping also reuses
 the generated static fanout index. After updating both four-state planes, the
 runtime computes change and edge masks and marks the fanout entries' compute

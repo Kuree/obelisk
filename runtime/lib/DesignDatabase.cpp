@@ -1,6 +1,7 @@
 //===- DesignDatabase.cpp - Checked DWARF-like design reflection ----------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
@@ -27,6 +28,12 @@ constexpr uint64_t kScopeSize = 64;
 constexpr uint64_t kObjectSize = 96;
 constexpr uint64_t kTypeSize = 80;
 constexpr uint64_t kIndexSize = 24;
+constexpr uint64_t kStatementSize = 40;
+constexpr uint64_t kStatementSiteSize = 16;
+
+uint16_t read16(const uint8_t *data) {
+  return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
+}
 
 uint32_t read32(const uint8_t *data) {
   uint32_t value = 0;
@@ -111,6 +118,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               read64(data + offsetof(DatabaseHeader, string_size)),
               read64(data + offsetof(DatabaseHeader, index_offset)),
               read64(data + offsetof(DatabaseHeader, index_count)),
+              read64(data + offsetof(DatabaseHeader, statement_offset)),
+              read64(data + offsetof(DatabaseHeader, statement_count)),
+              read64(data + offsetof(DatabaseHeader, statement_site_offset)),
+              read64(data + offsetof(DatabaseHeader, statement_site_count)),
               execution->state_bit_count};
   uint32_t supportedProfile =
       OBELISK_RT_DESIGN_PROFILE_READ | OBELISK_RT_DESIGN_PROFILE_WRITE;
@@ -124,6 +135,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
            0) ||
       ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0) !=
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0) ||
+      ((execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0 &&
+       (database.statementCount != 0 || database.statementSiteCount != 0)) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -133,9 +146,17 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.strings, database.stringSize, 1, database.size) ||
       !validRange(database.index, database.indexCount, kIndexSize,
                   database.size) ||
+      !validRange(database.statements, database.statementCount, kStatementSize,
+                  database.size) ||
+      !validRange(database.statementSites, database.statementSiteCount,
+                  kStatementSiteSize, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
-      database.index < kHeaderSize || database.stringSize == 0 ||
+      database.index < kHeaderSize || database.statements < kHeaderSize ||
+      database.statementSites < kHeaderSize || database.stringSize == 0 ||
+      database.scopeCount > UINT32_MAX || database.objectCount > UINT32_MAX ||
+      database.statementCount > UINT32_MAX ||
+      database.statementSiteCount > UINT32_MAX ||
       database.indexCount != database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
@@ -156,7 +177,40 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !rangesDisjoint(database.types, database.typeCount, kTypeSize,
                       database.index, database.indexCount, kIndexSize) ||
       !rangesDisjoint(database.strings, database.stringSize, 1, database.index,
-                      database.indexCount, kIndexSize))
+                      database.indexCount, kIndexSize) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.statementSites,
+                      database.statementSiteCount, kStatementSiteSize) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.scopes, database.scopeCount,
+                      kScopeSize) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.objects, database.objectCount,
+                      kObjectSize) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.types, database.typeCount,
+                      kTypeSize) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.strings, database.stringSize,
+                      1) ||
+      !rangesDisjoint(database.statements, database.statementCount,
+                      kStatementSize, database.index, database.indexCount,
+                      kIndexSize) ||
+      !rangesDisjoint(database.statementSites, database.statementSiteCount,
+                      kStatementSiteSize, database.scopes, database.scopeCount,
+                      kScopeSize) ||
+      !rangesDisjoint(database.statementSites, database.statementSiteCount,
+                      kStatementSiteSize, database.objects,
+                      database.objectCount, kObjectSize) ||
+      !rangesDisjoint(database.statementSites, database.statementSiteCount,
+                      kStatementSiteSize, database.types, database.typeCount,
+                      kTypeSize) ||
+      !rangesDisjoint(database.statementSites, database.statementSiteCount,
+                      kStatementSiteSize, database.strings, database.stringSize,
+                      1) ||
+      !rangesDisjoint(database.statementSites, database.statementSiteCount,
+                      kStatementSiteSize, database.index, database.indexCount,
+                      kIndexSize))
     return false;
   return true;
 }
@@ -548,6 +602,133 @@ bool validateDatabaseImpl(const Database &database) {
                   [](uint8_t state) { return state != 2; }))
     return false;
 
+  auto getRelativeString = [&](uint32_t relative, std::string_view &result) {
+    if (relative == 0 || relative >= database.stringSize)
+      return false;
+    return getString(database, database.strings + relative, result) &&
+           !result.empty();
+  };
+  std::vector<uint8_t> parentState(database.statementCount, 0);
+  std::vector<uint8_t> siteMasks(database.statementCount, 0);
+  uint64_t previousStatementID = 0;
+  for (uint64_t index = 0; index != database.statementCount; ++index) {
+    const uint8_t *statement =
+        database.data + database.statements + index * kStatementSize;
+    uint64_t id = read64(statement);
+    uint32_t ownerIndex = read32(statement + 8);
+    uint32_t scopeIndex = read32(statement + 12);
+    uint32_t parentIndex = read32(statement + 16);
+    uint32_t sourceFile = read32(statement + 20);
+    uint32_t name = read32(statement + 24);
+    uint32_t line = read32(statement + 28);
+    uint32_t column = read32(statement + 32);
+    uint16_t vpiKind = read16(statement + 36);
+    uint16_t flags = read16(statement + 38);
+    if (id == 0 || (index != 0 && id <= previousStatementID) ||
+        ownerIndex >= database.objectCount ||
+        scopeIndex >= database.scopeCount ||
+        (parentIndex != UINT32_MAX && parentIndex >= database.statementCount) ||
+        (flags & ~OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0)
+      return false;
+    previousStatementID = id;
+    const auto *kind = obelisk::reflection::findVPIObjectKind(vpiKind);
+    if (!kind || kind->role != obelisk::reflection::VPIObjectRole::Concrete ||
+        (kind->families &
+         obelisk::reflection::vpiFamilyMask(
+             obelisk::reflection::VPIObjectFamily::Statement)) == 0)
+      return false;
+    const uint8_t *owner =
+        database.data + database.objects + uint64_t{ownerIndex} * kObjectSize;
+    uint32_t ownerKind = read32(owner);
+    if (ownerKind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+        ownerKind != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      return false;
+    if (read64(owner + 16) !=
+        database.scopes + uint64_t{scopeIndex} * kScopeSize)
+      return false;
+    if ((sourceFile == 0 && (line != 0 || column != 0)) ||
+        (sourceFile != 0 && (line == 0 || column == 0)))
+      return false;
+    std::string_view text;
+    if (sourceFile != 0 && !getRelativeString(sourceFile, text))
+      return false;
+    if (name != 0 && !getRelativeString(name, text))
+      return false;
+    bool named = kind && (std::string_view(kind->apiName) == "vpiNamedBegin" ||
+                          std::string_view(kind->apiName) == "vpiNamedFork");
+    if (named != (name != 0))
+      return false;
+  }
+  struct ParentWorkItem {
+    uint32_t index;
+    bool finish;
+  };
+  std::vector<ParentWorkItem> parentWorklist;
+  auto validateParent = [&](uint32_t root) {
+    parentWorklist.clear();
+    parentWorklist.push_back({root, false});
+    while (!parentWorklist.empty()) {
+      ParentWorkItem item = parentWorklist.back();
+      parentWorklist.pop_back();
+      if (item.finish) {
+        parentState[item.index] = 2;
+        continue;
+      }
+      if (parentState[item.index] == 1)
+        return false;
+      if (parentState[item.index] == 2)
+        continue;
+      parentState[item.index] = 1;
+      parentWorklist.push_back({item.index, true});
+      const uint8_t *statement = database.data + database.statements +
+                                 uint64_t{item.index} * kStatementSize;
+      uint32_t parent = read32(statement + 16);
+      if (parent == UINT32_MAX)
+        continue;
+      const uint8_t *parentStatement = database.data + database.statements +
+                                       uint64_t{parent} * kStatementSize;
+      if (read32(parentStatement + 8) != read32(statement + 8))
+        return false;
+      parentWorklist.push_back({parent, false});
+    }
+    return true;
+  };
+  for (uint32_t index = 0; index != database.statementCount; ++index)
+    if (parentState[index] != 2 && !validateParent(index))
+      return false;
+
+  uint64_t previousSiteID = 0;
+  for (uint64_t index = 0; index != database.statementSiteCount; ++index) {
+    const uint8_t *site =
+        database.data + database.statementSites + index * kStatementSiteSize;
+    uint64_t id = read64(site);
+    uint32_t statementIndex = read32(site + 8);
+    uint16_t phase = read16(site + 12);
+    if (id == 0 || (index != 0 && id <= previousSiteID) ||
+        statementIndex >= database.statementCount || read16(site + 14) != 0)
+      return false;
+    previousSiteID = id;
+    const uint8_t *statement = database.data + database.statements +
+                               uint64_t{statementIndex} * kStatementSize;
+    uint16_t kind = read16(statement + 36);
+    auto callbackPhase =
+        static_cast<obelisk::reflection::VPIStatementCallbackPhase>(phase);
+    if (!obelisk::reflection::isVPIStatementCallbackPhase(kind,
+                                                          callbackPhase) ||
+        phase >= 8 || (siteMasks[statementIndex] & (uint8_t{1} << phase)) != 0)
+      return false;
+    siteMasks[statementIndex] |= uint8_t{1} << phase;
+  }
+  for (uint32_t index = 0; index != database.statementCount; ++index) {
+    const uint8_t *statement =
+        database.data + database.statements + uint64_t{index} * kStatementSize;
+    const auto *callback =
+        obelisk::reflection::findVPIStatementCallback(read16(statement + 36));
+    uint8_t expectedMask = callback ? callback->phaseMask : 0;
+    if (siteMasks[index] != expectedMask)
+      return false;
+  }
+
   uint64_t previousHash = 0;
   std::string_view previousName;
   std::unordered_set<uint64_t> indexedRecords;
@@ -667,6 +848,10 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.typeCount == right.typeCount && left.strings == right.strings &&
          left.stringSize == right.stringSize && left.index == right.index &&
          left.indexCount == right.indexCount &&
+         left.statements == right.statements &&
+         left.statementCount == right.statementCount &&
+         left.statementSites == right.statementSites &&
+         left.statementSiteCount == right.statementSiteCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -1040,10 +1225,10 @@ obelisk_rt_status obelisk_rt_cached_design_source(
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
       kind == OBELISK_RT_DESIGN_RECORD_TYPE)
     return OBELISK_RT_INVALID_HANDLE;
-  uint64_t fileOffset = read64(
-      record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 48 : 32));
-  uint64_t lineColumn = read64(
-      record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 56 : 88));
+  uint64_t fileOffset =
+      read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 48 : 32));
+  uint64_t lineColumn =
+      read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 56 : 88));
   if (fileOffset == 0) {
     *outFile = nullptr;
     *outFileSize = 0;

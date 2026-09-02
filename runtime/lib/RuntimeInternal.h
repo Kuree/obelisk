@@ -1393,6 +1393,10 @@ struct DesignDatabaseCache {
   uint64_t stringSize = 0;
   uint64_t index = 0;
   uint64_t indexCount = 0;
+  uint64_t statements = 0;
+  uint64_t statementCount = 0;
+  uint64_t statementSites = 0;
+  uint64_t statementSiteCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
