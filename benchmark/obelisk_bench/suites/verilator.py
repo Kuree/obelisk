@@ -248,6 +248,10 @@ PATTERN_FIELD_WIDTH = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the assignment-pattern formats are %p and the special shorter %0p; the "
     "test requires Verilator's arbitrary-width %4p and %-4p extensions")
+FUNCTION_NAME_LOCAL = Exclusion(
+    "IEEE 1800-2017 13.4.1",
+    "it is illegal to declare another object with the function's name inside "
+    "the function scope; function other declares a local string other")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -702,6 +706,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
     "t_dpi_display": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_dpi_export_scope_flat": DPI_EXPORT_FROM_WRONG_SCOPE,
+    "t_class_format": FUNCTION_NAME_LOCAL,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
