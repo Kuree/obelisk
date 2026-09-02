@@ -3005,6 +3005,89 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                                sourceType, key, siteID, 1, 0, resultPath);
 }
 
+FailureOr<Value> UnitLowering::lowerVirtualInterfaceInstanceMember(
+    Value interface, sim::VirtualInterfaceType selectedInterface,
+    StringAttr member, Location location) {
+  ensureVirtualInterfaceInventory();
+  auto interfaceType = dyn_cast<sim::VirtualInterfaceType>(interface.getType());
+  if (!interfaceType || !member) {
+    emitError(location) << "virtual interface member has no static identity";
+    return failure();
+  }
+  std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
+                     member.getValue() + "\n" +
+                     selectedInterface.getInterfaceName().getValue())
+                        .str();
+  auto found = virtualInterfaceInstanceMembers.find(key);
+  if (found == virtualInterfaceInstanceMembers.end() || found->second.empty()) {
+    emitError(location) << "virtual interface member '" << member.getValue()
+                        << "' has no elaborated interface instance";
+    return failure();
+  }
+
+  Value scope = sim::SimVirtualInterfaceScopeOp::create(
+      builder, location, builder.getI64Type(), interface);
+  Block *merge = addBlock();
+  merge->addArgument(selectedInterface, location);
+  for (auto [parentScopeID, childScopeID] : found->second) {
+    Block *matched = addBlock();
+    Block *next = addBlock();
+    Value expected =
+        arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(parentScopeID));
+    Value equal = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, scope, expected);
+    cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
+                             next, ValueRange{});
+    setCurrent(matched);
+    Value selected = sim::SimVirtualInterfaceBindOp::create(
+        builder, location, selectedInterface,
+        builder.getI64IntegerAttr(childScopeID));
+    cf::BranchOp::create(builder, location, merge, ValueRange{selected});
+    setCurrent(next);
+  }
+  if (failed(emitRuntimeFatal(
+          location,
+          "virtual interface member access used a null or invalid handle.")))
+    return failure();
+  setCurrent(merge);
+  return merge->getArgument(0);
+}
+
+FailureOr<Value> UnitLowering::lowerVirtualInterfaceReceiverMembers(
+    Operation *expression, Value interface, Location location) {
+  auto members = expression->getAttrOfType<ArrayAttr>(
+      virtualInterfaceReceiverMembersAttrName);
+  if (!members)
+    return interface;
+  for (Attribute memberAttr : members) {
+    auto projection = dyn_cast<DictionaryAttr>(memberAttr);
+    auto member =
+        projection ? projection.getAs<StringAttr>("member") : StringAttr{};
+    auto identity = projection ? projection.getAs<SymbolRefAttr>("interface")
+                               : SymbolRefAttr{};
+    if (!member || !identity) {
+      emitError(location)
+          << "virtual-interface expression has malformed receiver members";
+      return failure();
+    }
+    Type semanticType = semantic::VirtualInterfaceType::get(
+        builder.getContext(), identity, builder.getStringAttr(""));
+    FailureOr<Type> normalized = normalizeSemanticType(semanticType, location);
+    auto selected = succeeded(normalized)
+                        ? dyn_cast<sim::VirtualInterfaceType>(*normalized)
+                        : sim::VirtualInterfaceType{};
+    if (!selected)
+      return failure();
+    FailureOr<Value> projected = lowerVirtualInterfaceInstanceMember(
+        interface, selected, member, location);
+    if (failed(projected))
+      return failure();
+    interface = *projected;
+  }
+  return interface;
+}
+
 FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     semantic::SVMemberAccessExpressionOp op, Value interface, Type elementType,
     bool lvalue) {
@@ -3016,6 +3099,12 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     emitError(location) << "virtual interface member has no static identity";
     return failure();
   }
+  FailureOr<Value> projected =
+      lowerVirtualInterfaceReceiverMembers(op, interface, location);
+  if (failed(projected))
+    return failure();
+  interface = *projected;
+  interfaceType = cast<sim::VirtualInterfaceType>(interface.getType());
   StringAttr selectedMember = member;
   if (op->hasAttr("virtual_interface_clocking"))
     if (auto source = op->getAttrOfType<StringAttr>(
@@ -3049,51 +3138,12 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       op->hasAttr("virtual_interface_clocking_source_expression");
   bool clockedReadIff =
       clockedRead && op->hasAttr("virtual_interface_clock_event_has_iff");
+  if (auto selectedInterface = dyn_cast<sim::VirtualInterfaceType>(elementType))
+    return lowerVirtualInterfaceInstanceMember(interface, selectedInterface,
+                                               selectedMember, location);
   std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
                      selectedMember.getValue())
                         .str();
-  if (auto selectedInterface =
-          dyn_cast<sim::VirtualInterfaceType>(elementType)) {
-    std::string instanceKey =
-        (Twine(key) + "\n" + selectedInterface.getInterfaceName().getValue())
-            .str();
-    auto found = virtualInterfaceInstanceMembers.find(instanceKey);
-    if (found == virtualInterfaceInstanceMembers.end() ||
-        found->second.empty()) {
-      emitError(location) << "virtual interface member '"
-                          << selectedMember.getValue()
-                          << "' has no elaborated interface instance";
-      return failure();
-    }
-
-    Value scope = sim::SimVirtualInterfaceScopeOp::create(
-        builder, location, builder.getI64Type(), interface);
-    Block *merge = addBlock();
-    merge->addArgument(elementType, location);
-    for (auto [parentScopeID, childScopeID] : found->second) {
-      Block *matched = addBlock();
-      Block *next = addBlock();
-      Value expected =
-          arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                    builder.getI64IntegerAttr(parentScopeID));
-      Value equal = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, scope, expected);
-      cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
-                               next, ValueRange{});
-      setCurrent(matched);
-      Value selected = sim::SimVirtualInterfaceBindOp::create(
-          builder, location, selectedInterface,
-          builder.getI64IntegerAttr(childScopeID));
-      cf::BranchOp::create(builder, location, merge, ValueRange{selected});
-      setCurrent(next);
-    }
-    if (failed(emitRuntimeFatal(
-            location,
-            "virtual interface member access used a null or invalid handle.")))
-      return failure();
-    setCurrent(merge);
-    return merge->getArgument(0);
-  }
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
   bool isNet = false;

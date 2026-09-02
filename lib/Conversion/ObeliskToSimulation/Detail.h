@@ -436,6 +436,10 @@ inline constexpr ::mlir::StringLiteral
 /// when a virtual-interface member selects another interface instance.
 inline constexpr ::mlir::StringLiteral virtualInterfaceParentMemberAttrName =
     "obelisk_sim.virtual_interface_parent_member";
+/// Ordered nested-interface selections omitted from a flattened semantic call
+/// receiver. Each entry records the member name and child interface identity.
+inline constexpr ::mlir::StringLiteral virtualInterfaceReceiverMembersAttrName =
+    "obelisk_sim.virtual_interface_receiver_members";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =

@@ -171,6 +171,13 @@ PreparedUnits::resolveVirtualInterfaceCallees(
   if (!interface)
     return {};
   SymbolRefAttr identity = interface.getInterfaceName();
+  if (auto receiverMembers = call->getAttrOfType<ArrayAttr>(
+          virtualInterfaceReceiverMembersAttrName);
+      receiverMembers && !receiverMembers.empty())
+    if (auto member = dyn_cast<DictionaryAttr>(
+            receiverMembers[receiverMembers.size() - 1]))
+      if (auto nested = member.getAs<SymbolRefAttr>("interface"))
+        identity = nested;
   StringRef selectedModport = interface.getModport().getValue();
   auto topInstance = [](Operation *operation) {
     semantic::SVInstanceSymbolOp result;

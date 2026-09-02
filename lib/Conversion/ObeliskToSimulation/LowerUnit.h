@@ -197,6 +197,13 @@ private:
   lowerVirtualInterfaceMember(semantic::SVMemberAccessExpressionOp op,
                               ::mlir::Value interface, ::mlir::Type elementType,
                               bool lvalue);
+  ::mlir::FailureOr<::mlir::Value> lowerVirtualInterfaceInstanceMember(
+      ::mlir::Value interface, sim::VirtualInterfaceType selectedInterface,
+      ::mlir::StringAttr member, ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerVirtualInterfaceReceiverMembers(::mlir::Operation *expression,
+                                       ::mlir::Value interface,
+                                       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceClock(semantic::SVMemberAccessExpressionOp op,
                              ::mlir::Value interface);

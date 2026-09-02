@@ -188,6 +188,73 @@ static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   return {};
 }
 
+static Operation *getFirstChild(Operation *operation) {
+  if (!operation || operation->getNumRegions() == 0 ||
+      operation->getRegion(0).empty() ||
+      operation->getRegion(0).front().empty())
+    return nullptr;
+  return &operation->getRegion(0).front().front();
+}
+
+/// Slang flattens `vif.child.member` and `vif.child.method()` receivers to the
+/// original virtual handle while retaining the nested selection in the exact
+/// referenced symbol. Freeze that symbol ancestry for later unit isolation.
+static void freezeVirtualInterfaceReceiverMembers(
+    Operation *expression, Operation *receiver, SymbolRefAttr reference,
+    const llvm::StringMap<Operation *> &semanticSymbols, Builder &builder) {
+  if (!expression || !receiver || !reference ||
+      expression->hasAttr(virtualInterfaceReceiverMembersAttrName))
+    return;
+  auto typeAttr = receiver->getAttrOfType<TypeAttr>("semantic_type");
+  auto receiverType =
+      typeAttr ? dyn_cast<semantic::VirtualInterfaceType>(typeAttr.getValue())
+               : semantic::VirtualInterfaceType{};
+  if (!receiverType)
+    return;
+  auto target = semanticSymbols.find(reference.getLeafReference());
+  if (target == semanticSymbols.end())
+    return;
+
+  SmallVector<std::pair<StringAttr, SymbolRefAttr>> reversedMembers;
+  bool foundReceiver = false;
+  for (Operation *cursor = target->second->getParentOp(); cursor;
+       cursor = cursor->getParentOp()) {
+    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(cursor)) {
+      if (body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity") ==
+          receiverType.getInterfaceName()) {
+        foundReceiver = true;
+        break;
+      }
+      continue;
+    }
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(cursor);
+    if (!instance)
+      continue;
+    semantic::SVInstanceBodySymbolOp body;
+    for (Operation *child : getChildren(instance))
+      if ((body = dyn_cast<semantic::SVInstanceBodySymbolOp>(child)))
+        break;
+    auto identity =
+        body ? body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")
+             : SymbolRefAttr{};
+    if (identity)
+      reversedMembers.push_back(
+          {builder.getStringAttr(getDebugName(instance)), identity});
+  }
+  if (!foundReceiver || reversedMembers.empty())
+    return;
+
+  SmallVector<Attribute> members;
+  members.reserve(reversedMembers.size());
+  for (auto [member, identity] : llvm::reverse(reversedMembers))
+    members.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("member", member),
+        builder.getNamedAttr("interface", identity),
+    }));
+  expression->setAttr(virtualInterfaceReceiverMembersAttrName,
+                      builder.getArrayAttr(members));
+}
+
 static bool containsResolutionOperation(Operation *root, Operation *nested) {
   for (Operation *current = nested; current; current = current->getParentOp())
     if (current == root)
@@ -7748,6 +7815,10 @@ void ObeliskSimPreparePass::runOnOperation() {
   SmallVector<semantic::SVCallExpressionOp> semanticCalls;
   semanticRoot->walk([&](semantic::SVCallExpressionOp call) {
     semanticCalls.push_back(call);
+    if (call.getHasThisClass())
+      freezeVirtualInterfaceReceiverMembers(call, getFirstChild(call),
+                                            call.getReferencedSymbolAttr(),
+                                            semanticSymbols, builder);
   });
   for (semantic::SVCallExpressionOp call : semanticCalls)
     if (!freezeRandModeContract(call) && !freezeConstraintModeContract(call) &&
@@ -7760,6 +7831,9 @@ void ObeliskSimPreparePass::runOnOperation() {
   // is an addressable class-wide storage root, while its object prefix is only
   // an evaluated qualifier and must not be classified as the assigned base.
   semanticRoot->walk([&](semantic::SVMemberAccessExpressionOp member) {
+    freezeVirtualInterfaceReceiverMembers(member, getFirstChild(member),
+                                          member.getReferencedSymbol(),
+                                          semanticSymbols, builder);
     auto symbol =
         semanticSymbols.find(member.getReferencedSymbol().getLeafReference());
     auto property =

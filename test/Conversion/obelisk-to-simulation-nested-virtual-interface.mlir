@@ -10,14 +10,18 @@ module {
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent", is_uninstantiated = false, name = "parent", node_id = 6 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "parent"} {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent", name = "parent_if", node_id = 7 : i64, sym_name = "parent_body", virtual_interface_identity = @root::@top_body::@parent} {
             obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "child"} {
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent.child", name = "child_if", node_id = 9 : i64, sym_name = "child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {}
+              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent.child", name = "child_if", node_id = 9 : i64, sym_name = "child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.parent.child.bump", name = "bump", node_id = 23 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "parent_bump"} {}
+              }
             }
           }
         }
         obelisk.sv.symbol.instance attributes {hierarchical_name = "top.other", is_uninstantiated = false, name = "other", node_id = 19 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "other"} {
           obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other", name = "parent_if", node_id = 20 : i64, sym_name = "other_body", virtual_interface_identity = @root::@top_body::@parent} {
             obelisk.sv.symbol.instance attributes {hierarchical_name = "top.other.child", is_uninstantiated = false, name = "child", node_id = 21 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "other_child"} {
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other.child", name = "child_if", node_id = 22 : i64, sym_name = "other_child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {}
+              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other.child", name = "child_if", node_id = 22 : i64, sym_name = "other_child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.other.child.bump", name = "bump", node_id = 24 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "other_bump"} {}
+              }
             }
           }
         }
@@ -31,6 +35,20 @@ module {
                 obelisk.sv.expression.member_access attributes {is_signed = false, member_name = "child", node_id = 17 : i64, referenced_path = "top.parent_if.child", referenced_symbol = @root::@top::@top_body::@parent::@parent_body::@child, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent_body::@child, "">} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 18 : i64, referenced_path = "top.parent_handle", referenced_symbol = @root::@top::@top_body::@parent_handle, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent, "">} {}
                 }
+              }
+            }
+            obelisk.sv.statement.expression_statement attributes {node_id = 30 : i64} {
+              obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "bump", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = true, is_signed = false, is_super_class = false, is_system_call = false, node_id = 31 : i64, referenced_path = "top.parent_if.child.bump", referenced_symbol = @root::@top::@top_body::@type_parent::@type_parent_body::@type_child::@type_child_body::@type_bump, semantic_type = !obelisk.void, subroutine_kind = 0 : i32} {
+                obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 32 : i64, referenced_path = "top.parent_handle", referenced_symbol = @root::@top::@top_body::@parent_handle, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent, "">} {}
+              }
+            }
+          }
+        }
+        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "parent_if", node_id = 25 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "type_parent"} {
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent_if", is_virtual_interface_type_instance = true, name = "parent_if", node_id = 26 : i64, sym_name = "type_parent_body", virtual_interface_identity = @root::@top_body::@parent} {
+            obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent_if.child", is_uninstantiated = false, name = "child", node_id = 27 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "type_child"} {
+              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent_if.child", name = "child_if", node_id = 28 : i64, sym_name = "type_child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.parent_if.child.bump", name = "bump", node_id = 29 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "type_bump"} {}
               }
             }
           }
@@ -55,3 +73,5 @@ module {
 // CHECK: [[OTHER_BOUND:%.*]] = obelisk_sim.virtual_interface.bind [[OTHER_CHILD]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">
 // CHECK: cf.br {{.*}}([[OTHER_BOUND]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">)
 // CHECK: obelisk_sim.fatal
+// CHECK: obelisk_sim.call @unit_
+// CHECK: obelisk_sim.call @unit_

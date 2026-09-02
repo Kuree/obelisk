@@ -1850,6 +1850,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (failed(receiver) ||
         !isa<sim::VirtualInterfaceType>((*receiver).getType()))
       return failure();
+    receiver = lowerVirtualInterfaceReceiverMembers(op, *receiver, location);
+    if (failed(receiver))
+      return failure();
     virtualScope = sim::SimVirtualInterfaceScopeOp::create(
         builder, location, builder.getI64Type(), *receiver);
     actuals = actuals.drop_front();
