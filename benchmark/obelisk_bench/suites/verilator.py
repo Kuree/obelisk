@@ -177,6 +177,8 @@ MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
 MODULE_TOP = re.compile(r"^\s*module\s+top\b", re.MULTILINE)
 MODULE_DECLARATION_LINE = re.compile(
     r"^\s*module\s+([A-Za-z_$][A-Za-z0-9_$]*)\b")
+CONFIG_DECLARATION_LINE = re.compile(
+    r"^\s*config\s+([A-Za-z_$][A-Za-z0-9_$]*)\b")
 # Any name the corpus cannot also declare. Nothing in test_regress spells one
 # with this prefix, and the shell is the only file the harness itself writes.
 SHELL_ALTERNATE_NAME = "obelisk_bench_top"
@@ -1147,8 +1149,18 @@ def needs_driver_shell(top_text: str) -> bool:
     return driver_module_name(top_text) is not None
 
 
-def driver_module_name(top_text: str) -> str | None:
+def driver_module_name(
+        top_text: str, selected_top: str | None = None,
+        configuration_texts: tuple[str, ...] | list[str] = (),
+) -> str | None:
     """Return the conventional DUT or the sole module with a driven clock."""
+    if selected_top:
+        selected_cell = selected_top.removesuffix(":config").rsplit(".", 1)[-1]
+        for text in (top_text, *configuration_texts):
+            for line in text.splitlines():
+                declaration = CONFIG_DECLARATION_LINE.match(line)
+                if declaration and declaration.group(1) == selected_cell:
+                    return None
     if MODULE_T.search(top_text):
         return "t"
     clocked = []
@@ -1223,18 +1235,20 @@ class CompileSettings(NamedTuple):
     """Portable compile settings recovered from a test descriptor."""
     defines: list[str]
     top: str | None
+    library_flags: list[str]
 
 
 def detect_compile_settings(descriptor: Path) -> CompileSettings:
     """Return literal portable compile settings from the descriptor.
 
     ``v_flags2`` and ``verilator_flags2`` mix portable source configuration
-    with Verilator-only optimization and code-generation switches.  Forward
-    only literal preprocessor and top-selection tokens; expressions involving
-    driver state are deliberately ignored instead of being evaluated.
+    with Verilator-only optimization and code-generation switches. Forward
+    only literal preprocessor, top-selection, and logical-library tokens whose
+    inputs resolve inside the checkout; expressions involving driver state are
+    deliberately ignored instead of being evaluated.
     """
     if not descriptor.exists():
-        return CompileSettings([], None)
+        return CompileSettings([], None, [])
     text = descriptor.read_text(encoding="utf-8", errors="replace")
     tokens: list[str] = []
 
@@ -1260,6 +1274,22 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
 
     defines: list[str] = []
     selected_top = None
+    library_flags: list[str] = []
+    current_work_library = None
+    regress = descriptor.parent.parent.resolve()
+
+    def resolve_input(spelling: str) -> Path | None:
+        path = Path(spelling)
+        candidates = ([path] if path.is_absolute() else
+                      [regress / path, descriptor.parent / path])
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            resolved = candidate.resolve()
+            if resolved == regress or regress in resolved.parents:
+                return resolved
+        return None
+
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -1276,8 +1306,27 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 index += 1
         elif token.startswith(("--top=", "--top-module=")):
             selected_top = token.split("=", 1)[1] or selected_top
+        elif token == "--work":
+            if index + 1 < len(tokens):
+                current_work_library = tokens[index + 1]
+                index += 1
+        elif token.startswith("--work="):
+            current_work_library = token.split("=", 1)[1] or None
+        elif token in ("-libmap", "--libmap"):
+            if index + 1 < len(tokens):
+                if path := resolve_input(tokens[index + 1]):
+                    library_flags.extend(("--libmap", str(path)))
+                index += 1
+        elif token.startswith(("-libmap=", "--libmap=")):
+            if path := resolve_input(token.split("=", 1)[1]):
+                library_flags.extend(("--libmap", str(path)))
+        elif (current_work_library and
+              Path(token).suffix.lower() in {".v", ".sv"}):
+            if path := resolve_input(token):
+                library_flags.extend(
+                    ("-v", f"{current_work_library}={path}"))
         index += 1
-    return CompileSettings(defines, selected_top)
+    return CompileSettings(defines, selected_top, library_flags)
 
 
 def detect_compile_defines(descriptor: Path) -> list[str]:
@@ -1689,6 +1738,13 @@ def judge_one(
         )
         compile_settings = detect_compile_settings(descriptor)
         descriptor_defines = compile_settings.defines
+        descriptor_library_flags = compile_settings.library_flags
+        configuration_texts = []
+        for index, flag in enumerate(descriptor_library_flags[:-1]):
+            if flag == "--libmap":
+                configuration_texts.append(
+                    Path(descriptor_library_flags[index + 1]).read_text(
+                        encoding="utf-8", errors="replace"))
         compatibility_defines = COMPATIBILITY_DEFINES.get(name, ())
         native_defines = DESCRIPTOR_DPI_NATIVE_DEFINES.get(name, ())
         if descriptor_sources:
@@ -1696,6 +1752,7 @@ def judge_one(
             header_flags = [
                 "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
                 "-I", str(top.parent), *descriptor_defines,
+                *descriptor_library_flags,
             ]
             header_flags.extend(
                 "-D" + definition
@@ -1726,8 +1783,9 @@ def judge_one(
                 return model.Outcome(
                     model.COMPILE_FAIL, descriptor_native.stderr)
         design_sources = [str(top)]
-        driver_module = driver_module_name(top_text)
         selected_top = compile_settings.top
+        driver_module = driver_module_name(
+            top_text, selected_top, configuration_texts)
         if driver_module:
             shell = Path(tmp) / "top.v"
             selected_top = shell_module_name(top_text)
@@ -1751,6 +1809,7 @@ def judge_one(
             "-I", str(top.parent),
         ]
         extra.extend(descriptor_defines)
+        extra.extend(descriptor_library_flags)
         extra.extend("-D" + definition
                      for definition in compatibility_defines)
         if selected_top:

@@ -116,6 +116,17 @@ class TopShellTest(unittest.TestCase):
                 "module test(input clk); endmodule\n")
         self.assertEqual(verilator.driver_module_name(text), "test")
 
+    def test_explicit_configuration_top_is_not_replaced_by_a_shell(self):
+        text = ("module t; endmodule\n"
+                "config cfg; design t; endconfig\n")
+        self.assertIsNone(verilator.driver_module_name(text, "cfg"))
+
+    def test_configuration_top_from_a_library_map_is_not_replaced(self):
+        text = "module t; endmodule\n"
+        library_map = "library rtl *.sv;\nconfig cfg; design t; endconfig\n"
+        self.assertIsNone(
+            verilator.driver_module_name(text, "cfg", [library_map]))
+
     def test_clock_period_matches_the_upstream_main_loop(self):
         # driver.py advances one time unit per sub-step and toggles clk on the
         # first of five, so a posedge lands every 10 units.
@@ -296,6 +307,44 @@ class CompileTopDescriptorTest(unittest.TestCase):
     def test_dynamic_top_flag_is_not_guessed(self):
         self.assertIsNone(self.top(
             "test.compile(verilator_flags2=['--top ' + selected])\n"))
+
+
+class CompileLibraryDescriptorTest(unittest.TestCase):
+    def settings(self, descriptor_text: str,
+                 files: tuple[str, ...]) -> verilator.CompileSettings:
+        temporary = tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-")
+        self.addCleanup(temporary.cleanup)
+        regress = Path(temporary.name) / "test_regress"
+        directory = regress / "t"
+        directory.mkdir(parents=True)
+        descriptor = directory / "t_x.py"
+        descriptor.write_text(descriptor_text, encoding="utf-8")
+        for spelling in files:
+            path = regress / spelling
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+        return verilator.detect_compile_settings(descriptor)
+
+    def test_work_library_sources_become_named_library_inputs(self):
+        settings = self.settings(
+            "test.compile(verilator_flags2=["
+            "'--work liba', 't/liba.v', '--work libb t/libb.sv'])\n",
+            ("t/liba.v", "t/libb.sv"),
+        )
+        self.assertEqual(settings.library_flags[::2], ["-v", "-v"])
+        self.assertEqual(
+            [(value.split("=", 1)[0], Path(value.split("=", 1)[1]).name)
+             for value in settings.library_flags[1::2]],
+            [("liba", "liba.v"), ("libb", "libb.sv")],
+        )
+
+    def test_library_map_path_is_resolved_from_test_regress(self):
+        settings = self.settings(
+            "test.compile(verilator_flags2=['-libmap t/maps/lib.map'])\n",
+            ("t/maps/lib.map",),
+        )
+        self.assertEqual(settings.library_flags[0], "--libmap")
+        self.assertEqual(Path(settings.library_flags[1]).name, "lib.map")
 
 
 class DescriptorDPISourcesTest(unittest.TestCase):
