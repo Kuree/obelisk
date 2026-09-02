@@ -1,11 +1,16 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' \
+// RUN:   -o %t.planned.mlir
+// RUN: obelisk-opt %t.planned.mlir \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // A dynamic, potentially overhanging packed NBA to a planned static root must
 // remain on the generated AOT path. Its overlap, mask, and source shift are
 // scalar operations independent of the selected width: no scheduler call,
 // allocation, loop, or width-proportional CFG is introduced in the top tier.
+// The second RUN invokes only the conversion pass so this test directly locks
+// down that pass's generated hot path.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

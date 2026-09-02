@@ -1683,6 +1683,9 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     ScheduledProcess &scheduled = context->scheduledProcesses[index];
     bool activeSelf = context->activeLogicalProcessToken ==
                       (kNativeLogicalProcessTag | scheduled.token);
+    if (activeSelf &&
+        (entry->reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0)
+      continue;
     if ((actor->continuation != entry->continuation && !activeSelf) ||
         scheduled.instance != actor || !scheduled.started ||
         (scheduled.signalTriggered && !activeSelf) ||

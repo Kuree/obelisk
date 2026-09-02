@@ -57,9 +57,9 @@ module attributes {
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %clock_fast = obelisk_sim.context.storage %ctx[3] :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %process = obelisk_sim.spawn @process(%ctx, %storage) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>
-          -> !obelisk_sim.process
+      %process = obelisk_sim.spawn @process(%ctx, %storage, %clock_slow) :
+          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>,
+          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
       %watcher = obelisk_sim.spawn @watcher(%ctx, %storage) :
           !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>
           -> !obelisk_sim.process
@@ -76,13 +76,21 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %destination: !obelisk_sim.ref<!obelisk_sim.logic<8>>
             {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+             obelisk_sim.descriptor_id = 0 : i64},
+        %bit_destination: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+            {obelisk_sim.capture_kind = 3 : i32,
+             obelisk_sim.descriptor_id = 2 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
       %value = obelisk_sim.logic.constant 42 : i8, 0 : i8 :
           !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %value to %destination :
           (!obelisk_sim.logic<8>,
            !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      %bit_value = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
+          !obelisk_sim.logic<1>
+      obelisk_sim.nba.enqueue %bit_value to %bit_destination :
+          (!obelisk_sim.logic<1>,
+           !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       obelisk_sim.return
     }
 
@@ -203,6 +211,7 @@ module attributes {
 // TWO-STATE-SAME: %[[SPAWN_CTX:.*]]: !llvm.ptr)
 // TWO-STATE: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[SPAWN_CTX]], {{.*}}, {{.*}})
 // TWO-STATE-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// TWO-STATE-SAME: alignment = 64 : i64
 // TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // TWO-STATE: llvm.load {{.*}} : !llvm.ptr -> i64
 // TWO-STATE: llvm.icmp "ne" {{.*}} : i64
@@ -216,10 +225,27 @@ module attributes {
 // TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
 // TWO-STATE: llvm.getelementptr %[[CANON_UNKNOWN]]
 // TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1
+// TWO-STATE-SAME: alignment = 128 : i64
+// The production materializer specializes the clone to the steady two-state
+// region and accesses an aligned byte root at its declared width. This is an
+// actual pass-pipeline check: widening it back to the packed 64-bit fallback
+// would reintroduce the adjacent-byte read/modify/write on the hot path.
+// TWO-STATE: llvm.mlir.constant(2 : i32) : i32
 // TWO-STATE: %[[FAST_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
 // TWO-STATE: %[[FAST_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
 // TWO-STATE: llvm.getelementptr %[[FAST_ACC]][32]
 // TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
+// TWO-STATE: %[[FAST_VALUE_ADDR:.*]] = llvm.getelementptr {{.*}}[0]
+// TWO-STATE-NEXT: %[[FAST_OLD8:.*]] = llvm.load %[[FAST_VALUE_ADDR]] {{.*}} : !llvm.ptr -> i8
+// TWO-STATE: %[[FAST_NEW8:.*]] = llvm.trunc {{.*}} : i64 to i8
+// TWO-STATE: llvm.store %[[FAST_NEW8]], {{.*}} {{.*}} : i8, !llvm.ptr
+// The independent one-bit NBA root is byte-aligned by the production state
+// layout and uses an exact i8 access too. This checks the actual sub-byte
+// transformation rather than merely an already byte-wide source declaration.
+// TWO-STATE: %[[BIT_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_1
+// TWO-STATE: %[[BIT_OLD8:.*]] = llvm.load {{.*}} {{.*}} : !llvm.ptr -> i8
+// TWO-STATE: %[[BIT_NEW8:.*]] = llvm.trunc {{.*}} : i64 to i8
+// TWO-STATE: llvm.store %[[BIT_NEW8]], {{.*}} {{.*}} : i8, !llvm.ptr
 // TWO-STATE: %[[FAST_UNKNOWN_ADDR:.*]] = llvm.getelementptr %[[FAST_UNKNOWN]]
 // TWO-STATE-NOT: llvm.load %[[FAST_UNKNOWN_ADDR]]
 // TWO-STATE-NOT: llvm.store {{.*}}, %[[FAST_UNKNOWN_ADDR]]
@@ -227,12 +253,16 @@ module attributes {
 
 // State-domain analysis derives a precise proof for this NBA's stored value
 // and exact destination root. Its staged write uses the dirty bit as validity
-// and can omit unknown, write-mask, region, valid, and summary traffic.
+// and can omit write-mask, region, valid, and summary traffic. It must still
+// clear a stale unknown lane left by a coincident four-state writer in the
+// shared accumulator.
 // TWO-STATE-STAGE-LABEL: llvm.func @process(
 // TWO-STATE-STAGE: %[[ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
 // TWO-STATE-STAGE: %[[VALUE:.*]] = llvm.getelementptr %[[ACC]][0]
 // TWO-STATE-STAGE: llvm.store {{.*}}, %[[VALUE]]
-// TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][32]
+// TWO-STATE-STAGE: %[[STAGE_UNKNOWN:.*]] = llvm.getelementptr %[[ACC]][32]
+// TWO-STATE-STAGE: %[[STAGE_ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// TWO-STATE-STAGE: llvm.store %[[STAGE_ZERO]], %[[STAGE_UNKNOWN]]
 // TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][64]
 // TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][96]
 // TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][100]

@@ -97,11 +97,14 @@ module attributes {
       obelisk_sim.nba.enqueue %unknown to %destination :
           (!obelisk_sim.logic<1>,
            !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
+      // Runtime-only preparation for the cold checkpoint must not disqualify
+      // the whole periodic eval group. The path probe replaces this complete
+      // block with its Tier-3 return before validating its hot closure.
       %now = obelisk_sim.time.now %ctx
       %stdout = arith.constant -2147483647 : i32
-      %message = obelisk_sim.bytes.constant "checkpoint"
-      obelisk_sim.display %ctx to %stdout(%message) newline = true radix = 10
-          flags = [0] : !obelisk_sim.bytes
+      %message = obelisk_sim.bytes.constant "checkpoint %0t"
+      obelisk_sim.display %ctx to %stdout(%message, %now) newline = true radix = 10
+          flags = [0, 0] : !obelisk_sim.bytes, i64
       cf.br ^wait
     }
   }
@@ -111,9 +114,14 @@ module attributes {
 // range before clearing this owner's pending bit.
 // CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1_0
 // CHECK: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
-// CHECK: %[[UNKNOWN_BYTE:.*]] = llvm.load
-// CHECK: %[[RANGE_MASK:.*]] = llvm.mlir.constant(6 : i8)
-// CHECK: llvm.and %[[UNKNOWN_BYTE]], %[[RANGE_MASK]]
+// Independent one-bit roots are byte-aligned, so the certificate checks each
+// exact byte rather than reading a packed neighbor through one shared mask.
+// CHECK: %[[UNKNOWN_BYTE0:.*]] = llvm.load
+// CHECK: %[[RANGE_MASK0:.*]] = llvm.mlir.constant(1 : i8)
+// CHECK: llvm.and %[[UNKNOWN_BYTE0]], %[[RANGE_MASK0]]
+// CHECK: %[[UNKNOWN_BYTE1:.*]] = llvm.load
+// CHECK: %[[RANGE_MASK1:.*]] = llvm.mlir.constant(1 : i8)
+// CHECK: llvm.and %[[UNKNOWN_BYTE1]], %[[RANGE_MASK1]]
 // A guarded owner has a separate full-closure certificate. While that
 // stronger certificate remains pending, its exact path dispatcher is already
 // a safe steady route and must not bounce the owner through Tier 2 every slot.
@@ -153,6 +161,7 @@ module attributes {
 // CHECK: llvm.cond_br {{.*}}, ^[[PROMOTED:bb[0-9]+]], ^[[TRANSIENT:bb[0-9]+]]
 // CHECK: ^[[TRANSIENT]]:
 // CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_path_known_0
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_time
 // CHECK: ^[[PROMOTED]]:
 // CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_checkpoint_path_0
 // CHECK: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1

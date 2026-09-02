@@ -3127,6 +3127,61 @@ TEST(Scheduler, AOTStaticTransitionRetriggersTheExecutingWait) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, AOTStaticTransitionCanSuppressTheExecutingWait) {
+  AOTTestState state;
+  const obelisk_rt_static_fanout_entry fanout[] = {
+      {1, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE, 1,
+       OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF, 0, 1},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.fanout_entries = fanout;
+  plan.fanout_entry_count = std::size(fanout);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(44);
+  fixture.descriptor.execution = &execution;
+  fixture.descriptor.native_execute = schedulerSelfTriggerExecute;
+  schedulerWaitHandle = obelisk_rt_v1_native_state_static_handle(1);
+  schedulerWaitWidth = 1;
+  schedulerSelfTriggerCount = 0;
+  schedulerSelfTriggerStaticState = 1;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node nodes[] = {
+      {0, 0, UINT32_MAX},
+      {0, 1, UINT32_MAX},
+  };
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+
+  uint8_t oldValue = 0;
+  uint8_t newValue = 1;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, schedulerWaitHandle, 1, &oldValue, nullptr, &newValue, nullptr);
+  EXPECT_EQ(
+      obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(schedulerSelfTriggerCount, 1u);
+  EXPECT_TRUE(context->nativeScheduleReadyNodes.empty() ||
+              context->nativeScheduleReadyNodes.front() == 0);
+  schedulerSelfTriggerStaticState = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, CompactBytecodeUsesDirectSignalSubscriptions) {
   SchedulerFixture fixture(31);
   std::vector<uint8_t> code;

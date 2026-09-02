@@ -74,14 +74,15 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       return failure();
     for (const sim::ManagedHandleSlot &slot : managedRootSlots)
       managedRootOffsets.push_back(slot.bitOffset);
-    // Keep byte-sized roots byte-aligned. Besides avoiding cross-byte packed
-    // loads and masks for ordinary scalar state, this lets read-only VPI retain
-    // a canonical value with one plain store. Sub-byte roots remain densely
-    // packed, and managed roots retain their stronger word alignment.
+    // Keep every independently addressable root byte-aligned. Besides
+    // avoiding cross-root read/modify/write dependencies for scalar state,
+    // this lets generated eval and read-only VPI retain a canonical value with
+    // one plain access. Padding is outside every stable handle's bound, while
+    // managed roots retain their stronger word alignment.
     uint64_t alignment = 1;
     if (!managedRootOffsets.empty())
       alignment = 64;
-    else if (*width >= 8)
+    else
       alignment = 8;
     if (alignment != 1) {
       if (layout.bitCount >

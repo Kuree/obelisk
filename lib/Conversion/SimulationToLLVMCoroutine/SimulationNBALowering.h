@@ -27,6 +27,10 @@ struct NativeStaticNBAPlan {
   llvm::SmallVector<obelisk_rt_static_nba_root> roots;
   llvm::SmallVector<obelisk_rt_static_nba_site> sites;
   llvm::DenseMap<uint64_t, uint32_t> siteRoots;
+  // Graph rebuilding gives generated eval clones fresh site IDs. Preserve the
+  // source semantic site so mutually exclusive compiler clones do not look
+  // like independently ordered NBA statements.
+  llvm::DenseMap<uint64_t, uint64_t> siteSemanticOrigins;
   llvm::SmallVector<std::string> generatedAccumulators;
   // Canonical state-plane bit offset for each root. This is revision-coupled
   // lowering metadata, not a second state allocation.
@@ -47,6 +51,7 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          mlir::TypeConverter &converter,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
+                                         const NativeStateLayout *stateLayout,
                                          bool staticSitesEnabled,
                                          bool guardedClaims, bool evalCeiling);
 mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(

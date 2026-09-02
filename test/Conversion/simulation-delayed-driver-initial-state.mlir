@@ -34,10 +34,10 @@ module attributes {
 
 // The net and both drivers are unknown. Their value bits are respectively Z,
 // Z, and X, so only the first two bits are set in the value plane.
-// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\07\00\00\00\00\00\00\00\00")
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\03\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\01\00\00\00\00\00\00\00\00\00")
 
 // Bit 14 records initial X on the delayed driver's descriptor. The ordinary
 // driver retains the legacy/default-Z flags.
-// BYTECODE: state 2: kind=driver flags=953 value=1 target=0 width=1
-// BYTECODE: state 3: kind=driver flags=17337 value=2 target=0 width=1
+// BYTECODE: state 2: kind=driver flags=953 value=8 target=0 width=1
+// BYTECODE: state 3: kind=driver flags=17337 value=16 target=0 width=1

@@ -814,9 +814,9 @@ LogicalResult lowerPackedSimulationOperations(
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
                                             stateLayout.bitCount);
     populateDriverToLLVMConversionPatterns(patterns, c, stateLayout);
-    populateNBAToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
-                                        staticNBAPlan, staticNBAPlan != nullptr,
-                                        vpiAllowsWrite, experimentalTwoState);
+    populateNBAToLLVMConversionPatterns(
+        patterns, c, stateLayout.bitCount, staticNBAPlan, &stateLayout,
+        staticNBAPlan != nullptr, vpiAllowsWrite, experimentalTwoState);
   };
   RewritePatternSet packedPatterns(context);
   populatePackedPatterns(packedConverter, packedPatterns);

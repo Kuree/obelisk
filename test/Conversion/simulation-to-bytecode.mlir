@@ -110,7 +110,7 @@ module attributes {
 // disjoint per-bit uwire driver ranges.
 // ENCODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
 // ENCODE: obelisk.execution.flags = 1 : i32
-// ENCODE: obelisk.execution.state_bits = 73 : i64
+// ENCODE: obelisk.execution.state_bits = 98 : i64
 // ENCODE: obelisk.bytecode.function = 0 : i32
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32

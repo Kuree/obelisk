@@ -708,6 +708,24 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   return success();
 }
 
+/// Preserve the native subtarget across serialized bitcode and LTO. A target
+/// machine controls the local optimization pipeline, but LLD reconstructs its
+/// own target machines when it consumes bitcode. Match Clang's -march=native
+/// contract by putting the detected CPU and feature set on every executable
+/// function as well.
+static void
+applyNativeFunctionTargetAttributes(llvm::Module &module,
+                                    const TargetMachine &targetMachine) {
+  StringRef cpu = targetMachine.getTargetCPU();
+  StringRef features = targetMachine.getTargetFeatureString();
+  for (llvm::Function &function : module) {
+    if (function.isIntrinsic() || function.isDeclaration())
+      continue;
+    function.addFnAttr("target-cpu", cpu);
+    function.addFnAttr("target-features", features);
+  }
+}
+
 LogicalResult lowerLLVMCoroutines(llvm::Module &module,
                                   TargetMachine &targetMachine,
                                   bool optimizeFrame) {
@@ -1105,6 +1123,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                     options.sharedLibraryInputs,
                                     requiresStateSync, resolveInitialDrivers)))
     return failure();
+  if (options.target == TargetKind::Native)
+    applyNativeFunctionTargetAttributes(*llvmModule, *targetMachine);
   markBackendTiming("VPI lifecycle materialization");
   bool splitModule = nativePartitionPlan &&
                      shouldSplitNativeModule(*llvmModule, *nativePartitionPlan);

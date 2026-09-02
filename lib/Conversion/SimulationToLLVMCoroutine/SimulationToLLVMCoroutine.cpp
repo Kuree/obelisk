@@ -902,6 +902,36 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     for (Block *block : unreachable)
       block->erase();
 
+    // Validate the executable dry-run overlay, not the unpruned source body.
+    // A checkpoint block is replaced above by a constant Tier-3 return, so
+    // operations used only to prepare that cold leaf (for example the
+    // simulation-time read required by a $finish diagnostic) are not part of
+    // the generated Tier-1 closure. Rejecting the source before this pruning
+    // lets one cold runtime leaf disable the complete periodic eval group.
+    bool supported = true;
+    probe.walk([&](Operation *operation) {
+      if (!supported || operation == probe.getOperation())
+        return;
+      if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
+        supported = false;
+        return;
+      }
+      if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveChangedOp>(operation)) {
+        supported = false;
+        return;
+      }
+      if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
+              sim::SimNBAEnqueueOp, cf::BranchOp, cf::CondBranchOp>(operation))
+        return;
+      if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation))
+        supported = false;
+    });
+    if (!supported) {
+      probe.erase();
+      return sim::SimFuncOp{};
+    }
+
     // A path-guarded route is only meaningful when some activation stays in
     // the generated closure. If every reachable exit is a checkpoint block,
     // the probe degenerates to the constant checkpoint answer: the dispatcher
@@ -1828,6 +1858,25 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
   // present.  Materialize them in a second phase after every actor decision is
   // complete.
   for (PendingEvalWrapper &pending : pendingEvalWrappers) {
+    // Preserve the typed executor identity across design-to-module symbol
+    // flattening. A fusion executor can own several physical source
+    // continuations, so actor/continuation labels are not sufficient to decide
+    // procedural self-suppression inside the generated clock-group closure.
+    if (!pending.runtimeCheckpoint) {
+      Builder identityBuilder(context);
+      auto directFragmentAttr =
+          identityBuilder.getI32IntegerAttr(result.size());
+      for (sim::SimFuncOp body : {pending.body, pending.twoStateBody}) {
+        if (!body)
+          continue;
+        if (auto previous = body->getAttrOfType<IntegerAttr>(
+                "obelisk.eval.direct_fragment");
+            previous && previous != directFragmentAttr)
+          return body.emitOpError(
+              "is shared by multiple typed direct fragments");
+        body->setAttr("obelisk.eval.direct_fragment", directFragmentAttr);
+      }
+    }
     if (pending.runtimeCheckpoint
             ? failed(makeRuntimeCheckpointWrapper(
                   module, pending.actor, pending.wrapper, pending.actorSlot,
@@ -2677,6 +2726,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // replace several source actor continuations with one outlined
   // module-instance body, so the source-owner set must be expanded while the
   // current compute graph and its fusion certificate are both available.
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> executorFusionGroups =
+      preLowerFusionOwners;
   DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups =
       std::move(preLowerFusionOwners);
   DenseMap<uint64_t, uint32_t> fusionGroupsBySourceCodeUnit =
@@ -2743,10 +2794,24 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     auto found = aotFusionGroups.find({slot, continuation});
     return found == aotFusionGroups.end() ? UINT32_MAX : found->second;
   };
+  auto executorFusionGroupFor = [&](uint32_t slot, uint32_t continuation) {
+    auto found = executorFusionGroups.find({slot, continuation});
+    return found == executorFusionGroups.end() ? UINT32_MAX : found->second;
+  };
 
   // Expand a fused executor through typed physical owners, then attach only
   // current-generation graph fragments for ownership and SCC analysis.
   for (NativeDirectFragment &direct : *directFragments) {
+    uint32_t executorGroup =
+        executorFusionGroupFor(direct.actorSlot, direct.continuation);
+    if (executorGroup != UINT32_MAX) {
+      if (direct.fusionGroup != UINT32_MAX &&
+          direct.fusionGroup != executorGroup)
+        return module.emitError(
+            "direct eval executor disagrees with its fusion certificate");
+      direct.fusionGroup = executorGroup;
+      direct.fusionExecutor = true;
+    }
     if (direct.fusionGroup == UINT32_MAX)
       direct.fusionGroup =
           fusionGroupFor(direct.actorSlot, direct.continuation);
@@ -2786,10 +2851,20 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     direct.sourceOwners.erase(
         std::unique(direct.sourceOwners.begin(), direct.sourceOwners.end()),
         direct.sourceOwners.end());
-    for (auto sourceOwner : direct.sourceOwners)
+    for (auto sourceOwner : direct.sourceOwners) {
+      bool preservedExactBody =
+          direct.fusionExecutor &&
+          llvm::any_of(*directFragments, [&](const auto &body) {
+            return !body.fusionExecutor &&
+                   body.actorSlot == sourceOwner.first &&
+                   body.continuation == sourceOwner.second;
+          });
+      if (preservedExactBody)
+        continue;
       if (auto fragments = staticFanoutPlan.fragments.find(sourceOwner);
           fragments != staticFanoutPlan.fragments.end())
         llvm::append_range(direct.fragmentIDs, fragments->second);
+    }
     llvm::sort(direct.fragmentIDs);
     direct.fragmentIDs.erase(
         std::unique(direct.fragmentIDs.begin(), direct.fragmentIDs.end()),
@@ -3786,6 +3861,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       probeJoin->addArgument(i8, route.twoState.getLoc());
       Block *classifyNative = new Block;
       Block *checkpoint = new Block;
+      Block *checkpointClearUnknown = new Block;
+      Block *checkpointPublish = new Block;
       route.dispatcher.getBody().push_back(twoState);
       route.dispatcher.getBody().push_back(fourState);
       route.dispatcher.getBody().push_back(fullProbe);
@@ -3793,6 +3870,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       route.dispatcher.getBody().push_back(probeJoin);
       route.dispatcher.getBody().push_back(classifyNative);
       route.dispatcher.getBody().push_back(checkpoint);
+      route.dispatcher.getBody().push_back(checkpointClearUnknown);
+      route.dispatcher.getBody().push_back(checkpointPublish);
       builder.setInsertionPointToStart(entry);
       SmallVector<Value> arguments(entry->getArguments());
       Value promoted = LLVM::ICmpOp::create(
@@ -3835,6 +3914,57 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::CondBrOp::create(builder, route.twoState.getLoc(), known, twoState,
                              fourState);
       builder.setInsertionPointToStart(checkpoint);
+      // A promoted body executes against a certified two-state view and
+      // deliberately leaves the canonical unknown plane untouched.  Before
+      // handing a checkpoint back to its four-state continuation, materialize
+      // that view by clearing exactly the owner's certified state ranges.  A
+      // checkpoint reached through the unpromoted four-state probe must retain
+      // its real X/Z bits.
+      LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
+                             checkpointClearUnknown, checkpointPublish);
+      builder.setInsertionPointToStart(checkpointClearUnknown);
+      Value checkpointUnknown = LLVM::AddressOfOp::create(
+          builder, route.twoState.getLoc(), pointer, "__obelisk_state_unknown");
+      ArrayRef<int64_t> checkpointRanges = route.ranges.asArrayRef();
+      if ((checkpointRanges.size() & 1) != 0)
+        return route.twoState.emitError("malformed local promotion ranges");
+      for (size_t index = 0; index != checkpointRanges.size(); index += 2) {
+        if (checkpointRanges[index] < 0 || checkpointRanges[index + 1] <= 0)
+          return route.twoState.emitError("invalid local promotion range");
+        uint64_t bitOffset = static_cast<uint64_t>(checkpointRanges[index]);
+        uint64_t bitWidth = static_cast<uint64_t>(checkpointRanges[index + 1]);
+        uint64_t firstByte = bitOffset / 8;
+        uint64_t lastBit = bitOffset + bitWidth;
+        uint64_t lastByte = (lastBit + 7) / 8;
+        for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
+          uint8_t mask = UINT8_MAX;
+          if (byte == firstByte && bitOffset % 8 != 0)
+            mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
+          if (byte + 1 == lastByte && lastBit % 8 != 0)
+            mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
+          Value address = detail::byteGEP(builder, route.twoState.getLoc(),
+                                          checkpointUnknown, byte);
+          if (mask == UINT8_MAX) {
+            LLVM::StoreOp::create(
+                builder, route.twoState.getLoc(),
+                detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0),
+                address, 1);
+          } else {
+            Value old = LLVM::LoadOp::create(builder, route.twoState.getLoc(),
+                                             i8, address, 1);
+            LLVM::StoreOp::create(
+                builder, route.twoState.getLoc(),
+                LLVM::AndOp::create(
+                    builder, route.twoState.getLoc(), old,
+                    detail::llvmConstant(builder, route.twoState.getLoc(), i8,
+                                         static_cast<uint8_t>(~mask))),
+                address, 1);
+          }
+        }
+      }
+      LLVM::BrOp::create(builder, route.twoState.getLoc(), ValueRange{},
+                         checkpointPublish);
+      builder.setInsertionPointToStart(checkpointPublish);
       LLVM::StoreOp::create(
           builder, route.twoState.getLoc(),
           detail::llvmConstant(builder, route.twoState.getLoc(),
@@ -4518,6 +4648,15 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   // without improving the generated schedule. Keep the canonical and
   // four-state barriers explicitly out of line below.
   fastClone->removeAttr("passthrough");
+  // The promoted coordinator enters this clone only for the NBA update
+  // region.  AOT partitioning deliberately keeps the (large) barrier out of
+  // the coordinator's object, so LLVM cannot propagate that constant across
+  // the call boundary.  Specialize it here instead: otherwise every scalar
+  // root repeats an exec-region comparison on every clock.
+  builder.setInsertionPointToStart(&fastClone.getBody().front());
+  fastClone.getBody().front().getArgument(2).replaceAllUsesWith(
+      detail::llvmConstant(builder, fastClone.getLoc(), builder.getI32Type(),
+                           2));
   // The full four-state and canonicalizing two-state barriers are handoff
   // paths.  Keep them out of the promoted coordinator so their unknown-plane
   // bookkeeping does not inflate register pressure and instruction layout in
@@ -4557,6 +4696,7 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   }
   for (LLVM::StoreOp store : canonicalUnknownStores)
     store.erase();
+
   // Specialization is carried entirely by call-site intent.  Validate and
   // consume the phase-local markers so a renamed or newly outlined
   // coordinator cannot silently retain the wrong NBA implementation.
@@ -4582,6 +4722,13 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
       if (!expectedSource && !expectedCanonical && !expectedFast)
         return call.emitError("fast two-state NBA intent is attached to an "
                               "unrelated callee"),
+               WalkResult::interrupt();
+      auto region = call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>();
+      auto regionValue =
+          region ? dyn_cast<IntegerAttr>(region.getValue()) : IntegerAttr{};
+      if (!regionValue || regionValue.getInt() != 2)
+        return call.emitError("fast two-state NBA intent requires the NBA "
+                              "execution region"),
                WalkResult::interrupt();
       call.setCallee(fastTwoStateName);
       call->removeAttr("obelisk.eval.use_fast_two_state_nba");
@@ -4851,6 +4998,29 @@ public:
       return;
     }
     markTiming("post-conversion materialization");
+
+    // Keep the generated eval loop's hottest call boundaries on an I-cache
+    // line regardless of unrelated runtime/string table growth. These bodies
+    // are deliberately retained as calls by the large-function policy below;
+    // leaving their placement at the target's minimum function alignment
+    // makes steady-state throughput depend on incidental section size.
+    Builder alignmentBuilder(&getContext());
+    module.walk([&](LLVM::LLVMFuncOp function) {
+      if (function.isExternal())
+        return;
+      StringRef name = function.getSymName();
+      uint64_t alignment = 0;
+      if (name.starts_with("__obelisk_aot_static_nba_commit_two_state"))
+        alignment = 128;
+      else if (name.starts_with("__obelisk_fused_") &&
+               name.contains("__obelisk_eval_body_"))
+        alignment = 64;
+      else if (function->hasAttr("obelisk.eval.call_closure_root"))
+        alignment = 64;
+      if (alignment)
+        function.setAlignmentAttr(
+            alignmentBuilder.getI64IntegerAttr(alignment));
+    });
 
     // ThinLTO may otherwise import a mechanically expanded helper into many
     // shards and optimize the same large body repeatedly.  Keep full local

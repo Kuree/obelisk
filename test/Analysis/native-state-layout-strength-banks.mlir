@@ -29,6 +29,6 @@ module {
   }
 }
 
-// CHECK: native-state bits=8
-// CHECK: driver 0 net=0
-// CHECK: driver 1 net=0
+// CHECK: native-state bits=17
+// CHECK: driver 0 net=0 handle=2 offset=8 width=1
+// CHECK: driver 1 net=0 handle=3 offset=16 width=1

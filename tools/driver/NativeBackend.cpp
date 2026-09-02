@@ -23,6 +23,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -343,10 +345,14 @@ public:
     const Target *target = TargetRegistry::lookupTarget(triple, error);
     if (!target)
       return nullptr;
+    StringRef cpu = sys::getHostCPUName();
+    SubtargetFeatures features;
+    for (const auto &feature : sys::getHostCPUFeatures())
+      features.AddFeature(feature.getKey(), feature.getValue());
     TargetOptions targetOptions;
     return std::unique_ptr<TargetMachine>(target->createTargetMachine(
-        triple, "", "", targetOptions, Reloc::PIC_, CodeModel::Small,
-        getCodeGenOptLevel(optLevel)));
+        triple, cpu, features.getString(), targetOptions, Reloc::PIC_,
+        CodeModel::Small, getCodeGenOptLevel(optLevel)));
   }
 
   LogicalResult linkExecutable(ArrayRef<std::string> modulePaths,

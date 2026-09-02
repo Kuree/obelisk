@@ -81,5 +81,5 @@ endmodule
 // SIM: obelisk_sim.assert.sampled_history
 // LLVM-FLAG: @__obelisk_execution_descriptor_v1 = constant
 // LLVM-FLAG-SAME: { i32 1, i32 33, i64 120,
-// LLVM-FLAG-SAME: { i32 1, i32 24, ptr @__obelisk_sampled_ranges_v1, i64 1 }
-// LLVM-FLAG: @__obelisk_sampled_ranges_v1 = internal constant [1 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 1, i64 0, i64 2 }]
+// LLVM-FLAG-SAME: { i32 1, i32 24, ptr @__obelisk_sampled_ranges_v1, i64 2 }
+// LLVM-FLAG: @__obelisk_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 8, i64 0, i64 1 }, { i64, i64, i64 } { i64 16, i64 1, i64 1 }]

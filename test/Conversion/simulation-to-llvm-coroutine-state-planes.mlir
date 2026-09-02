@@ -29,5 +29,5 @@ module attributes {
 // the two logic<4> nets and byte 3 the driver, all at high impedance.
 // Generated scalar accesses may use an unaligned word at the final root, so
 // the canonical 32-bit plane carries one private 8-byte guard word.
-// CHECK: llvm.mlir.global internal @__obelisk_state_unknown("\00\FF\FF\0F\00\00\00\00\00\00\00\00")
-// CHECK: llvm.mlir.global internal @__obelisk_state_value("\00\00\FF\0F\00\00\00\00\00\00\00\00")
+// CHECK: llvm.mlir.global internal @__obelisk_state_unknown("\00\FF\0F\0F\0F\00\00\00\00\00\00\00\00")
+// CHECK: llvm.mlir.global internal @__obelisk_state_value("\00\00\0F\0F\0F\00\00\00\00\00\00\00\00")

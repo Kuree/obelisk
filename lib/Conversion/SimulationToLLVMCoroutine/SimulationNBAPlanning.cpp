@@ -344,6 +344,15 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
            failure();
   for (const obelisk_rt_static_nba_site &site : plan.sites)
     plan.siteRoots.try_emplace(site.site, site.root);
+  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    sim::NBASiteAttr site = enqueue.getSiteAttr();
+    if (!site)
+      return;
+    auto origin =
+        enqueue->getAttrOfType<IntegerAttr>("obelisk.eval.origin_nba_site");
+    plan.siteSemanticOrigins.try_emplace(
+        site.getId(), origin ? origin.getValue().getZExtValue() : site.getId());
+  });
 
   // Prove the subset for which a dirty bit is also a complete generated-stage
   // validity proof. Fixed part-selects retain a write mask; roots shared

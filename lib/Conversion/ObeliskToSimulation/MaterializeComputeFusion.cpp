@@ -31,6 +31,20 @@ namespace obelisk {
 
 namespace {
 
+constexpr StringLiteral evalOriginNBASiteAttr = "obelisk.eval.origin_nba_site";
+
+static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
+  body.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    if (enqueue->hasAttr(evalOriginNBASiteAttr))
+      return;
+    sim::NBASiteAttr site = enqueue.getSiteAttr();
+    if (site)
+      enqueue->setAttr(evalOriginNBASiteAttr,
+                       IntegerAttr::get(IntegerType::get(body.getContext(), 64),
+                                        site.getId()));
+  });
+}
+
 bool useEvalBodyFusion(sim::SimDesignOp design) {
   ModuleOp module = design->getParentOfType<ModuleOp>();
   auto scheduler = module->getAttrOfType<sim::NativeSchedulerModeAttr>(
@@ -485,6 +499,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     abandon();
     return success();
   }
+  preserveEvalNBASiteOrigins(evalBody);
   function->setAttr("obelisk.eval.body",
                     FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
   return success();
@@ -2835,6 +2850,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     if (!cloneSupported) {
       evalBody.erase();
     } else {
+      preserveEvalNBASiteOrigins(evalBody);
       fused->setAttr("obelisk.eval.body",
                      FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
     }

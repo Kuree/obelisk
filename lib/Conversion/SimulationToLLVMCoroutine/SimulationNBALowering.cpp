@@ -521,10 +521,12 @@ public:
   PackedSliceNBAConversion(const TypeConverter &converter, MLIRContext *context,
                            uint64_t stateBitCount,
                            const NativeStaticNBAPlan *staticPlan,
+                           const NativeStateLayout *stateLayout,
                            bool staticSitesEnabled, bool guardedClaims)
       : OpConversionPattern(converter, context, PatternBenefit(2)),
         stateBitCount(stateBitCount), staticPlan(staticPlan),
-        staticSitesEnabled(staticSitesEnabled), guardedClaims(guardedClaims) {}
+        stateLayout(stateLayout), staticSitesEnabled(staticSitesEnabled),
+        guardedClaims(guardedClaims) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
@@ -562,18 +564,34 @@ public:
               rewriter.getZeroAttr(lowPlanes[1].getType())));
       valid = arith::AndIOp::create(rewriter, location, valid, known);
     }
-    // The ordinary dynamic-reference conversion already folds the complete
-    // handle contract, including an X/Z index and representability/range
-    // checks that may have consumed a now-specialized unknown plane. Reuse
-    // that remapped result instead of trying to reconstruct knownness from the
-    // low-bit producer after one-to-N conversion has rewritten it.
-    valid = arith::AndIOp::create(
-        rewriter, location, valid,
-        arith::CmpIOp::create(
-            rewriter, location, arith::CmpIPredicate::ne,
-            adaptor.getDestination().front(),
-            llvmConstant(rewriter, location, i64, UINT64_MAX)));
-    Value valid32 = LLVM::ZExtOp::create(rewriter, location, i32, valid);
+    // Dynamic-reference lowering may have consumed an unknown index plane
+    // while building a guarded stable handle.  Preserve that exact validity
+    // predicate, but not the selected handle result: direct staging needs the
+    // former to make an X/Z write a no-op (IEEE 1800-2017 11.5.1), while
+    // retaining the latter would keep native_handle_offset on the hot path.
+    Value directValid = valid;
+    bool exactDestinationValidity = true;
+    Operation *destinationSelect =
+        adaptor.getDestination().front().getDefiningOp();
+    if (isa_and_nonnull<arith::SelectOp, LLVM::SelectOp>(destinationSelect)) {
+      std::optional<uint64_t> trueValue =
+          resolveCFGConstantInteger(destinationSelect->getOperand(1));
+      std::optional<uint64_t> falseValue =
+          resolveCFGConstantInteger(destinationSelect->getOperand(2));
+      Value condition = destinationSelect->getOperand(0);
+      if (falseValue && *falseValue == UINT64_MAX) {
+        directValid =
+            arith::AndIOp::create(rewriter, location, directValid, condition);
+      } else if (trueValue && *trueValue == UINT64_MAX) {
+        Value inverted = arith::XOrIOp::create(
+            rewriter, location, condition,
+            llvmConstant(rewriter, location, rewriter.getI1Type(), 1));
+        directValid =
+            arith::AndIOp::create(rewriter, location, directValid, inverted);
+      } else {
+        exactDestinationValidity = false;
+      }
+    }
     sim::NBASiteAttr site = op.getSiteAttr();
     bool staticallyStaged =
         !op.getClockingOutputAttr() && staticSitesEnabled && staticPlan &&
@@ -594,8 +612,28 @@ public:
       // Capture specialization replaces direct descriptor arguments with a
       // context-storage op. A surviving entry argument can be a runtime view;
       // descriptor provenance alone does not prove root-relative offset zero.
-      if (isa<BlockArgument>(reference))
-        return std::nullopt;
+      if (auto argument = dyn_cast<BlockArgument>(reference)) {
+        auto owner =
+            dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+        if (!owner || argument.getOwner() != &owner.getBody().front() ||
+            !owner->hasAttr("obelisk.eval.raw_captures") || !stateLayout ||
+            rootIndex == UINT32_MAX || !staticPlan ||
+            rootIndex >= staticPlan->roots.size())
+          return std::nullopt;
+        auto descriptor = owner.getArgAttrOfType<IntegerAttr>(
+            argument.getArgNumber(), "obelisk_sim.descriptor_id");
+        auto handle = descriptor
+                          ? stateLayout->storage.find(descriptor.getInt())
+                          : stateLayout->storage.end();
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (handle == stateLayout->storage.end() ||
+            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+            decoded.id != staticPlan->roots[rootIndex].static_state ||
+            decoded.offset < 0)
+          return std::nullopt;
+        return static_cast<uint64_t>(decoded.offset);
+      }
       if (auto extract = reference.getDefiningOp<sim::SimRefExtractOp>()) {
         std::optional<uint64_t> parent = resolveViewOffset(extract.getInput());
         if (!parent || extract.getLowBit() > UINT64_MAX - *parent)
@@ -653,12 +691,12 @@ public:
             [](Value value) { return isa<IntegerType>(value.getType()); }) ||
         (adaptor.getValue().size() == 1 &&
          isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType()));
-    bool directGeneratedStage = staticallyStaged && rootIndex != UINT32_MAX &&
-                                !generatedAccumulator.empty() &&
-                                rootWidth <= 64 && *sourceWidth <= 64 &&
-                                viewOffset && *viewOffset <= rootWidth &&
-                                *baseWidth <= rootWidth - *viewOffset &&
-                                commitRegion != UINT32_MAX && scalarValue;
+    bool directGeneratedStage =
+        staticallyStaged && rootIndex != UINT32_MAX &&
+        !generatedAccumulator.empty() && rootWidth <= 64 &&
+        *sourceWidth <= 64 && viewOffset && *viewOffset <= rootWidth &&
+        *baseWidth <= rootWidth - *viewOffset && commitRegion != UINT32_MAX &&
+        scalarValue && exactDestinationValidity;
 
     auto widen = [&](Value value) {
       if (isa<LLVM::LLVMPointerType>(value.getType()))
@@ -684,7 +722,7 @@ public:
       Value aboveBegin = arith::CmpIOp::create(
           rewriter, location, arith::CmpIPredicate::sgt, low.value, lowerBound);
       Value overlaps = arith::AndIOp::create(
-          rewriter, location, valid,
+          rewriter, location, directValid,
           arith::AndIOp::create(rewriter, location, belowEnd, aboveBegin));
       Value lowPositive = arith::CmpIOp::create(
           rewriter, location, arith::CmpIPredicate::sgt, low.value, zero);
@@ -852,6 +890,17 @@ public:
       rewriter.setInsertionPointToEnd(fallback);
     }
 
+    // Generic fallback consumes the converted handle contract.  Build this
+    // only after the direct path has returned: otherwise its handle-offset
+    // call remains artificially live in a runtime-free eval body even though
+    // direct staging has already reconstructed index knownness and bounds.
+    valid = arith::AndIOp::create(
+        rewriter, location, valid,
+        arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::ne,
+            adaptor.getDestination().front(),
+            llvmConstant(rewriter, location, i64, UINT64_MAX)));
+    Value valid32 = LLVM::ZExtOp::create(rewriter, location, i32, valid);
     auto savePlane = [&](Value value) {
       Value address = entryAlloca(rewriter, location, value.getType(), 1, 1);
       LLVM::StoreOp::create(rewriter, location, value, address, 1);
@@ -909,6 +958,7 @@ public:
 private:
   uint64_t stateBitCount = 0;
   const NativeStaticNBAPlan *staticPlan = nullptr;
+  const NativeStateLayout *stateLayout = nullptr;
   bool staticSitesEnabled = false;
   bool guardedClaims = false;
 };
@@ -1002,6 +1052,8 @@ public:
       Value unknown = llvmConstant(rewriter, location, i64, 0);
       if (adaptor.getValue().size() == 2)
         unknown = widen(adaptor.getValue()[1]);
+      if (inductiveTwoStateAccess)
+        unknown = llvmConstant(rewriter, location, i64, 0);
       Value value = widen(adaptor.getValue().front());
       uint32_t homeRegion =
           function ? getRuntimeEventRegion(function.getHomeRegion())
@@ -1063,10 +1115,14 @@ public:
           };
           mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
                      value);
-          if (!inductiveTwoStateAccess)
-            mergeField(
-                offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
-                unknown);
+          // A promoted body can share the generated accumulator with a
+          // four-state bootstrap or fallback body.  Explicitly overwrite its
+          // selected unknown bits with zero: otherwise a later mixed or
+          // checkpoint barrier can replay stale X/Z data from the prior
+          // phase into canonical state.
+          mergeField(
+              offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+              unknown);
           if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = byteGEP(
@@ -1092,9 +1148,10 @@ public:
                   offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
                       laneOffset),
               4);
-          // This lane form is restricted to two-state values. The generated
-          // record is zero-initialized and no other path writes its unknown
-          // lanes, so repeatedly storing zero here only adds hot-path traffic.
+          // This lane form is restricted to two-state values, but the same
+          // accumulator can have been populated by a four-state phase before
+          // promotion.  Clear the selected unknown lane as part of staging so
+          // every legal barrier observes the same known value.
           LLVM::StoreOp::create(
               rewriter, location,
               llvmConstant(rewriter, location, i32, UINT32_MAX),
@@ -1103,14 +1160,13 @@ public:
                                write_mask) +
                           laneOffset),
               4);
-          if (!inductiveTwoStateAccess)
-            LLVM::StoreOp::create(
-                rewriter, location, llvmConstant(rewriter, location, i32, 0),
-                byteGEP(rewriter, location, base,
-                        offsetof(obelisk_rt_generated_nba_accumulator_256,
-                                 unknown) +
-                            laneOffset),
-                4);
+          LLVM::StoreOp::create(
+              rewriter, location, llvmConstant(rewriter, location, i32, 0),
+              byteGEP(
+                  rewriter, location, base,
+                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown) +
+                      laneOffset),
+              4);
         }
         if (!fixedRegionEvalStage) {
           LLVM::StoreOp::create(
@@ -1364,6 +1420,7 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          TypeConverter &converter,
                                          uint64_t stateBitCount,
                                          const NativeStaticNBAPlan *staticPlan,
+                                         const NativeStateLayout *stateLayout,
                                          bool staticSitesEnabled,
                                          bool guardedClaims, bool evalCeiling) {
   patterns.add<InertialDriverConversion>(converter, patterns.getContext(),
@@ -1377,7 +1434,7 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
   patterns.add<InertialPathStrengthPairConversion>(
       converter, patterns.getContext(), stateBitCount);
   patterns.add<PackedSliceNBAConversion>(converter, patterns.getContext(),
-                                         stateBitCount, staticPlan,
+                                         stateBitCount, staticPlan, stateLayout,
                                          staticSitesEnabled, guardedClaims);
   patterns.add<ImmediateNBAConversion>(
       converter, patterns.getContext(), stateBitCount, staticPlan,

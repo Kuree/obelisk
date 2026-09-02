@@ -2002,6 +2002,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                          valueLayout.kind == OBELISK_RT_DBREG_REAL64;
         Logic oldReal{value.width, false, LimbVector(limbCount(value.width)),
                       LimbVector(limbCount(value.width))};
+        uint64_t mirroredBegin = UINT64_MAX;
+        uint64_t mirroredEnd = 0;
         for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
                        start <= INT64_MAX - static_cast<int64_t>(bitIndex);
@@ -2094,6 +2096,8 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             } else {
               setBit(context->stateValue, storageBit, newValue);
               setBit(context->stateUnknown, storageBit, newUnknown);
+              mirroredBegin = std::min(mirroredBegin, storageBit);
+              mirroredEnd = std::max(mirroredEnd, storageBit + 1);
             }
             if (!local && !realValue && !equalStringContents)
               transitions.push_back(
@@ -2105,6 +2109,14 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                    oldValue, oldUnknown, newValue, newUnknown});
           }
         }
+        // Bytecode is the tier-three authority for the canonical vectors, but
+        // a native schedule plan can remain bound while individual actors
+        // fall back to bytecode.  Keep its flat planes coherent immediately:
+        // Preponed sampling and a later native handover may read them before
+        // another generated fragment happens to touch the same byte.
+        if (mirroredBegin != UINT64_MAX)
+          obelisk_rt_sync_native_state_range_unlocked(
+              context, mirroredBegin, mirroredEnd - mirroredBegin);
         if (isLoad && !eventValue && !local && !automatic &&
             context->observerForcesCanonicalPlane &&
             context->clockOccurrences &&
