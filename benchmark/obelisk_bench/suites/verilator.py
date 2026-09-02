@@ -178,6 +178,12 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
+    "t_process_always": (
+        "IEEE 1800-2017 9.2.2.1 describes a time-free always procedure as a "
+        "simulation deadlock rather than a compile error, while 20.2 makes "
+        "$finish exit the simulator; this test unconditionally calls $finish "
+        "before the always procedure can reiterate, but pinned Slang rejects "
+        "it as a deadlock before emitting IR"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "

@@ -841,6 +841,16 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
+    def test_terminating_always_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_process_always",
+            "always procedure does not advance time and so will create a "
+            "simulation deadlock\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 9.2.2.1", log)
+        self.assertIn("20.2", log)
+        self.assertTrue(log.endswith("simulation deadlock\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),
