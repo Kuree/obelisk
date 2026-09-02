@@ -262,18 +262,27 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       if (sourceSet.insert(function.getOperation()).second)
         sources.push_back(function);
 
-    // A delayed-net drive owns calendar and charge-storage behavior in the
-    // runtime. It cannot execute inside the closed Tier-1 evaluator, whose
-    // calls must be scheduler-free. Reject the complete owner transitively
-    // while the Simulation call graph is still available so Auto can retain
-    // the ordinary Tier-2/runtime route instead of discovering the runtime
-    // call only after irreversible LLVM conversion.
-    bool hasDelayedNetDrive = false;
+    // Delayed-net drives own calendar and charge-storage behavior in the
+    // runtime. Pass-connected nets likewise require component-wide resolution
+    // after every publication (IEEE 1800-2017 28.8 and 28.13). Neither can
+    // execute inside the closed Tier-1 evaluator, whose calls must be
+    // scheduler-free. Reject the complete owner transitively while the
+    // Simulation call graph is still available so Auto can retain the
+    // ordinary Tier-2/runtime route instead of discovering the runtime call
+    // only after irreversible LLVM conversion.
+    bool hasRuntimeDriverResolution = false;
     for (sim::SimFuncOp function : closure)
-      function.walk([&](sim::SimDriverDriveDelayedNetOp) {
-        hasDelayedNetDrive = true;
+      function.walk([&](Operation *operation) {
+        hasRuntimeDriverResolution |=
+            isa<sim::SimDriverDriveDelayedNetOp>(operation) ||
+            (stateLayout.hasPassSwitch &&
+             isa<sim::SimDriverDriveOp, sim::SimDriverDriveInertialOp,
+                 sim::SimDriverDriveInertialPathOp,
+                 sim::SimDriverDriveInertialStrengthPairOp,
+                 sim::SimDriverDriveInertialPathStrengthPairOp,
+                 sim::SimDriverDriveChangedOp>(operation));
       });
-    if (hasDelayedNetDrive)
+    if (hasRuntimeDriverResolution)
       root->setAttr(sim::metadata::evalUnsupportedCheckpointOwner,
                     StringAttr::get(module.getContext(), root.getSymName()));
   }
@@ -368,6 +377,20 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
+        // Pass-connected nets require component-wide resolution after every
+        // driver publication (IEEE 1800-2017 28.8 and 28.13). The native
+        // lowering performs that resolution through the scheduler runtime,
+        // so this operation cannot enter a runtime-free eval closure.
+        if (stateLayout.hasPassSwitch &&
+            isa<sim::SimDriverDriveOp, sim::SimDriverDriveInertialOp,
+                sim::SimDriverDriveInertialPathOp,
+                sim::SimDriverDriveInertialStrengthPairOp,
+                sim::SimDriverDriveInertialPathStrengthPairOp,
+                sim::SimDriverDriveDelayedNetOp,
+                sim::SimDriverDriveChangedOp>(operation)) {
+          runtimeFree = false;
+          checkpointSafe = false;
+        }
         if (operation->getName().getDialectNamespace() == "obelisk_rt") {
           preserving = false;
           runtimeFree = false;
