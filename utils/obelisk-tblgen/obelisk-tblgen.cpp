@@ -385,41 +385,75 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto roles = records.getAllDerivedDefinitions("VPIObjectRole");
   auto objects = records.getAllDerivedDefinitions("VPIObjectKind");
   auto relations = records.getAllDerivedDefinitions("VPIRelation");
+  auto objectSets = records.getAllDerivedDefinitions("VPIObjectSet");
+  auto traversalModes = records.getAllDerivedDefinitions("VPITraversalMode");
+  auto traversalOrders = records.getAllDerivedDefinitions("VPITraversalOrder");
+  auto traversalEdges = records.getAllDerivedDefinitions("VPITraversalEdge");
   if (families.empty() || roles.empty() || objects.empty() ||
-      relations.empty()) {
-    PrintError(
-        "VPI object model needs families, roles, objects, and relations");
+      relations.empty() || objectSets.empty() || traversalModes.empty() ||
+      traversalOrders.empty() || traversalEdges.empty()) {
+    PrintError("VPI object model needs families, roles, objects, relations, "
+               "object sets, traversal modes, orders, and edges");
     return false;
   }
   if (families.size() > 64) {
     PrintError("VPI object model supports at most 64 families");
     return false;
   }
+  if (objectSets.size() > std::numeric_limits<uint16_t>::max()) {
+    PrintError("VPI object model supports at most 65535 object sets");
+    return false;
+  }
 
   StringMap<const Record *> familyNames;
+  DenseMap<uint32_t, const Record *> familyValues;
   for (const Record *family : families) {
     StringRef name;
+    uint32_t value = 0;
     if (!getCppName(*family, "VPI object family", name))
       return false;
+    if (!getU32(*family, "value", 0, value))
+      return false;
+    if (value >= 64) {
+      PrintError(family->getLoc(),
+                 "VPI object family value must be in [0, 63]");
+      return false;
+    }
     if (!familyNames.try_emplace(name, family).second) {
       PrintError(family->getLoc(), "duplicate VPI object family name");
       return false;
     }
+    if (!familyValues.try_emplace(value, family).second) {
+      PrintError(family->getLoc(), "duplicate VPI object family value");
+      return false;
+    }
   }
 
-  StringSet<> supportedRoles{"Concrete", "AbstractSelector", "RelationOnly",
-                             "CompatibilitySelector"};
+  StringMap<uint32_t> supportedRoles{{"Concrete", 0},
+                                     {"AbstractSelector", 1},
+                                     {"RelationOnly", 2},
+                                     {"CompatibilitySelector", 3}};
   StringMap<const Record *> roleNames;
+  DenseMap<uint32_t, const Record *> roleValues;
   for (const Record *role : roles) {
     StringRef name;
+    uint32_t value = 0;
     if (!getCppName(*role, "VPI object role", name))
       return false;
-    if (!supportedRoles.contains(name)) {
+    if (!getU32(*role, "value", 0, value))
+      return false;
+    auto supported = supportedRoles.find(name);
+    if (supported == supportedRoles.end() || supported->second != value ||
+        role->getValueAsBit("concrete") != (name == "Concrete")) {
       PrintError(role->getLoc(), "unsupported VPI object role");
       return false;
     }
     if (!roleNames.try_emplace(name, role).second) {
       PrintError(role->getLoc(), "duplicate VPI object role name");
+      return false;
+    }
+    if (!roleValues.try_emplace(value, role).second) {
+      PrintError(role->getLoc(), "duplicate VPI object role value");
       return false;
     }
   }
@@ -548,6 +582,211 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       return false;
     }
   }
+
+  auto validateEnum = [](ArrayRef<const Record *> values,
+                         ArrayRef<std::pair<StringRef, uint32_t>> supported,
+                         StringRef description) {
+    StringMap<uint32_t> expected;
+    for (auto [name, value] : supported)
+      expected[name] = value;
+    StringSet<> names;
+    DenseSet<uint32_t> numbers;
+    for (const Record *record : values) {
+      StringRef name;
+      uint32_t value = 0;
+      if (!getCppName(*record, description, name) ||
+          !getU32(*record, "value", 0, value))
+        return false;
+      auto found = expected.find(name);
+      if (found == expected.end() || found->second != value ||
+          !names.insert(name).second || !numbers.insert(value).second) {
+        PrintError(record->getLoc(),
+                   Twine("unsupported or duplicate ") + description);
+        return false;
+      }
+    }
+    if (names.size() != expected.size()) {
+      PrintError(Twine("missing ") + description);
+      return false;
+    }
+    return true;
+  };
+  const std::pair<StringRef, uint32_t> supportedModes[] = {{"Handle", 0},
+                                                           {"Iterate", 1}};
+  const std::pair<StringRef, uint32_t> supportedOrders[] = {{"None", 0},
+                                                            {"Source", 1},
+                                                            {"Declaration", 2},
+                                                            {"Index", 3},
+                                                            {"Time", 4}};
+  if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
+      !validateEnum(traversalOrders, supportedOrders, "VPI traversal order"))
+    return false;
+
+  auto isConcrete = [](const Record *object) {
+    return object->getValueAsString("aliasOf").empty() &&
+           object->getValueAsDef("role")->getValueAsBit("concrete");
+  };
+  auto expandSet = [&](const Record *set,
+                       SmallVectorImpl<const Record *> &expanded) {
+    DenseSet<const Record *> selected;
+    DenseSet<const Record *> requestedFamilies;
+    for (const Record *family : set->getValueAsListOfDefs("families")) {
+      if (!requestedFamilies.insert(family).second) {
+        PrintError(set->getLoc(), "duplicate family in VPI object set");
+        return false;
+      }
+    }
+    for (const Record *object : objects) {
+      if (!isConcrete(object))
+        continue;
+      for (const Record *family : object->getValueAsListOfDefs("families"))
+        if (requestedFamilies.contains(family)) {
+          selected.insert(object);
+          break;
+        }
+    }
+    for (const Record *object : set->getValueAsListOfDefs("objects")) {
+      if (!isConcrete(object) || !selected.insert(object).second) {
+        PrintError(set->getLoc(),
+                   "VPI object set needs unique canonical concrete objects");
+        return false;
+      }
+    }
+    DenseSet<const Record *> exclusions;
+    for (const Record *object : set->getValueAsListOfDefs("exclude")) {
+      if (!isConcrete(object) || !exclusions.insert(object).second ||
+          !selected.erase(object)) {
+        PrintError(set->getLoc(),
+                   "VPI object set exclusion must select a unique member");
+        return false;
+      }
+    }
+    llvm::append_range(expanded, selected);
+    llvm::sort(expanded, [](const Record *left, const Record *right) {
+      return left->getValueAsInt("value") < right->getValueAsInt("value");
+    });
+    return true;
+  };
+
+  StringMap<const Record *> setNames;
+  DenseMap<const Record *, SmallVector<const Record *>> expandedSets;
+  const Record *iterateSourcesSet = nullptr;
+  for (const Record *set : objectSets) {
+    StringRef name;
+    if (!getCppName(*set, "VPI object set", name))
+      return false;
+    if (!setNames.try_emplace(name, set).second) {
+      PrintError(set->getLoc(), "duplicate VPI object set name");
+      return false;
+    }
+    auto &expanded = expandedSets[set];
+    if (!expandSet(set, expanded))
+      return false;
+    if (set->getValueAsBit("iterateSources")) {
+      if (iterateSourcesSet || !expanded.empty() ||
+          set->getValueAsBit("nullRoot") ||
+          !set->getValueAsListOfDefs("exclude").empty()) {
+        PrintError(set->getLoc(),
+                   "derived iterator-source set must be unique and empty");
+        return false;
+      }
+      iterateSourcesSet = set;
+    } else if (expanded.empty() && !set->getValueAsBit("nullRoot")) {
+      PrintError(set->getLoc(), "VPI object set expands to no concrete kinds");
+      return false;
+    }
+  }
+
+  if (iterateSourcesSet) {
+    DenseSet<const Record *> selected;
+    for (const Record *edge : traversalEdges) {
+      const Record *mode = edge->getValueAsDef("mode");
+      const Record *sources = edge->getValueAsDef("sources");
+      if (sources == iterateSourcesSet) {
+        PrintError(edge->getLoc(),
+                   "derived iterator-source set cannot be an edge source");
+        return false;
+      }
+      if (mode->getValueAsInt("value") != 1 ||
+          sources->getValueAsBit("nullRoot"))
+        continue;
+      const auto &sourceKinds = expandedSets.find(sources)->second;
+      selected.insert(sourceKinds.begin(), sourceKinds.end());
+    }
+    auto &expanded = expandedSets[iterateSourcesSet];
+    llvm::append_range(expanded, selected);
+    llvm::sort(expanded, [](const Record *left, const Record *right) {
+      return left->getValueAsInt("value") < right->getValueAsInt("value");
+    });
+    if (expanded.empty()) {
+      PrintError(iterateSourcesSet->getLoc(),
+                 "derived iterator-source set expands to no concrete kinds");
+      return false;
+    }
+  }
+
+  StringMap<const Record *> edgeKeys;
+  for (const Record *edge : traversalEdges) {
+    const Record *sources = edge->getValueAsDef("sources");
+    const Record *targets = edge->getValueAsDef("targets");
+    const Record *selector = edge->getValueAsDef("selector");
+    const Record *mode = edge->getValueAsDef("mode");
+    const Record *order = edge->getValueAsDef("order");
+    StringRef clause = edge->getValueAsString("clause");
+    if (targets->getValueAsBit("nullRoot") || clause.empty()) {
+      PrintError(edge->getLoc(),
+                 "VPI traversal needs non-root targets and an LRM clause");
+      return false;
+    }
+    if (!selector->getValueAsString("aliasOf").empty()) {
+      PrintError(edge->getLoc(), "VPI traversal selector must be canonical");
+      return false;
+    }
+    if (selector->isSubClassOf("VPIObjectKind") &&
+        selector->getValueAsDef("role")->getValueAsString("cppName") ==
+            "RelationOnly") {
+      PrintError(edge->getLoc(),
+                 "relation-only traversal must use its VPIRelation record");
+      return false;
+    }
+    StringRef modeName = mode->getValueAsString("cppName");
+    if (selector->isSubClassOf("VPIRelation")) {
+      StringRef cardinality =
+          selector->getValueAsDef("cardinality")->getValueAsString("cppName");
+      if ((cardinality == "One" && modeName != "Handle") ||
+          (cardinality == "Many" && modeName != "Iterate")) {
+        PrintError(edge->getLoc(),
+                   "VPI traversal mode disagrees with relation cardinality");
+        return false;
+      }
+    }
+    if (modeName == "Handle" && order->getValueAsString("cppName") != "None") {
+      PrintError(edge->getLoc(), "one-to-one VPI traversal cannot be ordered");
+      return false;
+    }
+    auto addKey = [&](uint32_t source) {
+      std::string key =
+          (Twine(source) + ":" + Twine(selector->getValueAsInt("value")) + ":" +
+           Twine(mode->getValueAsInt("value")))
+              .str();
+      auto [existing, inserted] = edgeKeys.try_emplace(key, edge);
+      if (!inserted) {
+        PrintError(edge->getLoc(),
+                   Twine("duplicate expanded VPI edge for source ") +
+                       Twine(source) + ", selector " +
+                       Twine(selector->getValueAsInt("value")) + ", mode " +
+                       modeName + "; first declared by " +
+                       existing->second->getName());
+        return false;
+      }
+      return true;
+    };
+    for (const Record *source : expandedSets.lookup(sources))
+      if (!addKey(static_cast<uint32_t>(source->getValueAsInt("value"))))
+        return false;
+    if (sources->getValueAsBit("nullRoot") && !addKey(0))
+      return false;
+  }
   return true;
 }
 
@@ -566,14 +805,14 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   SmallVector<const Record *> families(familyRecords.begin(),
                                        familyRecords.end());
   llvm::sort(families, [](const Record *left, const Record *right) {
-    return left->getValueAsString("cppName") <
-           right->getValueAsString("cppName");
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
   DenseMap<const Record *, unsigned> familyBits;
   os << "enum class VPIObjectFamily : uint8_t {\n";
-  for (auto [index, family] : llvm::enumerate(families)) {
-    familyBits[family] = index;
-    os << formatv("  {0} = {1},\n", family->getValueAsString("cppName"), index);
+  for (const Record *family : families) {
+    unsigned value = family->getValueAsInt("value");
+    familyBits[family] = value;
+    os << formatv("  {0} = {1},\n", family->getValueAsString("cppName"), value);
   }
   os << "};\n\n";
   os << "constexpr uint64_t vpiFamilyMask(VPIObjectFamily family) {\n"
@@ -583,13 +822,13 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   auto roleRecords = records.getAllDerivedDefinitions("VPIObjectRole");
   SmallVector<const Record *> roles(roleRecords.begin(), roleRecords.end());
   llvm::sort(roles, [](const Record *left, const Record *right) {
-    return left->getValueAsString("cppName") <
-           right->getValueAsString("cppName");
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
   os << "enum class VPIObjectRole : uint8_t {\n";
   for (const Record *role : roles)
-    os << formatv("  {0},\n", role->getValueAsString("cppName"));
-  os << "  Alias,\n};\n\n";
+    os << formatv("  {0} = {1},\n", role->getValueAsString("cppName"),
+                  role->getValueAsInt("value"));
+  os << "  Alias = 4,\n};\n\n";
 
   auto objectRecords = records.getAllDerivedDefinitions("VPIObjectKind");
   SmallVector<const Record *> objects(objectRecords.begin(),
@@ -687,6 +926,208 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "    if (relation.value == value && relation.aliasOf == nullptr)\n"
         "      return &relation;\n"
         "  return nullptr;\n"
+        "}\n\n";
+
+  auto setRecords = records.getAllDerivedDefinitions("VPIObjectSet");
+  SmallVector<const Record *> objectSets(setRecords.begin(), setRecords.end());
+  llvm::sort(objectSets, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  DenseMap<const Record *, SmallVector<uint32_t>> expandedSets;
+  for (const Record *set : objectSets) {
+    DenseSet<const Record *> selected;
+    DenseSet<const Record *> requestedFamilies;
+    for (const Record *family : set->getValueAsListOfDefs("families"))
+      requestedFamilies.insert(family);
+    for (const Record *object : objects) {
+      if (!object->getValueAsString("aliasOf").empty() ||
+          !object->getValueAsDef("role")->getValueAsBit("concrete"))
+        continue;
+      for (const Record *family : object->getValueAsListOfDefs("families"))
+        if (requestedFamilies.contains(family)) {
+          selected.insert(object);
+          break;
+        }
+    }
+    for (const Record *object : set->getValueAsListOfDefs("objects"))
+      selected.insert(object);
+    for (const Record *object : set->getValueAsListOfDefs("exclude"))
+      selected.erase(object);
+    auto &expanded = expandedSets[set];
+    for (const Record *object : selected)
+      expanded.push_back(static_cast<uint32_t>(object->getValueAsInt("value")));
+    llvm::sort(expanded);
+  }
+  for (const Record *set : objectSets) {
+    if (!set->getValueAsBit("iterateSources"))
+      continue;
+    DenseSet<uint32_t> selected;
+    for (const Record *edge :
+         records.getAllDerivedDefinitions("VPITraversalEdge")) {
+      const Record *mode = edge->getValueAsDef("mode");
+      const Record *sources = edge->getValueAsDef("sources");
+      if (mode->getValueAsInt("value") != 1 ||
+          sources->getValueAsBit("nullRoot"))
+        continue;
+      const auto &sourceKinds = expandedSets.find(sources)->second;
+      selected.insert(sourceKinds.begin(), sourceKinds.end());
+    }
+    auto &expanded = expandedSets[set];
+    llvm::append_range(expanded, selected);
+    llvm::sort(expanded);
+  }
+
+  os << "enum class VPIObjectSetID : uint16_t {\n";
+  for (auto [index, set] : llvm::enumerate(objectSets))
+    os << formatv("  {0} = {1},\n", set->getValueAsString("cppName"), index);
+  os << "};\n\n";
+  os << "inline constexpr uint32_t vpiObjectSetKinds[] = {\n";
+  for (const Record *set : objectSets)
+    for (uint32_t value : expandedSets.lookup(set))
+      os << formatv("  {0},\n", value);
+  os << "};\n\n";
+  os << "struct VPIObjectSetDescriptor {\n"
+        "  const char *name;\n"
+        "  uint32_t firstKind;\n"
+        "  uint32_t kindCount;\n"
+        "  bool includesNullRoot;\n"
+        "};\n\n";
+  os << "inline constexpr VPIObjectSetDescriptor vpiObjectSets[] = {\n";
+  uint32_t firstKind = 0;
+  for (const Record *set : objectSets) {
+    uint32_t count = expandedSets.lookup(set).size();
+    os << formatv("  {{\"{0}\", {1}, {2}, {3}",
+                  set->getValueAsString("cppName"), firstKind, count,
+                  set->getValueAsBit("nullRoot") ? "true" : "false");
+    os << "},\n";
+    firstKind += count;
+  }
+  os << "};\n\n";
+  os << "inline constexpr bool vpiObjectSetContains(VPIObjectSetID id,\n"
+        "                                          uint32_t kind) {\n"
+        "  const auto &set =\n"
+        "      vpiObjectSets[static_cast<uint16_t>(id)];\n"
+        "  uint32_t low = set.firstKind;\n"
+        "  uint32_t high = low + set.kindCount;\n"
+        "  while (low != high) {\n"
+        "    uint32_t middle = low + (high - low) / 2;\n"
+        "    if (vpiObjectSetKinds[middle] < kind)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != set.firstKind + set.kindCount &&\n"
+        "         vpiObjectSetKinds[low] == kind;\n"
+        "}\n\n";
+
+  auto modeRecords = records.getAllDerivedDefinitions("VPITraversalMode");
+  SmallVector<const Record *> modes(modeRecords.begin(), modeRecords.end());
+  llvm::sort(modes, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPITraversalMode : uint8_t {\n";
+  for (const Record *mode : modes)
+    os << formatv("  {0} = {1},\n", mode->getValueAsString("cppName"),
+                  mode->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto orderRecords = records.getAllDerivedDefinitions("VPITraversalOrder");
+  SmallVector<const Record *> orders(orderRecords.begin(), orderRecords.end());
+  llvm::sort(orders, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPITraversalOrder : uint8_t {\n";
+  for (const Record *order : orders)
+    os << formatv("  {0} = {1},\n", order->getValueAsString("cppName"),
+                  order->getValueAsInt("value"));
+  os << "};\n\n";
+
+  struct EmittedTraversalEdge {
+    uint32_t source;
+    uint32_t selector;
+    const Record *mode;
+    const Record *order;
+    const Record *targets;
+    StringRef selectorName;
+    StringRef clause;
+  };
+  SmallVector<EmittedTraversalEdge> emittedEdges;
+  for (const Record *edge :
+       records.getAllDerivedDefinitions("VPITraversalEdge")) {
+    const Record *sources = edge->getValueAsDef("sources");
+    const Record *selector = edge->getValueAsDef("selector");
+    auto addEdge = [&](uint32_t source) {
+      emittedEdges.push_back(
+          {source, static_cast<uint32_t>(selector->getValueAsInt("value")),
+           edge->getValueAsDef("mode"), edge->getValueAsDef("order"),
+           edge->getValueAsDef("targets"),
+           selector->getValueAsString("apiName"),
+           edge->getValueAsString("clause")});
+    };
+    for (uint32_t source : expandedSets.lookup(sources))
+      addEdge(source);
+    if (sources->getValueAsBit("nullRoot"))
+      addEdge(0);
+  }
+  llvm::sort(emittedEdges, [](const EmittedTraversalEdge &left,
+                              const EmittedTraversalEdge &right) {
+    return std::make_tuple(left.source, left.selector,
+                           left.mode->getValueAsInt("value")) <
+           std::make_tuple(right.source, right.selector,
+                           right.mode->getValueAsInt("value"));
+  });
+  os << "struct VPITraversalDescriptor {\n"
+        "  uint32_t sourceType;\n"
+        "  uint32_t selector;\n"
+        "  VPITraversalMode mode;\n"
+        "  VPITraversalOrder order;\n"
+        "  VPIObjectSetID targets;\n"
+        "  const char *selectorName;\n"
+        "  const char *clause;\n"
+        "};\n\n";
+  os << "inline constexpr VPITraversalDescriptor vpiTraversals[] = {\n";
+  for (const EmittedTraversalEdge &edge : emittedEdges) {
+    os << formatv(
+        "  {{{0}, {1}, VPITraversalMode::{2}, VPITraversalOrder::{3}, "
+        "VPIObjectSetID::{4}, \"{5}\", \"{6}\"",
+        edge.source, edge.selector, edge.mode->getValueAsString("cppName"),
+        edge.order->getValueAsString("cppName"),
+        edge.targets->getValueAsString("cppName"), edge.selectorName,
+        edge.clause);
+    os << "},\n";
+  }
+  os << "};\n\n";
+  os << "inline constexpr const VPITraversalDescriptor *findVPITraversal(\n"
+        "    uint32_t sourceType, uint32_t selector, VPITraversalMode mode) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiTraversals) / sizeof(vpiTraversals[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    const auto &edge = vpiTraversals[middle];\n"
+        "    bool less = edge.sourceType < sourceType ||\n"
+        "                (edge.sourceType == sourceType &&\n"
+        "                 (edge.selector < selector ||\n"
+        "                  (edge.selector == selector &&\n"
+        "                   static_cast<uint8_t>(edge.mode) <\n"
+        "                       static_cast<uint8_t>(mode))));\n"
+        "    if (less)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  if (low == sizeof(vpiTraversals) / sizeof(vpiTraversals[0]))\n"
+        "    return nullptr;\n"
+        "  const auto &edge = vpiTraversals[low];\n"
+        "  return edge.sourceType == sourceType && edge.selector == selector "
+        "&&\n"
+        "                 edge.mode == mode\n"
+        "             ? &edge\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool hasVPITraversal(\n"
+        "    uint32_t sourceType, uint32_t selector, VPITraversalMode mode) {\n"
+        "  return findVPITraversal(sourceType, selector, mode) != nullptr;\n"
         "}\n\n";
 
   os << "} // namespace obelisk::reflection\n\n";

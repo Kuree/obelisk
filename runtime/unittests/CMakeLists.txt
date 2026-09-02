@@ -30,6 +30,7 @@ add_executable(ObeliskRuntimeTests
   RuntimeControlTest.cpp
   RuntimeTest.cpp
   VCDTest.cpp
+  VPIObjectModelTest.cpp
   $<TARGET_OBJECTS:ObeliskRuntimeCAPISmoke>
 )
 target_link_libraries(ObeliskRuntimeTests PRIVATE

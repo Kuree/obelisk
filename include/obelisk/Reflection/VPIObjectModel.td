@@ -7,44 +7,48 @@
 //
 //===----------------------------------------------------------------------===//
 
-class VPIObjectFamily<string cppName_> {
+class VPISelector;
+
+class VPIObjectFamily<string cppName_, int value_> {
   string cppName = cppName_;
+  int value = value_;
 }
 
-def ScopeFamily : VPIObjectFamily<"Scope">;
-def DeclarationFamily : VPIObjectFamily<"Declaration">;
-def ProcessFamily : VPIObjectFamily<"Process">;
-def StatementFamily : VPIObjectFamily<"Statement">;
-def ExpressionFamily : VPIObjectFamily<"Expression">;
-def VariableFamily : VPIObjectFamily<"Variable">;
-def NetFamily : VPIObjectFamily<"Net">;
-def ArrayFamily : VPIObjectFamily<"Array">;
-def TypespecFamily : VPIObjectFamily<"Typespec">;
-def PrimitiveFamily : VPIObjectFamily<"Primitive">;
-def TimingFamily : VPIObjectFamily<"Timing">;
-def AssertionFamily : VPIObjectFamily<"Assertion">;
-def TransientFamily : VPIObjectFamily<"Transient">;
-def RuntimeFamily : VPIObjectFamily<"Runtime">;
-def OtherFamily : VPIObjectFamily<"Other">;
+def ScopeFamily : VPIObjectFamily<"Scope", 0>;
+def DeclarationFamily : VPIObjectFamily<"Declaration", 1>;
+def ProcessFamily : VPIObjectFamily<"Process", 2>;
+def StatementFamily : VPIObjectFamily<"Statement", 3>;
+def ExpressionFamily : VPIObjectFamily<"Expression", 4>;
+def VariableFamily : VPIObjectFamily<"Variable", 5>;
+def NetFamily : VPIObjectFamily<"Net", 6>;
+def ArrayFamily : VPIObjectFamily<"Array", 7>;
+def TypespecFamily : VPIObjectFamily<"Typespec", 8>;
+def PrimitiveFamily : VPIObjectFamily<"Primitive", 9>;
+def TimingFamily : VPIObjectFamily<"Timing", 10>;
+def AssertionFamily : VPIObjectFamily<"Assertion", 11>;
+def TransientFamily : VPIObjectFamily<"Transient", 12>;
+def RuntimeFamily : VPIObjectFamily<"Runtime", 13>;
+def OtherFamily : VPIObjectFamily<"Other", 14>;
 
 // A public VPI spelling is not necessarily a concrete value returned by
 // vpiType.  Keep abstract grouping selectors, traversal-only spellings, and
 // deprecated compatibility selectors in the ABI inventory without exposing
 // them as concrete handle kinds.
-class VPIObjectRole<string cppName_, bit concrete_> {
+class VPIObjectRole<string cppName_, int value_, bit concrete_> {
   string cppName = cppName_;
+  int value = value_;
   bit concrete = concrete_;
 }
 
-def ConcreteRole : VPIObjectRole<"Concrete", 1>;
-def AbstractSelectorRole : VPIObjectRole<"AbstractSelector", 0>;
-def RelationOnlyRole : VPIObjectRole<"RelationOnly", 0>;
-def CompatibilitySelectorRole : VPIObjectRole<"CompatibilitySelector", 0>;
+def ConcreteRole : VPIObjectRole<"Concrete", 0, 1>;
+def AbstractSelectorRole : VPIObjectRole<"AbstractSelector", 1, 0>;
+def RelationOnlyRole : VPIObjectRole<"RelationOnly", 2, 0>;
+def CompatibilitySelectorRole : VPIObjectRole<"CompatibilitySelector", 3, 0>;
 
 class VPIObjectKind<string apiName_, int value_,
                     list<VPIObjectFamily> families_,
                     string aliasOf_ = "",
-                    VPIObjectRole role_ = ConcreteRole> {
+                    VPIObjectRole role_ = ConcreteRole> : VPISelector {
   string apiName = apiName_;
   int value = value_;
   list<VPIObjectFamily> families = families_;
@@ -363,7 +367,7 @@ def OneOrMany : VPIRelationCardinality<"OneOrMany">;
 
 class VPIRelation<string apiName_, int value_,
                   VPIRelationCardinality cardinality_,
-                  string aliasOf_ = ""> {
+                  string aliasOf_ = ""> : VPISelector {
   string apiName = apiName_;
   int value = value_;
   VPIRelationCardinality cardinality = cardinality_;
@@ -371,7 +375,9 @@ class VPIRelation<string apiName_, int value_,
 }
 
 // One-to-one selectors from vpi_user.h.
-def ConditionRel : VPIRelation<"vpiCondition", 71, One>;
+// Ordered waits permit vpi_iterate(vpiCondition, ...), while other sources use
+// vpi_handle().
+def ConditionRel : VPIRelation<"vpiCondition", 71, OneOrMany>;
 def DelayRel : VPIRelation<"vpiDelay", 72, One>;
 def ElseStmtRel : VPIRelation<"vpiElseStmt", 73, One>;
 def ForIncStmtRel : VPIRelation<"vpiForIncStmt", 74, OneOrMany>;
@@ -422,7 +428,7 @@ def LocalLoadRel : VPIRelation<"vpiLocalLoad", 123, Many>;
 def OutTermRel : VPIRelation<"vpiOutTerm", 124, One>;
 def PortsRel : VPIRelation<"vpiPorts", 125, Many>;
 def SimNetRel : VPIRelation<"vpiSimNet", 126, One>;
-def TaskFuncRel : VPIRelation<"vpiTaskFunc", 127, Many>;
+def TaskFuncRel : VPIRelation<"vpiTaskFunc", 127, OneOrMany>;
 def BaseExprRel : VPIRelation<"vpiBaseExpr", 131, One>;
 def WidthExprRel : VPIRelation<"vpiWidthExpr", 132, One>;
 def AutomaticsRel : VPIRelation<"vpiAutomatics", 136, Many>;
