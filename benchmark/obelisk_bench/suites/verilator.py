@@ -587,7 +587,13 @@ POST_2017_DPI_RESULT_TYPES = Exclusion(
     "DPI function results may use the listed basic types or scalar bit and "
     "logic; the test explicitly requires the IEEE 1800-2023 extension for "
     "packed array, structure, and union results")
+NONSTANDARD_DPI_PACKED_RESULTS = Exclusion(
+    "IEEE 1800-2017 35.5.5",
+    "DPI function results may use scalar bit or logic but not packed arrays; "
+    "the test's accessor macros export functions returning bit vectors under "
+    "Verilator's requested 1800-2005 mode")
 EXCLUDED: dict[str, Exclusion] = {
+    "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
