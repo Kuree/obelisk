@@ -896,6 +896,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("footnote 37", excluded.reason)
         self.assertIn("nonvoid interface function", excluded.reason)
 
+    def test_literal_implicit_inout_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_interface_generic2"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
+        self.assertIn("defaults to inout", excluded.reason)
+        self.assertIn("23.3.3.3", excluded.reason)
+        self.assertIn("literals 87 and 73", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

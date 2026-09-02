@@ -954,6 +954,11 @@ PARENLESS_INTERFACE_FUNCTION = Exclusion(
     "IEEE 1800-2017 A.8.2",
     "footnote 37 permits omitted call parentheses only for a task, void "
     "function, or class method; i.get_status is a nonvoid interface function")
+CONSTANT_TO_IMPLICIT_INOUT_PORT = Exclusion(
+    "IEEE 1800-2017 23.2.2.3",
+    "an ANSI port whose direction is omitted defaults to inout, and following "
+    "ports inherit that direction; 23.3.3.3 requires an inout actual to be a "
+    "net, but the test connects the literals 87 and 73")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1079,6 +1084,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_infinite_recursion": TASK_RANDOMIZE_CALLBACK,
     "t_inside_unbounded_both": BOTH_BOUNDS_UNBOUNDED_RANGE,
     "t_interface_func_no_paren": PARENLESS_INTERFACE_FUNCTION,
+    "t_interface_generic2": CONSTANT_TO_IMPLICIT_INOUT_PORT,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
