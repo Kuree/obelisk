@@ -317,6 +317,11 @@ IMPLICIT_SENSITIVITY_STARTUP = Exclusion(
     "always @* waits for a change on its inferred sensitivity list, unlike "
     "always_comb, which the clause contrasts as executing once at time zero; "
     "the test needs the time-zero settle Verilator gives always @*")
+DECLARATION_INITIALIZER_EVENT = Exclusion(
+    "IEEE 1800-2017 6.8",
+    "static declaration initializers complete before any initial or always "
+    "procedure starts, so the test's cyc = 0 cannot trigger its later always "
+    "@(cyc); the test needs Verilator's extra time-zero combinational settle")
 THROUGHOUT_TEMPORAL_AND = Exclusion(
     "IEEE 1800-2017 16.9.9",
     "`exp throughout seq` abbreviates `(exp)[*0:$] intersect seq`, so every "
@@ -700,6 +705,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
+    "t_scheduling_3": DECLARATION_INITIALIZER_EVENT,
     "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
     "t_math_shortreal": SHORTREAL_COMPARISON_PRECISION,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
