@@ -163,6 +163,8 @@ EXPECTED_ERROR_NAMES = frozenset({
 DESCRIPTOR_FAILS = re.compile(r"\bfails\s*=\s*True\b")
 MODULE_T = re.compile(r"^\s*module\s+t\b", re.MULTILINE)
 MODULE_TOP = re.compile(r"^\s*module\s+top\b", re.MULTILINE)
+MODULE_DECLARATION_LINE = re.compile(
+    r"^\s*module\s+([A-Za-z_$][A-Za-z0-9_$]*)\b")
 # Any name the corpus cannot also declare. Nothing in test_regress spells one
 # with this prefix, and the shell is the only file the harness itself writes.
 SHELL_ALTERNATE_NAME = "obelisk_bench_top"
@@ -170,8 +172,6 @@ SHELL_ALTERNATE_NAME = "obelisk_bench_top"
 # at the start of a line just as a non-ANSI port declaration does.
 STOP_SCANNING = re.compile(
     r'^\s*(?:function|task|clocking|endmodule|import\s+"DPI(?:-C)?")')
-MODULE_T_LINE = re.compile(r"^\s*module\s+t\b")
-
 # Port-declaration scanning. driver.py takes the first identifier after an
 # optional `logic|bit|reg|wire`, which misreads anything else in that slot:
 # `input signed [64:0] i_x` yields "signed" and `input addr_t aw_addr` yields
@@ -840,8 +840,8 @@ def declaration_names(declaration: str) -> list[str]:
     return [token for token in tokens if token != ","]
 
 
-def detect_inputs(top_text: str) -> list[str]:
-    """Return module t's input signal names, as driver.py's _read_inputs_v does.
+def detect_inputs(top_text: str, module_name: str = "t") -> list[str]:
+    """Return one module's input names, as driver.py's _read_inputs_v does.
 
     Only inputs of the last-seen `module t` count, and only those before its
     first function/task/clocking/endmodule — enough to find `clk`/`fastclk`.
@@ -851,11 +851,13 @@ def detect_inputs(top_text: str) -> list[str]:
     like `task automatic step(input string label);` are not read as ports.
     """
     inputs: dict[str, None] = {}
-    scanning = True
+    module_line = re.compile(
+        r"^\s*module\s+" + re.escape(module_name) + r"\b")
+    scanning = False
     heading = False
     for line in top_text.splitlines():
-        if MODULE_T_LINE.match(line):
-            inputs = {}       # module t has precedence over earlier modules
+        if module_line.match(line):
+            inputs = {}
             scanning = True
             heading = True
         if STOP_SCANNING.match(line):
@@ -969,8 +971,24 @@ def shell_module_name(top_text: str) -> str:
 
 
 def needs_driver_shell(top_text: str) -> bool:
-    """Whether driver.py's conventional ``module t`` needs our clock shell."""
-    return bool(MODULE_T.search(top_text))
+    """Whether Verilator's generated main would need our clock shell."""
+    return driver_module_name(top_text) is not None
+
+
+def driver_module_name(top_text: str) -> str | None:
+    """Return the conventional DUT or the sole module with a driven clock."""
+    if MODULE_T.search(top_text):
+        return "t"
+    clocked = []
+    for line in top_text.splitlines():
+        declaration = MODULE_DECLARATION_LINE.match(line)
+        if not declaration:
+            continue
+        name = declaration.group(1)
+        inputs = detect_inputs(top_text, name)
+        if "clk" in inputs or "fastclk" in inputs:
+            clocked.append(name)
+    return clocked[0] if len(clocked) == 1 else None
 
 
 def detect_executes(descriptor: Path) -> bool:
@@ -1326,12 +1344,13 @@ def runtime_errors_mismatch_golden(
 
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
-                   module_name: str = "top") -> str:
+                   module_name: str = "top",
+                   instance_module: str = "t") -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
     lines = [f"module {module_name};"]
     for name in sorted(inputs):
         lines.append(f"    reg {name};")
-    lines.append("    t t (")
+    lines.append(f"    {instance_module} t (")
     comma = ""
     for name in sorted(inputs):
         lines.append(f"      {comma}.{name} ({name})")
@@ -1485,13 +1504,17 @@ def judge_one(
                 return model.Outcome(
                     model.COMPILE_FAIL, descriptor_native.stderr)
         design_sources = [str(top)]
-        if needs_driver_shell(top_text):
+        driver_module = driver_module_name(top_text)
+        selected_top = None
+        if driver_module:
             shell = Path(tmp) / "top.v"
+            selected_top = shell_module_name(top_text)
             shell.write_text(
-                make_top_shell(detect_inputs(top_text),
+                make_top_shell(detect_inputs(top_text, driver_module),
                                detect_sim_time(descriptor),
                                detect_timing_loop(descriptor),
-                               shell_module_name(top_text)),
+                               selected_top,
+                               driver_module),
                 encoding="utf-8")
             design_sources.append(str(shell))
         binary = Path(tmp) / "sim"
@@ -1508,6 +1531,8 @@ def judge_one(
         extra.extend(descriptor_defines)
         extra.extend("-D" + definition
                      for definition in compatibility_defines)
+        if selected_top:
+            extra.append(f"--top={selected_top}")
         if compile_threads is not None:
             extra.append(f"--compile-threads={compile_threads}")
         compiled = runner.compile_design(

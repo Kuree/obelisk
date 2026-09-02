@@ -105,9 +105,16 @@ class DetectInputsTest(unittest.TestCase):
 
 
 class TopShellTest(unittest.TestCase):
-    def test_only_the_driver_style_module_needs_a_shell(self):
+    def test_driver_style_and_single_clocked_modules_need_a_shell(self):
         self.assertTrue(verilator.needs_driver_shell("module t; endmodule\n"))
+        self.assertTrue(verilator.needs_driver_shell(
+            "module test(input clk); endmodule\n"))
         self.assertFalse(verilator.needs_driver_shell("module tb; endmodule\n"))
+
+    def test_single_clocked_module_is_the_driver_dut(self):
+        text = ("module helper; endmodule\n"
+                "module test(input clk); endmodule\n")
+        self.assertEqual(verilator.driver_module_name(text), "test")
 
     def test_clock_period_matches_the_upstream_main_loop(self):
         # driver.py advances one time unit per sub-step and toggles clk on the
@@ -139,6 +146,11 @@ class TopShellTest(unittest.TestCase):
         shell = verilator.make_top_shell(["clk"], module_name="obelisk_top")
         self.assertIn("module obelisk_top;", shell)
         self.assertNotIn("module top;", shell)
+
+    def test_the_instantiated_module_can_be_renamed(self):
+        shell = verilator.make_top_shell(
+            ["clk"], instance_module="test")
+        self.assertIn("test t (", shell)
 
 
 class GeneratedFixtureTest(unittest.TestCase):
