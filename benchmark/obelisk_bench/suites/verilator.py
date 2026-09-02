@@ -774,6 +774,11 @@ CONFIG_PARENT_LIBRARY_SEARCH = Exclusion(
     "only the library of the parent cell; the configured top t is in work, "
     "but the test expects its m1 and m2 children to be found by searching "
     "unrelated liba and libb libraries")
+LIBRARY_QUALIFIED_CELL_LIBLIST = Exclusion(
+    "IEEE 1800-2017 33.4.1.4",
+    "a cell selection clause that includes a library name cannot use a "
+    "liblist expansion clause; the test requires `cell liba.m3 liblist "
+    "libb` to compile and bind")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -784,6 +789,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_new_default": POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT,
     "t_class_override": POST_2017_CLASS_OVERRIDE_CONTROLS,
     "t_config_inst": CONFIG_PARENT_LIBRARY_SEARCH,
+    "t_config_liblist": LIBRARY_QUALIFIED_CELL_LIBLIST,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
