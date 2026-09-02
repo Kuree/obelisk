@@ -485,6 +485,12 @@ class GoldenOutputTest(unittest.TestCase):
             "$finish: t_x.v:12: simulation time 5\n",
         ))
 
+    def test_finish_diagnostic_after_unterminated_output_is_removed(self):
+        self.assertTrue(self.match(
+            "data=beef",
+            "data=beef$finish: t_x.v:12: simulation time 5\n",
+        ))
+
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:

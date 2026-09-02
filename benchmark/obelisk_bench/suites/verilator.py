@@ -49,7 +49,7 @@ RUNTIME_ERROR_LOCATION = re.compile(
 ASSERTION_FAILURE = re.compile(r"\bassert(?:ion)?\b.*\bfailed\b",
                                re.IGNORECASE)
 FINISH_DIAGNOSTIC = re.compile(
-    r"(?m)^\$finish: [^\n]*: simulation time [^\n]*(?:\n|\Z)")
+    r"\$finish: [^\n]*: simulation time [^\n]*(?:\n|\Z)")
 # A small number of upstream self-checks call $finish after their checks and
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
@@ -695,6 +695,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
+    "t_display_signed": PATTERN_RADIX,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_bitqueue": PATTERN_RADIX,
