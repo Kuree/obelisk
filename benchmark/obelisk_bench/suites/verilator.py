@@ -1080,18 +1080,24 @@ def detect_run_args(descriptor: Path) -> list[str]:
     return []
 
 
-def detect_compile_defines(descriptor: Path) -> list[str]:
-    """Return literal preprocessor definitions requested by the descriptor.
+class CompileSettings(NamedTuple):
+    """Portable compile settings recovered from a test descriptor."""
+    defines: list[str]
+    top: str | None
+
+
+def detect_compile_settings(descriptor: Path) -> CompileSettings:
+    """Return literal portable compile settings from the descriptor.
 
     ``v_flags2`` and ``verilator_flags2`` mix portable source configuration
     with Verilator-only optimization and code-generation switches.  Forward
-    only literal ``+define+``, ``-D``, and ``-U`` tokens; expressions involving
+    only literal preprocessor and top-selection tokens; expressions involving
     driver state are deliberately ignored instead of being evaluated.
     """
     if not descriptor.exists():
-        return []
+        return CompileSettings([], None)
     text = descriptor.read_text(encoding="utf-8", errors="replace")
-    result: list[str] = []
+    tokens: list[str] = []
 
     def literal_strings(node: ast.AST) -> list[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -1111,15 +1117,38 @@ def detect_compile_defines(descriptor: Path) -> list[str]:
                 if keyword.arg not in ("v_flags2", "verilator_flags2"):
                     continue
                 for fragment in literal_strings(keyword.value):
-                    for token in shlex.split(fragment):
-                        if token.startswith("+define+"):
-                            definitions = token.removeprefix("+define+")
-                            result.extend("-D" + definition
-                                          for definition in definitions.split("+")
-                                          if definition)
-                        elif token.startswith(("-D", "-U")) and len(token) > 2:
-                            result.append(token)
-    return result
+                    tokens.extend(shlex.split(fragment))
+
+    defines: list[str] = []
+    selected_top = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith("+define+"):
+            definitions = token.removeprefix("+define+")
+            defines.extend("-D" + definition
+                           for definition in definitions.split("+")
+                           if definition)
+        elif token.startswith(("-D", "-U")) and len(token) > 2:
+            defines.append(token)
+        elif token in ("--top", "--top-module"):
+            if index + 1 < len(tokens):
+                selected_top = tokens[index + 1]
+                index += 1
+        elif token.startswith(("--top=", "--top-module=")):
+            selected_top = token.split("=", 1)[1] or selected_top
+        index += 1
+    return CompileSettings(defines, selected_top)
+
+
+def detect_compile_defines(descriptor: Path) -> list[str]:
+    """Return literal preprocessor definitions requested by the descriptor."""
+    return detect_compile_settings(descriptor).defines
+
+
+def detect_compile_top(descriptor: Path) -> str | None:
+    """Return the literal top selected by the descriptor, if any."""
+    return detect_compile_settings(descriptor).top
 
 
 def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
@@ -1499,7 +1528,8 @@ def judge_one(
             [] if expectation.compile_error
             else detect_descriptor_dpi_sources(descriptor)
         )
-        descriptor_defines = detect_compile_defines(descriptor)
+        compile_settings = detect_compile_settings(descriptor)
+        descriptor_defines = compile_settings.defines
         compatibility_defines = COMPATIBILITY_DEFINES.get(name, ())
         native_defines = DESCRIPTOR_DPI_NATIVE_DEFINES.get(name, ())
         if descriptor_sources:
@@ -1538,7 +1568,7 @@ def judge_one(
                     model.COMPILE_FAIL, descriptor_native.stderr)
         design_sources = [str(top)]
         driver_module = driver_module_name(top_text)
-        selected_top = None
+        selected_top = compile_settings.top
         if driver_module:
             shell = Path(tmp) / "top.v"
             selected_top = shell_module_name(top_text)

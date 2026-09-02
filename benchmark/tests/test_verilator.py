@@ -279,6 +279,25 @@ class CompileDefinesDescriptorTest(unittest.TestCase):
         )
 
 
+class CompileTopDescriptorTest(unittest.TestCase):
+    def top(self, text: str) -> str | None:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_compile_top(path)
+
+    def test_literal_top_flag_is_forwarded(self):
+        self.assertEqual(
+            self.top("test.compile(verilator_flags2=["
+                     "'--binary', '--top cfg2'])\n"),
+            "cfg2",
+        )
+
+    def test_dynamic_top_flag_is_not_guessed(self):
+        self.assertIsNone(self.top(
+            "test.compile(verilator_flags2=['--top ' + selected])\n"))
+
+
 class DescriptorDPISourcesTest(unittest.TestCase):
     def sources(self, descriptor_text: str, sources: dict[str, str]):
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
