@@ -806,6 +806,12 @@ STACKED_UNARY_OPERATOR = Exclusion(
     "a unary operator applies to a primary, not another unary expression; "
     "the test requires Verilator's acceptance of `-~c` where the standard "
     "spelling is `-(~c)`")
+FUNCTION_ENABLES_TASK = Exclusion(
+    "IEEE 1800-2017 13.4",
+    "a function shall not enable a task regardless of whether the task "
+    "contains timing control; WriterAdapter::write is a function that calls "
+    "the task BlockingWriter::write, and the test suppresses Verilator's own "
+    "FUNCTIMECTL diagnostic")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -820,6 +826,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_config_libmap": CONFIG_MAP_IMPLICIT_LIBRARY_SEARCH,
     "t_config_rules": MULTIPLE_CONFIG_DEFAULT_CLAUSES,
     "t_constraint_operators": STACKED_UNARY_OPERATOR,
+    "t_coroutine_lambda": FUNCTION_ENABLES_TASK,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

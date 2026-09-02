@@ -815,6 +815,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.3")
         self.assertIn("standard spelling is `-(~c)`", excluded.reason)
 
+    def test_function_cannot_enable_a_task(self):
+        excluded = verilator.EXCLUDED["t_coroutine_lambda"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4")
+        self.assertIn("WriterAdapter::write", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
