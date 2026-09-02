@@ -1,11 +1,11 @@
 #include "vpi_user.h"
 
-static void startup(void) {
+static PLI_INT32 end_compile(p_cb_data callback) {
   vpiHandle module = vpi_handle_by_name("$root.vpi_top", 0);
   vpiHandle object = vpi_handle_by_name("value", module);
   if (!object) {
     vpi_printf("lookup-failed\n");
-    return;
+    return 0;
   }
   vpiHandle scope = vpi_handle(vpiScope, object);
   vpiHandle iterator = vpi_iterate(vpiReg, module);
@@ -46,6 +46,12 @@ static void startup(void) {
   value.value.integer = 1;
   vpi_put_value(object, &value, 0, vpiForceFlag);
   vpi_release_handle(object);
+  return 0;
+}
+
+static void startup(void) {
+  static s_cb_data callback = {cbEndOfCompile, end_compile};
+  vpi_register_cb(&callback);
 }
 
 void (*vlog_startup_routines[])(void) = {startup, 0};

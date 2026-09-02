@@ -764,6 +764,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     return failure();
   }
   llvm::CallBase *spawn = nullptr;
+  llvm::CallBase *report = nullptr;
   llvm::CallBase *destroy = nullptr;
   for (llvm::BasicBlock &block : *main)
     for (llvm::Instruction &instruction : block)
@@ -771,10 +772,18 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
         if (llvm::Function *callee = call->getCalledFunction()) {
           if (callee->getName().ends_with(".__obelisk_spawn"))
             spawn = call;
+          else if (callee->getName() == "obelisk_rt_v1_scheduler_report_status")
+            report = call;
           else if (callee->getName() == "obelisk_rt_v1_context_destroy")
             destroy = call;
         }
-  if (!spawn || (enableVPI && !destroy)) {
+  auto *returnStatus =
+      destroy
+          ? dyn_cast<llvm::ReturnInst>(destroy->getParent()->getTerminator())
+          : nullptr;
+  if (!spawn || (enableVPI && (!report || !destroy || !returnStatus ||
+                               report->arg_size() != 2 ||
+                               returnStatus->getNumOperands() != 1))) {
     errs() << "obelisk: error: generated scheduler lifecycle is incomplete\n";
     return failure();
   }
@@ -891,10 +900,40 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
                                 llvm::ConstantInt::get(i64, names.size())},
                                "obelisk.vpi.startup");
     beforeSpawn.CreateCall(fail, {runtimeContext, status});
+    llvm::FunctionCallee endCompile = module.getOrInsertFunction(
+        "obelisk_rt_v1_vpi_end_compile",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
+                                false));
+    status = beforeSpawn.CreateCall(endCompile, {runtimeContext},
+                                    "obelisk.vpi.end_compile");
+    beforeSpawn.CreateCall(fail, {runtimeContext, status});
+    llvm::FunctionCallee startSimulation = module.getOrInsertFunction(
+        "obelisk_rt_v1_vpi_start_simulation",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
+                                false));
+    status = beforeSpawn.CreateCall(startSimulation, {runtimeContext},
+                                    "obelisk.vpi.start_simulation");
+    beforeSpawn.CreateCall(fail, {runtimeContext, status});
+    llvm::FunctionCallee endSimulation = module.getOrInsertFunction(
+        "obelisk_rt_v1_vpi_end_simulation",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
+                                false));
     llvm::FunctionCallee shutdown = module.getOrInsertFunction(
         "obelisk_rt_v1_vpi_shutdown",
         llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pointer},
                                 false));
+    llvm::IRBuilder<> beforeReport(report);
+    llvm::Value *endStatus =
+        beforeReport.CreateCall(endSimulation, {report->getArgOperand(0)},
+                                "obelisk.vpi.end_simulation");
+    llvm::Value *runStatus = report->getArgOperand(1);
+    llvm::Value *runFailed = beforeReport.CreateICmpNE(
+        runStatus, llvm::ConstantInt::get(runStatus->getType(), 0),
+        "obelisk.vpi.run_failed");
+    llvm::Value *finalStatus = beforeReport.CreateSelect(
+        runFailed, runStatus, endStatus, "obelisk.vpi.final_status");
+    report->setArgOperand(1, finalStatus);
+    returnStatus->setOperand(0, finalStatus);
     llvm::IRBuilder<> beforeDestroy(destroy);
     beforeDestroy.CreateCall(shutdown, {destroy->getArgOperand(0)});
   }

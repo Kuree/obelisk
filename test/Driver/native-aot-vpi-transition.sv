@@ -132,17 +132,23 @@ endmodule
 //--- plugin.c
 #include "vpi_user.h"
 
-static void startup(void) {
+static PLI_INT32 end_compile(p_cb_data callback) {
   vpiHandle seed =
       vpi_handle_by_name("$root.native_aot_vpi_transition.seed", 0);
   if (!seed) {
     vpi_printf("seed-lookup-failed\n");
-    return;
+    return 0;
   }
   s_vpi_value value = {vpiIntVal};
   value.value.integer = 7;
   vpi_put_value(seed, &value, 0, vpiForceFlag);
   vpi_release_handle(seed);
+  return 0;
+}
+
+static void startup(void) {
+  static s_cb_data callback = {cbEndOfCompile, end_compile};
+  vpi_register_cb(&callback);
 }
 
 void (*vlog_startup_routines[])(void) = {startup, 0};
@@ -190,17 +196,23 @@ void (*vlog_startup_routines[])(void) = {0};
 //--- readonly.c
 #include "vpi_user.h"
 
-static void startup(void) {
+static PLI_INT32 end_compile(p_cb_data callback) {
   vpiHandle seed =
       vpi_handle_by_name("$root.native_aot_vpi_transition.seed", 0);
   if (!seed) {
     vpi_printf("seed-lookup-failed\n");
-    return;
+    return 0;
   }
   s_vpi_value value = {vpiIntVal};
   vpi_get_value(seed, &value);
   vpi_printf("vpi-startup-read=%d\n", value.value.integer);
   vpi_release_handle(seed);
+  return 0;
+}
+
+static void startup(void) {
+  static s_cb_data callback = {cbEndOfCompile, end_compile};
+  vpi_register_cb(&callback);
 }
 
 void (*vlog_startup_routines[])(void) = {startup, 0};

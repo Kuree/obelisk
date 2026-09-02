@@ -18,10 +18,12 @@ At runtime every detected module is already present through `DT_NEEDED`.
 Obelisk obtains a handle with `RTLD_NOLOAD`, resolves the startup table on that
 specific handle, validates its ELF symbol extent and null terminator, and calls
 the tables in positional-input order. Repeated filesystem identities are
-deduplicated. Startup runs after runtime, DPI, class, and native-state
-registration and before the root process is spawned. The VPI context remains
-active through scheduler execution, including DPI calls, and is deactivated
-before context destruction.
+deduplicated. In accordance with IEEE 1800-2017 36.10.2, startup-table routines
+may only register callbacks and system tasks/functions; hierarchy and value
+access begins when `cbEndOfCompile` callbacks run. Startup runs after runtime,
+DPI, class, and native-state registration and before the root process is
+spawned. The VPI context remains active through scheduler execution, including
+DPI calls, and is deactivated before context destruction.
 
 The current backdoor subset provides hierarchical and scoped
 `vpi_handle_by_name`, `$root.` normalization, scope relations, filtered
@@ -52,11 +54,17 @@ skips bytecode stabilization when no observer, conditional wait, force, or
 dirty specialization state is active. Deposits without an exact mapping and
 force/release operations retain the guarded bytecode handoff.
 
-Callbacks, delayed writes, system task/function registration, VPI strength
-and trireg access, and VPI-registered waveform dumping are not implemented.
+The cold lifecycle callbacks `cbEndOfCompile`, `cbStartOfSimulation`, and
+`cbEndOfSimulation` are implemented, including callback-object iteration,
+`vpi_get_cb_info`, release, and removal. Lifecycle registration does not
+activate scheduler observation or alter native specialization. Callback input
+is copied at registration, duplicate registrations remain distinct, and each
+invocation receives a fresh action-callback record. Other callback reasons,
+delayed writes, system task/function registration, VPI strength and trireg
+access, and VPI-registered waveform dumping are not implemented.
 SystemVerilog trireg execution itself, including charge strength, retention,
 decay, and connected charge sharing, is implemented independently of VPI.
-Registration calls made from a startup table produce a clear
+Unsupported registration calls made from a startup table produce a clear
 unsupported-startup failure rather than an unresolved-symbol loader crash.
 Waveform dumping itself is available through the `$dump` system tasks and is
 described in [Waveform dumping](waveforms.md); it reads the same design
