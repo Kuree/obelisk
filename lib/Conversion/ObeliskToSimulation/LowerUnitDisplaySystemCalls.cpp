@@ -1144,7 +1144,18 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
               return failure();
             initial = *converted;
           }
-          monitorObservations.push_back({*observer, initial});
+          Value directWatch;
+          if (auto named =
+                  dyn_cast<semantic::SVNamedValueExpressionOp>(child)) {
+            StringRef path = named.getReferencedPath();
+            directWatch = values.lookup(path);
+            if (!directWatch)
+              directWatch = lvalues.lookup(path);
+            if (!directWatch ||
+                !isa<sim::RefType, sim::NetType>(directWatch.getType()))
+              directWatch = {};
+          }
+          monitorObservations.push_back({*observer, initial, directWatch});
         }
       }
     }

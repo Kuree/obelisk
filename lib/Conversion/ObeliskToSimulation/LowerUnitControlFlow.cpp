@@ -1230,6 +1230,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                               sim::ExecutionDomain::Design));
   if (!persistent)
     return outlined;
+  callback->setAttr("obelisk_sim.persistent_monitor", builder.getUnitAttr());
 
   Block &entry = callback.getBody().front();
   Block *loop = entry.splitBlock(entry.begin());
@@ -1254,7 +1255,35 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
       watched.push_back(argument);
   for (sim::SimReturnOp returnOp : returns) {
     OpBuilder waitBuilder(returnOp);
-    if (observationComplete && !observations.empty()) {
+    bool directObservations =
+        observationComplete && !observations.empty() &&
+        llvm::all_of(observations, [](const MonitorObservation &observation) {
+          return static_cast<bool>(observation.directWatch);
+        });
+    if (directObservations) {
+      SmallVector<Value> directWatches;
+      for (const MonitorObservation &observation : observations)
+        if (!llvm::is_contained(directWatches, observation.directWatch))
+          directWatches.push_back(observation.directWatch);
+      if (directWatches.size() == 1) {
+        sim::SimSuspendChangeOp::create(
+            waitBuilder, returnOp.getLoc(), directWatches.front(), ValueRange{},
+            sim::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Postponed),
+            dispatch);
+      } else {
+        SmallVector<int32_t> edges(directWatches.size(),
+                                   static_cast<int32_t>(sim::EdgeKind::Change));
+        sim::SimSuspendAnyOp::create(
+            waitBuilder, returnOp.getLoc(), directWatches,
+            waitBuilder.getDenseI32ArrayAttr(edges),
+            sim::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Postponed),
+            dispatch);
+      }
+    } else if (observationComplete && !observations.empty()) {
       SmallVector<Value> operands;
       SmallVector<int32_t> edges(observations.size(),
                                  static_cast<int32_t>(sim::EdgeKind::Change));

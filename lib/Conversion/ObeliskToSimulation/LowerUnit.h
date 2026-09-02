@@ -66,6 +66,10 @@ private:
   struct MonitorObservation {
     ::mlir::Value observer;
     ::mlir::Value initial;
+    /// The exact declaration handle when the monitored expression is a
+    /// direct named value. Such an expression changes iff this handle
+    /// changes, so it needs no computed-observer subscription.
+    ::mlir::Value directWatch;
   };
 
   struct CapturedLValue {
