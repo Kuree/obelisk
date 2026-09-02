@@ -415,6 +415,18 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                         selectRange(read.getNet(), provenance, localRanges);
           return;
         }
+        if (auto write = dyn_cast<sim::SimNetWriteOp>(operation)) {
+          auto found = provenance.find(write.getNet());
+          if (found != provenance.end() && found->second.descriptor &&
+              domains->isInductivelyTwoState(found->second.resource,
+                                             *found->second.descriptor))
+            (void)selectRange(write.getNet(), provenance, inductiveRanges);
+          preserving &=
+              knownStateDomains->isTwoStateWithInductiveRoots(
+                  write.getValue()) &&
+              selectRange(write.getNet(), provenance, localRanges);
+          return;
+        }
         if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
           auto found = provenance.find(store.getReference());
           if (found != provenance.end() && found->second.descriptor &&

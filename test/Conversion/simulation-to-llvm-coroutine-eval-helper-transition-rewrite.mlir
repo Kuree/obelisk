@@ -2,6 +2,7 @@
 // RUN:   > %t
 // RUN: FileCheck %s < %t
 // RUN: FileCheck %s --check-prefix=NO-PURE-CLONE < %t
+// RUN: FileCheck %s --check-prefix=NO-UNSAFE-TWO-STATE < %t
 
 // This preplanned body has no NBA operation, so its shared helper transition
 // is independent of the inert static-NBA metadata. The one conversion pass
@@ -90,6 +91,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func private @pure_leaf(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 8 : i64, domain = 0 : i32, effect_summary = [], entry_kind = 8 : i32, home_region = 2 : i32} {
       obelisk_sim.return
     }
+    obelisk_sim.code_unit.decl 9 in 0 function hierarchy "eval_wide_dynamic_nba.unknown_owner" {internal}
+    obelisk_sim.func private @unknown_owner(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 9 : i64, domain = 0 : i32, effect_summary = [], entry_kind = 8 : i32, home_region = 2 : i32, obelisk.eval.body = @unknown_net_eval} {
+      obelisk_sim.return
+    }
+    obelisk_sim.code_unit.decl 10 in 0 function hierarchy "eval_wide_dynamic_nba.unknown_net_eval" {internal}
+    obelisk_sim.func private @unknown_net_eval(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 10 : i64, domain = 0 : i32, effect_summary = [], entry_kind = 8 : i32, home_region = 2 : i32, obelisk.eval.borrowed_captures, obelisk.eval.raw_captures} {
+      obelisk_sim.call @write_unknown_net(%arg0) : (!obelisk_sim.context) -> ()
+      obelisk_sim.return
+    }
+    obelisk_sim.code_unit.decl 11 in 0 function hierarchy "eval_wide_dynamic_nba.write_unknown_net" {internal}
+    obelisk_sim.func private @write_unknown_net(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 11 : i64, domain = 0 : i32, effect_summary = [], entry_kind = 8 : i32, home_region = 2 : i32} {
+      %net = obelisk_sim.context.net %arg0[0] : !obelisk_sim.net<!obelisk_sim.logic<1>>
+      %x = obelisk_sim.logic.constant false, true : !obelisk_sim.logic<1>
+      obelisk_sim.net.write %net = %x : !obelisk_sim.net<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -97,6 +114,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: obelisk.eval.generated
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// The known net write contributes [1096, 1097) to the promotion scan. Without
+// analyzing SimNetWriteOp this range was missing, allowing stale X/Z state to
+// enter the two-state helper after an external disturbance.
+// CHECK-SAME: obelisk.eval.local_promotion_ranges = array<i64: 0, 1, 1032, 64, 1096, 1, 1104, 1>
 // CHECK: llvm.call @touch_clock.__obelisk_eval_private_0
 // CHECK: llvm.call @touch_net.__obelisk_eval_private_0
 // CHECK: llvm.call @touch_driver.__obelisk_eval_private_0
@@ -130,3 +151,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
 
 // NO-PURE-CLONE-NOT: @pure_leaf.__obelisk_eval_private
+
+// An X-valued net write is not known-state preserving and must never get a
+// two-state route, even though its helper is otherwise runtime-free.
+// NO-UNSAFE-TWO-STATE-NOT: @unknown_net_eval.__obelisk_two_state

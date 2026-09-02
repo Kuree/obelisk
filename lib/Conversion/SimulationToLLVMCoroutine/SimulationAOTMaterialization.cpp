@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/DataLayout.h"
+#include <functional>
 #include <numeric>
 
 using namespace mlir;
@@ -59,11 +60,22 @@ collectGeneratedEvalCallClosure(ModuleOp module) {
       continue;
     closure.push_back(function);
     sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-    function.walk([&](sim::SimCallOp call) {
-      if (design)
-        if (sim::SimFuncOp callee =
-                design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
-          pending.push_back(callee);
+    function.walk([&](Operation *operation) {
+      if (!design)
+        return;
+      StringRef calleeName;
+      if (auto call = dyn_cast<sim::SimCallOp>(operation))
+        calleeName = call.getCallee();
+      else if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+        if (!call.getCallee())
+          return;
+        calleeName = *call.getCallee();
+      } else {
+        return;
+      }
+      if (sim::SimFuncOp callee =
+              design.lookupSymbol<sim::SimFuncOp>(calleeName))
+        pending.push_back(callee);
     });
   }
   return closure;
@@ -139,6 +151,34 @@ struct DynamicEvalNBAProof {
   bool siteExecutesAtMostOnce = false;
 };
 
+/// Return true only when `operation` cannot be revisited through its enclosing
+/// function's structured or CFG control flow. Generated call-graph
+/// multiplicity is checked separately before this local fact is consumed.
+static bool locallyExecutesAtMostOnce(Operation *operation,
+                                      sim::SimFuncOp enclosing) {
+  for (Operation *ancestor = operation->getParentOp();
+       ancestor && ancestor != enclosing.getOperation();
+       ancestor = ancestor->getParentOp())
+    if (isa<LoopLikeOpInterface>(ancestor))
+      return false;
+
+  Block *origin = operation->getBlock();
+  SmallVector<Block *, 8> worklist;
+  for (Block *successor : origin->getTerminator()->getSuccessors())
+    worklist.push_back(successor);
+  llvm::SmallPtrSet<Block *, 16> visited;
+  while (!worklist.empty()) {
+    Block *block = worklist.pop_back_val();
+    if (block == origin)
+      return false;
+    if (!visited.insert(block).second)
+      continue;
+    for (Block *successor : block->getTerminator()->getSuccessors())
+      worklist.push_back(successor);
+  }
+  return true;
+}
+
 static uint32_t
 getDynamicNBACommitRegion(sim::SimFuncOp function,
                           const DynamicEvalNBAProofContext &proofContext) {
@@ -211,7 +251,8 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
 
 static FailureOr<DynamicEvalNBAProof>
 proveDynamicEvalNBA(LLVM::CallOp call,
-                    const DynamicEvalNBAProofContext &proofContext) {
+                    const DynamicEvalNBAProofContext &proofContext,
+                    bool enclosingExecutesAtMostOnce) {
   ValueRange arguments = call.getArgOperands();
   if (arguments.size() != 9)
     return call.emitError("malformed static NBA ABI"), failure();
@@ -335,33 +376,14 @@ proveDynamicEvalNBA(LLVM::CallOp call,
     proof.exclusivePeriodicIngress &= sawIngress;
   }
 
-  auto siteBlockIsAcyclic = [&] {
-    Block *origin = call->getBlock();
-    SmallVector<Block *, 8> worklist;
-    for (Block *successor : origin->getTerminator()->getSuccessors())
-      worklist.push_back(successor);
-    llvm::SmallPtrSet<Block *, 16> visited;
-    while (!worklist.empty()) {
-      Block *block = worklist.pop_back_val();
-      if (block == origin)
-        return false;
-      if (!visited.insert(block).second)
-        continue;
-      for (Block *successor : block->getTerminator()->getSuccessors())
-        worklist.push_back(successor);
-    }
-    return true;
-  };
-  bool outsideStructuredLoop = true;
-  for (Operation *ancestor = call->getParentOp();
-       ancestor && ancestor != enclosing.getOperation();
-       ancestor = ancestor->getParentOp())
-    if (isa<LoopLikeOpInterface>(ancestor)) {
-      outsideStructuredLoop = false;
-      break;
-    }
   unsigned matchingSiteCalls = 0;
-  if (site && enclosing)
+  auto semanticOriginFor = [&](uint64_t siteID) {
+    auto origin = staticNBAPlan.siteSemanticOrigins.find(siteID);
+    return origin == staticNBAPlan.siteSemanticOrigins.end() ? siteID
+                                                             : origin->second;
+  };
+  if (site && enclosing) {
+    uint64_t semanticSite = semanticOriginFor(*site);
     enclosing.walk([&](LLVM::CallOp other) {
       if (!other.getCallee() ||
           *other.getCallee() != "obelisk_rt_v1_scheduler_static_nba" ||
@@ -369,10 +391,13 @@ proveDynamicEvalNBA(LLVM::CallOp call,
         return;
       std::optional<uint64_t> otherSite =
           constantU64(other.getArgOperands()[1]);
-      matchingSiteCalls += otherSite && *otherSite == *site;
+      matchingSiteCalls +=
+          otherSite && semanticOriginFor(*otherSite) == semanticSite;
     });
+  }
   proof.siteExecutesAtMostOnce =
-      matchingSiteCalls == 1 && outsideStructuredLoop && siteBlockIsAcyclic();
+      matchingSiteCalls == 1 && enclosingExecutesAtMostOnce &&
+      locallyExecutesAtMostOnce(call.getOperation(), enclosing);
 
   bool commonDynamicRoot =
       site && width && *width != 0 && *width <= 64 &&
@@ -385,7 +410,7 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       offsetCall.getArgOperands().size() == 2 &&
       (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
       proof.commitRegion != UINT32_MAX;
-  bool directAccumulator =
+  bool directAccumulatorCandidate =
       commonDynamicRoot &&
       root->second < staticNBAPlan.generatedAccumulators.size() &&
       !staticNBAPlan.generatedAccumulators[root->second].empty() &&
@@ -398,13 +423,19 @@ proveDynamicEvalNBA(LLVM::CallOp call,
         if (proof.firstRootSite == UINT64_MAX)
           proof.firstRootSite = candidate.site;
         proof.lastRootSite = candidate.site;
-        auto origin = staticNBAPlan.siteSemanticOrigins.find(candidate.site);
-        semanticRootSites.insert(
-            origin == staticNBAPlan.siteSemanticOrigins.end() ? candidate.site
-                                                              : origin->second);
+        semanticRootSites.insert(semanticOriginFor(candidate.site));
       }
   proof.semanticRootSiteCount = semanticRootSites.size();
   proof.uniqueSemanticRootSite = site && semanticRootSites.size() == 1;
+  // A root accumulator stores only the final value and publishes one
+  // old-to-final transition at the NBA barrier.  That is equivalent to the
+  // ordered NBA queue only when one semantic statement contributes and the
+  // statement executes at most once in this activation.  Otherwise an
+  // intermediate edge (for example 0 -> 1 -> 0) would be lost even though
+  // the final state is correct.
+  bool directAccumulator = directAccumulatorCandidate &&
+                           proof.uniqueSemanticRootSite &&
+                           proof.siteExecutesAtMostOnce;
   // The periodic fast loop owns the design-side NBA handoff only. Reactive
   // owners require the later Re-NBA phase, which remains runtime scheduled.
   proof.periodicWideLatch = commonDynamicRoot && proof.uniqueSemanticRootSite &&
@@ -490,9 +521,59 @@ FailureOr<bool> makeNativeEvalPlan(
                                             periodicAliases,
                                             generatedTransitionRanges,
                                             computeGraph};
+    SmallVector<sim::SimFuncOp> evalClosure =
+        collectGeneratedEvalCallClosure(module);
+    llvm::SmallPtrSet<Operation *, 16> evalClosureSet;
+    for (sim::SimFuncOp function : evalClosure)
+      evalClosureSet.insert(function.getOperation());
+    DenseMap<Operation *, SmallVector<Operation *, 2>> incomingEvalCalls;
+    for (sim::SimFuncOp caller : evalClosure) {
+      sim::SimDesignOp design = caller->getParentOfType<sim::SimDesignOp>();
+      if (!design)
+        continue;
+      caller.walk([&](Operation *operation) {
+        StringRef calleeName;
+        if (auto call = dyn_cast<sim::SimCallOp>(operation))
+          calleeName = call.getCallee();
+        else if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+          if (!call.getCallee())
+            return;
+          calleeName = *call.getCallee();
+        } else {
+          return;
+        }
+        sim::SimFuncOp callee =
+            design.lookupSymbol<sim::SimFuncOp>(calleeName);
+        if (callee && evalClosureSet.contains(callee.getOperation()))
+          incomingEvalCalls[callee.getOperation()].push_back(operation);
+      });
+    }
+    DenseMap<Operation *, bool> closureOnceMemo;
+    llvm::SmallPtrSet<Operation *, 16> closureOnceVisiting;
+    std::function<bool(sim::SimFuncOp)> closureExecutesAtMostOnce =
+        [&](sim::SimFuncOp function) {
+          auto memo = closureOnceMemo.find(function.getOperation());
+          if (memo != closureOnceMemo.end())
+            return memo->second;
+          if (!closureOnceVisiting.insert(function.getOperation()).second)
+            return false;
+          ArrayRef<Operation *> incoming =
+              incomingEvalCalls[function.getOperation()];
+          bool once = incoming.empty();
+          if (incoming.size() == 1) {
+            Operation *call = incoming.front();
+            sim::SimFuncOp caller = call->getParentOfType<sim::SimFuncOp>();
+            once = caller &&
+                   locallyExecutesAtMostOnce(call, caller) &&
+                   closureExecutesAtMostOnce(caller);
+          }
+          closureOnceVisiting.erase(function.getOperation());
+          closureOnceMemo[function.getOperation()] = once;
+          return once;
+        };
     LogicalResult valid = success();
     bool needsRuntimeFallback = false;
-    for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
+    for (sim::SimFuncOp function : evalClosure) {
       if (failed(valid))
         break;
       bool directBody = function->hasAttr("obelisk.eval.direct_fragment");
@@ -509,7 +590,8 @@ FailureOr<bool> makeNativeEvalPlan(
           return;
         }
         FailureOr<DynamicEvalNBAProof> proof =
-            proveDynamicEvalNBA(call, proofContext);
+            proveDynamicEvalNBA(call, proofContext,
+                                closureExecutesAtMostOnce(function));
         if (failed(proof)) {
           valid = failure();
           return;
