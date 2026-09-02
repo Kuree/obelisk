@@ -704,6 +704,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertIs(verilator.EXCLUDED["t_sys_readmem_assoc"],
                       verilator.READMEM_HASH_COMMENT)
 
+    def test_implicit_name_signedness_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_math_signed_calc"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 23.3.2.3")
+        self.assertIn("explicit .port(signal)", excluded.reason)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):

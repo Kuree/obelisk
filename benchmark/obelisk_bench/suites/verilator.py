@@ -261,6 +261,11 @@ FINISH_ZERO_EXTRA_NEWLINE = Exclusion(
     "IEEE 1800-2017 20.2",
     "Table 20-1 requires $finish(0) to print nothing; the golden requires an "
     "extra blank line after the design's final newline")
+IMPLICIT_NAME_TYPE_MISMATCH = Exclusion(
+    "IEEE 1800-2017 23.3.2.3",
+    "an implicit .name connection requires equivalent data types; the test "
+    "connects unsigned parent signals to signed instance ports, which would "
+    "need explicit .port(signal) assignment-compatible connections")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -796,6 +801,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_scheduling_3": DECLARATION_INITIALIZER_EVENT,
     "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
     "t_math_shortreal": SHORTREAL_COMPARISON_PRECISION,
+    "t_math_signed_calc": IMPLICIT_NAME_TYPE_MISMATCH,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
