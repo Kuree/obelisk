@@ -812,6 +812,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIs(verilator.EXCLUDED["t_fsm_register_wrapper_noinline"],
                       excluded)
 
+    def test_method_shadowing_outer_class_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_function_shadow_class"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 3.12.1")
+        self.assertIn("IEEE 1800-2017 3.13", excluded.reason)
+        self.assertIn("B::new()", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
