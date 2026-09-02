@@ -893,6 +893,12 @@ VARIABLE_FORCE_SELECT = Exclusion(
     "IEEE 1800-2017 10.6.2",
     "a force/release lvalue shall not be a bit-select or part-select of a "
     "variable; the test requires Verilator's extension for variable selects")
+INTEGRAL_OUTPUT_TO_ENUM = Exclusion(
+    "IEEE 1800-2017 6.22.3",
+    "port connections require assignment-compatible types under IEEE "
+    "1800-2017 23.3.3, but compatibility is directional: an enum converts "
+    "implicitly to an integral type while integral-to-enum requires an "
+    "explicit cast; the logic-vector output directly drives an enum variable")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -920,6 +926,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_force_unpacked_bitsel": VARIABLE_FORCE_SELECT,
     "t_force_wide_sel": VARIABLE_FORCE_SELECT,
     "t_foreach_const": CONSTANT_FOREACH_EXTENSIONS,
+    "t_fsm_register_wrapper": INTEGRAL_OUTPUT_TO_ENUM,
+    "t_fsm_register_wrapper_noinline": INTEGRAL_OUTPUT_TO_ENUM,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

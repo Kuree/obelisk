@@ -781,6 +781,15 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 A.6.4", excluded.reason)
         self.assertIn("non-null statement body", excluded.reason)
 
+    def test_integral_output_to_enum_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_fsm_register_wrapper"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.22.3")
+        self.assertIn("IEEE 1800-2017 23.3.3", excluded.reason)
+        self.assertIn("integral-to-enum requires an explicit cast",
+                      excluded.reason)
+        self.assertIs(verilator.EXCLUDED["t_fsm_register_wrapper_noinline"],
+                      excluded)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
