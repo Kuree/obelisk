@@ -1094,6 +1094,8 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("top.$unit", excluded.reason)
 
     def test_class_parameter_use_before_declaration_is_not_a_failure(self):
+        self.assertIs(verilator.EXCLUDED["t_param"],
+                      verilator.USE_BEFORE_DECLARATION)
         self.assertIs(verilator.EXCLUDED["t_class_param"],
                       verilator.USE_BEFORE_DECLARATION)
         self.assertIs(verilator.EXCLUDED["t_class_param_mod"],

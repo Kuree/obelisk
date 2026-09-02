@@ -1138,6 +1138,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_tri_cond_eqcase_with_1": UNTIMED_ALWAYS,
     "t_tri_eqcase_input": UNTIMED_ALWAYS,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_param": USE_BEFORE_DECLARATION,
     "t_package_twodeep": HEADER_IMPORT_WITHOUT_PORTS,
     "t_package_using_dollar_unit": PACKAGE_COMPILATION_UNIT_REFERENCE,
     "t_array_mda": OUT_OF_RANGE_FIXED_ARRAY_INDEX,
