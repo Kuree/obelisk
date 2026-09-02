@@ -469,6 +469,11 @@ NON_STANDARD_REWIND_SPELLING = Exclusion(
     "the standard spells the seek-to-start file function $rewind, which "
     "Obelisk provides; the test calls it $frewind, a tool-specific name 5.6.3 "
     "puts outside the standard")
+TIME_SCAN_PRECISION_ROUNDING = Exclusion(
+    "IEEE 1800-2017 21.3.4.3",
+    "a value matched by %t is scaled and rounded according to $timeformat, "
+    "whose precision 2 rounds the test's 8.125 ms to 8.13 ms; the test "
+    "expects the unrounded 8.125 ms value")
 USE_BEFORE_DECLARATION = Exclusion(
     "IEEE 1800-2017 6.5",
     "\"Data shall be declared before they are used, apart from implicit nets\" "
@@ -770,6 +775,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
+    "t_time_sscanf": TIME_SCAN_PRECISION_ROUNDING,
     "t_clk_concat2": MIXED_PORT_HEADER_STYLES,
     "t_clk_concat5": MIXED_PORT_HEADER_STYLES,
     "t_clk_concat6": MIXED_PORT_HEADER_STYLES,
