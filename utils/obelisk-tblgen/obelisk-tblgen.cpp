@@ -809,6 +809,21 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                  "VPI traversal needs non-root targets and an LRM clause");
       return false;
     }
+    if (edge->getValueAsBit("statementContainment")) {
+      if (sources->getValueAsBit("nullRoot")) {
+        PrintError(edge->getLoc(),
+                   "statement containment cannot start at the null root");
+        return false;
+      }
+      const Record *statementFamily = familyNames.lookup("Statement");
+      for (const Record *target : expandedSets.lookup(targets))
+        if (!llvm::is_contained(target->getValueAsListOfDefs("families"),
+                                statementFamily)) {
+          PrintError(edge->getLoc(),
+                     "statement containment target is not a statement");
+          return false;
+        }
+    }
     if (!selector->getValueAsString("aliasOf").empty()) {
       PrintError(edge->getLoc(), "VPI traversal selector must be canonical");
       return false;
@@ -1200,6 +1215,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     const Record *mode;
     const Record *order;
     const Record *targets;
+    bool statementContainment;
     StringRef selectorName;
     StringRef clause;
   };
@@ -1213,6 +1229,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
           {source, static_cast<uint32_t>(selector->getValueAsInt("value")),
            edge->getValueAsDef("mode"), edge->getValueAsDef("order"),
            edge->getValueAsDef("targets"),
+           edge->getValueAsBit("statementContainment"),
            selector->getValueAsString("apiName"),
            edge->getValueAsString("clause")});
     };
@@ -1234,6 +1251,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  VPITraversalMode mode;\n"
         "  VPITraversalOrder order;\n"
         "  VPIObjectSetID targets;\n"
+        "  bool statementContainment;\n"
         "  const char *selectorName;\n"
         "  const char *clause;\n"
         "};\n\n";
@@ -1241,11 +1259,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   for (const EmittedTraversalEdge &edge : emittedEdges) {
     os << formatv(
         "  {{{0}, {1}, VPITraversalMode::{2}, VPITraversalOrder::{3}, "
-        "VPIObjectSetID::{4}, \"{5}\", \"{6}\"",
+        "VPIObjectSetID::{4}, {5}, \"{6}\", \"{7}\"",
         edge.source, edge.selector, edge.mode->getValueAsString("cppName"),
         edge.order->getValueAsString("cppName"),
-        edge.targets->getValueAsString("cppName"), edge.selectorName,
-        edge.clause);
+        edge.targets->getValueAsString("cppName"), edge.statementContainment,
+        edge.selectorName, edge.clause);
     os << "},\n";
   }
   os << "};\n\n";
@@ -1279,6 +1297,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "inline constexpr bool hasVPITraversal(\n"
         "    uint32_t sourceType, uint32_t selector, VPITraversalMode mode) {\n"
         "  return findVPITraversal(sourceType, selector, mode) != nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool isVPIStatementContainment(\n"
+        "    uint32_t sourceType, uint32_t selector, VPITraversalMode mode) {\n"
+        "  const auto *edge = findVPITraversal(sourceType, selector, mode);\n"
+        "  return edge && edge->statementContainment;\n"
         "}\n\n";
 
   // Emit the same model as a compact, architecture-independent wire image.
@@ -1411,7 +1434,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     append16(static_cast<uint16_t>(edge.selector));
     append16(imageSetIDs.lookup(edge.targets));
     image.push_back(static_cast<uint8_t>(edge.mode->getValueAsInt("value")));
-    image.push_back(static_cast<uint8_t>(edge.order->getValueAsInt("value")));
+    image.push_back(
+        static_cast<uint8_t>(edge.order->getValueAsInt("value") |
+                             (edge.statementContainment ? 0x80 : 0)));
   }
 
   if (image.size() > std::numeric_limits<uint32_t>::max()) {
@@ -1447,6 +1472,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imageSetSize << ";\n";
   os << "inline constexpr uint32_t vpiObjectModelImageTraversalSize = "
      << imageTraversalSize << ";\n\n";
+  os << "inline constexpr uint8_t "
+        "vpiObjectModelImageStatementContainment = 0x80;\n\n";
   os << formatv("inline constexpr uint64_t "
                 "vpiObjectModelImageFingerprint = UINT64_C({0});\n\n",
                 imageChecksum);
@@ -1585,7 +1612,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     uint16_t selector = readVPIObjectModelImage16(record, 2);
     uint16_t targets = readVPIObjectModelImage16(record, 4);
     uint8_t mode = record[6];
-    uint8_t order = record[7];
+    uint8_t flagsAndOrder = record[7];
+    uint8_t order = flagsAndOrder & 0x7f;
     bool ordered = index == 0 || previousSource < source ||
                    (previousSource == source &&
                     (previousSelector < selector ||
@@ -1613,6 +1641,7 @@ struct VPIObjectModelImageTraversal {
   uint16_t targets;
   VPITraversalMode mode;
   VPITraversalOrder order;
+  bool statementContainment;
 };
 
 inline constexpr bool findVPIObjectModelImageTraversal(
@@ -1649,7 +1678,8 @@ inline constexpr bool findVPIObjectModelImageTraversal(
             readVPIObjectModelImage16(record, 2),
             readVPIObjectModelImage16(record, 4),
             static_cast<VPITraversalMode>(record[6]),
-            static_cast<VPITraversalOrder>(record[7])};
+            static_cast<VPITraversalOrder>(record[7] & 0x7f),
+            (record[7] & vpiObjectModelImageStatementContainment) != 0};
   return result.sourceType == sourceType && result.selector == selector &&
          result.mode == mode;
 }

@@ -42,15 +42,20 @@ def DeclarationOrder : VPITraversalOrder<"Declaration", 2>;
 def IndexOrder : VPITraversalOrder<"Index", 3>;
 def TimeOrder : VPITraversalOrder<"Time", 4>;
 
+// statementContainment marks forward structural ownership of Statement-family
+// targets. Sources may be scopes, code units/processes, assertions, or other
+// statements. Cross-references and reverse parent/scope edges do not set it.
 class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
                        VPITraversalMode mode_, VPIObjectSet targets_,
-                       VPITraversalOrder order_, string clause_> {
+                       VPITraversalOrder order_, string clause_,
+                       bit statementContainment_ = 0> {
   VPIObjectSet sources = sources_;
   VPISelector selector = selector_;
   VPITraversalMode mode = mode_;
   VPIObjectSet targets = targets_;
   VPITraversalOrder order = order_;
   string clause = clause_;
+  bit statementContainment = statementContainment_;
 }
 
 // Abstract target classes.  Expansion always discards aliases and
@@ -296,7 +301,7 @@ def ModuleInterfaceArrays : VPITraversalEdge<ModuleSource, InterfaceArray,
 def ModuleProcesses : VPITraversalEdge<ModuleSource, ProcessRel, IterateMode,
   StaticProcessObjects, NoOrder, "37.5">;
 def ModuleContAssigns : VPITraversalEdge<ModuleSource, ContAssign, IterateMode,
-  ContAssignObjects, NoOrder, "37.5">;
+  ContAssignObjects, NoOrder, "37.5", 1>;
 def ModuleChildren : VPITraversalEdge<ModuleSource, Module, IterateMode,
   ModuleTarget, NoOrder, "37.5">;
 def ModuleArrays : VPITraversalEdge<ModuleSource, ModuleArray, IterateMode,
@@ -314,7 +319,7 @@ def ModuleDefParams : VPITraversalEdge<ModuleSource, DefParam, IterateMode,
 def ModuleIODecls : VPITraversalEdge<ModuleSource, IODecl, IterateMode,
   IODeclObjects, NoOrder, "37.5">;
 def ModuleAliasStmts : VPITraversalEdge<ModuleSource, AliasStmt, IterateMode,
-  AliasStmtObjects, NoOrder, "37.5">;
+  AliasStmtObjects, NoOrder, "37.5", 1>;
 def ModuleClockingBlocks : VPITraversalEdge<ModuleSource, ClockingBlock,
   IterateMode, ClockingBlockObjects, NoOrder, "37.5">;
 def ModuleInternalScopes : VPITraversalEdge<ModuleSource, InternalScopeRel,
@@ -329,7 +334,7 @@ def InterfaceModports : VPITraversalEdge<InterfaceObjects, Modport,
 def InterfaceModPaths : VPITraversalEdge<InterfaceObjects, ModPath,
   IterateMode, ModPathObjects, NoOrder, "37.6">;
 def InterfaceContAssigns : VPITraversalEdge<InterfaceObjects, ContAssign,
-  IterateMode, ContAssignObjects, NoOrder, "37.6">;
+  IterateMode, ContAssignObjects, NoOrder, "37.6", 1>;
 def InterfaceClockingBlocks : VPITraversalEdge<InterfaceObjects,
   ClockingBlock, IterateMode, ClockingBlockObjects, NoOrder, "37.6">;
 def InterfaceChildren : VPITraversalEdge<InterfaceObjects, Interface,
@@ -342,7 +347,7 @@ def InterfaceInstanceArrays : VPITraversalEdge<InterfaceObjects,
   InstanceArrayRel, HandleMode, InstanceArrayObjects, NoOrder, "37.6">;
 
 def ProgramContAssigns : VPITraversalEdge<ProgramObjects, ContAssign,
-  IterateMode, ContAssignObjects, NoOrder, "37.9">;
+  IterateMode, ContAssignObjects, NoOrder, "37.9", 1>;
 def ProgramClockingBlocks : VPITraversalEdge<ProgramObjects, ClockingBlock,
   IterateMode, ClockingBlockObjects, NoOrder, "37.9">;
 def ProgramInterfaces : VPITraversalEdge<ProgramObjects, Interface,

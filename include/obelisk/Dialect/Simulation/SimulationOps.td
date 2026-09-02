@@ -112,15 +112,15 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
 def SimStatementDeclOp : SimOp<"statement.decl", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
-  let summary = "immutable VPI behavioral-statement identity";
+  let summary = "immutable VPI statement identity";
   let description = [{
     Describes one elaborated statement occurrence independently of executable
     fragments and bytecode. The exact callback sites are separate inventory
     records because one statement (notably `for`) may have multiple semantic
     cbStmt points. `scope_id` is the exact elaborated hierarchy scope. The
     optional code-unit ID owns behavioral statements; scope-owned static
-    statement objects omit it. Statement nesting is represented only by
-    `parent_id`.
+    statement objects omit it and are owned by `scope_id`. Statement nesting
+    is represented only by `parent_id`.
   }];
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$code_unit_id,
                        I64Attr:$scope_id, I32Attr:$vpi_kind,
