@@ -1824,13 +1824,14 @@ std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
   return bytes;
 }
 
-std::vector<uint8_t> makeDatabase(bool writable = true) {
+std::vector<uint8_t> makeDatabase(bool writable = true,
+                                  bool withSource = true) {
   constexpr uint64_t scopeOffset = 128;
   constexpr uint64_t objectOffset = 192;
   constexpr uint64_t typeOffset = 288;
   constexpr uint64_t stringOffset = 368;
-  constexpr uint64_t stringSize = 20;
-  constexpr uint64_t indexOffset = 392;
+  constexpr uint64_t stringSize = 28;
+  constexpr uint64_t indexOffset = 400;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
   put32(bytes, 8, OBELISK_RT_VERSION);
@@ -1857,6 +1858,10 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, objectOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
+  if (withSource) {
+    put64(bytes, scopeOffset + 48, stringOffset + 20);
+    put64(bytes, scopeOffset + 56, (uint64_t{3} << 32) | 1);
+  }
 
   put32(bytes, objectOffset, OBELISK_RT_DESIGN_RECORD_STORAGE);
   put32(bytes, objectOffset + 4,
@@ -1864,12 +1869,16 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
             (writable ? OBELISK_RT_DESIGN_CAP_WRITE : 0));
   put64(bytes, objectOffset + 8, 7);
   put64(bytes, objectOffset + 16, scopeOffset);
+  if (withSource)
+    put64(bytes, objectOffset + 32, stringOffset + 20);
   put64(bytes, objectOffset + 40, stringOffset + 4);
   put64(bytes, objectOffset + 48, typeOffset);
   put64(bytes, objectOffset + 56, 65);
   put64(bytes, objectOffset + 64, 64);
   put64(bytes, objectOffset + 72, 0);
   put64(bytes, objectOffset + 80, 0);
+  if (withSource)
+    put64(bytes, objectOffset + 88, (uint64_t{7} << 32) | 5);
 
   put32(bytes, typeOffset, OBELISK_RT_DESIGN_RECORD_TYPE);
   put32(bytes, typeOffset + 4,
@@ -1879,7 +1888,7 @@ std::vector<uint8_t> makeDatabase(bool writable = true) {
   put64(bytes, typeOffset + 8, 65);
   put64(bytes, typeOffset + 16, 64);
   put64(bytes, typeOffset + 72, stringOffset + 14);
-  std::memcpy(bytes.data() + stringOffset, "top\0top.value\0logic\0",
+  std::memcpy(bytes.data() + stringOffset, "top\0top.value\0logic\0test.sv\0",
               stringSize);
 
   struct Entry {
@@ -3930,6 +3939,10 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_get(vpiSize, value), 65);
   EXPECT_STREQ(vpi_get_str(vpiName, value), "value");
   EXPECT_STREQ(vpi_get_str(vpiFullName, value), "top.value");
+  EXPECT_STREQ(vpi_get_str(vpiFile, value), "test.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, value), 7);
+  EXPECT_STREQ(vpi_get_str(vpiDefFile, root), "test.sv");
+  EXPECT_EQ(vpi_get(vpiDefLineNo, root), 3);
   EXPECT_EQ(vpi_compare_objects(value, absolute), 1);
   EXPECT_EQ(vpi_compare_objects(root, scope), 1);
 
@@ -3986,6 +3999,8 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   ASSERT_NE(value.value.vector, nullptr);
   EXPECT_EQ(value.value.vector[0].aval, UINT32_MAX);
   EXPECT_EQ(value.value.vector[0].bval, 0u);
+  EXPECT_EQ(value.value.vector[2].aval, 1u);
+  EXPECT_EQ(value.value.vector[2].bval, 0u);
 
   value = {};
   value.format = vpiScalarVal;
@@ -3994,6 +4009,10 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   value.value.scalar = vpi0;
   vpi_get_value(object, &value);
   EXPECT_EQ(value.value.scalar, vpiX);
+  value = {};
+  value.format = vpiIntVal;
+  vpi_get_value(object, &value);
+  EXPECT_EQ(value.value.integer, 0);
 
   char binary[] = "1_0xz?";
   value = {};
@@ -4003,9 +4022,16 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   value.value.str = nullptr;
   vpi_get_value(object, &value);
   ASSERT_NE(value.value.str, nullptr);
+  const char *valueString = value.value.str;
   std::string formatted(value.value.str);
   ASSERT_GE(formatted.size(), 5u);
   EXPECT_EQ(formatted.substr(formatted.size() - 5), "10xzz");
+  const char *propertyString = vpi_get_str(vpiFullName, object);
+  ASSERT_NE(propertyString, nullptr);
+  EXPECT_STREQ(propertyString, "top.value");
+  EXPECT_STREQ(valueString, formatted.c_str());
+  vpi_get_value(object, &value);
+  EXPECT_STREQ(propertyString, "top.value");
   vpi_put_value(object, nullptr, nullptr, vpiReleaseFlag);
 
   char invalidBinary[] = "2";
@@ -4042,6 +4068,21 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   vpi_put_value(object, &value, nullptr, vpiNoDelay);
   EXPECT_EQ(vpi_chk_error(&error), vpiError);
   EXPECT_STREQ(error.message, "VPI mutation requires --vpi=full");
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture noSource;
+  noSource.database = makeDatabase(true, false);
+  noSource.execution.design_database = noSource.database.data();
+  noSource.execution.design_database_size = noSource.database.size();
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&noSource.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  object = vpi_handle_by_name(objectName, nullptr);
+  ASSERT_NE(object, nullptr);
+  EXPECT_EQ(vpi_get_str(vpiFile, object), nullptr);
+  EXPECT_EQ(vpi_get(vpiLineNo, object), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
   obelisk_rt_v1_context_destroy(context);
 }

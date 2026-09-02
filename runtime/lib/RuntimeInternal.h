@@ -2653,6 +2653,11 @@ obelisk_rt_status obelisk_rt_cached_design_type_info(
 obelisk_rt_status obelisk_rt_cached_design_type_child(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_source(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
+    uint32_t *outColumn) noexcept;
+
 obelisk_rt_status obelisk_rt_cached_design_name(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept;

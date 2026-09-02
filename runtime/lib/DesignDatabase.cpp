@@ -1028,6 +1028,37 @@ obelisk_rt_status obelisk_rt_cached_design_type_child(
                   : OBELISK_RT_INVALID_HANDLE;
 }
 
+obelisk_rt_status obelisk_rt_cached_design_source(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
+    uint32_t *outColumn) noexcept {
+  if (!outFile || !outFileSize || !outLine || !outColumn)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  const uint8_t *record = nullptr;
+  uint32_t kind = 0;
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
+      kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t fileOffset = read64(
+      record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 48 : 32));
+  uint64_t lineColumn = read64(
+      record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 56 : 88));
+  if (fileOffset == 0) {
+    *outFile = nullptr;
+    *outFileSize = 0;
+  } else {
+    std::string_view file;
+    if (!getString(*database, fileOffset, file))
+      return OBELISK_RT_INVALID_DESIGN;
+    *outFile = reinterpret_cast<const uint8_t *>(file.data());
+    *outFileSize = file.size();
+  }
+  *outLine = static_cast<uint32_t>(lineColumn >> 32);
+  *outColumn = static_cast<uint32_t>(lineColumn);
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status obelisk_rt_cached_design_name(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept {

@@ -20,8 +20,10 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 #include <string>
@@ -68,9 +70,17 @@ struct VPIState {
   std::string errorCode;
   int errorLevel = 0;
   bool unsupportedStartup = false;
+  // IEEE temporary results are invalidated by the next routine call of the
+  // same family, irrespective of which object handle was used.
+  std::string propertyStringScratch;
+  std::string valueStringScratch;
+  std::vector<s_vpi_vecval> vectorScratch;
 };
 
-VPIState *activeState = nullptr;
+// VPI is callable only from the simulation thread (startup, callbacks, and
+// reentrant DPI on that thread).  A process-global binding would accidentally
+// authorize debugger transport/signal threads and race callback scratch state.
+thread_local VPIState *activeState = nullptr;
 
 void setError(VPIState *state, const char *message, int level = vpiError,
               const char *code = "OBELISK_VPI") {
@@ -240,7 +250,10 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
       }
       break;
     case vpiIntVal:
-      value[0] = static_cast<uint32_t>(source->value.integer);
+      if (source->value.integer < 0)
+        std::fill(value.begin(), value.end(), UINT64_MAX);
+      value[0] = (value[0] & ~UINT64_C(0xffffffff)) |
+                 static_cast<uint32_t>(source->value.integer);
       break;
     case vpiScalarVal:
       if (source->value.scalar == vpi1)
@@ -529,6 +542,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                ? 0
                : static_cast<PLI_INT32>(
                      std::min<uint64_t>(info.bit_width, INT32_MAX));
+  if (property == vpiLineNo || property == vpiDefLineNo) {
+    const uint8_t *file = nullptr;
+    uint64_t fileSize = 0;
+    uint32_t line = 0, column = 0;
+    if (obelisk_rt_cached_design_source(handle->owner->context, handle->cursor,
+                                        &file, &fileSize, &line, &column) !=
+        OBELISK_RT_OK)
+      return vpiUndefined;
+    return static_cast<PLI_INT32>(std::min<uint32_t>(line, INT32_MAX));
+  }
   setError(handle->owner, "unsupported integer VPI property", vpiNotice);
   return vpiUndefined;
 }
@@ -541,16 +564,37 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
   __vpiHandle *handle = validate(opaque);
-  if (!handle || (property != vpiName && property != vpiFullName))
+  if (!handle)
     return nullptr;
-  if (!nameFor(handle, handle->scratch))
-    return nullptr;
-  if (property == vpiName) {
-    size_t separator = handle->scratch.rfind('.');
-    if (separator != std::string::npos)
-      handle->scratch.erase(0, separator + 1);
+  std::string &scratch = handle->owner->propertyStringScratch;
+  if (property == vpiName || property == vpiFullName) {
+    if (!nameFor(handle, scratch))
+      return nullptr;
+    if (property == vpiName) {
+      size_t separator = scratch.rfind('.');
+      if (separator != std::string::npos)
+        scratch.erase(0, separator + 1);
+    }
+    return scratch.data();
   }
-  return handle->scratch.data();
+  if (property == vpiFile || property == vpiDefFile) {
+    const uint8_t *file = nullptr;
+    uint64_t size = 0;
+    uint32_t line = 0, column = 0;
+    if (obelisk_rt_cached_design_source(handle->owner->context, handle->cursor,
+                                        &file, &size, &line, &column) !=
+        OBELISK_RT_OK)
+      return nullptr;
+    if (size == 0) {
+      scratch.clear();
+      return nullptr;
+    }
+    scratch.assign(reinterpret_cast<const char *>(file),
+                   static_cast<size_t>(size));
+    return scratch.data();
+  }
+  setError(handle->owner, "unsupported string VPI property", vpiNotice);
+  return nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
@@ -565,17 +609,14 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   const std::vector<uint64_t> &unknown = handle->unknownScratch;
   switch (destination->format) {
   case vpiVectorVal: {
-    if (!destination->value.vector) {
-      OBELISK_RT_TRY {
-        handle->vectorScratch.resize(
-            static_cast<size_t>((info.bit_width + 31) / 32));
-        destination->value.vector = handle->vectorScratch.data();
-      }
-      OBELISK_RT_CATCH_ALL {
-        setError(handle->owner, "VPI vector buffer is out of memory",
-                 vpiSystem);
-        return;
-      }
+    OBELISK_RT_TRY {
+      handle->owner->vectorScratch.resize(
+          static_cast<size_t>((info.bit_width + 31) / 32));
+      destination->value.vector = handle->owner->vectorScratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI vector buffer is out of memory", vpiSystem);
+      return;
     }
     size_t words = static_cast<size_t>((info.bit_width + 31) / 32);
     for (size_t word = 0; word != words; ++word) {
@@ -595,7 +636,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     break;
   }
   case vpiIntVal:
-    destination->value.integer = static_cast<PLI_INT32>(value[0] ^ unknown[0]);
+    destination->value.integer = static_cast<PLI_INT32>(value[0] & ~unknown[0]);
     break;
   case vpiScalarVal: {
     bool v = (value[0] & 1) != 0;
@@ -605,15 +646,16 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   }
   case vpiBinStrVal:
     OBELISK_RT_TRY {
-      handle->scratch.assign(static_cast<size_t>(info.bit_width), '0');
+      handle->owner->valueStringScratch.assign(
+          static_cast<size_t>(info.bit_width), '0');
       for (uint64_t bit = 0; bit != info.bit_width; ++bit) {
         uint64_t mask = uint64_t{1} << (bit % 64);
         bool v = (value[bit / 64] & mask) != 0;
         bool u = (unknown[bit / 64] & mask) != 0;
-        handle->scratch[info.bit_width - 1 - bit] =
+        handle->owner->valueStringScratch[info.bit_width - 1 - bit] =
             !u ? (v ? '1' : '0') : (v ? 'z' : 'x');
       }
-      destination->value.str = handle->scratch.data();
+      destination->value.str = handle->owner->valueStringScratch.data();
     }
     OBELISK_RT_CATCH_ALL {
       setError(handle->owner, "could not format binary VPI value", vpiSystem);
