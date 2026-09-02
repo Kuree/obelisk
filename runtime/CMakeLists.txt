@@ -38,6 +38,7 @@ set(_obelisk_runtime_common_sources
   lib/StochasticQueue.cpp
   lib/VCD.cpp
   lib/VPI.cpp
+  lib/VPIObjectModelABI.cpp
 )
 set(_obelisk_runtime_cold_tail_sources
   # Keep feature-only services after every common runtime object. Native links
@@ -61,7 +62,9 @@ add_library(obelisk_rt STATIC
 )
 
 add_library(ObeliskRuntime ALIAS obelisk_rt)
-add_dependencies(obelisk_rt ObeliskDesignReflectionIncGen)
+add_dependencies(obelisk_rt
+  ObeliskDesignReflectionIncGen
+  ObeliskVPIObjectModelIncGen)
 
 target_include_directories(obelisk_rt
   PUBLIC
