@@ -685,6 +685,13 @@ class ExpectationDescriptorTest(unittest.TestCase):
                 "test.compile(fails=test.vlt_all)\ntest.passes()\n"),
             verilator.Expectation(True, False))
 
+    def test_implicit_return_extern_function_is_a_compile_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_interface_modport_export",
+                "test.compile(fails=test.vlt_all)\ntest.passes()\n"),
+            verilator.Expectation(True, False))
+
     def test_a_multiline_compile_call_is_read_whole(self):
         self.assertEqual(
             self.expectation(

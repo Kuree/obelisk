@@ -231,6 +231,10 @@ EXPECTED_COMPILE_ERROR_NAMES = frozenset({
     # interconnect net. The explicitly typed output ports in modaa default to
     # variables under 23.2.2.3, so their connections must be rejected.
     "t_interconnect",
+    # IEEE 1800-2017 A.2.6 requires function_prototype to contain an explicit
+    # data_type_or_void. Unlike a function definition, its return type cannot
+    # use the empty implicit_data_type production.
+    "t_interface_modport_export",
 })
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on
