@@ -856,6 +856,11 @@ EVENT_TRIGGER_METHOD_CALL = Exclusion(
     "an event trigger takes a hierarchical_event_identifier, not an arbitrary "
     "event-valued expression; the test requires Verilator to accept the "
     "function call b.get_event() directly after the trigger operator")
+STRING_WILDCARD_EQUALITY = Exclusion(
+    "IEEE 1800-2017 11.3",
+    "Table 11-1 restricts wildcard equality to integral operands; the test "
+    "requires Verilator's extension of ==? and !=? to a string expression, "
+    "while Table 6-9 defines only ordinary equality for strings")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -877,6 +882,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
+    "t_eq_wild": STRING_WILDCARD_EQUALITY,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

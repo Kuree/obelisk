@@ -906,6 +906,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("hierarchical_event_identifier", excluded.reason)
         self.assertIn("b.get_event()", excluded.reason)
 
+    def test_wildcard_equality_requires_integral_operands(self):
+        excluded = verilator.EXCLUDED["t_eq_wild"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 11.3")
+        self.assertIn("integral operands", excluded.reason)
+        self.assertIn("string", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
