@@ -613,8 +613,14 @@ DPI_PACKED_EXPORT_RESULT = Exclusion(
     "IEEE 1800-2017 35.5.5",
     "an exported DPI function result may use scalar bit or logic but not a "
     "packed array; the test exports dpix_f_bit15 with a bit [14:0] result")
+VERILATOR_DPI_DECLARATION_COMMENT = Exclusion(
+    "IEEE 1800-2017 5.4",
+    "a block comment has no DPI declaration semantics; the test requires "
+    "Verilator's dpi_c_decl metacomment to replace H.7.4's const char * "
+    "string result with char * and add a C++ throw() specifier")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
+    "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
