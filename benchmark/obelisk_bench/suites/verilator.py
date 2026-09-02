@@ -566,6 +566,12 @@ ACTIVE_ASSERTION_ACTION_CONTROL = Exclusion(
     "PassOff explicitly does not affect an assertion already executing, but "
     "the test expects PassOff between two clocks to suppress the pass action "
     "of a ##1 attempt that started on the preceding clock")
+DPI_PART_SELECT_EXTENSION = Exclusion(
+    "IEEE 1800-2017 H.11.5",
+    "the canonical packed-array part-select utilities are limited to widths "
+    "of at most 32 bits, and a get narrower than 32 bits shall leave the "
+    "destination's upper bits unchanged; the test requests 40-bit selects "
+    "and expects an uninitialized narrow destination to be zero-filled")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -596,6 +602,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_math_width": UNTYPED_UNSIZED_PARAMETER_WIDTH,
     "t_class_trigger_null": NULL_OBJECT_MEMBER_EVENT_CONTROL,
     "t_clocking_timing": USE_BEFORE_DECLARATION,
+    "t_dpi_lib": DPI_PART_SELECT_EXTENSION,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
