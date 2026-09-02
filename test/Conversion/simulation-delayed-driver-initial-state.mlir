@@ -1,9 +1,9 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
 
-// IEEE 1800-2017 4.9.1, 6.7.1, and 28.16: a delayed continuous driver
-// starts at x until its time-zero evaluation reaches the output. An ordinary
-// driver still starts at z.
+// IEEE 1800-2017 4.9.1, 6.7.1, and 10.3.3: a continuous assignment is
+// evaluated at time zero, but a delayed update does not reach its net until
+// the selected propagation delay elapses. Both drivers therefore start at z.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -32,12 +32,11 @@ module attributes {
   }
 }
 
-// The net and both drivers are unknown. Their value bits are respectively Z,
-// Z, and X, so only the first two bits are set in the value plane.
+// The net and both drivers are four-state. All three start at Z, so every
+// corresponding value-plane bit is set.
 // NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\00\00\00\00\00\00\00\00")
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\01\00\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\01\01\00\00\00\00\00\00\00\00")
 
-// Bit 14 records initial X on the delayed driver's descriptor. The ordinary
-// driver retains the legacy/default-Z flags.
+// Neither descriptor carries the explicit initial-X bit.
 // BYTECODE: state 2: kind=driver flags=953 value=8 target=0 width=1
-// BYTECODE: state 3: kind=driver flags=17337 value=16 target=0 width=1
+// BYTECODE: state 3: kind=driver flags=953 value=16 target=0 width=1

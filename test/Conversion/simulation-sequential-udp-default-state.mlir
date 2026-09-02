@@ -67,8 +67,9 @@ module attributes {
 
 // LOWER: obelisk_sim.driver.drive_changed {{.*}} {obelisk_sim.initial_driver_x}
 
-// The packed bits are storage, net, driver. The value plane begins 0b010:
-// storage X, unresolved net Z, and the certified UDP driver X.
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\02
+// Independently addressable storage, net, and driver roots occupy separate
+// bytes. The unresolved net is Z; the storage and certified UDP driver are X.
+// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\00\01\00\00\00\00\00\00\00\00\00")
 
 // BYTECODE: kind=driver flags=17337
