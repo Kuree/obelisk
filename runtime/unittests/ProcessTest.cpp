@@ -8484,7 +8484,8 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
 
   std::memset(wait, 0, 64);
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
-  entries[0] = {UINT64_MAX, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  entries[0] = {OBELISK_RT_STABLE_HANDLE_AUTOMATIC_TAG,
+                OBELISK_RT_WAIT_EDGE_CHANGE, 1};
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
             OBELISK_RT_INVALID_FRAME);
@@ -8500,7 +8501,7 @@ TEST(ProcessInstance, RejectsMalformedWaitSemantics) {
 
   std::memset(wait, 0, 64);
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 2, 0, 0};
-  entries[0] = {17, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  entries[0] = {UINT64_MAX, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
   entries[1] = {18, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
   EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
                 instance, nullptr, OBELISK_RT_TIER_NATIVE, &action),
