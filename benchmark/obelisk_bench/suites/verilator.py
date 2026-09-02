@@ -48,6 +48,8 @@ RUNTIME_ERROR_LOCATION = re.compile(
     r"([^/\\:\s]+\.(?:s?vh?)):(\d+):")
 ASSERTION_FAILURE = re.compile(r"\bassert(?:ion)?\b.*\bfailed\b",
                                re.IGNORECASE)
+FINISH_DIAGNOSTIC = re.compile(
+    r"(?m)^\$finish: [^\n]*: simulation time [^\n]*(?:\n|\Z)")
 # A small number of upstream self-checks call $finish after their checks and
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
@@ -1370,7 +1372,8 @@ def runtime_output_matches_golden(
     expected = golden.read_text(encoding="utf-8", errors="replace")
     if _runtime_assertion_error_signature(expected)[1] != 0:
         return None
-    return stdout + stderr == expected
+    actual = FINISH_DIAGNOSTIC.sub("", stdout + stderr)
+    return actual == expected
 
 
 def _runtime_assertion_error_signature(

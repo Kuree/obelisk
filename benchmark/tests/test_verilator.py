@@ -478,6 +478,13 @@ class GoldenOutputTest(unittest.TestCase):
     def test_output_mismatch_remains_a_failure(self):
         self.assertFalse(self.match("data=beef\n", "data=dead\n"))
 
+    def test_lrm_finish_diagnostic_is_not_part_of_design_output(self):
+        self.assertTrue(self.match(
+            "data=beef\n",
+            "data=beef\n",
+            "$finish: t_x.v:12: simulation time 5\n",
+        ))
+
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
