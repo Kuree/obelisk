@@ -60,19 +60,25 @@ class DetectInputsTest(unittest.TestCase):
     def test_unpacked_dimension_keeps_the_name(self):
         self.assertEqual(self.detect("module t (", "  input a[1];"), ["a"])
 
-    def test_wrapper_preserves_nonintegral_and_unpacked_input_types(self):
+    def test_wrapper_only_declares_inputs_the_driver_changes(self):
         text = "\n".join((
-            "module t (clk, check_real, check_array_real, check_string);",
+            "module t (clk, check_real, check_array_real, check_string, value);",
+            "  typedef logic [7:0] local_t;",
             "  input clk;",
             "  input real check_real;",
             "  input real check_array_real [1:0];",
             "  input string check_string;",
+            "  input local_t value;",
         ))
-        shell = verilator.make_top_shell(verilator.detect_input_ports(text))
+        driver_inputs = verilator.detect_driver_inputs(text)
+        self.assertEqual(driver_inputs, ["clk"])
+        shell = verilator.make_top_shell(driver_inputs)
         self.assertIn("reg clk;", shell)
-        self.assertIn("real check_real;", shell)
-        self.assertIn("real check_array_real [1:0];", shell)
-        self.assertIn("string check_string;", shell)
+        self.assertIn(".clk (clk)", shell)
+        self.assertNotIn("check_real", shell)
+        self.assertNotIn("check_array_real", shell)
+        self.assertNotIn("check_string", shell)
+        self.assertNotIn("value", shell)
 
     def test_one_declaration_may_name_several_ports(self):
         self.assertEqual(self.detect("module t (", "  input clk, fastclk;"),
