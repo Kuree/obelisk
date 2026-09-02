@@ -202,6 +202,10 @@ class ExecutesDescriptorTest(unittest.TestCase):
         self.assertFalse(self.descriptor(
             "test.lint(verilator_flags2=['--no-timing'], fails=True)\n"))
 
+    def test_a_commented_out_execute_call_does_not_run_the_design(self):
+        self.assertFalse(self.descriptor(
+            "test.compile(fails=test.vlt_all)\n#test.execute()\n"))
+
     def test_an_unreadable_descriptor_keeps_running_the_design(self):
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
             self.assertTrue(verilator.detect_executes(Path(tmp) / "absent.py"))

@@ -139,7 +139,6 @@ TIMING_LOOP = re.compile(r"^\s*test\.compile\(.*\btiming_loop\s*=\s*True",
 # test: upstream judges it on the build and never simulates the design. Its
 # body is therefore free to assert what no simulation makes true, so running it
 # here manufactures a failure that says nothing about Obelisk.
-EXECUTES = re.compile(r"\btest\.execute\s*\(")
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
@@ -977,8 +976,21 @@ def detect_executes(descriptor: Path) -> bool:
     """
     if not descriptor.exists():
         return True
-    return bool(EXECUTES.search(
-        descriptor.read_text(encoding="utf-8", errors="replace")))
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        # An unfamiliar future descriptor is safer to run than silently omit.
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute):
+            continue
+        receiver = node.func.value
+        if (node.func.attr == "execute" and isinstance(receiver, ast.Name)
+                and receiver.id == "test"):
+            return True
+    return False
 
 
 def detect_run_args(descriptor: Path) -> list[str]:
