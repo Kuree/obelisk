@@ -147,9 +147,113 @@ class NativeBuildResult:
 
 
 _SHARED_SUFFIXES = {".so", ".vpi"}
+_NATIVE_SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
 _NATIVE_COMPONENT_SUFFIXES = {
     ".a", ".bc", ".c", ".cc", ".cpp", ".cxx", ".o",
 }
+
+
+def _native_source_compiler(obelisk: str, use_cxx: bool) -> list[str]:
+    variable = "CXX" if use_cxx else "CC"
+    if explicit := os.environ.get(variable):
+        return shlex.split(explicit)
+    if not use_cxx:
+        return ["cc"]
+    # NativeBackend links the staged libc++, so compile C++ sources with the
+    # matching LLVM distribution instead of the host's potentially unrelated
+    # libstdc++ ABI. In a build tree that distribution is beside the driver.
+    for ancestor in Path(obelisk).resolve().parents:
+        toolchains = ancestor / "llvm-mlir"
+        if not toolchains.is_dir():
+            continue
+        candidates = sorted(toolchains.glob("*/bin/clang++"))
+        if len(candidates) == 1:
+            return [str(candidates[0]), "-stdlib=libc++"]
+        break
+    return ["clang++", "-stdlib=libc++"]
+
+
+def build_native_objects(
+        obelisk: str, sources: list[str], output_dir: str,
+        timeout: float = 60.0, compiler_flags: list[str] | None = None,
+        cwd: str | None = None,
+        module_name: str = "benchmark_native") -> NativeBuildResult:
+    """Compile foreign implementation sources for the final executable.
+
+    Unlike VPI modules, DPI implementations can call functions exported by
+    the design.  Keep them as objects so those references resolve when the
+    final executable is linked instead of probing an incomplete shared object.
+    """
+    if not sources:
+        return NativeBuildResult(ok=True, inputs=[], stderr="")
+    base = Path(cwd).resolve() if cwd else Path.cwd()
+    resolved: list[Path] = []
+    for spelling in sources:
+        path = Path(spelling)
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if not path.exists():
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"native source input does not exist: {path}",
+            )
+        if path.suffix.lower() not in _NATIVE_SOURCE_SUFFIXES:
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"unsupported native source input: {path}",
+            )
+        resolved.append(path)
+
+    try:
+        resource = _run_with_retry([obelisk, "--print-resource-dir"], timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return NativeBuildResult(
+            ok=False, inputs=[],
+            stderr=f"could not locate Obelisk DPI headers: {error}",
+        )
+    if resource.returncode != 0:
+        return NativeBuildResult(
+            ok=False, inputs=[], stderr=resource.stdout + resource.stderr)
+    resource_dir = Path(resource.stdout.strip())
+
+    objects: list[str] = []
+    compilers: dict[bool, list[str]] = {}
+    for index, source in enumerate(resolved):
+        use_cxx = (source.suffix == ".C" or
+                   source.suffix.lower() in {".cc", ".cpp", ".cxx"})
+        compiler_var = "CXX" if use_cxx else "CC"
+        compiler = compilers.get(use_cxx)
+        if compiler is None:
+            compiler = _native_source_compiler(obelisk, use_cxx)
+            compilers[use_cxx] = compiler
+        if not compiler:
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"{compiler_var} names no compiler",
+            )
+        output = Path(output_dir) / f"{module_name}-{index}.o"
+        command = [
+            *compiler, "-c", "-fPIC", str(source), *(compiler_flags or []),
+            "-I", str(resource_dir / "include"), "-o", str(output),
+        ]
+        try:
+            result = _run_with_retry(command, timeout, cwd=cwd)
+        except subprocess.TimeoutExpired:
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"native source compilation exceeded {timeout:g}s",
+            )
+        except OSError as error:
+            return NativeBuildResult(
+                ok=False, inputs=[],
+                stderr=f"native compiler could not launch: {error}",
+            )
+        if result.returncode != 0:
+            return NativeBuildResult(
+                ok=False, inputs=[], stderr=result.stdout + result.stderr)
+        objects.append(str(output))
+    return NativeBuildResult(ok=True, inputs=objects, stderr="")
 
 
 def build_vpi_inputs(obelisk: str, code: list[str], output_dir: str,

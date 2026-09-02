@@ -276,6 +276,18 @@ class DescriptorDPISourcesTest(unittest.TestCase):
         )
         self.assertEqual([path.name for path in sources], ["t_x.cpp"])
 
+    def test_name_concatenation_can_name_a_generated_header_dpi_source(self):
+        sources = self.sources(
+            'test.compile(v_flags2=["t/" + test.name + ".cpp"])\n',
+            {
+                "t_x.cpp": (
+                    '#include "svdpi.h"\n'
+                    '#if defined(VERILATOR)\n#include "Vt_x__Dpi.h"\n'
+                    '#else\n#error "Unknown simulator for DPI test"\n#endif\n')
+            },
+        )
+        self.assertEqual([path.name for path in sources], ["t_x.cpp"])
+
     def test_headerless_unrelated_native_source_is_not_attached(self):
         sources = self.sources(
             'test.compile(verilator_flags2=["--binary", '
@@ -290,6 +302,34 @@ class DescriptorDPISourcesTest(unittest.TestCase):
             {"t_x_main.cpp": '#include "Vt_x.h"\n'},
         )
         self.assertEqual(sources, [])
+
+    def test_generated_dpi_header_alias_is_local_to_the_build_directory(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            directory = Path(tmp)
+            source = directory / "implementation.cpp"
+            source.write_text('#include "dpi.h"\n', encoding="utf-8")
+            header = directory / "descriptor_dpi.h"
+            header.write_text("// generated\n", encoding="utf-8")
+            selected = verilator.prepare_descriptor_dpi_header(
+                [source], header)
+            alias = directory / "dpi.h"
+            self.assertEqual(selected, alias)
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(alias.read_text(encoding="utf-8"), "// generated\n")
+
+    def test_checked_in_compatibility_header_can_back_the_fixed_name(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            directory = Path(tmp)
+            source = directory / "implementation.cpp"
+            source.write_text('#include "dpi.h"\n', encoding="utf-8")
+            generated = directory / "descriptor_dpi.h"
+            generated.write_text("// generated\n", encoding="utf-8")
+            compatibility = directory / "expected.out"
+            compatibility.write_text("// expected\n", encoding="utf-8")
+            selected = verilator.prepare_descriptor_dpi_header(
+                [source], generated, compatibility)
+            self.assertEqual(selected.read_text(encoding="utf-8"),
+                             "// expected\n")
 
 
 class RuntimeErrorTest(unittest.TestCase):

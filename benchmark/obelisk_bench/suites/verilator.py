@@ -58,6 +58,23 @@ CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
 # Verilator-only `$c` calls and implementation-specific behavior.
 COMPATIBILITY_DEFINES: dict[str, tuple[str, ...]] = {
     "t_assert_cover": ("verilator",),
+    "t_dpi_arg_inout_type": ("NO_SHORTREAL",),
+    "t_dpi_arg_inout_unpack": ("NO_SHORTREAL", "NO_UNPACK_STRUCT"),
+    "t_dpi_arg_input_type": ("NO_SHORTREAL",),
+    "t_dpi_arg_input_unpack": ("NO_SHORTREAL", "NO_UNPACK_STRUCT"),
+    "t_dpi_arg_output_type": ("NO_SHORTREAL",),
+    "t_dpi_arg_output_unpack": ("NO_SHORTREAL", "NO_UNPACK_STRUCT"),
+}
+DESCRIPTOR_DPI_NATIVE_DEFINES: dict[str, tuple[str, ...]] = {
+    name: ("VERILATOR",)
+    for name in (
+        "t_dpi_arg_inout_type",
+        "t_dpi_arg_inout_unpack",
+        "t_dpi_arg_input_type",
+        "t_dpi_arg_input_unpack",
+        "t_dpi_arg_output_type",
+        "t_dpi_arg_output_unpack",
+    )
 }
 SCENARIO = "simulator"
 KNOWN_SLANG_BUGS = {
@@ -1046,6 +1063,7 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
 
     root = descriptor.parent.parent.resolve()
     aliases: dict[str, str] = {
+        "name": descriptor.stem,
         "pli_filename": descriptor.with_suffix(".cpp").relative_to(
             root).as_posix(),
     }
@@ -1066,6 +1084,12 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
         if isinstance(node, (ast.List, ast.Tuple)):
             return [value for element in node.elts
                     for value in literal_strings(element)]
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left = literal_strings(node.left)
+            right = literal_strings(node.right)
+            if len(left) == 1 and len(right) == 1:
+                return [left[0] + right[0]]
+            return []
         if (isinstance(node, ast.Attribute) and
                 isinstance(node.value, ast.Name) and
                 node.value.id == "test" and node.attr in aliases):
@@ -1113,8 +1137,13 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
             for declaration in dpi_declarations)
         if not has_svdpi and not headerless_dpi_definition:
             continue
+        generated_header_branch = re.search(
+            r'defined\((?:MS|VERILATOR)\)[\s\S]*?'
+            r'#\s*include\s*[<"](?:dpi\.h|V[A-Za-z0-9_]+__Dpi\.h)[>"]',
+            source)
         if ("Unknown simulator for DPI test" in source and
-                "define NEED_EXTERNS" not in source):
+                "define NEED_EXTERNS" not in source and
+                not generated_header_branch):
             continue
         seen.add(resolved)
         result.append(resolved)
@@ -1123,7 +1152,7 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
 
 def descriptor_dpi_compiler_flags(sources: list[Path], header: Path) -> list[str]:
     """Return bounded compatibility flags for descriptor DPI sources."""
-    flags = ["-include", str(header)]
+    flags = ["-include", str(header), "-I", str(header.parent)]
     # These guarded branches are the sources' generic DPI implementations:
     # unlike their Verilator branches they need no generated model headers.
     # Select one only when it exposes NEED_EXTERNS for that simulator spelling.
@@ -1136,6 +1165,25 @@ def descriptor_dpi_compiler_flags(sources: list[Path], header: Path) -> list[str
             flags.append("-DCADENCE")
             break
     return flags
+
+
+def prepare_descriptor_dpi_header(
+        sources: list[Path], generated: Path,
+        compatibility: Path | None = None) -> Path:
+    """Provide the fixed header name expected by a portable source branch."""
+    fixed_name = next((match.group(1) for source in sources
+                       if (match := re.search(
+                           r'#\s*include\s*[<"]'
+                           r'(dpi\.h|V[A-Za-z0-9_]+__Dpi\.h)[>"]',
+                           source.read_text(
+                               encoding="utf-8", errors="replace")))), None)
+    if fixed_name is None:
+        return generated
+    target = (compatibility if compatibility and compatibility.exists()
+              else generated)
+    alias = generated.with_name(fixed_name)
+    alias.symlink_to(target.resolve())
+    return alias
 
 
 def contains_runtime_error(stdout: str, stderr: str) -> bool:
@@ -1342,6 +1390,8 @@ def judge_one(
             else detect_descriptor_dpi_sources(descriptor)
         )
         descriptor_defines = detect_compile_defines(descriptor)
+        compatibility_defines = COMPATIBILITY_DEFINES.get(name, ())
+        native_defines = DESCRIPTOR_DPI_NATIVE_DEFINES.get(name, ())
         if descriptor_sources:
             header = Path(tmp) / "descriptor_dpi.h"
             header_flags = [
@@ -1350,17 +1400,24 @@ def judge_one(
             ]
             header_flags.extend(
                 "-D" + definition
-                for definition in COMPATIBILITY_DEFINES.get(name, ()))
+                for definition in compatibility_defines)
             generated = runner.emit_dpi_header(
                 obelisk, [str(top)], str(header), header_flags,
                 single_unit=SINGLE_UNIT,
             )
             if not generated.ok:
                 return model.Outcome(model.COMPILE_FAIL, generated.stderr)
-            descriptor_native = runner.build_vpi_inputs(
+            native_header = prepare_descriptor_dpi_header(
+                descriptor_sources, header,
+                top.with_name(f"{name}__Dpi.out"))
+            descriptor_native = runner.build_native_objects(
                 obelisk, [str(source) for source in descriptor_sources], tmp,
                 compiler_flags=descriptor_dpi_compiler_flags(
-                    descriptor_sources, header),
+                    descriptor_sources, native_header) + [
+                        "-D" + definition
+                        for definition in (*compatibility_defines,
+                                           *native_defines)
+                    ],
                 cwd=str(top.parent),
                 module_name="verilator_descriptor_" + "".join(
                     character if character.isalnum() else "_"
@@ -1389,7 +1446,7 @@ def judge_one(
         ]
         extra.extend(descriptor_defines)
         extra.extend("-D" + definition
-                     for definition in COMPATIBILITY_DEFINES.get(name, ()))
+                     for definition in compatibility_defines)
         if compile_threads is not None:
             extra.append(f"--compile-threads={compile_threads}")
         compiled = runner.compile_design(
