@@ -774,6 +774,13 @@ class ExcludedTest(unittest.TestCase):
                 self.assertIn("shall not be a bit-select or part-select",
                               excluded.reason)
 
+    def test_constant_foreach_extensions_are_not_compiler_failures(self):
+        excluded = verilator.EXCLUDED["t_foreach_const"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4.3")
+        self.assertIn("identifiers declared locally", excluded.reason)
+        self.assertIn("IEEE 1800-2017 A.6.4", excluded.reason)
+        self.assertIn("non-null statement body", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

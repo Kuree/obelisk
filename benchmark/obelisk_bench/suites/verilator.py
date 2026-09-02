@@ -600,6 +600,13 @@ NULL_STATEMENT_BODY = Exclusion(
     "nor a foreach loop_statement admits one -- both take a statement, which "
     "A.6.4 gives no empty production; the test writes `final ;` or a foreach "
     "with a null body")
+CONSTANT_FOREACH_EXTENSIONS = Exclusion(
+    "IEEE 1800-2017 13.4.3",
+    "a constant function may use only parameters, functions, and identifiers "
+    "declared locally to it, and a foreach loop requires a non-null statement "
+    "body under IEEE 1800-2017 A.6.4; the test iterates module variables while "
+    "computing localparams and also requires Verilator's null foreach-body "
+    "extension")
 EMPTY_ASSIGNMENT_PATTERN = Exclusion(
     "IEEE 1800-2017 A.6.7.1",
     "every assignment_pattern production carries at least one element or "
@@ -912,6 +919,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_force_unpacked": VARIABLE_FORCE_SELECT,
     "t_force_unpacked_bitsel": VARIABLE_FORCE_SELECT,
     "t_force_wide_sel": VARIABLE_FORCE_SELECT,
+    "t_foreach_const": CONSTANT_FOREACH_EXTENSIONS,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
