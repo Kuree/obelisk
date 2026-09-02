@@ -276,6 +276,11 @@ ZERO_STRING_MINIMUM_FIELD = Exclusion(
     "%s never prints leading zero characters and %0s requests the minimum "
     "field, so an all-zero integral argument is empty; the golden requires "
     "Verilator's one-space minimum")
+STATIC_REF_ARGUMENT = Exclusion(
+    "IEEE 1800-2017 13.5.2",
+    "passing an argument by ref is illegal for a static-lifetime subroutine; "
+    "the module function defaults static and the test requires its ref queue "
+    "element argument to compile")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -748,6 +753,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_method": POST_2017_ARRAY_MAP,
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
+    "t_queue_back": STATIC_REF_ARGUMENT,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
     "t_display_enum_format": PATTERN_FIELD_WIDTH,
