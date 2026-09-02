@@ -1,5 +1,7 @@
 // RUN: obelisk -emit-slang %s | obelisk-opt | FileCheck %s --check-prefix=SOURCE
-// RUN: obelisk -emit-obelisk %s | obelisk-opt | FileCheck %s --check-prefix=TARGET
+// RUN: obelisk -emit-obelisk %s | obelisk-opt | FileCheck %s --check-prefix=TARGET \
+// RUN:   --implicit-check-not='is_uninstantiated = true' \
+// RUN:   --implicit-check-not='name = "marker"'
 
 module requires_parameter #(parameter int WIDTH);
   logic marker;
@@ -18,8 +20,7 @@ endmodule
 // SOURCE: slang.symbol.variable attributes {{.*}}name = "marker"
 
 // TARGET: obelisk.sv.symbol.definition attributes {{.*}}name = "requires_parameter"
-// TARGET: obelisk.sv.symbol.instance attributes {{.*}}is_uninstantiated = true
-// TARGET-SAME: referenced_path = "requires_parameter"
-// TARGET: obelisk.sv.symbol.instance_body
-// TARGET: obelisk.sv.symbol.variable attributes {{.*}}name = "marker"
+// TARGET: obelisk.sv.symbol.definition attributes {{.*}}name = "uninstantiated_test_top"
+// TARGET: obelisk.sv.symbol.instance attributes {{.*}}is_uninstantiated = false
+// TARGET-SAME: referenced_path = "uninstantiated_test_top"
 // TARGET-NOT: slang.

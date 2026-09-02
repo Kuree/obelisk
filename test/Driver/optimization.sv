@@ -22,9 +22,8 @@ module optimization_levels;
   endfunction
 
   initial begin
-    // SCCP proves this capture dead at every level. O0 deliberately retains
-    // the process ABI; O1+ removes the now-unused capture before graph and
-    // bytecode/native construction.
+    // Early boundary DCE proves this capture dead at every level before graph
+    // and bytecode/native construction. O1+ additionally inlines add_one.
     if (1'b0)
       result = dead_capture;
     result = add_one(8'd41);
@@ -33,7 +32,9 @@ endmodule
 
 // O0: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
 // O0: obelisk_sim.func private @unit_0
-// O0: obelisk_sim.func private @unit_1({{.*}}!obelisk_sim.ref<!obelisk_sim.logic<1>>
+// O0: obelisk_sim.func private @unit_1(%arg0: !obelisk_sim.context
+// O0-SAME: %arg1: !obelisk_sim.ref<!obelisk_sim.packed_array
+// O0-SAME: obelisk_sim.descriptor_id = 0 : i64}) attributes
 // O0: obelisk_sim.call @unit_0
 
 // INLINE: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
