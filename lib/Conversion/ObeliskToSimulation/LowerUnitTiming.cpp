@@ -517,9 +517,13 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     // element as long as the expression reduces to a singular value. One that
     // has no watchable handle is re-evaluated by an observer instead, which
     // reports a change in exactly that value.
+    bool sampledClockingVariable =
+        children.front()->hasAttr(clockingVariableAttrName) ||
+        children.front()->hasAttr("virtual_interface_clocking");
     bool computed =
         !clockingBlockEvent &&
-        (!isAddressableExpression(children.front()) ||
+        (sampledClockingVariable ||
+         !isAddressableExpression(children.front()) ||
          !hasWatchableSignalHandle(children.front()) ||
          (event.getHasIff() && (!isAddressableExpression(children[1]) ||
                                 !hasWatchableSignalHandle(children[1]) ||
@@ -752,6 +756,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       return failure();
     }
     computed |= event.getHasIff() ||
+                eventChildren.front()->hasAttr(clockingVariableAttrName) ||
+                eventChildren.front()->hasAttr("virtual_interface_clocking") ||
                 !isAddressableExpression(eventChildren.front()) ||
                 !hasWatchableSignalHandle(eventChildren.front());
     FailureOr<Type> watchedType =
