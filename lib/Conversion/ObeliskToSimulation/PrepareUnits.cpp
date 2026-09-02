@@ -346,26 +346,61 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     }
   }
 
-  auto compatibleABI = [](semantic::SVSubroutineSymbolOp lhs,
-                          semantic::SVSubroutineSymbolOp rhs) {
-    if (lhs.getSemanticType() != rhs.getSemanticType() ||
-        lhs.getSubroutineKind() != rhs.getSubroutineKind())
-      return false;
-    SmallVector<semantic::SVFormalArgumentSymbolOp> lhsFormals;
-    SmallVector<semantic::SVFormalArgumentSymbolOp> rhsFormals;
-    for (Operation *child : getChildren(lhs))
+  struct SubroutineABI {
+    semantic::SVSubroutineKind kind;
+    FunctionType signature;
+    SmallVector<semantic::SVArgumentDirection> directions;
+  };
+  auto getSubroutineABI = [context](semantic::SVSubroutineSymbolOp subroutine)
+      -> FailureOr<SubroutineABI> {
+    std::optional<Type> type = subroutine.getSemanticType();
+    auto subroutineType = type ? dyn_cast<semantic::SubroutineType>(*type)
+                               : semantic::SubroutineType{};
+    auto signature = subroutineType
+                         ? dyn_cast<FunctionType>(subroutineType.getSignature())
+                         : FunctionType{};
+    if (!signature) {
+      emitError(getSemanticLocation(subroutine))
+          << "subroutine has no resolved function signature";
+      return failure();
+    }
+    SmallVector<Type> inputs;
+    SmallVector<Type> results;
+    inputs.reserve(signature.getNumInputs());
+    results.reserve(signature.getNumResults());
+    auto normalize = [&](Type source) -> FailureOr<Type> {
+      if (isa<semantic::VoidType>(source))
+        return source;
+      return normalizeSemanticType(source, getSemanticLocation(subroutine));
+    };
+    for (Type source : signature.getInputs()) {
+      FailureOr<Type> normalized = normalize(source);
+      if (failed(normalized))
+        return failure();
+      inputs.push_back(*normalized);
+    }
+    for (Type source : signature.getResults()) {
+      FailureOr<Type> normalized = normalize(source);
+      if (failed(normalized))
+        return failure();
+      results.push_back(*normalized);
+    }
+    SmallVector<semantic::SVArgumentDirection> directions;
+    for (Operation *child : getChildren(subroutine))
       if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
-        lhsFormals.push_back(formal);
-    for (Operation *child : getChildren(rhs))
-      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
-        rhsFormals.push_back(formal);
-    if (lhsFormals.size() != rhsFormals.size())
-      return false;
-    return llvm::all_of(llvm::zip_equal(lhsFormals, rhsFormals), [](auto pair) {
-      auto [lhsFormal, rhsFormal] = pair;
-      return lhsFormal.getDirection() == rhsFormal.getDirection() &&
-             lhsFormal.getSemanticType() == rhsFormal.getSemanticType();
-    });
+        directions.push_back(formal.getDirection());
+    if (directions.size() != inputs.size()) {
+      emitError(getSemanticLocation(subroutine))
+          << "subroutine signature and formal inventory disagree";
+      return failure();
+    }
+    return SubroutineABI{subroutine.getSubroutineKind(),
+                         FunctionType::get(context, inputs, results),
+                         std::move(directions)};
+  };
+  auto compatibleABI = [](const SubroutineABI &lhs, const SubroutineABI &rhs) {
+    return lhs.kind == rhs.kind && lhs.signature == rhs.signature &&
+           lhs.directions == rhs.directions;
   };
 
   auto resolveExternImplementation =
@@ -395,7 +430,11 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
              "subroutine";
       return failure();
     }
-    if (!compatibleABI(stub, target)) {
+    FailureOr<SubroutineABI> stubABI = getSubroutineABI(stub);
+    FailureOr<SubroutineABI> targetABI = getSubroutineABI(target);
+    if (failed(stubABI) || failed(targetABI))
+      return failure();
+    if (!compatibleABI(*stubABI, *targetABI)) {
       emitError(getSemanticLocation(target))
           << "modport-exported interface extern implementation has an "
              "incompatible subroutine ABI";
@@ -553,17 +592,30 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         .push_back(index);
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
-    auto lhs = cast<semantic::SVSubroutineSymbolOp>(lhsRecord.source);
     const SmallVector<unsigned> &candidateIndices =
         result.virtualInterfaceCalleeIndex[lhsRecord.method][lhsRecord.design]
                                           [lhsRecord.interfaceIdentity];
-    for (unsigned rhsIndex : candidateIndices) {
-      if (rhsIndex <= index)
-        continue;
+    // Each candidate appears in exactly one group and groups retain insertion
+    // order. Compare every member with the first normalized ABI once instead
+    // of performing a quadratic all-pairs scan.
+    if (candidateIndices.empty() || candidateIndices.front() != index)
+      continue;
+    auto lhs = cast<semantic::SVSubroutineSymbolOp>(lhsRecord.source);
+    FailureOr<SubroutineABI> lhsABI = getSubroutineABI(lhs);
+    if (failed(lhsABI)) {
+      invalid = true;
+      continue;
+    }
+    for (unsigned rhsIndex : ArrayRef(candidateIndices).drop_front()) {
       const PreparedVirtualInterfaceCallee &rhsRecord =
           result.virtualInterfaceCallees[rhsIndex];
       auto rhs = cast<semantic::SVSubroutineSymbolOp>(rhsRecord.source);
-      if (!compatibleABI(lhs, rhs)) {
+      FailureOr<SubroutineABI> rhsABI = getSubroutineABI(rhs);
+      if (failed(rhsABI)) {
+        invalid = true;
+        continue;
+      }
+      if (!compatibleABI(*lhsABI, *rhsABI)) {
         emitError(getSemanticLocation(rhs))
             << "virtual-interface call candidates have incompatible "
                "subroutine ABIs";
