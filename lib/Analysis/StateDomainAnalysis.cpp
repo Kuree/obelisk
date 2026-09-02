@@ -334,12 +334,13 @@ struct FunctionSummary {
   SmallVector<sim::SimReturnOp> returns;
 };
 
-FunctionSummary
-buildSummary(sim::SimFuncOp function,
-             const analysis::ClassDispatchAnalysis &classDispatch) {
+FunctionSummary buildSummary(
+    sim::SimFuncOp function,
+    const analysis::ClassDispatchAnalysis &classDispatch,
+    const analysis::DescriptorProvenanceAnalysis &descriptorProvenance) {
   FunctionSummary summary;
   summary.function = function;
-  summary.provenance = analysis::deriveDescriptorProvenance(function);
+  summary.provenance = descriptorProvenance.derive(function);
   if (function.getBody().empty())
     return summary;
 
@@ -816,9 +817,11 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   });
 
   analysis::ClassDispatchAnalysis classDispatch(design);
+  analysis::DescriptorProvenanceAnalysis descriptorProvenance(design);
   SmallVector<FunctionSummary, 0> summaries(functions.size());
   parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
-    summaries[index] = buildSummary(functions[index], classDispatch);
+    summaries[index] =
+        buildSummary(functions[index], classDispatch, descriptorProvenance);
   });
 
   DenseMap<Operation *, unsigned> functionIndex;
@@ -1172,6 +1175,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
   }
 
   DenseMap<Value, StateDomainFact> facts;
+  analysis::DescriptorProvenanceAnalysis descriptorProvenance(design);
   while (true) {
     FailureOr<DenseMap<Value, StateDomainFact>> solved =
         computeValueFacts(design, candidates);
@@ -1182,7 +1186,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       analysis::DescriptorProvenanceMap provenance =
-          analysis::deriveDescriptorProvenance(function);
+          descriptorProvenance.derive(function);
       function.walk([&](Operation *operation) {
         auto rejectWrite = [&](Value destination, Value value) {
           if (getValueFact(facts, value).domain == StateDomain::TwoState)

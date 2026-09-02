@@ -140,7 +140,9 @@ bool containsFourStateLogic(Type type) {
   return result;
 }
 
-DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
+static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
+    sim::SimFuncOp function,
+    const DenseMap<uint64_t, uint64_t> *sharedDriverNets) {
   DescriptorProvenanceMap provenanceMap;
   if (function.isExternal() || function.getBody().empty())
     return provenanceMap;
@@ -154,6 +156,8 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
   // build it on first use.
   std::optional<DenseMap<uint64_t, uint64_t>> driverNetsStorage;
   auto driverNets = [&]() -> const DenseMap<uint64_t, uint64_t> & {
+    if (sharedDriverNets)
+      return *sharedDriverNets;
     if (!driverNetsStorage) {
       driverNetsStorage.emplace();
       if (auto design = function->getParentOfType<sim::SimDesignOp>())
@@ -389,6 +393,24 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
       break;
   }
   return provenanceMap;
+}
+
+DescriptorProvenanceAnalysis::DescriptorProvenanceAnalysis(
+    sim::SimDesignOp design) {
+  if (design.getBody().empty())
+    return;
+  for (sim::SimDriverDeclOp driver :
+       design.getBody().front().getOps<sim::SimDriverDeclOp>())
+    driverNets[driver.getId()] = driver.getNetId();
+}
+
+DescriptorProvenanceMap
+DescriptorProvenanceAnalysis::derive(sim::SimFuncOp function) const {
+  return deriveDescriptorProvenanceImpl(function, &driverNets);
+}
+
+DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
+  return deriveDescriptorProvenanceImpl(function, nullptr);
 }
 
 uint64_t getSimulationOperationCost(Operation &operation) {

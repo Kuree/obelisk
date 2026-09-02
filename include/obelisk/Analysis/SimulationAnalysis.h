@@ -37,6 +37,19 @@ struct DescriptorProvenance {
 using DescriptorProvenanceMap =
     llvm::DenseMap<mlir::Value, DescriptorProvenance>;
 
+/// Immutable design-wide descriptor lookup shared by provenance queries.
+/// Construct one when deriving provenance for multiple functions so driver
+/// normalization does not rescan the design for every function.
+class DescriptorProvenanceAnalysis {
+public:
+  explicit DescriptorProvenanceAnalysis(sim::SimDesignOp design);
+
+  DescriptorProvenanceMap derive(sim::SimFuncOp function) const;
+
+private:
+  llvm::DenseMap<uint64_t, uint64_t> driverNets;
+};
+
 /// Physical bit width used by the canonical simulation state and process
 /// frame representations. This includes fixed unpacked aggregates and the tag
 /// carried beside an unpacked tagged-union payload.
@@ -49,6 +62,7 @@ bool containsFourStateLogic(mlir::Type type);
 
 /// Derive stable descriptor roots and ranges for all handle-typed values in a
 /// defined simulation function. Driver handles are normalized to their net.
+/// Prefer DescriptorProvenanceAnalysis when querying multiple functions.
 DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function);
 
 /// Weighted cost shared by IPO growth accounting and compute-graph lane

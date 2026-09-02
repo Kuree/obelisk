@@ -1,5 +1,9 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
 
+// A publication expanded through a connected component still activates a
+// compact subscription on the consumer's original descriptor.
+// CHECK: edges = [#obelisk_sim.edge<source = 0, target = 2, kind = sensitivity, resource = <effect = watch, resource = net, target = descriptor, descriptor = 2
+
 module {
   obelisk_sim.design @connectivity_graph {
     obelisk_sim.code_unit.decl 9000001 in 0 continuous hierarchy "test.connectivity_graph.driver.9000001"
@@ -31,15 +35,12 @@ module {
       obelisk_sim.return
     }
 
-    // Reads and transition watches are likewise expanded through topology.
-    // Bits outside the connected component remain dependencies of their
-    // original descriptor; sparse alias expansion must not drop them.
+    // Consumers retain only the descriptor they name. Producers publish every
+    // alias above, so this compact subscription is equivalent and avoids an
+    // N-by-N summary for a net fanned out through N interface ports. Bits
+    // outside the connected component remain dependencies of descriptor 2.
     // CHECK-LABEL: obelisk_sim.func @reader
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = net, target = descriptor, descriptor = 0
-    // CHECK-SAME: effect = read, resource = net, target = descriptor, descriptor = 1
-    // CHECK-SAME: effect = read, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
-    // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 0
-    // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 1
+    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     obelisk_sim.func @reader(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},

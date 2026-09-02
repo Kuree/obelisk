@@ -537,10 +537,12 @@ ComputeEffect substituteObserverEffect(const ComputeEffect &effect,
 
 struct ProgramAnalysis {
   explicit ProgramAnalysis(sim::SimDesignOp design)
-      : classDispatch(design), connectivity(design) {}
+      : classDispatch(design), connectivity(design),
+        descriptorProvenance(design) {}
 
   ::obelisk::analysis::ClassDispatchAnalysis classDispatch;
   ::obelisk::analysis::NetConnectivityAnalysis connectivity;
+  ::obelisk::analysis::DescriptorProvenanceAnalysis descriptorProvenance;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
   DenseMap<Operation *, unsigned> indexForFunction;
@@ -551,31 +553,40 @@ struct ProgramAnalysis {
 
   void expandConnectivity(SmallVectorImpl<ComputeEffect> &effects) const {
     SmallVector<ComputeEffect> expanded;
+    DenseMap<unsigned, DenseSet<std::pair<uint64_t, uint64_t>>>
+        expandedComponents;
     for (const ComputeEffect &effect : effects) {
       if (effect.target.resource != sim::ComputeResourceKind::Net ||
-          !effect.target.descriptor || effect.target.width == 0) {
+          !effect.target.descriptor || effect.target.width == 0 ||
+          !isActiveProducer(effect)) {
         expanded.push_back(effect);
         continue;
       }
+      // Expand publications, not subscriptions. A producer has to publish
+      // every logical descriptor in a connected component so the generated
+      // runtime transition ABI remains exact. A read or watch only needs the
+      // descriptor it names: every matching producer is expanded to that
+      // descriptor already. Expanding both sides makes a component with N
+      // port-connected clock consumers carry N effects in each consumer and
+      // turns summary construction quadratic without adding an edge. The
+      // component set also makes expansion idempotent when a callee summary
+      // already contains all producer aliases.
       uint64_t begin = effect.target.dynamic ? 0 : effect.target.low;
       uint64_t width =
           effect.target.dynamic ? effect.target.rootWidth : effect.target.width;
-      // Connectivity is sparse: getComponent() returns no members for an
-      // isolated bit. Preserve the complete source range once, then add only
-      // aliases not already covered by that range. Otherwise a vector with
-      // some connected bits would silently lose all of its isolated bits.
-      ComputeEffect source = effect;
-      source.target.low = begin;
-      source.target.width = width;
-      source.target.dynamic = false;
-      expanded.push_back(source);
       for (uint64_t bit = 0; bit != width; ++bit) {
+        ::obelisk::analysis::NetBit source{*effect.target.descriptor,
+                                           begin + bit};
         ArrayRef<::obelisk::analysis::NetBit> component =
-            connectivity.getComponent({*effect.target.descriptor, begin + bit});
+            connectivity.getComponent(source);
+        ::obelisk::analysis::NetBit canonical =
+            component.empty() ? source : component.front();
+        auto &seen = expandedComponents[static_cast<unsigned>(effect.kind)];
+        if (!seen.insert({canonical.net, canonical.offset}).second)
+          continue;
+        if (component.empty())
+          component = ArrayRef(source);
         for (::obelisk::analysis::NetBit member : component) {
-          if (member.net == *effect.target.descriptor &&
-              member.offset >= begin && member.offset - begin < width)
-            continue;
           std::optional<uint64_t> rootWidth =
               connectivity.getNetWidth(member.net);
           if (!rootWidth)
@@ -615,8 +626,7 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
       info.baseEffects = {{sim::ComputeEffectKind::Read},
                           {sim::ComputeEffectKind::Write}};
     } else {
-      info.provenance =
-          ::obelisk::analysis::deriveDescriptorProvenance(function);
+      info.provenance = analysis.descriptorProvenance.derive(function);
       info.baseEffects = collectDirectEffects(info);
       analysis.expandConnectivity(info.baseEffects);
     }
