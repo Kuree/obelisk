@@ -1037,6 +1037,7 @@ class ExcludedTest(unittest.TestCase):
         excluded = verilator.EXCLUDED["t_math_signed_calc"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.3.2.3")
         self.assertIn("explicit .port(signal)", excluded.reason)
+        self.assertIs(verilator.EXCLUDED["t_iff"], excluded)
 
     def test_post_2017_mixed_string_equality_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_string_size"]
