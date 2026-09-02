@@ -433,6 +433,11 @@ TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "tasks and system functions are not part of this standard\"; the test is "
     "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
     "it uses to hide a value from constant folding")
+VERILATOR_DPI_SYSTEM_TASK_ALIAS = Exclusion(
+    "IEEE 1800-2017 36.3.1",
+    "a user-defined system task or function is registered through the PLI "
+    "callback registry; the test instead requires Verilator's private shortcut "
+    "that aliases $dpii_sys and $dpii_func calls to DPI imports")
 VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "IEEE 1800-2017 20.15.1",
     "$random uses the standard's normative probabilistic-distribution "
@@ -615,6 +620,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_lib": DPI_PART_SELECT_EXTENSION,
     "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
     "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
+    "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
