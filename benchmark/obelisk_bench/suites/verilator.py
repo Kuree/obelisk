@@ -244,6 +244,10 @@ NONSTANDARD_DISPLAY_FORMS = Exclusion(
     "unpacked byte array, and 21.2.1.3 defines field width for radix formats; "
     "the test requires an unformatted associative array plus Verilator's "
     "%0c, %0v, and %0u extensions")
+PATTERN_FIELD_WIDTH = Exclusion(
+    "IEEE 1800-2017 21.2.1.7",
+    "the assignment-pattern formats are %p and the special shorter %0p; the "
+    "test requires Verilator's arbitrary-width %4p and %-4p extensions")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -717,6 +721,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
+    "t_display_enum_format": PATTERN_FIELD_WIDTH,
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
     "t_display_p_elab": PATTERN_RADIX,
     "t_display_signed": PATTERN_RADIX,

@@ -680,6 +680,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
         self.assertIn("unformatted associative array", excluded.reason)
 
+    def test_pattern_field_width_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_display_enum_format"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1.7")
+        self.assertIn("arbitrary-width %4p", excluded.reason)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):
