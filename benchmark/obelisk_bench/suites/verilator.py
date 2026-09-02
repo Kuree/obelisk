@@ -762,6 +762,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_math_pow6": PORT_INITIALIZER,
     "t_var_tieout": PORT_INITIALIZER,
     "t_mod_interface_clocking": VARIABLE_ON_BIDIRECTIONAL_PORT,
+    "t_mod_param_class_typedef5": VARIABLE_ON_BIDIRECTIONAL_PORT,
     "t_opt_const": VARIABLE_ON_BIDIRECTIONAL_PORT,
     "t_final": NULL_STATEMENT_BODY,
     "t_foreach": NULL_STATEMENT_BODY,
