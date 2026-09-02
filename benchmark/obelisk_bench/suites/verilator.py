@@ -1685,7 +1685,7 @@ def judge_one(
         (Path(tmp) / "t").symlink_to(top.parent, target_is_directory=True)
         result = runner.execute(
             str(binary), timeout,
-            args=detect_run_args(descriptor), cwd=tmp)
+            args=detect_run_args(descriptor), cwd=tmp, merge_stderr=True)
         runtime_log = result.stdout + result.stderr
         runtime_error = contains_runtime_error(result.stdout, result.stderr)
         if expectation.run_error:

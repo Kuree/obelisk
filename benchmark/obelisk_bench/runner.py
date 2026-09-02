@@ -522,7 +522,7 @@ def compile_preprocessor(obelisk: str, sources: list[str], output: str,
 
 
 def execute(binary: str, timeout: float, args: list[str] | None = None,
-            cwd: str | None = None) -> ExecResult:
+            cwd: str | None = None, merge_stderr: bool = False) -> ExecResult:
     """Run a compiled test executable and capture its ordered output.
 
     This is the step the upstream harnesses perform by calling `vvp`; because
@@ -532,21 +532,28 @@ def execute(binary: str, timeout: float, args: list[str] | None = None,
     if "/" not in binary:
         binary = os.path.join(".", binary)
     command = [binary, *(args or [])]
+    output_options = (
+        {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+        if merge_stderr else {"capture_output": True}
+    )
     for attempt in range(2):
         try:
             result = subprocess.run(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, errors="replace",
-                timeout=timeout, check=False, cwd=cwd)
+                command, text=True, errors="replace", timeout=timeout,
+                check=False, cwd=cwd, **output_options)
             return ExecResult(ok=result.returncode == 0, stdout=result.stdout,
-                              timed_out=False, stderr="",
+                              timed_out=False,
+                              stderr="" if merge_stderr else result.stderr,
                               returncode=result.returncode)
         except subprocess.TimeoutExpired as expired:
             stdout = expired.stdout or b""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
+            stderr = "" if merge_stderr else expired.stderr or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
             return ExecResult(
-                ok=False, stdout=stdout, timed_out=True, stderr="")
+                ok=False, stdout=stdout, timed_out=True, stderr=stderr)
         except OSError as error:
             if attempt == 0:
                 time.sleep(0.2)

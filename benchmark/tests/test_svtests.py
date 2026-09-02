@@ -766,7 +766,7 @@ class BenchmarkRunnerTest(unittest.TestCase):
 
     def test_execute_preserves_process_returncode(self):
         completed = subprocess.CompletedProcess(
-            args=[], returncode=19, stdout="diagnostic\n", stderr=None)
+            args=[], returncode=19, stdout="diagnostic\n", stderr="error\n")
         with mock.patch.object(
                 runner.subprocess, "run", return_value=completed) as run:
             result = runner.execute("sim", 10)
@@ -774,6 +774,19 @@ class BenchmarkRunnerTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.returncode, 19)
         self.assertEqual(result.stdout, "diagnostic\n")
+        self.assertEqual(result.stderr, "error\n")
+        self.assertTrue(run.call_args.kwargs["capture_output"])
+        self.assertEqual(run.call_args.kwargs["errors"], "replace")
+
+    def test_execute_can_preserve_interleaved_output(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="ordered\n", stderr=None)
+        with mock.patch.object(
+                runner.subprocess, "run", return_value=completed) as run:
+            result = runner.execute("sim", 10, merge_stderr=True)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.stdout, "ordered\n")
         self.assertEqual(result.stderr, "")
         self.assertIs(run.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(run.call_args.kwargs["stderr"], subprocess.STDOUT)
