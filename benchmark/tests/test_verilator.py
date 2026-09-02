@@ -705,6 +705,8 @@ class ExcludedTest(unittest.TestCase):
     def test_class_parameter_use_before_declaration_is_not_a_failure(self):
         self.assertIs(verilator.EXCLUDED["t_class_param"],
                       verilator.USE_BEFORE_DECLARATION)
+        self.assertIs(verilator.EXCLUDED["t_class_param_mod"],
+                      verilator.USE_BEFORE_DECLARATION)
 
     def test_post_2017_default_constructor_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_class_new_default"]
