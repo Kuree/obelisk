@@ -935,6 +935,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("Syntax 23-1 note 1", excluded.reason)
         self.assertIn("neither list", excluded.reason)
 
+    def test_package_compilation_unit_reference_is_not_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_package_using_dollar_unit"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 26.2")
+        self.assertIn("shall not refer", excluded.reason)
+        self.assertIn("compilation-unit", excluded.reason)
+
     def test_doubly_unbounded_range_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_inside_unbounded_both"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.3")

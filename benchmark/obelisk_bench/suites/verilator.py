@@ -586,6 +586,11 @@ HEADER_IMPORT_WITHOUT_PORTS = Exclusion(
     "to be followed by a parameter-port list or a list of port declarations; "
     "the test ends the header immediately after its import and needs "
     "Verilator's extension accepting neither list")
+PACKAGE_COMPILATION_UNIT_REFERENCE = Exclusion(
+    "IEEE 1800-2017 26.2",
+    "a package shall not refer to items defined in compilation-unit scope, "
+    "but my_pkg initializes its variables from the compilation-unit typedef, "
+    "class, and function and expects those unqualified references to bind")
 HIERARCHICAL_TYPEDEF = Exclusion(
     "IEEE 1800-2017 6.18",
     "\"hierarchical references to type_identifier shall not be allowed\", and "
@@ -1134,6 +1139,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_tri_eqcase_input": UNTIMED_ALWAYS,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
     "t_package_twodeep": HEADER_IMPORT_WITHOUT_PORTS,
+    "t_package_using_dollar_unit": PACKAGE_COMPILATION_UNIT_REFERENCE,
     "t_array_mda": OUT_OF_RANGE_FIXED_ARRAY_INDEX,
     "t_property_until": FOUR_STATE_CLOCK_STARTUP,
     "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,
