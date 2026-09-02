@@ -1862,7 +1862,7 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
   static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
   static_assert(sizeof(void *) != 8 ||
-                sizeof(ClockOccurrenceFeatureState) == 192);
+                sizeof(ClockOccurrenceFeatureState) == 248);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
