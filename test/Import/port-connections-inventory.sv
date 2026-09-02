@@ -23,7 +23,7 @@ endprogram
 module port_connections_inventory;
   logic defaulted;
   logic input_value;
-  logic output_value;
+  wire output_value;
   wire net_value;
 
   inventory_leaf ordered(defaulted, input_value, output_value, net_value);
