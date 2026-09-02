@@ -173,7 +173,10 @@ bool queueIsFull(const ContainerHeader &header) {
          header.size >= queueElementLimit(header.bound);
 }
 
-OBELISK_RT_FEATURE_TEXT void warnIgnoredQueueWrite(bool bounded) {
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((noinline, cold))
+#endif
+void warnIgnoredQueueWrite(bool bounded) {
   std::fputs(bounded ? "WARNING: bounded queue write discarded an element\n"
                      : "WARNING: invalid indexed queue write was ignored\n",
              stderr);
