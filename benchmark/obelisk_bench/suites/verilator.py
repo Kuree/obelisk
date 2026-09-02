@@ -223,6 +223,10 @@ PATTERN_RADIX = Exclusion(
     "a singular pattern element prints the way it prints unformatted, which "
     "21.2.1 makes decimal; the test expects Verilator's hexadecimal with a "
     "base prefix")
+DECIMAL_FIELD_ZERO_PADDING = Exclusion(
+    "IEEE 1800-2017 21.2.1.3",
+    "decimal fields are padded with leading spaces; the golden instead treats "
+    "%03d as a C-style request for leading zeroes")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -696,6 +700,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display_signed": PATTERN_RADIX,
+    "t_gen_genblk": DECIMAL_FIELD_ZERO_PADDING,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_bitqueue": PATTERN_RADIX,
