@@ -595,6 +595,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_string_to_bit": DYNAMIC_BITSTREAM_SIZE_MISMATCH,
     "t_math_width": UNTYPED_UNSIZED_PARAMETER_WIDTH,
     "t_class_trigger_null": NULL_OBJECT_MEMBER_EVENT_CONTROL,
+    "t_clocking_timing": USE_BEFORE_DECLARATION,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
