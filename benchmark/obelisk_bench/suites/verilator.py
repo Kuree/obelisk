@@ -470,6 +470,12 @@ TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "tasks and system functions are not part of this standard\"; the test is "
     "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
     "it uses to hide a value from constant folding")
+VERILATOR_MAIN_TOP_NAME = Exclusion(
+    "IEEE 1800-2017 21.2.1.6",
+    "%m prints the hierarchy of the SystemVerilog design element that invokes "
+    "it; 23.6 makes each top-level module the top of that name hierarchy, but "
+    "the test instead requires Verilator's private --main-top-name option to "
+    "prefix the module with the generated C++ model name ALTOP")
 VERILATOR_DPI_SYSTEM_TASK_ALIAS = Exclusion(
     "IEEE 1800-2017 36.3.1",
     "a user-defined system task or function is registered through the PLI "
@@ -791,6 +797,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_fork_finish": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_func_call_super_arg": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_func_purification": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_flag_main_top_name": VERILATOR_MAIN_TOP_NAME,
     "t_interface_virtual_timing": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_param_array7": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_param_in_func": TOOL_SPECIFIC_SYSTEM_TASK,
