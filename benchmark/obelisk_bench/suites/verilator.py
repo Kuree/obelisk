@@ -710,6 +710,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_iface_nested_width2": HIERARCHICAL_TYPEDEF,
     "t_iface_nested_width3": HIERARCHICAL_TYPEDEF,
     "t_class_static_member": USE_BEFORE_DECLARATION,
+    "t_class_modscope": USE_BEFORE_DECLARATION,
     "t_select_param": USE_BEFORE_DECLARATION,
     "t_func_const": USE_BEFORE_DECLARATION,
     "t_var_overcmp": USE_BEFORE_DECLARATION,
