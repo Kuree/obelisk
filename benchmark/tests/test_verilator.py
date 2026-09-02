@@ -946,6 +946,12 @@ class ExcludedTest(unittest.TestCase):
         for name in names[1:]:
             self.assertIs(verilator.EXCLUDED[name], excluded)
 
+    def test_external_hierarchy_virtual_interface_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_interface_ndup_member"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.9")
+        self.assertIn("outside its body", excluded.reason)
+        self.assertIn("virtual backdoor_if", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")

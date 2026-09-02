@@ -980,6 +980,12 @@ LOCAL_INTERFACE_PARAMETER_CONSTANT = Exclusion(
     "generate-block-qualified parameters, but not a parameter selected by a "
     "hierarchical name through a locally instantiated interface; the test "
     "requires Verilator's waived HIERPARAM extension")
+VIRTUAL_INTERFACE_WITH_EXTERNAL_HIERARCHY = Exclusion(
+    "IEEE 1800-2017 25.9",
+    "an interface containing hierarchical references to objects outside its "
+    "body shall not be used in a virtual-interface declaration; backdoor_if "
+    "reads t.child1 and t.child2 and the test then declares a virtual "
+    "backdoor_if")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1110,6 +1116,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_modport_expr_hier": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_expr_nested": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_param": LOCAL_INTERFACE_PARAMETER_CONSTANT,
+    "t_interface_ndup_member": VIRTUAL_INTERFACE_WITH_EXTERNAL_HIERARCHY,
     "t_interface_param_dependency": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_param_local_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_parameter_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
