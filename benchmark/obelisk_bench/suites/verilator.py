@@ -227,6 +227,12 @@ DECIMAL_FIELD_ZERO_PADDING = Exclusion(
     "IEEE 1800-2017 21.2.1.3",
     "decimal fields are padded with leading spaces; the golden instead treats "
     "%03d as a C-style request for leading zeroes")
+DEFAULT_REAL_DECIMAL_FORMAT = Exclusion(
+    "IEEE 1800-2017 21.2.1.2",
+    "an expression without a corresponding format specification uses the "
+    "default decimal format, which Table 21-3 identifies as %f for a real; "
+    "the golden instead removes %f's trailing fractional zeroes as though "
+    "the unformatted real had used the shorter %g representation")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -699,6 +705,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
+    "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
     "t_display_signed": PATTERN_RADIX,
     "t_gen_genblk": DECIMAL_FIELD_ZERO_PADDING,
     "t_dynarray": PATTERN_RADIX,
