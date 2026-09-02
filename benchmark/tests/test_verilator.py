@@ -894,6 +894,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("int index is signed", excluded.reason)
         self.assertIn("bit [31:0] index is unsigned", excluded.reason)
 
+    def test_sized_enum_encoding_must_match_base_width(self):
+        excluded = verilator.EXCLUDED["t_enum_size"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.19")
+        self.assertIn("1-bit literal", excluded.reason)
+        self.assertIn("3-bit and 32-bit", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")

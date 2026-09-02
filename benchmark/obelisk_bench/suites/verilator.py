@@ -846,6 +846,11 @@ ASSOCIATIVE_INDEX_SIGNEDNESS = Exclusion(
     "equivalent; the int index is signed while the bit [31:0] index is "
     "unsigned, so 6.22.2(c) makes the index types nonequivalent and 7.9.9 "
     "does not permit assignment between the arrays")
+SIZED_ENUM_ENCODING_WIDTH = Exclusion(
+    "IEEE 1800-2017 6.19",
+    "a sized literal used as an enum encoding must have exactly the enum "
+    "base type's width; the test assigns a 1-bit literal to 3-bit and 32-bit "
+    "enum bases and requires Verilator's suppressed WIDTH diagnostic")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -865,6 +870,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
+    "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
