@@ -785,6 +785,11 @@ CONFIG_MAP_IMPLICIT_LIBRARY_SEARCH = Exclusion(
     "those libraries to a configuration's current liblist; cfg has no "
     "liblist clause, so the test cannot require all mapped libraries to be "
     "searched for t's children")
+MULTIPLE_CONFIG_DEFAULT_CLAUSES = Exclusion(
+    "IEEE 1800-2017 33.4.1.2",
+    "a configuration cannot contain more than one default clause for the "
+    "same expansion kind; the test requires both `default liblist` and "
+    "`default liblist liba libb`, treating the empty first clause as ignored")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -797,6 +802,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_config_inst": CONFIG_PARENT_LIBRARY_SEARCH,
     "t_config_liblist": LIBRARY_QUALIFIED_CELL_LIBLIST,
     "t_config_libmap": CONFIG_MAP_IMPLICIT_LIBRARY_SEARCH,
+    "t_config_rules": MULTIPLE_CONFIG_DEFAULT_CLAUSES,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
