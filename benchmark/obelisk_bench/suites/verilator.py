@@ -259,6 +259,11 @@ VERILATOR_HIERARCHICAL_NAME_SPELLING = Exclusion(
     "reference and use $unit:: for explicit scope resolution; the test "
     "instead requires Verilator's top.$unit path and all-dot class, package, "
     "and method spelling while documenting that simulators differ")
+POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT = Exclusion(
+    "IEEE 1800-2017 A.1.9",
+    "the class-constructor grammar permits only an optional tf_port_list "
+    "after new and has no bare default production; the test requires the "
+    "later-standard function new(default) syntax")
 UNFORMATTED_UNPACKED_EXPRESSION = Exclusion(
     "IEEE 1800-2017 21.2.1",
     "an unpacked expression without a corresponding format is legal only for "
@@ -750,6 +755,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_export_scope_flat": DPI_EXPORT_FROM_WRONG_SCOPE,
     "t_class_format": FUNCTION_NAME_LOCAL,
     "t_class_name": VERILATOR_HIERARCHICAL_NAME_SPELLING,
+    "t_class_new_default": POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

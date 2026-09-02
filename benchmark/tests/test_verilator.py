@@ -699,6 +699,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertIs(verilator.EXCLUDED["t_class_param"],
                       verilator.USE_BEFORE_DECLARATION)
 
+    def test_post_2017_default_constructor_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_class_new_default"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.1.9")
+        self.assertIn("new(default)", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
