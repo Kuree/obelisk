@@ -991,6 +991,11 @@ VIRTUAL_INTERFACE_WITH_EXTERNAL_HIERARCHY = Exclusion(
     "body shall not be used in a virtual-interface declaration; backdoor_if "
     "reads t.child1 and t.child2 and the test then declares a virtual "
     "backdoor_if")
+WRITE_THROUGH_INPUT_MODPORT = Exclusion(
+    "IEEE 1800-2017 25.5",
+    "modport directions are those seen from the module using the interface, "
+    "so a member listed as input is read-only through that selected modport; "
+    "the test writes pa.addr and pb.addr through virtual PBus.phy handles")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1126,6 +1131,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_param_local_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_parameter_access": LOCAL_INTERFACE_PARAMETER_CONSTANT,
     "t_interface_star": ALWAYS_FF_MULTIPLE_WRITER,
+    "t_interface_virtual": WRITE_THROUGH_INPUT_MODPORT,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,

@@ -959,6 +959,12 @@ class ExcludedTest(unittest.TestCase):
                       excluded.reason)
         self.assertIn("both always_ff processes", excluded.reason)
 
+    def test_virtual_input_modport_writes_are_not_compiler_failures(self):
+        excluded = verilator.EXCLUDED["t_interface_virtual"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.5")
+        self.assertIn("read-only", excluded.reason)
+        self.assertIn("pa.addr and pb.addr", excluded.reason)
+
     def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_qw"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
