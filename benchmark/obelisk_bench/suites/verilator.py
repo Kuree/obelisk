@@ -165,6 +165,14 @@ EXPECTED_ERROR_NAMES = frozenset({
     # target cannot consume its source or is narrower than the source stream.
     "t_stream_unpack_narrower",
 })
+# Positive-looking upstream names whose source is nevertheless an IEEE compile
+# error. Keep this exact: their descriptors spell the Verilator-only boolean
+# `test.vlt_all`, which is not portable evidence for any other test.
+EXPECTED_COMPILE_ERROR_NAMES = frozenset({
+    # IEEE 1800-2017 33.4.1.3 requires an instance clause to start at one of
+    # the top-level cells named by the configuration's design statement.
+    "t_config_inst_missing",
+})
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on
 # `test.execute` means it builds and the *run* is what has to fail. The name
@@ -1112,11 +1120,13 @@ def detect_expectation(name: str, descriptor: Path) -> Expectation:
     diagnosis as a failure. An unreadable descriptor leaves the name's reading
     in place.
     """
-    nominated = name in EXPECTED_ERROR_NAMES or bool(EXPECTED_ERROR.search(name))
+    nominated = (name in EXPECTED_ERROR_NAMES or
+                 name in EXPECTED_COMPILE_ERROR_NAMES or
+                 bool(EXPECTED_ERROR.search(name)))
     if not nominated or not descriptor.exists():
         return Expectation(nominated, False)
     text = descriptor.read_text(encoding="utf-8", errors="replace")
-    compile_error = any(
+    compile_error = name in EXPECTED_COMPILE_ERROR_NAMES or any(
         DESCRIPTOR_FAILS.search(arguments)
         for method in ("compile", "lint")
         for arguments in descriptor_calls(text, method))

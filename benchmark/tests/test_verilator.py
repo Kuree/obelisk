@@ -595,6 +595,13 @@ class ExpectationDescriptorTest(unittest.TestCase):
                 "test.compile()\ntest.execute(fails=True)\ntest.passes()\n"),
             verilator.Expectation(False, True))
 
+    def test_config_instance_outside_the_design_is_a_compile_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_config_inst_missing",
+                "test.lint(fails=test.vlt_all)\ntest.passes()\n"),
+            verilator.Expectation(True, False))
+
     def test_a_multiline_compile_call_is_read_whole(self):
         self.assertEqual(
             self.expectation(
