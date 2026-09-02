@@ -803,6 +803,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 33.4.1.2")
         self.assertIn("default liblist liba libb", excluded.reason)
 
+    def test_stacked_unary_operator_is_not_standard_grammar(self):
+        excluded = verilator.EXCLUDED["t_constraint_operators"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.3")
+        self.assertIn("standard spelling is `-(~c)`", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
