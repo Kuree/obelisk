@@ -264,6 +264,11 @@ POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT = Exclusion(
     "the class-constructor grammar permits only an optional tf_port_list "
     "after new and has no bare default production; the test requires the "
     "later-standard function new(default) syntax")
+POST_2017_CLASS_OVERRIDE_CONTROLS = Exclusion(
+    "IEEE 1800-2017 A.1.9",
+    "the method grammar has no colon-prefixed override controls; the test "
+    "requires the later-standard :initial, :extends, and :final class-method "
+    "syntax")
 UNFORMATTED_UNPACKED_EXPRESSION = Exclusion(
     "IEEE 1800-2017 21.2.1",
     "an unpacked expression without a corresponding format is legal only for "
@@ -756,6 +761,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_format": FUNCTION_NAME_LOCAL,
     "t_class_name": VERILATOR_HIERARCHICAL_NAME_SPELLING,
     "t_class_new_default": POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT,
+    "t_class_override": POST_2017_CLASS_OVERRIDE_CONTROLS,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

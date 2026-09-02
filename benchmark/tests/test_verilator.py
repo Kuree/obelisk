@@ -704,6 +704,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 A.1.9")
         self.assertIn("new(default)", excluded.reason)
 
+    def test_post_2017_override_controls_are_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_class_override"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.1.9")
+        self.assertIn(":initial", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
