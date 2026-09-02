@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <tuple>
 
 using namespace mlir;
 
@@ -181,6 +182,33 @@ LogicalResult SimStatementSiteDeclOp::verify() {
     return emitOpError("statement ID must be nonzero");
   if (getPhase() > UINT16_MAX)
     return emitOpError("callback phase exceeds the reflection encoding");
+  return success();
+}
+
+LogicalResult SimVPIStatementRelationDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getSourceIdAttr(), "source ID")) ||
+      failed(verifyNonnegative(*this, getSourceVpiKindAttr(),
+                               "source VPI object kind")) ||
+      failed(verifyNonnegative(*this, getSelectorAttr(), "VPI selector")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "ordinal")) ||
+      failed(verifyNonnegative(*this, getModeMaskAttr(), "mode mask")) ||
+      failed(verifyNonnegative(*this, getTargetStatementIdAttr(),
+                               "target statement ID")))
+    return failure();
+  if (getTargetStatementId() == 0)
+    return emitOpError("target statement ID must be nonzero");
+  if (getSourceVpiKind() > UINT16_MAX)
+    return emitOpError("source VPI kind exceeds the reflection encoding");
+  if (getSelector() > UINT16_MAX)
+    return emitOpError("VPI selector exceeds the reflection encoding");
+  if (getOrdinal() > UINT32_MAX)
+    return emitOpError("ordinal exceeds the reflection encoding");
+  if (getModeMask() == 0 || (getModeMask() & ~uint32_t{3}) != 0)
+    return emitOpError(
+        "mode mask must contain only vpi_handle and/or vpi_iterate");
+  const auto *source = reflection::findVPIObjectKind(getSourceVpiKind());
+  if (!source || source->role != reflection::VPIObjectRole::Concrete)
+    return emitOpError("source VPI kind is not a concrete object");
   return success();
 }
 
@@ -1371,10 +1399,12 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, statementIds,
       statementSiteIds, storageIds, netIds, driverIds, portIds, connectionIds,
       covergroupIds, classIds;
+  llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
+  SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
@@ -1393,6 +1423,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (auto scope = dyn_cast<SimScopeDeclOp>(op)) {
       if (failed(addId(scope.getIdAttr(), scopeIds, "scope")))
         return failure();
+      scopes[scope.getId()] = scope;
       if (!scope.getParentAttr()) {
         if (sawRoot)
           return scope.emitOpError(
@@ -1412,6 +1443,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(site.getIdAttr(), statementSiteIds, "statement-site")))
         return failure();
       statementSites.push_back(site);
+    } else if (auto relation = dyn_cast<SimVPIStatementRelationDeclOp>(op)) {
+      statementRelations.push_back(relation);
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (failed(addId(storage.getIdAttr(), storageIds, "storage")))
         return failure();
@@ -1504,6 +1537,243 @@ LogicalResult SimDesignOp::verifyRegions() {
         worklist.push_back({parent->second, false});
       }
     }
+  }
+
+  // Statement relations are an optional, all-or-nothing inventory while the
+  // lowering that produces them is introduced. Once present, every statement
+  // has exactly one semantic incoming containment edge. Handle and iterate
+  // access to the same child are represented by one merged mode mask.
+  if (!statementRelations.empty()) {
+    llvm::DenseMap<uint64_t, SimVPIStatementRelationDeclOp> incomingRelations;
+    llvm::DenseMap<uint64_t, uint32_t> scopeSourceKinds;
+    struct ModeRelation {
+      uint32_t sourceTag;
+      uint64_t sourceId;
+      uint32_t sourceVPIKind;
+      uint32_t selector;
+      uint32_t mode;
+      uint64_t ordinal;
+      uint64_t targetId;
+      SimVPIStatementRelationDeclOp relation;
+    };
+    SmallVector<ModeRelation> modeRelations;
+    incomingRelations.reserve(statementRelations.size());
+    scopeSourceKinds.reserve(
+        std::min<size_t>(scopeIds.size(), statementRelations.size()));
+    modeRelations.reserve(statementRelations.size() * 2);
+    for (SimVPIStatementRelationDeclOp relation : statementRelations) {
+      auto target = statements.find(relation.getTargetStatementId());
+      if (target == statements.end())
+        return relation.emitOpError(
+            "references an unknown target statement ID");
+      if (!incomingRelations
+               .try_emplace(relation.getTargetStatementId(), relation)
+               .second)
+        return relation.emitOpError(
+            "duplicates the target statement's semantic containment edge; "
+            "merge access modes into one record");
+
+      const auto *sourceKind =
+          reflection::findVPIObjectKind(relation.getSourceVpiKind());
+      switch (relation.getSourceKind()) {
+      case VPIStatementSourceKind::Scope: {
+        auto source = scopes.find(relation.getSourceId());
+        if (source == scopes.end())
+          return relation.emitOpError("references an unknown source scope ID");
+        if ((sourceKind->families &
+             reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) ==
+            0)
+          return relation.emitOpError(
+              "scope source VPI kind is not a scope object");
+        if (source->second.getInterfaceType().has_value() !=
+            (StringRef(sourceKind->apiName) == "vpiInterface"))
+          return relation.emitOpError(
+              "interface scope metadata and source VPI kind disagree");
+        if (auto [iterator, inserted] = scopeSourceKinds.try_emplace(
+                relation.getSourceId(), relation.getSourceVpiKind());
+            !inserted && iterator->second != relation.getSourceVpiKind())
+          return relation.emitOpError(
+              "source scope has inconsistent exact VPI kinds");
+        if (target->second.getCodeUnitId() || target->second.getParentId() ||
+            target->second.getScopeId() != relation.getSourceId())
+          return relation.emitOpError(
+              "scope source does not own the root scope-owned statement");
+        break;
+      }
+      case VPIStatementSourceKind::CodeUnit: {
+        auto source = codeUnits.find(relation.getSourceId());
+        if (source == codeUnits.end())
+          return relation.emitOpError(
+              "references an unknown source code-unit ID");
+        StringRef expectedKind;
+        switch (source->second.getCodeUnitKind()) {
+        case EntryKind::Initial:
+          expectedKind = "vpiInitial";
+          break;
+        case EntryKind::Final:
+          expectedKind = "vpiFinal";
+          break;
+        case EntryKind::Always:
+        case EntryKind::AlwaysComb:
+        case EntryKind::AlwaysFF:
+        case EntryKind::AlwaysLatch:
+          expectedKind = "vpiAlways";
+          break;
+        case EntryKind::Function:
+          expectedKind = "vpiFunction";
+          break;
+        case EntryKind::Task:
+          expectedKind = "vpiTask";
+          break;
+        default:
+          return relation.emitOpError(
+              "source code-unit kind cannot own VPI statements");
+        }
+        if (expectedKind != sourceKind->apiName)
+          return relation.emitOpError(
+              "source VPI kind does not match the code-unit kind");
+        if (target->second.getCodeUnitId() != relation.getSourceId() ||
+            target->second.getParentId() ||
+            target->second.getScopeId() != source->second.getScopeId())
+          return relation.emitOpError(
+              "code-unit source does not own the root behavioral statement");
+        break;
+      }
+      case VPIStatementSourceKind::Statement: {
+        auto source = statements.find(relation.getSourceId());
+        if (source == statements.end())
+          return relation.emitOpError(
+              "references an unknown source statement ID");
+        if (source->second.getVpiKind() != relation.getSourceVpiKind())
+          return relation.emitOpError(
+              "source VPI kind does not match the statement declaration");
+        if (target->second.getParentId() != relation.getSourceId() ||
+            target->second.getCodeUnitId() != source->second.getCodeUnitId() ||
+            target->second.getScopeId() != source->second.getScopeId())
+          return relation.emitOpError(
+              "statement source does not match the target's structural parent");
+        break;
+      }
+      }
+
+      for (uint32_t modeValue = 0; modeValue != 2; ++modeValue) {
+        uint32_t modeBit = uint32_t{1} << modeValue;
+        if ((relation.getModeMask() & modeBit) == 0)
+          continue;
+        auto mode = static_cast<reflection::VPITraversalMode>(modeValue);
+        const auto *edge = reflection::findVPITraversal(
+            relation.getSourceVpiKind(), relation.getSelector(), mode);
+        if (!edge || !edge->statementContainment ||
+            !reflection::vpiObjectSetContains(edge->targets,
+                                              target->second.getVpiKind()))
+          return relation.emitOpError(
+              "is not a legal statement-containment traversal in the "
+              "generated VPI model");
+        modeRelations.push_back(
+            {static_cast<uint32_t>(relation.getSourceKind()),
+             relation.getSourceId(), relation.getSourceVpiKind(),
+             relation.getSelector(), modeValue, relation.getOrdinal(),
+             relation.getTargetStatementId(), relation});
+      }
+    }
+
+    llvm::sort(modeRelations, [](const ModeRelation &left,
+                                 const ModeRelation &right) {
+      return std::tie(left.sourceTag, left.sourceId, left.sourceVPIKind,
+                      left.selector, left.mode, left.ordinal, left.targetId) <
+             std::tie(right.sourceTag, right.sourceId, right.sourceVPIKind,
+                      right.selector, right.mode, right.ordinal,
+                      right.targetId);
+    });
+    auto sameModeGroup = [](const ModeRelation &left,
+                            const ModeRelation &right) {
+      return std::tie(left.sourceTag, left.sourceId, left.sourceVPIKind,
+                      left.selector, left.mode) ==
+             std::tie(right.sourceTag, right.sourceId, right.sourceVPIKind,
+                      right.selector, right.mode);
+    };
+    for (size_t begin = 0; begin != modeRelations.size();) {
+      size_t end = begin + 1;
+      while (end != modeRelations.size() &&
+             sameModeGroup(modeRelations[begin], modeRelations[end]))
+        ++end;
+      uint64_t expectedOrdinal = 0;
+      for (size_t index = begin; index != end; ++index) {
+        const ModeRelation &entry = modeRelations[index];
+        if (index != begin &&
+            entry.ordinal == modeRelations[index - 1].ordinal) {
+          SimVPIStatementRelationDeclOp relation = entry.relation;
+          return relation.emitOpError(
+              "overlaps another target at the same source, selector, mode, "
+              "and ordinal");
+        }
+        if (entry.ordinal != expectedOrdinal) {
+          SimVPIStatementRelationDeclOp relation = entry.relation;
+          return relation.emitOpError(
+              "ordinals must be dense from zero for each source, selector, "
+              "and access mode");
+        }
+        ++expectedOrdinal;
+      }
+      if (modeRelations[begin].mode ==
+              static_cast<uint32_t>(reflection::VPITraversalMode::Handle) &&
+          end - begin > 1)
+        return modeRelations[end - 1].relation.emitOpError(
+            "vpi_handle relation may expose at most one target");
+      begin = end;
+    }
+
+    // If a generated containment relation provides both singular and
+    // iterative access (currently for-init and for-inc), the singular child is
+    // exactly iterative ordinal zero. Later iterative children remain
+    // iterate-only.
+    auto sameSelectorGroup = [](const ModeRelation &left,
+                                const ModeRelation &right) {
+      return std::tie(left.sourceTag, left.sourceId, left.sourceVPIKind,
+                      left.selector) ==
+             std::tie(right.sourceTag, right.sourceId, right.sourceVPIKind,
+                      right.selector);
+    };
+    for (size_t begin = 0; begin != modeRelations.size();) {
+      size_t end = begin + 1;
+      while (end != modeRelations.size() &&
+             sameSelectorGroup(modeRelations[begin], modeRelations[end]))
+        ++end;
+      const ModeRelation &first = modeRelations[begin];
+      const auto *handleEdge =
+          reflection::findVPITraversal(first.sourceVPIKind, first.selector,
+                                       reflection::VPITraversalMode::Handle);
+      const auto *iterateEdge =
+          reflection::findVPITraversal(first.sourceVPIKind, first.selector,
+                                       reflection::VPITraversalMode::Iterate);
+      bool dualContainment = handleEdge && handleEdge->statementContainment &&
+                             iterateEdge && iterateEdge->statementContainment;
+      if (dualContainment) {
+        const ModeRelation *handle = nullptr;
+        const ModeRelation *iterateZero = nullptr;
+        for (size_t index = begin; index != end; ++index) {
+          const ModeRelation &entry = modeRelations[index];
+          if (entry.mode ==
+              static_cast<uint32_t>(reflection::VPITraversalMode::Handle))
+            handle = &entry;
+          else if (entry.ordinal == 0)
+            iterateZero = &entry;
+        }
+        if (!handle || !iterateZero ||
+            handle->relation != iterateZero->relation) {
+          SimVPIStatementRelationDeclOp relation =
+              handle ? handle->relation : iterateZero->relation;
+          return relation.emitOpError(
+              "ordinal zero must merge vpi_handle and vpi_iterate for a "
+              "dual-mode statement relation");
+        }
+      }
+      begin = end;
+    }
+    for (SimStatementDeclOp statement : statementInventory)
+      if (!incomingRelations.count(statement.getId()))
+        return statement.emitOpError(
+            "is missing its semantic VPI statement-containment relation");
   }
 
   struct ElementShape {

@@ -146,6 +146,31 @@ def SimStatementSiteDeclOp : SimOp<"statement_site.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIStatementRelationDeclOp : SimOp<
+    "vpi_statement_relation.decl", [
+      MemoryEffects<[MemWrite<SimInventoryResource>]>
+    ]> {
+  let summary = "immutable VPI statement-containment relation";
+  let description = [{
+    Records one semantic incoming containment edge for a statement. The source
+    is a stable tagged scope, code-unit, or statement ID. `mode_mask` uses bit
+    zero for `vpi_handle` and bit one for `vpi_iterate`; when both access modes
+    expose the same semantic child they are merged into one record. `ordinal`
+    is dense independently for each source, selector, and access mode.
+
+    This is static reflection inventory. It does not register callbacks or add
+    work to the scheduler.
+  }];
+  let arguments = (ins SimVPIStatementSourceKind:$source_kind,
+                       I64Attr:$source_id, I32Attr:$source_vpi_kind,
+                       I32Attr:$selector, I64Attr:$ordinal,
+                       I32Attr:$mode_mask, I64Attr:$target_statement_id);
+  let assemblyFormat = [{$source_kind $source_id `type` $source_vpi_kind
+    `selector` $selector `ordinal` $ordinal `modes` $mode_mask
+    `to` $target_statement_id attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable mutable-storage descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
