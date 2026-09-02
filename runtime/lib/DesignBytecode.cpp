@@ -5608,7 +5608,9 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
                      OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS)) == 0 &&
                       (!suppressActiveSelf ||
-                       (signalWait && behaviorFlags == 0)) &&
+                       (signalWait &&
+                        (behaviorFlags == 0 ||
+                         action.suspend_kind == OBELISK_RT_SUSPEND_EDGE))) &&
                       (behaviorFlags == OBELISK_RT_WAIT_FLAGS_NONE ||
                        (action.suspend_kind == OBELISK_RT_SUSPEND_JOIN &&
                         behaviorFlags <= 1) ||
@@ -5700,8 +5702,9 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               !signalWait ||
               (observerCondition || managed
                    ? true
-                   : obelisk_rt_stable_handle_decode(
-                         waitEntries[index].stable_id, &decodedSignal));
+                   : waitEntries[index].stable_id == UINT64_MAX ||
+                         obelisk_rt_stable_handle_decode(
+                             waitEntries[index].stable_id, &decodedSignal));
           if (signalWait
                   ? (!validSignalHandle ||
                      (managed &&

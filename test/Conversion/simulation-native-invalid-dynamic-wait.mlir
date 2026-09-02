@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
@@ -7,6 +7,7 @@
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
+// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
 // IEEE 1800-2017 9.4.2: changing the index expression of an implicit event
 // expression re-evaluates a dynamic selection.  While the index is X, the
