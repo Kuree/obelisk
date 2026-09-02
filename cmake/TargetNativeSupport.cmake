@@ -139,6 +139,9 @@ set(_obelisk_target_runtime_vpi_headers
     "${_obelisk_target_runtime_vpi_include_dir}/vpi_user.h"
     "${_obelisk_target_runtime_vpi_include_dir}/sv_vpi_user.h"
     "${_obelisk_target_runtime_vpi_include_dir}/vpi_compatibility.h")
+set(_obelisk_target_runtime_reflection_headers
+    "${PROJECT_SOURCE_DIR}/include/obelisk/Reflection/VPIObjectModel.h"
+    "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/VPIObjectModel.h.inc")
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
 set(_obelisk_target_runtime_definitions)
@@ -168,6 +171,10 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     list(APPEND source_dependencies
       "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
   endif()
+  if(source STREQUAL "DesignDatabase")
+    list(APPEND source_dependencies
+      ${_obelisk_target_runtime_reflection_headers})
+  endif()
   list(APPEND _obelisk_target_runtime_objects "${object}")
   list(APPEND _obelisk_target_runtime_lto_objects "${lto_object}")
   add_custom_command(
@@ -187,6 +194,8 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
       -I "${_obelisk_runtime_source_dir}/include"
       -I "${_obelisk_runtime_source_dir}/lib"
+      -I "${PROJECT_SOURCE_DIR}/include"
+      -I "${CMAKE_BINARY_DIR}/include"
       -isystem "${_obelisk_target_runtime_vpi_include_dir}"
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
@@ -202,6 +211,8 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
       -I "${_obelisk_runtime_source_dir}/include"
       -I "${_obelisk_runtime_source_dir}/lib"
+      -I "${PROJECT_SOURCE_DIR}/include"
+      -I "${CMAKE_BINARY_DIR}/include"
       -isystem "${_obelisk_target_runtime_vpi_include_dir}"
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
     DEPENDS
