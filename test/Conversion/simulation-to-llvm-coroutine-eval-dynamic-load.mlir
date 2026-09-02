@@ -111,7 +111,9 @@ module attributes {
 // CHECK: llvm.icmp "sge"
 // CHECK: llvm.icmp "sle"
 // CHECK: llvm.icmp "slt"
-// CHECK: llvm.icmp "sgt"
+// The upper-bound compare is unsigned after the index has been clamped
+// nonnegative; this is equivalent to the source signed comparison.
+// CHECK: llvm.icmp "ugt"
 // CHECK: llvm.select
 // CHECK: llvm.load {{.*}} {alignment = 1 : i64}
 // CHECK: llvm.shl

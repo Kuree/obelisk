@@ -261,6 +261,21 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     for (sim::SimFuncOp function : closure)
       if (sourceSet.insert(function.getOperation()).second)
         sources.push_back(function);
+
+    // A delayed-net drive owns calendar and charge-storage behavior in the
+    // runtime. It cannot execute inside the closed Tier-1 evaluator, whose
+    // calls must be scheduler-free. Reject the complete owner transitively
+    // while the Simulation call graph is still available so Auto can retain
+    // the ordinary Tier-2/runtime route instead of discovering the runtime
+    // call only after irreversible LLVM conversion.
+    bool hasDelayedNetDrive = false;
+    for (sim::SimFuncOp function : closure)
+      function.walk([&](sim::SimDriverDriveDelayedNetOp) {
+        hasDelayedNetDrive = true;
+      });
+    if (hasDelayedNetDrive)
+      root->setAttr(sim::metadata::evalUnsupportedCheckpointOwner,
+                    StringAttr::get(module.getContext(), root.getSymName()));
   }
 
   if (sources.empty())
@@ -823,6 +838,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveDelayedNetOp,
               sim::SimDriverDriveChangedOp>(operation)) {
         supported = false;
         return;
@@ -924,26 +940,27 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     // simulation-time read required by a $finish diagnostic) are not part of
     // the generated Tier-1 closure. Rejecting the source before this pruning
     // lets one cold runtime leaf disable the complete periodic eval group.
-    bool supported = true;
+    bool probeSupported = true;
     probe.walk([&](Operation *operation) {
-      if (!supported || operation == probe.getOperation())
+      if (!probeSupported || operation == probe.getOperation())
         return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
-        supported = false;
+        probeSupported = false;
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveDelayedNetOp,
               sim::SimDriverDriveChangedOp>(operation)) {
-        supported = false;
+        probeSupported = false;
         return;
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation))
-        supported = false;
+        probeSupported = false;
     });
-    if (!supported) {
+    if (!probeSupported) {
       probe.erase();
       return sim::SimFuncOp{};
     }
@@ -968,6 +985,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     SmallVector<Operation *> publications;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimNBAEnqueueOp, sim::SimRefStoreOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveDelayedNetOp,
               sim::SimDriverDriveChangedOp>(operation))
         publications.push_back(operation);
     });
@@ -2964,8 +2982,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // replace several source actor continuations with one outlined
   // module-instance body, so the source-owner set must be expanded while the
   // current compute graph and its fusion certificate are both available.
-  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> executorFusionGroups =
-      preLowerFusionOwners;
   DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups =
       std::move(preLowerFusionOwners);
   DenseMap<uint64_t, uint32_t> fusionGroupsBySourceCodeUnit =
@@ -3032,24 +3048,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     auto found = aotFusionGroups.find({slot, continuation});
     return found == aotFusionGroups.end() ? UINT32_MAX : found->second;
   };
-  auto executorFusionGroupFor = [&](uint32_t slot, uint32_t continuation) {
-    auto found = executorFusionGroups.find({slot, continuation});
-    return found == executorFusionGroups.end() ? UINT32_MAX : found->second;
-  };
-
   // Expand a fused executor through typed physical owners, then attach only
   // current-generation graph fragments for ownership and SCC analysis.
   for (NativeDirectFragment &direct : *directFragments) {
-    uint32_t executorGroup =
-        executorFusionGroupFor(direct.actorSlot, direct.continuation);
-    if (executorGroup != UINT32_MAX) {
-      if (direct.fusionGroup != UINT32_MAX &&
-          direct.fusionGroup != executorGroup)
-        return module.emitError(
-            "direct eval executor disagrees with its fusion certificate");
-      direct.fusionGroup = executorGroup;
-      direct.fusionExecutor = true;
-    }
     if (direct.fusionGroup == UINT32_MAX)
       direct.fusionGroup =
           fusionGroupFor(direct.actorSlot, direct.continuation);
@@ -3090,10 +3091,16 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         std::unique(direct.sourceOwners.begin(), direct.sourceOwners.end()),
         direct.sourceOwners.end());
     for (auto sourceOwner : direct.sourceOwners) {
+      // Stable source-owner metadata on an ordinary generated body records
+      // provenance, not whole-group execution. It may recover coverage for a
+      // source activation erased by fusion, but a preserved exact body keeps
+      // ownership of its own physical fragment. An explicit instance
+      // coordinator is different: it replaces every certified source
+      // activation in the group and therefore retains complete coverage.
       bool preservedExactBody =
-          direct.fusionExecutor &&
+          !direct.instanceCoordinator &&
           llvm::any_of(*directFragments, [&](const auto &body) {
-            return !body.fusionExecutor &&
+            return &body != &direct && !body.instanceCoordinator &&
                    body.actorSlot == sourceOwner.first &&
                    body.continuation == sourceOwner.second;
           });

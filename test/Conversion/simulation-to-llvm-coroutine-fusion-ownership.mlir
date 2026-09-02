@@ -1,138 +1,12 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
-// A generated fusion executor may retain stable source-owner metadata for a
-// physical continuation whose exact body was preserved outside the outlined
-// fusion. Group membership alone does not prove that the executor runs that
-// continuation. Exercise the production ownership planner and coroutine
-// materializer, and require both physical direct bodies to survive.
-module attributes {
-  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
-  llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
-} {
-  obelisk_sim.design @fusion_ownership attributes {
-    compute_graph = #obelisk_sim.graph<
-      version = 1, vpi = off, workers = 1,
-      nodes = [
-        #obelisk_sim.fragment<id = 0, function = @fused, block = 0,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 1, function = @fused, block = 1,
-          region = active, action = suspend_change, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = watch, resource = storage,
-              target = descriptor, descriptor = 0, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false,
-              trigger = change>]>,
-        #obelisk_sim.fragment<id = 2, function = @fused, block = 2,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 3, function = @boundary, block = 0,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 4, function = @boundary, block = 1,
-          region = active, action = suspend_change, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = watch, resource = storage,
-              target = descriptor, descriptor = 1, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false,
-              trigger = change>]>,
-        #obelisk_sim.fragment<id = 5, function = @boundary, block = 2,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 6, function = @root, block = 0,
-          region = active, action = terminate, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 7, function = @clock, block = 0,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 8, function = @clock, block = 1,
-          region = active, action = suspend_delay, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 9, function = @clock, block = 2,
-          region = active, action = continue, tier = native, cost = 2,
-          lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = read, resource = storage,
-              target = descriptor, descriptor = 0, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false, trigger = none>,
-            #obelisk_sim.effect<effect = write, resource = storage,
-              target = descriptor, descriptor = 0, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false, trigger = none>]>,
-        #obelisk_sim.fragment<id = 10, function = @clock_outside, block = 0,
-          region = active, action = continue, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 11, function = @clock_outside, block = 1,
-          region = active, action = suspend_delay, tier = native, cost = 1,
-          lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 12, function = @clock_outside, block = 2,
-          region = active, action = continue, tier = native, cost = 2,
-          lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = read, resource = storage,
-              target = descriptor, descriptor = 1, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false, trigger = none>,
-            #obelisk_sim.effect<effect = write, resource = storage,
-              target = descriptor, descriptor = 1, formal = 0, low = 0,
-              width = 1, dynamic = false, deferred = false, trigger = none>]>],
-      edges = [
-        #obelisk_sim.edge<source = 0, target = 1, kind = process_order>,
-        #obelisk_sim.edge<source = 1, target = 2, kind = resume>,
-        #obelisk_sim.edge<source = 2, target = 1, kind = process_order>,
-        #obelisk_sim.edge<source = 3, target = 4, kind = process_order>,
-        #obelisk_sim.edge<source = 4, target = 5, kind = resume>,
-        #obelisk_sim.edge<source = 5, target = 4, kind = process_order>,
-        #obelisk_sim.edge<source = 6, target = 0, kind = spawn>,
-        #obelisk_sim.edge<source = 6, target = 3, kind = spawn>,
-        #obelisk_sim.edge<source = 6, target = 7, kind = spawn>,
-        #obelisk_sim.edge<source = 6, target = 10, kind = spawn>,
-        #obelisk_sim.edge<source = 7, target = 8, kind = process_order>,
-        #obelisk_sim.edge<source = 8, target = 9, kind = resume>,
-        #obelisk_sim.edge<source = 9, target = 1, kind = sensitivity,
-          resource = <effect = watch, resource = storage,
-            target = descriptor, descriptor = 0, formal = 0, low = 0,
-            width = 1, dynamic = false, deferred = false, trigger = change>>,
-        #obelisk_sim.edge<source = 9, target = 8, kind = process_order>,
-        #obelisk_sim.edge<source = 10, target = 11, kind = process_order>,
-        #obelisk_sim.edge<source = 11, target = 12, kind = resume>,
-        #obelisk_sim.edge<source = 12, target = 4, kind = sensitivity,
-          resource = <effect = watch, resource = storage,
-            target = descriptor, descriptor = 1, formal = 0, low = 0,
-            width = 1, dynamic = false, deferred = false, trigger = change>>,
-        #obelisk_sim.edge<source = 12, target = 11, kind = process_order>],
-      regions = [
-        #obelisk_sim.region<kind = active, groups = [
-          #obelisk_sim.group<fragments = [0], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [1], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [2], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [3], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [4], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [5], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [6], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [7], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [8], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [9], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [10], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [11], schedule = acyclic,
-            feedback = []>,
-          #obelisk_sim.group<fragments = [12], schedule = acyclic,
-            feedback = []>]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
-  } {
+// A generated body may retain stable source-owner provenance for a physical
+// continuation whose exact body survived fusion. This fixture is frozen after
+// planning so the test exercises only coroutine conversion and its production
+// Eval ownership transformation.
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 3 : i32} {
+  obelisk_sim.design @fusion_ownership attributes {compute_graph = #obelisk_sim.graph<version = 1, vpi = off, workers = 1, nodes = [#obelisk_sim.fragment<id = 0, function = @fused, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 1, function = @fused, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 2, function = @fused, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 3, function = @boundary, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 4, function = @boundary, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 5, function = @boundary, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 6, function = @root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 7, function = @clock, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 8, function = @clock, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 9, function = @clock, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>, #obelisk_sim.fragment<id = 10, function = @clock_outside, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 11, function = @clock_outside, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 12, function = @clock_outside, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>], edges = [#obelisk_sim.edge<source = 0, target = 1, kind = process_order>, #obelisk_sim.edge<source = 1, target = 2, kind = resume>, #obelisk_sim.edge<source = 2, target = 1, kind = process_order>, #obelisk_sim.edge<source = 3, target = 4, kind = process_order>, #obelisk_sim.edge<source = 4, target = 5, kind = resume>, #obelisk_sim.edge<source = 5, target = 4, kind = process_order>, #obelisk_sim.edge<source = 6, target = 0, kind = spawn>, #obelisk_sim.edge<source = 6, target = 3, kind = spawn>, #obelisk_sim.edge<source = 6, target = 7, kind = spawn>, #obelisk_sim.edge<source = 6, target = 10, kind = spawn>, #obelisk_sim.edge<source = 7, target = 8, kind = process_order>, #obelisk_sim.edge<source = 8, target = 9, kind = resume>, #obelisk_sim.edge<source = 9, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 9, target = 8, kind = process_order>, #obelisk_sim.edge<source = 10, target = 11, kind = process_order>, #obelisk_sim.edge<source = 11, target = 12, kind = resume>, #obelisk_sim.edge<source = 12, target = 4, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 12, target = 11, kind = process_order>], regions = [#obelisk_sim.region<kind = active, groups = [#obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [2], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [3], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [4], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [5], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [6], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [7], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [8], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [9], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [10], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [11], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [12], schedule = acyclic, feedback = []>]>, #obelisk_sim.region<kind = nba, groups = []>, #obelisk_sim.region<kind = observed, groups = []>, #obelisk_sim.region<kind = reactive, groups = []>, #obelisk_sim.region<kind = postponed, groups = []>]>, obelisk_sim.compute_kernels = [#obelisk_sim.kernel<id = 0, region = active, schedule = acyclic, lane = 0, cost = 1, loweringReady = true, fragments = [0]>, #obelisk_sim.kernel<id = 1, region = active, schedule = acyclic, lane = 0, cost = 1, loweringReady = true, fragments = [1]>, #obelisk_sim.kernel<id = 2, region = active, schedule = acyclic, lane = 0, cost = 2, loweringReady = true, fragments = [2, 3]>, #obelisk_sim.kernel<id = 3, region = active, schedule = acyclic, lane = 0, cost = 1, loweringReady = true, fragments = [4]>, #obelisk_sim.kernel<id = 4, region = active, schedule = acyclic, lane = 0, cost = 10, loweringReady = true, fragments = [5, 6, 7, 8, 9, 10, 11, 12]>], obelisk_sim.static_specialization = #obelisk_sim.static_specialization<version = 1, maxPackedWidth = 64, sourceGraph = <version = 1, vpi = off, workers = 1, nodes = [#obelisk_sim.fragment<id = 0, function = @fused, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 1, function = @fused, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 2, function = @fused, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 3, function = @boundary, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 4, function = @boundary, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 5, function = @boundary, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 6, function = @root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 7, function = @clock, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 8, function = @clock, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 9, function = @clock, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>, #obelisk_sim.fragment<id = 10, function = @clock_outside, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 11, function = @clock_outside, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 12, function = @clock_outside, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>], edges = [#obelisk_sim.edge<source = 0, target = 1, kind = process_order>, #obelisk_sim.edge<source = 1, target = 2, kind = resume>, #obelisk_sim.edge<source = 2, target = 1, kind = process_order>, #obelisk_sim.edge<source = 3, target = 4, kind = process_order>, #obelisk_sim.edge<source = 4, target = 5, kind = resume>, #obelisk_sim.edge<source = 5, target = 4, kind = process_order>, #obelisk_sim.edge<source = 6, target = 0, kind = spawn>, #obelisk_sim.edge<source = 6, target = 3, kind = spawn>, #obelisk_sim.edge<source = 6, target = 7, kind = spawn>, #obelisk_sim.edge<source = 6, target = 10, kind = spawn>, #obelisk_sim.edge<source = 7, target = 8, kind = process_order>, #obelisk_sim.edge<source = 8, target = 9, kind = resume>, #obelisk_sim.edge<source = 9, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 9, target = 8, kind = process_order>, #obelisk_sim.edge<source = 10, target = 11, kind = process_order>, #obelisk_sim.edge<source = 11, target = 12, kind = resume>, #obelisk_sim.edge<source = 12, target = 4, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 12, target = 11, kind = process_order>], regions = [#obelisk_sim.region<kind = active, groups = [#obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [2], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [3], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [4], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [5], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [6], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [7], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [8], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [9], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [10], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [11], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [12], schedule = acyclic, feedback = []>]>, #obelisk_sim.region<kind = nba, groups = []>, #obelisk_sim.region<kind = observed, groups = []>, #obelisk_sim.region<kind = reactive, groups = []>, #obelisk_sim.region<kind = postponed, groups = []>]>, roots = [#obelisk_sim.static_state_root<descriptor = 0, width = 1, direct = true, guarded = false, nba = false>, #obelisk_sim.static_state_root<descriptor = 1, width = 1, direct = true, guarded = false, nba = false>], actorRoots = [#obelisk_sim.static_actor_root<function = @boundary, descriptor = 1, read = true, write = false>, #obelisk_sim.static_actor_root<function = @clock, descriptor = 0, read = true, write = true>, #obelisk_sim.static_actor_root<function = @clock_outside, descriptor = 1, read = true, write = true>, #obelisk_sim.static_actor_root<function = @fused, descriptor = 0, read = true, write = false>], nbaRoots = []>, obelisk_sim.static_superstep = #obelisk_sim.static_superstep<version = 1, sourceGraph = <version = 1, vpi = off, workers = 1, nodes = [#obelisk_sim.fragment<id = 0, function = @fused, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 1, function = @fused, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 2, function = @fused, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 3, function = @boundary, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 4, function = @boundary, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 5, function = @boundary, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 6, function = @root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 7, function = @clock, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 8, function = @clock, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 9, function = @clock, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>, #obelisk_sim.fragment<id = 10, function = @clock_outside, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 11, function = @clock_outside, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 12, function = @clock_outside, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>], edges = [#obelisk_sim.edge<source = 0, target = 1, kind = process_order>, #obelisk_sim.edge<source = 1, target = 2, kind = resume>, #obelisk_sim.edge<source = 2, target = 1, kind = process_order>, #obelisk_sim.edge<source = 3, target = 4, kind = process_order>, #obelisk_sim.edge<source = 4, target = 5, kind = resume>, #obelisk_sim.edge<source = 5, target = 4, kind = process_order>, #obelisk_sim.edge<source = 6, target = 0, kind = spawn>, #obelisk_sim.edge<source = 6, target = 3, kind = spawn>, #obelisk_sim.edge<source = 6, target = 7, kind = spawn>, #obelisk_sim.edge<source = 6, target = 10, kind = spawn>, #obelisk_sim.edge<source = 7, target = 8, kind = process_order>, #obelisk_sim.edge<source = 8, target = 9, kind = resume>, #obelisk_sim.edge<source = 9, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 9, target = 8, kind = process_order>, #obelisk_sim.edge<source = 10, target = 11, kind = process_order>, #obelisk_sim.edge<source = 11, target = 12, kind = resume>, #obelisk_sim.edge<source = 12, target = 4, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 12, target = 11, kind = process_order>], regions = [#obelisk_sim.region<kind = active, groups = [#obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [2], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [3], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [4], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [5], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [6], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [7], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [8], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [9], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [10], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [11], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [12], schedule = acyclic, feedback = []>]>, #obelisk_sim.region<kind = nba, groups = []>, #obelisk_sim.region<kind = observed, groups = []>, #obelisk_sim.region<kind = reactive, groups = []>, #obelisk_sim.region<kind = postponed, groups = []>]>, actors = [@root, @fused, @boundary, @clock, @clock_outside]>, obelisk_sim.three_tier_schedule = #obelisk_sim.three_tier_schedule<version = 1, sourceGraph = <version = 1, vpi = off, workers = 1, nodes = [#obelisk_sim.fragment<id = 0, function = @fused, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 1, function = @fused, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 2, function = @fused, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 3, function = @boundary, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 4, function = @boundary, block = 1, region = active, action = suspend_change, tier = native, cost = 1, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>]>, #obelisk_sim.fragment<id = 5, function = @boundary, block = 2, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 6, function = @root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 7, function = @clock, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 8, function = @clock, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 9, function = @clock, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>, #obelisk_sim.fragment<id = 10, function = @clock_outside, block = 0, region = active, action = continue, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 11, function = @clock_outside, block = 1, region = active, action = suspend_delay, tier = native, cost = 1, lane = 0, twoState = true, effects = []>, #obelisk_sim.fragment<id = 12, function = @clock_outside, block = 2, region = active, action = continue, tier = native, cost = 2, lane = 0, twoState = true, effects = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>]>], edges = [#obelisk_sim.edge<source = 0, target = 1, kind = process_order>, #obelisk_sim.edge<source = 1, target = 2, kind = resume>, #obelisk_sim.edge<source = 2, target = 1, kind = process_order>, #obelisk_sim.edge<source = 3, target = 4, kind = process_order>, #obelisk_sim.edge<source = 4, target = 5, kind = resume>, #obelisk_sim.edge<source = 5, target = 4, kind = process_order>, #obelisk_sim.edge<source = 6, target = 0, kind = spawn>, #obelisk_sim.edge<source = 6, target = 3, kind = spawn>, #obelisk_sim.edge<source = 6, target = 7, kind = spawn>, #obelisk_sim.edge<source = 6, target = 10, kind = spawn>, #obelisk_sim.edge<source = 7, target = 8, kind = process_order>, #obelisk_sim.edge<source = 8, target = 9, kind = resume>, #obelisk_sim.edge<source = 9, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 9, target = 8, kind = process_order>, #obelisk_sim.edge<source = 10, target = 11, kind = process_order>, #obelisk_sim.edge<source = 11, target = 12, kind = resume>, #obelisk_sim.edge<source = 12, target = 4, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>>, #obelisk_sim.edge<source = 12, target = 11, kind = process_order>], regions = [#obelisk_sim.region<kind = active, groups = [#obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [2], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [3], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [4], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [5], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [6], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [7], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [8], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [9], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [10], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [11], schedule = acyclic, feedback = []>, #obelisk_sim.group<fragments = [12], schedule = acyclic, feedback = []>]>, #obelisk_sim.region<kind = nba, groups = []>, #obelisk_sim.region<kind = observed, groups = []>, #obelisk_sim.region<kind = reactive, groups = []>, #obelisk_sim.region<kind = postponed, groups = []>]>, ownerCount = 5, triggers = [#obelisk_sim.trigger_group<id = 0, key = <resource = storage, descriptor = 0, low = 0, width = 1, edge = change>>, #obelisk_sim.trigger_group<id = 1, key = <resource = storage, descriptor = 1, low = 0, width = 1, edge = change>>], kernels = [#obelisk_sim.scheduled_kernel<id = 0, owner = 2, readyBit = 0, tier = tier1, region = active, schedule = acyclic, shared = true, loweringReady = true, twoStateEligible = true, promotionRoots = [], fragments = [0]>, #obelisk_sim.scheduled_kernel<id = 1, owner = 0, readyBit = 0, tier = tier1, region = active, schedule = acyclic, shared = false, loweringReady = true, twoStateEligible = true, promotionRoots = [#obelisk_sim.inductive_root<resource = storage, descriptor = 0>], fragments = [1]>, #obelisk_sim.scheduled_kernel<id = 2, owner = 3, readyBit = 0, tier = tier1, region = active, schedule = acyclic, shared = true, loweringReady = true, twoStateEligible = true, promotionRoots = [], fragments = [2, 3]>, #obelisk_sim.scheduled_kernel<id = 3, owner = 1, readyBit = 0, tier = tier1, region = active, schedule = acyclic, shared = false, loweringReady = true, twoStateEligible = true, promotionRoots = [#obelisk_sim.inductive_root<resource = storage, descriptor = 1>], fragments = [4]>, #obelisk_sim.scheduled_kernel<id = 4, owner = 4, readyBit = 0, tier = tier1, region = active, schedule = acyclic, shared = true, loweringReady = true, twoStateEligible = true, promotionRoots = [#obelisk_sim.inductive_root<resource = storage, descriptor = 0>, #obelisk_sim.inductive_root<resource = storage, descriptor = 1>], fragments = [5, 6, 7, 8, 9, 10, 11, 12]>], roots = [#obelisk_sim.scheduled_root<resource = storage, descriptor = 0, low = 0, width = 1, owner = 4, tier = tier1>, #obelisk_sim.scheduled_root<resource = storage, descriptor = 1, low = 0, width = 1, owner = 4, tier = tier1>], ingress = [#obelisk_sim.scheduler_ingress<trigger = 0, owner = 0, readyBit = 0, fragment = 1>, #obelisk_sim.scheduler_ingress<trigger = 1, owner = 1, readyBit = 0, fragment = 4>]>} {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "owners.root"
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "owners.fused"
@@ -141,111 +15,67 @@ module attributes {
     obelisk_sim.code_unit.decl 5 in 0 always hierarchy "owners.clock_outside"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
-
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %inside = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %outside = obelisk_sim.context.storage %ctx[1] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %fused = obelisk_sim.spawn @fused(%ctx, %inside) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %boundary = obelisk_sim.spawn @boundary(%ctx, %outside) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %clock = obelisk_sim.spawn @clock(%ctx, %inside) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %clock_outside = obelisk_sim.spawn @clock_outside(%ctx, %outside) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
+    obelisk_sim.func @root(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, domain = 0 : i32, entry_kind = 0 : i32, home_region = 2 : i32} {
+      %0 = obelisk_sim.context.storage %arg0[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %1 = obelisk_sim.context.storage %arg0[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %2 = obelisk_sim.spawn @fused(%arg0, %0) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
+      %3 = obelisk_sim.spawn @boundary(%arg0, %1) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
+      %4 = obelisk_sim.spawn @clock(%arg0, %0) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
+      %5 = obelisk_sim.spawn @clock_outside(%arg0, %1) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
       obelisk_sim.return
     }
-
-    obelisk_sim.func @fused(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
-                    obelisk.native.region_body,
-                    obelisk.eval.fusion_group = 0 : i32,
-                    obelisk.eval.source_owners = [
-                      {code_unit = 2 : i64, continuation = 1 : i32},
-                      {code_unit = 3 : i64, continuation = 2 : i32}]} {
-      cf.br ^wait
-    ^wait:
-      obelisk_sim.suspend.change %state to ^resume
-          {site = #obelisk_sim.continuation<id = 1>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-    ^resume:
-      cf.br ^wait
+    obelisk_sim.func @fused(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {code_unit_id = 2 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, obelisk.eval.body = @fused.__obelisk_eval_body_0, obelisk.eval.fusion_group = 0 : i32, obelisk.eval.source_owners = [{code_unit = 2 : i64, continuation = 1 : i32}, {code_unit = 3 : i64, continuation = 2 : i32}], obelisk.native.region_body} {
+      cf.br ^bb1
+    ^bb1:  // 2 preds: ^bb0, ^bb2
+      obelisk_sim.suspend.change %arg1 to ^bb2 {site = #obelisk_sim.continuation<id = 1>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+    ^bb2:  // pred: ^bb1
+      cf.br ^bb1
     }
-
-    obelisk_sim.func @boundary(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64,
-                    obelisk.native.region_body} {
-      cf.br ^wait
-    ^wait:
-      obelisk_sim.suspend.change %state to ^resume
-          {site = #obelisk_sim.continuation<id = 2>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-    ^resume:
-      cf.br ^wait
+    obelisk_sim.func @boundary(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, obelisk.eval.body = @boundary.__obelisk_eval_body_0, obelisk.native.region_body} {
+      cf.br ^bb1
+    ^bb1:  // 2 preds: ^bb0, ^bb2
+      obelisk_sim.suspend.change %arg1 to ^bb2 {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+    ^bb2:  // pred: ^bb1
+      cf.br ^bb1
     }
-
-    obelisk_sim.func @clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %inside: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
-      cf.br ^wait
-    ^wait:
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 3>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
-    ^toggle:
-      %inside_old = obelisk_sim.ref.load %inside :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %inside_new = obelisk_sim.logic.unary bit_not %inside_old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %inside_new to %inside :
-          !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      cf.br ^wait
+    obelisk_sim.func @clock(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32} {
+      cf.br ^bb1
+    ^bb1:  // 2 preds: ^bb0, ^bb2
+      %0 = obelisk_sim.time.constant 1
+      obelisk_sim.suspend.delay %0 to ^bb2 {site = #obelisk_sim.continuation<id = 3>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+    ^bb2:  // pred: ^bb1
+      %1 = obelisk_sim.ref.load %arg1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %2 = obelisk_sim.logic.unary bit_not %1 : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      obelisk_sim.ref.store %2 to %arg1 : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      cf.br ^bb1
     }
-
-    obelisk_sim.func @clock_outside(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %outside: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
-      cf.br ^wait
-    ^wait:
-      %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 4>,
-           timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
-    ^toggle:
-      %outside_old = obelisk_sim.ref.load %outside :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %outside_new = obelisk_sim.logic.unary bit_not %outside_old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %outside_new to %outside :
-          !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      cf.br ^wait
+    obelisk_sim.func @clock_outside(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {code_unit_id = 5 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32} {
+      cf.br ^bb1
+    ^bb1:  // 2 preds: ^bb0, ^bb2
+      %0 = obelisk_sim.time.constant 2
+      obelisk_sim.suspend.delay %0 to ^bb2 {site = #obelisk_sim.continuation<id = 4>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+    ^bb2:  // pred: ^bb1
+      %1 = obelisk_sim.ref.load %arg1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %2 = obelisk_sim.logic.unary bit_not %1 : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
+      obelisk_sim.ref.store %2 to %arg1 : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      cf.br ^bb1
+    }
+    obelisk_sim.code_unit.decl 6 in 0 function hierarchy "fused.__obelisk_eval_body_0" debug "generated native eval body" {internal}
+    obelisk_sim.func private @fused.__obelisk_eval_body_0(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {code_unit_id = 6 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, obelisk.eval.borrowed_captures, obelisk.eval.continuation = 1 : i32, obelisk.eval.fusion_group = 0 : i32, obelisk.eval.raw_captures, obelisk.eval.source_owners = [{code_unit = 2 : i64, continuation = 1 : i32}]} {
+      cf.br ^bb1
+    ^bb1:  // pred: ^bb0
+      obelisk_sim.return
+    }
+    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "boundary.__obelisk_eval_body_0" debug "generated native eval body" {internal}
+    obelisk_sim.func private @boundary.__obelisk_eval_body_0(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {code_unit_id = 7 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, obelisk.eval.borrowed_captures, obelisk.eval.continuation = 2 : i32, obelisk.eval.raw_captures, obelisk.eval.source_owners = [{code_unit = 3 : i64, continuation = 2 : i32}]} {
+      cf.br ^bb1
+    ^bb1:  // pred: ^bb0
+      obelisk_sim.return
     }
   }
 }
 
+// Both preserved physical bodies must remain distinct Eval owners.
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_2_2.__obelisk_execute(
 // CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1

@@ -1598,7 +1598,6 @@ FailureOr<bool> makeNativeEvalPlan(
     };
     struct GeneratedTransition {
       LLVM::CallOp call;
-      unsigned directFragment = UINT_MAX;
       bool periodicTwoState = false;
       std::optional<uint32_t> activeOwnerBit;
     };
@@ -1611,17 +1610,10 @@ FailureOr<bool> makeNativeEvalPlan(
           activeOwner == activeOwnerBits.end()
               ? std::nullopt
               : std::optional<uint32_t>{activeOwner->second};
-      unsigned directFragment = UINT_MAX;
-      if (auto identity = function->getAttrOfType<IntegerAttr>(
-              "obelisk.eval.direct_fragment");
-          identity && identity.getInt() >= 0 &&
-          static_cast<uint64_t>(identity.getInt()) < directFragments.size())
-        directFragment = static_cast<unsigned>(identity.getUInt());
       function.walk([&](LLVM::CallOp call) {
         if (call.getCallee() &&
             *call.getCallee() == "obelisk_rt_v1_scheduler_static_transition")
-          transitions.push_back(
-              {call, directFragment, periodicTwoState, activeOwnerBit});
+          transitions.push_back({call, periodicTwoState, activeOwnerBit});
       });
     }
     auto packedMask = [](uint64_t width) {
@@ -1629,7 +1621,6 @@ FailureOr<bool> makeNativeEvalPlan(
     };
     for (const GeneratedTransition &transition : transitions) {
       LLVM::CallOp call = transition.call;
-      unsigned directFragment = transition.directFragment;
       bool periodicTwoState = transition.periodicTwoState;
       std::optional<uint32_t> activeOwnerBit = transition.activeOwnerBit;
       ValueRange arguments = call.getArgOperands();
