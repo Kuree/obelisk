@@ -815,6 +815,15 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertTrue(log.endswith(
             "range of selection [2:0] is reversed\n"))
 
+    def test_explicit_type_input_net_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_interface_input_port_assign",
+            "cannot assign to input port 'clk'\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 23.2.2.3", log)
+        self.assertIn("23.3.3.1", log)
+        self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

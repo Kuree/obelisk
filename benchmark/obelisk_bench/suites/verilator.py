@@ -166,6 +166,12 @@ KNOWN_SLANG_BUGS = {
         "23.3.3.5 maps equal-size unpacked port connections left-index to "
         "left-index; pinned Slang rejects the legal reverse-direction slice "
         "primsig[2:0] from the ascending array primsig[0:2]"),
+    "t_interface_input_port_assign": (
+        "IEEE 1800-2017 23.2.2.3 makes an input port whose kind is omitted "
+        "a net of the default net type even when it has an explicit logic "
+        "data type, and 23.3.3.1 permits that net port to be coerced when "
+        "driven externally; pinned Slang instead treats logic_if.clk as a "
+        "variable input and rejects the continuous assignment"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "
