@@ -707,6 +707,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assign_dff": ACTIVE_REGION_READ_WRITE_RACE,
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
+    "t_interface_virtual_sched_act": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
     "t_multidriven_simple": ACTIVE_REGION_COMBINATIONAL_READ_RACE,
     "t_split_var_types": UNTIMED_ALWAYS,
