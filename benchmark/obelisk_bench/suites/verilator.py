@@ -835,6 +835,11 @@ MIXED_CONTINUOUS_PROCEDURAL_MEMBER = Exclusion(
     "a mixture of procedural and continuous assignments is illegal when "
     "their written longest static prefixes overlap; the initial assignment "
     "to all of strl overlaps the continuous assignment to strl.a")
+DESIGN_REFERENCES_PROGRAM_INSTANCE = Exclusion(
+    "IEEE 1800-2017 24.5",
+    "calling program subroutines from a design module is illegal; module t "
+    "calls prog1.run and prog1.stop, while its reads of prog1.v are also "
+    "forbidden program-signal references under 24.3")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -852,6 +857,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_coroutine_lambda": FUNCTION_ENABLES_TASK,
     "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
+    "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,

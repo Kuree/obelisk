@@ -876,6 +876,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.5")
         self.assertIn("strl.a", excluded.reason)
 
+    def test_design_cannot_reach_into_a_program_instance(self):
+        excluded = verilator.EXCLUDED["t_disable_task_by_name"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 24.5")
+        self.assertIn("prog1.run", excluded.reason)
+        self.assertIn("prog1.v", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
