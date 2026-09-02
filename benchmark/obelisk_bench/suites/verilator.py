@@ -238,6 +238,13 @@ ACTIVE_REGION_READ_WRITE_RACE = Exclusion(
     "process while the DFF reads d in another; Active-region events may be "
     "processed in any order, but the test requires Verilator's write-first "
     "ordering")
+ACTIVE_REGION_COMBINATIONAL_READ_RACE = Exclusion(
+    "IEEE 1800-2017 4.8",
+    "the testbench changes sel and immediately reads outputs driven by "
+    "separate always_comb and continuous-assignment processes; the LRM's "
+    "analogous example permits either the old or new output because the "
+    "dependent Active-region update may run before or after the read, but the "
+    "test requires Verilator's immediate combinational settle")
 STATIC_SUBROUTINE_RECURSION = Exclusion(
     "IEEE 1800-2017 13.3.2",
     "\"all variables of a static task shall be static in that there shall be "
@@ -695,6 +702,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assigndly_dynamic": SAME_VALUE_WRITE,
     "t_case_unique_overlap": TWO_STATE_INITIALIZATION,
     "t_math_cmp": TWO_STATE_INITIALIZATION,
+    "t_multidriven_simple": ACTIVE_REGION_COMBINATIONAL_READ_RACE,
     "t_split_var_types": UNTIMED_ALWAYS,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,
     "t_timing_write_expr": UNTIMED_ALWAYS,
