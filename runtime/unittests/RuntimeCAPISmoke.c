@@ -136,13 +136,16 @@ _Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, byte_stride) == 8,
                "DPI open-array dimension stride offset changed");
 _Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, flags) == 16,
                "DPI open-array dimension flags offset changed");
-_Static_assert(sizeof(obelisk_rt_dpi_open_array_v1) == SMOKE_PTR(64, 56),
+_Static_assert(sizeof(obelisk_rt_dpi_open_array_v1) == 64,
                "DPI open-array descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, data) == 32,
                "DPI open-array data offset changed");
-_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, ranges) ==
-                   SMOKE_PTR(48, 44),
+_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, data_size) == 40,
+               "DPI open-array data size offset changed");
+_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, ranges) == 48,
                "DPI open-array ranges offset changed");
+_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, reserved) == 56,
+               "DPI open-array reserved offset changed");
 _Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
                "activation descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,

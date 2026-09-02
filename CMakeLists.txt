@@ -230,7 +230,7 @@ if(EMSCRIPTEN)
       set(${flags} "${${flags}} -fexceptions")
     endif()
   endforeach()
-  include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
+  set(_obelisk_configure_wasm_support TRUE)
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   set(OBELISK_NATIVE_PLATFORM "linux")
   include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
@@ -456,6 +456,12 @@ set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
 set(OBELISK_SLANG_INCLUDE_DIR "${OBELISK_SLANG_SOURCE_DIR}/include")
 message(STATUS
   "Building slang v${OBELISK_SLANG_VERSION} from ${OBELISK_SLANG_SOURCE_DIR}")
+if(_obelisk_configure_wasm_support)
+  # The standalone runtime compiler needs Slang's canonical IEEE VPI headers.
+  # Configure it only after FetchContent has resolved every supported source
+  # and base-directory override to the actual materialized source tree.
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
+endif()
 
 #===------------------------------------------------------------------------===
 # Language standard. Obelisk stays at the SDK's C++17 baseline except for the
@@ -495,6 +501,11 @@ endif()
 add_custom_target(obelisk-generated-files)
 add_subdirectory(utils/obelisk-tblgen)
 add_subdirectory(include)
+if(EMSCRIPTEN AND TARGET obelisk_target_runtime)
+  # TargetWasmSupport is loaded before the reflection generators are declared.
+  # Keep its direct compiler commands behind the imported host-generated files.
+  add_dependencies(obelisk_target_runtime obelisk-generated-files)
+endif()
 add_subdirectory(runtime)
 add_subdirectory(lib)
 add_subdirectory(tools)
