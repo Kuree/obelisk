@@ -25,9 +25,30 @@ module {
 module {
   obelisk_sim.design @unknown_owner {
     obelisk_sim.scope.decl 0
-    // expected-error @below {{references an unknown code-unit or scope ID}}
+    // expected-error @below {{references an unknown code-unit ID}}
     obelisk_sim.statement.decl 1 in 99 scope 0 type 4
     obelisk_sim.statement_site.decl 2 on 1 phase 0
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @behavioral_statement_without_owner {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{behavioral statement requires a code-unit ID}}
+    obelisk_sim.statement.decl 1 scope 0 type 38
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @scope_owned_statement_with_owner {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    // expected-error @below {{scope-owned statement must omit a code-unit ID}}
+    obelisk_sim.statement.decl 1 in 1 scope 0 type 8
   }
 }
 
@@ -152,8 +173,20 @@ module {
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.first"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.second"
     obelisk_sim.statement.decl 10 in 1 scope 0 type 38
-    // expected-error @below {{references an unknown or cross-code-unit parent statement}}
+    // expected-error @below {{references an unknown or cross-owner/scope parent statement}}
     obelisk_sim.statement.decl 20 in 2 scope 0 type 38 parent 10
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @cross_scope_scope_owned_parent {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.scope.decl 1 parent 0
+    obelisk_sim.statement.decl 10 scope 0 type 8
+    // expected-error @below {{references an unknown or cross-owner/scope parent statement}}
+    obelisk_sim.statement.decl 20 scope 1 type 128 parent 10
   }
 }
 

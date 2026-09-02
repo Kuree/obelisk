@@ -118,7 +118,8 @@ def Index : ReflectionLayout<"Index", 24,
   [IndexHash, IndexName, IndexRecord]>;
 
 // Compact immutable source identities. Indices and string offsets are 32-bit
-// offsets within their respective tables; UINT32_MAX is the absent parent.
+// offsets within their respective tables. UINT32_MAX denotes an absent owner
+// for scope-owned statements and an absent parent.
 // Executable tier/fragment/PC bindings deliberately live in a later side
 // table and never alter these semantic identities.
 def StatementID : ReflectionField<"ID", 0, U64LE>;

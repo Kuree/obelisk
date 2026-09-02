@@ -562,17 +562,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (auto [index, entry] : llvm::enumerate(statements)) {
     sim::SimStatementDeclOp statement = entry.declaration;
-    auto owner = codeUnitObjectIndices.find(statement.getCodeUnitId());
     auto scope = scopeIndices.find(statement.getScopeId());
-    if (owner == codeUnitObjectIndices.end() || scope == scopeIndices.end()) {
-      statement.emitOpError(
-          "statement reflection owner or scope was not serialized");
+    if (scope == scopeIndices.end()) {
+      statement.emitOpError("statement reflection scope was not serialized");
       return {};
+    }
+    uint32_t ownerIndex = UINT32_MAX;
+    if (auto ownerID = statement.getCodeUnitId()) {
+      auto owner = codeUnitObjectIndices.find(*ownerID);
+      if (owner == codeUnitObjectIndices.end()) {
+        statement.emitOpError("statement reflection owner was not serialized");
+        return {};
+      }
+      ownerIndex = owner->second;
     }
     StatementWriter writer(output.data() + statementOffset +
                            index * StatementLayout.size);
     writer.setID(statement.getId());
-    writer.setOwnerObjectIndex(owner->second);
+    writer.setOwnerObjectIndex(ownerIndex);
     writer.setScopeIndex(scope->second);
     writer.setParentIndex(
         statement.getParentId()
