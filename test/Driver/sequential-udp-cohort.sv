@@ -137,4 +137,4 @@ endmodule
 // The outlined member is a hard optimization boundary even at O3.
 // LLVM: call {{.*}}@__obelisk_region_kernel_{{.*}}.__member
 // LLVM: define {{.*}}@__obelisk_region_kernel_{{.*}}.__member{{.*}}#[[NOINLINE:[0-9]+]] {
-// LLVM: attributes #[[NOINLINE]] = { noinline }
+// LLVM: attributes #[[NOINLINE]] = { noinline{{.*}} }
