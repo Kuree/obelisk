@@ -2731,6 +2731,33 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   bool alwaysSynchronized = currentOccurrence && !*currentOccurrence;
   Value synchronizationPredicate =
       currentOccurrence ? *currentOccurrence : Value{};
+  std::optional<unsigned> trackedClockWidth;
+  std::optional<uint64_t> trackedClockDescriptor;
+  bool trackRuntimeOccurrence = false;
+  // IEEE 1800-2017 14.16 uses the current clocking event when a zero-skew
+  // drive executes anywhere in that event's time step. Static CFG provenance
+  // handles direct @(cb) continuations above. For an indirect wakeup in the
+  // same slot, register the exact descriptor in the root initializer and let
+  // the outlined helper query its sparse occurrence history before waiting.
+  if (!currentOccurrence && !virtualInterface && !hasIff && !cycleDelay &&
+      !distinctEdgeSkew) {
+    Type clockElement;
+    if (auto reference = dyn_cast<sim::RefType>(clock.getType()))
+      clockElement = reference.getElementType();
+    else if (auto net = dyn_cast<sim::NetType>(clock.getType()))
+      clockElement = net.getElementType();
+    trackedClockWidth =
+        clockElement ? sim::getPackedWidth(clockElement) : std::nullopt;
+    auto clockPath =
+        destination->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+    auto descriptor = clockPath ? descriptorIDs.find(clockPath.getValue())
+                                : descriptorIDs.end();
+    if (trackedClockWidth && *trackedClockWidth != 0 && clockPath &&
+        descriptor != descriptorIDs.end()) {
+      trackedClockDescriptor = descriptor->second;
+      trackRuntimeOccurrence = true;
+    }
+  }
   struct ObserverPlan {
     FlatSymbolRefAttr evaluator;
     sim::ObserverType type;
@@ -3135,7 +3162,14 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
           entryBuilder, location,
           entry.getArgument(*synchronizationPredicateIndex), afterOccurrence,
           ValueRange{}, wait, ValueRange{});
-    else
+    else if (trackRuntimeOccurrence) {
+      Value current = sim::SimClockingOutputCurrentOp::create(
+          entryBuilder, location, entry.getArgument(2),
+          static_cast<sim::EdgeKind>(baseSignalEdge), *trackedClockWidth,
+          *trackedClockDescriptor);
+      cf::CondBranchOp::create(entryBuilder, location, current, afterOccurrence,
+                               wait);
+    } else
       cf::BranchOp::create(entryBuilder, location, wait);
   }
   if (wait) {

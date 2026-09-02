@@ -3995,6 +3995,31 @@ def SimEventTriggeredOp
   let assemblyFormat = "$event attr-dict";
 }
 
+def SimClockingOutputTrackOp : SimOp<"clocking_output.track", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "track one static clocking-output event from time zero";
+  let description = [{
+    Register a statically bound clock and edge before design processes begin.
+    The runtime retains only the most recent matching numeric time, allowing a
+    zero-skew clocking output issued later in the same time slot to use the
+    current clocking event instead of waiting one cycle.
+  }];
+  let arguments = (ins AnyType:$clock, SimEdgeKind:$edge, I64Attr:$width);
+  let assemblyFormat = "$edge $clock `width` $width attr-dict `:` type($clock)";
+}
+
+def SimClockingOutputCurrentOp : SimOp<"clocking_output.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test for a matching clocking-output event in this time slot";
+  let arguments = (ins AnyType:$clock, SimEdgeKind:$edge, I64Attr:$width,
+                       I64Attr:$descriptor);
+  let results = (outs I1:$current);
+  let assemblyFormat = "$edge $clock `width` $width `descriptor` $descriptor "
+                       "attr-dict `:` type($clock)";
+}
+
 def SimWaitOrderFailedOp
     : SimOp<"wait_order.failed",
             [MemoryEffects<[MemRead<SimSchedulerResource>]>]> {

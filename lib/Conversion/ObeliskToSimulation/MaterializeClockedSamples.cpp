@@ -7,6 +7,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -73,18 +74,54 @@ public:
     }
 
     sim::SimFuncOp root;
+    struct ClockingOutputTracker {
+      Type type;
+      uint64_t descriptor;
+      uint64_t width;
+      sim::EdgeKind edge;
+      Location location;
+    };
+    SmallVector<ClockingOutputTracker> clockingOutputTrackers;
+    llvm::DenseSet<Attribute> clockingOutputTrackerKeys;
     llvm::StringMap<SmallVector<sim::SimFuncOp, 2>> planGroups;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       if (function.getEntryKind() == sim::EntryKind::RootInitializer)
         root = function;
+      function.walk([&](sim::SimClockingOutputCurrentOp current) {
+        Type type = current.getClock().getType();
+        if (!isa<sim::RefType, sim::NetType>(type)) {
+          current.emitError(
+              "static clocking-output tracker requires storage or net clock");
+          invalid = true;
+          return;
+        }
+        Attribute key = ArrayAttr::get(
+            design.getContext(),
+            {TypeAttr::get(type),
+             IntegerAttr::get(IntegerType::get(design.getContext(), 64),
+                              current.getDescriptor()),
+             IntegerAttr::get(IntegerType::get(design.getContext(), 64),
+                              current.getWidth()),
+             IntegerAttr::get(IntegerType::get(design.getContext(), 32),
+                              static_cast<uint32_t>(current.getEdge()))});
+        if (!clockingOutputTrackerKeys.insert(key).second)
+          return;
+        clockingOutputTrackers.push_back({type, current.getDescriptor(),
+                                          current.getWidth(), current.getEdge(),
+                                          current.getLoc()});
+      });
       auto plan = function->getAttrOfType<DictionaryAttr>(
           "obelisk_sim.clocked_sample_plan");
       auto key = plan ? plan.getAs<StringAttr>("key") : StringAttr{};
       if (key)
         planGroups[key.getValue()].push_back(function);
     }
-    if (planGroups.empty())
+    if (invalid) {
+      signalPassFailure();
+      return;
+    }
+    if (planGroups.empty() && clockingOutputTrackers.empty())
       return;
     if (!root || root.getBody().empty() ||
         !root.getBody().front().getTerminator()) {
@@ -101,6 +138,21 @@ public:
 
     OpBuilder rootBuilder(root.getBody().front().getTerminator());
     Value context = root.getBody().front().getArgument(0);
+    for (const ClockingOutputTracker &tracker : clockingOutputTrackers) {
+      Value clock;
+      if (isa<sim::RefType>(tracker.type))
+        clock = sim::SimContextStorageOp::create(rootBuilder, tracker.location,
+                                                 tracker.type, context,
+                                                 tracker.descriptor);
+      else
+        clock = sim::SimContextNetOp::create(rootBuilder, tracker.location,
+                                             tracker.type, context,
+                                             tracker.descriptor);
+      sim::SimClockingOutputTrackOp::create(rootBuilder, tracker.location,
+                                            clock, tracker.edge, tracker.width);
+    }
+    if (planGroups.empty())
+      return;
     OpBuilder declarationBuilder(&design.getBody().front(),
                                  design.getBody().front().begin());
     llvm::DenseMap<uint64_t, Operation *> codeUnitIDs;

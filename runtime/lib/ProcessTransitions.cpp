@@ -352,6 +352,11 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
 bool recordClockOccurrenceUnlocked(
     obelisk_rt_context *context, ClockOccurrenceSubscription &subscription,
     const ClockConditionPublicationView *sample) {
+  if (subscription.waiterToken == 0) {
+    subscription.clockingOutputSeen = true;
+    subscription.lastClockingOutputTime = context->schedulerTime;
+    return true;
+  }
   bool native = subscription.native;
   uint64_t logicalToken =
       native ? kNativeLogicalProcessTag | subscription.waiterToken
@@ -841,6 +846,71 @@ static bool signalTransitionBatchMatches(const Subscription &subscription,
   return false;
 }
 
+bool recordStaticClockingOutputOccurrencesUnlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
+    uint64_t edgeBitOffset, uint64_t &sequence) {
+  ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
+  if (!feature || feature->clockingOutputs.empty())
+    return true;
+  uint32_t kind = 0;
+  uint32_t objectID = 0;
+  int64_t firstPage = 0;
+  int64_t lastPage = 0;
+  if (!signalSubscriptionBucketRange(stableID, bitWidth, kind, objectID,
+                                     firstPage, lastPage)) {
+    context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+    return false;
+  }
+  auto visitBucket = [&](int64_t page) {
+    SignalSubscriptionBucketKey key{kind, objectID, page};
+    auto bucket = feature->subscriptionBuckets.find(key);
+    if (bucket == feature->subscriptionBuckets.end())
+      return true;
+    for (const ClockOccurrenceBucketEntry &entry : bucket->second) {
+      ClockOccurrenceSubscription *subscription = entry.subscription;
+      if (!subscription || subscription->waiterToken != 0 ||
+          !rangesOverlap(subscription->stableID, subscription->bitWidth,
+                         stableID, bitWidth) ||
+          !signalTransitionBatchMatches(*subscription, stableID, bitWidth,
+                                        changed, posedge, negedge,
+                                        edgeBitOffset, true))
+        continue;
+      if (sequence == 0) {
+        if (context->nextSchedulerSequence == 0) {
+          context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+          return false;
+        }
+        sequence = context->nextSchedulerSequence++;
+      }
+      if (subscription->lastExaminedSequence == sequence)
+        continue;
+      subscription->lastExaminedSequence = sequence;
+      subscription->clockingOutputSeen = true;
+      subscription->lastClockingOutputTime = context->schedulerTime;
+    }
+    return true;
+  };
+  __int128 pageCount = static_cast<__int128>(lastPage) - firstPage + 1;
+  if (pageCount <= kMaximumIndexedSignalPages) {
+    if (!visitBucket(kWideSignalSubscriptionPage))
+      return false;
+    for (int64_t page = firstPage;; ++page) {
+      if (!visitBucket(page))
+        return false;
+      if (page == lastPage)
+        break;
+    }
+    return true;
+  }
+  for (const auto &[key, bucket] : feature->subscriptionBuckets) {
+    (void)bucket;
+    if (key.kind == kind && key.id == objectID && !visitBucket(key.page))
+      return false;
+  }
+  return true;
+}
+
 static bool staticAOTFanoutRangeHasConsumer(const obelisk_rt_context *context,
                                             uint32_t staticID,
                                             uint64_t staticOffset,
@@ -1094,11 +1164,19 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown) {
   ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
-  if (!feature && edgeBitOffset == 0 &&
-      publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
-                                               changed, posedge, negedge,
-                                               outSequence, false)) {
-    return context->schedulerStatus == OBELISK_RT_OK;
+  if ((!feature || feature->waits.empty()) && edgeBitOffset == 0) {
+    uint64_t sequence = 0;
+    if (publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
+                                                 changed, posedge, negedge,
+                                                 &sequence, false)) {
+      if (!recordStaticClockingOutputOccurrencesUnlocked(
+              context, stableID, bitWidth, changed, posedge, negedge,
+              edgeBitOffset, sequence))
+        return false;
+      if (outSequence)
+        *outSequence = sequence;
+      return context->schedulerStatus == OBELISK_RT_OK;
+    }
   }
   return publishSignalTransitionBatchImpl(
       context, stableID, bitWidth, changed, posedge, negedge, edgeBitOffset,

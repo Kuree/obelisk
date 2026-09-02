@@ -3157,6 +3157,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
     return sentinel(
         0, obelisk_rt_v1_clock_occurrence_consume(context, signature.flags));
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT: {
+    Layout clock = layoutAt(image, frame.function, inputRegister(0));
+    auto width = scalar(1);
+    if (clock.kind != OBELISK_RT_DBREG_HANDLE || !width || *width == 0)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t stable = UINT64_MAX;
+    if (!encodeCanonicalHandle(frame.data + clock.offset, stable))
+      return OBELISK_RT_INVALID_HANDLE;
+    if (signature.id == OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK)
+      return obelisk_rt_v1_clocking_output_track(context, stable, *width,
+                                                 signature.flags);
+    return sentinel(0, obelisk_rt_v1_clocking_output_current(
+                           context, stable, *width, signature.flags));
+  }
   case OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE: {
     std::optional<uint64_t> mask = readScalar(image, frame, inputRegister(0));
     std::optional<uint64_t> start = readScalar(image, frame, inputRegister(1));

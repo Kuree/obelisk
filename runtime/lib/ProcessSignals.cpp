@@ -1,6 +1,7 @@
 //===- ProcessSignals.cpp - Signal subscription indexing ----------------===//
 
 #include "ProcessSignals.h"
+#include "ProcessContext.h"
 #include "ProcessObservers.h"
 #include "ProcessShared.h"
 #include "ProcessValidation.h"
@@ -9,6 +10,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <new>
 #include <vector>
@@ -158,8 +160,15 @@ bool appendClockOccurrenceSubscriptionUnlocked(
     }
   }
   subscription->bucketSlots.reserve(wide ? 1 : static_cast<size_t>(pageCount));
-  auto &owned = feature.subscriptions[logicalToken];
-  owned.push_back(std::move(subscription));
+  auto [ownedEntry, freshOwner] =
+      feature.subscriptions.try_emplace(logicalToken);
+  OBELISK_RT_TRY { ownedEntry->second.push_back(std::move(subscription)); }
+  OBELISK_RT_CATCH_ALL {
+    if (freshOwner && ownedEntry->second.empty())
+      feature.subscriptions.erase(ownedEntry);
+    OBELISK_RT_RETHROW;
+  }
+  auto &owned = ownedEntry->second;
   ClockOccurrenceSubscription &stored = *owned.back();
   // A custom native descriptor is not present in the frozen AOT fanout.
   // Reuse its existing dynamic-subscription guard so ordinary publications
@@ -173,6 +182,34 @@ bool appendClockOccurrenceSubscriptionUnlocked(
         std::max(context->signalDiagnostics.subscriptionsHighWater,
                  context->signalDiagnostics.subscriptionsCurrent);
   }
+  auto rollback = [&] {
+    for (const SignalSubscriptionBucketSlot &slot : stored.bucketSlots) {
+      auto bucket = feature.subscriptionBuckets.find(slot.key);
+      if (bucket == feature.subscriptionBuckets.end() ||
+          slot.bucketIndex >= bucket->second.size())
+        continue;
+      ClockOccurrenceBucketEntry &entry = bucket->second[slot.bucketIndex];
+      if (entry.subscription != &stored)
+        continue;
+      ClockOccurrenceBucketEntry moved = bucket->second.back();
+      entry = moved;
+      bucket->second.pop_back();
+      if (moved.subscription && moved.subscription != &stored &&
+          moved.slotIndex < moved.subscription->bucketSlots.size())
+        moved.subscription->bucketSlots[moved.slotIndex].bucketIndex =
+            slot.bucketIndex;
+      if (bucket->second.empty())
+        feature.subscriptionBuckets.erase(bucket);
+    }
+    if (context->signalDiagnosticsEnabled &&
+        context->signalDiagnostics.subscriptionsCurrent != 0)
+      --context->signalDiagnostics.subscriptionsCurrent;
+    if (customEdge && native && context->nativeDynamicSignalSubscriptions != 0)
+      --context->nativeDynamicSignalSubscriptions;
+    owned.pop_back();
+    if (owned.empty())
+      feature.subscriptions.erase(logicalToken);
+  };
   int64_t indexedFirst = wide ? kWideSignalSubscriptionPage : firstPage;
   int64_t indexedLast = wide ? kWideSignalSubscriptionPage : lastPage;
   for (int64_t page = indexedFirst;; ++page) {
@@ -195,12 +232,19 @@ bool appendClockOccurrenceSubscriptionUnlocked(
         if (found->second.empty())
           feature.subscriptionBuckets.erase(found);
       }
+      rollback();
       OBELISK_RT_RETHROW;
     }
     if (page == indexedLast)
       break;
   }
   return true;
+}
+
+bool validClockingOutputEdge(uint32_t edge) {
+  return edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+         edge == OBELISK_RT_WAIT_EDGE_POSEDGE ||
+         edge == OBELISK_RT_WAIT_EDGE_NEGEDGE;
 }
 
 void eraseClockOccurrenceSubscriptionsUnlocked(obelisk_rt_context *context,
@@ -350,6 +394,69 @@ bool appendManagedSubscriptionUnlocked(
 }
 
 } // namespace
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_clocking_output_track(obelisk_rt_context *context,
+                                    uint64_t stableID, uint64_t bitWidth,
+                                    uint32_t edge) {
+  if (!context || stableID == UINT64_MAX || bitWidth == 0 ||
+      !validClockingOutputEdge(edge))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (context->schedulerStatus != OBELISK_RT_OK)
+      return context->schedulerStatus;
+    if (!context->clockOccurrences)
+      context->clockOccurrences =
+          std::make_unique<ClockOccurrenceFeatureState>();
+    ClockOccurrenceFeatureState &feature = *context->clockOccurrences;
+    ClockingOutputOccurrenceKey key{stableID, bitWidth, edge};
+    if (feature.clockingOutputs.find(key) != feature.clockingOutputs.end())
+      return OBELISK_RT_OK;
+    auto [inserted, fresh] = feature.clockingOutputs.try_emplace(key, nullptr);
+    if (!fresh)
+      return OBELISK_RT_OK;
+    OBELISK_RT_TRY {
+      if (!appendClockOccurrenceSubscriptionUnlocked(
+              context, /*logicalToken=*/0, stableID, bitWidth, edge,
+              /*waiterToken=*/0, /*native=*/false, /*occurrenceBit=*/0)) {
+        feature.clockingOutputs.erase(inserted);
+        return context->schedulerStatus == OBELISK_RT_OK
+                   ? OBELISK_RT_INVALID_ARGUMENT
+                   : context->schedulerStatus;
+      }
+      inserted->second = feature.subscriptions[0].back().get();
+    }
+    OBELISK_RT_CATCH_ALL {
+      feature.clockingOutputs.erase(key);
+      OBELISK_RT_RETHROW;
+    }
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_clocking_output_current(obelisk_rt_context *context,
+                                      uint64_t stableID, uint64_t bitWidth,
+                                      uint32_t edge) {
+  if (!context || stableID == UINT64_MAX || bitWidth == 0 ||
+      !validClockingOutputEdge(edge))
+    return 0;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (!context->clockOccurrences)
+      return 0;
+    ClockingOutputOccurrenceKey key{stableID, bitWidth, edge};
+    auto found = context->clockOccurrences->clockingOutputs.find(key);
+    return found != context->clockOccurrences->clockingOutputs.end() &&
+           found->second && found->second->clockingOutputSeen &&
+           found->second->lastClockingOutputTime == context->schedulerTime;
+  }
+  OBELISK_RT_CATCH_ALL { return 0; }
+}
 
 bool signalSubscriptionBucketRange(uint64_t stableID, uint64_t bitWidth,
                                    uint32_t &kind, uint32_t &id,

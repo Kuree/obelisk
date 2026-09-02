@@ -385,6 +385,8 @@ bool validIntrinsic(const Image &image, const Function &function,
       signature.id != OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM &&
       signature.id != OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK &&
+      signature.id != OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT &&
       signature.id != OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
       signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
@@ -612,6 +614,13 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
+    return signature.flags <= 2 && site.inputCount == 2 &&
+           site.outputCount == 0 && handle(input(0)) && bits(input(1), 64);
+  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT:
+    return signature.flags <= 2 && site.inputCount == 2 &&
+           site.outputCount == 1 && handle(input(0)) && bits(input(1), 64) &&
+           bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE:
     return signature.flags != 0 && site.inputCount == 3 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&

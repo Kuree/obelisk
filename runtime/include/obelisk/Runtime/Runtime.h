@@ -1193,6 +1193,8 @@ enum {
   // case and its flags ABI exactly.
   OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER = UINT32_C(0x0001024b),
   OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE = UINT32_C(0x0001024c),
+  OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK = UINT32_C(0x0001024d),
+  OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT = UINT32_C(0x0001024e),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3665,6 +3667,18 @@ void obelisk_rt_v1_scheduler_event_replace_after(obelisk_rt_context *context,
                                                  uint64_t delay);
 uint32_t obelisk_rt_v1_scheduler_event_triggered(obelisk_rt_context *context,
                                                  uint64_t stable_id);
+// Register/query one statically bound clocking-output event. Registration is
+// idempotent and installs a sparse pay-to-play signal subscription; `current`
+// is nonzero only after the requested edge has occurred at the current
+// numeric simulation time.
+obelisk_rt_status
+obelisk_rt_v1_clocking_output_track(obelisk_rt_context *context,
+                                    uint64_t stable_id, uint64_t bit_width,
+                                    uint32_t edge);
+uint32_t obelisk_rt_v1_clocking_output_current(obelisk_rt_context *context,
+                                               uint64_t stable_id,
+                                               uint64_t bit_width,
+                                               uint32_t edge);
 uint32_t obelisk_rt_v1_scheduler_wait_order_failed(obelisk_rt_context *context);
 // Consume one finalized clock-occurrence cohort for the active logical
 // process and exact compiler site. Zero means no complete cohort is pending.

@@ -545,6 +545,23 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicClockOccurrenceConsume, {},
                          {op.getMask()},
                          static_cast<uint32_t>(op.getOccurrenceSite()));
+  if (auto op = dyn_cast<sim::SimClockingOutputTrackOp>(operation)) {
+    uint32_t width = emitU64Constant(plan, op.getWidth());
+    if (width == kInvalidRegister)
+      return op.emitOpError("cannot encode clocking output width");
+    return emitIntrinsicRegisters(plan, kIntrinsicClockingOutputTrack,
+                                  {reg(plan, op.getClock()), width}, {},
+                                  static_cast<uint32_t>(op.getEdge()));
+  }
+  if (auto op = dyn_cast<sim::SimClockingOutputCurrentOp>(operation)) {
+    uint32_t width = emitU64Constant(plan, op.getWidth());
+    if (width == kInvalidRegister)
+      return op.emitOpError("cannot encode clocking output width");
+    return emitIntrinsicRegisters(plan, kIntrinsicClockingOutputCurrent,
+                                  {reg(plan, op.getClock()), width},
+                                  {reg(plan, op.getCurrent())},
+                                  static_cast<uint32_t>(op.getEdge()));
+  }
   if (auto op = dyn_cast<sim::SimNoChangeUpdateOp>(operation)) {
     return emitIntrinsic(plan, kIntrinsicNoChangeUpdate,
                          {op.getMask(), op.getStartOffset(), op.getEndOffset()},

@@ -118,6 +118,68 @@ public:
   }
 };
 
+class ClockingOutputTrackConversion final
+    : public OpConversionPattern<sim::SimClockingOutputTrackOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimClockingOutputTrackOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getClock().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_clocking_output_track"),
+            ValueRange{
+                context, adaptor.getClock().front(),
+                llvmConstant(rewriter, location, rewriter.getI64Type(),
+                             operation.getWidth()),
+                llvmConstant(rewriter, location, rewriter.getI32Type(),
+                             static_cast<uint32_t>(operation.getEdge()))})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class ClockingOutputCurrentConversion final
+    : public OpConversionPattern<sim::SimClockingOutputCurrentOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(sim::SimClockingOutputCurrentOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getClock().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Value current =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_clocking_output_current"),
+            ValueRange{
+                loadCurrentRuntimeContext(rewriter, location),
+                adaptor.getClock().front(),
+                llvmConstant(rewriter, location, rewriter.getI64Type(),
+                             operation.getWidth()),
+                llvmConstant(rewriter, location, rewriter.getI32Type(),
+                             static_cast<uint32_t>(operation.getEdge()))})
+            .getResult();
+    rewriter.replaceOpWithNewOp<LLVM::TruncOp>(operation, rewriter.getI1Type(),
+                                               current);
+    return success();
+  }
+};
+
 class WaitOrderFailedConversion final
     : public OpConversionPattern<sim::SimWaitOrderFailedOp> {
 public:
@@ -209,7 +271,8 @@ public:
 void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                                            TypeConverter &converter) {
   patterns.add<EventCreateConversion, EventTriggerConversion,
-               EventTriggeredConversion, WaitOrderFailedConversion,
+               EventTriggeredConversion, ClockingOutputTrackConversion,
+               ClockingOutputCurrentConversion, WaitOrderFailedConversion,
                ClockOccurrenceConsumeConversion, NoChangeUpdateConversion,
                EventEqualConversion>(converter, patterns.getContext());
 }

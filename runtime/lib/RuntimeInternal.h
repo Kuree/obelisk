@@ -975,6 +975,11 @@ struct ClockOccurrenceSubscription {
   uint32_t edge = 0;
   uint8_t occurrenceBit = 0;
   bool native = false;
+  bool clockingOutputSeen = false;
+  // Token zero denotes a design-lifetime clocking-output tracker rather than
+  // a suspend.clock_set waiter. It records only matching numeric time and is
+  // queried by zero-skew output helpers in the same time slot.
+  uint64_t lastClockingOutputTime = 0;
   // Clause 31.5 state exists only for a noncanonical descriptor subscription.
   // Six standard transition classes fit in the frozen edge word; three packed
   // feature-local planes retain value, unknown, and initialization without
@@ -983,6 +988,28 @@ struct ClockOccurrenceSubscription {
   std::vector<uint8_t> previousUnknown;
   std::vector<uint8_t> previousInitialized;
   std::vector<SignalSubscriptionBucketSlot> bucketSlots;
+};
+
+struct ClockingOutputOccurrenceKey {
+  uint64_t stableID = UINT64_MAX;
+  uint64_t bitWidth = 0;
+  uint32_t edge = 0;
+
+  bool operator==(const ClockingOutputOccurrenceKey &other) const {
+    return stableID == other.stableID && bitWidth == other.bitWidth &&
+           edge == other.edge;
+  }
+};
+
+struct ClockingOutputOccurrenceKeyHash {
+  size_t operator()(const ClockingOutputOccurrenceKey &key) const {
+    size_t hash = std::hash<uint64_t>{}(key.stableID);
+    hash ^= std::hash<uint64_t>{}(key.bitWidth) + size_t{0x9e3779b9} +
+            (hash << 6) + (hash >> 2);
+    hash ^= std::hash<uint32_t>{}(key.edge) + size_t{0x9e3779b9} + (hash << 6) +
+            (hash >> 2);
+    return hash;
+  }
 };
 
 struct ClockOccurrenceBucketEntry {
@@ -1080,6 +1107,9 @@ struct ClockOccurrenceFeatureState {
   std::unordered_map<uint64_t,
                      std::vector<std::unique_ptr<ClockOccurrenceSubscription>>>
       subscriptions;
+  std::unordered_map<ClockingOutputOccurrenceKey, ClockOccurrenceSubscription *,
+                     ClockingOutputOccurrenceKeyHash>
+      clockingOutputs;
   uint64_t conditionalWaitCount = 0;
   const ClockConditionPublicationView *conditionPublication = nullptr;
   // Timer-mode Clause 31.4.2/.3 checks are the only users of replaceable
@@ -1094,6 +1124,7 @@ static_assert(
         sizeof(decltype(ClockOccurrenceFeatureState::waits)) +
             sizeof(decltype(ClockOccurrenceFeatureState::subscriptionBuckets)) +
             sizeof(decltype(ClockOccurrenceFeatureState::subscriptions)) +
+            sizeof(decltype(ClockOccurrenceFeatureState::clockingOutputs)) +
             sizeof(uint64_t) +
             sizeof(
                 decltype(ClockOccurrenceFeatureState::conditionPublication)) +

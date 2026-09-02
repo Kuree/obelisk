@@ -92,15 +92,31 @@ module {
   }
 }
 
-// An asynchronous drive waits for the clocking edge and then schedules NBA.
+// Static zero-skew clocks are registered once per event, even when several
+// outputs use the same clock.
+// CHECK-LABEL: obelisk_sim.func @__obelisk_root
+// CHECK: %[[CLK:.+]] = obelisk_sim.context.storage %arg0[0]
+// CHECK: %[[CLK2:.+]] = obelisk_sim.context.storage %arg0[4]
+// CHECK: obelisk_sim.clocking_output.track posedge %[[CLK]] width 1
+// CHECK-NEXT: obelisk_sim.clocking_output.track posedge %[[CLK2]] width 1
+// CHECK-NOT: obelisk_sim.clocking_output.track
+// CHECK: obelisk_sim.return
+
+// An asynchronous drive uses the current clocking time slot when available,
+// otherwise waits for the next clocking edge before scheduling NBA.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.25
 // CHECK-SAME: home_region = 10 : i32
+// CHECK: %[[CURRENT:.+]] = obelisk_sim.clocking_output.current posedge %arg2 width 1
+// CHECK-NEXT: cf.cond_br %[[CURRENT]], ^[[DRIVE:bb[0-9]+]], ^[[WAIT:bb[0-9]+]]
+// CHECK: ^[[WAIT]]:
 // CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: ^[[DRIVE]]:
 // CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP:[0-9]+]] : i64
 
 // A same-edge drive following @(cb); ##0 remains in the current event.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.35
 // CHECK-SAME: home_region = 10 : i32
+// CHECK-NOT: obelisk_sim.clocking_output.current
 // CHECK-NOT: obelisk_sim.suspend.edge
 // CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP]] : i64
 
