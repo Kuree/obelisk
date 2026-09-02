@@ -31,6 +31,20 @@ def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
   let cppNamespace = "::obelisk::sim";
 }
 
+def SimVPIStatementSourceScope
+    : I32EnumAttrCase<"Scope", 0, "scope">;
+def SimVPIStatementSourceCodeUnit
+    : I32EnumAttrCase<"CodeUnit", 1, "code_unit">;
+def SimVPIStatementSourceStatement
+    : I32EnumAttrCase<"Statement", 2, "statement">;
+def SimVPIStatementSourceKind : I32EnumAttr<
+    "VPIStatementSourceKind", "VPI statement-relation source kind", [
+      SimVPIStatementSourceScope, SimVPIStatementSourceCodeUnit,
+      SimVPIStatementSourceStatement
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimNativeSchedulerAuto
     : I32EnumAttrCase<"Auto", 0, "auto">;
 def SimNativeSchedulerGeneric
