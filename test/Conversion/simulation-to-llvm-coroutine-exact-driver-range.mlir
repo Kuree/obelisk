@@ -24,7 +24,9 @@ module attributes {
           !obelisk_sim.driver<!obelisk_sim.logic<1>>
       %one = obelisk_sim.logic.constant true, false :
           !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %bit = %one :
+      obelisk_sim.driver.drive %bit = %one {
+          obelisk.eval.source_owner = {code_unit = 17 : i64,
+                                       continuation = 3 : i32}} :
           !obelisk_sim.driver<!obelisk_sim.logic<1>>,
           !obelisk_sim.logic<1>
       obelisk_sim.return
@@ -34,6 +36,8 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @exact_slice
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-SAME: obelisk.eval.source_owner = {code_unit = 17 : i64, continuation = 3 : i32}
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 
 // -----

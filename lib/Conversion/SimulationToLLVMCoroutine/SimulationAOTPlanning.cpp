@@ -318,6 +318,18 @@ buildNativePeriodicAliasPlan(ModuleOp module,
         break;
       sourceReference = view.getInput();
     }
+    if (auto argument = dyn_cast<BlockArgument>(sourceReference)) {
+      if (argument.getOwner() != &function.getBody().front())
+        return WalkResult::advance();
+      if (auto low = function.getArgAttrOfType<IntegerAttr>(
+              argument.getArgNumber(), sim::metadata::descriptorLow)) {
+        if (low.getValue().isNegative() ||
+            low.getValue().getActiveBits() > 64 ||
+            low.getUInt() > UINT64_MAX - sourceLocalBitOffset)
+          return WalkResult::advance();
+        sourceLocalBitOffset += low.getUInt();
+      }
+    }
     if (unsupported || load->getBlock() != drive->getBlock() ||
         load->getBlock() != wait->getBlock() ||
         drive.getValue() != load.getResult() ||

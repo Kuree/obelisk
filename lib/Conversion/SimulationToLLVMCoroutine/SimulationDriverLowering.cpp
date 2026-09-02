@@ -488,7 +488,8 @@ public:
         } else {
           notifySignal(rewriter, op.getLoc(), adaptor.getDriver().front(),
                        *sourceWidth, oldRawValue, oldRawUnknown, driveValue,
-                       driveUnknown, std::nullopt);
+                       driveUnknown, std::nullopt,
+                       op->getAttr(sim::metadata::evalSourceOwner));
         }
       }
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
@@ -744,7 +745,8 @@ public:
                      publication.oldUnknown, publication.value,
                      publication.net->fourState ? publication.unknown : Value{},
                      resolveDirectStaticStateRange(
-                         publication.handle, publication.net->width, &layout));
+                         publication.handle, publication.net->width, &layout),
+                     op->getAttr(sim::metadata::evalSourceOwner));
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else
@@ -1086,13 +1088,15 @@ public:
                      publication.oldValue, publication.oldUnknown,
                      publication.value,
                      publication.fourState ? publication.unknown : Value{},
-                     publication.directRange);
+                     publication.directRange,
+                     op->getAttr(sim::metadata::evalSourceOwner));
       } else {
         notifySignal(rewriter, op.getLoc(), run.front().handle, run.size(),
                      packBits(run, &Publication::oldValue),
                      packBits(run, &Publication::oldUnknown),
                      packBits(run, &Publication::value),
-                     packBits(run, &Publication::unknown), firstRange);
+                     packBits(run, &Publication::unknown), firstRange,
+                     op->getAttr(sim::metadata::evalSourceOwner));
       }
       begin = end;
     }
