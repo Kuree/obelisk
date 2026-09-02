@@ -1051,9 +1051,9 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
     The descriptor is data, never executed.  Resolve only literal native-source
     spellings from the two compile flag lists, including the common
     ``test.pli_filename`` alias, and only within the checked-out test_regress
-    tree.  A Verilator model main is not a DPI implementation, so require the
-    standard ``svdpi.h`` include before forwarding a source to Obelisk's native
-    build.
+    tree.  A Verilator model main is not a DPI implementation, so require
+    either ``svdpi.h``, an explicit C-linkage definition of a declared DPI
+    name, or that definition after the matching generated DPI header.
     """
     if not descriptor.exists():
         return []
@@ -1125,6 +1125,11 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
     native_suffixes = {".c", ".cc", ".cpp", ".cxx"}
     dpi_declarations = re.findall(
         r'\b(?:import|export)\s+"DPI(?:-C)?"[^;]*;', top_text, re.DOTALL)
+    dpi_declaration_identifiers = {
+        identifier
+        for declaration in dpi_declarations
+        for identifier in re.findall(r'\b[A-Za-z_]\w*\b', declaration)
+    }
     result: list[Path] = []
     seen: set[Path] = set()
     for spelling in spellings:
@@ -1141,13 +1146,23 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
             continue
         source = resolved.read_text(encoding="utf-8", errors="replace")
         has_svdpi = re.search(r"#\s*include\s*[<\"]svdpi\.h[>\"]", source)
-        headerless_dpi_definition = any(
-            re.search(rf"\b{re.escape(name)}\b", declaration)
+        explicit_c_dpi_definition = any(
+            name in dpi_declaration_identifiers
             for name in re.findall(
                 r'extern\s+"C"\s+[^;{}]*?\b([A-Za-z_]\w*)\s*'
-                r'\([^;{}]*\)\s*\{', source)
-            for declaration in dpi_declarations)
-        if not has_svdpi and not headerless_dpi_definition:
+                r'\([^;{}]*\)\s*\{', source))
+        expected_dpi_header = f"V{descriptor.stem}__Dpi.h"
+        includes_generated_dpi_header = re.search(
+            rf'#\s*include\s*[<"]{re.escape(expected_dpi_header)}[>"]',
+            source)
+        header_backed_dpi_definition = bool(
+            includes_generated_dpi_header and any(
+                name in dpi_declaration_identifiers
+                for name in re.findall(
+                    r'(?m)^\s*[^#;{}]*?\b([A-Za-z_]\w*)\s*'
+                    r'\([^;{}]*\)\s*\{', source)))
+        if (not has_svdpi and not explicit_c_dpi_definition and
+                not header_backed_dpi_definition):
             continue
         generated_header_branch = re.search(
             r'defined\((?:MS|VERILATOR)\)[\s\S]*?'

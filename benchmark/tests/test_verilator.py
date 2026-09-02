@@ -276,6 +276,31 @@ class DescriptorDPISourcesTest(unittest.TestCase):
         )
         self.assertEqual([path.name for path in sources], ["t_x.cpp"])
 
+    def test_generated_dpi_header_supplies_c_linkage_for_definition(self):
+        sources = self.sources(
+            'test.compile(verilator_flags2=["--binary", '
+            'test.pli_filename])\n',
+            {"t_x.cpp": '#include "Vt_x__Dpi.h"\nvoid dpi() {}\n'},
+        )
+        self.assertEqual([path.name for path in sources], ["t_x.cpp"])
+
+    def test_generated_dpi_header_does_not_attach_unrelated_definition(self):
+        sources = self.sources(
+            'test.compile(verilator_flags2=["--binary", '
+            'test.pli_filename])\n',
+            {"t_x.cpp": (
+                '#include "Vt_x__Dpi.h"\nvoid unrelated() {}\n')},
+        )
+        self.assertEqual(sources, [])
+
+    def test_another_models_dpi_header_does_not_supply_linkage(self):
+        sources = self.sources(
+            'test.compile(verilator_flags2=["--binary", '
+            'test.pli_filename])\n',
+            {"t_x.cpp": '#include "Vother__Dpi.h"\nvoid dpi() {}\n'},
+        )
+        self.assertEqual(sources, [])
+
     def test_name_concatenation_can_name_a_generated_header_dpi_source(self):
         sources = self.sources(
             'test.compile(v_flags2=["t/" + test.name + ".cpp"])\n',
