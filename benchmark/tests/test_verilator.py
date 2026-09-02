@@ -806,6 +806,15 @@ class DependencyFailureTest(unittest.TestCase):
                 self.assertTrue(log.endswith(
                     "lvalue of force/release must be a variable\n"))
 
+    def test_reverse_unpacked_slice_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_interface_ar3", "range of selection [2:0] is reversed\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 7.4.6", log)
+        self.assertIn("23.3.3.5", log)
+        self.assertTrue(log.endswith(
+            "range of selection [2:0] is reversed\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

@@ -160,6 +160,12 @@ KNOWN_SLANG_BUGS = {
         "follow its final override value, and 5.7.1 makes self-determined '0 "
         "one bit; pinned Slang instead widens the override to the parameter's "
         "32-bit default before folding $bits(RESET)"),
+    "t_interface_ar3": (
+        "IEEE 1800-2017 7.4.6 permits a constant-size unpacked array slice "
+        "without imposing 11.5.1's packed part-select direction rule, and "
+        "23.3.3.5 maps equal-size unpacked port connections left-index to "
+        "left-index; pinned Slang rejects the legal reverse-direction slice "
+        "primsig[2:0] from the ascending array primsig[0:2]"),
     "t_stream": (
         "IEEE 1800-2017 11.4.14 permits a streaming concatenation as the "
         "operand of a bit-stream cast, and 6.24.1 defines a positive "
