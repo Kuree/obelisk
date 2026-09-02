@@ -21,7 +21,8 @@ namespace detail {
 void notifySignal(ConversionPatternRewriter &builder, Location location,
                   Value handle, uint64_t width, Value oldValue,
                   Value oldUnknown, Value newValue, Value newUnknown,
-                  std::optional<DirectStaticStateRange> directRange) {
+                  std::optional<DirectStaticStateRange> directRange,
+                  Attribute sourceOwner) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
@@ -58,7 +59,7 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
     cf::CondBranchOp::create(builder, location, unchanged, continuation,
                              ValueRange{}, publish, ValueRange{});
     builder.setInsertionPointToEnd(publish);
-    LLVM::CallOp::create(
+    LLVM::CallOp transition = LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(builder.getContext(),
                            "obelisk_rt_v1_scheduler_static_transition"),
@@ -68,6 +69,8 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
             llvmConstant(builder, location, i64, directRange->localOffset),
             llvmConstant(builder, location, i64, width), oldValueScalar,
             oldUnknownScalar, newValueScalar, newUnknownScalar});
+    if (sourceOwner)
+      transition->setAttr(sim::metadata::evalSourceOwner, sourceOwner);
     cf::BranchOp::create(builder, location, continuation);
     builder.setInsertionPointToStart(continuation);
     return;

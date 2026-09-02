@@ -128,6 +128,7 @@ struct DynamicEvalNBAProofContext {
   ArrayRef<NativeDirectFragment> directFragments;
   ArrayRef<std::string> mergedExecutors;
   ArrayRef<unsigned> periodicEntryRecords;
+  ArrayRef<uint32_t> periodicOwnerBits;
   ArrayRef<NativePeriodicClock> periodicClocks;
   ArrayRef<NativePeriodicAlias> periodicAliases;
   ArrayRef<GeneratedTransitionRange> generatedTransitionRanges;
@@ -311,23 +312,29 @@ proveDynamicEvalNBA(LLVM::CallOp call,
     return physicalBit - bound->offset;
   };
   auto isExactPeriodicIngress = [&](const auto &fanout) {
-    if (fanout.bit_width != 1 ||
+    if (fanout.bit_width == 0 ||
         fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
         fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
       return false;
+    auto periodicBitTouches = [&](uint64_t bit) {
+      if (fanout.low_bit > bit || bit - fanout.low_bit >= fanout.bit_width)
+        return false;
+      return fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+             fanout.low_bit == bit;
+    };
     bool clockIngress = llvm::any_of(
         proofContext.periodicClocks, [&](const NativePeriodicClock &clock) {
           std::optional<uint64_t> bit =
               periodicLocalBit(clock.staticState, clock.bitOffset);
           return bit && fanout.static_state == clock.staticState &&
-                 fanout.low_bit == *bit;
+                 periodicBitTouches(*bit);
         });
     bool aliasIngress = llvm::any_of(
         proofContext.periodicAliases, [&](const NativePeriodicAlias &alias) {
           std::optional<uint64_t> bit =
               periodicLocalBit(alias.targetStaticState, alias.targetBitOffset);
           return bit && fanout.static_state == alias.targetStaticState &&
-                 fanout.low_bit == *bit;
+                 periodicBitTouches(*bit);
         });
     return clockIngress || aliasIngress;
   };
@@ -335,10 +342,21 @@ proveDynamicEvalNBA(LLVM::CallOp call,
     bool sawIngress = false;
     proof.exclusivePeriodicIngress =
         llvm::all_of(proofContext.fanoutEntries, [&](const auto &fanout) {
-          if (fanout.merged_bit != *proof.periodicRecord)
+          size_t fanoutIndex =
+              static_cast<size_t>(&fanout - proofContext.fanoutEntries.data());
+          uint32_t periodicOwner =
+              fanoutIndex < proofContext.periodicOwnerBits.size() &&
+                      proofContext.periodicOwnerBits[fanoutIndex] != UINT32_MAX
+                  ? proofContext.periodicOwnerBits[fanoutIndex]
+                  : fanout.merged_bit;
+          bool exactPeriodic = isExactPeriodicIngress(fanout);
+          bool genericIngress = fanout.merged_bit == *proof.periodicRecord;
+          bool periodicIngress =
+              exactPeriodic && periodicOwner == *proof.periodicRecord;
+          if (!genericIngress && !periodicIngress)
             return true;
           sawIngress = true;
-          if (!isExactPeriodicIngress(fanout)) {
+          if (genericIngress && !exactPeriodic) {
             ++proof.nonPeriodicIngressCount;
             return false;
           }
@@ -496,8 +514,8 @@ FailureOr<bool> makeNativeEvalPlan(
     // but an active-self-suppressed route needs the runtime's exact current
     // actor check. Reject only that overlap; all other helper transitions are
     // rewritten with the rest of the generated call closure below.
-    bool unownedTransitionNeedsActiveSelfCheck = llvm::any_of(
-        generatedTransitionRanges, [&](const auto &range) {
+    bool unownedTransitionNeedsActiveSelfCheck =
+        llvm::any_of(generatedTransitionRanges, [&](const auto &range) {
           auto [state, low, width, sourceIndex] = range;
           if (sourceIndex != UINT_MAX)
             return false;
@@ -505,8 +523,8 @@ FailureOr<bool> makeNativeEvalPlan(
           return llvm::any_of(resolved->fanoutEntries, [&](const auto &entry) {
             return entry.static_state == state && entry.low_bit < end &&
                    low < entry.low_bit + entry.bit_width &&
-                   (entry.reserved &
-                    OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0;
+                   (entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) !=
+                       0;
           });
         });
     if (unownedTransitionNeedsActiveSelfCheck)
@@ -517,6 +535,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                             directFragments,
                                             resolved->mergedExecutors,
                                             resolved->periodicEntryRecords,
+                                            resolved->periodicOwnerBits,
                                             periodicClocks,
                                             periodicAliases,
                                             generatedTransitionRanges,
@@ -542,8 +561,7 @@ FailureOr<bool> makeNativeEvalPlan(
         } else {
           return;
         }
-        sim::SimFuncOp callee =
-            design.lookupSymbol<sim::SimFuncOp>(calleeName);
+        sim::SimFuncOp callee = design.lookupSymbol<sim::SimFuncOp>(calleeName);
         if (callee && evalClosureSet.contains(callee.getOperation()))
           incomingEvalCalls[callee.getOperation()].push_back(operation);
       });
@@ -563,8 +581,7 @@ FailureOr<bool> makeNativeEvalPlan(
           if (incoming.size() == 1) {
             Operation *call = incoming.front();
             sim::SimFuncOp caller = call->getParentOfType<sim::SimFuncOp>();
-            once = caller &&
-                   locallyExecutesAtMostOnce(call, caller) &&
+            once = caller && locallyExecutesAtMostOnce(call, caller) &&
                    closureExecutesAtMostOnce(caller);
           }
           closureOnceVisiting.erase(function.getOperation());
@@ -589,9 +606,8 @@ FailureOr<bool> makeNativeEvalPlan(
           needsRuntimeFallback = true;
           return;
         }
-        FailureOr<DynamicEvalNBAProof> proof =
-            proveDynamicEvalNBA(call, proofContext,
-                                closureExecutesAtMostOnce(function));
+        FailureOr<DynamicEvalNBAProof> proof = proveDynamicEvalNBA(
+            call, proofContext, closureExecutesAtMostOnce(function));
         if (failed(proof)) {
           valid = failure();
           return;
@@ -602,6 +618,11 @@ FailureOr<bool> makeNativeEvalPlan(
               << ", periodic-entry=" << static_cast<bool>(proof->periodicRecord)
               << ", exclusive-periodic-ingress="
               << proof->exclusivePeriodicIngress
+              << ", periodic-ingress-count=" << proof->periodicIngressCount
+              << ", non-periodic-ingress-count="
+              << proof->nonPeriodicIngressCount
+              << ", periodic-ingress-transition-conflicts="
+              << proof->periodicIngressTransitionConflicts
               << ", unique-semantic-root-site=" << proof->uniqueSemanticRootSite
               << ", site-once=" << proof->siteExecutesAtMostOnce << ")";
         needsRuntimeFallback |= !proof->eligible;
@@ -629,6 +650,10 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->mergedTwoStateExecutors);
   SmallVector<SmallVector<NativePromotionRange>> mergedPromotionRanges =
       std::move(resolved->mergedPromotionRanges);
+  SmallVector<uint32_t> periodicOwnerBits =
+      std::move(resolved->periodicOwnerBits);
+  SmallVector<uint64_t> ownerSubsumptionMasks =
+      std::move(resolved->ownerSubsumptionMasks);
   SmallVector<unsigned> periodicClosureRecords =
       std::move(resolved->periodicClosureRecords);
   SmallVector<unsigned> periodicEntryRecords =
@@ -1564,15 +1589,19 @@ FailureOr<bool> makeNativeEvalPlan(
       if (direct.fusionGroup != UINT32_MAX)
         fusionMembers[direct.fusionGroup].push_back(index);
     }
-    llvm::StringMap<uint32_t> activeOwnerBits;
+    llvm::StringMap<uint64_t> activeOwnerBits;
+    DenseMap<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, uint32_t>>
+        physicalSourceOwners;
+    DenseMap<uint64_t, std::pair<uint32_t, uint32_t>> uniqueCodeUnitOwners;
+    DenseSet<uint64_t> ambiguousCodeUnitOwners;
     auto mapActiveBody = [&](StringRef name, uint32_t bit) -> LogicalResult {
       if (name.empty())
         return success();
-      auto [entry, inserted] = activeOwnerBits.try_emplace(name, bit);
-      if (!inserted && entry->second != bit)
-        return module.emitError("generated eval body has multiple active "
-                                "owner identities: ")
+      if (bit >= 64)
+        return module.emitError("generated eval body owner exceeds direct "
+                                "ingress width: ")
                << name;
+      activeOwnerBits[name] |= uint64_t{1} << bit;
       return success();
     };
     for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
@@ -1591,6 +1620,20 @@ FailureOr<bool> makeNativeEvalPlan(
           return failure();
       }
     }
+    for (const NativeDirectFragment &direct : directFragments) {
+      if (direct.instanceCoordinator)
+        continue;
+      std::pair<uint32_t, uint32_t> physical{direct.actorSlot,
+                                             direct.continuation};
+      for (uint64_t codeUnit : direct.sourceCodeUnits) {
+        physicalSourceOwners.try_emplace(
+            std::pair{codeUnit, direct.continuation}, physical);
+        auto [found, inserted] =
+            uniqueCodeUnitOwners.try_emplace(codeUnit, physical);
+        if (!inserted && found->second != physical)
+          ambiguousCodeUnitOwners.insert(codeUnit);
+      }
+    }
     auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
       return !function->hasAttr("obelisk.eval.runtime_nba_required") &&
              (function->hasAttr("obelisk.eval.raw_captures") ||
@@ -1599,21 +1642,40 @@ FailureOr<bool> makeNativeEvalPlan(
     struct GeneratedTransition {
       LLVM::CallOp call;
       bool periodicTwoState = false;
-      std::optional<uint32_t> activeOwnerBit;
+      uint64_t activeOwnerMask = 0;
+      std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
     SmallVector<GeneratedTransition> transitions;
     for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
       bool periodicTwoState =
           function->hasAttr("obelisk.eval.selected_two_state");
       auto activeOwner = activeOwnerBits.find(function.getSymName());
-      std::optional<uint32_t> activeOwnerBit =
-          activeOwner == activeOwnerBits.end()
-              ? std::nullopt
-              : std::optional<uint32_t>{activeOwner->second};
+      uint64_t activeOwnerMask =
+          activeOwner == activeOwnerBits.end() ? 0 : activeOwner->second;
       function.walk([&](LLVM::CallOp call) {
-        if (call.getCallee() &&
-            *call.getCallee() == "obelisk_rt_v1_scheduler_static_transition")
-          transitions.push_back({call, periodicTwoState, activeOwnerBit});
+        if (!call.getCallee() ||
+            *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
+          return;
+        std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
+        if (auto owner = call->getAttrOfType<DictionaryAttr>(
+                sim::metadata::evalSourceOwner)) {
+          auto codeUnit = owner.getAs<IntegerAttr>("code_unit");
+          auto continuation = owner.getAs<IntegerAttr>("continuation");
+          if (codeUnit && continuation && continuation.getInt() > 0 &&
+              static_cast<uint64_t>(continuation.getInt()) <= UINT32_MAX) {
+            auto exact = physicalSourceOwners.find(
+                {codeUnit.getUInt(),
+                 static_cast<uint32_t>(continuation.getInt())});
+            if (exact != physicalSourceOwners.end())
+              physicalSourceOwner = exact->second;
+            else if (!ambiguousCodeUnitOwners.contains(codeUnit.getUInt()))
+              if (auto unique = uniqueCodeUnitOwners.find(codeUnit.getUInt());
+                  unique != uniqueCodeUnitOwners.end())
+                physicalSourceOwner = unique->second;
+          }
+        }
+        transitions.push_back(
+            {call, periodicTwoState, activeOwnerMask, physicalSourceOwner});
       });
     }
     auto packedMask = [](uint64_t width) {
@@ -1622,7 +1684,9 @@ FailureOr<bool> makeNativeEvalPlan(
     for (const GeneratedTransition &transition : transitions) {
       LLVM::CallOp call = transition.call;
       bool periodicTwoState = transition.periodicTwoState;
-      std::optional<uint32_t> activeOwnerBit = transition.activeOwnerBit;
+      uint64_t activeOwnerMask = transition.activeOwnerMask;
+      std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner =
+          transition.physicalSourceOwner;
       ValueRange arguments = call.getArgOperands();
       if (arguments.size() != 8)
         return call.emitError("malformed static transition ABI"), failure();
@@ -1675,12 +1739,18 @@ FailureOr<bool> makeNativeEvalPlan(
             entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
           continue;
         if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
-          if (!activeOwnerBit) {
+          if (physicalSourceOwner) {
+            if (*physicalSourceOwner ==
+                std::pair{entry.actor_slot, entry.continuation})
+              continue;
+          } else if (activeOwnerMask == 0) {
             needsActiveSelfCheck = true;
             continue;
-          }
-          if (entry.merged_bit == *activeOwnerBit)
+          } else if (entry.merged_bit < 64 &&
+                     (activeOwnerMask & (uint64_t{1} << entry.merged_bit)) !=
+                         0) {
             continue;
+          }
         }
         uint64_t overlapMask = packedMask(overlapHigh - overlapLow)
                                << (overlapLow - *lowBit);
@@ -2759,10 +2829,18 @@ FailureOr<bool> makeNativeEvalPlan(
       return directStatus &&
              !executor->hasAttr(sim::metadata::evalTier2Convergence);
     };
+    auto periodicBitTouchesFanout =
+        [](uint64_t bit, const obelisk_rt_static_fanout_entry &fanout) {
+          if (fanout.bit_width == 0 || fanout.low_bit > bit ||
+              bit - fanout.low_bit >= fanout.bit_width)
+            return false;
+          return fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+                 fanout.low_bit == bit;
+        };
     auto clockTouchesFanout =
         [&](const NativePeriodicClock &clock,
             const obelisk_rt_static_fanout_entry &fanout) {
-          if (fanout.static_state != clock.staticState || fanout.bit_width == 0)
+          if (fanout.static_state != clock.staticState)
             return false;
           auto bound =
               llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
@@ -2773,11 +2851,10 @@ FailureOr<bool> makeNativeEvalPlan(
               clock.bitOffset - bound->offset >= bound->width)
             return false;
           uint64_t localBit = clock.bitOffset - bound->offset;
-          return fanout.low_bit <= localBit &&
-                 localBit - fanout.low_bit < fanout.bit_width;
+          return periodicBitTouchesFanout(localBit, fanout);
         };
     for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks))
-      for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
+      for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             !clockTouchesFanout(clock, fanout) ||
             fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
@@ -2790,8 +2867,13 @@ FailureOr<bool> makeNativeEvalPlan(
                          alias.forwardingContinuation == fanout.continuation;
                 }))
           continue;
-        uint64_t bit = uint64_t{1} << fanout.merged_bit;
-        auto &masks = canDispatchClockOwnerDirectly(fanout.merged_bit)
+        uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
+                             ? fanout.merged_bit
+                             : periodicOwnerBits[fanoutIndex];
+        if (owner >= 64)
+          continue;
+        uint64_t bit = uint64_t{1} << owner;
+        auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex][fanout.kernel]
                           : clockMasks[clockIndex][fanout.kernel];
         auto &[rising, falling] = masks;
@@ -2821,17 +2903,21 @@ FailureOr<bool> makeNativeEvalPlan(
           alias.targetBitOffset - targetBound->offset >= targetBound->width)
         continue;
       uint64_t targetLocalBit = alias.targetBitOffset - targetBound->offset;
-      for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
+      for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             (fanout.actor_slot == alias.forwardingActorSlot &&
              fanout.continuation == alias.forwardingContinuation) ||
             fanout.static_state != alias.targetStaticState ||
-            fanout.bit_width == 0 || fanout.low_bit > targetLocalBit ||
-            targetLocalBit - fanout.low_bit >= fanout.bit_width ||
+            !periodicBitTouchesFanout(targetLocalBit, fanout) ||
             fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
           continue;
-        uint64_t bit = uint64_t{1} << fanout.merged_bit;
-        auto &masks = canDispatchClockOwnerDirectly(fanout.merged_bit)
+        uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
+                             ? fanout.merged_bit
+                             : periodicOwnerBits[fanoutIndex];
+        if (owner >= 64)
+          continue;
+        uint64_t bit = uint64_t{1} << owner;
+        auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex][fanout.kernel]
                           : clockMasks[clockIndex][fanout.kernel];
         auto &[rising, falling] = masks;
@@ -3265,6 +3351,10 @@ FailureOr<bool> makeNativeEvalPlan(
     // slot, so invoke them directly and reserve the cttz coordinator for the
     // publications they produce. A bitset keeps coincident-clock dispatch
     // compact while ensuring a shared owner executes exactly once.
+    auto directOwnerConsumedMask = [&](unsigned recordIndex) {
+      return (uint64_t{1} << mergedFragments[recordIndex].bit) |
+             ownerSubsumptionMasks[recordIndex];
+    };
     if (canCompressSilentFall && !directOwnerRecords.empty()) {
       // The only generated step is now the rising phase of one proven
       // periodic source. Its direct owner set is a compile-time constant, so
@@ -3314,7 +3404,7 @@ FailureOr<bool> makeNativeEvalPlan(
         // the whole initial mask after the sequence would erase that
         // required retrigger.  Clear only the owner just executed, exactly
         // where the bitset coordinator would consume it.
-        uint64_t inverse = ~(uint64_t{1} << mergedFragments[recordIndex].bit);
+        uint64_t inverse = ~directOwnerConsumedMask(recordIndex);
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
@@ -3557,11 +3647,12 @@ FailureOr<bool> makeNativeEvalPlan(
                                    ValueRange{directStatus});
           builder.setInsertionPointToStart(afterExecute);
         }
-        // Match coordinator execution semantics: an implicit combinational
-        // sensitivity cannot retrigger the owner that is currently executing.
-        // Fused clock/combinational bodies commonly publish one of their own
-        // roots, so leaving this bit queued would execute the whole clock body
-        // a second time in the fixpoint scan.
+        // Match coordinator execution semantics: neither the coordinator nor
+        // an exact member already executed inside it may remain pending. An
+        // implicit combinational sensitivity cannot retrigger its currently
+        // executing logical owner, and fused bodies commonly publish one of
+        // their own roots.
+        uint64_t inverse = ~directOwnerConsumedMask(recordIndex);
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
@@ -3569,9 +3660,9 @@ FailureOr<bool> makeNativeEvalPlan(
               LLVM::LoadOp::create(builder, location, i64, ingress, 8);
           LLVM::StoreOp::create(
               builder, location,
-              arith::AndIOp::create(builder, location, queued,
-                                    llvmConstant(builder, location, i64,
-                                                 ~(uint64_t{1} << record.bit))),
+              arith::AndIOp::create(
+                  builder, location, queued,
+                  llvmConstant(builder, location, i64, inverse)),
               ingress, 8);
         }
         cf::BranchOp::create(builder, location, nextDirect);
@@ -3963,6 +4054,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                             mergedExecutors,
                                             mergedTwoStateExecutors,
                                             promotionKernelReadyNames,
+                                            ownerSubsumptionMasks,
                                             recordNBATaintMasks,
                                             nbaTaintedRecords,
                                             nbaTaintWordCount,

@@ -78,11 +78,46 @@ resolveNativeEvalPlan(ModuleOp module,
         (Twine("__obelisk_aot_model_active_v1_") + Twine(index)).str();
   }
 
-  if (evalOwnership.fanoutOwners.size() != result.fanoutEntries.size())
+  if (evalOwnership.fanoutOwners.size() != result.fanoutEntries.size() ||
+      evalOwnership.periodicFanoutOwners.size() != result.fanoutEntries.size())
     return module.emitError("eval ownership plan does not match fanout"),
            failure();
+  result.periodicOwnerBits.assign(result.fanoutEntries.size(), UINT32_MAX);
+  auto resolveOwner =
+      [&](const NativeEvalFanoutOwner &plannedOwner,
+          const obelisk_rt_static_fanout_entry &entry) -> FailureOr<uint32_t> {
+    if (plannedOwner.kind != NativeEvalFanoutOwnerKind::Direct ||
+        plannedOwner.directFragment >= directFragments.size())
+      return module.emitError(
+                 "generated eval owner references an invalid direct fragment"),
+             failure();
+    const NativeDirectFragment &direct =
+        directFragments[plannedOwner.directFragment];
+    auto merged =
+        llvm::find_if(result.mergedFragments, [&](const auto &candidate) {
+          size_t index =
+              static_cast<size_t>(&candidate - result.mergedFragments.data());
+          return index < result.mergedExecutors.size() &&
+                 result.mergedExecutors[index] == direct.wrapper &&
+                 candidate.actor_slot == direct.actorSlot &&
+                 candidate.continuation == direct.continuation;
+        });
+    if (merged != result.mergedFragments.end()) {
+      merged->compute_node = std::min(merged->compute_node, entry.compute_node);
+      return merged->bit;
+    }
+    uint32_t bit = static_cast<uint32_t>(result.mergedFragments.size());
+    result.mergedFragments.push_back({direct.actorSlot, direct.continuation,
+                                      entry.kernel, bit, entry.compute_node, 0,
+                                      nullptr});
+    result.mergedExecutors.push_back(direct.wrapper);
+    result.mergedTwoStateExecutors.push_back(direct.twoStateWrapper);
+    result.mergedPromotionRanges.emplace_back();
+    llvm::append_range(result.mergedPromotionRanges.back(),
+                       direct.promotionRanges);
+    return bit;
+  };
   for (auto [entryIndex, entry] : llvm::enumerate(result.fanoutEntries)) {
-    const auto &executable = executableNodes[entry.compute_node];
     auto trigger = llvm::lower_bound(
         result.clockKernels,
         std::tuple{entry.static_state, entry.low_bit, entry.bit_width,
@@ -116,51 +151,21 @@ resolveNativeEvalPlan(ModuleOp module,
       entry.merged_bit = 0;
       continue;
     }
-    const NativeDirectFragment *direct =
-        plannedOwner.directFragment < directFragments.size()
-            ? &directFragments[plannedOwner.directFragment]
-            : nullptr;
-    if (!direct)
-      return module.emitError("generated eval owner references an invalid "
-                              "direct fragment"),
-             failure();
-    auto merged =
-        llvm::find_if(result.mergedFragments, [&](const auto &candidate) {
-          size_t index =
-              static_cast<size_t>(&candidate - result.mergedFragments.data());
-          if (direct)
-            return index < result.mergedExecutors.size() &&
-                   result.mergedExecutors[index] == direct->wrapper &&
-                   candidate.actor_slot == direct->actorSlot &&
-                   candidate.continuation == direct->continuation;
-          return candidate.actor_slot == executable.actor_slot &&
-                 candidate.continuation == executable.continuation;
-        });
-    if (merged != result.mergedFragments.end()) {
-      entry.merged_bit = merged->bit;
-      size_t mergedIndex =
-          static_cast<size_t>(merged - result.mergedFragments.begin());
-      setFanoutRoute(entry, !result.mergedExecutors[mergedIndex].empty()
-                                ? OBELISK_RT_FANOUT_DIRECT
-                                : OBELISK_RT_FANOUT_RUNTIME);
-      merged->compute_node = std::min(merged->compute_node, entry.compute_node);
-      continue;
-    }
+    FailureOr<uint32_t> genericBit = resolveOwner(plannedOwner, entry);
+    if (failed(genericBit))
+      return failure();
+    entry.merged_bit = *genericBit;
+    setFanoutRoute(entry, OBELISK_RT_FANOUT_DIRECT);
 
-    entry.merged_bit = static_cast<uint32_t>(result.mergedFragments.size());
-    setFanoutRoute(entry, direct ? OBELISK_RT_FANOUT_DIRECT
-                                 : OBELISK_RT_FANOUT_RUNTIME);
-    result.mergedFragments.push_back(
-        {direct ? direct->actorSlot : executable.actor_slot,
-         direct ? direct->continuation : executable.continuation, entry.kernel,
-         entry.merged_bit, entry.compute_node, 0, nullptr});
-    result.mergedExecutors.push_back(direct ? direct->wrapper : std::string{});
-    result.mergedTwoStateExecutors.push_back(direct ? direct->twoStateWrapper
-                                                    : std::string{});
-    result.mergedPromotionRanges.emplace_back();
-    if (direct)
-      llvm::append_range(result.mergedPromotionRanges.back(),
-                         direct->promotionRanges);
+    const NativeEvalFanoutOwner &periodicOwner =
+        evalOwnership.periodicFanoutOwners[entryIndex];
+    if (periodicOwner.kind != NativeEvalFanoutOwnerKind::Direct)
+      continue;
+    FailureOr<uint32_t> periodicBit = resolveOwner(periodicOwner, entry);
+    if (failed(periodicBit))
+      return failure();
+    if (*periodicBit != *genericBit)
+      result.periodicOwnerBits[entryIndex] = *periodicBit;
   }
 
   if (!result.mergedFragments.empty()) {
@@ -197,6 +202,9 @@ resolveNativeEvalPlan(ModuleOp module,
       if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
           OBELISK_RT_FANOUT_DIRECT)
         entry.merged_bit = remap[entry.merged_bit];
+    for (uint32_t &bit : result.periodicOwnerBits)
+      if (bit != UINT32_MAX)
+        bit = remap[bit];
   }
 
   // Promotion belongs to the exact periodic execution closure. Follow graph
@@ -204,6 +212,15 @@ resolveNativeEvalPlan(ModuleOp module,
   // asynchronous owners into the scan.
   if (!result.mergedFragments.empty() && computeGraph) {
     llvm::SmallDenseSet<unsigned, 32> closure;
+    auto periodicBitTouches = [](uint64_t bit,
+                                 const obelisk_rt_static_fanout_entry &entry) {
+      if (entry.bit_width == 0 || entry.low_bit > bit ||
+          bit - entry.low_bit >= entry.bit_width)
+        return false;
+      // IEEE 1800 edge events on a vector observe only the expression's least
+      // significant bit. Ordinary change events observe the complete range.
+      return entry.edge == OBELISK_RT_WAIT_EDGE_CHANGE || entry.low_bit == bit;
+    };
     auto clockTouches = [&](const NativePeriodicClock &clock,
                             const obelisk_rt_static_fanout_entry &entry) {
       if (entry.static_state != clock.staticState || entry.bit_width == 0)
@@ -217,7 +234,7 @@ resolveNativeEvalPlan(ModuleOp module,
           clock.bitOffset - bound->offset >= bound->width)
         return false;
       uint64_t bit = clock.bitOffset - bound->offset;
-      return entry.low_bit <= bit && bit - entry.low_bit < entry.bit_width;
+      return periodicBitTouches(bit, entry);
     };
     auto aliasTouches = [&](const NativePeriodicAlias &alias,
                             const obelisk_rt_static_fanout_entry &entry) {
@@ -232,9 +249,9 @@ resolveNativeEvalPlan(ModuleOp module,
           alias.targetBitOffset - bound->offset >= bound->width)
         return false;
       uint64_t bit = alias.targetBitOffset - bound->offset;
-      return entry.low_bit <= bit && bit - entry.low_bit < entry.bit_width;
+      return periodicBitTouches(bit, entry);
     };
-    for (const auto &entry : result.fanoutEntries) {
+    for (auto [entryIndex, entry] : llvm::enumerate(result.fanoutEntries)) {
       uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
       if (route == OBELISK_RT_FANOUT_RUNTIME ||
           route == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
@@ -246,18 +263,24 @@ resolveNativeEvalPlan(ModuleOp module,
       periodic |= llvm::any_of(periodicAliases, [&](const auto &alias) {
         return aliasTouches(alias, entry);
       });
-      if (periodic)
-        closure.insert(entry.merged_bit);
+      if (periodic) {
+        uint32_t owner = result.periodicOwnerBits[entryIndex] == UINT32_MAX
+                             ? entry.merged_bit
+                             : result.periodicOwnerBits[entryIndex];
+        if (owner < result.mergedFragments.size())
+          closure.insert(owner);
+      }
     }
     const llvm::SmallDenseSet<unsigned, 32> periodicSeeds = closure;
     result.periodicEntryRecords.assign(periodicSeeds.begin(),
                                        periodicSeeds.end());
     llvm::sort(result.periodicEntryRecords);
 
-    llvm::DenseMap<uint32_t, unsigned> fragmentOwners;
     SmallVector<SmallVector<uint32_t>> ownerFragments(
         result.mergedFragments.size());
-    std::optional<std::tuple<uint32_t, unsigned, unsigned>> overlap;
+    SmallVector<bool> ownerIsCoordinator(result.mergedFragments.size(), false);
+    SmallVector<uint32_t> ownerFusionGroups(result.mergedFragments.size(),
+                                            UINT32_MAX);
     for (auto [recordIndex, executor] :
          llvm::enumerate(result.mergedExecutors)) {
       if (executor.empty())
@@ -271,19 +294,55 @@ resolveNativeEvalPlan(ModuleOp module,
       });
       if (direct == directFragments.end())
         continue;
+      ownerIsCoordinator[recordIndex] = direct->instanceCoordinator;
+      ownerFusionGroups[recordIndex] = direct->fusionGroup;
       SmallVector<uint32_t> ownedFragments;
       llvm::append_range(ownedFragments, direct->fragmentIDs);
       llvm::sort(ownedFragments);
       ownedFragments.erase(
           std::unique(ownedFragments.begin(), ownedFragments.end()),
           ownedFragments.end());
-      for (uint32_t fragment : ownedFragments) {
-        ownerFragments[recordIndex].push_back(fragment);
-        auto [found, inserted] =
-            fragmentOwners.try_emplace(fragment, recordIndex);
-        if (!inserted && found->second != recordIndex)
-          overlap = std::tuple{fragment, found->second, recordIndex};
+      ownerFragments[recordIndex] = std::move(ownedFragments);
+    }
+
+    result.ownerSubsumptionMasks.assign(result.mergedFragments.size(), 0);
+    std::optional<std::tuple<uint32_t, unsigned, unsigned>> overlap;
+    for (unsigned first = 0; first != result.mergedFragments.size(); ++first) {
+      if (ownerFragments[first].empty())
+        continue;
+      for (unsigned second = first + 1; second != result.mergedFragments.size();
+           ++second) {
+        if (ownerFragments[second].empty())
+          continue;
+        auto shared = llvm::find_if(ownerFragments[first], [&](uint32_t id) {
+          return llvm::binary_search(ownerFragments[second], id);
+        });
+        if (shared == ownerFragments[first].end())
+          continue;
+        unsigned coordinator = ownerIsCoordinator[first] ? first : second;
+        unsigned exact = ownerIsCoordinator[first] ? second : first;
+        bool certifiedPair =
+            ownerIsCoordinator[first] != ownerIsCoordinator[second] &&
+            ownerFusionGroups[coordinator] != UINT32_MAX &&
+            ownerFusionGroups[coordinator] == ownerFusionGroups[exact];
+        bool containsExact =
+            certifiedPair &&
+            llvm::all_of(ownerFragments[exact], [&](uint32_t fragment) {
+              return llvm::binary_search(ownerFragments[coordinator], fragment);
+            });
+        // The only intentional overlap is a complete Tier-2 body nested in
+        // its certified Tier-1 fusion coordinator. Partial overlap is not
+        // executable ownership: both wrappers would execute the shared body.
+        if (!containsExact) {
+          overlap = std::tuple{*shared, first, second};
+          break;
+        }
+        if (result.mergedFragments[exact].bit < 64)
+          result.ownerSubsumptionMasks[coordinator] |=
+              uint64_t{1} << result.mergedFragments[exact].bit;
       }
+      if (overlap)
+        break;
     }
     if (overlap) {
       auto [fragment, firstOwner, secondOwner] = *overlap;
@@ -292,6 +351,15 @@ resolveNativeEvalPlan(ModuleOp module,
              << firstOwner << " (" << result.mergedExecutors[firstOwner]
              << ") and " << secondOwner << " ("
              << result.mergedExecutors[secondOwner] << ")";
+    }
+
+    llvm::DenseMap<uint32_t, unsigned> fragmentOwners;
+    for (unsigned owner = 0; owner != result.mergedFragments.size(); ++owner) {
+      for (uint32_t fragment : ownerFragments[owner]) {
+        auto [found, inserted] = fragmentOwners.try_emplace(fragment, owner);
+        if (!inserted && ownerIsCoordinator[owner])
+          found->second = owner;
+      }
     }
 
     llvm::SmallDenseSet<uint32_t, 64> reachableNodes;
@@ -333,9 +401,27 @@ resolveNativeEvalPlan(ModuleOp module,
         }
       }
     } while (changed);
+    // Tier-1 execution contains these exact Tier-2 bodies, but generated
+    // transitions still publish their exact identities.  Keep them in the
+    // periodic promotion/transition closure while leaving only the complete
+    // coordinator in the periodic entry set.
+    SmallVector<unsigned> closureSnapshot(closure.begin(), closure.end());
+    for (unsigned owner : closureSnapshot) {
+      if (owner >= result.ownerSubsumptionMasks.size())
+        continue;
+      uint64_t members = result.ownerSubsumptionMasks[owner];
+      while (members != 0) {
+        unsigned bit = llvm::countr_zero(members);
+        closure.insert(bit);
+        members &= members - 1;
+      }
+    }
     result.periodicClosureRecords.assign(closure.begin(), closure.end());
     llvm::sort(result.periodicClosureRecords);
   }
+
+  if (result.ownerSubsumptionMasks.empty())
+    result.ownerSubsumptionMasks.assign(result.mergedFragments.size(), 0);
 
   // Project graph-level NBA reachability onto exclusive generated owners.
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;

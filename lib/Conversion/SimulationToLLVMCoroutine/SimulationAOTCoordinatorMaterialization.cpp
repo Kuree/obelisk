@@ -47,6 +47,7 @@ LogicalResult materializeNativeEvalCoordinator(
   ArrayRef<std::string> mergedTwoStateExecutors = plan.twoStateExecutors;
   ArrayRef<std::string> promotionKernelReadyNames =
       plan.promotionReadyFunctions;
+  ArrayRef<uint64_t> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
   bool prioritySignalHandoff = plan.prioritySignalHandoff;
   bool promotedCoordinator = options.promoted;
@@ -88,7 +89,9 @@ LogicalResult materializeNativeEvalCoordinator(
   };
 
   if (clockKernels.empty() || mergedFragments.empty() ||
-      mergedFragments.size() > 64 || executors.size() != mergedFragments.size())
+      mergedFragments.size() > 64 ||
+      executors.size() != mergedFragments.size() ||
+      ownerSubsumptionMasks.size() != mergedFragments.size())
     return success();
   builder.setInsertionPointToEnd(module.getBody());
   SmallVector<Type> coordinatorArguments{pointer, pointer};
@@ -202,6 +205,14 @@ LogicalResult materializeNativeEvalCoordinator(
         builder, location,
         arith::AndIOp::create(builder, location, queued, inverse), ingress, 8);
   };
+  auto publishIngressMask = [&](Value mask) {
+    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                              clockKernels.front().ingressName);
+    Value queued = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+    LLVM::StoreOp::create(builder, location,
+                          arith::OrIOp::create(builder, location, queued, mask),
+                          ingress, 8);
+  };
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
   Block *scanReady = new Block;
@@ -228,6 +239,30 @@ LogicalResult materializeNativeEvalCoordinator(
 
   builder.setInsertionPointToStart(scanReady);
   Value ready = combinedIngress();
+  bool hasSubsumption = false;
+  for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
+    uint64_t subsumed = ownerSubsumptionMasks[recordIndex];
+    if (record.bit >= 64 || subsumed == 0 ||
+        (allowedOwnerMask & (uint64_t{1} << record.bit)) == 0)
+      continue;
+    hasSubsumption = true;
+    Value coordinatorMask =
+        llvmConstant(builder, location, i64, uint64_t{1} << record.bit);
+    Value coordinatorPending = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne,
+        arith::AndIOp::create(builder, location, ready, coordinatorMask),
+        llvmConstant(builder, location, i64, 0));
+    Value withoutMembers =
+        arith::AndIOp::create(builder, location, ready,
+                              llvmConstant(builder, location, i64, ~subsumed));
+    ready = arith::SelectOp::create(builder, location, coordinatorPending,
+                                    withoutMembers, ready);
+  }
+  if (hasSubsumption) {
+    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                              clockKernels.front().ingressName);
+    LLVM::StoreOp::create(builder, location, ready, ingress, 8);
+  }
   Value empty =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq, ready,
                             llvmConstant(builder, location, i64, 0));
@@ -312,9 +347,11 @@ LogicalResult materializeNativeEvalCoordinator(
     // transition published by the activation then remains queued and drives
     // another local fixpoint iteration. Non-convergence owners retain the
     // clock-kernel rule below, which suppresses their implicit self fanout.
+    uint64_t subsumedOwnerMask = ownerSubsumptionMasks[recordIndex];
     if (convergenceOwner)
       clearIngressMask(
-          llvmConstant(builder, location, i64, uint64_t{1} << record.bit));
+          llvmConstant(builder, location, i64,
+                       (uint64_t{1} << record.bit) | subsumedOwnerMask));
     Value executeStatus;
     if (hybridCoordinator && !mergedTwoStateExecutors[recordIndex].empty() &&
         !promotionKernelReadyNames[recordIndex].empty()) {
@@ -377,7 +414,21 @@ LogicalResult materializeNativeEvalCoordinator(
     }
     if (!convergenceOwner)
       clearIngressMask(
-          llvmConstant(builder, location, i64, uint64_t{1} << record.bit));
+          llvmConstant(builder, location, i64,
+                       (uint64_t{1} << record.bit) | subsumedOwnerMask));
+    else if (subsumedOwnerMask != 0) {
+      Value queuedMembers = arith::AndIOp::create(
+          builder, location, combinedIngress(),
+          llvmConstant(builder, location, i64, subsumedOwnerMask));
+      Value membersPending = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, queuedMembers,
+          llvmConstant(builder, location, i64, 0));
+      clearIngressMask(llvmConstant(builder, location, i64, subsumedOwnerMask));
+      publishIngressMask(arith::SelectOp::create(
+          builder, location, membersPending,
+          llvmConstant(builder, location, i64, uint64_t{1} << record.bit),
+          llvmConstant(builder, location, i64, 0)));
+    }
     Value executeOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, executeStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));

@@ -83,7 +83,12 @@ struct NativeEvalFanoutOwner {
 };
 
 struct NativeEvalOwnershipPlan {
+  /// Owner used by ordinary state transitions and external disturbance.
   llvm::SmallVector<NativeEvalFanoutOwner> fanoutOwners;
+  /// Owner used only when a periodic clock/alias directly activates the
+  /// corresponding fanout entry.  This remains separate because the static
+  /// fanout table does not encode the origin of a state transition.
+  llvm::SmallVector<NativeEvalFanoutOwner> periodicFanoutOwners;
 };
 
 struct NativeEvalClockKernel {
@@ -108,6 +113,12 @@ struct ResolvedNativeEvalPlan {
   llvm::SmallVector<std::string> mergedTwoStateExecutors;
   llvm::SmallVector<llvm::SmallVector<NativePromotionRange>>
       mergedPromotionRanges;
+  /// Periodic-only owner bit for each fanout entry, or UINT32_MAX when the
+  /// generic owner is also the periodic owner.
+  llvm::SmallVector<uint32_t> periodicOwnerBits;
+  /// For each merged owner, exact Tier-2 owner bits consumed by execution of
+  /// that complete Tier-1 coordinator.
+  llvm::SmallVector<uint64_t> ownerSubsumptionMasks;
   llvm::SmallVector<unsigned> periodicClosureRecords;
   llvm::SmallVector<unsigned> periodicEntryRecords;
   uint32_t nbaTaintWordCount = 0;
@@ -124,6 +135,7 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<std::string> fourStateExecutors;
   mlir::ArrayRef<std::string> twoStateExecutors;
   mlir::ArrayRef<std::string> promotionReadyFunctions;
+  mlir::ArrayRef<uint64_t> ownerSubsumptionMasks;
   mlir::ArrayRef<llvm::SmallVector<uint64_t>> nbaTaintMasks;
   const llvm::BitVector &nbaTaintedOwners;
   uint32_t nbaTaintWordCount = 0;

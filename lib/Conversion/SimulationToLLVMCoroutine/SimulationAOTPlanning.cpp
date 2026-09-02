@@ -178,6 +178,14 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
           reference.getArgNumber(), sim::metadata::descriptorId);
       if (attribute)
         descriptor = attribute.getInt();
+      if (auto low = function.getArgAttrOfType<IntegerAttr>(
+              reference.getArgNumber(), sim::metadata::descriptorLow)) {
+        if (low.getValue().isNegative() ||
+            low.getValue().getActiveBits() > 64 ||
+            low.getUInt() > UINT64_MAX - localBitOffset)
+          return WalkResult::advance();
+        localBitOffset += low.getUInt();
+      }
     } else {
       descriptor = storage.getId();
     }
@@ -929,9 +937,14 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
                   terminator->hasAttr(sim::metadata::topLevelWildcardWait)
               ? OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF
               : 0;
+      // IEEE 1800-2017 9.4.2 defines a vector edge event in terms of the
+      // expression's least significant bit. Keep the full watched range for
+      // ordinary change sensitivity, but encode edge-sensitive fanout as its
+      // single LSB so every static publication path shares that semantic.
+      uint64_t fanoutWidth =
+          edge == OBELISK_RT_WAIT_EDGE_CHANGE ? effect.getWidth() : 1;
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
-                              UINT32_MAX, flags, effect.getLow(),
-                              effect.getWidth()});
+                              UINT32_MAX, flags, effect.getLow(), fanoutWidth});
     }
   }
   llvm::sort(plan.entries, [](const auto &lhs, const auto &rhs) {
@@ -1060,6 +1073,7 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
                              ArrayRef<NativePeriodicAlias> periodicAliases) {
   NativeEvalOwnershipPlan result;
   result.fanoutOwners.reserve(fanoutPlan.entries.size());
+  result.periodicFanoutOwners.reserve(fanoutPlan.entries.size());
 
   auto isPeriodicAlias = [&](const obelisk_rt_static_fanout_entry &entry) {
     return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
@@ -1130,14 +1144,17 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
 
   for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
     if (isPeriodicAlias(entry)) {
-      result.fanoutOwners.push_back(
-          {NativeEvalFanoutOwnerKind::PeriodicAlias, UINT32_MAX});
+      NativeEvalFanoutOwner owner{NativeEvalFanoutOwnerKind::PeriodicAlias,
+                                  UINT32_MAX};
+      result.fanoutOwners.push_back(owner);
+      result.periodicFanoutOwners.push_back(owner);
       continue;
     }
 
     ArrayRef<uint32_t> plannedFragments = fragmentsFor(entry);
     if (plannedFragments.empty()) {
       result.fanoutOwners.emplace_back();
+      result.periodicFanoutOwners.emplace_back();
       continue;
     }
     std::optional<unsigned> coordinator;
@@ -1154,46 +1171,51 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
                failure();
       coordinator = owner->second;
     }
-    if (coordinatorCovers && coordinator) {
-      result.fanoutOwners.push_back({NativeEvalFanoutOwnerKind::Direct,
-                                     static_cast<uint32_t>(*coordinator)});
-      continue;
-    }
-    if (auto exact = exactOwners.find({entry.actor_slot, entry.continuation});
-        exact != exactOwners.end()) {
-      result.fanoutOwners.push_back({NativeEvalFanoutOwnerKind::Direct,
-                                     static_cast<uint32_t>(exact->second)});
-      continue;
-    }
+    std::optional<unsigned> exact;
+    if (auto foundExact =
+            exactOwners.find({entry.actor_slot, entry.continuation});
+        foundExact != exactOwners.end())
+      exact = foundExact->second;
     auto physicalOwner = std::pair{entry.actor_slot, entry.continuation};
-    if (auto cached = fallbackOwners.find(physicalOwner);
-        cached != fallbackOwners.end()) {
-      result.fanoutOwners.push_back(cached->second);
-      continue;
+    NativeEvalFanoutOwner genericOwner;
+    if (exact) {
+      genericOwner = {NativeEvalFanoutOwnerKind::Direct,
+                      static_cast<uint32_t>(*exact)};
+    } else if (coordinatorCovers && coordinator) {
+      genericOwner = {NativeEvalFanoutOwnerKind::Direct,
+                      static_cast<uint32_t>(*coordinator)};
+    } else if (auto cached = fallbackOwners.find(physicalOwner);
+               cached != fallbackOwners.end()) {
+      genericOwner = cached->second;
+    } else {
+      DenseMap<unsigned, unsigned> coverage;
+      for (uint32_t fragment : plannedFragments)
+        for (unsigned candidate : fragmentCandidates.lookup(fragment))
+          ++coverage[candidate];
+      std::optional<unsigned> direct;
+      for (auto [candidate, count] : coverage) {
+        if (count != plannedFragments.size())
+          continue;
+        if (direct && *direct != candidate)
+          return module.emitError(
+                     "typed scheduler owner maps to multiple generated bodies"),
+                 failure();
+        direct = candidate;
+      }
+      // Complete coverage in the current graph generation is the only
+      // fallback after exact physical identity and a certified coordinator.
+      genericOwner =
+          direct ? NativeEvalFanoutOwner{NativeEvalFanoutOwnerKind::Direct,
+                                         static_cast<uint32_t>(*direct)}
+                 : NativeEvalFanoutOwner{};
+      fallbackOwners.try_emplace(physicalOwner, genericOwner);
     }
-    DenseMap<unsigned, unsigned> coverage;
-    for (uint32_t fragment : plannedFragments)
-      for (unsigned candidate : fragmentCandidates.lookup(fragment))
-        ++coverage[candidate];
-    std::optional<unsigned> direct;
-    for (auto [candidate, count] : coverage) {
-      if (count != plannedFragments.size())
-        continue;
-      if (direct && *direct != candidate)
-        return module.emitError(
-                   "typed scheduler owner maps to multiple generated bodies"),
-               failure();
-      direct = candidate;
-    }
-    // Complete coverage in the current graph generation is the only fallback
-    // after coordinator and exact physical identity. No FragmentABI ordinal
-    // or erased source symbol participates in this decision.
-    NativeEvalFanoutOwner owner =
-        direct ? NativeEvalFanoutOwner{NativeEvalFanoutOwnerKind::Direct,
-                                       static_cast<uint32_t>(*direct)}
-               : NativeEvalFanoutOwner{};
-    fallbackOwners.try_emplace(physicalOwner, owner);
-    result.fanoutOwners.push_back(owner);
+    result.fanoutOwners.push_back(genericOwner);
+    result.periodicFanoutOwners.push_back(
+        coordinatorCovers && coordinator
+            ? NativeEvalFanoutOwner{NativeEvalFanoutOwnerKind::Direct,
+                                    static_cast<uint32_t>(*coordinator)}
+            : genericOwner);
   }
   return result;
 }

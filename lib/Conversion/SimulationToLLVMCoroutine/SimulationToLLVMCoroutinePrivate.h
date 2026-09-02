@@ -362,7 +362,8 @@ void notifySignal(
     mlir::ConversionPatternRewriter &builder, mlir::Location location,
     mlir::Value handle, uint64_t width, mlir::Value oldValue,
     mlir::Value oldUnknown, mlir::Value newValue, mlir::Value newUnknown,
-    std::optional<DirectStaticStateRange> directRange = std::nullopt);
+    std::optional<DirectStaticStateRange> directRange = std::nullopt,
+    mlir::Attribute sourceOwner = {});
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult

@@ -449,6 +449,32 @@ struct ObeliskSimulationInlinerInterface final
          llvm::zip_equal(valuesToReplace, returnOp.getOperands()))
       replacement.replaceAllUsesWith(value);
   }
+
+  void processInlinedCallBlocks(
+      Operation *call,
+      iterator_range<Region::iterator> inlinedBlocks) const final {
+    Attribute sourceOwner = call->getAttr(metadata::evalSourceOwner);
+    if (!sourceOwner)
+      return;
+    for (Block &block : inlinedBlocks)
+      block.walk([&](Operation *operation) {
+        // A nested fused call may already carry the more precise identity of
+        // the logical process from which it was cloned. Preserve that fact;
+        // otherwise inherit the caller's identity through arbitrary helper
+        // depth before the call operation is erased by the inliner.
+        if (operation->hasAttr(metadata::evalSourceOwner))
+          return;
+        Attribute inheritedOwner = sourceOwner;
+        for (Operation *parent = operation->getParentOp(); parent;
+             parent = parent->getParentOp())
+          if (Attribute parentOwner =
+                  parent->getAttr(metadata::evalSourceOwner)) {
+            inheritedOwner = parentOwner;
+            break;
+          }
+        operation->setAttr(metadata::evalSourceOwner, inheritedOwner);
+      });
+  }
 };
 
 void ObeliskSimulationDialect::initialize() {

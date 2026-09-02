@@ -438,7 +438,8 @@ public:
                            (assumeClean || !directRange->guarded) &&
                            directLayout && directLayout->transitionHandlesExact
                        ? directRange
-                       : std::nullopt);
+                       : std::nullopt,
+                   op->getAttr(sim::metadata::evalSourceOwner));
     }
     rewriter.eraseOp(op);
     return success();
@@ -609,7 +610,8 @@ public:
     } else {
       notifySignal(rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown,
                    newValue, containsLogic(valueType) ? newUnknown : Value{},
-                   resolveDirectStaticStateRange(handle, *width, directLayout));
+                   resolveDirectStaticStateRange(handle, *width, directLayout),
+                   op->getAttr(sim::metadata::evalSourceOwner));
     }
     rewriter.eraseOp(op);
     return success();

@@ -2573,10 +2573,22 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     mappings[index]->map(candidate.wait, next);
   }
 
+  auto applySourceOwner = [](Operation *root, Attribute sourceOwner) {
+    root->walk([&](Operation *operation) {
+      if (!operation->hasAttr(sim::metadata::evalSourceOwner))
+        operation->setAttr(sim::metadata::evalSourceOwner, sourceOwner);
+    });
+  };
+
   builder.setInsertionPointToStart(&entry);
-  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
-    for (Operation *operation : candidate.entryPreamble)
-      builder.clone(*operation, *mapping);
+  for (auto [candidateIndex, pair] :
+       llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+    auto &[candidate, mapping] = pair;
+    for (Operation *operation : candidate.entryPreamble) {
+      Operation *cloned = builder.clone(*operation, *mapping);
+      applySourceOwner(cloned, sourceOwners[candidateIndex]);
+    }
+  }
   if (evalBodyFusion) {
     for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
       for (auto [argument, value] : llvm::zip_equal(
@@ -2609,7 +2621,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
             continue;
           }
         }
-        builder.clone(operation, *mapping);
+        Operation *cloned = builder.clone(operation, *mapping);
+        applySourceOwner(cloned, sourceOwners[candidateIndex]);
       }
     }
   }

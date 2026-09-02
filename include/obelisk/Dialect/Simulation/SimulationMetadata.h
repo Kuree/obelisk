@@ -191,6 +191,12 @@ inline constexpr llvm::StringLiteral evalReconstructsContinuationArgs =
 /// that another pattern may already have replaced.
 inline constexpr llvm::StringLiteral evalCompactNBAMetadata =
     "obelisk.eval.compact_nba_metadata";
+/// Stable logical process identity attached to operations cloned into a
+/// fused eval body.  The inliner propagates a call-site identity through
+/// helper bodies so active-self suppression does not depend on the physical
+/// coordinator that happens to contain the operation.
+inline constexpr llvm::StringLiteral evalSourceOwner =
+    "obelisk.eval.source_owner";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
