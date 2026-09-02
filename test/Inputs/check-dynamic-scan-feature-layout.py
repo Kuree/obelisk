@@ -356,7 +356,8 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
     text = path.read_text()
     if not re.search(
         r"foreach\(source IN LISTS _obelisk_target_runtime_common_sources\s+"
-        r"_obelisk_target_runtime_cold_tail_sources\)", text
+        r"_obelisk_target_runtime_cold_tail_sources(?:\s+"
+        r"_[A-Za-z0-9_]+)*\)", text
     ):
         raise SystemExit(f"{path} does not append the declared cold-tail group")
 
