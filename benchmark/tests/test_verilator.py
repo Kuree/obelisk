@@ -686,6 +686,14 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 5.11", log)
         self.assertTrue(log.endswith("invalid target type 'bit'\n"))
 
+    def test_associative_select_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_cover_fsm_sel", "dynamic-non-procedural\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 7.8", log)
+        self.assertIn("IEEE 1800-2017 10.3", log)
+        self.assertTrue(log.endswith("dynamic-non-procedural\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

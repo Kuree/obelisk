@@ -126,6 +126,12 @@ KNOWN_SLANG_BUGS = {
         "value in its subarray context; pinned Slang contextualizes the "
         "innermost pattern one dimension too deep and rejects scalar bit as "
         "its target before emitting IR"),
+    "t_cover_fsm_sel": (
+        "IEEE 1800-2017 7.8 permits a selected associative-array element in "
+        "expressions and 7.8.6 defines its read value, while IEEE 1800-2017 "
+        "10.3 accepts an expression as a continuous-assignment source; "
+        "pinned Slang instead rejects both selected reads as "
+        "dynamic-non-procedural before emitting IR"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
