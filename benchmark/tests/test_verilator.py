@@ -694,6 +694,15 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 10.3", log)
         self.assertTrue(log.endswith("dynamic-non-procedural\n"))
 
+    def test_cover_sequence_empty_match_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_cover_sequence", "sequence must not admit an empty match\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 16.12.22", log)
+        self.assertIn("IEEE 1800-2017 16.14.3", log)
+        self.assertTrue(log.endswith(
+            "sequence must not admit an empty match\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

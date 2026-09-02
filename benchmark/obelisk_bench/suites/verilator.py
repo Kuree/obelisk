@@ -132,6 +132,13 @@ KNOWN_SLANG_BUGS = {
         "10.3 accepts an expression as a continuous-assignment source; "
         "pinned Slang instead rejects both selected reads as "
         "dynamic-non-procedural before emitting IR"),
+    "t_cover_sequence": (
+        "IEEE 1800-2017 16.9.2 defines [*] as [*0:$], and IEEE 1800-2017 "
+        "16.12.22 permits a nondegenerate sequence that also admits an empty "
+        "match as an overlapping-implication antecedent; IEEE 1800-2017 "
+        "16.14.3 defines cover sequence through exactly that implication, "
+        "but pinned Slang applies the stricter sequence-property rule and "
+        "rejects both forms before emitting IR"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
