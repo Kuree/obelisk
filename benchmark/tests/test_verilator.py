@@ -434,6 +434,11 @@ class DependencyFailureTest(unittest.TestCase):
 
 
 class ExcludedTest(unittest.TestCase):
+    def test_void_exported_task_prototype_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_dpi_qw"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 H.8.2")
+        self.assertIn("int return type", excluded.reason)
+
     def test_an_excluded_test_is_skipped_without_compiling(self):
         # The skip has to come before the test file is even read, so that
         # judging one costs nothing and needs no checkout.

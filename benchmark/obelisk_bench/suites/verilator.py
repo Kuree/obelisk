@@ -573,6 +573,10 @@ DPI_PART_SELECT_EXTENSION = Exclusion(
     "of at most 32 bits, and a get narrower than 32 bits shall leave the "
     "destination's upper bits unchanged; the test requests 40-bit selects "
     "and expects an uninitialized narrow destination to be zero-filled")
+DPI_EXPORTED_TASK_VOID_RETURN = Exclusion(
+    "IEEE 1800-2017 H.8.2",
+    "an exported task has an int return type in C for the DPI disable "
+    "protocol, but the test's foreign source declares set_value as void")
 EXCLUDED: dict[str, Exclusion] = {
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
@@ -604,6 +608,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_trigger_null": NULL_OBJECT_MEMBER_EVENT_CONTROL,
     "t_clocking_timing": USE_BEFORE_DECLARATION,
     "t_dpi_lib": DPI_PART_SELECT_EXTENSION,
+    "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
