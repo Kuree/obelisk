@@ -64,7 +64,7 @@ struct DesignImage {
   std::vector<uint8_t> bytes;
 
   DesignImage() {
-    constexpr uint64_t scopeOffset = 160;
+    constexpr uint64_t scopeOffset = 176;
     constexpr uint64_t subScopeOffset = scopeOffset + 64;
     constexpr uint64_t objectOffset = subScopeOffset + 64;
     constexpr uint64_t clkOffset = objectOffset;
@@ -158,6 +158,7 @@ struct DesignImage {
     put64(bytes, 120, index.size());
     put64(bytes, 128, stringOffset);
     put64(bytes, 144, stringOffset);
+    put64(bytes, 160, stringOffset);
 
     // top: children are clk, data, bus, then the sub scope.
     put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);

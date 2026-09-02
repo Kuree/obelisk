@@ -27,6 +27,13 @@ module attributes {
     obelisk_sim.statement_site.decl 1000 on 100 phase 0
     obelisk_sim.statement_site.decl 1100 on 200 phase 1
 
+    // Deliberately reverse semantic edge order as well. The image sorts by
+    // table/index/selector/ordinal for zero-copy query ranges.
+    obelisk_sim.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 1 modes 2 to 200
+    obelisk_sim.vpi_statement_relation.decl code_unit 10 type 24 selector 104 ordinal 0 modes 1 to 100
+    obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 50
+    obelisk_sim.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 0 modes 2 to 150
+
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context
         {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 10 : i64} {
@@ -47,5 +54,10 @@ module attributes {
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0
 // DATABASE-NEXT: statement_site id=1200 statement=3 phase=2 flags=0x0
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 selector=8 ordinal=0 target_statement=0
+// DATABASE-NEXT: relation source_table=1 source=0 source_type=24 selector=104 ordinal=0 target_statement=1
+// DATABASE-NEXT: relation source_table=2 source=1 source_type=33 selector=104 ordinal=0 target_statement=2
+// DATABASE-NEXT: relation source_table=2 source=1 source_type=33 selector=104 ordinal=1 target_statement=3
 
 // WAVEFORM-NOT: statement
+// WAVEFORM-NOT: relation

@@ -91,10 +91,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct StatementSiteRecord {
     sim::SimStatementSiteDeclOp declaration;
   };
+  struct RelationRecord {
+    TableKind sourceTable;
+    uint32_t sourceIndex;
+    uint32_t targetIndex;
+    uint32_t ordinal;
+    uint16_t selector;
+    uint16_t sourceKindAndTable;
+  };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
   SmallVector<StatementRecord> statements;
   SmallVector<StatementSiteRecord> statementSites;
+  SmallVector<sim::SimVPIStatementRelationDeclOp> relationDeclarations;
+  SmallVector<RelationRecord> relations;
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
@@ -174,6 +184,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
       if (includeStatements)
         statementSites.push_back({site});
+    } else if (auto relation =
+                   dyn_cast<sim::SimVPIStatementRelationDeclOp>(operation)) {
+      if (includeStatements)
+        relationDeclarations.push_back(relation);
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (!isReflectableType(storage.getType()))
         continue;
@@ -257,7 +271,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
                return left.declaration.getId() < right.declaration.getId();
              });
   if (scopes.size() > UINT32_MAX || objects.size() > UINT32_MAX ||
-      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX) {
+      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX ||
+      relationDeclarations.size() > UINT32_MAX) {
     design.emitOpError("reflection table exceeds 32-bit compact indices");
     return {};
   }
@@ -472,8 +487,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t statementOffset = typeOffset + types.size() * TypeLayout.size;
   uint64_t statementSiteOffset =
       statementOffset + statements.size() * StatementLayout.size;
-  uint64_t stringOffset =
+  uint64_t relationOffset =
       statementSiteOffset + statementSites.size() * StatementSiteLayout.size;
+  uint64_t stringOffset =
+      relationOffset + relationDeclarations.size() * RelationLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -495,6 +512,66 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, statement] : llvm::enumerate(statements))
     statementIndices[statement.declaration.getId()] =
         static_cast<uint32_t>(index);
+
+  relations.reserve(relationDeclarations.size());
+  for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
+    TableKind sourceTable = TableKind::Scope;
+    uint32_t sourceIndex = 0;
+    switch (relation.getSourceKind()) {
+    case sim::VPIStatementSourceKind::Scope: {
+      sourceTable = TableKind::Scope;
+      auto source = scopeIndices.find(relation.getSourceId());
+      if (source == scopeIndices.end()) {
+        relation.emitOpError("relation source scope was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    case sim::VPIStatementSourceKind::CodeUnit: {
+      sourceTable = TableKind::Object;
+      auto source = codeUnitObjectIndices.find(relation.getSourceId());
+      if (source == codeUnitObjectIndices.end()) {
+        relation.emitOpError("relation source code unit was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    case sim::VPIStatementSourceKind::Statement: {
+      sourceTable = TableKind::Statement;
+      auto source = statementIndices.find(relation.getSourceId());
+      if (source == statementIndices.end()) {
+        relation.emitOpError("relation source statement was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    }
+    auto target = statementIndices.find(relation.getTargetStatementId());
+    if (target == statementIndices.end()) {
+      relation.emitOpError("relation target statement was not serialized");
+      return {};
+    }
+    uint16_t sourceKindAndTable = 0;
+    if (!tryPackTableKindPayload(sourceTable, relation.getSourceVpiKind(),
+                                 sourceKindAndTable)) {
+      relation.emitOpError("relation source VPI kind cannot be packed");
+      return {};
+    }
+    relations.push_back(
+        {sourceTable, sourceIndex, target->second,
+         static_cast<uint32_t>(relation.getOrdinal()),
+         static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
+  }
+  llvm::sort(relations, [](const RelationRecord &left,
+                           const RelationRecord &right) {
+    return std::tie(left.sourceTable, left.sourceIndex, left.selector,
+                    left.ordinal, left.targetIndex) <
+           std::tie(right.sourceTable, right.sourceIndex, right.selector,
+                    right.ordinal, right.targetIndex);
+  });
 
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
@@ -651,6 +728,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setPhase(static_cast<uint16_t>(site.getPhase()));
     writer.setFlags(0);
   }
+  for (auto [index, relation] : llvm::enumerate(relations)) {
+    RelationWriter writer(output.data() + relationOffset +
+                          index * RelationLayout.size);
+    writer.setSourceIndex(relation.sourceIndex);
+    writer.setTargetIndex(relation.targetIndex);
+    writer.setOrdinal(relation.ordinal);
+    writer.setSelector(relation.selector);
+    writer.setSourceKindAndTable(relation.sourceKindAndTable);
+  }
   llvm::append_range(output, strings);
   alignTo(output, 8);
   indexOffset = output.size();
@@ -711,6 +797,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   writer.setStatementCount(statements.size());
   writer.setStatementSiteOffset(statementSiteOffset);
   writer.setStatementSiteCount(statementSites.size());
+  writer.setRelationOffset(relationOffset);
+  writer.setRelationCount(relations.size());
   writer.setChecksum(checksum(output, field::HeaderChecksum));
   return output;
 }

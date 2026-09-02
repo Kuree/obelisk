@@ -1832,12 +1832,12 @@ std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
 
 std::vector<uint8_t> makeDatabase(bool writable = true,
                                   bool withSource = true) {
-  constexpr uint64_t scopeOffset = 160;
-  constexpr uint64_t objectOffset = 224;
-  constexpr uint64_t typeOffset = 320;
-  constexpr uint64_t stringOffset = 400;
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t typeOffset = 336;
+  constexpr uint64_t stringOffset = 416;
   constexpr uint64_t stringSize = 28;
-  constexpr uint64_t indexOffset = 432;
+  constexpr uint64_t indexOffset = 448;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
   put32(bytes, 8, OBELISK_RT_VERSION);
@@ -1860,6 +1860,7 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   put64(bytes, 120, 2);
   put64(bytes, 128, stringOffset);
   put64(bytes, 144, stringOffset);
+  put64(bytes, 160, stringOffset);
 
   put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
@@ -1923,12 +1924,12 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
 }
 
 std::vector<uint8_t> makeCodeUnitDatabase() {
-  constexpr uint64_t scopeOffset = 160;
-  constexpr uint64_t processOffset = 224;
-  constexpr uint64_t functionOffset = 320;
-  constexpr uint64_t stringOffset = 416;
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t processOffset = 240;
+  constexpr uint64_t functionOffset = 336;
+  constexpr uint64_t stringOffset = 432;
   constexpr uint64_t stringSize = 20;
-  constexpr uint64_t indexOffset = 440;
+  constexpr uint64_t indexOffset = 456;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
   put32(bytes, 8, OBELISK_RT_VERSION);
@@ -1949,6 +1950,7 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   put64(bytes, 120, 3);
   put64(bytes, 128, stringOffset);
   put64(bytes, 144, stringOffset);
+  put64(bytes, 160, stringOffset);
 
   put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
@@ -1994,14 +1996,15 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
 }
 
 std::vector<uint8_t> makeStatementDatabase() {
-  constexpr uint64_t scopeOffset = 160;
-  constexpr uint64_t childScopeOffset = 224;
-  constexpr uint64_t processOffset = 288;
-  constexpr uint64_t statementOffset = 384;
-  constexpr uint64_t siteOffset = 464;
-  constexpr uint64_t stringOffset = 512;
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t childScopeOffset = 240;
+  constexpr uint64_t processOffset = 304;
+  constexpr uint64_t statementOffset = 400;
+  constexpr uint64_t siteOffset = 520;
+  constexpr uint64_t relationOffset = 568;
+  constexpr uint64_t stringOffset = 616;
   constexpr uint64_t stringSize = 42;
-  constexpr uint64_t indexOffset = 560;
+  constexpr uint64_t indexOffset = 664;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
   put32(bytes, 8, OBELISK_RT_VERSION);
@@ -2020,9 +2023,11 @@ std::vector<uint8_t> makeStatementDatabase() {
   put64(bytes, 112, indexOffset);
   put64(bytes, 120, 3);
   put64(bytes, 128, statementOffset);
-  put64(bytes, 136, 2);
+  put64(bytes, 136, 3);
   put64(bytes, 144, siteOffset);
   put64(bytes, 152, 3);
+  put64(bytes, 160, relationOffset);
+  put64(bytes, 168, 3);
 
   put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
@@ -2060,6 +2065,7 @@ std::vector<uint8_t> makeStatementDatabase() {
   statement(0, 100, UINT32_MAX, vpiNamedBegin,
             OBELISK_RT_DESIGN_STATEMENT_PROTECTED, 8, 1, 37);
   statement(1, 200, 0, vpiFor, 0, 9, 3, 0);
+  statement(2, 300, 0, vpiNullStmt, 0, 10, 5, 0);
   auto site = [&](size_t index, uint64_t id, uint32_t statement,
                   uint16_t phase) {
     size_t offset = siteOffset + index * 16;
@@ -2070,6 +2076,20 @@ std::vector<uint8_t> makeStatementDatabase() {
   site(0, 1000, 0, 0);
   site(1, 1100, 1, 1);
   site(2, 1200, 1, 2);
+
+  auto relation = [&](size_t index, uint32_t source, uint32_t target,
+                      uint32_t ordinal, uint16_t selector,
+                      uint16_t sourceKindAndTable) {
+    size_t offset = relationOffset + index * 16;
+    put32(bytes, offset, source);
+    put32(bytes, offset + 4, target);
+    put32(bytes, offset + 8, ordinal);
+    put16(bytes, offset + 12, selector);
+    put16(bytes, offset + 14, sourceKindAndTable);
+  };
+  relation(0, 0, 0, 0, vpiStmt, uint16_t{1u << 14} | vpiInitial);
+  relation(1, 0, 1, 0, vpiStmt, uint16_t{2u << 14} | vpiNamedBegin);
+  relation(2, 0, 2, 1, vpiStmt, uint16_t{2u << 14} | vpiNamedBegin);
 
   std::memcpy(bytes.data() + stringOffset,
               "top\0top.child\0top.child.proc\0test.sv\0body\0", stringSize);
@@ -2096,14 +2116,14 @@ std::vector<uint8_t> makeStatementDatabase() {
 }
 
 std::vector<uint8_t> makeAggregateDatabase() {
-  constexpr uint64_t scopeOffset = 160;
-  constexpr uint64_t objectOffset = 224;
-  constexpr uint64_t typeOffset = 320;
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t typeOffset = 336;
   constexpr uint64_t fieldTypeOffset = typeOffset + 80;
   constexpr uint64_t scalarTypeOffset = fieldTypeOffset + 80;
   constexpr uint64_t stringOffset = scalarTypeOffset + 80;
   constexpr uint64_t stringSize = 33;
-  constexpr uint64_t indexOffset = 600;
+  constexpr uint64_t indexOffset = 616;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
   put32(bytes, 8, OBELISK_RT_VERSION);
@@ -2125,6 +2145,7 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, 120, 2);
   put64(bytes, 128, stringOffset);
   put64(bytes, 144, stringOffset);
+  put64(bytes, 160, stringOffset);
 
   put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
@@ -3225,7 +3246,7 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   Fixture fixture;
   fixture.bytecode = makeDriverBytecode();
   fixture.database = makeDatabase();
-  put32(fixture.database, 224, OBELISK_RT_DESIGN_RECORD_NET);
+  put32(fixture.database, 240, OBELISK_RT_DESIGN_RECORD_NET);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -3818,7 +3839,7 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   Fixture fixture;
   fixture.bytecode = makeConnectedDriverBytecode();
   fixture.database = makeDatabase();
-  put32(fixture.database, 224, OBELISK_RT_DESIGN_RECORD_NET);
+  put32(fixture.database, 240, OBELISK_RT_DESIGN_RECORD_NET);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -6706,12 +6727,12 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
 
   // Version 1 code-unit records must remain pointer-free and state-free.
   std::vector<uint8_t> malformed = fixture.database;
-  put64(malformed, 320 + 48, 416);
+  put64(malformed, 336 + 48, 432);
   put64(malformed, 32, imageChecksum(malformed));
   fixture.execution.design_database = malformed.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
             OBELISK_RT_INVALID_DESIGN);
-  put64(malformed, 320 + 48, 0);
+  put64(malformed, 336 + 48, 0);
   put32(malformed, 8, 2);
   put64(malformed, 32, imageChecksum(malformed));
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
@@ -6732,15 +6753,73 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
                             OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
                             OBELISK_RT_EXECUTION_VPI_READ;
   ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  constexpr size_t statements = 400;
+  constexpr size_t sites = 520;
+  constexpr size_t relations = 568;
+
+  // The LRM permits both singular and iterative vpiForInitStmt traversal.
+  // Ordinal zero must satisfy both modes, while later records continue the
+  // dense iterative range.
+  std::vector<uint8_t> dualMode = fixture.database;
+  put16(dualMode, statements + 36, vpiFor);
+  put16(dualMode, statements + 38, 0);
+  put32(dualMode, statements + 24, 0);
+  put16(dualMode, statements + 40 + 36, vpiNullStmt);
+  put64(dualMode, 152, 2);
+  put32(dualMode, sites + 8, 0);
+  put16(dualMode, sites + 12, 1);
+  put32(dualMode, sites + 16 + 8, 0);
+  put16(dualMode, sites + 16 + 12, 2);
+  put16(dualMode, relations + 16 + 12, vpiForInitStmt);
+  put16(dualMode, relations + 16 + 14,
+        uint16_t{2u << 14} | vpiFor);
+  put16(dualMode, relations + 32 + 12, vpiForInitStmt);
+  put16(dualMode, relations + 32 + 14,
+        uint16_t{2u << 14} | vpiFor);
+  put64(dualMode, 32, imageChecksum(dualMode));
+  fixture.execution.design_database = dualMode.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+
+  // Scope-owned records use the exact module traversal selectors rather than
+  // the behavioral vpiStmt relation. Cover a dense module continuous-assign
+  // iterator followed by a distinct alias-statement iterator.
+  std::vector<uint8_t> scopeRelations = fixture.database;
+  for (size_t index = 0; index != 3; ++index) {
+    size_t statement = statements + index * 40;
+    put32(scopeRelations, statement + 8, UINT32_MAX);
+    put32(scopeRelations, statement + 16, UINT32_MAX);
+    put32(scopeRelations, statement + 24, 0);
+    put16(scopeRelations, statement + 38, 0);
+  }
+  put16(scopeRelations, statements + 36, vpiContAssign);
+  put16(scopeRelations, statements + 40 + 36, vpiContAssign);
+  put16(scopeRelations, statements + 80 + 36, vpiAliasStmt);
+  put64(scopeRelations, 152, 0);
+  auto scopeRelation = [&](size_t index, uint32_t target, uint32_t ordinal,
+                           uint16_t selector) {
+    size_t relation = relations + index * 16;
+    put32(scopeRelations, relation, 1);
+    put32(scopeRelations, relation + 4, target);
+    put32(scopeRelations, relation + 8, ordinal);
+    put16(scopeRelations, relation + 12, selector);
+    put16(scopeRelations, relation + 14, vpiModule);
+  };
+  scopeRelation(0, 0, 0, vpiContAssign);
+  scopeRelation(1, 1, 1, vpiContAssign);
+  scopeRelation(2, 2, 0, vpiAliasStmt);
+  put64(scopeRelations, 32, imageChecksum(scopeRelations));
+  fixture.execution.design_database = scopeRelations.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
 
   // Continuous assignments and alias statements are owned by their hierarchy
   // scope rather than by a process/function object.
   std::vector<uint8_t> scopeOwned = fixture.database;
-  put32(scopeOwned, 384 + 40 + 8, UINT32_MAX);
-  put32(scopeOwned, 384 + 40 + 16, UINT32_MAX);
+  put32(scopeOwned, 400 + 40 + 8, UINT32_MAX);
+  put32(scopeOwned, 400 + 40 + 16, UINT32_MAX);
   put64(scopeOwned, 152, 1);
+  put64(scopeOwned, 168, 0);
   for (uint16_t kind : {vpiContAssign, vpiContAssignBit, vpiAliasStmt}) {
-    put16(scopeOwned, 384 + 40 + 36, kind);
+    put16(scopeOwned, 400 + 40 + 36, kind);
     put64(scopeOwned, 32, imageChecksum(scopeOwned));
     fixture.execution.design_database = scopeOwned.data();
     EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK)
@@ -6748,19 +6827,19 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   }
 
   std::vector<uint8_t> scopeOwnedWithProcess = scopeOwned;
-  put32(scopeOwnedWithProcess, 384 + 40 + 8, 0);
+  put32(scopeOwnedWithProcess, 400 + 40 + 8, 0);
   put64(scopeOwnedWithProcess, 32, imageChecksum(scopeOwnedWithProcess));
   fixture.execution.design_database = scopeOwnedWithProcess.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
             OBELISK_RT_INVALID_DESIGN);
 
   std::vector<uint8_t> crossScopeParent = fixture.database;
-  put32(crossScopeParent, 384 + 8, UINT32_MAX);
-  put32(crossScopeParent, 384 + 12, 0);
-  put32(crossScopeParent, 384 + 24, 0);
-  put16(crossScopeParent, 384 + 36, vpiContAssign);
-  put32(crossScopeParent, 384 + 40 + 8, UINT32_MAX);
-  put16(crossScopeParent, 384 + 40 + 36, vpiContAssignBit);
+  put32(crossScopeParent, 400 + 8, UINT32_MAX);
+  put32(crossScopeParent, 400 + 12, 0);
+  put32(crossScopeParent, 400 + 24, 0);
+  put16(crossScopeParent, 400 + 36, vpiContAssign);
+  put32(crossScopeParent, 400 + 40 + 8, UINT32_MAX);
+  put16(crossScopeParent, 400 + 40 + 36, vpiContAssignBit);
   put64(crossScopeParent, 152, 0);
   put64(crossScopeParent, 32, imageChecksum(crossScopeParent));
   fixture.execution.design_database = crossScopeParent.data();
@@ -6768,7 +6847,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
             OBELISK_RT_INVALID_DESIGN);
 
   std::vector<uint8_t> behavioralWithoutProcess = fixture.database;
-  put32(behavioralWithoutProcess, 384 + 40 + 8, UINT32_MAX);
+  put32(behavioralWithoutProcess, 400 + 40 + 8, UINT32_MAX);
   put64(behavioralWithoutProcess, 32, imageChecksum(behavioralWithoutProcess));
   fixture.execution.design_database = behavioralWithoutProcess.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
@@ -6777,7 +6856,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   // Static traversal inventory includes statement kinds that are not eligible
   // for cbStmt, provided they have no semantic callback sites.
   std::vector<uint8_t> nonCallback = fixture.database;
-  put16(nonCallback, 384 + 40 + 36, vpiNullStmt);
+  put16(nonCallback, 400 + 40 + 36, vpiNullStmt);
   put64(nonCallback, 152, 1);
   put64(nonCallback, 32, imageChecksum(nonCallback));
   fixture.execution.design_database = nonCallback.data();
@@ -6796,8 +6875,6 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
     EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
               OBELISK_RT_INVALID_DESIGN);
   };
-  constexpr size_t statements = 384;
-  constexpr size_t sites = 464;
   rejected(statements, 0, 8);                     // zero statement ID
   rejected(statements + 40, 50, 8);               // unsorted statement IDs
   rejected(statements + 40, 100, 8);              // duplicate ID
@@ -6814,12 +6891,12 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(sites, 0, 8);                          // zero site ID
   rejected(sites + 16, 1000, 8);                  // duplicate site ID
   rejected(sites + 16, 900, 8);                   // unsorted site IDs
-  rejected(sites + 8, 2);                         // missing statement target
+  rejected(sites + 8, 3);                         // missing statement target
   rejected(sites + 12, 2, 2);                     // illegal named-block phase
   rejected(sites + 16 + 12, 2, 2);                // duplicate for phase
   rejected(sites + 32 + 12, 0, 2);                // missing for increment
   rejected(sites + 14, 1, 2);                     // reserved flags
-  rejected(128, 160, 8);                          // statement/scope overlap
+  rejected(128, 176, 8);                          // statement/scope overlap
   rejected(144, statements, 8);                   // site/statement overlap
   rejected(128, fixture.database.size() + 1, 8);  // statement past image
   rejected(144, fixture.database.size() + 1, 8);  // site past image
@@ -6827,6 +6904,33 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(152, UINT64_MAX, 8);                   // site span overflow
   rejected(136, uint64_t{UINT32_MAX} + 1, 8);     // statement index cap
   rejected(152, uint64_t{UINT32_MAX} + 1, 8);     // site index cap
+  rejected(relations, 1);                         // missing source object
+  rejected(relations + 4, 3);                     // missing target statement
+  rejected(relations + 8, 1);                     // non-dense handle ordinal
+  rejected(relations + 12, 0, 2);                 // illegal selector
+  rejected(relations + 14, uint16_t{3u << 14} | vpiInitial, 2);
+  rejected(relations + 16 + 14, uint16_t{2u << 14} | vpiFor, 2);
+  rejected(relations + 16 + 4, 0);                 // duplicate incoming edge
+  rejected(relations + 32 + 8, 2);                 // iterate ordinal gap
+  rejected(relations + 32 + 14,
+           uint16_t{2u << 14} | vpiNamedFork, 2); // source kind inconsistency
+  rejected(statements + 80 + 16, UINT32_MAX);     // target ownership mismatch
+  rejected(statements + 80 + 36, vpiCaseItem, 2); // illegal traversal target
+  {
+    std::vector<uint8_t> malformed = fixture.database;
+    std::swap_ranges(malformed.begin() + relations + 16,
+                     malformed.begin() + relations + 32,
+                     malformed.begin() + relations + 32);
+    put64(malformed, 32, imageChecksum(malformed));
+    fixture.execution.design_database = malformed.data();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  }
+  rejected(160, 176, 8);                           // relation/header overlap
+  rejected(160, statements, 8);                    // relation/statement overlap
+  rejected(160, fixture.database.size() + 1, 8);   // relation past image
+  rejected(168, UINT64_MAX, 8);                    // relation span overflow
+  rejected(168, uint64_t{UINT32_MAX} + 1, 8);      // relation index cap
 
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
@@ -6888,8 +6992,8 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
   EXPECT_EQ(scalarInfo.bit_width, 65u);
   EXPECT_EQ(scalarInfo.range_left, 64);
 
-  constexpr uint64_t fieldTypeOffset = 320 + 80;
-  constexpr uint64_t rootTypeOffset = 320;
+  constexpr uint64_t fieldTypeOffset = 336 + 80;
+  constexpr uint64_t rootTypeOffset = 336;
   put64(fixture.database, fieldTypeOffset + 32, rootTypeOffset);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
@@ -6898,8 +7002,8 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
 
 TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   Fixture sourceMetadata;
-  constexpr uint64_t scopeOffset = 160;
-  constexpr uint64_t stringOffset = 400;
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t stringOffset = 416;
   put64(sourceMetadata.database, scopeOffset + 48, stringOffset);
   put64(sourceMetadata.database, scopeOffset + 56, (UINT64_C(12) << 32) | 7);
   put64(sourceMetadata.database, 32, imageChecksum(sourceMetadata.database));
@@ -6911,7 +7015,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
             OBELISK_RT_INVALID_DESIGN);
 
   Fixture inconsistentScalarRange;
-  constexpr uint64_t typeOffset = 320;
+  constexpr uint64_t typeOffset = 336;
   put64(inconsistentScalarRange.database, typeOffset + 16, 63);
   put64(inconsistentScalarRange.database, 32,
         imageChecksum(inconsistentScalarRange.database));
@@ -6919,7 +7023,7 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
             OBELISK_RT_INVALID_DESIGN);
 
   Fixture corrupt;
-  corrupt.database[224 + 16] ^= 1;
+  corrupt.database[240 + 16] ^= 1;
   EXPECT_EQ(obelisk_rt_v1_design_validate(&corrupt.execution),
             OBELISK_RT_INVALID_DESIGN);
   obelisk_rt_context *context = nullptr;

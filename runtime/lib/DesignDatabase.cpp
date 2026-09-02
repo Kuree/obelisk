@@ -1,6 +1,7 @@
 //===- DesignDatabase.cpp - Checked DWARF-like design reflection ----------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -13,6 +14,7 @@
 #include <new>
 #include <optional>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -30,6 +32,8 @@ constexpr uint64_t kTypeSize = 80;
 constexpr uint64_t kIndexSize = 24;
 constexpr uint64_t kStatementSize = 40;
 constexpr uint64_t kStatementSiteSize = 16;
+constexpr uint64_t kRelationSize =
+    obelisk::reflection::RelationLayout.size;
 
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
@@ -122,6 +126,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               read64(data + offsetof(DatabaseHeader, statement_count)),
               read64(data + offsetof(DatabaseHeader, statement_site_offset)),
               read64(data + offsetof(DatabaseHeader, statement_site_count)),
+              read64(data + offsetof(DatabaseHeader, relation_offset)),
+              read64(data + offsetof(DatabaseHeader, relation_count)),
               execution->state_bit_count};
   uint32_t supportedProfile =
       OBELISK_RT_DESIGN_PROFILE_READ | OBELISK_RT_DESIGN_PROFILE_WRITE;
@@ -136,7 +142,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0) !=
           ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0) ||
       ((execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0 &&
-       (database.statementCount != 0 || database.statementSiteCount != 0)) ||
+       (database.statementCount != 0 || database.statementSiteCount != 0 ||
+        database.relationCount != 0)) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -150,13 +157,17 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   database.size) ||
       !validRange(database.statementSites, database.statementSiteCount,
                   kStatementSiteSize, database.size) ||
+      !validRange(database.relations, database.relationCount, kRelationSize,
+                  database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
-      database.statementSites < kHeaderSize || database.stringSize == 0 ||
+      database.statementSites < kHeaderSize ||
+      database.relations < kHeaderSize || database.stringSize == 0 ||
       database.scopeCount > UINT32_MAX || database.objectCount > UINT32_MAX ||
       database.statementCount > UINT32_MAX ||
       database.statementSiteCount > UINT32_MAX ||
+      database.relationCount > UINT32_MAX ||
       database.indexCount != database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
@@ -210,7 +221,28 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                       1) ||
       !rangesDisjoint(database.statementSites, database.statementSiteCount,
                       kStatementSiteSize, database.index, database.indexCount,
-                      kIndexSize))
+                      kIndexSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.scopes, database.scopeCount,
+                      kScopeSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.objects, database.objectCount,
+                      kObjectSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.types, database.typeCount,
+                      kTypeSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.strings, database.stringSize,
+                      1) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.index, database.indexCount,
+                      kIndexSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.statements,
+                      database.statementCount, kStatementSize) ||
+      !rangesDisjoint(database.relations, database.relationCount,
+                      kRelationSize, database.statementSites,
+                      database.statementSiteCount, kStatementSiteSize))
     return false;
   return true;
 }
@@ -739,6 +771,166 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
 
+  std::vector<uint8_t> incomingRelations(database.statementCount, 0);
+  bool havePreviousRelation = false;
+  uint8_t previousTable = 0;
+  uint32_t previousSource = 0;
+  uint16_t previousSelector = 0;
+  uint32_t previousOrdinal = 0;
+  uint16_t currentSourceKind = 0;
+  uint32_t expectedIterateOrdinal = 0;
+  bool handleSeen = false;
+  for (uint64_t index = 0; index != database.relationCount; ++index) {
+    const uint8_t *bytes =
+        database.data + database.relations + index * kRelationSize;
+    obelisk::reflection::RelationView relation(bytes);
+    uint32_t sourceIndex = relation.getSourceIndex();
+    uint32_t targetIndex = relation.getTargetIndex();
+    uint32_t ordinal = relation.getOrdinal();
+    uint16_t selector = relation.getSelector();
+    uint16_t packedSource = relation.getSourceKindAndTable();
+    auto sourceTable = obelisk::reflection::unpackTableKind(packedSource);
+    if (!obelisk::reflection::isValidTableKind(sourceTable) ||
+        targetIndex >= database.statementCount ||
+        incomingRelations[targetIndex] != 0)
+      return false;
+    incomingRelations[targetIndex] = 1;
+    uint8_t table = static_cast<uint8_t>(sourceTable);
+    uint16_t sourceKind =
+        obelisk::reflection::unpackTableKindPayload(packedSource);
+    if (havePreviousRelation &&
+        std::tie(table, sourceIndex, selector, ordinal) <=
+            std::tie(previousTable, previousSource, previousSelector,
+                     previousOrdinal))
+      return false;
+    bool sameSource = havePreviousRelation && table == previousTable &&
+                      sourceIndex == previousSource;
+    bool sameGroup = sameSource && selector == previousSelector;
+    if (sameSource) {
+      if (sourceKind != currentSourceKind)
+        return false;
+    } else {
+      currentSourceKind = sourceKind;
+    }
+    if (!sameGroup) {
+      expectedIterateOrdinal = 0;
+      handleSeen = false;
+    }
+    havePreviousRelation = true;
+    previousTable = table;
+    previousSource = sourceIndex;
+    previousSelector = selector;
+    previousOrdinal = ordinal;
+
+    const auto *sourceDescriptor =
+        obelisk::reflection::findVPIObjectKind(sourceKind);
+    if (!sourceDescriptor ||
+        sourceDescriptor->role != obelisk::reflection::VPIObjectRole::Concrete)
+      return false;
+    const uint8_t *sourceRecord = nullptr;
+    switch (sourceTable) {
+    case obelisk::reflection::TableKind::Scope:
+      if (sourceIndex >= database.scopeCount ||
+          (sourceDescriptor->families &
+           obelisk::reflection::vpiFamilyMask(
+               obelisk::reflection::VPIObjectFamily::Scope)) == 0)
+        return false;
+      sourceRecord =
+          database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize;
+      break;
+    case obelisk::reflection::TableKind::Object: {
+      if (sourceIndex >= database.objectCount)
+        return false;
+      sourceRecord = database.data + database.objects +
+                     uint64_t{sourceIndex} * kObjectSize;
+      uint32_t recordKind = read32(sourceRecord);
+      std::string_view kindName(sourceDescriptor->apiName);
+      if (recordKind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
+        if (kindName != "vpiFunction")
+          return false;
+      } else if (recordKind != OBELISK_RT_DESIGN_RECORD_PROCESS ||
+                 (kindName != "vpiInitial" && kindName != "vpiFinal" &&
+                  kindName != "vpiAlways" && kindName != "vpiTask")) {
+        return false;
+      }
+      break;
+    }
+    case obelisk::reflection::TableKind::Statement:
+      if (sourceIndex >= database.statementCount)
+        return false;
+      sourceRecord = database.data + database.statements +
+                     uint64_t{sourceIndex} * kStatementSize;
+      if (read16(sourceRecord + 36) != sourceKind)
+        return false;
+      break;
+    }
+
+    const uint8_t *target = database.data + database.statements +
+                            uint64_t{targetIndex} * kStatementSize;
+    uint16_t targetKind = read16(target + 36);
+    auto legalTarget = [&](obelisk::reflection::VPITraversalMode mode) {
+      const auto *edge =
+          obelisk::reflection::findVPITraversal(sourceKind, selector, mode);
+      return edge && edge->statementContainment &&
+             obelisk::reflection::vpiObjectSetContains(edge->targets,
+                                                       targetKind);
+    };
+    bool handleLegal =
+        legalTarget(obelisk::reflection::VPITraversalMode::Handle);
+    bool iterateLegal =
+        legalTarget(obelisk::reflection::VPITraversalMode::Iterate);
+    if ((!handleLegal || ordinal != 0) && !iterateLegal)
+      return false;
+    if (handleLegal && ordinal == 0) {
+      if (handleSeen)
+        return false;
+      handleSeen = true;
+    }
+    if (iterateLegal) {
+      if (ordinal != expectedIterateOrdinal)
+        return false;
+      ++expectedIterateOrdinal;
+    }
+    const auto *handleEdge = obelisk::reflection::findVPITraversal(
+        sourceKind, selector, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *iterateEdge = obelisk::reflection::findVPITraversal(
+        sourceKind, selector, obelisk::reflection::VPITraversalMode::Iterate);
+    if (ordinal == 0 && handleEdge && handleEdge->statementContainment &&
+        iterateEdge && iterateEdge->statementContainment &&
+        (!handleLegal || !iterateLegal))
+      return false;
+
+    uint32_t targetOwner = read32(target + 8);
+    uint32_t targetScope = read32(target + 12);
+    uint32_t targetParent = read32(target + 16);
+    switch (sourceTable) {
+    case obelisk::reflection::TableKind::Scope:
+      if (targetOwner != UINT32_MAX || targetParent != UINT32_MAX ||
+          targetScope != sourceIndex)
+        return false;
+      break;
+    case obelisk::reflection::TableKind::Object: {
+      uint64_t sourceScope = read64(sourceRecord + 16);
+      uint32_t sourceScopeIndex =
+          static_cast<uint32_t>((sourceScope - database.scopes) / kScopeSize);
+      if (targetOwner != sourceIndex || targetParent != UINT32_MAX ||
+          targetScope != sourceScopeIndex)
+        return false;
+      break;
+    }
+    case obelisk::reflection::TableKind::Statement:
+      if (targetParent != sourceIndex ||
+          targetOwner != read32(sourceRecord + 8) ||
+          targetScope != read32(sourceRecord + 12))
+        return false;
+      break;
+    }
+  }
+  if (database.relationCount != 0 &&
+      std::any_of(incomingRelations.begin(), incomingRelations.end(),
+                  [](uint8_t incoming) { return incoming != 1; }))
+    return false;
+
   uint64_t previousHash = 0;
   std::string_view previousName;
   std::unordered_set<uint64_t> indexedRecords;
@@ -862,6 +1054,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.statementCount == right.statementCount &&
          left.statementSites == right.statementSites &&
          left.statementSiteCount == right.statementSiteCount &&
+         left.relations == right.relations &&
+         left.relationCount == right.relationCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
