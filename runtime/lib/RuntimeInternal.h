@@ -1397,6 +1397,8 @@ struct DesignDatabaseCache {
   uint64_t statementCount = 0;
   uint64_t statementSites = 0;
   uint64_t statementSiteCount = 0;
+  uint64_t relations = 0;
+  uint64_t relationCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };

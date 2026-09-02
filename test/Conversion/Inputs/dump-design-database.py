@@ -13,7 +13,7 @@ if not match:
     raise SystemExit("missing obelisk.design.database attribute")
 
 image = bytes(int(value) & 0xFF for value in re.findall(r"-?\d+", match.group(1)))
-if len(image) < 160 or image[:8] != b"OBDSGN1\0":
+if len(image) < 176 or image[:8] != b"OBDSGN1\0":
     raise SystemExit("invalid Obelisk design-database header")
 
 scope_offset, scope_count = struct.unpack_from("<QQ", image, 48)
@@ -22,6 +22,7 @@ type_offset, type_count = struct.unpack_from("<QQ", image, 80)
 string_offset, string_size = struct.unpack_from("<QQ", image, 96)
 statement_offset, statement_count = struct.unpack_from("<QQ", image, 128)
 statement_site_offset, statement_site_count = struct.unpack_from("<QQ", image, 144)
+relation_offset, relation_count = struct.unpack_from("<QQ", image, 160)
 
 
 def checked_range(offset, count, size, description):
@@ -35,6 +36,7 @@ checked_range(type_offset, type_count, 80, "type")
 checked_range(string_offset, string_size, 1, "string")
 checked_range(statement_offset, statement_count, 40, "statement")
 checked_range(statement_site_offset, statement_site_count, 16, "statement site")
+checked_range(relation_offset, relation_count, 16, "relation")
 
 
 def string_at(offset):
@@ -100,4 +102,17 @@ for index in range(statement_site_count):
     print(
         f"statement_site id={stable_id} statement={statement} phase={phase} "
         f"flags=0x{flags:x}"
+    )
+
+for index in range(relation_count):
+    offset = relation_offset + index * 16
+    source, target, ordinal, selector, packed_source = struct.unpack_from(
+        "<IIIHH", image, offset
+    )
+    source_table = packed_source >> 14
+    source_kind = packed_source & 0x3FFF
+    print(
+        f"relation source_table={source_table} source={source} "
+        f"source_type={source_kind} selector={selector} ordinal={ordinal} "
+        f"target_statement={target}"
     )

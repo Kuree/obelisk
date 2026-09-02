@@ -842,10 +842,12 @@ typedef struct obelisk_rt_design_database_header_v1 {
   uint64_t statement_count;
   uint64_t statement_site_offset;
   uint64_t statement_site_count;
+  uint64_t relation_offset;
+  uint64_t relation_count;
 } obelisk_rt_design_database_header_v1;
 
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
-#define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 160u
+#define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 176u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 #define OBELISK_RT_DESIGN_BYTECODE_MAGIC "OBBCDS1"
 #define OBELISK_RT_DESIGN_DATABASE_MAGIC "OBDSGN1"

@@ -66,13 +66,16 @@ def HeaderStatementSiteOffset
     : ReflectionField<"StatementSiteOffset", 144, U64LE>;
 def HeaderStatementSiteCount
     : ReflectionField<"StatementSiteCount", 152, U64LE>;
-def Header : ReflectionLayout<"Header", 160,
+def HeaderRelationOffset : ReflectionField<"RelationOffset", 160, U64LE>;
+def HeaderRelationCount : ReflectionField<"RelationCount", 168, U64LE>;
+def Header : ReflectionLayout<"Header", 176,
   [HeaderMagic, HeaderVersion, HeaderReserved, HeaderProfile, HeaderSize,
    HeaderImageSize, HeaderChecksum, HeaderRoot, HeaderScopeOffset,
    HeaderScopeCount, HeaderObjectOffset, HeaderObjectCount, HeaderTypeOffset,
    HeaderTypeCount, HeaderStringOffset, HeaderStringSize, HeaderIndexOffset,
    HeaderIndexCount, HeaderStatementOffset, HeaderStatementCount,
-   HeaderStatementSiteOffset, HeaderStatementSiteCount]>;
+   HeaderStatementSiteOffset, HeaderStatementSiteCount, HeaderRelationOffset,
+   HeaderRelationCount]>;
 
 def ScopeKindField : ReflectionField<"Kind", 0, U32LE>;
 def ScopeCaps : ReflectionField<"Caps", 4, U32LE>;

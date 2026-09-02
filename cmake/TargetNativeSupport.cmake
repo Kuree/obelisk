@@ -140,6 +140,8 @@ set(_obelisk_target_runtime_vpi_headers
     "${_obelisk_target_runtime_vpi_include_dir}/sv_vpi_user.h"
     "${_obelisk_target_runtime_vpi_include_dir}/vpi_compatibility.h")
 set(_obelisk_target_runtime_reflection_headers
+    "${PROJECT_SOURCE_DIR}/include/obelisk/Reflection/DesignReflection.h"
+    "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/DesignReflectionLayout.h.inc"
     "${PROJECT_SOURCE_DIR}/include/obelisk/Reflection/VPIObjectModel.h"
     "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/VPIObjectModel.h.inc")
 set(_obelisk_target_runtime_objects)
