@@ -609,6 +609,10 @@ NONSTANDARD_DPI_PACKED_RESULTS = Exclusion(
     "DPI function results may use scalar bit or logic but not packed arrays; "
     "the test's accessor macros export functions returning bit vectors under "
     "Verilator's requested 1800-2005 mode")
+DPI_PACKED_EXPORT_RESULT = Exclusion(
+    "IEEE 1800-2017 35.5.5",
+    "an exported DPI function result may use scalar bit or logic but not a "
+    "packed array; the test exports dpix_f_bit15 with a bit [14:0] result")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_array_method": POST_2017_ARRAY_MAP,
@@ -641,6 +645,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_trigger_null": NULL_OBJECT_MEMBER_EVENT_CONTROL,
     "t_clocking_timing": USE_BEFORE_DECLARATION,
     "t_dpi_lib": DPI_PART_SELECT_EXTENSION,
+    "t_dpi_export": DPI_PACKED_EXPORT_RESULT,
     "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
     "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
     "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,

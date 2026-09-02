@@ -505,6 +505,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 35.5.5")
         self.assertIn("not packed arrays", excluded.reason)
 
+    def test_packed_dpi_export_result_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_dpi_export"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 35.5.5")
+        self.assertIn("bit [14:0] result", excluded.reason)
+
     def test_verilator_dpi_system_task_alias_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_dpi_sys"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 36.3.1")
