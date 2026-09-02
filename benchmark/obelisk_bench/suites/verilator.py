@@ -985,6 +985,115 @@ def detect_compile_defines(descriptor: Path) -> list[str]:
     return result
 
 
+def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
+    """Return portable DPI sources named by an upstream compile descriptor.
+
+    The descriptor is data, never executed.  Resolve only literal native-source
+    spellings from the two compile flag lists, including the common
+    ``test.pli_filename`` alias, and only within the checked-out test_regress
+    tree.  A Verilator model main is not a DPI implementation, so require the
+    standard ``svdpi.h`` include before forwarding a source to Obelisk's native
+    build.
+    """
+    if not descriptor.exists():
+        return []
+    text = descriptor.read_text(encoding="utf-8", errors="replace")
+    if not re.search(r"(?:\.c(?:c|pp|xx)?\b|pli_filename)", text):
+        return []
+    top = descriptor.with_suffix(".v")
+    if not top.exists():
+        top = descriptor.with_suffix(".sv")
+    if not top.exists() or not re.search(
+            r"\b(?:import|export)\s+\"DPI(?:-C)?\"",
+            top.read_text(encoding="utf-8", errors="replace")):
+        return []
+    try:
+        module = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    aliases: dict[str, str] = {}
+    for statement in module.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if (isinstance(target, ast.Attribute) and
+                isinstance(target.value, ast.Name) and
+                target.value.id == "test" and
+                isinstance(statement.value, ast.Constant) and
+                isinstance(statement.value.value, str)):
+            aliases[target.attr] = statement.value.value
+
+    def literal_strings(node: ast.AST) -> list[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [value for element in node.elts
+                    for value in literal_strings(element)]
+        if (isinstance(node, ast.Attribute) and
+                isinstance(node.value, ast.Name) and
+                node.value.id == "test" and node.attr in aliases):
+            return [aliases[node.attr]]
+        return []
+
+    spellings: list[str] = []
+    for node in ast.walk(module):
+        if not (isinstance(node, ast.Call) and
+                isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id == "test" and
+                node.func.attr in ("compile", "lint")):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg not in ("v_flags2", "verilator_flags2"):
+                continue
+            for fragment in literal_strings(keyword.value):
+                spellings.extend(shlex.split(fragment))
+
+    root = descriptor.parent.parent.resolve()
+    native_suffixes = {".c", ".cc", ".cpp", ".cxx"}
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for spelling in spellings:
+        if Path(spelling).suffix.lower() not in native_suffixes:
+            continue
+        path = Path(spelling)
+        candidates = ([path] if path.is_absolute() else
+                      [root / path, descriptor.parent / path])
+        resolved = next((candidate.resolve() for candidate in candidates
+                         if candidate.exists()), None)
+        if (resolved is None or
+                not (resolved == root or root in resolved.parents) or
+                resolved in seen):
+            continue
+        source = resolved.read_text(encoding="utf-8", errors="replace")
+        if not re.search(r"#\s*include\s*[<\"]svdpi\.h[>\"]", source):
+            continue
+        if ("Unknown simulator for DPI test" in source and
+                "define NEED_EXTERNS" not in source):
+            continue
+        seen.add(resolved)
+        result.append(resolved)
+    return result
+
+
+def descriptor_dpi_compiler_flags(sources: list[Path], header: Path) -> list[str]:
+    """Return bounded compatibility flags for descriptor DPI sources."""
+    flags = ["-include", str(header)]
+    # These guarded branches are the sources' generic DPI implementations:
+    # unlike their Verilator branches they need no generated model headers.
+    # Select one only when it exposes NEED_EXTERNS for that simulator spelling.
+    for source in sources:
+        text = source.read_text(encoding="utf-8", errors="replace")
+        if "defined(NC)" in text and "define NEED_EXTERNS" in text:
+            flags.append("-DNC")
+            break
+        if "defined(CADENCE)" in text and "define NEED_EXTERNS" in text:
+            flags.append("-DCADENCE")
+            break
+    return flags
+
+
 def contains_runtime_error(stdout: str, stderr: str) -> bool:
     """Whether simulation emitted an error despite returning success."""
     return bool(RUNTIME_ERROR.search(stdout) or RUNTIME_ERROR.search(stderr))
@@ -1170,7 +1279,8 @@ def judge_one(
         return model.Outcome(model.SKIP,
                              f"{excluded.clause}: {excluded.reason}")
     top_text = top.read_text(encoding="utf-8", errors="replace")
-    expectation = detect_expectation(name, top.with_suffix(".py"))
+    descriptor = top.with_suffix(".py")
+    expectation = detect_expectation(name, descriptor)
 
     with tempfile.TemporaryDirectory(prefix="obelisk-vlt-") as tmp:
         prepare_generated_fixtures(name, tmp)
@@ -1182,11 +1292,44 @@ def judge_one(
         )
         if not native.ok:
             return model.Outcome(model.COMPILE_FAIL, native.stderr)
+        descriptor_native = runner.NativeBuildResult(True, [], "")
+        descriptor_sources = (
+            [] if expectation.compile_error
+            else detect_descriptor_dpi_sources(descriptor)
+        )
+        descriptor_defines = detect_compile_defines(descriptor)
+        if descriptor_sources:
+            header = Path(tmp) / "descriptor_dpi.h"
+            header_flags = [
+                "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
+                "-I", str(top.parent), *descriptor_defines,
+            ]
+            header_flags.extend(
+                "-D" + definition
+                for definition in COMPATIBILITY_DEFINES.get(name, ()))
+            generated = runner.emit_dpi_header(
+                obelisk, [str(top)], str(header), header_flags,
+                single_unit=SINGLE_UNIT,
+            )
+            if not generated.ok:
+                return model.Outcome(model.COMPILE_FAIL, generated.stderr)
+            descriptor_native = runner.build_vpi_inputs(
+                obelisk, [str(source) for source in descriptor_sources], tmp,
+                compiler_flags=descriptor_dpi_compiler_flags(
+                    descriptor_sources, header),
+                cwd=str(top.parent),
+                module_name="verilator_descriptor_" + "".join(
+                    character if character.isalnum() else "_"
+                    for character in name),
+            )
+            if not descriptor_native.ok:
+                return model.Outcome(
+                    model.COMPILE_FAIL, descriptor_native.stderr)
         shell = Path(tmp) / "top.v"
         shell.write_text(
             make_top_shell(detect_inputs(top_text),
-                           detect_sim_time(top.with_suffix(".py")),
-                           detect_timing_loop(top.with_suffix(".py")),
+                           detect_sim_time(descriptor),
+                           detect_timing_loop(descriptor),
                            shell_module_name(top_text)),
             encoding="utf-8")
         binary = Path(tmp) / "sim"
@@ -1200,7 +1343,7 @@ def judge_one(
             "-y", str(top.parent), "-Y", ".v", "-Y", ".sv",
             "-I", str(top.parent),
         ]
-        extra.extend(detect_compile_defines(top.with_suffix(".py")))
+        extra.extend(descriptor_defines)
         extra.extend("-D" + definition
                      for definition in COMPATIBILITY_DEFINES.get(name, ()))
         if compile_threads is not None:
@@ -1208,7 +1351,7 @@ def judge_one(
         compiled = runner.compile_design(
             obelisk, [str(top), str(shell)], str(binary), extra,
             single_unit=SINGLE_UNIT,
-            native_inputs=native.inputs,
+            native_inputs=[*native.inputs, *descriptor_native.inputs],
             vpi=vpi_mode or ("full" if native.inputs else "off"),
         )
 
@@ -1224,7 +1367,7 @@ def judge_one(
             return model.Outcome(
                 model.COMPILE_FAIL,
                 classify_dependency_failure(name, compiled.stderr))
-        if not detect_executes(top.with_suffix(".py")):
+        if not detect_executes(descriptor):
             # Upstream stops here for this test, so this is its whole verdict.
             return model.Outcome(model.PASS)
 
@@ -1235,7 +1378,7 @@ def judge_one(
         (Path(tmp) / "t").symlink_to(top.parent, target_is_directory=True)
         result = runner.execute(
             str(binary), timeout,
-            args=detect_run_args(top.with_suffix(".py")), cwd=tmp)
+            args=detect_run_args(descriptor), cwd=tmp)
         runtime_log = result.stdout + result.stderr
         runtime_error = contains_runtime_error(result.stdout, result.stderr)
         if expectation.run_error:
@@ -1248,7 +1391,6 @@ def judge_one(
             return model.Outcome(
                 model.RUN_FAIL,
                 classify_dependency_failure(name, runtime_log))
-        descriptor = top.with_suffix(".py")
         runtime_error_mismatch = runtime_errors_mismatch_golden(
             descriptor, result.stdout, result.stderr)
         if (result.ok and not runtime_error_mismatch and

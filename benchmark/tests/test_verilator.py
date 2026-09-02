@@ -230,6 +230,45 @@ class CompileDefinesDescriptorTest(unittest.TestCase):
         )
 
 
+class DescriptorDPISourcesTest(unittest.TestCase):
+    def sources(self, descriptor_text: str, sources: dict[str, str]):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            regress = Path(tmp) / "test_regress"
+            directory = regress / "t"
+            directory.mkdir(parents=True)
+            descriptor = directory / "t_x.py"
+            descriptor.write_text(descriptor_text, encoding="utf-8")
+            descriptor.with_suffix(".v").write_text(
+                'module t; import "DPI-C" function void dpi(); endmodule\n',
+                encoding="utf-8")
+            for name, text in sources.items():
+                path = directory / name
+                path.write_text(text, encoding="utf-8")
+            return verilator.detect_descriptor_dpi_sources(descriptor)
+
+    def test_literal_source_flag_is_resolved_from_test_regress(self):
+        sources = self.sources(
+            'test.compile(v_flags2=["t/t_x_c.cpp"])\n',
+            {"t_x_c.cpp": '#include "svdpi.h"\n'},
+        )
+        self.assertEqual([path.name for path in sources], ["t_x_c.cpp"])
+
+    def test_pli_filename_used_by_exe_is_forwarded(self):
+        sources = self.sources(
+            'test.pli_filename = "t/t_x_c.cpp"\n'
+            'test.compile(verilator_flags2=["--exe", test.pli_filename])\n',
+            {"t_x_c.cpp": "#include <svdpi.h>\n"},
+        )
+        self.assertEqual([path.name for path in sources], ["t_x_c.cpp"])
+
+    def test_verilator_model_main_is_not_mistaken_for_dpi_code(self):
+        sources = self.sources(
+            'test.compile(v_flags2=["t/t_x_main.cpp"])\n',
+            {"t_x_main.cpp": '#include "Vt_x.h"\n'},
+        )
+        self.assertEqual(sources, [])
+
+
 class RuntimeErrorTest(unittest.TestCase):
     def test_error_on_stderr_is_a_runtime_failure(self):
         self.assertTrue(verilator.contains_runtime_error(

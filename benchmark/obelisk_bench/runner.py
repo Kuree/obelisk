@@ -348,6 +348,41 @@ def compile_frontend(obelisk: str, sources: list[str], output: str,
     )
 
 
+def emit_dpi_header(obelisk: str, sources: list[str], output: str,
+                    extra_flags: list[str], std: str = "1800-2017",
+                    single_unit: bool = True,
+                    timeout: float = 60.0) -> CompileResult:
+    """Emit the C declarations a native DPI implementation must include."""
+    command = [obelisk]
+    if single_unit:
+        command.append("--single-unit")
+    command += [
+        f"--std={std}", *extra_flags, *sources,
+        "--emit-dpi-header", "-o", output,
+    ]
+    try:
+        result = _run_with_retry(command, timeout)
+    except subprocess.TimeoutExpired:
+        return CompileResult(
+            ok=False, stderr=f"DPI header generation exceeded {timeout:g}s",
+            failure_kind="timeout",
+        )
+    except OSError as error:
+        return CompileResult(
+            ok=False, stderr=f"DPI header generation could not launch: {error}",
+            failure_kind="launch",
+        )
+    return CompileResult(
+        ok=result.returncode == 0,
+        stderr=result.stdout + result.stderr,
+        failure_kind=(
+            None if result.returncode == 0
+            else "crash" if result.returncode < 0
+            else "compile"
+        ),
+    )
+
+
 def compile_preprocessor(obelisk: str, sources: list[str], output: str,
                          extra_flags: list[str], std: str = "1800-2017",
                          single_unit: bool = True,
