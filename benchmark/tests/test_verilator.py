@@ -519,6 +519,7 @@ class ExcludedTest(unittest.TestCase):
         excluded = verilator.EXCLUDED["t_dpi_sys"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 36.3.1")
         self.assertIn("PLI callback registry", excluded.reason)
+        self.assertIs(verilator.EXCLUDED["t_dpi_display"], excluded)
 
     def test_an_excluded_test_is_skipped_without_compiling(self):
         # The skip has to come before the test file is even read, so that

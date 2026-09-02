@@ -454,7 +454,7 @@ VERILATOR_DPI_SYSTEM_TASK_ALIAS = Exclusion(
     "IEEE 1800-2017 36.3.1",
     "a user-defined system task or function is registered through the PLI "
     "callback registry; the test instead requires Verilator's private shortcut "
-    "that aliases $dpii_sys and $dpii_func calls to DPI imports")
+    "that aliases $dpii_* system calls to DPI imports")
 VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "IEEE 1800-2017 20.15.1",
     "$random uses the standard's normative probabilistic-distribution "
@@ -621,6 +621,7 @@ VERILATOR_DPI_DECLARATION_COMMENT = Exclusion(
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
+    "t_dpi_display": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
