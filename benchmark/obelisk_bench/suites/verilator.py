@@ -1283,6 +1283,32 @@ def shell_module_name(top_text: str) -> str:
     return SHELL_ALTERNATE_NAME if MODULE_TOP.search(top_text) else "top"
 
 
+def detect_time_scope_declarations(
+        top_text: str, module_name: str = "t") -> tuple[str, ...]:
+    """Return one module's explicit timeunit/timeprecision declarations."""
+    text = re.sub(r"//[^\n]*|/\*.*?\*/", " ", top_text,
+                  flags=re.DOTALL)
+    module = re.compile(
+        r"^\s*module\s+" + re.escape(module_name) + r"\b", re.MULTILINE)
+    matches = list(module.finditer(text))
+    if not matches:
+        return ()
+    body_start = matches[-1].end()
+    end = re.search(r"^\s*endmodule\b", text[body_start:], re.MULTILINE)
+    body_end = body_start + end.start() if end else len(text)
+    body = text[body_start:body_end]
+    declarations = []
+    seen = set()
+    for match in re.finditer(
+            r"\b(timeunit|timeprecision)\s+([^;]+);", body):
+        keyword = match.group(1)
+        if keyword in seen:
+            continue
+        seen.add(keyword)
+        declarations.append(f"{keyword} {match.group(2).strip()};")
+    return tuple(declarations)
+
+
 def needs_driver_shell(top_text: str) -> bool:
     """Whether Verilator's generated main would need our clock shell."""
     return driver_module_name(top_text) is not None
@@ -1754,7 +1780,8 @@ def runtime_errors_mismatch_golden(
 def make_top_shell(inputs: list[str | InputPort], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top",
-                   instance_module: str = "t") -> str:
+                   instance_module: str = "t",
+                   time_scope_declarations: tuple[str, ...] = ()) -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
     ports = [value if isinstance(value, InputPort)
              else InputPort(value, f"reg {value};")
@@ -1762,6 +1789,8 @@ def make_top_shell(inputs: list[str | InputPort], sim_time: int = SIM_TIME,
     ports.sort(key=lambda port: port.name)
     names = {port.name for port in ports}
     lines = [f"module {module_name};"]
+    lines.extend(f"    {declaration}"
+                 for declaration in time_scope_declarations)
     for port in ports:
         lines.append(f"    {port.declaration}")
     lines.append(f"    {instance_module} t (")
@@ -1934,11 +1963,13 @@ def judge_one(
             shell = Path(tmp) / "top.v"
             selected_top = shell_module_name(top_text)
             shell.write_text(
-                make_top_shell(detect_input_ports(top_text, driver_module),
-                               detect_sim_time(descriptor),
-                               detect_timing_loop(descriptor),
-                               selected_top,
-                               driver_module),
+                make_top_shell(
+                    detect_input_ports(top_text, driver_module),
+                    detect_sim_time(descriptor),
+                    detect_timing_loop(descriptor),
+                    selected_top,
+                    driver_module,
+                    detect_time_scope_declarations(top_text, driver_module)),
                 encoding="utf-8")
             design_sources.append(str(shell))
         binary = Path(tmp) / "sim"

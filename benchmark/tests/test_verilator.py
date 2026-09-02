@@ -177,6 +177,21 @@ class TopShellTest(unittest.TestCase):
             ["clk"], instance_module="test")
         self.assertIn("test t (", shell)
 
+    def test_explicit_dut_time_scope_is_copied_to_the_shell(self):
+        source = ("module t;\n"
+                  "  timeunit 10s; timeprecision 1s;\n"
+                  "endmodule\n")
+        declarations = verilator.detect_time_scope_declarations(source)
+        self.assertEqual(
+            declarations, ("timeunit 10s;", "timeprecision 1s;"))
+        shell = verilator.make_top_shell(
+            [], time_scope_declarations=declarations)
+        self.assertIn(
+            "module top;\n"
+            "    timeunit 10s;\n"
+            "    timeprecision 1s;\n",
+            shell)
+
 
 class GeneratedFixtureTest(unittest.TestCase):
     def test_fread_fixture_matches_upstream_descriptor(self):
