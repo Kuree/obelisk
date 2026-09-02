@@ -900,6 +900,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("1-bit literal", excluded.reason)
         self.assertIn("3-bit and 32-bit", excluded.reason)
 
+    def test_event_trigger_requires_an_event_identifier(self):
+        excluded = verilator.EXCLUDED["t_event_control_pass"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 15.5.1")
+        self.assertIn("hierarchical_event_identifier", excluded.reason)
+        self.assertIn("b.get_event()", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")

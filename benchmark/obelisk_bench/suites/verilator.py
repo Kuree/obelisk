@@ -851,6 +851,11 @@ SIZED_ENUM_ENCODING_WIDTH = Exclusion(
     "a sized literal used as an enum encoding must have exactly the enum "
     "base type's width; the test assigns a 1-bit literal to 3-bit and 32-bit "
     "enum bases and requires Verilator's suppressed WIDTH diagnostic")
+EVENT_TRIGGER_METHOD_CALL = Exclusion(
+    "IEEE 1800-2017 15.5.1",
+    "an event trigger takes a hierarchical_event_identifier, not an arbitrary "
+    "event-valued expression; the test requires Verilator to accept the "
+    "function call b.get_event() directly after the trigger operator")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -871,6 +876,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
+    "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
