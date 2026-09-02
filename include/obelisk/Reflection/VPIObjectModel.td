@@ -29,6 +29,10 @@ def AssertionFamily : VPIObjectFamily<"Assertion", 11>;
 def TransientFamily : VPIObjectFamily<"Transient", 12>;
 def RuntimeFamily : VPIObjectFamily<"Runtime", 13>;
 def OtherFamily : VPIObjectFamily<"Other", 14>;
+// Statement objects elaborated directly in a hierarchy scope rather than in
+// a behavioral process/function code unit.
+def ScopeOwnedStatementFamily
+    : VPIObjectFamily<"ScopeOwnedStatement", 15>;
 
 // A public VPI spelling is not necessarily a concrete value returned by
 // vpiType.  Keep abstract grouping selectors, traversal-only spellings, and
@@ -64,7 +68,8 @@ def Begin : VPIObjectKind<"vpiBegin", 4, [StatementFamily, ScopeFamily]>;
 def Case : VPIObjectKind<"vpiCase", 5, [StatementFamily]>;
 def CaseItem : VPIObjectKind<"vpiCaseItem", 6, [StatementFamily]>;
 def Constant : VPIObjectKind<"vpiConstant", 7, [ExpressionFamily]>;
-def ContAssign : VPIObjectKind<"vpiContAssign", 8, [StatementFamily]>;
+def ContAssign : VPIObjectKind<"vpiContAssign", 8,
+  [StatementFamily, ScopeOwnedStatementFamily]>;
 def Deassign : VPIObjectKind<"vpiDeassign", 9, [StatementFamily]>;
 def DefParam : VPIObjectKind<"vpiDefParam", 10, [DeclarationFamily]>;
 def DelayControl : VPIObjectKind<"vpiDelayControl", 11, [StatementFamily]>;
@@ -155,7 +160,7 @@ def SwitchArray : VPIObjectKind<"vpiSwitchArray", 117,
 def UdpArray : VPIObjectKind<"vpiUdpArray", 118,
   [ArrayFamily, PrimitiveFamily]>;
 def ContAssignBit : VPIObjectKind<"vpiContAssignBit", 128,
-  [StatementFamily]>;
+  [StatementFamily, ScopeOwnedStatementFamily]>;
 def NamedEventArray : VPIObjectKind<"vpiNamedEventArray", 129,
   [ArrayFamily, VariableFamily]>;
 def IndexedPartSelect : VPIObjectKind<"vpiIndexedPartSelect", 130,
@@ -254,7 +259,8 @@ def Constraint : VPIObjectKind<"vpiConstraint", 653, [DeclarationFamily]>;
 def ConstraintOrdering : VPIObjectKind<"vpiConstraintOrdering", 654,
   [DeclarationFamily]>;
 def DistItem : VPIObjectKind<"vpiDistItem", 645, [ExpressionFamily]>;
-def AliasStmt : VPIObjectKind<"vpiAliasStmt", 646, [StatementFamily]>;
+def AliasStmt : VPIObjectKind<"vpiAliasStmt", 646,
+  [StatementFamily, ScopeOwnedStatementFamily]>;
 def Thread : VPIObjectKind<"vpiThread", 647,
   [ProcessFamily, TransientFamily]>;
 def MethodFuncCall : VPIObjectKind<"vpiMethodFuncCall", 648,

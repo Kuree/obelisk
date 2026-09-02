@@ -17,6 +17,9 @@ module attributes {
     // normalized by stable ID, not by mutable MLIR block order or source loc.
     obelisk_sim.statement.decl 200 in 10 scope 0 type 15 parent 100 loc("test.sv":9:3)
     obelisk_sim.statement.decl 100 in 10 scope 0 type 33 name "body" {is_protected} loc("test.sv":8:1)
+    // Scope-owned continuous assignments are owned directly by the exact
+    // elaborated scope and therefore omit a behavioral code-unit owner.
+    obelisk_sim.statement.decl 50 scope 0 type 8 loc("test.sv":7:1)
     // Non-cbStmt statement kinds are still traversal-visible identities and
     // correctly have no semantic callback-site record.
     obelisk_sim.statement.decl 150 in 10 scope 0 type 38 parent 100 loc("test.sv":8:7)
@@ -37,11 +40,12 @@ module attributes {
   }
 }
 
-// DATABASE: statement id=100 owner=0 scope=0 parent=4294967295 type=33 flags=0x1 source=test.sv:8:1 name=body
-// DATABASE-NEXT: statement id=150 owner=0 scope=0 parent=0 type=38 flags=0x0 source=test.sv:8:7 name=
-// DATABASE-NEXT: statement id=200 owner=0 scope=0 parent=0 type=15 flags=0x0 source=test.sv:9:3 name=
-// DATABASE-NEXT: statement_site id=1000 statement=0 phase=0 flags=0x0
-// DATABASE-NEXT: statement_site id=1100 statement=2 phase=1 flags=0x0
-// DATABASE-NEXT: statement_site id=1200 statement=2 phase=2 flags=0x0
+// DATABASE: statement id=50 owner=4294967295 scope=0 parent=4294967295 type=8 flags=0x0 source=test.sv:7:1 name=
+// DATABASE-NEXT: statement id=100 owner=0 scope=0 parent=4294967295 type=33 flags=0x1 source=test.sv:8:1 name=body
+// DATABASE-NEXT: statement id=150 owner=0 scope=0 parent=1 type=38 flags=0x0 source=test.sv:8:7 name=
+// DATABASE-NEXT: statement id=200 owner=0 scope=0 parent=1 type=15 flags=0x0 source=test.sv:9:3 name=
+// DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
+// DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0
+// DATABASE-NEXT: statement_site id=1200 statement=3 phase=2 flags=0x0
 
 // WAVEFORM-NOT: statement

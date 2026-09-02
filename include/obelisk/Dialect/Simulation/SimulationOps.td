@@ -117,14 +117,17 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
     Describes one elaborated statement occurrence independently of executable
     fragments and bytecode. The exact callback sites are separate inventory
     records because one statement (notably `for`) may have multiple semantic
-    cbStmt points. `scope_id` is the exact hierarchy scope that owns the code
-    unit; statement nesting is represented only by `parent_id`.
+    cbStmt points. `scope_id` is the exact elaborated hierarchy scope. The
+    optional code-unit ID owns behavioral statements; scope-owned static
+    statement objects omit it. Statement nesting is represented only by
+    `parent_id`.
   }];
-  let arguments = (ins I64Attr:$id, I64Attr:$code_unit_id, I64Attr:$scope_id,
-                       I32Attr:$vpi_kind, OptionalAttr<I64Attr>:$parent_id,
+  let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$code_unit_id,
+                       I64Attr:$scope_id, I32Attr:$vpi_kind,
+                       OptionalAttr<I64Attr>:$parent_id,
                        OptionalAttr<StrAttr>:$name,
                        OptionalAttr<UnitAttr>:$is_protected);
-  let assemblyFormat = [{$id `in` $code_unit_id `scope` $scope_id
+  let assemblyFormat = [{$id (`in` $code_unit_id^)? `scope` $scope_id
     `type` $vpi_kind (`parent` $parent_id^)? (`name` $name^)? attr-dict}];
   let hasVerifier = 1;
 }

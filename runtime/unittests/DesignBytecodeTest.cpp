@@ -4,6 +4,7 @@
 #include "../lib/RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
 
@@ -6731,6 +6732,47 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
                             OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
                             OBELISK_RT_EXECUTION_VPI_READ;
   ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+
+  // Continuous assignments and alias statements are owned by their hierarchy
+  // scope rather than by a process/function object.
+  std::vector<uint8_t> scopeOwned = fixture.database;
+  put32(scopeOwned, 384 + 40 + 8, UINT32_MAX);
+  put32(scopeOwned, 384 + 40 + 16, UINT32_MAX);
+  put64(scopeOwned, 152, 1);
+  for (uint16_t kind : {vpiContAssign, vpiContAssignBit, vpiAliasStmt}) {
+    put16(scopeOwned, 384 + 40 + 36, kind);
+    put64(scopeOwned, 32, imageChecksum(scopeOwned));
+    fixture.execution.design_database = scopeOwned.data();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK)
+        << kind;
+  }
+
+  std::vector<uint8_t> scopeOwnedWithProcess = scopeOwned;
+  put32(scopeOwnedWithProcess, 384 + 40 + 8, 0);
+  put64(scopeOwnedWithProcess, 32, imageChecksum(scopeOwnedWithProcess));
+  fixture.execution.design_database = scopeOwnedWithProcess.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+
+  std::vector<uint8_t> crossScopeParent = fixture.database;
+  put32(crossScopeParent, 384 + 8, UINT32_MAX);
+  put32(crossScopeParent, 384 + 12, 0);
+  put32(crossScopeParent, 384 + 24, 0);
+  put16(crossScopeParent, 384 + 36, vpiContAssign);
+  put32(crossScopeParent, 384 + 40 + 8, UINT32_MAX);
+  put16(crossScopeParent, 384 + 40 + 36, vpiContAssignBit);
+  put64(crossScopeParent, 152, 0);
+  put64(crossScopeParent, 32, imageChecksum(crossScopeParent));
+  fixture.execution.design_database = crossScopeParent.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+
+  std::vector<uint8_t> behavioralWithoutProcess = fixture.database;
+  put32(behavioralWithoutProcess, 384 + 40 + 8, UINT32_MAX);
+  put64(behavioralWithoutProcess, 32, imageChecksum(behavioralWithoutProcess));
+  fixture.execution.design_database = behavioralWithoutProcess.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
 
   // Static traversal inventory includes statement kinds that are not eligible
   // for cbStmt, provided they have no semantic callback sites.

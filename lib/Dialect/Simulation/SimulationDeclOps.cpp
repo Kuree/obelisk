@@ -132,7 +132,8 @@ LogicalResult SimCodeUnitDeclOp::verify() {
 
 LogicalResult SimStatementDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "statement ID")) ||
-      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      (getCodeUnitIdAttr() &&
+       failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID"))) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
       failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
       (getParentIdAttr() && failed(verifyNonnegative(*this, getParentIdAttr(),
@@ -140,7 +141,7 @@ LogicalResult SimStatementDeclOp::verify() {
     return failure();
   if (getId() == 0)
     return emitOpError("statement ID must be nonzero");
-  if (getCodeUnitId() == 0)
+  if (getCodeUnitId() && *getCodeUnitId() == 0)
     return emitOpError("code-unit ID must be nonzero");
   if (getParentIdAttr() && *getParentId() == getId())
     return emitOpError("cannot be its own parent");
@@ -150,6 +151,14 @@ LogicalResult SimStatementDeclOp::verify() {
       (kind->families &
        reflection::vpiFamilyMask(reflection::VPIObjectFamily::Statement)) == 0)
     return emitOpError("VPI kind is not a concrete statement object");
+  bool scopeOwned =
+      (kind->families &
+       reflection::vpiFamilyMask(
+           reflection::VPIObjectFamily::ScopeOwnedStatement)) != 0;
+  if (scopeOwned == getCodeUnitId().has_value())
+    return emitOpError(scopeOwned
+                           ? "scope-owned statement must omit a code-unit ID"
+                           : "behavioral statement requires a code-unit ID");
   bool named = kind && (StringRef(kind->apiName) == "vpiNamedBegin" ||
                         StringRef(kind->apiName) == "vpiNamedFork");
   if (named != getName().has_value() || (getName() && getName()->empty()))
@@ -1488,9 +1497,10 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (auto parentID = statement.getParentId()) {
         auto parent = statements.find(*parentID);
         if (parent == statements.end() ||
-            parent->second.getCodeUnitId() != statement.getCodeUnitId())
+            parent->second.getCodeUnitId() != statement.getCodeUnitId() ||
+            parent->second.getScopeId() != statement.getScopeId())
           return statement.emitOpError(
-              "references an unknown or cross-code-unit parent statement");
+              "references an unknown or cross-owner/scope parent statement");
         worklist.push_back({parent->second, false});
       }
     }
@@ -1678,19 +1688,23 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (!scopeIds.count(codeUnit.getScopeId()))
         return codeUnit.emitOpError("references an unknown scope ID");
     } else if (auto statement = dyn_cast<SimStatementDeclOp>(op)) {
-      auto owner = codeUnits.find(statement.getCodeUnitId());
-      if (owner == codeUnits.end() || !scopeIds.count(statement.getScopeId()))
-        return statement.emitOpError(
-            "references an unknown code-unit or scope ID");
-      if (owner->second.getScopeId() != statement.getScopeId())
-        return statement.emitOpError(
-            "scope ID must match the owning code unit's scope");
+      if (!scopeIds.count(statement.getScopeId()))
+        return statement.emitOpError("references an unknown scope ID");
+      if (auto ownerID = statement.getCodeUnitId()) {
+        auto owner = codeUnits.find(*ownerID);
+        if (owner == codeUnits.end())
+          return statement.emitOpError("references an unknown code-unit ID");
+        if (owner->second.getScopeId() != statement.getScopeId())
+          return statement.emitOpError(
+              "scope ID must match the owning code unit's scope");
+      }
       if (auto parentID = statement.getParentId()) {
         auto parent = statements.find(*parentID);
         if (parent == statements.end() ||
-            parent->second.getCodeUnitId() != statement.getCodeUnitId())
+            parent->second.getCodeUnitId() != statement.getCodeUnitId() ||
+            parent->second.getScopeId() != statement.getScopeId())
           return statement.emitOpError(
-              "references an unknown or cross-code-unit parent statement");
+              "references an unknown or cross-owner/scope parent statement");
       }
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
       auto statement = statements.find(site.getStatementId());

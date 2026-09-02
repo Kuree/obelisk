@@ -24,7 +24,7 @@ using Mode = VPITraversalMode;
 using Order = VPITraversalOrder;
 using KindSet = std::set<uint32_t>;
 
-constexpr size_t kExpectedTraversalCount = 1868;
+constexpr size_t kExpectedTraversalCount = 1872;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 
@@ -250,6 +250,32 @@ TEST(VPIObjectModel, StatementCallbacksExactlyMatchLrmTable38_6) {
        {vpiNullStmt, vpiCaseItem, vpiContAssign, vpiImmediateAssert, vpiDoWhile,
         vpiForeachStmt, vpiReturnStmt, vpiBreak, vpiContinue})
     EXPECT_EQ(findVPIStatementCallback(kind), nullptr) << objectName(kind);
+}
+
+TEST(VPIObjectModel, ScopeOwnedStatementsAreExactlyTheModuleLevelKinds) {
+  const uint64_t scopeOwnedMask =
+      vpiFamilyMask(VPIObjectFamily::ScopeOwnedStatement);
+  for (const auto &object : vpiObjectKinds) {
+    if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+      continue;
+    bool expected = object.value == vpiContAssign ||
+                    object.value == vpiContAssignBit ||
+                    object.value == vpiAliasStmt;
+    EXPECT_EQ((object.families & scopeOwnedMask) != 0, expected)
+        << object.apiName;
+  }
+}
+
+TEST(VPIObjectModel, BlocksIterateStatementsWithoutAnLrmOrderGuarantee) {
+  for (uint32_t source : {vpiBegin, vpiNamedBegin, vpiFork, vpiNamedFork}) {
+    const auto &edge = requireTraversal(source, vpiStmt, Mode::Iterate);
+    EXPECT_EQ(edge.order, Order::None) << objectName(source);
+    EXPECT_TRUE(vpiObjectSetContains(edge.targets, vpiAssignment));
+    EXPECT_TRUE(vpiObjectSetContains(edge.targets, vpiIfElse));
+    EXPECT_TRUE(vpiObjectSetContains(edge.targets, vpiFor));
+    EXPECT_FALSE(vpiObjectSetContains(edge.targets, vpiCaseItem));
+    expectAbsent(source, vpiStmt, Mode::Handle);
+  }
 }
 
 TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {

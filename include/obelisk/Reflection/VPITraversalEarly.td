@@ -179,6 +179,8 @@ def VPIEarlyScopeChildren : VPIObjectSet<"EarlyScopeChildren",
   [VariableFamily, ScopeFamily],
   [SpecParam, NamedEventArray, Package, Module, Interface, Program, Begin,
    For, Fork, NamedBegin, NamedFork, ForeachStmt]>;
+def VPIEarlyBlockScopes : VPIObjectSet<"EarlyBlockScopes",
+  [Begin, NamedBegin, Fork, NamedFork]>;
 def VPIEarlyPortLowConnTargets : VPIObjectSet<"EarlyPortLowConnTargets",
   [RefObj, VarSelect, BitSelect, IndexedPartSelect, PartSelect, Operation,
    Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr],
@@ -299,6 +301,8 @@ def VPIEarlyPrimitiveArrayDelay : VPITraversalEdge<PrimitiveArrayObjects,
 // 37.12 Scope.  Existing right-hand declaration iterations are not repeated.
 def VPIEarlyScopeStatement : VPITraversalEdge<TaskFunctionDeclObjects,
   StmtRel, HandleMode, StatementObjects, NoOrder, "37.12">;
+def VPIEarlyBlockStatements : VPITraversalEdge<VPIEarlyBlockScopes, StmtRel,
+  IterateMode, StatementObjects, NoOrder, "37.12">;
 def VPIEarlyScopeRegs : VPITraversalEdge<NonInstanceScopeObjects, Reg,
   IterateMode, RegObjects, NoOrder, "37.12; 37.83">;
 def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,

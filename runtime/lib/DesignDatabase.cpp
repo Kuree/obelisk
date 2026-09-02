@@ -625,7 +625,6 @@ bool validateDatabaseImpl(const Database &database) {
     uint16_t vpiKind = read16(statement + 36);
     uint16_t flags = read16(statement + 38);
     if (id == 0 || (index != 0 && id <= previousStatementID) ||
-        ownerIndex >= database.objectCount ||
         scopeIndex >= database.scopeCount ||
         (parentIndex != UINT32_MAX && parentIndex >= database.statementCount) ||
         (flags & ~OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0)
@@ -637,15 +636,25 @@ bool validateDatabaseImpl(const Database &database) {
          obelisk::reflection::vpiFamilyMask(
              obelisk::reflection::VPIObjectFamily::Statement)) == 0)
       return false;
-    const uint8_t *owner =
-        database.data + database.objects + uint64_t{ownerIndex} * kObjectSize;
-    uint32_t ownerKind = read32(owner);
-    if (ownerKind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-        ownerKind != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+    bool scopeOwned =
+        (kind->families &
+         obelisk::reflection::vpiFamilyMask(
+             obelisk::reflection::VPIObjectFamily::ScopeOwnedStatement)) != 0;
+    if (scopeOwned != (ownerIndex == UINT32_MAX))
       return false;
-    if (read64(owner + 16) !=
-        database.scopes + uint64_t{scopeIndex} * kScopeSize)
-      return false;
+    if (!scopeOwned) {
+      if (ownerIndex >= database.objectCount)
+        return false;
+      const uint8_t *owner =
+          database.data + database.objects + uint64_t{ownerIndex} * kObjectSize;
+      uint32_t ownerKind = read32(owner);
+      if (ownerKind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+          ownerKind != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+        return false;
+      if (read64(owner + 16) !=
+          database.scopes + uint64_t{scopeIndex} * kScopeSize)
+        return false;
+    }
     if ((sourceFile == 0 && (line != 0 || column != 0)) ||
         (sourceFile != 0 && (line == 0 || column == 0)))
       return false;
@@ -687,7 +696,8 @@ bool validateDatabaseImpl(const Database &database) {
         continue;
       const uint8_t *parentStatement = database.data + database.statements +
                                        uint64_t{parent} * kStatementSize;
-      if (read32(parentStatement + 8) != read32(statement + 8))
+      if (read32(parentStatement + 8) != read32(statement + 8) ||
+          read32(parentStatement + 12) != read32(statement + 12))
         return false;
       parentWorklist.push_back({parent, false});
     }

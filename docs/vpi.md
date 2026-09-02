@@ -53,10 +53,12 @@ the two Table 38-6 callback points of a `for` statement. The exact cbStmt
 eligibility and placement policy are generated from the VPI TableGen model.
 Static inventory includes concrete statement kinds that are not cbStmt-capable;
 those kinds have no callback-site records. A statement's hierarchy-scope index
-is exactly its owning process/function instance scope, while lexical statement
-nesting uses its parent-statement index. Per-design VPI relation edges (such as
-`vpiStmt`, `vpiElseStmt`, and ordered case/for children) are a separate future
-table rather than being overloaded onto either field.
+identifies its exact elaborated scope. Behavioral statements also name their
+owning process/function object; scope-owned continuous assignments and alias
+statements use the absent-owner sentinel. Lexical statement nesting uses the
+parent-statement index. Per-design VPI relation edges (such as `vpiStmt`,
+`vpiElseStmt`, and ordered case/for children) are a separate future table rather
+than being overloaded onto either field.
 These immutable tables are emitted only for a VPI profile, not for VCD-only
 reflection, and do not install executable probes or change the scheduler.
 This chunk defines and validates the schema; production SV lowering, relation
