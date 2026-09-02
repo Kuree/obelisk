@@ -696,6 +696,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_stream_dynamic": PATTERN_RADIX,
     "t_stream_unpack": PATTERN_RADIX,
     "t_struct_unpacked": PATTERN_RADIX,
+    "t_unpacked_array_p_fmt": PATTERN_RADIX,
     "t_stream_unpack_lhs": UNDERSIZED_STREAM_SOURCE,
     "t_string_to_bit": DYNAMIC_BITSTREAM_SIZE_MISMATCH,
     "t_math_width": UNTYPED_UNSIZED_PARAMETER_WIDTH,
