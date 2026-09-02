@@ -936,6 +936,10 @@ TASK_RANDOMIZE_CALLBACK = Exclusion(
     "IEEE 1800-2017 18.6.2",
     "the built-in pre_randomize callback has the fixed prototype function "
     "void pre_randomize(); the test redeclares it as a task")
+BOTH_BOUNDS_UNBOUNDED_RANGE = Exclusion(
+    "IEEE 1800-2017 A.8.3",
+    "footnote 25 permits $ in an open value range only in [expression:$] or "
+    "[$:expression]; the test requires Verilator's extension [ $ : $ ]")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -1059,6 +1063,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_iff": IMPLICIT_NAME_TYPE_MISMATCH,
     "t_implements_typed": NONVIRTUAL_INTERFACE_IMPLEMENTATION,
     "t_infinite_recursion": TASK_RANDOMIZE_CALLBACK,
+    "t_inside_unbounded_both": BOTH_BOUNDS_UNBOUNDED_RANGE,
     "t_detectarray_1": MIXED_VARIABLE_DRIVERS,
     "t_detectarray_2": MIXED_VARIABLE_DRIVERS,
     "t_split_var_4": TWO_STATE_INITIALIZATION,
