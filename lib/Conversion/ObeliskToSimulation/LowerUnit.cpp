@@ -485,6 +485,22 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
   for (Operation &operation : design.getBody().front()) {
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
       StringAttr identity = scope.getInterfaceTypeAttr();
+      std::optional<uint64_t> parent = scope.getParent();
+      if (identity && parent) {
+        auto parentScope = interfaceScopes.find(*parent);
+        if (parentScope != interfaceScopes.end()) {
+          auto member = scope->getAttrOfType<StringAttr>(
+              virtualInterfaceParentMemberAttrName);
+          if (member) {
+            std::string key = (Twine(memberKey(parentScope->second.getValue(),
+                                               member.getValue())) +
+                               "\n" + identity.getValue())
+                                  .str();
+            virtualInterfaceInstanceMembers[key].push_back(
+                {*parent, scope.getId()});
+          }
+        }
+      }
       auto events = scope->getAttrOfType<ArrayAttr>(
           virtualInterfaceClockEventMembersAttrName);
       if (!identity || !events)

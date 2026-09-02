@@ -716,6 +716,7 @@ private:
   ::llvm::StringMap<uint64_t> scopeIDs;
   using VirtualMemberTargets =
       ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
+  ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceInstanceMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceStorageMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceEventMembers;

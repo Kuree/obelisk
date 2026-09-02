@@ -3052,6 +3052,48 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
                      selectedMember.getValue())
                         .str();
+  if (auto selectedInterface =
+          dyn_cast<sim::VirtualInterfaceType>(elementType)) {
+    std::string instanceKey =
+        (Twine(key) + "\n" + selectedInterface.getInterfaceName().getValue())
+            .str();
+    auto found = virtualInterfaceInstanceMembers.find(instanceKey);
+    if (found == virtualInterfaceInstanceMembers.end() ||
+        found->second.empty()) {
+      emitError(location) << "virtual interface member '"
+                          << selectedMember.getValue()
+                          << "' has no elaborated interface instance";
+      return failure();
+    }
+
+    Value scope = sim::SimVirtualInterfaceScopeOp::create(
+        builder, location, builder.getI64Type(), interface);
+    Block *merge = addBlock();
+    merge->addArgument(elementType, location);
+    for (auto [parentScopeID, childScopeID] : found->second) {
+      Block *matched = addBlock();
+      Block *next = addBlock();
+      Value expected =
+          arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                    builder.getI64IntegerAttr(parentScopeID));
+      Value equal = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, scope, expected);
+      cf::CondBranchOp::create(builder, location, equal, matched, ValueRange{},
+                               next, ValueRange{});
+      setCurrent(matched);
+      Value selected = sim::SimVirtualInterfaceBindOp::create(
+          builder, location, selectedInterface,
+          builder.getI64IntegerAttr(childScopeID));
+      cf::BranchOp::create(builder, location, merge, ValueRange{selected});
+      setCurrent(next);
+    }
+    if (failed(emitRuntimeFatal(
+            location,
+            "virtual interface member access used a null or invalid handle.")))
+      return failure();
+    setCurrent(merge);
+    return merge->getArgument(0);
+  }
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
   bool isNet = false;

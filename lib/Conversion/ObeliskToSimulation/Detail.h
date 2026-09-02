@@ -431,6 +431,11 @@ inline constexpr ::mlir::StringLiteral clockingEventMonitorPathAttrName =
 inline constexpr ::mlir::StringLiteral
     virtualInterfaceClockEventMembersAttrName =
         "obelisk_sim.virtual_interface_clock_events";
+/// Names the interface member whose elaborated instance owns a child scope.
+/// This avoids recovering escaped or indexed identifiers from display paths
+/// when a virtual-interface member selects another interface instance.
+inline constexpr ::mlir::StringLiteral virtualInterfaceParentMemberAttrName =
+    "obelisk_sim.virtual_interface_parent_member";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =

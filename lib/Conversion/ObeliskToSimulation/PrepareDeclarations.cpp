@@ -1010,6 +1010,18 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
             builder.getI64IntegerAttr(parentId),
             builder.getStringAttr(getHierarchyName(body)),
             builder.getStringAttr(getDebugName(body)), interfaceType);
+        if (interfaceType) {
+          auto instance =
+              dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
+          auto parentBody =
+              instance
+                  ? instance
+                        ->getParentOfType<semantic::SVInstanceBodySymbolOp>()
+                  : semantic::SVInstanceBodySymbolOp{};
+          if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
+            declaration->setAttr(virtualInterfaceParentMemberAttrName,
+                                 builder.getStringAttr(getDebugName(instance)));
+        }
         result.declarations.push_back(declaration);
         auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
         auto precisionAttr =
