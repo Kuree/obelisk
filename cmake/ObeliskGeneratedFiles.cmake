@@ -14,6 +14,11 @@ obelisk_register_generated_file(
   NAME VPIObjectModel
   OUTPUT include/obelisk/Reflection/VPIObjectModel.h.inc
   TOOL obelisk-tblgen
-  INPUT include/obelisk/Reflection/VPIObjectModel.td
+  INPUT include/obelisk/Reflection/VPITraversalModel.td
   ARGS -gen-obelisk-vpi-object-model
-  DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)
+  INCLUDE_DIRS include/obelisk/Reflection
+  DEPENDS
+    include/obelisk/Reflection/VPIObjectModel.td
+    include/obelisk/Reflection/VPITraversalEarly.td
+    include/obelisk/Reflection/VPITraversalLate.td
+    utils/obelisk-tblgen/obelisk-tblgen.cpp)

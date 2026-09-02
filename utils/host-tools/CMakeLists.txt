@@ -45,19 +45,33 @@ function(obelisk_add_generated_file relative_output)
 endfunction()
 
 function(obelisk_register_generated_file)
-  cmake_parse_arguments(ARG "" "NAME;OUTPUT;TOOL;INPUT" "ARGS;DEPENDS" ${ARGN})
-  if(NOT ARG_NAME OR NOT ARG_OUTPUT OR NOT ARG_TOOL OR NOT ARG_INPUT)
+  cmake_parse_arguments(ARG "" "NAME;OUTPUT;TOOL;INPUT"
+    "ARGS;DEPENDS;INCLUDE_DIRS" ${ARGN})
+  if(ARG_UNPARSED_ARGUMENTS OR ARG_KEYWORDS_MISSING_VALUES OR
+      NOT ARG_NAME OR NOT ARG_OUTPUT OR NOT ARG_TOOL OR NOT ARG_INPUT)
     message(FATAL_ERROR
-      "generated-file manifest entries need NAME, OUTPUT, TOOL, and INPUT")
+      "invalid generated-file manifest entry ${ARG_NAME}")
   endif()
+  get_property(registered_names GLOBAL PROPERTY OBELISK_GENERATED_NAMES)
+  get_property(registered_outputs GLOBAL PROPERTY OBELISK_GENERATED_OUTPUTS)
+  if(ARG_NAME IN_LIST registered_names OR ARG_OUTPUT IN_LIST registered_outputs)
+    message(FATAL_ERROR
+      "duplicate generated-file NAME or OUTPUT for ${ARG_NAME}")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY OBELISK_GENERATED_NAMES "${ARG_NAME}")
+  set_property(GLOBAL APPEND PROPERTY OBELISK_GENERATED_OUTPUTS "${ARG_OUTPUT}")
   set(depends)
   foreach(dependency IN LISTS ARG_DEPENDS)
     list(APPEND depends "${OBELISK_SOURCE_DIR}/${dependency}")
   endforeach()
+  set(include_args)
+  foreach(include_dir IN LISTS ARG_INCLUDE_DIRS)
+    list(APPEND include_args -I "${OBELISK_SOURCE_DIR}/${include_dir}")
+  endforeach()
   obelisk_add_generated_file("${ARG_OUTPUT}"
     TOOL "${ARG_TOOL}"
     INPUT "${OBELISK_SOURCE_DIR}/${ARG_INPUT}"
-    ARGS ${ARG_ARGS}
+    ARGS ${ARG_ARGS} ${include_args}
     DEPENDS ${depends})
 endfunction()
 
