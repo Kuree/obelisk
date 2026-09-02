@@ -252,6 +252,11 @@ FUNCTION_NAME_LOCAL = Exclusion(
     "IEEE 1800-2017 13.4.1",
     "it is illegal to declare another object with the function's name inside "
     "the function scope; function other declares a local string other")
+UNFORMATTED_UNPACKED_EXPRESSION = Exclusion(
+    "IEEE 1800-2017 21.2.1",
+    "an unpacked expression without a corresponding format is legal only for "
+    "a string or unpacked byte array; the test requires $display(mem) to "
+    "implicitly use %p for an unpacked int array")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -866,6 +871,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_scheduling_7": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_struct_cons_cast": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_struct_unpacked_clean": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_sys_sformat": UNFORMATTED_UNPACKED_EXPRESSION,
     "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
