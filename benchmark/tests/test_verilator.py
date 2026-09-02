@@ -679,6 +679,13 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 33.3.1", log)
         self.assertTrue(log.endswith("none.sv: No such file\n"))
 
+    def test_nested_unpacked_pattern_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_constraint_unpacked_array", "invalid target type 'bit'\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 5.11", log)
+        self.assertTrue(log.endswith("invalid target type 'bit'\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

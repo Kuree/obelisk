@@ -120,6 +120,12 @@ KNOWN_SLANG_BUGS = {
         "for source files encountered by the compiler; pinned Slang eagerly "
         "opens the unreferenced `none.sv` mapping and rejects the invocation "
         "because that deliberately unmatched file does not exist"),
+    "t_constraint_unpacked_array": (
+        "IEEE 1800-2017 5.11 requires assignment-pattern braces to follow "
+        "the number of unpacked dimensions, and 10.9.1 applies each default "
+        "value in its subarray context; pinned Slang contextualizes the "
+        "innermost pattern one dimension too deep and rejects scalar bit as "
+        "its target before emitting IR"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
