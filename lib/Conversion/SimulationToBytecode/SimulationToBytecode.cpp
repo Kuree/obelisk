@@ -182,7 +182,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   if (waveformMetadata)
     databaseProfile |= kDatabaseProfileRead;
   if (databaseProfile != 0) {
-    result.designDatabase = serializeDatabase(databaseProfile);
+    result.designDatabase = serializeDatabase(databaseProfile, profile != 0);
     if (result.designDatabase.empty())
       return failure();
   }
@@ -802,9 +802,11 @@ SmallVector<uint8_t> Encoder::serializeBytecode() {
                                 captureRecords, state);
 }
 
-SmallVector<uint8_t> Encoder::serializeDatabase(uint32_t profile) {
-  return serializeDesignDatabase(design, profile, state.storageOffsets,
-                                 state.netOffsets, state.driverOffsets);
+SmallVector<uint8_t> Encoder::serializeDatabase(uint32_t profile,
+                                                bool includeStatements) {
+  return serializeDesignDatabase(design, profile, includeStatements,
+                                 state.storageOffsets, state.netOffsets,
+                                 state.driverOffsets);
 }
 
 } // namespace bytecode

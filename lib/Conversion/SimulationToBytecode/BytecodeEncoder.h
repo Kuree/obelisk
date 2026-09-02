@@ -199,7 +199,8 @@ private:
 
   uint32_t getVPIProfile();
   llvm::SmallVector<uint8_t> serializeBytecode();
-  llvm::SmallVector<uint8_t> serializeDatabase(uint32_t profile);
+  llvm::SmallVector<uint8_t> serializeDatabase(uint32_t profile,
+                                               bool includeStatements);
 
   sim::SimDesignOp design;
   SimulationBytecodeOptions options;

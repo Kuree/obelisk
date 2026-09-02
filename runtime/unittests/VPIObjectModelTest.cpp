@@ -205,6 +205,53 @@ TEST(VPIObjectModel, TraversalGraphExactlyMatchesIndependentLrmOracle) {
         << keyName(key.source, key.selector, key.mode);
 }
 
+TEST(VPIObjectModel, StatementCallbacksExactlyMatchLrmTable38_6) {
+  using Policy = VPIStatementCallbackPolicy;
+  const std::map<uint32_t, Policy> expected{
+      {vpiBegin, Policy::OnceBefore},
+      {vpiNamedBegin, Policy::OnceBefore},
+      {vpiFork, Policy::OnceBefore},
+      {vpiNamedFork, Policy::OnceBefore},
+      {vpiIf, Policy::OnceBefore},
+      {vpiIfElse, Policy::OnceBefore},
+      {vpiWhile, Policy::ConditionEachIteration},
+      {vpiRepeat, Policy::RepeatEncounterAndIteration},
+      {vpiFor, Policy::ForInitialAndIncrement},
+      {vpiForever, Policy::ForeverEncounterAndIteration},
+      {vpiWait, Policy::OnceBefore},
+      {vpiCase, Policy::OnceBefore},
+      {vpiAssignment, Policy::OnceBefore},
+      {vpiAssignStmt, Policy::OnceBefore},
+      {vpiDeassign, Policy::OnceBefore},
+      {vpiDisable, Policy::OnceBefore},
+      {vpiForce, Policy::OnceBefore},
+      {vpiRelease, Policy::OnceBefore},
+      {vpiEventStmt, Policy::OnceBefore},
+      {vpiDelayControl, Policy::DelayEncounter},
+      {vpiEventControl, Policy::EventEncounter},
+      {vpiTaskCall, Policy::CallBefore},
+      {vpiSysTaskCall, Policy::CallBefore},
+  };
+  std::map<uint32_t, Policy> actual;
+  for (const auto &callback : vpiStatementCallbacks) {
+    EXPECT_TRUE(actual.emplace(callback.objectType, callback.policy).second);
+    EXPECT_STREQ(callback.clause, "IEEE 1800-2017 Table 38-6");
+    EXPECT_EQ(callback.phaseMask,
+              callback.objectType == vpiFor ? uint8_t{0x6} : uint8_t{0x1})
+        << objectName(callback.objectType);
+  }
+  EXPECT_EQ(actual, expected);
+
+  using Phase = VPIStatementCallbackPhase;
+  EXPECT_TRUE(isVPIStatementCallbackPhase(vpiFor, Phase::BeforeForControls));
+  EXPECT_TRUE(isVPIStatementCallbackPhase(vpiFor, Phase::BeforeForIncrement));
+  EXPECT_FALSE(isVPIStatementCallbackPhase(vpiFor, Phase::BeforeExecute));
+  for (uint32_t kind :
+       {vpiNullStmt, vpiCaseItem, vpiContAssign, vpiImmediateAssert, vpiDoWhile,
+        vpiForeachStmt, vpiReturnStmt, vpiBreak, vpiContinue})
+    EXPECT_EQ(findVPIStatementCallback(kind), nullptr) << objectName(kind);
+}
+
 TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   KindSet expectedSources;
   for (const auto &edge : vpiTraversals)

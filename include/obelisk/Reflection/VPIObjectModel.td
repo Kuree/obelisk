@@ -358,6 +358,87 @@ def LetExpr : VPIObjectKind<"vpiLetExpr", 904, [ExpressionFamily]>;
 def Fsm : VPIObjectKind<"vpiFsm", 758, [RuntimeFamily]>;
 def FsmHandle : VPIObjectKind<"vpiFsmHandle", 759, [RuntimeFamily]>;
 
+// IEEE 1800-2017 Table 38-6 is deliberately modeled separately from the
+// statement family.  Not every object classified as a statement by Chapter
+// 37 is eligible for cbStmt (for example vpiNullStmt and vpiCaseItem).
+class VPIStatementCallbackPhase<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def BeforeExecutePhase : VPIStatementCallbackPhase<"BeforeExecute", 0>;
+def BeforeForControlsPhase
+    : VPIStatementCallbackPhase<"BeforeForControls", 1>;
+def BeforeForIncrementPhase
+    : VPIStatementCallbackPhase<"BeforeForIncrement", 2>;
+
+class VPIStatementCallbackPolicy<string cppName_, int value_,
+                                 list<VPIStatementCallbackPhase> phases_> {
+  string cppName = cppName_;
+  int value = value_;
+  list<VPIStatementCallbackPhase> phases = phases_;
+}
+
+def OnceBeforePolicy
+    : VPIStatementCallbackPolicy<"OnceBefore", 0, [BeforeExecutePhase]>;
+def ConditionEachIterationPolicy : VPIStatementCallbackPolicy<
+    "ConditionEachIteration", 1, [BeforeExecutePhase]>;
+def RepeatEncounterAndIterationPolicy : VPIStatementCallbackPolicy<
+    "RepeatEncounterAndIteration", 2, [BeforeExecutePhase]>;
+def ForInitialAndIncrementPolicy : VPIStatementCallbackPolicy<
+    "ForInitialAndIncrement", 3,
+    [BeforeForControlsPhase, BeforeForIncrementPhase]>;
+def ForeverEncounterAndIterationPolicy : VPIStatementCallbackPolicy<
+    "ForeverEncounterAndIteration", 4, [BeforeExecutePhase]>;
+def DelayEncounterPolicy
+    : VPIStatementCallbackPolicy<"DelayEncounter", 5, [BeforeExecutePhase]>;
+def EventEncounterPolicy
+    : VPIStatementCallbackPolicy<"EventEncounter", 6, [BeforeExecutePhase]>;
+def CallBeforePolicy
+    : VPIStatementCallbackPolicy<"CallBefore", 7, [BeforeExecutePhase]>;
+
+class VPIStatementCallbackSpec<VPIObjectKind object_,
+                               VPIStatementCallbackPolicy policy_> {
+  VPIObjectKind object = object_;
+  VPIStatementCallbackPolicy policy = policy_;
+  string clause = "IEEE 1800-2017 Table 38-6";
+}
+
+def BeginCallback : VPIStatementCallbackSpec<Begin, OnceBeforePolicy>;
+def NamedBeginCallback
+    : VPIStatementCallbackSpec<NamedBegin, OnceBeforePolicy>;
+def ForkCallback : VPIStatementCallbackSpec<Fork, OnceBeforePolicy>;
+def NamedForkCallback
+    : VPIStatementCallbackSpec<NamedFork, OnceBeforePolicy>;
+def IfCallback : VPIStatementCallbackSpec<If, OnceBeforePolicy>;
+def IfElseCallback : VPIStatementCallbackSpec<IfElse, OnceBeforePolicy>;
+def WhileCallback
+    : VPIStatementCallbackSpec<While, ConditionEachIterationPolicy>;
+def RepeatCallback
+    : VPIStatementCallbackSpec<Repeat, RepeatEncounterAndIterationPolicy>;
+def ForCallback
+    : VPIStatementCallbackSpec<For, ForInitialAndIncrementPolicy>;
+def ForeverCallback
+    : VPIStatementCallbackSpec<Forever, ForeverEncounterAndIterationPolicy>;
+def WaitCallback : VPIStatementCallbackSpec<Wait, OnceBeforePolicy>;
+def CaseCallback : VPIStatementCallbackSpec<Case, OnceBeforePolicy>;
+def AssignmentCallback
+    : VPIStatementCallbackSpec<Assignment, OnceBeforePolicy>;
+def AssignStmtCallback
+    : VPIStatementCallbackSpec<AssignStmt, OnceBeforePolicy>;
+def DeassignCallback : VPIStatementCallbackSpec<Deassign, OnceBeforePolicy>;
+def DisableCallback : VPIStatementCallbackSpec<Disable, OnceBeforePolicy>;
+def ForceCallback : VPIStatementCallbackSpec<Force, OnceBeforePolicy>;
+def ReleaseCallback : VPIStatementCallbackSpec<Release, OnceBeforePolicy>;
+def EventStmtCallback : VPIStatementCallbackSpec<EventStmt, OnceBeforePolicy>;
+def DelayControlCallback
+    : VPIStatementCallbackSpec<DelayControl, DelayEncounterPolicy>;
+def EventControlCallback
+    : VPIStatementCallbackSpec<EventControl, EventEncounterPolicy>;
+def TaskCallCallback : VPIStatementCallbackSpec<TaskCall, CallBeforePolicy>;
+def SysTaskCallCallback
+    : VPIStatementCallbackSpec<SysTaskCall, CallBeforePolicy>;
+
 class VPIRelationCardinality<string cppName_> {
   string cppName = cppName_;
 }

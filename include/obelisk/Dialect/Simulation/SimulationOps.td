@@ -109,6 +109,40 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let hasVerifier = 1;
 }
 
+def SimStatementDeclOp : SimOp<"statement.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable VPI behavioral-statement identity";
+  let description = [{
+    Describes one elaborated statement occurrence independently of executable
+    fragments and bytecode. The exact callback sites are separate inventory
+    records because one statement (notably `for`) may have multiple semantic
+    cbStmt points. `scope_id` is the exact hierarchy scope that owns the code
+    unit; statement nesting is represented only by `parent_id`.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       I32Attr:$vpi_kind, OptionalAttr<I64Attr>:$parent_id,
+                       OptionalAttr<StrAttr>:$name,
+                       OptionalAttr<UnitAttr>:$is_protected);
+  let assemblyFormat = [{$id `in` $code_unit_id `scope` $scope_id
+    `type` $vpi_kind (`parent` $parent_id^)? (`name` $name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimStatementSiteDeclOp : SimOp<"statement_site.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable semantic cbStmt callback site";
+  let description = [{
+    Names a semantic callback point on a statement. This is not an executable
+    poll or scheduling effect; a later lowering binds the stable site ID to
+    tier-specific fragment and bytecode locations.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$statement_id, I32Attr:$phase);
+  let assemblyFormat = [{$id `on` $statement_id `phase` $phase attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable mutable-storage descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,

@@ -6,6 +6,7 @@ class ReflectionEncoding<string cppName_, int width_> {
 }
 
 def Bytes8 : ReflectionEncoding<"Bytes", 8>;
+def U16LE : ReflectionEncoding<"U16LE", 2>;
 def U32LE : ReflectionEncoding<"U32LE", 4>;
 def U64LE : ReflectionEncoding<"U64LE", 8>;
 def I64LE : ReflectionEncoding<"I64LE", 8>;
@@ -49,12 +50,19 @@ def HeaderStringOffset : ReflectionField<"StringOffset", 96, U64LE>;
 def HeaderStringSize : ReflectionField<"StringSize", 104, U64LE>;
 def HeaderIndexOffset : ReflectionField<"IndexOffset", 112, U64LE>;
 def HeaderIndexCount : ReflectionField<"IndexCount", 120, U64LE>;
-def Header : ReflectionLayout<"Header", 128,
+def HeaderStatementOffset : ReflectionField<"StatementOffset", 128, U64LE>;
+def HeaderStatementCount : ReflectionField<"StatementCount", 136, U64LE>;
+def HeaderStatementSiteOffset
+    : ReflectionField<"StatementSiteOffset", 144, U64LE>;
+def HeaderStatementSiteCount
+    : ReflectionField<"StatementSiteCount", 152, U64LE>;
+def Header : ReflectionLayout<"Header", 160,
   [HeaderMagic, HeaderVersion, HeaderReserved, HeaderProfile, HeaderSize,
    HeaderImageSize, HeaderChecksum, HeaderRoot, HeaderScopeOffset,
    HeaderScopeCount, HeaderObjectOffset, HeaderObjectCount, HeaderTypeOffset,
    HeaderTypeCount, HeaderStringOffset, HeaderStringSize, HeaderIndexOffset,
-   HeaderIndexCount]>;
+   HeaderIndexCount, HeaderStatementOffset, HeaderStatementCount,
+   HeaderStatementSiteOffset, HeaderStatementSiteCount]>;
 
 def ScopeKindField : ReflectionField<"Kind", 0, U32LE>;
 def ScopeCaps : ReflectionField<"Caps", 4, U32LE>;
@@ -108,6 +116,36 @@ def IndexName : ReflectionField<"Name", 8, U64LE>;
 def IndexRecord : ReflectionField<"Record", 16, U64LE>;
 def Index : ReflectionLayout<"Index", 24,
   [IndexHash, IndexName, IndexRecord]>;
+
+// Compact immutable source identities. Indices and string offsets are 32-bit
+// offsets within their respective tables; UINT32_MAX is the absent parent.
+// Executable tier/fragment/PC bindings deliberately live in a later side
+// table and never alter these semantic identities.
+def StatementID : ReflectionField<"ID", 0, U64LE>;
+def StatementOwnerObjectIndex
+    : ReflectionField<"OwnerObjectIndex", 8, U32LE>;
+def StatementScopeIndex : ReflectionField<"ScopeIndex", 12, U32LE>;
+def StatementParentIndex : ReflectionField<"ParentIndex", 16, U32LE>;
+def StatementSourceFile : ReflectionField<"SourceFile", 20, U32LE>;
+def StatementName : ReflectionField<"Name", 24, U32LE>;
+def StatementSourceLine : ReflectionField<"SourceLine", 28, U32LE>;
+def StatementSourceColumn : ReflectionField<"SourceColumn", 32, U32LE>;
+def StatementVPIKind : ReflectionField<"VPIKind", 36, U16LE>;
+def StatementFlags : ReflectionField<"Flags", 38, U16LE>;
+def Statement : ReflectionLayout<"Statement", 40,
+  [StatementID, StatementOwnerObjectIndex, StatementScopeIndex,
+   StatementParentIndex, StatementSourceFile, StatementName,
+   StatementSourceLine, StatementSourceColumn, StatementVPIKind,
+   StatementFlags]>;
+
+def StatementSiteID : ReflectionField<"ID", 0, U64LE>;
+def StatementSiteStatementIndex
+    : ReflectionField<"StatementIndex", 8, U32LE>;
+def StatementSitePhase : ReflectionField<"Phase", 12, U16LE>;
+def StatementSiteFlags : ReflectionField<"Flags", 14, U16LE>;
+def StatementSite : ReflectionLayout<"StatementSite", 16,
+  [StatementSiteID, StatementSiteStatementIndex, StatementSitePhase,
+   StatementSiteFlags]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

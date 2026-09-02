@@ -25,12 +25,14 @@ namespace {
 constexpr int64_t maxU32 = std::numeric_limits<uint32_t>::max();
 
 struct Encoding {
-  enum class Kind { Bytes, U32LE, U64LE, I64LE } kind;
+  enum class Kind { Bytes, U16LE, U32LE, U64LE, I64LE } kind;
   StringRef name;
   uint32_t width;
 };
 
 StringRef getCppType(Encoding::Kind encoding) {
+  if (encoding == Encoding::Kind::U16LE)
+    return "uint16_t";
   if (encoding == Encoding::Kind::U32LE)
     return "uint32_t";
   if (encoding == Encoding::Kind::U64LE)
@@ -81,7 +83,10 @@ bool getEncoding(const Record &field, Encoding &result) {
   uint32_t expectedWidth = width;
   if (name == "Bytes")
     kind = Encoding::Kind::Bytes;
-  else if (name == "U32LE") {
+  else if (name == "U16LE") {
+    kind = Encoding::Kind::U16LE;
+    expectedWidth = 2;
+  } else if (name == "U32LE") {
     kind = Encoding::Kind::U32LE;
     expectedWidth = 4;
   } else if (name == "U64LE") {
@@ -210,6 +215,9 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
   os << "namespace obelisk::reflection {\n\n";
 
   os << "namespace detail {\n"
+        "inline uint16_t readU16LE(const uint8_t *data) {\n"
+        "  return uint16_t{data[0]} | (uint16_t{data[1]} << 8);\n"
+        "}\n"
         "inline uint32_t readU32LE(const uint8_t *data) {\n"
         "  uint32_t value = 0;\n"
         "  for (unsigned byte = 0; byte != 4; ++byte)\n"
@@ -225,6 +233,10 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
         "inline void writeU32LE(uint8_t *data, uint32_t value) {\n"
         "  for (unsigned byte = 0; byte != 4; ++byte)\n"
         "    data[byte] = static_cast<uint8_t>(value >> (byte * 8));\n"
+        "}\n"
+        "inline void writeU16LE(uint8_t *data, uint16_t value) {\n"
+        "  data[0] = static_cast<uint8_t>(value);\n"
+        "  data[1] = static_cast<uint8_t>(value >> 8);\n"
         "}\n"
         "inline void writeU64LE(uint8_t *data, uint64_t value) {\n"
         "  for (unsigned byte = 0; byte != 8; ++byte)\n"
@@ -389,11 +401,20 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto traversalModes = records.getAllDerivedDefinitions("VPITraversalMode");
   auto traversalOrders = records.getAllDerivedDefinitions("VPITraversalOrder");
   auto traversalEdges = records.getAllDerivedDefinitions("VPITraversalEdge");
+  auto callbackPhases =
+      records.getAllDerivedDefinitions("VPIStatementCallbackPhase");
+  auto callbackPolicies =
+      records.getAllDerivedDefinitions("VPIStatementCallbackPolicy");
+  auto callbackSpecs =
+      records.getAllDerivedDefinitions("VPIStatementCallbackSpec");
   if (families.empty() || roles.empty() || objects.empty() ||
       relations.empty() || objectSets.empty() || traversalModes.empty() ||
-      traversalOrders.empty() || traversalEdges.empty()) {
+      traversalOrders.empty() || traversalEdges.empty() ||
+      callbackPhases.empty() || callbackPolicies.empty() ||
+      callbackSpecs.empty()) {
     PrintError("VPI object model needs families, roles, objects, relations, "
-               "object sets, traversal modes, orders, and edges");
+               "object sets, traversal modes, orders, edges, and statement "
+               "callback policies");
     return false;
   }
   if (families.size() > 64) {
@@ -554,6 +575,22 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                        &objectApiNames))
     return false;
 
+  const std::pair<StringRef, uint32_t> supportedCallbackPhases[] = {
+      {"BeforeExecute", 0},
+      {"BeforeForControls", 1},
+      {"BeforeForIncrement", 2},
+  };
+  const std::pair<StringRef, uint32_t> supportedCallbackPolicies[] = {
+      {"OnceBefore", 0},
+      {"ConditionEachIteration", 1},
+      {"RepeatEncounterAndIteration", 2},
+      {"ForInitialAndIncrement", 3},
+      {"ForeverEncounterAndIteration", 4},
+      {"DelayEncounter", 5},
+      {"EventEncounter", 6},
+      {"CallBefore", 7},
+  };
+
   for (const Record *object : objects) {
     const Record *role = object->getValueAsDef("role");
     if (!roleNames.contains(role->getValueAsString("cppName"))) {
@@ -619,8 +656,42 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                                                             {"Index", 3},
                                                             {"Time", 4}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
-      !validateEnum(traversalOrders, supportedOrders, "VPI traversal order"))
+      !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
+      !validateEnum(callbackPhases, supportedCallbackPhases,
+                    "VPI statement callback phase") ||
+      !validateEnum(callbackPolicies, supportedCallbackPolicies,
+                    "VPI statement callback policy"))
     return false;
+
+  DenseSet<const Record *> callbackObjects;
+  for (const Record *policy : callbackPolicies) {
+    DenseSet<const Record *> phases;
+    for (const Record *phase : policy->getValueAsListOfDefs("phases"))
+      if (!phases.insert(phase).second) {
+        PrintError(policy->getLoc(),
+                   "duplicate phase in VPI statement callback policy");
+        return false;
+      }
+    if (phases.empty()) {
+      PrintError(policy->getLoc(),
+                 "VPI statement callback policy needs a phase");
+      return false;
+    }
+  }
+  for (const Record *spec : callbackSpecs) {
+    const Record *object = spec->getValueAsDef("object");
+    if (!object->getValueAsString("aliasOf").empty() ||
+        !object->getValueAsDef("role")->getValueAsBit("concrete") ||
+        !llvm::is_contained(object->getValueAsListOfDefs("families"),
+                            familyNames.lookup("Statement")) ||
+        !callbackObjects.insert(object).second ||
+        spec->getValueAsString("clause").empty()) {
+      PrintError(spec->getLoc(),
+                 "VPI statement callback spec needs a unique canonical "
+                 "concrete statement object and an LRM clause");
+      return false;
+    }
+  }
 
   auto isConcrete = [](const Record *object) {
     return object->getValueAsString("aliasOf").empty() &&
@@ -876,6 +947,86 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "    if (kind.value == value && kind.aliasOf == nullptr)\n"
         "      return &kind;\n"
         "  return nullptr;\n"
+        "}\n\n";
+
+  auto callbackPhaseRecords =
+      records.getAllDerivedDefinitions("VPIStatementCallbackPhase");
+  SmallVector<const Record *> callbackPhases(callbackPhaseRecords.begin(),
+                                             callbackPhaseRecords.end());
+  llvm::sort(callbackPhases, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIStatementCallbackPhase : uint16_t {\n";
+  for (const Record *phase : callbackPhases)
+    os << formatv("  {0} = {1},\n", phase->getValueAsString("cppName"),
+                  phase->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto callbackPolicyRecords =
+      records.getAllDerivedDefinitions("VPIStatementCallbackPolicy");
+  SmallVector<const Record *> callbackPolicies(callbackPolicyRecords.begin(),
+                                               callbackPolicyRecords.end());
+  llvm::sort(callbackPolicies, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIStatementCallbackPolicy : uint8_t {\n";
+  for (const Record *policy : callbackPolicies)
+    os << formatv("  {0} = {1},\n", policy->getValueAsString("cppName"),
+                  policy->getValueAsInt("value"));
+  os << "};\n\n";
+  os << "struct VPIStatementCallbackDescriptor {\n"
+        "  uint32_t objectType;\n"
+        "  VPIStatementCallbackPolicy policy;\n"
+        "  uint8_t phaseMask;\n"
+        "  const char *clause;\n"
+        "};\n\n";
+  auto callbackSpecRecords =
+      records.getAllDerivedDefinitions("VPIStatementCallbackSpec");
+  SmallVector<const Record *> callbackSpecs(callbackSpecRecords.begin(),
+                                            callbackSpecRecords.end());
+  llvm::sort(callbackSpecs, [](const Record *left, const Record *right) {
+    return left->getValueAsDef("object")->getValueAsInt("value") <
+           right->getValueAsDef("object")->getValueAsInt("value");
+  });
+  os << "inline constexpr VPIStatementCallbackDescriptor "
+        "vpiStatementCallbacks[] = {\n";
+  for (const Record *spec : callbackSpecs) {
+    const Record *policy = spec->getValueAsDef("policy");
+    uint32_t phaseMask = 0;
+    for (const Record *phase : policy->getValueAsListOfDefs("phases"))
+      phaseMask |= uint32_t{1} << phase->getValueAsInt("value");
+    os << formatv("  {{{0}, VPIStatementCallbackPolicy::{1}, {2}, "
+                  "\"{3}\"",
+                  spec->getValueAsDef("object")->getValueAsInt("value"),
+                  policy->getValueAsString("cppName"), phaseMask,
+                  spec->getValueAsString("clause"));
+    os << "},\n";
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIStatementCallbackDescriptor *\n"
+        "findVPIStatementCallback(uint32_t objectType) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiStatementCallbacks) /\n"
+        "                sizeof(vpiStatementCallbacks[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiStatementCallbacks[middle].objectType < objectType)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != sizeof(vpiStatementCallbacks) /\n"
+        "                    sizeof(vpiStatementCallbacks[0]) &&\n"
+        "                 vpiStatementCallbacks[low].objectType == objectType\n"
+        "             ? &vpiStatementCallbacks[low]\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool isVPIStatementCallbackPhase(\n"
+        "    uint32_t objectType, VPIStatementCallbackPhase phase) {\n"
+        "  const auto *callback = findVPIStatementCallback(objectType);\n"
+        "  unsigned value = static_cast<unsigned>(phase);\n"
+        "  return callback && value < 8 &&\n"
+        "         (callback->phaseMask & (uint8_t{1} << value)) != 0;\n"
         "}\n\n";
 
   os << "inline constexpr const VPIObjectKindDescriptor *\n"

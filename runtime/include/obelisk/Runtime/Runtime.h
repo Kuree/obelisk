@@ -838,10 +838,14 @@ typedef struct obelisk_rt_design_database_header_v1 {
   uint64_t string_size;
   uint64_t index_offset;
   uint64_t index_count;
+  uint64_t statement_offset;
+  uint64_t statement_count;
+  uint64_t statement_site_offset;
+  uint64_t statement_site_count;
 } obelisk_rt_design_database_header_v1;
 
 #define OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE 208u
-#define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 128u
+#define OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE 160u
 #define OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE 32u
 #define OBELISK_RT_DESIGN_BYTECODE_MAGIC "OBBCDS1"
 #define OBELISK_RT_DESIGN_DATABASE_MAGIC "OBDSGN1"
@@ -1550,6 +1554,8 @@ typedef struct obelisk_rt_design_type_info_v1 {
   uint64_t tag_bits;
   uint64_t packed_offset;
 } obelisk_rt_design_type_info_v1;
+
+#define OBELISK_RT_DESIGN_STATEMENT_PROTECTED (UINT32_C(1) << 0)
 
 // Every code form returns through this action ABI. A continuation identifies
 // the next fixed fragment state. Suspend payloads are interpreted according to

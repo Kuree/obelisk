@@ -79,7 +79,7 @@ inline std::optional<uint32_t> simulationWidth(mlir::Type type) {
 }
 
 llvm::SmallVector<uint8_t> serializeDesignDatabase(
-    sim::SimDesignOp design, uint32_t profile,
+    sim::SimDesignOp design, uint32_t profile, bool includeStatements,
     const llvm::DenseMap<uint64_t, uint64_t> &storageOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &netOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &driverOffsets);

@@ -47,11 +47,23 @@ static_assert(field::HeaderIndexOffset ==
               offsetof(obelisk_rt_design_database_header_v1, index_offset));
 static_assert(field::HeaderIndexCount ==
               offsetof(obelisk_rt_design_database_header_v1, index_count));
+static_assert(field::HeaderStatementOffset ==
+              offsetof(obelisk_rt_design_database_header_v1, statement_offset));
+static_assert(field::HeaderStatementCount ==
+              offsetof(obelisk_rt_design_database_header_v1, statement_count));
+static_assert(field::HeaderStatementSiteOffset ==
+              offsetof(obelisk_rt_design_database_header_v1,
+                       statement_site_offset));
+static_assert(field::HeaderStatementSiteCount ==
+              offsetof(obelisk_rt_design_database_header_v1,
+                       statement_site_count));
 
 static_assert(ScopeLayout.size == 64);
 static_assert(ObjectLayout.size == 96);
 static_assert(TypeLayout.size == 80);
 static_assert(IndexLayout.size == 24);
+static_assert(StatementLayout.size == 40);
+static_assert(StatementSiteLayout.size == 16);
 
 static_assert(uint32_t(RecordKind::Scope) == OBELISK_RT_DESIGN_RECORD_SCOPE);
 static_assert(uint32_t(RecordKind::Storage) ==
