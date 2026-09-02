@@ -233,7 +233,7 @@ if(EMSCRIPTEN)
   set(_obelisk_configure_wasm_support TRUE)
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   set(OBELISK_NATIVE_PLATFORM "linux")
-  include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
+  set(_obelisk_configure_native_support TRUE)
 elseif(APPLE)
   message(FATAL_ERROR
     "no macOS native backend is registered; configure with emcmake to target "
@@ -461,6 +461,11 @@ if(_obelisk_configure_wasm_support)
   # Configure it only after FetchContent has resolved every supported source
   # and base-directory override to the actual materialized source tree.
   include("${PROJECT_SOURCE_DIR}/cmake/TargetWasmSupport.cmake")
+endif()
+if(_obelisk_configure_native_support)
+  # The standalone runtime compiler needs Slang's canonical IEEE VPI headers.
+  # Configure it only after FetchContent has resolved the source tree.
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
 endif()
 
 #===------------------------------------------------------------------------===

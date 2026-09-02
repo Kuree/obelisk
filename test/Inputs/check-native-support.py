@@ -14,6 +14,8 @@ cmake = sys.argv[1]
 scratch = pathlib.Path(sys.argv[2]).resolve()
 source_root = pathlib.Path(sys.argv[3]).resolve()
 llvm_dist = pathlib.Path(sys.argv[4]).resolve()
+slang_source = pathlib.Path(sys.argv[5]).resolve()
+reflection_include = pathlib.Path(sys.argv[6]).resolve()
 shutil.rmtree(scratch, ignore_errors=True)
 scratch.mkdir(parents=True)
 
@@ -83,6 +85,8 @@ shutil.copytree(source_root / "runtime", graph_runtime)
             "project(ObeliskNativeGraphTest LANGUAGES NONE)",
             f'set(OBELISK_SOURCE_DIR [[{source_root}]])',
             f'set(OBELISK_LLVM_DIST_DIR [[{llvm_dist}]])',
+            f'set(OBELISK_SLANG_SOURCE_DIR [[{slang_source}]])',
+            f'set(OBELISK_TARGET_REFLECTION_INCLUDE_DIR [[{reflection_include}]])',
             'set(OBELISK_LLVM_VERSION "22.1.6")',
             'set(LLVM_VERSION_MAJOR "22")',
             f'include([[{source_root / "cmake/TargetNativeSupport.cmake"}]])',
