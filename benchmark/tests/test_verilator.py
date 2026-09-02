@@ -459,6 +459,26 @@ class RuntimeErrorTest(unittest.TestCase):
                 descriptor, "", ""))
 
 
+class GoldenOutputTest(unittest.TestCase):
+    def match(self, expected: str, stdout: str, stderr: str = "") -> bool:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            descriptor = Path(tmp) / "t_x.py"
+            descriptor.write_text(
+                "test.execute(expect_filename=test.golden_filename)\n",
+                encoding="utf-8",
+            )
+            descriptor.with_suffix(".out").write_text(
+                expected, encoding="utf-8")
+            return verilator.runtime_output_matches_golden(
+                descriptor, stdout, stderr)
+
+    def test_exact_output_is_the_verdict_without_a_finish_marker(self):
+        self.assertTrue(self.match("data=beef\n", "data=beef\n"))
+
+    def test_output_mismatch_remains_a_failure(self):
+        self.assertFalse(self.match("data=beef\n", "data=dead\n"))
+
+
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:

@@ -1353,6 +1353,25 @@ def _golden_output(descriptor: Path) -> Path | None:
     return None
 
 
+def runtime_output_matches_golden(
+        descriptor: Path, stdout: str, stderr: str,
+) -> bool | None:
+    """Compare clean runtime output when the descriptor names a golden.
+
+    Assertion-error goldens are compared by source signature below because
+    portable simulators format those diagnostics differently.  Every clean
+    golden remains an exact output oracle, including tests that intentionally
+    end without the conventional completion marker.
+    """
+    golden = _golden_output(descriptor)
+    if golden is None:
+        return None
+    expected = golden.read_text(encoding="utf-8", errors="replace")
+    if _runtime_assertion_error_signature(expected)[1] != 0:
+        return None
+    return stdout + stderr == expected
+
+
 def _runtime_assertion_error_signature(
         *outputs: str,
 ) -> tuple[Counter[tuple[str, int]], int]:
@@ -1650,6 +1669,14 @@ def judge_one(
                 classify_dependency_failure(name, runtime_log))
         runtime_error_mismatch = runtime_errors_mismatch_golden(
             descriptor, result.stdout, result.stderr)
+        golden_match = runtime_output_matches_golden(
+            descriptor, result.stdout, result.stderr)
+        if golden_match is not None:
+            if result.ok and not runtime_error_mismatch and golden_match:
+                return model.Outcome(model.PASS)
+            return model.Outcome(
+                model.RUN_FAIL,
+                classify_dependency_failure(name, runtime_log))
         if (result.ok and not runtime_error_mismatch and
                 (FINISHED_MARKER in result.stdout or
                  top.stem in CLEAN_EXIT_WITH_UNREACHABLE_MARKER)):
