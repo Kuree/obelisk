@@ -215,6 +215,10 @@ EXPECTED_COMPILE_ERROR_NAMES = frozenset({
     # IEEE 1800-2017 33.4.1.3 requires an instance clause to start at one of
     # the top-level cells named by the configuration's design statement.
     "t_config_inst_missing",
+    # IEEE 1800-2017 23.3.3.2 forbids connecting a variable port to an
+    # interconnect net. The explicitly typed output ports in modaa default to
+    # variables under 23.2.2.3, so their connections must be rejected.
+    "t_interconnect",
 })
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on

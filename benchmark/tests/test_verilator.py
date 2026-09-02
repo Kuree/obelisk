@@ -678,6 +678,13 @@ class ExpectationDescriptorTest(unittest.TestCase):
                 "test.lint(fails=test.vlt_all)\ntest.passes()\n"),
             verilator.Expectation(True, False))
 
+    def test_variable_ports_on_interconnect_are_a_compile_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_interconnect",
+                "test.compile(fails=test.vlt_all)\ntest.passes()\n"),
+            verilator.Expectation(True, False))
+
     def test_a_multiline_compile_call_is_read_whole(self):
         self.assertEqual(
             self.expectation(
