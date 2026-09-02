@@ -690,6 +690,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4.1")
         self.assertIn("local string other", excluded.reason)
 
+    def test_verilator_hierarchical_name_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_class_name"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1.6")
+        self.assertIn("top.$unit", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")

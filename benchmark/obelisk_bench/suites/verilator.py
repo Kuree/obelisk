@@ -252,6 +252,13 @@ FUNCTION_NAME_LOCAL = Exclusion(
     "IEEE 1800-2017 13.4.1",
     "it is illegal to declare another object with the function's name inside "
     "the function scope; function other declares a local string other")
+VERILATOR_HIERARCHICAL_NAME_SPELLING = Exclusion(
+    "IEEE 1800-2017 21.2.1.6",
+    "%m prints the invoking subroutine's hierarchical name, but 3.12.1 says "
+    "compilation-unit declarations are not accessible by hierarchical "
+    "reference and use $unit:: for explicit scope resolution; the test "
+    "instead requires Verilator's top.$unit path and all-dot class, package, "
+    "and method spelling while documenting that simulators differ")
 UNFORMATTED_UNPACKED_EXPRESSION = Exclusion(
     "IEEE 1800-2017 21.2.1",
     "an unpacked expression without a corresponding format is legal only for "
@@ -742,6 +749,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_display": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_dpi_export_scope_flat": DPI_EXPORT_FROM_WRONG_SCOPE,
     "t_class_format": FUNCTION_NAME_LOCAL,
+    "t_class_name": VERILATOR_HIERARCHICAL_NAME_SPELLING,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
