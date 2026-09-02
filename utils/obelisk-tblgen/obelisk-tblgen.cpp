@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <tuple>
 
 using namespace llvm;
@@ -111,8 +112,11 @@ bool validateReflectionSchema(const RecordKeeper &records) {
   auto encodings = records.getAllDerivedDefinitions("ReflectionEncoding");
   auto layouts = records.getAllDerivedDefinitions("ReflectionLayout");
   auto kinds = records.getAllDerivedDefinitions("ReflectionRecordKind");
-  if (encodings.empty() || layouts.empty() || kinds.empty()) {
-    PrintError("reflection schema needs encodings, layouts, and record kinds");
+  auto tableKinds = records.getAllDerivedDefinitions("ReflectionTableKind");
+  if (encodings.empty() || layouts.empty() || kinds.empty() ||
+      tableKinds.empty()) {
+    PrintError("reflection schema needs encodings, layouts, record kinds, and "
+               "table kinds");
     return false;
   }
 
@@ -197,6 +201,40 @@ bool validateReflectionSchema(const RecordKeeper &records) {
     if (!kindNames.try_emplace(kindName, kind).second ||
         !kindValues.insert(value).second) {
       PrintError(kind->getLoc(), "duplicate record kind name or value");
+      return false;
+    }
+  }
+  DenseSet<uint32_t> tableKindValues;
+  StringMap<const Record *> tableKindNames;
+  std::optional<uint32_t> tableKindWidth;
+  for (const Record *kind : tableKinds) {
+    StringRef kindName;
+    uint32_t value = 0;
+    uint32_t packedWidth = 0;
+    if (!getCppName(*kind, "reflection table kind", kindName) ||
+        !getU32(*kind, "value", 0, value) ||
+        !getU32(*kind, "packedWidth", 1, packedWidth))
+      return false;
+    if (packedWidth > 8) {
+      PrintError(kind->getLoc(),
+                 "reflection table kind packed width must be at most 8");
+      return false;
+    }
+    if (!tableKindWidth)
+      tableKindWidth = packedWidth;
+    else if (*tableKindWidth != packedWidth) {
+      PrintError(kind->getLoc(),
+                 "reflection table kinds must use one packed width");
+      return false;
+    }
+    if (value >= (uint32_t{1} << packedWidth)) {
+      PrintError(kind->getLoc(),
+                 "reflection table kind does not fit its packed width");
+      return false;
+    }
+    if (!tableKindNames.try_emplace(kindName, kind).second ||
+        !tableKindValues.insert(value).second) {
+      PrintError(kind->getLoc(), "duplicate table kind name or value");
       return false;
     }
   }
@@ -387,6 +425,54 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
     os << "},\n";
   }
   os << "};\n\n";
+
+  auto tableKindRecords =
+      records.getAllDerivedDefinitions("ReflectionTableKind");
+  SmallVector<const Record *> tableKinds(tableKindRecords.begin(),
+                                          tableKindRecords.end());
+  llvm::sort(tableKinds, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class TableKind : uint8_t {\n";
+  for (const Record *kind : tableKinds)
+    os << formatv("  {0} = {1},\n", kind->getValueAsString("cppName"),
+                  kind->getValueAsInt("value"));
+  os << "};\n\n";
+  os << "constexpr bool isValidTableKind(TableKind table) {\n"
+        "  switch (table) {\n";
+  for (const Record *kind : tableKinds)
+    os << formatv("  case TableKind::{0}:\n",
+                  kind->getValueAsString("cppName"));
+  os << "    return true;\n"
+        "  }\n"
+        "  return false;\n"
+        "}\n\n";
+  const uint32_t packedWidth =
+      tableKinds.front()->getValueAsInt("packedWidth");
+  os << "inline constexpr unsigned tableKindPackedWidth = " << packedWidth
+     << ";\n"
+      "inline constexpr unsigned tableKindPackedShift = 16 - "
+      "tableKindPackedWidth;\n"
+      "inline constexpr uint16_t tableKindPayloadMask = "
+      "(uint16_t{1} << tableKindPackedShift) - 1;\n\n"
+      "constexpr bool canPackTableKindPayload(uint32_t payload) {\n"
+      "  return payload <= tableKindPayloadMask;\n"
+      "}\n\n"
+      "constexpr bool tryPackTableKindPayload(TableKind table, "
+      "uint32_t payload, uint16_t &packed) {\n"
+      "  if (!isValidTableKind(table) || "
+      "!canPackTableKindPayload(payload))\n"
+      "    return false;\n"
+      "  packed = (static_cast<uint16_t>(table) << "
+      "tableKindPackedShift) | static_cast<uint16_t>(payload);\n"
+      "  return true;\n"
+      "}\n\n"
+      "constexpr TableKind unpackTableKind(uint16_t value) {\n"
+      "  return static_cast<TableKind>(value >> tableKindPackedShift);\n"
+      "}\n\n"
+      "constexpr uint16_t unpackTableKindPayload(uint16_t value) {\n"
+      "  return value & tableKindPayloadMask;\n"
+      "}\n\n";
   os << "} // namespace obelisk::reflection\n\n";
   os << "#endif // OBELISK_REFLECTION_DESIGNREFLECTIONLAYOUT_H_INC\n";
   return false;

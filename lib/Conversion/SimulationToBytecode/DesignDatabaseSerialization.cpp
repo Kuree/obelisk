@@ -29,6 +29,30 @@ namespace {
 
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 using namespace obelisk::reflection;
+static_assert(RelationLayout.size == 16);
+static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
+static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
+static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
+static_assert(tableKindPackedWidth == 2);
+static_assert(tableKindPayloadMask == 0x3fff);
+static_assert(canPackTableKindPayload(tableKindPayloadMask));
+static_assert(!canPackTableKindPayload(tableKindPayloadMask + 1));
+
+constexpr bool tableKindPackingIsStable() {
+  for (TableKind table :
+       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+    uint16_t packed = 0;
+    if (!tryPackTableKindPayload(table, tableKindPayloadMask, packed) ||
+        unpackTableKind(packed) != table ||
+        unpackTableKindPayload(packed) != tableKindPayloadMask)
+      return false;
+  }
+  uint16_t rejected = 0;
+  return !tryPackTableKindPayload(static_cast<TableKind>(3), 0, rejected) &&
+         !tryPackTableKindPayload(TableKind::Scope,
+                                  tableKindPayloadMask + 1, rejected);
+}
+static_assert(tableKindPackingIsStable());
 
 } // namespace
 

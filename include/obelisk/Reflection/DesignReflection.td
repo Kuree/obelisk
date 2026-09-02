@@ -32,6 +32,16 @@ class ReflectionRecordKind<string cppName_, int value_,
   ReflectionLayout layout = layout_;
 }
 
+class ReflectionTableKind<string cppName_, int value_, int packedWidth_ = 2> {
+  string cppName = cppName_;
+  int value = value_;
+  int packedWidth = packedWidth_;
+}
+
+def ScopeTable : ReflectionTableKind<"Scope", 0>;
+def ObjectTable : ReflectionTableKind<"Object", 1>;
+def StatementTable : ReflectionTableKind<"Statement", 2>;
+
 def HeaderMagic : ReflectionField<"Magic", 0, Bytes8>;
 def HeaderVersion : ReflectionField<"Version", 8, U32LE>;
 def HeaderReserved : ReflectionField<"Reserved", 12, U32LE>;
@@ -147,6 +157,22 @@ def StatementSiteFlags : ReflectionField<"Flags", 14, U16LE>;
 def StatementSite : ReflectionLayout<"StatementSite", 16,
   [StatementSiteID, StatementSiteStatementIndex, StatementSitePhase,
    StatementSiteFlags]>;
+
+// Compact statement-traversal adjacency. Stable MLIR IDs are resolved to
+// 32-bit table indices during serialization. The source's exact VPI kind and
+// two-bit table tag share SourceKindAndTable; the target is always a statement
+// and its exact kind is authoritative in the statement table. Handle/iterate
+// legality is recovered from the generated VPI traversal model instead of
+// redundantly stored per design edge.
+def RelationSourceIndex : ReflectionField<"SourceIndex", 0, U32LE>;
+def RelationTargetIndex : ReflectionField<"TargetIndex", 4, U32LE>;
+def RelationOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def RelationSelector : ReflectionField<"Selector", 12, U16LE>;
+def RelationSourceKindAndTable
+    : ReflectionField<"SourceKindAndTable", 14, U16LE>;
+def Relation : ReflectionLayout<"Relation", 16,
+  [RelationSourceIndex, RelationTargetIndex, RelationOrdinal,
+   RelationSelector, RelationSourceKindAndTable]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;
