@@ -484,6 +484,10 @@ TIME_SCAN_PRECISION_ROUNDING = Exclusion(
     "a value matched by %t is scaled and rounded according to $timeformat, "
     "whose precision 2 rounds the test's 8.125 ms to 8.13 ms; the test "
     "expects the unrounded 8.125 ms value")
+TIME_DECLARATION_ORDER = Exclusion(
+    "IEEE 1800-2017 3.14.2.2",
+    "timeunit and timeprecision declarations must precede every other item "
+    "in their time scope; the test declares six realtime parameters first")
 USE_BEFORE_DECLARATION = Exclusion(
     "IEEE 1800-2017 6.5",
     "\"Data shall be declared before they are used, apart from implicit nets\" "
@@ -789,6 +793,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
     "t_time_sscanf": TIME_SCAN_PRECISION_ROUNDING,
+    "t_timing_osc": TIME_DECLARATION_ORDER,
     "t_clk_concat2": MIXED_PORT_HEADER_STYLES,
     "t_clk_concat5": MIXED_PORT_HEADER_STYLES,
     "t_clk_concat6": MIXED_PORT_HEADER_STYLES,
