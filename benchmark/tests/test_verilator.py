@@ -912,6 +912,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("integral operands", excluded.reason)
         self.assertIn("string", excluded.reason)
 
+    def test_output_port_net_select_must_be_constant(self):
+        excluded = verilator.EXCLUDED["t_force_immediate_release_port_net"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 23.3.3")
+        self.assertIn("continuous assignment", excluded.reason)
+        self.assertIn("e[idx +: 8]", excluded.reason)
+
     def test_unformatted_int_array_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_sys_sformat"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")

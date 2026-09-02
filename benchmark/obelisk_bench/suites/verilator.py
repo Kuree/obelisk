@@ -861,6 +861,11 @@ STRING_WILDCARD_EQUALITY = Exclusion(
     "Table 11-1 restricts wildcard equality to integral operands; the test "
     "requires Verilator's extension of ==? and !=? to a string expression, "
     "while Table 6-9 defines only ordinary equality for strings")
+DYNAMIC_OUTPUT_PORT_NET_SELECT = Exclusion(
+    "IEEE 1800-2017 23.3.3",
+    "an output-port connection drives its outside net as a continuous "
+    "assignment, whose net lvalue can use only A.8.5's constant_select; the "
+    "test connects the output directly to the runtime slice e[idx +: 8]")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -883,6 +888,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
     "t_eq_wild": STRING_WILDCARD_EQUALITY,
+    "t_force_immediate_release_port_net": DYNAMIC_OUTPUT_PORT_NET_SELECT,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
