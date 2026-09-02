@@ -609,6 +609,13 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("IEEE 1800-2017 7.12.1", log)
         self.assertTrue(log.endswith("Stack dump\n"))
 
+    def test_nested_extern_slang_bug_remains_a_tagged_failure(self):
+        log = verilator.classify_dependency_failure(
+            "t_class_extern", "expected subroutine name\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 8.24", log)
+        self.assertTrue(log.endswith("expected subroutine name\n"))
+
     def test_unlisted_failure_is_unchanged(self):
         self.assertEqual(
             verilator.classify_dependency_failure("t_other", "error\n"),

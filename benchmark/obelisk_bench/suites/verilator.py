@@ -110,6 +110,11 @@ KNOWN_SLANG_BUGS = {
         "class type in compilation-unit scope, and 8.23 requires the left "
         "operand of :: to resolve as a class type; pinned Slang stops at the "
         "later same-named class method instead of resolving the outer type"),
+    "t_class_extern": (
+        "IEEE 1800-2017 8.24 requires a qualified out-of-block method "
+        "definition to bind to its extern prototype, and A.2.2.1 permits a "
+        "nested class_type such as Cls::SubCls in class_scope; pinned Slang "
+        "rejects that qualified nested implementation before IR emission"),
     "t_inst_dff": (
         "IEEE 1800-2017 6.20.2 makes an untyped parameter's type and range "
         "follow its final override value, and 5.7.1 makes self-determined '0 "
