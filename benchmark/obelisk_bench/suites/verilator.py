@@ -716,6 +716,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
+    "t_class1": CLASS_PATTERN,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
     "t_display_class": CLASS_PATTERN,
