@@ -281,6 +281,12 @@ STATIC_REF_ARGUMENT = Exclusion(
     "passing an argument by ref is illegal for a static-lifetime subroutine; "
     "the module function defaults static and the test requires its ref queue "
     "element argument to compile")
+ARRAY_ELEMENT_CLASS_COVARIANCE = Exclusion(
+    "IEEE 1800-2017 7.6",
+    "fixed, dynamic, and queue array assignment compatibility requires "
+    "equivalent element types; the test passes an array of derived "
+    "reg_slave_TABLES handles to a dynamic-array formal of base uvm_reg "
+    "handles, whose element types are only assignment compatible")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -754,6 +760,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assoc_wildcard_method": POST_2017_ARRAY_MAP,
     "t_queue_method": POST_2017_ARRAY_MAP,
     "t_queue_back": STATIC_REF_ARGUMENT,
+    "t_queue_inherit_call": ARRAY_ELEMENT_CLASS_COVARIANCE,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
     "t_display_enum_format": PATTERN_FIELD_WIDTH,
