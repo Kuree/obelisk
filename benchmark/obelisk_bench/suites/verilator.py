@@ -768,6 +768,12 @@ VERILATOR_DPI_DECLARATION_COMMENT = Exclusion(
     "a block comment has no DPI declaration semantics; the test requires "
     "Verilator's dpi_c_decl metacomment to replace H.7.4's const char * "
     "string result with char * and add a C++ throw() specifier")
+CONFIG_PARENT_LIBRARY_SEARCH = Exclusion(
+    "IEEE 1800-2017 33.4.1.5",
+    "when no liblist clause is selected, the current library list contains "
+    "only the library of the parent cell; the configured top t is in work, "
+    "but the test expects its m1 and m2 children to be found by searching "
+    "unrelated liba and libb libraries")
 EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_accessors": NONSTANDARD_DPI_PACKED_RESULTS,
     "t_dpi_decl": VERILATOR_DPI_DECLARATION_COMMENT,
@@ -777,6 +783,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_class_name": VERILATOR_HIERARCHICAL_NAME_SPELLING,
     "t_class_new_default": POST_2017_DEFAULT_CONSTRUCTOR_ARGUMENT,
     "t_class_override": POST_2017_CLASS_OVERRIDE_CONTROLS,
+    "t_config_inst": CONFIG_PARENT_LIBRARY_SEARCH,
     "t_array_method": POST_2017_ARRAY_MAP,
     "t_array_pattern_concat": ARRAY_PATTERN_DOES_NOT_FLATTEN,
     "t_assign_pattern_cmp": UNTYPED_PATTERN_COMPARISON,
