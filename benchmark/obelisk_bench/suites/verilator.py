@@ -489,6 +489,13 @@ DYNAMIC_BITSTREAM_SIZE_MISMATCH = Exclusion(
     "difference between a dynamic source and fixed destination shall issue an "
     "error when known; the test instead requires every cast to truncate or "
     "zero-pad the string to the destination width")
+UNTYPED_UNSIZED_PARAMETER_WIDTH = Exclusion(
+    "IEEE 1800-2017 6.20.2",
+    "an untyped parameter whose final assigned value is unsized has an "
+    "implementation-dependent range of at least 32 bits; 5.7.1 makes `'1` "
+    "an unsized fill value, so assigning the resulting all-ones parameter to "
+    "four bits produces 4'b1111, while the test requires a one-bit parameter "
+    "and 4'b0001")
 UNTYPED_PATTERN_COMPARISON = Exclusion(
     "IEEE 1800-2017 10.9",
     "an untyped assignment pattern has no self-determined type and may only "
@@ -573,6 +580,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_stream_unpack": PATTERN_RADIX,
     "t_stream_unpack_lhs": UNDERSIZED_STREAM_SOURCE,
     "t_string_to_bit": DYNAMIC_BITSTREAM_SIZE_MISMATCH,
+    "t_math_width": UNTYPED_UNSIZED_PARAMETER_WIDTH,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class_enum": CLASS_PATTERN,
     "t_class_param_extends": CLASS_PATTERN,
