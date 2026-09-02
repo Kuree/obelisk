@@ -106,6 +106,43 @@ static bool isFixedForeachCollectionUse(Operation *reference) {
   return false;
 }
 
+static bool markForeachIteratorObserverCapture(
+    Operation *use, Operation *iterator,
+    const llvm::StringMap<Operation *> &semanticSymbols) {
+  for (Operation *parent = use; parent; parent = parent->getParentOp()) {
+    auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(parent);
+    if (!foreach)
+      continue;
+    ArrayAttr loopDimensions = foreach.getLoopDimensions();
+    for (auto [index, attribute] : llvm::enumerate(loopDimensions)) {
+      auto dimension = dyn_cast<DictionaryAttr>(attribute);
+      auto reference =
+          dimension
+              ? dimension.getAs<SymbolRefAttr>(foreach_metadata::iteratorSymbol)
+              : SymbolRefAttr{};
+      auto found = reference
+                       ? semanticSymbols.find(reference.getLeafReference())
+                       : semanticSymbols.end();
+      if (found == semanticSymbols.end() || found->second != iterator)
+        continue;
+      if (dimension.contains(foreachIteratorObserverCaptureAttrName))
+        return true;
+      SmallVector<Attribute> dimensions(loopDimensions.begin(),
+                                        loopDimensions.end());
+      NamedAttrList rewritten(dimension);
+      rewritten.set(foreachIteratorObserverCaptureAttrName,
+                    UnitAttr::get(foreach.getContext()));
+      dimensions[index] =
+          DictionaryAttr::get(foreach.getContext(), rewritten.getAttrs());
+      foreach
+        ->setAttr("loop_dimensions",
+                  ArrayAttr::get(foreach.getContext(), dimensions));
+      return true;
+    }
+  }
+  return false;
+}
+
 static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   for (Operation *parent = member ? member->getParentOp() : nullptr; parent;
        parent = parent->getParentOp())
@@ -430,6 +467,28 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       }
       if (!referencedSymbol)
         return;
+      // A foreach iterator normally remains an SSA value. An observer is
+      // invoked after its enclosing process suspends, so its capture ABI needs
+      // the stable automatic cell that owns the iterator during this loop.
+      if (unit.entryKind == sim::EntryKind::Observer &&
+          isa<semantic::SVIteratorSymbolOp>(referencedSymbol)) {
+        FailureOr<Type> type = getNormalizedSemanticType(referencedSymbol);
+        if (failed(type)) {
+          invalid = true;
+          return;
+        }
+        if (seenLocals.insert(path).second) {
+          result.observerLocals[unit.source].push_back(
+              {path.str(), *type, true, false});
+          if (!markForeachIteratorObserverCapture(nested, referencedSymbol,
+                                                  semanticSymbols)) {
+            emitError(getSemanticLocation(nested))
+                << "observer foreach iterator has no owning loop dimension";
+            invalid = true;
+          }
+        }
+        return;
+      }
       if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
               semantic::SVSpecparamSymbolOp>(referencedSymbol)) {
         if (auto type = nested->getAttrOfType<TypeAttr>("semantic_type");

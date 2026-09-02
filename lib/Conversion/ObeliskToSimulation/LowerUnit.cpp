@@ -1020,6 +1020,8 @@ FailureOr<Value> UnitLowering::bindObserver(
     if (!path)
       return emitError(location) << "observer path is not a string", failure();
     Value value = overrides ? overrides->lookup(path.getValue()) : Value{};
+    if (!value && !observerCaptureOverrides.empty())
+      value = observerCaptureOverrides.lookup(path.getValue());
     if (!value)
       value = values.lookup(path.getValue());
     if (!value)

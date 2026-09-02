@@ -378,6 +378,10 @@ inline constexpr ::mlir::StringLiteral observerCapturesAttrName =
     "obelisk_sim.observer_captures";
 inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
     "obelisk_sim.observer_dependencies";
+/// Marks a foreach iterator that must remain addressable while an outlined
+/// observer reevaluates an expression from the loop body.
+inline constexpr ::mlir::StringLiteral foreachIteratorObserverCaptureAttrName =
+    "obelisk_sim.foreach_iterator_observer_capture";
 inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
     "obelisk_sim.sampled_observer";
 

@@ -662,6 +662,9 @@ private:
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> lvalueExpressionCaptures;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
+  /// Stable lexical cells used only when binding outlined observers. Ordinary
+  /// expressions and fork branches retain their value-oriented bindings.
+  ::llvm::StringMap<::mlir::Value> observerCaptureOverrides;
   ::llvm::StringMap<uint64_t> descriptorIDs;
   ::llvm::DenseMap<uint64_t, ::mlir::Value> nodeLvalues;
   bool deferDriverResolution = false;

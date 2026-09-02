@@ -182,14 +182,51 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     return failure();
   }
 
+  struct SavedObserverCapture {
+    std::string path;
+    Value value;
+    bool existed;
+  };
+  SmallVector<SavedObserverCapture> savedObserverCaptures;
+  llvm::scope_exit restoreObserverCaptures([&] {
+    for (const SavedObserverCapture &capture : savedObserverCaptures) {
+      if (capture.existed)
+        observerCaptureOverrides[capture.path] = capture.value;
+      else
+        observerCaptureOverrides.erase(capture.path);
+    }
+  });
+  auto allocateObserverCapture = [&](StringRef path,
+                                     Type type) -> FailureOr<Value> {
+    auto previous = observerCaptureOverrides.find(path);
+    savedObserverCaptures.push_back(
+        {path.str(),
+         previous == observerCaptureOverrides.end() ? Value{}
+                                                    : previous->second,
+         previous != observerCaptureOverrides.end()});
+    Value initial = createDefaultValue(builder, location, type);
+    if (!initial) {
+      emitError(location) << "cannot initialize foreach iterator capture '"
+                          << path << "' of type " << type;
+      return failure();
+    }
+    Value reference = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), type),
+        initial);
+    observerCaptureOverrides[path] = reference;
+    return reference;
+  };
+
   if (foreach_metadata::hasRuntimeDimension(op.getLoopDimensions())) {
     struct RuntimeDimension {
-      bool hasIterator;
-      bool runtime;
-      int64_t left;
-      int64_t right;
+      bool hasIterator = false;
+      bool runtime = false;
+      bool observerCapture = false;
+      int64_t left = 0;
+      int64_t right = 0;
       std::string iteratorPath;
       Type iteratorType;
+      Value observerReference;
     };
     SmallVector<RuntimeDimension> dimensions;
     for (Attribute attribute : op.getLoopDimensions()) {
@@ -205,8 +242,11 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
         emitError(location) << "malformed runtime foreach metadata";
         return failure();
       }
-      RuntimeDimension lowered{
-          hasIterator.getValue(), !hasRange.getValue(), 0, 0, {}, {}};
+      RuntimeDimension lowered;
+      lowered.hasIterator = hasIterator.getValue();
+      lowered.runtime = !hasRange.getValue();
+      lowered.observerCapture =
+          dimension.contains(foreachIteratorObserverCaptureAttrName);
       if (hasRange.getValue()) {
         auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
         auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
@@ -247,6 +287,15 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     FailureOr<Value> collection = lowerExpression(children[0]);
     if (failed(collection))
       return failure();
+    for (RuntimeDimension &dimension : dimensions) {
+      if (!dimension.observerCapture)
+        continue;
+      FailureOr<Value> reference = allocateObserverCapture(
+          dimension.iteratorPath, dimension.iteratorType);
+      if (failed(reference))
+        return failure();
+      dimension.observerReference = *reference;
+    }
     Block *exit = addBlock();
     Type indexType = builder.getI64Type();
     auto constant = [&](uint64_t value) -> Value {
@@ -325,6 +374,9 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
           if (failed(iterator))
             return failure();
           values[dimension.iteratorPath] = *iterator;
+          if (dimension.observerReference)
+            sim::SimRefStoreOp::create(builder, location, *iterator,
+                                       dimension.observerReference);
         }
 
         Value nestedCollection = currentCollection;
@@ -424,6 +476,9 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
         if (failed(iterator))
           return failure();
         values[dimension.iteratorPath] = *iterator;
+        if (dimension.observerReference)
+          sim::SimRefStoreOp::create(builder, location, *iterator,
+                                     dimension.observerReference);
       }
 
       Value nestedCollection = currentCollection;
@@ -479,6 +534,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     uint64_t stride;
     std::string iteratorPath;
     Type iteratorType;
+    bool observerCapture;
+    Value observerReference;
   };
   SmallVector<Dimension> dimensions;
   for (Attribute attribute : op.getLoopDimensions()) {
@@ -527,11 +584,28 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       emitError(location) << "foreach dimension range is too large";
       return failure();
     }
-    dimensions.push_back({leftValue, rightValue, distance.getZExtValue(), 0,
-                          path.getValue().str(), *iteratorType});
+    dimensions.push_back(
+        {leftValue,
+         rightValue,
+         distance.getZExtValue(),
+         0,
+         path.getValue().str(),
+         *iteratorType,
+         dimension.contains(foreachIteratorObserverCaptureAttrName),
+         {}});
   }
   if (dimensions.empty())
     return success();
+
+  for (Dimension &dimension : dimensions) {
+    if (!dimension.observerCapture)
+      continue;
+    FailureOr<Value> reference =
+        allocateObserverCapture(dimension.iteratorPath, dimension.iteratorType);
+    if (failed(reference))
+      return failure();
+    dimension.observerReference = *reference;
+  }
 
   uint64_t iterationCount = 1;
   for (Dimension &dimension : llvm::reverse(dimensions)) {
@@ -600,6 +674,9 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     if (failed(converted))
       return failure();
     values[dimension.iteratorPath] = *converted;
+    if (dimension.observerReference)
+      sim::SimRefStoreOp::create(builder, location, *converted,
+                                 dimension.observerReference);
   }
 
   loopTargets.push_back(
