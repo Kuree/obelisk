@@ -580,6 +580,12 @@ UNTIMED_ALWAYS = Exclusion(
     "it will create a simulation deadlock condition\", and the test's design "
     "spells its combinational logic as exactly that; the test needs "
     "Verilator's inference of a sensitivity list for an untimed always")
+HEADER_IMPORT_WITHOUT_PORTS = Exclusion(
+    "IEEE 1800-2017 23.2.1",
+    "Syntax 23-1 note 1 requires a package import in an ANSI module header "
+    "to be followed by a parameter-port list or a list of port declarations; "
+    "the test ends the header immediately after its import and needs "
+    "Verilator's extension accepting neither list")
 HIERARCHICAL_TYPEDEF = Exclusion(
     "IEEE 1800-2017 6.18",
     "\"hierarchical references to type_identifier shall not be allowed\", and "
@@ -1127,6 +1133,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_tri_cond_eqcase_with_1": UNTIMED_ALWAYS,
     "t_tri_eqcase_input": UNTIMED_ALWAYS,
     "t_param_avec": ARRAY_ASSIGNMENT_ORDER,
+    "t_package_twodeep": HEADER_IMPORT_WITHOUT_PORTS,
     "t_array_mda": OUT_OF_RANGE_FIXED_ARRAY_INDEX,
     "t_property_until": FOUR_STATE_CLOCK_STARTUP,
     "t_property_until_implication": ACTION_BLOCK_PER_ATTEMPT,

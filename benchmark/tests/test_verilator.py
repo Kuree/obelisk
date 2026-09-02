@@ -929,6 +929,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("function void pre_randomize()", excluded.reason)
         self.assertIn("as a task", excluded.reason)
 
+    def test_header_import_without_ports_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_package_twodeep"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.1")
+        self.assertIn("Syntax 23-1 note 1", excluded.reason)
+        self.assertIn("neither list", excluded.reason)
+
     def test_doubly_unbounded_range_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_inside_unbounded_both"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 A.8.3")
