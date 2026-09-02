@@ -142,13 +142,17 @@ TIMING_LOOP = re.compile(r"^\s*test\.compile\(.*\btiming_loop\s*=\s*True",
 TRACE_DUMPFILE = "simx.vcd"
 
 EXPECTED_ERROR = re.compile(r"_(bad|unsup|fail\d*)$")
-# This negative test predates the corpus's `_bad` naming convention. Every
-# statement in it is required to fail by IEEE 1800-2017 11.4.14: a streaming
-# assignment target cannot consume too few source bits, and a fixed data-object
-# target cannot be narrower than its source stream. Keep the exception exact so
-# an unrelated descriptor cannot make a standards-compliant rejection look
-# like a pass merely by asking Verilator itself to fail.
-EXPECTED_ERROR_NAMES = frozenset({"t_stream_unpack_narrower"})
+# These negative tests predate or depart from the corpus's `_bad` naming
+# convention. Keep the exceptions exact so an unrelated descriptor cannot make
+# a failure look like a pass merely by asking Verilator itself to fail.
+EXPECTED_ERROR_NAMES = frozenset({
+    # IEEE 1800-2017 9.2.3 and 16.3 require the false assertion in the final
+    # procedure to execute when $finish ends the simulation.
+    "t_final_assert",
+    # IEEE 1800-2017 11.4.14 requires an error when a streaming assignment
+    # target cannot consume its source or is narrower than the source stream.
+    "t_stream_unpack_narrower",
+})
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on
 # `test.execute` means it builds and the *run* is what has to fail. The name

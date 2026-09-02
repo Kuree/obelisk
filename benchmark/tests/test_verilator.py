@@ -475,6 +475,13 @@ class ExpectationDescriptorTest(unittest.TestCase):
                 "test.compile()\ntest.execute(fails=True)\ntest.passes()\n"),
             verilator.Expectation(False, True))
 
+    def test_a_positive_named_final_assert_expects_its_runtime_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_final_assert",
+                "test.compile()\ntest.execute(fails=True)\ntest.passes()\n"),
+            verilator.Expectation(False, True))
+
     def test_a_multiline_compile_call_is_read_whole(self):
         self.assertEqual(
             self.expectation(
