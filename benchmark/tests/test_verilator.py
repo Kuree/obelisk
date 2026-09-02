@@ -670,6 +670,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertIs(verilator.EXCLUDED["t_display_p_elab"],
                       verilator.PATTERN_RADIX)
 
+    def test_partial_timeformat_arguments_are_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_display_time"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 20.4.2")
+        self.assertIn("all four arguments", excluded.reason)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):

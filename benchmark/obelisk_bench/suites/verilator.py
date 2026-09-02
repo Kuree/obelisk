@@ -233,6 +233,11 @@ DEFAULT_REAL_DECIMAL_FORMAT = Exclusion(
     "default decimal format, which Table 21-3 identifies as %f for a real; "
     "the golden instead removes %f's trailing fractional zeroes as though "
     "the unformatted real had used the shorter %g representation")
+PARTIAL_TIMEFORMAT_ARGUMENTS = Exclusion(
+    "IEEE 1800-2017 20.4.2",
+    "Syntax 20-4 permits $timeformat either without an argument list or with "
+    "all four arguments; the test requires Verilator's partial and "
+    "hole-filled argument-list extensions")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -708,6 +713,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
     "t_display_p_elab": PATTERN_RADIX,
     "t_display_signed": PATTERN_RADIX,
+    "t_display_time": PARTIAL_TIMEFORMAT_ARGUMENTS,
     "t_gen_genblk": DECIMAL_FIELD_ZERO_PADDING,
     "t_dynarray": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
