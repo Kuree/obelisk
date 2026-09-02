@@ -257,6 +257,10 @@ UNFORMATTED_UNPACKED_EXPRESSION = Exclusion(
     "an unpacked expression without a corresponding format is legal only for "
     "a string or unpacked byte array; the test requires $display(mem) to "
     "implicitly use %p for an unpacked int array")
+FINISH_ZERO_EXTRA_NEWLINE = Exclusion(
+    "IEEE 1800-2017 20.2",
+    "Table 20-1 requires $finish(0) to print nothing; the golden requires an "
+    "extra blank line after the design's final newline")
 CLASS_PATTERN = Exclusion(
     "IEEE 1800-2017 21.2.1.7",
     "the rendering of a non-null class handle is implementation dependent; the "
@@ -875,6 +879,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_timing_initial_always": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_unroll_complexcond": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_file_basic": NON_STANDARD_REWIND_SPELLING,
+    "t_sys_file_basic_mcd": FINISH_ZERO_EXTRA_NEWLINE,
     "t_time_sscanf": TIME_SCAN_PRECISION_ROUNDING,
     "t_timing_osc": TIME_DECLARATION_ORDER,
     "t_clk_concat2": MIXED_PORT_HEADER_STYLES,

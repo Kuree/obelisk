@@ -695,6 +695,11 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1")
         self.assertIn("implicitly use %p", excluded.reason)
 
+    def test_finish_zero_blank_line_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_sys_file_basic_mcd"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 20.2")
+        self.assertIn("extra blank line", excluded.reason)
+
     def test_every_exclusion_cites_the_clause_that_settles_it(self):
         for name, excluded in verilator.EXCLUDED.items():
             with self.subTest(test=name):
