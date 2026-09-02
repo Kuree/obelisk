@@ -8,11 +8,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace {
 
@@ -145,6 +147,12 @@ void expectNoOrder(uint32_t source, uint32_t selector, Mode mode) {
       << keyName(source, selector, mode);
 }
 
+void refreshImageChecksum(std::vector<uint8_t> &image) {
+  uint64_t checksum = checksumVPIObjectModelImage(image.data(), image.size());
+  for (unsigned byte = 0; byte != 8; ++byte)
+    image[16 + byte] = static_cast<uint8_t>(checksum >> (byte * 8));
+}
+
 OracleGraph buildLrmOracle() {
   OracleGraph graph;
   auto S = [](std::initializer_list<uint32_t> kinds) {
@@ -206,6 +214,181 @@ TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   const auto &use = requireTraversal(vpiIterator, vpiUse, Mode::Handle);
   EXPECT_EQ(expandedTargets(use.targets), expectedSources);
   expectAbsent(vpiIterator, vpiUse, Mode::Iterate);
+}
+
+TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
+  ASSERT_TRUE(validateVPIObjectModelImage(vpiObjectModelImage,
+                                          sizeof(vpiObjectModelImage)));
+  EXPECT_LT(sizeof(vpiObjectModelImage), 32u * 1024u);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 60),
+            kExpectedTraversalCount);
+
+  size_t canonicalObjects = 0;
+  for (const auto &object : vpiObjectKinds)
+    canonicalObjects += object.aliasOf == nullptr;
+  size_t canonicalRelations = 0;
+  for (const auto &relation : vpiRelations)
+    canonicalRelations += relation.aliasOf == nullptr;
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 28),
+            canonicalObjects);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 36),
+            canonicalRelations);
+
+  uint32_t objectOffset = readVPIObjectModelImage32(vpiObjectModelImage, 24);
+  uint32_t imageObject = 0;
+  for (const auto &object : vpiObjectKinds) {
+    if (object.aliasOf != nullptr)
+      continue;
+    const uint8_t *record = vpiObjectModelImage + objectOffset +
+                            imageObject * vpiObjectModelImageObjectSize;
+    EXPECT_EQ(readVPIObjectModelImage16(record, 0), object.value)
+        << object.apiName;
+    EXPECT_EQ(record[2], static_cast<uint8_t>(object.role)) << object.apiName;
+    EXPECT_EQ(record[3], 0) << object.apiName;
+    EXPECT_EQ(readVPIObjectModelImage64(record, 4), object.families)
+        << object.apiName;
+    ++imageObject;
+  }
+  uint32_t relationOffset = readVPIObjectModelImage32(vpiObjectModelImage, 32);
+  uint32_t imageRelation = 0;
+  for (const auto &relation : vpiRelations) {
+    if (relation.aliasOf != nullptr)
+      continue;
+    const uint8_t *record = vpiObjectModelImage + relationOffset +
+                            imageRelation * vpiObjectModelImageRelationSize;
+    EXPECT_EQ(readVPIObjectModelImage16(record, 0), relation.value)
+        << relation.apiName;
+    EXPECT_EQ(record[2], static_cast<uint8_t>(relation.cardinality))
+        << relation.apiName;
+    EXPECT_EQ(record[3], 0) << relation.apiName;
+    ++imageRelation;
+  }
+
+  for (const auto &edge : vpiTraversals) {
+    SCOPED_TRACE(keyName(edge.sourceType, edge.selector, edge.mode));
+    VPIObjectModelImageTraversal imageEdge{};
+    ASSERT_TRUE(findVPIObjectModelImageTraversal(vpiObjectModelImage,
+                                                 edge.sourceType, edge.selector,
+                                                 edge.mode, imageEdge));
+    EXPECT_EQ(imageEdge.order, edge.order);
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      EXPECT_EQ(vpiObjectModelImageTargetContains(
+                    vpiObjectModelImage, imageEdge.targets, object.value),
+                vpiObjectSetContains(edge.targets, object.value))
+          << object.apiName;
+    }
+  }
+}
+
+TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
+  std::vector<uint8_t> damaged(std::begin(vpiObjectModelImage),
+                               std::end(vpiObjectModelImage));
+  auto reset = [&] {
+    damaged.assign(std::begin(vpiObjectModelImage),
+                   std::end(vpiObjectModelImage));
+  };
+  auto write16 = [&](uint32_t offset, uint16_t value) {
+    damaged[offset] = static_cast<uint8_t>(value);
+    damaged[offset + 1] = static_cast<uint8_t>(value >> 8);
+  };
+  damaged[0] ^= 1;
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+  damaged[0] ^= 1;
+  damaged.back() ^= 1;
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(vpiObjectModelImage,
+                                           sizeof(vpiObjectModelImage) - 1));
+
+  reset();
+  uint32_t objectOffset = readVPIObjectModelImage32(damaged.data(), 24);
+  damaged[objectOffset + 3] = 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+
+  reset();
+  uint32_t setOffset = readVPIObjectModelImage32(damaged.data(), 40);
+  damaged[setOffset + 2] = 0;
+  damaged[setOffset + 3] = 0;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+
+  reset();
+  uint32_t traversalOffset = readVPIObjectModelImage32(damaged.data(), 56);
+  uint32_t traversalCount = readVPIObjectModelImage32(damaged.data(), 60);
+  for (uint32_t index = 0; index != traversalCount; ++index) {
+    uint8_t *record = damaged.data() + traversalOffset +
+                      index * vpiObjectModelImageTraversalSize;
+    if (record[6] == static_cast<uint8_t>(Mode::Handle)) {
+      record[7] = static_cast<uint8_t>(Order::Source);
+      break;
+    }
+  }
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+
+  reset();
+  uint32_t setCount = readVPIObjectModelImage32(damaged.data(), 44);
+  uint32_t kindOffset = readVPIObjectModelImage32(damaged.data(), 48);
+  for (uint32_t index = 0; index != setCount; ++index) {
+    const uint8_t *record =
+        damaged.data() + setOffset + index * vpiObjectModelImageSetSize;
+    uint16_t first = readVPIObjectModelImage16(record, 0);
+    uint16_t count = readVPIObjectModelImage16(record, 2);
+    if (count < 2)
+      continue;
+    uint16_t left =
+        readVPIObjectModelImage16(damaged.data(), kindOffset + first * 2);
+    uint16_t right = readVPIObjectModelImage16(
+        damaged.data(), kindOffset + (uint32_t{first} + 1) * 2);
+    write16(kindOffset + first * 2, right);
+    write16(kindOffset + (uint32_t{first} + 1) * 2, left);
+    break;
+  }
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(traversalOffset + 4, static_cast<uint16_t>(setCount));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[traversalOffset + 6] = 2;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(traversalOffset, UINT16_MAX);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  uint32_t relationOffset = readVPIObjectModelImage32(damaged.data(), 32);
+  damaged[relationOffset + 2] = 3;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  // A structurally valid but different model is rejected by the generated
+  // canonical fingerprint, keeping compiler and runtime schemas in lockstep.
+  reset();
+  damaged[objectOffset + 4] ^= 0x80;
+  refreshImageChecksum(damaged);
+  EXPECT_TRUE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
 }
 
 TEST(VPIObjectModel, TraversalDescriptorsAreSortedUniqueAndSearchable) {
