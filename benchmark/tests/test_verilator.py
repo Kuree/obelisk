@@ -60,6 +60,20 @@ class DetectInputsTest(unittest.TestCase):
     def test_unpacked_dimension_keeps_the_name(self):
         self.assertEqual(self.detect("module t (", "  input a[1];"), ["a"])
 
+    def test_wrapper_preserves_nonintegral_and_unpacked_input_types(self):
+        text = "\n".join((
+            "module t (clk, check_real, check_array_real, check_string);",
+            "  input clk;",
+            "  input real check_real;",
+            "  input real check_array_real [1:0];",
+            "  input string check_string;",
+        ))
+        shell = verilator.make_top_shell(verilator.detect_input_ports(text))
+        self.assertIn("reg clk;", shell)
+        self.assertIn("real check_real;", shell)
+        self.assertIn("real check_array_real [1:0];", shell)
+        self.assertIn("string check_string;", shell)
+
     def test_one_declaration_may_name_several_ports(self):
         self.assertEqual(self.detect("module t (", "  input clk, fastclk;"),
                          ["clk", "fastclk"])

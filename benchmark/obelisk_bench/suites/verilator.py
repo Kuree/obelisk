@@ -1091,8 +1091,57 @@ def declaration_names(declaration: str) -> list[str]:
     return [token for token in tokens if token != ","]
 
 
-def detect_inputs(top_text: str, module_name: str = "t") -> list[str]:
-    """Return one module's input names, as driver.py's _read_inputs_v does.
+class InputPort(NamedTuple):
+    """One generated-shell input and its equivalent storage declaration."""
+
+    name: str
+    declaration: str
+
+
+def declaration_ports(declaration: str) -> list[InputPort]:
+    """Return input ports while preserving each port's source data type."""
+    declaration = MACRO.sub(" ", declaration)
+    declaration = DECLARATION_END.split(declaration, maxsplit=1)[0]
+    declaration = DIRECTION_KEYWORD.split(declaration, maxsplit=1)[0]
+    names = declaration_names(declaration)
+    if not names:
+        return []
+
+    # Mask dimensions without changing offsets, then take the final occurrence
+    # of the first name before its comma. This distinguishes `input T T` from
+    # the type T while retaining packed dimensions in the shared prefix.
+    masked = DIMENSION.sub(lambda match: " " * len(match.group()), declaration)
+    first_segment = masked.split(",", maxsplit=1)[0]
+    first_matches = list(re.finditer(
+        rf"(?<![A-Za-z0-9_$]){re.escape(names[0])}(?![A-Za-z0-9_$])",
+        first_segment))
+    if not first_matches:
+        return []
+    prefix = declaration[:first_matches[-1].start()].strip()
+    prefix_words = TOKEN.findall(DIMENSION.sub(" ", prefix))
+    if not prefix_words or all(word in {"signed", "unsigned"}
+                               for word in prefix_words):
+        prefix = f"reg {prefix}".rstrip()
+
+    ports = []
+    cursor = first_matches[-1].start()
+    for name in names:
+        match = re.search(
+            rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])",
+            masked[cursor:])
+        if not match:
+            continue
+        end = cursor + match.end()
+        dimensions = re.match(r"(?:\s*\[[^\]]*\])*", declaration[end:])
+        suffix = dimensions.group(0).rstrip() if dimensions else ""
+        storage_type = "reg" if name in {"clk", "fastclk"} else prefix
+        ports.append(InputPort(name, f"{storage_type} {name}{suffix};"))
+        cursor = end
+    return ports
+
+
+def detect_input_ports(top_text: str, module_name: str = "t") -> list[InputPort]:
+    """Return one module's input ports, as driver.py's scan does.
 
     Only inputs of the last-seen `module t` count, and only those before its
     first function/task/clocking/endmodule — enough to find `clk`/`fastclk`.
@@ -1101,7 +1150,7 @@ def detect_inputs(top_text: str, module_name: str = "t") -> list[str]:
     the stop line is checked first, so the formal arguments of a declaration
     like `task automatic step(input string label);` are not read as ports.
     """
-    inputs: dict[str, None] = {}
+    inputs: dict[str, InputPort] = {}
     module_line = re.compile(
         r"^\s*module\s+" + re.escape(module_name) + r"\b")
     scanning = False
@@ -1126,11 +1175,16 @@ def detect_inputs(top_text: str, module_name: str = "t") -> list[str]:
             opening = INPUT_LINE.match(text)
             starts = [opening.end()] if opening else []
         for start in starts:
-            for name in declaration_names(text[start:]):
-                inputs[name] = None
+            for port in declaration_ports(text[start:]):
+                inputs[port.name] = port
         if heading and ";" in text:
             heading = False
-    return list(inputs)
+    return list(inputs.values())
+
+
+def detect_inputs(top_text: str, module_name: str = "t") -> list[str]:
+    """Return one module's input names."""
+    return [port.name for port in detect_input_ports(top_text, module_name)]
 
 
 def detect_sim_time(descriptor: Path) -> int:
@@ -1691,25 +1745,30 @@ def runtime_errors_mismatch_golden(
     return contains_runtime_error(stdout, stderr)
 
 
-def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
+def make_top_shell(inputs: list[str | InputPort], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top",
                    instance_module: str = "t") -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
+    ports = [value if isinstance(value, InputPort)
+             else InputPort(value, f"reg {value};")
+             for value in inputs]
+    ports.sort(key=lambda port: port.name)
+    names = {port.name for port in ports}
     lines = [f"module {module_name};"]
-    for name in sorted(inputs):
-        lines.append(f"    reg {name};")
+    for port in ports:
+        lines.append(f"    {port.declaration}")
     lines.append(f"    {instance_module} t (")
     comma = ""
-    for name in sorted(inputs):
-        lines.append(f"      {comma}.{name} ({name})")
+    for port in ports:
+        lines.append(f"      {comma}.{port.name} ({port.name})")
         comma = ","
     lines.append("    );")
     lines.append("")
     lines.append("    initial begin")
-    if "fastclk" in inputs:
+    if "fastclk" in names:
         lines.append("        fastclk = 0;")
-    if "clk" in inputs:
+    if "clk" in names:
         lines.append("        clk = 0;")
     if timing_loop:
         # driver.py's timing-loop main starts at time zero and toggles `clk`
@@ -1717,7 +1776,7 @@ def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
         # inside the design already place its own events, so the SystemVerilog
         # scheduler covers what the C++ loop does with nextTimeSlot().
         lines.append(f"        while ($time < {sim_time}) begin")
-        if "clk" in inputs:
+        if "clk" in names:
             lines.append("          #1 clk = !clk;")
         else:
             lines.append("          #1;")
@@ -1733,9 +1792,9 @@ def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
     # its 110 posedges — enough that a testbench finishing at `cyc == 99` never
     # gets there and exits silently.
     for i in range(5):
-        if "fastclk" in inputs:
+        if "fastclk" in names:
             lines.append("          fastclk = !fastclk;")
-        if i == 0 and "clk" in inputs:
+        if i == 0 and "clk" in names:
             lines.append("          clk = !clk;")
         lines.append("          #1;")
     lines.append("        end")
@@ -1869,7 +1928,7 @@ def judge_one(
             shell = Path(tmp) / "top.v"
             selected_top = shell_module_name(top_text)
             shell.write_text(
-                make_top_shell(detect_inputs(top_text, driver_module),
+                make_top_shell(detect_input_ports(top_text, driver_module),
                                detect_sim_time(descriptor),
                                detect_timing_loop(descriptor),
                                selected_top,
