@@ -1088,6 +1088,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("shall be preceded by the var keyword", excluded.reason)
         self.assertIn("type(bit[9:0]) tvar", excluded.reason)
 
+    def test_malformed_sequential_udp_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_timescale_udp"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 29.3.4")
+        self.assertIn("29.3.2", excluded.reason)
+        self.assertIn("current-state field", excluded.reason)
+        self.assertIn("undeclared in1", excluded.reason)
+
     def test_two_state_conditional_startup_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_opt_expand_keep_widths"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.8")
