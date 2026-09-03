@@ -738,6 +738,11 @@ VERILATOR_NATIVE_MODEL_DRIVER = Exclusion(
     "the descriptor's C++ input is a Verilator-native simulator driver that "
     "constructs VM_PREFIX and calls Verilated model APIs rather than a "
     "portable DPI foreign implementation")
+VERILATOR_PUBLIC_CLOCK_DRIVER = Exclusion(
+    "IEEE 1800-2017 5.4",
+    "a block comment has no signal-export semantics; the test relies on the "
+    "Verilator public_flat_rw metacomment and a generated C++ model driver "
+    "that mutates rootp->t__DOT__clk directly")
 VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "IEEE 1800-2017 20.15.1",
     "$random uses the standard's normative probabilistic-distribution "
@@ -1232,6 +1237,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_embed1": VERILATOR_EMBEDDED_MODEL,
     "t_dpi_export_context2_bad": VERILATOR_NATIVE_MODEL_DRIVER,
     "t_dpi_export_context_bad": VERILATOR_NATIVE_MODEL_DRIVER,
+    "t_public_clk": VERILATOR_PUBLIC_CLOCK_DRIVER,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class1": CLASS_PATTERN,

@@ -1078,6 +1078,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("reg_35", excluded.reason)
         self.assertIn("out18=1", excluded.reason)
 
+    def test_verilator_public_clock_driver_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_public_clk"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 5.4")
+        self.assertIn("public_flat_rw", excluded.reason)
+        self.assertIn("generated C++ model", excluded.reason)
+        self.assertIn("rootp", excluded.reason)
+
     def test_literal_implicit_inout_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_generic2"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
