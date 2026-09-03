@@ -712,6 +712,12 @@ TIME_DECLARATION_ORDER = Exclusion(
     "IEEE 1800-2017 3.14.2.2",
     "timeunit and timeprecision declarations must precede every other item "
     "in their time scope; the test declares six realtime parameters first")
+HIERARCHICAL_BARE_DELAY = Exclusion(
+    "IEEE 1800-2017 A.2.2.3",
+    "the bare `# delay_value` form permits a ps_identifier, which A.9.3 "
+    "defines as an optional package scope followed by one identifier; the "
+    "test requires Verilator's `#sub.delay` hierarchical extension (the "
+    "parenthesized `#(sub.delay)` form beside it is the standard spelling)")
 USE_BEFORE_DECLARATION = Exclusion(
     "IEEE 1800-2017 6.5",
     "\"Data shall be declared before they are used, apart from implicit nets\" "
@@ -1149,6 +1155,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_sys_readmem_assoc": READMEM_HASH_COMMENT,
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
     "t_select_negative": UNSIGNED_SELECT_INDEX,
+    "t_delay": HIERARCHICAL_BARE_DELAY,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
     "t_wait_iface_vif": IMPLICIT_SENSITIVITY_STARTUP,
     "t_scheduling_3": DECLARATION_INITIALIZER_EVENT,
