@@ -2143,7 +2143,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder, getSemanticLocation(property), id, source->second.scopeId,
             i64, sim::Lifetime::Design, builder.getStringAttr(path),
             builder.getStringAttr(debugName),
-            sim::ComputeObservabilityKindAttr{});
+            sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
       };
       addState(keyPath, "__obelisk_static_randc_key");
       addState(positionPath, "__obelisk_static_randc_position");
@@ -2873,7 +2873,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getStringAttr(path),
           builder.getStringAttr(
               "implicit negative timing-check delayed signal"),
-          sim::ComputeObservabilityKindAttr{});
+          sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
     }
     for (NegativeTimingCheckPlan &check : negativeChecks) {
       auto indices = check.check->getAttrOfType<DenseI64ArrayAttr>(
@@ -3631,7 +3631,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               scopeId, snapshotType, sim::Lifetime::Design,
               builder.getStringAttr(snapshotPath),
               builder.getStringAttr("__obelisk_timing_path_snapshot"),
-              sim::ComputeObservabilityKindAttr{});
+              sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
           snapshots.try_emplace(input.path, std::move(snapshotPath));
         }
       if (invalid)
@@ -3720,7 +3720,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                 scopeId, type, sim::Lifetime::Design,
                 builder.getStringAttr(statePath),
                 builder.getStringAttr(debugName),
-                sim::ComputeObservabilityKindAttr{});
+                sim::ComputeObservabilityKindAttr{},
+                sim::VPITypeSemanticsAttr{});
             return builder.getStringAttr(statePath);
           };
           edgePendingPath =
@@ -9228,7 +9229,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getI1Type(), sim::Lifetime::Design,
             builder.getStringAttr(hierarchy),
             builder.getStringAttr("timing-check timer deadline"),
-            sim::ComputeObservabilityKindAttr{});
+            sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
         functionAttrs.push_back(
             builder.getNamedAttr("obelisk_sim.timing_timer_storage",
                                  builder.getI64IntegerAttr(timerStorageID)));

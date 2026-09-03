@@ -38,6 +38,104 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+LogicalResult
+VPITypeSemanticsAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                             VPITypeKind kind, bool, bool, StringAttr name,
+                             DenseI64ArrayAttr range, ArrayAttr children,
+                             ArrayAttr childNames) {
+  if (!range || (range.size() != 0 && range.size() != 2))
+    return emitError() << "VPI semantic type range must be empty or contain "
+                          "one left/right pair";
+  if (!children || llvm::any_of(children, [](Attribute child) {
+        return !isa<VPITypeSemanticsAttr>(child);
+      }))
+    return emitError()
+           << "VPI semantic type children must all be semantic type attributes";
+  if (!childNames || llvm::any_of(childNames, [](Attribute childName) {
+        auto string = dyn_cast<StringAttr>(childName);
+        return !string || string.getValue().empty();
+      }))
+    return emitError() << "VPI semantic type child names must all be strings";
+
+  const bool aggregate = kind == VPITypeKind::PackedStruct ||
+                         kind == VPITypeKind::UnpackedStruct ||
+                         kind == VPITypeKind::PackedUnion ||
+                         kind == VPITypeKind::UnpackedUnion;
+  const bool named =
+      kind == VPITypeKind::Enum || aggregate || kind == VPITypeKind::Class ||
+      kind == VPITypeKind::VirtualInterface || kind == VPITypeKind::Covergroup;
+  if (name && (!named || name.getValue().empty()))
+    return emitError()
+           << "VPI semantic type has an invalid named-type identity";
+  if ((kind == VPITypeKind::Class || kind == VPITypeKind::VirtualInterface ||
+       kind == VPITypeKind::Covergroup) &&
+      !name)
+    return emitError() << "VPI semantic type kind "
+                       << stringifyVPITypeKind(kind)
+                       << " requires a named-type identity";
+  const bool ranged =
+      kind == VPITypeKind::GenericIntegral || kind == VPITypeKind::Bit ||
+      kind == VPITypeKind::Logic || kind == VPITypeKind::Reg ||
+      kind == VPITypeKind::Byte || kind == VPITypeKind::ShortInt ||
+      kind == VPITypeKind::Int || kind == VPITypeKind::LongInt ||
+      kind == VPITypeKind::Integer || kind == VPITypeKind::Time ||
+      kind == VPITypeKind::PackedArray || kind == VPITypeKind::UnpackedArray;
+  if (range.size() != (ranged ? 2u : 0u))
+    return emitError() << "VPI semantic type kind "
+                       << stringifyVPITypeKind(kind)
+                       << (ranged ? " requires" : " cannot have")
+                       << " a source range";
+
+  const size_t childCount = children.size();
+  auto requireChildren = [&](size_t expected) -> LogicalResult {
+    if (childCount != expected)
+      return emitError() << "VPI semantic type kind "
+                         << stringifyVPITypeKind(kind) << " requires "
+                         << expected << " child type(s)";
+    return success();
+  };
+  switch (kind) {
+  case VPITypeKind::Enum:
+    if (!name || name.getValue().empty())
+      return emitError() << "VPI enum semantic type requires a name";
+    if (failed(requireChildren(1)))
+      return failure();
+    break;
+  case VPITypeKind::PackedArray:
+  case VPITypeKind::UnpackedArray:
+  case VPITypeKind::DynamicArray:
+  case VPITypeKind::Queue:
+  case VPITypeKind::PackedOpenArray:
+  case VPITypeKind::UnpackedOpenArray:
+  case VPITypeKind::Mailbox:
+    if (failed(requireChildren(1)))
+      return failure();
+    break;
+  case VPITypeKind::AssocArray:
+    if (failed(requireChildren(2)))
+      return failure();
+    break;
+  case VPITypeKind::PackedStruct:
+  case VPITypeKind::UnpackedStruct:
+  case VPITypeKind::PackedUnion:
+  case VPITypeKind::UnpackedUnion:
+    if (childCount == 0)
+      return emitError() << "VPI aggregate semantic type requires a field";
+    if (childNames.size() != childCount)
+      return emitError()
+             << "VPI aggregate semantic type requires one name per field";
+    break;
+  default:
+    if (failed(requireChildren(0)))
+      return failure();
+    break;
+  }
+  if (!aggregate && !childNames.empty())
+    return emitError()
+           << "only VPI aggregate semantic types may name child fields";
+  return success();
+}
+
 LogicalResult RandomVariableReferenceAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     ArrayRef<FlatSymbolRefAttr> path, FlatSymbolRefAttr target) {

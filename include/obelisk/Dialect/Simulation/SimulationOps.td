@@ -181,7 +181,8 @@ def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInvento
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
-                       OptionalAttr<SimComputeObservabilityKind>:$observability);
+                       OptionalAttr<SimComputeObservabilityKind>:$observability,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -207,7 +208,8 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                          "::obelisk::sim::NetResolutionKind::Wire">:$resolution_kind,
                        OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
                        OptionalAttr<SimStrength>:$charge_strength,
-                       OptionalAttr<UnitAttr>:$internal);
+                       OptionalAttr<UnitAttr>:$internal,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -338,7 +340,8 @@ def SimPortDeclOp : SimOp<"port.decl", [MemoryEffects<[MemWrite<SimInventoryReso
                        I64Attr:$source_low, TypeAttr:$type,
                        SimPortDirection:$direction, I64Attr:$ordinal,
                        StrAttr:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
   let assemblyFormat = [{$id `in` $scope_id `source` $source_id
     `net` `=` $source_is_net `at` $source_low `:` $type $direction
     `ordinal` $ordinal `hierarchy` $hierarchical_name

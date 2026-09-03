@@ -45,6 +45,75 @@ def SimVPIStatementSourceKind : I32EnumAttr<
   let cppNamespace = "::obelisk::sim";
 }
 
+// Source-semantic type categories retained only in immutable reflection
+// inventory. Executable operations continue to use normalized simulation
+// types, so VPI metadata cannot inhibit canonicalization or tier formation.
+def SimVPITypeUnknown : I32EnumAttrCase<"Unknown", 0, "unknown">;
+def SimVPITypeGenericIntegral
+    : I32EnumAttrCase<"GenericIntegral", 1, "generic_integral">;
+def SimVPITypeBit : I32EnumAttrCase<"Bit", 2, "bit">;
+def SimVPITypeLogic : I32EnumAttrCase<"Logic", 3, "logic">;
+def SimVPITypeReg : I32EnumAttrCase<"Reg", 4, "reg">;
+def SimVPITypeByte : I32EnumAttrCase<"Byte", 5, "byte">;
+def SimVPITypeShortInt : I32EnumAttrCase<"ShortInt", 6, "shortint">;
+def SimVPITypeInt : I32EnumAttrCase<"Int", 7, "int">;
+def SimVPITypeLongInt : I32EnumAttrCase<"LongInt", 8, "longint">;
+def SimVPITypeInteger : I32EnumAttrCase<"Integer", 9, "integer">;
+def SimVPITypeEnum : I32EnumAttrCase<"Enum", 10, "enum">;
+def SimVPITypeTime : I32EnumAttrCase<"Time", 11, "time">;
+def SimVPITypeShortReal : I32EnumAttrCase<"ShortReal", 12, "shortreal">;
+def SimVPITypeReal : I32EnumAttrCase<"Real", 13, "real">;
+def SimVPITypeRealtime : I32EnumAttrCase<"Realtime", 14, "realtime">;
+def SimVPITypeString : I32EnumAttrCase<"String", 15, "string">;
+def SimVPITypeChandle : I32EnumAttrCase<"Chandle", 16, "chandle">;
+def SimVPITypePackedArray
+    : I32EnumAttrCase<"PackedArray", 17, "packed_array">;
+def SimVPITypeUnpackedArray
+    : I32EnumAttrCase<"UnpackedArray", 18, "unpacked_array">;
+def SimVPITypePackedStruct
+    : I32EnumAttrCase<"PackedStruct", 19, "packed_struct">;
+def SimVPITypeUnpackedStruct
+    : I32EnumAttrCase<"UnpackedStruct", 20, "unpacked_struct">;
+def SimVPITypePackedUnion
+    : I32EnumAttrCase<"PackedUnion", 21, "packed_union">;
+def SimVPITypeUnpackedUnion
+    : I32EnumAttrCase<"UnpackedUnion", 22, "unpacked_union">;
+def SimVPITypeDynamicArray
+    : I32EnumAttrCase<"DynamicArray", 23, "dynamic_array">;
+def SimVPITypeQueue : I32EnumAttrCase<"Queue", 24, "queue">;
+def SimVPITypeAssocArray
+    : I32EnumAttrCase<"AssocArray", 25, "assoc_array">;
+def SimVPITypeClass : I32EnumAttrCase<"Class", 26, "class">;
+def SimVPITypeVirtualInterface
+    : I32EnumAttrCase<"VirtualInterface", 27, "virtual_interface">;
+def SimVPITypeEvent : I32EnumAttrCase<"Event", 28, "event">;
+def SimVPITypePackedOpenArray
+    : I32EnumAttrCase<"PackedOpenArray", 29, "packed_open_array">;
+def SimVPITypeUnpackedOpenArray
+    : I32EnumAttrCase<"UnpackedOpenArray", 30, "unpacked_open_array">;
+def SimVPITypeProcess : I32EnumAttrCase<"Process", 31, "process">;
+def SimVPITypeCovergroup
+    : I32EnumAttrCase<"Covergroup", 32, "covergroup">;
+def SimVPITypeMailbox : I32EnumAttrCase<"Mailbox", 33, "mailbox">;
+def SimVPITypeSemaphore : I32EnumAttrCase<"Semaphore", 34, "semaphore">;
+def SimVPITypeKind : I32EnumAttr<
+    "VPITypeKind", "source-semantic VPI reflection type category", [
+      SimVPITypeUnknown, SimVPITypeGenericIntegral, SimVPITypeBit,
+      SimVPITypeLogic, SimVPITypeReg, SimVPITypeByte, SimVPITypeShortInt,
+      SimVPITypeInt, SimVPITypeLongInt, SimVPITypeInteger, SimVPITypeEnum,
+      SimVPITypeTime, SimVPITypeShortReal, SimVPITypeReal,
+      SimVPITypeRealtime, SimVPITypeString, SimVPITypeChandle,
+      SimVPITypePackedArray, SimVPITypeUnpackedArray, SimVPITypePackedStruct,
+      SimVPITypeUnpackedStruct, SimVPITypePackedUnion,
+      SimVPITypeUnpackedUnion, SimVPITypeDynamicArray, SimVPITypeQueue,
+      SimVPITypeAssocArray, SimVPITypeClass, SimVPITypeVirtualInterface,
+      SimVPITypeEvent, SimVPITypePackedOpenArray,
+      SimVPITypeUnpackedOpenArray, SimVPITypeProcess, SimVPITypeCovergroup,
+      SimVPITypeMailbox, SimVPITypeSemaphore
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimNativeSchedulerAuto
     : I32EnumAttrCase<"Auto", 0, "auto">;
 def SimNativeSchedulerGeneric

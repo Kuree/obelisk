@@ -738,6 +738,13 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = type;
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+          makeVPITypeSemantics(type, getSemanticLocation(op));
+      if (failed(vpiType)) {
+        invalid = true;
+        return;
+      }
+      descriptors[path].vpiType = *vpiType;
 
       // Event descriptors have no standalone declaration operation. Record
       // interface-owned clocking events on their scope declaration so
@@ -766,6 +773,13 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopes.lookup(op),
                            type, sim::NetResolutionKind::Wire};
       descriptors[path].rootType = type;
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+          makeVPITypeSemantics(type, getSemanticLocation(op));
+      if (failed(vpiType)) {
+        invalid = true;
+        return;
+      }
+      descriptors[path].vpiType = *vpiType;
       return;
     }
     uint64_t scopeId = scopes.lookup(op);
@@ -786,7 +800,9 @@ materializeDesignDescriptors(ModuleOp module,
           }
           FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
                                                        getSemanticLocation(op));
-          if (failed(type)) {
+          FailureOr<sim::VPITypeSemanticsAttr> vpiType = makeVPITypeSemantics(
+              semanticType.getValue(), getSemanticLocation(op));
+          if (failed(type) || failed(vpiType)) {
             invalid = true;
             continue;
           }
@@ -795,18 +811,27 @@ materializeDesignDescriptors(ModuleOp module,
                                               scopeId, *type,
                                               sim::NetResolutionKind::Wire};
           descriptors[leafPath.getValue()].rootType = *type;
+          descriptors[leafPath.getValue()].vpiType = *vpiType;
           sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
-              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{});
+              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{}, *vpiType);
         }
         return;
       }
     }
     FailureOr<Type> type = getNormalizedSemanticType(op);
-    if (failed(type)) {
+    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+        semanticType ? makeVPITypeSemantics(semanticType.getValue(),
+                                            getSemanticLocation(op))
+                     : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    if (failed(type) || failed(vpiType)) {
+      if (!semanticType)
+        emitError(getSemanticLocation(op))
+            << "design object is missing semantic type metadata";
       invalid = true;
       return;
     }
@@ -818,6 +843,7 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, *type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = *type;
+      descriptors[path].vpiType = *vpiType;
       return;
     }
     if (storage) {
@@ -825,6 +851,7 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = *type;
+      descriptors[path].vpiType = *vpiType;
       sim::Lifetime lifetime =
           (op->getParentOfType<semantic::SVStatementBlockSymbolOp>() ||
            isStaticFormal(op))
@@ -832,7 +859,7 @@ materializeDesignDescriptors(ModuleOp module,
               : sim::Lifetime::Design;
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
-          hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+          hierarchy, debug, sim::ComputeObservabilityKindAttr{}, *vpiType);
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&
@@ -956,6 +983,7 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
     descriptors[path].rootType = *type;
+    descriptors[path].vpiType = *vpiType;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
     auto declaration = sim::SimNetDeclOp::create(
         builder, getSemanticLocation(op), id, scopeId, *type,
@@ -968,7 +996,7 @@ materializeDesignDescriptors(ModuleOp module,
                       ? lowerChargeStrength(*net.getChargeStrength())
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
-        UnitAttr{});
+        UnitAttr{}, *vpiType);
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",
@@ -1021,7 +1049,7 @@ materializeDesignDescriptors(ModuleOp module,
         builder, getSemanticLocation(constraint), id, scopeId, type,
         sim::Lifetime::Design, builder.getStringAttr(hierarchy),
         builder.getStringAttr("__obelisk_constraint_mode"),
-        sim::ComputeObservabilityKindAttr{});
+        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   // A static random property has one rand_mode bit shared by all instances of
@@ -1054,11 +1082,11 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[hierarchy] = {DescriptorInfo::Kind::Storage, id, scopeId, type,
                               sim::NetResolutionKind::Wire};
     descriptors[hierarchy].rootType = type;
-    sim::SimStorageDeclOp::create(builder, getSemanticLocation(property), id,
-                                  scopeId, type, sim::Lifetime::Design,
-                                  builder.getStringAttr(hierarchy),
-                                  builder.getStringAttr("__obelisk_rand_mode"),
-                                  sim::ComputeObservabilityKindAttr{});
+    sim::SimStorageDeclOp::create(
+        builder, getSemanticLocation(property), id, scopeId, type,
+        sim::Lifetime::Design, builder.getStringAttr(hierarchy),
+        builder.getStringAttr("__obelisk_rand_mode"),
+        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   for (Operation *op : designObjects) {
@@ -1155,6 +1183,15 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path].packedViewOffset = packedViewOffset;
       descriptors[path].viewIndices = std::move(viewIndices);
       descriptors[path].aggregateViewType = aggregateViewType;
+      auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+      FailureOr<sim::VPITypeSemanticsAttr> viewType = makeVPITypeSemantics(
+          semanticType ? semanticType.getValue() : view->second.viewType,
+          getSemanticLocation(op));
+      if (failed(viewType)) {
+        invalid = true;
+        continue;
+      }
+      descriptors[path].vpiType = *viewType;
     }
   }
   for (const auto &[path, targetPath] : portAliases.interfaceAliases) {
@@ -1221,6 +1258,13 @@ materializeDesignDescriptors(ModuleOp module,
         target->second.packedViewOffset + view->second.packedOffset;
     descriptors[path].viewIndices = std::move(viewIndices);
     descriptors[path].aggregateViewType = aggregateViewType;
+    FailureOr<sim::VPITypeSemanticsAttr> viewType =
+        makeVPITypeSemantics(view->second.viewType, module.getLoc());
+    if (failed(viewType)) {
+      invalid = true;
+      continue;
+    }
+    descriptors[path].vpiType = *viewType;
   }
   uint64_t nextPortId = 0;
   llvm::StringSet<> emittedPorts;
@@ -1313,7 +1357,8 @@ materializeDesignDescriptors(ModuleOp module,
         connection.getFormalOrdinal(), builder.getStringAttr(portHierarchy),
         connection.getFormalName()
             ? builder.getStringAttr(*connection.getFormalName())
-            : StringAttr{});
+            : StringAttr{},
+        source->second.vpiType);
   }
   if (invalid)
     return failure();

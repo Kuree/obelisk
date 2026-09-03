@@ -14,6 +14,28 @@ class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
   let mnemonic = attrMnemonic;
 }
 
+def SimVPITypeSemanticsAttr
+    : SimAttr<"VPITypeSemantics", "vpi_type"> {
+  let summary = "source-semantic type retained for VPI reflection";
+  let description = [{
+    Preserves source type identity after executable lowering normalizes
+    integer flavors, enums, time, and managed values. `children` contains the
+    enum base type, array/container element type, associative key and element,
+    or declaration-ordered aggregate fields as appropriate. `child_names`
+    records field names without conflating them with a child's named semantic
+    type. `range` is empty or the source left/right pair. This attribute is
+    immutable inventory only and must not participate in executable type
+    conversion or scheduler decisions.
+  }];
+  let parameters = (ins EnumParameter<SimVPITypeKind>:$kind,
+      "bool":$isSigned, "bool":$isFourState,
+      OptionalParameter<"::mlir::StringAttr">:$name,
+      "::mlir::DenseI64ArrayAttr":$range, "::mlir::ArrayAttr":$children,
+      "::mlir::ArrayAttr":$childNames);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Prepared unit boundary
 //===----------------------------------------------------------------------===//

@@ -760,7 +760,7 @@ module attributes {
 // hidden connection identities.
 // The port inventory keeps declaration order, direction, canonical source,
 // and the child module's scope independently of its backing descriptor.
-// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted"
+// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [0, 0], children = [], childNames = []>
 // LOWER-DAG: obelisk_sim.port.decl 1 in 9 source 7 net = false at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.ordered.input_value" debug "input_value"
 // LOWER-DAG: obelisk_sim.port.decl 2 in 9 source 8 net = false at 0 : !obelisk_sim.logic<1> output ordinal 2 hierarchy "port_connections_inventory.ordered.output_value" debug "output_value"
 // LOWER-DAG: obelisk_sim.port.decl 3 in 9 source 1 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 3 hierarchy "port_connections_inventory.ordered.net_value" debug "net_value"

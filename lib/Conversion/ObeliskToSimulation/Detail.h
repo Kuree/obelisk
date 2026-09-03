@@ -614,6 +614,9 @@ struct SemanticDimension {
 getNormalizedSemanticType(::mlir::Operation *op);
 ::mlir::FailureOr<::mlir::Type>
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
+/// Lossless source-semantic type inventory used only by VPI reflection.
+::mlir::FailureOr<::obelisk::sim::VPITypeSemanticsAttr>
+makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location);
 ::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
 makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
                     ::mlir::Location location, ::mlir::Builder &builder,
