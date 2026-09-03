@@ -47,7 +47,7 @@ endmodule
 // STDOUT-NOT: fatal-inner-after
 // STDOUT-NOT: fatal-outer-after
 // STDOUT-NOT: after-fatal
-// STDERR: INFO: {{.*}}native-diagnostics.sv:{{[0-9]+}}: value=1
-// STDERR-NEXT: WARNING: {{.*}}native-diagnostics.sv:{{[0-9]+}}: $warning called.
-// STDERR-NEXT: ERROR: {{.*}}native-diagnostics.sv:{{[0-9]+}}: continued
-// STDERR-NEXT: FATAL: {{.*}}native-diagnostics.sv:{{[0-9]+}}: done
+// STDERR: INFO: {{.*}}native-diagnostics.sv:{{[0-9]+}}: native_diagnostics: simulation time 0: value=1
+// STDERR-NEXT: WARNING: {{.*}}native-diagnostics.sv:{{[0-9]+}}: native_diagnostics: simulation time 0: $warning called.
+// STDERR-NEXT: ERROR: {{.*}}native-diagnostics.sv:{{[0-9]+}}: native_diagnostics: simulation time 0: continued
+// STDERR-NEXT: FATAL: {{.*}}native-diagnostics.sv:{{[0-9]+}}: native_diagnostics.fatal_inner: simulation time 0: done
