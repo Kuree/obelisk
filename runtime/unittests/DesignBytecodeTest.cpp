@@ -44,6 +44,12 @@ uint32_t designRecordKind(uint32_t physicalKind, uint32_t vpiKind) {
   return physicalKind | (vpiKind << 16);
 }
 
+uint16_t designRelationSource(uint16_t table, uint16_t vpiKind,
+                              bool iterate = false) {
+  return static_cast<uint16_t>((uint32_t{table} << 14) |
+                               (iterate ? uint32_t{1} << 13 : 0) | vpiKind);
+}
+
 uint64_t get64(const std::vector<uint8_t> &bytes, size_t offset) {
   uint64_t value = 0;
   for (unsigned index = 0; index != 8; ++index)
@@ -2096,14 +2102,14 @@ std::vector<uint8_t> makeStatementDatabase() {
                       uint16_t sourceKindAndTable) {
     size_t offset = relationOffset + index * 16;
     put32(bytes, offset, source);
-    put32(bytes, offset + 4, target);
+    put32(bytes, offset + 4, (uint32_t{2} << 30) | target);
     put32(bytes, offset + 8, ordinal);
     put16(bytes, offset + 12, selector);
     put16(bytes, offset + 14, sourceKindAndTable);
   };
-  relation(0, 0, 0, 0, vpiStmt, uint16_t{1u << 14} | vpiInitial);
-  relation(1, 0, 1, 0, vpiStmt, uint16_t{2u << 14} | vpiNamedBegin);
-  relation(2, 1, 2, 0, vpiStmt, uint16_t{2u << 14} | vpiFor);
+  relation(0, 0, 0, 0, vpiStmt, designRelationSource(1, vpiInitial));
+  relation(1, 0, 1, 0, vpiStmt, designRelationSource(2, vpiNamedBegin, true));
+  relation(2, 1, 2, 0, vpiStmt, designRelationSource(2, vpiFor));
 
   std::memcpy(bytes.data() + stringOffset,
               "top\0top.child\0top.child.proc\0test.sv\0body\0", stringSize);
@@ -4677,7 +4683,7 @@ TEST(VPI, BuildsStatementNamesFromCanonicalScopeOwners) {
     put32(fixture.database, process,
           designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, processKind));
     put16(fixture.database, relations + 14,
-          uint16_t{1u << 14} | static_cast<uint16_t>(processKind));
+          designRelationSource(1, static_cast<uint16_t>(processKind)));
     put64(fixture.database, 32, imageChecksum(fixture.database));
 
     obelisk_rt_context *context = nullptr;
@@ -4725,7 +4731,7 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   put32(fixture.database, 520 + 16 + 8, 1);
   put16(fixture.database, 520 + 16 + 12, 2);
   put16(fixture.database, 568 + 16 + 14,
-        uint16_t{2u << 14} | static_cast<uint16_t>(vpiForeachStmt));
+        designRelationSource(2, vpiForeachStmt));
   put64(fixture.database, 152, 2);
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
@@ -4768,11 +4774,14 @@ TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   put32(fixture.database, sites + 16 + 8, 0);
   put16(fixture.database, sites + 16 + 12, 2);
   put16(fixture.database, relations + 16 + 12, vpiForInitStmt);
-  put16(fixture.database, relations + 16 + 14, uint16_t{2u << 14} | vpiFor);
+  put16(fixture.database, relations + 16 + 14, designRelationSource(2, vpiFor));
   put16(fixture.database, relations + 32 + 12, vpiForInitStmt);
-  put16(fixture.database, relations + 32 + 14, uint16_t{2u << 14} | vpiFor);
+  put16(fixture.database, relations + 32 + 14,
+        designRelationSource(2, vpiFor, true));
   put32(fixture.database, relations + 32, 0);
-  put32(fixture.database, relations + 32 + 8, 1);
+  put32(fixture.database, relations + 32 + 4, (uint32_t{2} << 30) | 1);
+  put32(fixture.database, relations + 32 + 8, 0);
+  put64(fixture.database, 136, 2);
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
   obelisk_rt_context *context = nullptr;
@@ -4794,12 +4803,9 @@ TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   vpiHandle iterator = vpi_iterate(vpiForInitStmt, loop);
   ASSERT_NE(iterator, nullptr);
   vpiHandle first = vpi_scan(iterator);
-  vpiHandle second = vpi_scan(iterator);
   ASSERT_NE(first, nullptr);
-  ASSERT_NE(second, nullptr);
   EXPECT_EQ(vpi_compare_objects(singular, first), 1);
   EXPECT_EQ(vpi_get(vpiType, first), vpiNullStmt);
-  EXPECT_EQ(vpi_get(vpiType, second), vpiNullStmt);
   EXPECT_EQ(vpi_scan(iterator), nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
@@ -4824,10 +4830,11 @@ TEST(VPI, TraversesScopeOwnedStatementRelations) {
                       uint16_t selector) {
     size_t offset = relations + index * 16;
     put32(fixture.database, offset, 1);
-    put32(fixture.database, offset + 4, target);
+    put32(fixture.database, offset + 4, (uint32_t{2} << 30) | target);
     put32(fixture.database, offset + 8, ordinal);
     put16(fixture.database, offset + 12, selector);
-    put16(fixture.database, offset + 14, vpiModule);
+    put16(fixture.database, offset + 14,
+          designRelationSource(0, vpiModule, true));
   };
   relation(0, 0, 0, vpiContAssign);
   relation(1, 1, 1, vpiContAssign);
@@ -4854,6 +4861,114 @@ TEST(VPI, TraversesScopeOwnedStatementRelations) {
   ASSERT_NE(aliases, nullptr);
   EXPECT_EQ(vpi_get(vpiType, vpi_scan(aliases)), vpiAliasStmt);
   EXPECT_EQ(vpi_scan(aliases), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t relations = 568;
+
+  // IEEE 1800-2017 37.61: a process has a singular vpiModule relation.
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 0);
+  put32(fixture.database, relations + 4, 1); // Scope table, child module.
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiModule);
+  put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle module = vpi_handle(vpiModule, process);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, module), vpiModule);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, module), "top.child");
+  obelisk_rt_v1_context_destroy(context);
+
+  // IEEE 1800-2017 37.5: a module iterates its static processes. Reuse the
+  // same image storage with a target in the immutable object table.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 1);
+  put32(fixture.database, relations + 4, uint32_t{1} << 30);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiProcess);
+  put16(fixture.database, relations + 14,
+        designRelationSource(0, vpiModule, true));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char moduleName[] = "top.child";
+  module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  vpiHandle processes = vpi_iterate(vpiProcess, module);
+  ASSERT_NE(processes, nullptr);
+  process = vpi_scan(processes);
+  ASSERT_NE(process, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, process), vpiInitial);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, process), "top.child.proc");
+  EXPECT_EQ(vpi_scan(processes), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t relations = 568;
+
+  put64(fixture.database, 168, 2);
+  auto relation = [&](size_t index, bool iterate, uint32_t targetScope) {
+    size_t offset = relations + index * 16;
+    put32(fixture.database, offset, 1);
+    put32(fixture.database, offset + 4, targetScope);
+    put32(fixture.database, offset + 8, 0);
+    put16(fixture.database, offset + 12, vpiModule);
+    put16(fixture.database, offset + 14,
+          designRelationSource(0, vpiModule, iterate));
+  };
+  // IEEE 1800-2017 37.5 assigns different meanings to these same-selector
+  // modes: the singular edge names the containing module while iteration
+  // enumerates child modules.
+  relation(0, false, 0);
+  relation(1, true, 1);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char moduleName[] = "top.child";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+
+  vpiHandle containing = vpi_handle(vpiModule, module);
+  ASSERT_NE(containing, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, containing), "top");
+  vpiHandle elements = vpi_iterate(vpiModule, module);
+  ASSERT_NE(elements, nullptr);
+  vpiHandle firstElement = vpi_scan(elements);
+  ASSERT_NE(firstElement, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child");
+  EXPECT_EQ(vpi_compare_objects(containing, firstElement), 0);
+  EXPECT_EQ(vpi_scan(elements), nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -7203,7 +7318,7 @@ TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
   expectRejected(std::move(missingNestedScopeKind));
 
   std::vector<uint8_t> missingRelationSourceKind = makeStatementDatabase();
-  put16(missingRelationSourceKind, 568 + 14, uint16_t{1u << 14});
+  put16(missingRelationSourceKind, 568 + 14, designRelationSource(1, 0));
   expectRejected(std::move(missingRelationSourceKind));
 
   std::vector<uint8_t> unmarkedInternalProcess = makeCodeUnitDatabase();
@@ -7225,9 +7340,9 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   constexpr size_t sites = 520;
   constexpr size_t relations = 568;
 
-  // The LRM permits both singular and iterative vpiForInitStmt traversal.
-  // Ordinal zero must satisfy both modes, while later records continue the
-  // dense iterative range.
+  // The LRM permits both singular and iterative vpiForInitStmt traversal. A
+  // merged MLIR declaration becomes two mode-tagged wire records at ordinal
+  // zero.
   std::vector<uint8_t> dualMode = fixture.database;
   put16(dualMode, statements + 36, vpiFor);
   put16(dualMode, statements + 38, 0);
@@ -7239,12 +7354,13 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put32(dualMode, sites + 16 + 8, 0);
   put16(dualMode, sites + 16 + 12, 2);
   put16(dualMode, relations + 16 + 12, vpiForInitStmt);
-  put16(dualMode, relations + 16 + 14, uint16_t{2u << 14} | vpiFor);
+  put16(dualMode, relations + 16 + 14, designRelationSource(2, vpiFor));
   put16(dualMode, relations + 32 + 12, vpiForInitStmt);
-  put16(dualMode, relations + 32 + 14, uint16_t{2u << 14} | vpiFor);
-  put32(dualMode, statements + 80 + 16, 0);
+  put16(dualMode, relations + 32 + 14, designRelationSource(2, vpiFor, true));
   put32(dualMode, relations + 32, 0);
-  put32(dualMode, relations + 32 + 8, 1);
+  put32(dualMode, relations + 32 + 4, (uint32_t{2} << 30) | 1);
+  put32(dualMode, relations + 32 + 8, 0);
+  put64(dualMode, 136, 2);
   put64(dualMode, 32, imageChecksum(dualMode));
   fixture.execution.design_database = dualMode.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
@@ -7268,10 +7384,11 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
                            uint16_t selector) {
     size_t relation = relations + index * 16;
     put32(scopeRelations, relation, 1);
-    put32(scopeRelations, relation + 4, target);
+    put32(scopeRelations, relation + 4, (uint32_t{2} << 30) | target);
     put32(scopeRelations, relation + 8, ordinal);
     put16(scopeRelations, relation + 12, selector);
-    put16(scopeRelations, relation + 14, vpiModule);
+    put16(scopeRelations, relation + 14,
+          designRelationSource(0, vpiModule, true));
   };
   scopeRelation(0, 0, 0, vpiContAssign);
   scopeRelation(1, 1, 1, vpiContAssign);
@@ -7330,7 +7447,8 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put32(nonCallback, 400 + 80 + 16, 0);
   put32(nonCallback, relations + 32, 0);
   put32(nonCallback, relations + 32 + 8, 1);
-  put16(nonCallback, relations + 32 + 14, uint16_t{2u << 14} | vpiNamedBegin);
+  put16(nonCallback, relations + 32 + 14,
+        designRelationSource(2, vpiNamedBegin, true));
   put64(nonCallback, 152, 1);
   put64(nonCallback, 32, imageChecksum(nonCallback));
   fixture.execution.design_database = nonCallback.data();
@@ -7339,7 +7457,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   std::vector<uint8_t> foreachWithoutScope = fixture.database;
   put16(foreachWithoutScope, statements + 40 + 36, vpiForeachStmt);
   put16(foreachWithoutScope, relations + 16 + 14,
-        uint16_t{2u << 14} | static_cast<uint16_t>(vpiForeachStmt));
+        designRelationSource(2, vpiForeachStmt, true));
   put64(foreachWithoutScope, 32, imageChecksum(foreachWithoutScope));
   fixture.execution.design_database = foreachWithoutScope.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
@@ -7388,14 +7506,19 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(136, uint64_t{UINT32_MAX} + 1, 8);     // statement index cap
   rejected(152, uint64_t{UINT32_MAX} + 1, 8);     // site index cap
   rejected(relations, 1);                         // missing source object
-  rejected(relations + 4, 3);                     // missing target statement
-  rejected(relations + 8, 1);                     // non-dense handle ordinal
-  rejected(relations + 12, 0, 2);                 // illegal selector
+  rejected(relations + 4, (uint32_t{2} << 30) | 3); // missing statement
+  rejected(relations + 4, (uint32_t{1} << 30) | 1); // missing object
+  rejected(relations + 4, uint32_t{3} << 30);       // reserved target table
+  rejected(relations + 4, 1);     // scope kind is outside vpiStmt target set
+  rejected(relations + 8, 1);     // non-dense handle ordinal
+  rejected(relations + 12, 0, 2); // illegal selector
+  rejected(relations + 14, designRelationSource(1, vpiInitial, true),
+           2); // selector is not legal in iterate mode
   rejected(relations + 14, uint16_t{3u << 14} | vpiInitial, 2);
-  rejected(relations + 16 + 14, uint16_t{2u << 14} | vpiFor, 2);
-  rejected(relations + 16 + 4, 0); // duplicate incoming edge
-  rejected(relations + 32 + 8, 2); // iterate ordinal gap
-  rejected(relations + 32 + 14, uint16_t{2u << 14} | vpiNamedFork,
+  rejected(relations + 16 + 14, designRelationSource(2, vpiFor, true), 2);
+  rejected(relations + 16 + 4, uint32_t{2} << 30); // duplicate incoming edge
+  rejected(relations + 32 + 8, 2);                 // iterate ordinal gap
+  rejected(relations + 32 + 14, designRelationSource(2, vpiNamedFork),
            2);                                    // source kind inconsistency
   rejected(statements + 80 + 16, UINT32_MAX);     // target ownership mismatch
   rejected(statements + 80 + 36, vpiCaseItem, 2); // illegal traversal target

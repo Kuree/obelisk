@@ -785,11 +785,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (relationStatus == OBELISK_RT_OK) {
     obelisk_rt_design_cursor_v1 target{};
     uint32_t targetType = 0;
-    if (obelisk_rt_cached_vpi_relation_target(handle->owner->context,
-                                              range.first, &target,
-                                              &targetType) != OBELISK_RT_OK)
+    bool targetIsStatement = false;
+    if (obelisk_rt_cached_vpi_relation_target(
+            handle->owner->context, range.first, &target, &targetType,
+            &targetIsStatement) != OBELISK_RT_OK)
       return nullptr;
-    return makeHandle(handle->owner, target, targetType, true);
+    return makeHandle(handle->owner, target, targetType, targetIsStatement);
   }
   if (type != vpiScope)
     return nullptr;
@@ -967,9 +968,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     }
     obelisk_rt_design_cursor_v1 target{};
     uint32_t targetType = 0;
+    bool targetIsStatement = false;
     obelisk_rt_status status = obelisk_rt_cached_vpi_relation_target(
         iterator->owner->context,
-        iterator->relationRange.first + iterator->next, &target, &targetType);
+        iterator->relationRange.first + iterator->next, &target, &targetType,
+        &targetIsStatement);
     if (status != OBELISK_RT_OK) {
       iterator->alive = false;
       setError(iterator->owner, "VPI relation target lookup failed",
@@ -977,7 +980,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       return nullptr;
     }
     ++iterator->next;
-    return makeHandle(iterator->owner, target, targetType, true);
+    return makeHandle(iterator->owner, target, targetType, targetIsStatement);
   }
   if (iterator->designIterator) {
     if (iterator->cursor.offset == 0) {
