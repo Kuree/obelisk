@@ -125,6 +125,24 @@ bool nativeWaitReady(obelisk_rt_context &context,
 bool nativeProcessReady(obelisk_rt_context &context,
                         const ScheduledProcess &process,
                         bool directStaticSignalWait);
+inline const obelisk_rt_wait_record_v1 *
+designTaskCurrentWait(const ScheduledDesignTask &task) {
+  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+      task.waitOffset > task.frame.size() ||
+      task.waitSize > task.frame.size() - task.waitOffset)
+    return nullptr;
+  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
+                                                             task.waitOffset);
+}
+inline uint32_t designTaskOrderingRegion(const ScheduledDesignTask &task,
+                                         bool signalResume) {
+  if (signalResume && obelisk_rt_is_slot_final_clock_occurrence_wait(
+                          designTaskCurrentWait(task)))
+    return OBELISK_RT_REGION_POSTPONED;
+  return task.queuedRegion == OBELISK_RT_REGION_POSTPONED
+             ? OBELISK_RT_REGION_POSTPONED + 1
+             : task.queuedRegion;
+}
 void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
                                         const ScheduledProcess &process);
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context);

@@ -5736,6 +5736,470 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, QueriesSimulationAndObjectTimeWithoutSchedulerRegistration) {
+  Fixture fixture;
+  static constexpr char rootName[] = "$root";
+  static constexpr char topName[] = "top";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
+      {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
+  };
+  fixture.execution.dpi_scopes = scopes;
+  fixture.execution.dpi_scope_count = std::size(scopes);
+  fixture.execution.dpi_time_precision = -12;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  context->schedulerTime = UINT64_C(0x123456789abcdef0);
+
+  EXPECT_EQ(vpi_get(vpiTimeUnit, nullptr), -12);
+  EXPECT_EQ(vpi_get(vpiTimePrecision, nullptr), -12);
+
+  char top[] = "top";
+  char valueName[] = "top.value";
+  vpiHandle module = vpi_handle_by_name(top, nullptr);
+  vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(value, nullptr);
+  EXPECT_EQ(vpi_get(vpiTimeUnit, module), -9);
+  EXPECT_EQ(vpi_get(vpiTimePrecision, module), -12);
+  EXPECT_EQ(vpi_get(vpiTimeUnit, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  s_vpi_time time{};
+  time.type = vpiSimTime;
+  vpi_get_time(nullptr, &time);
+  EXPECT_EQ(time.high, UINT32_C(0x12345678));
+  EXPECT_EQ(time.low, UINT32_C(0x9abcdef0));
+  EXPECT_EQ(time.real, 0.0);
+
+  context->schedulerTime = 123456;
+  time = {};
+  time.type = vpiScaledRealTime;
+  vpi_get_time(module, &time);
+  EXPECT_DOUBLE_EQ(time.real, 123.456);
+  time = {};
+  time.type = vpiScaledRealTime;
+  vpi_get_time(value, &time);
+  EXPECT_DOUBLE_EQ(time.real, 123.456);
+
+  time.high = 1;
+  time.low = 2;
+  time.real = 3.0;
+  time.type = vpiSuppressTime;
+  vpi_get_time(nullptr, &time);
+  EXPECT_EQ(time.high, 0u);
+  EXPECT_EQ(time.low, 0u);
+  EXPECT_EQ(time.real, 0.0);
+
+  time.type = 99;
+  vpi_get_time(nullptr, &time);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message, "unsupported VPI time format");
+  vpi_get_time(nullptr, nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message, "VPI time destination is null");
+
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(vpi_release_handle(value), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
+  Fixture fixture;
+  static constexpr char rootName[] = "$root";
+  static constexpr char topName[] = "top";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
+      {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
+  };
+  fixture.execution.dpi_scopes = scopes;
+  fixture.execution.dpi_scope_count = std::size(scopes);
+  fixture.execution.dpi_time_precision = -12;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  context->schedulerTime = 10;
+
+  ScheduledProcess process;
+  process.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
+  process.started = true;
+  process.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  process.wakeTime = 40;
+  context->scheduledProcesses.push_back(std::move(process));
+  ScheduledProcess finalProcess;
+  finalProcess.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
+  finalProcess.phase = 1;
+  finalProcess.started = true;
+  finalProcess.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  finalProcess.wakeTime = 11;
+  context->scheduledProcesses.push_back(std::move(finalProcess));
+
+  ScheduledDesignTask task;
+  task.started = true;
+  task.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  task.wakeTime = 30;
+  context->scheduledDesignTasks.push_back(std::move(task));
+  ScheduledDesignTask terminatedTask;
+  terminatedTask.started = true;
+  terminatedTask.terminated = true;
+  terminatedTask.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  terminatedTask.wakeTime = 12;
+  context->scheduledDesignTasks.push_back(std::move(terminatedTask));
+
+  ScheduledNBA nba;
+  nba.dueTime = 20;
+  context->scheduledNBAs.push_back(nba);
+  ScheduledNBA cancelledNBA;
+  cancelledNBA.dueTime = 21;
+  cancelledNBA.cancelled = true;
+  context->scheduledNBAs.push_back(cancelledNBA);
+  ScheduledNBA inertial;
+  inertial.dueTime = 70;
+  context->scheduledInertialPathNBAs.emplace(std::pair{70u, 1u}, inertial);
+  ScheduledManagedNBA managed;
+  managed.dueTime = 60;
+  context->scheduledManagedNBAs.push_back(std::move(managed));
+  ScheduledDesignNBA designNBA;
+  designNBA.dueTime = 50;
+  context->scheduledDesignNBAs.push_back(std::move(designNBA));
+  context->scheduledDesignEvents.push_back({1, 80});
+  context->clockOccurrences = std::make_unique<ClockOccurrenceFeatureState>();
+  context->clockOccurrences->replaceableEvents =
+      std::make_unique<ReplaceableEventFeatureState>();
+  context->clockOccurrences->replaceableEvents->calendar.emplace(
+      std::pair{90u, 2u}, ScheduledDesignEvent{2, 90});
+  context->scheduledPassSwitchEvents.emplace(std::pair{UINT64_MAX, 3u},
+                                             ScheduledPassSwitchEvent{});
+  // This lazy heap entry is deliberately stale and must never be exposed.
+  context->scheduledProcessDelayHeap.emplace_back(13, 999);
+
+  vpiHandle iterator = vpi_iterate(vpiTimeQueue, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_handle(vpiUse, iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  // Iterator contents are a snapshot, not a live view of scheduler storage.
+  context->scheduledNBAs.front().dueTime = 25;
+
+  const std::array<uint64_t, 9> expected{20, 30, 40, 50,        60,
+                                         70, 80, 90, UINT64_MAX};
+  for (uint64_t scheduledTime : expected) {
+    vpiHandle queue = vpi_scan(iterator);
+    ASSERT_NE(queue, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, queue), vpiTimeQueue);
+    EXPECT_STREQ(vpi_get_str(vpiType, queue), "vpiTimeQueue");
+    EXPECT_EQ(vpi_get(vpiIsProtected, queue), 0);
+    s_vpi_time time{};
+    time.type = vpiSimTime;
+    vpi_get_time(queue, &time);
+    EXPECT_EQ((uint64_t{time.high} << 32) | time.low, scheduledTime);
+    time = {};
+    time.type = vpiScaledRealTime;
+    vpi_get_time(queue, &time);
+    EXPECT_EQ(time.real, static_cast<double>(scheduledTime));
+    EXPECT_EQ(vpi_release_handle(queue), 1);
+  }
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  context->scheduledProcesses.clear();
+  context->scheduledDesignTasks.clear();
+  context->scheduledNBAs.clear();
+  context->scheduledInertialPathNBAs.clear();
+  context->scheduledManagedNBAs.clear();
+  context->scheduledDesignNBAs.clear();
+  context->scheduledDesignEvents.clear();
+  context->scheduledPassSwitchEvents.clear();
+  context->scheduledProcessDelayHeap.clear();
+  context->clockOccurrences.reset();
+  EXPECT_EQ(vpi_iterate(vpiTimeQueue, nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  // A running event is itself before read-only synchronization and therefore
+  // keeps the current numeric time queue visible. Once that event boundary is
+  // cleared, the same empty scheduler is at/after read-only synchronization.
+  context->activeExecRegion = OBELISK_RT_REGION_ACTIVE;
+  iterator = vpi_iterate(vpiTimeQueue, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle current = vpi_scan(iterator);
+  ASSERT_NE(current, nullptr);
+  s_vpi_time currentTime{};
+  currentTime.type = vpiSimTime;
+  vpi_get_time(current, &currentTime);
+  EXPECT_EQ(currentTime.high, 0u);
+  EXPECT_EQ(currentTime.low, 10u);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_release_handle(current), 1);
+  context->activeExecRegion = OBELISK_RT_REGION_POSTPONED;
+  EXPECT_EQ(vpi_iterate(vpiTimeQueue, nullptr), nullptr);
+
+  context->activeExecRegion = UINT32_MAX;
+  ScheduledProcess postponed;
+  postponed.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
+  postponed.queuedRegion = OBELISK_RT_REGION_POSTPONED;
+  context->scheduledProcesses.push_back(std::move(postponed));
+  ScheduledNBA postponedNBA;
+  postponedNBA.dueTime = context->schedulerTime;
+  postponedNBA.execRegion = OBELISK_RT_REGION_POSTPONED;
+  context->scheduledNBAs.push_back(std::move(postponedNBA));
+  EXPECT_EQ(vpi_iterate(vpiTimeQueue, nullptr), nullptr);
+  context->scheduledProcesses.front().queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  iterator = vpi_iterate(vpiTimeQueue, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  current = vpi_scan(iterator);
+  ASSERT_NE(current, nullptr);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_release_handle(current), 1);
+  context->scheduledProcesses.clear();
+  context->scheduledNBAs.clear();
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  context->schedulerTime = 10;
+  context->activeExecRegion = UINT32_MAX;
+  context->signalDiagnosticsEnabled = true;
+
+  auto currentQueueVisible = [&]() {
+    vpiHandle iterator = vpi_iterate(vpiTimeQueue, nullptr);
+    if (!iterator)
+      return false;
+    vpiHandle queue = vpi_scan(iterator);
+    EXPECT_EQ(vpi_release_handle(iterator), 1);
+    if (queue) {
+      EXPECT_EQ(vpi_release_handle(queue), 1);
+    }
+    return queue != nullptr;
+  };
+  auto installDesignTask = [&](ScheduledDesignTask task) {
+    size_t index = context->scheduledDesignTasks.size();
+    context->scheduledDesignTaskIndices.emplace(task.id, index);
+    context->designPollCandidates.insert(task.id);
+    context->scheduledDesignTasks.push_back(std::move(task));
+  };
+  auto clearDesignTasks = [&]() {
+    context->scheduledDesignTasks.clear();
+    context->scheduledDesignTaskIndices.clear();
+    context->designPollCandidates.clear();
+  };
+
+  struct WaitRecord {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  };
+
+  // Event-generation readiness is shared with the bytecode scheduler rather
+  // than approximated by the VPI query.
+  WaitRecord eventRecord{
+      {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EVENT, 0, 1, 0, 0},
+      {77, OBELISK_RT_WAIT_EDGE_NONE, 0}};
+  ScheduledDesignTask eventTask;
+  eventTask.id = 101;
+  eventTask.started = true;
+  eventTask.suspendKind = OBELISK_RT_SUSPEND_EVENT;
+  eventTask.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  eventTask.waitSize = sizeof(eventRecord);
+  eventTask.scratchOffset = sizeof(eventRecord);
+  eventTask.frame.resize(sizeof(eventRecord));
+  std::memcpy(eventTask.frame.data(), &eventRecord, sizeof(eventRecord));
+  eventTask.waitGenerations.push_back(0);
+  context->events[77].generation = 1;
+  installDesignTask(std::move(eventTask));
+  EXPECT_TRUE(currentQueueVisible());
+  clearDesignTasks();
+
+  // A slot-final timing coordinator sorts immediately before true Postponed
+  // work and therefore still precedes the read-only synchronization point.
+  WaitRecord slotFinalRecord{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
+                              OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
+                                  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL,
+                              1, 0, 0},
+                             {91, OBELISK_RT_WAIT_EDGE_POSEDGE, 1}};
+  ScheduledDesignTask slotFinalTask;
+  slotFinalTask.id = 102;
+  slotFinalTask.started = true;
+  slotFinalTask.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+  slotFinalTask.signalTriggered = true;
+  slotFinalTask.queuedRegion = OBELISK_RT_REGION_OBSERVED;
+  slotFinalTask.waitSize = sizeof(slotFinalRecord);
+  slotFinalTask.scratchOffset = sizeof(slotFinalRecord);
+  slotFinalTask.frame.resize(sizeof(slotFinalRecord));
+  std::memcpy(slotFinalTask.frame.data(), &slotFinalRecord,
+              sizeof(slotFinalRecord));
+  installDesignTask(std::move(slotFinalTask));
+  EXPECT_TRUE(currentQueueVisible());
+  clearDesignTasks();
+
+  // Urgent scheduler work is promoted to region zero even when its stored
+  // queue region is Postponed.
+  ScheduledDesignTask urgentTask;
+  urgentTask.id = 103;
+  urgentTask.urgent = true;
+  urgentTask.queuedRegion = OBELISK_RT_REGION_POSTPONED;
+  installDesignTask(std::move(urgentTask));
+  EXPECT_TRUE(currentQueueVisible());
+  clearDesignTasks();
+
+  // Invalid managed waits are not runnable, but inspecting them must not
+  // poison scheduler status or diagnostics.
+  WaitRecord invalidMailbox{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_MAILBOX,
+                             OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY, 1, 0, 0},
+                            {0, OBELISK_RT_WAIT_EDGE_NONE, 0}};
+  ScheduledDesignTask mailboxTask;
+  mailboxTask.id = 104;
+  mailboxTask.started = true;
+  mailboxTask.suspendKind = OBELISK_RT_SUSPEND_MAILBOX;
+  mailboxTask.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  mailboxTask.waitSize = sizeof(invalidMailbox);
+  mailboxTask.scratchOffset = sizeof(invalidMailbox);
+  mailboxTask.frame.resize(sizeof(invalidMailbox));
+  std::memcpy(mailboxTask.frame.data(), &invalidMailbox,
+              sizeof(invalidMailbox));
+  installDesignTask(std::move(mailboxTask));
+  const uint64_t readinessCalls = context->signalDiagnostics.readinessCalls;
+  const obelisk_rt_status schedulerStatus = context->schedulerStatus;
+  EXPECT_FALSE(currentQueueVisible());
+  EXPECT_EQ(context->signalDiagnostics.readinessCalls, readinessCalls);
+  EXPECT_EQ(context->schedulerStatus, schedulerStatus);
+  clearDesignTasks();
+
+  // Native readiness inspection has the same side-effect-free contract.
+  obelisk_rt_frame_field_v1 waitField{OBELISK_RT_FRAME_WAIT,
+                                      OBELISK_RT_FRAME_FIELD_FLAGS_NONE,
+                                      0,
+                                      sizeof(invalidMailbox),
+                                      alignof(WaitRecord),
+                                      0};
+  obelisk_rt_frame_layout_v1 frameLayout{OBELISK_RT_VERSION,
+                                         0,
+                                         sizeof(invalidMailbox),
+                                         alignof(WaitRecord),
+                                         &waitField,
+                                         1,
+                                         0,
+                                         nullptr,
+                                         0};
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.frame_layout = &frameLayout;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.frame = &invalidMailbox;
+  instance.frame_size = sizeof(invalidMailbox);
+  ScheduledProcess nativeMailbox;
+  nativeMailbox.instance = &instance;
+  nativeMailbox.started = true;
+  nativeMailbox.suspendKind = OBELISK_RT_SUSPEND_MAILBOX;
+  nativeMailbox.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  nativeMailbox.waitSize = sizeof(invalidMailbox);
+  context->scheduledProcesses.push_back(std::move(nativeMailbox));
+  EXPECT_FALSE(currentQueueVisible());
+  EXPECT_EQ(context->signalDiagnostics.readinessCalls, readinessCalls);
+  EXPECT_EQ(context->schedulerStatus, schedulerStatus);
+  context->scheduledProcesses.clear();
+
+  // Cold inspection must not compact the scheduler's lazy unstarted set.
+  context->unstartedActiveActors.insert(999);
+  EXPECT_FALSE(currentQueueVisible());
+  EXPECT_EQ(context->unstartedActiveActors.count(999), 1u);
+  context->unstartedActiveActors.clear();
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  static constexpr char rootName[] = "$root";
+  static constexpr char topName[] = "top";
+  static constexpr char childName[] = "top.child";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
+      {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
+      {2, 1, childName, sizeof(childName) - 1, -6, -12, 0},
+  };
+  fixture.execution.dpi_scopes = scopes;
+  fixture.execution.dpi_scope_count = std::size(scopes);
+  fixture.execution.dpi_time_precision = -12;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  context->schedulerTime = 1000;
+
+  char topPath[] = "top";
+  char childPath[] = "top.child";
+  char processPath[] = "top.child.proc";
+  vpiHandle top = vpi_handle_by_name(topPath, nullptr);
+  vpiHandle child = vpi_handle_by_name(childPath, nullptr);
+  vpiHandle process = vpi_handle_by_name(processPath, nullptr);
+  ASSERT_NE(top, nullptr);
+  ASSERT_NE(child, nullptr);
+  ASSERT_NE(process, nullptr);
+  EXPECT_EQ(vpi_get(vpiTimeUnit, top), -9);
+  EXPECT_EQ(vpi_get(vpiTimePrecision, top), -12);
+  EXPECT_EQ(vpi_get(vpiTimeUnit, child), -6);
+  EXPECT_EQ(vpi_get(vpiTimePrecision, child), -12);
+
+  s_vpi_time time{};
+  time.type = vpiScaledRealTime;
+  vpi_get_time(process, &time);
+  EXPECT_DOUBLE_EQ(time.real, 0.001);
+  vpiHandle statement = vpi_handle(vpiStmt, process);
+  ASSERT_NE(statement, nullptr);
+  time = {};
+  time.type = vpiScaledRealTime;
+  vpi_get_time(statement, &time);
+  EXPECT_DOUBLE_EQ(time.real, 0.001);
+  obelisk_rt_v1_context_destroy(context);
+
+  // If exact metadata for a physical scope is missing, do not silently use
+  // an enclosing scope's different time unit.
+  Fixture missing;
+  installStatementDatabase(missing);
+  missing.execution.dpi_scopes = scopes;
+  missing.execution.dpi_scope_count = 2;
+  missing.execution.dpi_time_precision = -12;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&missing.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  child = vpi_handle_by_name(childPath, nullptr);
+  ASSERT_NE(child, nullptr);
+  EXPECT_EQ(vpi_get(vpiTimeUnit, child), vpiUndefined);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message, "VPI object timescale metadata is unavailable");
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   Fixture fixture;
   fixture.bytecode = makeVPIBytecode();

@@ -330,10 +330,13 @@ obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
   return status;
 }
 
-bool nativeWaitReady(obelisk_rt_context &context,
-                     const ScheduledProcess &process) {
-  if (context.signalDiagnosticsEnabled)
-    ++context.signalDiagnostics.readinessCalls;
+template <bool RecordSchedulerEffects>
+__attribute__((always_inline)) static inline bool
+nativeWaitReadyImpl(obelisk_rt_context &context,
+                    const ScheduledProcess &process) {
+  if constexpr (RecordSchedulerEffects)
+    if (context.signalDiagnosticsEnabled)
+      ++context.signalDiagnostics.readinessCalls;
   const obelisk_rt_wait_record_v1 *wait = currentWait(process);
   if (!wait)
     return false;
@@ -365,8 +368,9 @@ bool nativeWaitReady(obelisk_rt_context &context,
     obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
         obelisk_rt_object_from_managed_word(entries[0].stable_id), wait->flags,
         ready);
-    if (status != OBELISK_RT_OK)
-      context.schedulerStatus = status;
+    if constexpr (RecordSchedulerEffects)
+      if (status != OBELISK_RT_OK)
+        context.schedulerStatus = status;
     return status == OBELISK_RT_OK && ready;
   }
   case OBELISK_RT_SUSPEND_SEMAPHORE: {
@@ -376,8 +380,9 @@ bool nativeWaitReady(obelisk_rt_context &context,
     obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
         &context, obelisk_rt_object_from_managed_word(entries[0].stable_id),
         static_cast<int32_t>(wait->payload), process.waitSequence, ready);
-    if (status != OBELISK_RT_OK)
-      context.schedulerStatus = status;
+    if constexpr (RecordSchedulerEffects)
+      if (status != OBELISK_RT_OK)
+        context.schedulerStatus = status;
     return status == OBELISK_RT_OK && ready;
   }
   case OBELISK_RT_SUSPEND_AWAIT:
@@ -414,9 +419,16 @@ bool nativeWaitReady(obelisk_rt_context &context,
   }
 }
 
-bool nativeProcessReady(obelisk_rt_context &context,
-                        const ScheduledProcess &process,
-                        bool directStaticSignalWait) {
+bool nativeWaitReady(obelisk_rt_context &context,
+                     const ScheduledProcess &process) {
+  return nativeWaitReadyImpl<true>(context, process);
+}
+
+template <bool RecordSchedulerEffects>
+__attribute__((always_inline)) static inline bool
+nativeProcessReadyImpl(obelisk_rt_context &context,
+                       const ScheduledProcess &process,
+                       bool directStaticSignalWait) {
   if (process.explicitlySuspended)
     return false;
   if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
@@ -428,7 +440,13 @@ bool nativeProcessReady(obelisk_rt_context &context,
        process.suspendKind == OBELISK_RT_SUSPEND_EDGE))
     return process.signalTriggered ||
            (process.signalLatch && process.signalLatch->triggered);
-  return nativeWaitReady(context, process);
+  return nativeWaitReadyImpl<RecordSchedulerEffects>(context, process);
+}
+
+bool nativeProcessReady(obelisk_rt_context &context,
+                        const ScheduledProcess &process,
+                        bool directStaticSignalWait) {
+  return nativeProcessReadyImpl<true>(context, process, directStaticSignalWait);
 }
 
 static bool indexedSignalBlocked(const ScheduledProcess &process) {
@@ -494,6 +512,137 @@ nextScheduledProcessDelayUnlocked(obelisk_rt_context *context) {
     heap.pop_back();
   }
   return std::nullopt;
+}
+
+obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
+    const obelisk_rt_context *context, std::vector<uint64_t> &times) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  times.clear();
+  const uint64_t now = context->schedulerTime;
+  auto append = [&](uint64_t time) {
+    if (time > now)
+      times.push_back(time);
+  };
+  OBELISK_RT_TRY {
+    for (const ScheduledProcess &process : context->scheduledProcesses)
+      if (process.instance && process.phase == 0 && process.started &&
+          process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        append(process.wakeTime);
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+      if (!task.terminated && task.phase == 0 && task.started &&
+          task.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        append(task.wakeTime);
+    for (const ScheduledNBA &update : context->scheduledNBAs)
+      if (!update.cancelled)
+        append(update.dueTime);
+    for (const auto &entry : context->scheduledInertialPathNBAs)
+      append(entry.first.first);
+    for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
+      append(update.dueTime);
+    for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
+      append(update.dueTime);
+    for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
+      append(event.dueTime);
+    if (const ReplaceableEventFeatureState *replaceable =
+            obelisk_rt_replaceable_events(context))
+      for (const auto &entry : replaceable->calendar)
+        append(entry.first.first);
+    for (const auto &entry : context->scheduledPassSwitchEvents)
+      append(entry.first.first);
+
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end()), times.end());
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    times.clear();
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  OBELISK_RT_CATCH_ALL {
+    times.clear();
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+bool obelisk_rt_current_time_queue_pending_unlocked(
+    obelisk_rt_context *context) {
+  if (!context)
+    return false;
+  const uint64_t now = context->schedulerTime;
+  // The VPI read-only synchronization point precedes Postponed. An event
+  // currently executing there (or later) therefore cannot keep the current
+  // time queue visible.
+  if (context->activeExecRegion < OBELISK_RT_REGION_POSTPONED)
+    return true;
+
+  uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
+  uint32_t unstartedActorRegion =
+      obelisk_rt_peek_unstarted_actor_region(context, activePhase);
+  for (const ScheduledProcess &process : context->scheduledProcesses) {
+    if (!process.instance || process.phase != activePhase)
+      continue;
+    bool signalResume = process.signalTriggered ||
+                        (process.signalLatch && process.signalLatch->triggered);
+    bool runnable = nativeProcessReadyImpl<false>(*context, process, false);
+    if (runnable && process.queuedRegion >= unstartedActorRegion &&
+        signalResume && !process.urgent && !process.prioritySignal)
+      runnable = false;
+    if (!runnable)
+      continue;
+    if (process.urgent || schedulerOrderingRegion(process, signalResume) <=
+                              OBELISK_RT_REGION_POSTPONED)
+      return true;
+  }
+  if (obelisk_rt_design_task_pending_before_read_only_unlocked(context))
+    return true;
+
+  for (const ScheduledNBA &update : context->scheduledNBAs)
+    if (!update.cancelled && update.dueTime <= now &&
+        update.execRegion < OBELISK_RT_REGION_POSTPONED)
+      return true;
+  if (!context->scheduledInertialPathNBAs.empty() &&
+      context->scheduledInertialPathNBAs.begin()->first.first <= now)
+    return true;
+  auto hasDueBeforeReadOnly = [now](const auto &entries) {
+    return std::any_of(entries.begin(), entries.end(),
+                       [now](const auto &entry) {
+                         return entry.dueTime <= now &&
+                                entry.execRegion < OBELISK_RT_REGION_POSTPONED;
+                       });
+  };
+  if (hasDueBeforeReadOnly(context->scheduledManagedNBAs) ||
+      hasDueBeforeReadOnly(context->scheduledDesignNBAs) ||
+      hasDueBeforeReadOnly(context->scheduledDesignEvents))
+    return true;
+  if (const ReplaceableEventFeatureState *replaceable =
+          obelisk_rt_replaceable_events(context);
+      replaceable &&
+      std::any_of(replaceable->calendar.begin(), replaceable->calendar.end(),
+                  [now](const auto &entry) {
+                    return entry.first.first <= now &&
+                           entry.second.execRegion <
+                               OBELISK_RT_REGION_POSTPONED;
+                  }))
+    return true;
+  if (!context->scheduledPassSwitchEvents.empty() &&
+      context->scheduledPassSwitchEvents.begin()->first.first <= now)
+    return true;
+
+  for (const StaticNBAAccumulator &accumulator : context->staticNBAAccumulators)
+    if (accumulator.valid &&
+        accumulator.execRegion < OBELISK_RT_REGION_POSTPONED)
+      return true;
+  if (context->nativeScheduleHasGeneratedNBAAccumulators)
+    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
+         ++root) {
+      const obelisk_rt_generated_nba_accumulator_256 *generated =
+          context->nativeScheduleNBARoots[root].generated_accumulator;
+      if (generated && hasGeneratedNBAStages(*generated) &&
+          generated->exec_region < OBELISK_RT_REGION_POSTPONED)
+        return true;
+    }
+  return false;
 }
 
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {

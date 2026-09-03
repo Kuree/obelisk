@@ -2063,6 +2063,51 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
   return earliest;
 }
 
+// Read-only counterpart used by inspection APIs. Unlike the scheduler helper,
+// this never compacts stale inventory entries.
+inline uint32_t
+obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
+                                       uint32_t phase) {
+  const auto &actors = phase == 0 ? context->unstartedActiveActors
+                                  : context->unstartedFinalActors;
+  uint32_t earliest = UINT32_MAX;
+  for (uint64_t logicalToken : actors) {
+    bool pending = false;
+    bool explicitlySuspended = false;
+    uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
+    if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      auto indexed = context->scheduledProcessIndices.find(token);
+      if (indexed != context->scheduledProcessIndices.end() &&
+          indexed->second < context->scheduledProcesses.size()) {
+        const ScheduledProcess &process =
+            context->scheduledProcesses[indexed->second];
+        pending = process.instance && process.token == token &&
+                  process.phase == phase && !process.started;
+        explicitlySuspended = process.explicitlySuspended;
+        homeRegion = process.homeRegion;
+      }
+    } else {
+      auto indexed = context->scheduledDesignTaskIndices.find(logicalToken);
+      if (indexed != context->scheduledDesignTaskIndices.end() &&
+          indexed->second < context->scheduledDesignTasks.size()) {
+        const ScheduledDesignTask &task =
+            context->scheduledDesignTasks[indexed->second];
+        pending = !task.terminated && task.id == logicalToken &&
+                  task.phase == phase && !task.started;
+        explicitlySuspended = task.explicitlySuspended;
+        homeRegion = task.homeRegion;
+      }
+    }
+    if (!pending || explicitlySuspended)
+      continue;
+    if (homeRegion == OBELISK_RT_REGION_ACTIVE)
+      return OBELISK_RT_REGION_ACTIVE;
+    earliest = std::min(earliest, homeRegion);
+  }
+  return earliest;
+}
+
 inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
                                                uint32_t phase) {
   return obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
@@ -2382,6 +2427,16 @@ DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
     obelisk_rt_context *context,
     const obelisk_rt_execution_descriptor_v1 *execution);
+
+// Cold VPI query support. The caller holds the recursive context lock. This
+// snapshots only canonical future scheduler calendars, never their heaps,
+// mirrors, or deoptimization scratch state.
+obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
+    const obelisk_rt_context *context, std::vector<uint64_t> &times);
+bool obelisk_rt_current_time_queue_pending_unlocked(
+    obelisk_rt_context *context);
+bool obelisk_rt_design_task_pending_before_read_only_unlocked(
+    obelisk_rt_context *context);
 
 template <typename Callable>
 obelisk_rt_status guarded(obelisk_rt_context *context,

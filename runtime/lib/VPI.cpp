@@ -6,6 +6,7 @@
 
 #include "RuntimeInternal.h"
 
+#include "ProcessContext.h"
 #include "VPIHandleToken.h"
 #include "VPIInternal.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -55,7 +57,8 @@ enum class VPIHandleKind : uint8_t {
   Iterator,
   Callback,
   ScheduledEvent,
-  SystemTf
+  SystemTf,
+  TimeQueue
 };
 
 } // namespace
@@ -73,7 +76,9 @@ struct __vpiHandle {
   // peers during dispatch. Immutable design iterators use cursors or relation
   // indices directly and never populate this vector.
   std::vector<obelisk_rt_design_cursor_v1> items;
+  std::vector<uint64_t> timeQueueItems;
   bool callbackIterator = false;
+  bool timeQueueIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
   bool hasUse = false;
@@ -279,6 +284,24 @@ vpiHandle makeCallbackHandle(VPIState *state, uint64_t callbackId) {
   }
 }
 
+vpiHandle makeTimeQueueHandle(VPIState *state, uint64_t scheduledTime) {
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = state;
+    handle->kind = VPIHandleKind::TimeQueue;
+    handle->cursor.offset = scheduledTime;
+    return keepHandle(state, std::move(handle));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI time-queue handle arena is out of memory", vpiSystem);
+    return nullptr;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI time-queue handle", vpiInternal);
+    return nullptr;
+  }
+}
+
 VPICallback *findCallback(__vpiHandle *handle) {
   if (!handle || handle->kind != VPIHandleKind::Callback)
     return nullptr;
@@ -437,6 +460,8 @@ PLI_INT32 vpiTypeForHandle(VPIHandleKind kind) {
     return vpiSchedEvent;
   case VPIHandleKind::SystemTf:
     return vpiUserSystf;
+  case VPIHandleKind::TimeQueue:
+    return vpiTimeQueue;
   case VPIHandleKind::Object:
     return vpiUndefined;
   }
@@ -504,6 +529,46 @@ bool nameFor(__vpiHandle *handle, std::string &name) {
     setError(handle->owner, "could not materialize design name", vpiSystem);
     return false;
   }
+}
+
+DpiScopeHandle *timeScopeFor(__vpiHandle *handle) {
+  if (!handle || handle->kind != VPIHandleKind::Object)
+    return nullptr;
+  obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+  bool statement = handle->statement;
+  for (;;) {
+    obelisk_rt_design_cursor_v1 parent{};
+    bool parentIsStatement = false;
+    obelisk_rt_status status = OBELISK_RT_OK;
+    if (statement) {
+      status = obelisk_rt_cached_vpi_statement_enclosing_scope(
+          handle->owner->context, cursor, &parent, &parentIsStatement);
+    } else {
+      obelisk_rt_design_info_v1 info{};
+      status =
+          obelisk_rt_cached_design_info(handle->owner->context, cursor, &info);
+      if (status == OBELISK_RT_OK &&
+          info.kind == OBELISK_RT_DESIGN_RECORD_SCOPE)
+        return obelisk_rt_find_dpi_scope(handle->owner->context,
+                                         info.handle.id);
+      if (status == OBELISK_RT_OK)
+        status = obelisk_rt_cached_design_parent(handle->owner->context, cursor,
+                                                 &parent);
+    }
+    if (status != OBELISK_RT_OK || parent.offset == cursor.offset)
+      return nullptr;
+    cursor = parent;
+    statement = parentIsStatement;
+  }
+}
+
+bool globalTimeExponent(VPIState *state, int32_t &exponent) {
+  if (!state || !state->context || !state->context->execution) {
+    setError(state, "simulation time metadata is unavailable", vpiNotice);
+    return false;
+  }
+  exponent = state->context->execution->dpi_time_precision;
+  return true;
 }
 
 bool fullNameForStatement(__vpiHandle *handle, std::string &name) {
@@ -938,11 +1003,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (handle->kind == VPIHandleKind::Iterator) {
     if (type != vpiUse)
       return nullptr;
-    return handle->hasUse
-               ? makeHandle(handle->owner, handle->useCursor, handle->useType,
-                            handle->useStatement)
-               : nullptr;
+    return handle->hasUse ? makeHandle(handle->owner, handle->useCursor,
+                                       handle->useType, handle->useStatement)
+                          : nullptr;
   }
+  if (handle->kind == VPIHandleKind::TimeQueue)
+    return nullptr;
   if (handle->kind != VPIHandleKind::Object) {
     setError(handle->owner, "wrong-kind VPI handle");
     return nullptr;
@@ -1039,6 +1105,46 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     }
     OBELISK_RT_CATCH_ALL {
       setError(state, "could not allocate VPI callback iterator", vpiSystem);
+      return nullptr;
+    }
+  }
+  if (type == vpiTimeQueue && !reference) {
+    OBELISK_RT_TRY {
+      std::vector<uint64_t> times;
+      {
+        ContextMutexLock lock(state->context);
+        obelisk_rt_status status =
+            obelisk_rt_snapshot_future_time_queues_unlocked(state->context,
+                                                            times);
+        if (status != OBELISK_RT_OK) {
+          setError(state,
+                   status == OBELISK_RT_OUT_OF_MEMORY
+                       ? "could not allocate VPI time-queue snapshot"
+                       : "could not inspect scheduler time queues",
+                   status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem
+                                                      : vpiInternal);
+          return nullptr;
+        }
+        if ((state->phase == VPIPhase::StartSimulation ||
+             state->phase == VPIPhase::Running) &&
+            obelisk_rt_current_time_queue_pending_unlocked(state->context))
+          times.insert(times.begin(), state->context->schedulerTime);
+      }
+      if (times.empty())
+        return nullptr;
+      auto iterator = std::make_unique<__vpiHandle>();
+      iterator->owner = state;
+      iterator->kind = VPIHandleKind::Iterator;
+      iterator->timeQueueItems = std::move(times);
+      iterator->timeQueueIterator = true;
+      return keepHandle(state, std::move(iterator));
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      setError(state, "could not allocate VPI time-queue iterator", vpiSystem);
+      return nullptr;
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not create VPI time-queue iterator", vpiInternal);
       return nullptr;
     }
   }
@@ -1139,6 +1245,19 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     iterator->owner->handles.erase(iterator->token);
     return nullptr;
   }
+  if (iterator->timeQueueIterator) {
+    if (iterator->next == iterator->timeQueueItems.size()) {
+      iterator->owner->handles.erase(iterator->token);
+      return nullptr;
+    }
+    VPIState *state = iterator->owner;
+    const uintptr_t iteratorToken = iterator->token;
+    vpiHandle result =
+        makeTimeQueueHandle(state, iterator->timeQueueItems[iterator->next++]);
+    if (!result)
+      state->handles.erase(iteratorToken);
+    return result;
+  }
   if (iterator->relationIterator) {
     if (iterator->next == iterator->relationRange.count) {
       iterator->owner->handles.erase(iterator->token);
@@ -1208,6 +1327,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
   beginVPICall();
+  if (!opaque && (property == vpiTimeUnit || property == vpiTimePrecision)) {
+    VPIState *state = requireState();
+    int32_t exponent = 0;
+    return globalTimeExponent(state, exponent) ? exponent : vpiUndefined;
+  }
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
@@ -1230,6 +1354,17 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                ? 0
                : static_cast<PLI_INT32>(
                      std::min<uint64_t>(info.bit_width, INT32_MAX));
+  }
+  if (property == vpiTimeUnit || property == vpiTimePrecision) {
+    if (!propertyFor(handle, property))
+      return vpiUndefined;
+    DpiScopeHandle *scope = timeScopeFor(handle);
+    if (!scope) {
+      setError(handle->owner, "VPI object timescale metadata is unavailable",
+               vpiNotice);
+      return vpiUndefined;
+    }
+    return property == vpiTimeUnit ? scope->timeUnit : scope->timePrecision;
   }
   if (property == vpiDirection || property == vpiPortIndex ||
       property == vpiPortType || property == vpiScalar ||
@@ -1469,6 +1604,67 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   }
 }
 
+extern "C" OBELISK_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
+                                                p_vpi_time destination) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (!state)
+    return;
+  if (!destination) {
+    setError(state, "VPI time destination is null");
+    return;
+  }
+
+  int32_t unit = 0;
+  int32_t precision = 0;
+  if (!globalTimeExponent(state, precision))
+    return;
+  unit = precision;
+  uint64_t ticks = state->context->schedulerTime;
+  if (opaque) {
+    __vpiHandle *handle = findHandle(opaque);
+    if (!handle)
+      return;
+    if (handle->kind == VPIHandleKind::TimeQueue) {
+      ticks = handle->cursor.offset;
+    } else if (handle->kind == VPIHandleKind::Object) {
+      DpiScopeHandle *scope = timeScopeFor(handle);
+      if (!scope) {
+        setError(state, "VPI object timescale metadata is unavailable",
+                 vpiNotice);
+        return;
+      }
+      unit = scope->timeUnit;
+    } else {
+      setError(state, "VPI handle does not have simulation time", vpiNotice);
+      return;
+    }
+  }
+
+  switch (destination->type) {
+  case vpiSimTime:
+    destination->high = static_cast<PLI_UINT32>(ticks >> 32);
+    destination->low = static_cast<PLI_UINT32>(ticks);
+    destination->real = 0.0;
+    return;
+  case vpiScaledRealTime:
+    destination->high = 0;
+    destination->low = 0;
+    destination->real = static_cast<double>(
+        static_cast<long double>(ticks) *
+        std::pow(10.0L, static_cast<long double>(precision - unit)));
+    return;
+  case vpiSuppressTime:
+    destination->high = 0;
+    destination->low = 0;
+    destination->real = 0.0;
+    return;
+  default:
+    setError(state, "unsupported VPI time format");
+    return;
+  }
+}
+
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
                                                       p_vpi_value source,
                                                       p_vpi_time,
@@ -1520,7 +1716,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
   __vpiHandle *right = findHandle(second);
   if (!left || !right || left->kind != right->kind)
     return 0;
-  if (left->kind == VPIHandleKind::Callback)
+  if (left->kind == VPIHandleKind::Callback ||
+      left->kind == VPIHandleKind::TimeQueue)
     return left->cursor.offset == right->cursor.offset;
   if (left->kind != VPIHandleKind::Object) {
     setError(left->owner, "VPI handle kind does not denote an object");
