@@ -209,6 +209,12 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
+    "t_interface_modport_hier": (
+        "IEEE 1800-2017 25.4 gives interface port declarations the same "
+        "semantics as module ports, and 23.2.2.3 makes input logic clk a "
+        "net when the port kind is omitted; pinned Slang deliberately treats "
+        "the explicit-data-type input as a variable, introducing a separate "
+        "scheduled copy whose value can be stale during the parent posedge"),
     "t_modport_export_task": (
         "IEEE 1800-2017 25.7 permits subroutines to be defined in a module "
         "using a hierarchical interface-port name when the connected modport "

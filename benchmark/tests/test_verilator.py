@@ -971,6 +971,14 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
+    def test_interface_input_clock_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_interface_modport_hier", "l0_inst.bus.clk mismatch\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 25.4", log)
+        self.assertIn("23.2.2.3", log)
+        self.assertTrue(log.endswith("l0_inst.bus.clk mismatch\n"))
+
     def test_modport_exported_task_slang_bug_stays_visible(self):
         log = verilator.classify_dependency_failure(
             "t_modport_export_task",
