@@ -1115,6 +1115,11 @@ NONPROCEDURAL_ASSIGNMENT_EXPRESSION = Exclusion(
     "a procedural statement; the test uses parenthesized assignments inside "
     "a continuous-assignment right-hand side and suppresses Verilator's "
     "ASSIGNEQEXPR warning")
+TYPE_REFERENCE_VARIABLE_WITHOUT_VAR = Exclusion(
+    "IEEE 1800-2017 6.23",
+    "a type reference used in a variable declaration shall be preceded by "
+    "the var keyword; the test instead declares type(bit[9:0]) tvar and "
+    "requires Verilator to accept the missing var")
 CONSTANT_TO_IMPLICIT_INOUT_PORT = Exclusion(
     "IEEE 1800-2017 23.2.2.3",
     "an ANSI port whose direction is omitted defaults to inout, and following "
@@ -1295,6 +1300,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_func_no_paren": PARENLESS_INTERFACE_FUNCTION,
     "t_param_no_parentheses": PARENLESS_PARAMETER_ASSIGNMENT,
     "t_lint_assigneqexpr": NONPROCEDURAL_ASSIGNMENT_EXPRESSION,
+    "t_param_type_bit": TYPE_REFERENCE_VARIABLE_WITHOUT_VAR,
     "t_interface_generic2": CONSTANT_TO_IMPLICIT_INOUT_PORT,
     "t_interface_modport_expr_array": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_expr_hier": CHILD_INTERFACE_MODPORT_MEMBER,

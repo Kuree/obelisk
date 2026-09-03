@@ -1082,6 +1082,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("not within a procedural statement", excluded.reason)
         self.assertIn("continuous-assignment", excluded.reason)
 
+    def test_type_reference_without_var_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_param_type_bit"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.23")
+        self.assertIn("shall be preceded by the var keyword", excluded.reason)
+        self.assertIn("type(bit[9:0]) tvar", excluded.reason)
+
     def test_two_state_conditional_startup_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_opt_expand_keep_widths"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.8")
