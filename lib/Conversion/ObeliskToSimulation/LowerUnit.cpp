@@ -882,12 +882,18 @@ LogicalResult UnitLowering::storeReference(Value reference, Value value,
 FailureOr<Value> UnitLowering::toArgumentReference(Value reference,
                                                    Type elementType,
                                                    Location location) {
-  if (getReferenceElementType(reference) != elementType)
+  Type referenceElementType = getReferenceElementType(reference);
+  if (!sim::haveCompatibleArgumentRefLayout(referenceElementType, elementType))
     return failure();
   Type resultType =
       sim::ArgumentRefType::get(function.getContext(), elementType);
-  if (isa<sim::ArgumentRefType>(reference.getType()))
-    return reference;
+  if (isa<sim::ArgumentRefType>(reference.getType())) {
+    if (referenceElementType == elementType)
+      return reference;
+    return sim::SimArgumentRefRetypeOp::create(builder, location, resultType,
+                                               reference)
+        .getResult();
+  }
   if (isa<sim::RefType>(reference.getType())) {
     recordSensitivity(reference);
     return sim::SimArgumentRefFromRefOp::create(builder, location, resultType,

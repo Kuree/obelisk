@@ -515,9 +515,29 @@ module {
         %storage: !obelisk_sim.ref<i64>
           {obelisk_sim.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      // expected-error @below {{input and result element types must match}}
+      // expected-error @below {{input and result element types must have equivalent packed layouts}}
       %reference = obelisk_sim.argument_ref.from_ref %storage :
         !obelisk_sim.ref<i64> -> !obelisk_sim.argument_ref<i32>
+      obelisk_sim.return
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @bad_argument_ref_retype {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "f"
+    obelisk_sim.func @f(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %reference: !obelisk_sim.argument_ref<i32>
+          {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
+      // expected-error @below {{input and result element types must have equivalent packed layouts}}
+      %view = obelisk_sim.argument_ref.retype %reference :
+        !obelisk_sim.argument_ref<i32> ->
+        !obelisk_sim.argument_ref<!obelisk_sim.logic<32>>
       obelisk_sim.return
     }
   }

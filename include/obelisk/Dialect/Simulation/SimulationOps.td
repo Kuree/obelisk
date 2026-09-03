@@ -1616,6 +1616,21 @@ def SimArgumentRefFromManagedOp
   let hasVerifier = 1;
 }
 
+def SimArgumentRefRetypeOp : SimOp<"argument_ref.retype", [Pure]> {
+  let summary = "view an exact alias through an equivalent packed type";
+  let description = [{
+    Preserves the opaque alias representation while changing only the declared
+    packed element shape. The verifier requires identical packed width and
+    state domain; source signedness equivalence was checked before normalized
+    simulation types were formed.
+  }];
+  let arguments = (ins SimArgumentRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
 def SimReferencePathIndexOp : SimOp<"reference_path.index", [
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {

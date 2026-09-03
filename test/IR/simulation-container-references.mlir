@@ -10,6 +10,7 @@ module attributes {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.capture"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.managed_ref"
+    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "top.equivalent_packed_ref"
 
     obelisk_sim.func @capture(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -76,6 +77,25 @@ module attributes {
           !obelisk_sim.argument_ref<!obelisk_sim.assoc_array<i32, i64, true, false>>
       obelisk_sim.return
     }
+
+    // IEEE 1800-2017 6.22.2(c) and 13.5.2 allow a ref formal to view an
+    // equivalent packed type while preserving the original alias.
+    obelisk_sim.func @equivalent_packed_ref(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %reference: !obelisk_sim.argument_ref<i32>
+            {obelisk_sim.capture_kind = 1 : i32})
+        attributes {code_unit_id = 3 : i64, entry_kind = 8 : i32} {
+      %view = obelisk_sim.argument_ref.retype %reference :
+          !obelisk_sim.argument_ref<i32> ->
+          !obelisk_sim.argument_ref<!obelisk_sim.packed_array<31 : 0 x i1>>
+      %value = obelisk_sim.argument_ref.load %view :
+          !obelisk_sim.argument_ref<!obelisk_sim.packed_array<31 : 0 x i1>> ->
+          !obelisk_sim.packed_array<31 : 0 x i1>
+      obelisk_sim.argument_ref.store %value to %view :
+          !obelisk_sim.packed_array<31 : 0 x i1>,
+          !obelisk_sim.argument_ref<!obelisk_sim.packed_array<31 : 0 x i1>>
+      obelisk_sim.return
+    }
   }
 }
 
@@ -89,6 +109,7 @@ module attributes {
 // CHECK: obelisk_sim.container.export_fixed
 // CHECK: obelisk_sim.argument_ref.load
 // CHECK: obelisk_sim.argument_ref.store
+// CHECK: obelisk_sim.argument_ref.retype
 // NATIVE: llvm.call @obelisk_rt_v1_reference_path_index_create
 // NATIVE: llvm.call @obelisk_rt_v1_container_swap
 // NATIVE: llvm.call @obelisk_rt_v1_reference_path_string_character_create
@@ -101,4 +122,5 @@ module attributes {
 // NATIVE: %[[STORE_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
 // NATIVE: llvm.call @obelisk_rt_v1_argument_ref_store
 // NATIVE-SAME: %[[STORE_KIND]]
+// NATIVE-NOT: obelisk_sim.argument_ref.retype
 // BYTECODE: obelisk.bytecode.image

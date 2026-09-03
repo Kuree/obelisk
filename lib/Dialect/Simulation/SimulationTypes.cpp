@@ -49,6 +49,19 @@ bool isNormalizedValueType(Type type) {
          isManagedHandleType(type) || isAggregateType(type);
 }
 
+bool haveCompatibleArgumentRefLayout(Type lhs, Type rhs) {
+  if (lhs == rhs)
+    return true;
+  std::optional<unsigned> lhsWidth = getPackedWidth(lhs);
+  std::optional<unsigned> rhsWidth = getPackedWidth(rhs);
+  if (!lhsWidth || lhsWidth != rhsWidth)
+    return false;
+  Type lhsScalar = getPackedScalarType(lhs);
+  Type rhsScalar = getPackedScalarType(rhs);
+  return lhsScalar && rhsScalar &&
+         isa<LogicType>(lhsScalar) == isa<LogicType>(rhsScalar);
+}
+
 LogicalResult
 DynamicArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                          Type elementType) {

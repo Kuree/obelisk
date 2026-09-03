@@ -30,6 +30,12 @@ std::optional<unsigned> getPackedWidth(::mlir::Type type);
 /// unpacked values have no scalar representation.
 ::mlir::Type getPackedScalarType(::mlir::Type type);
 
+/// Whether two normalized types can share an argument-reference alias. Exact
+/// types always can. Distinct packed types can when source signedness was
+/// checked before normalization and the remaining IEEE 1800-2017 6.22.2(c)
+/// requirements -- total width and state domain -- match.
+bool haveCompatibleArgumentRefLayout(::mlir::Type lhs, ::mlir::Type rhs);
+
 /// Whether `type` is one of the fixed first-class aggregate types.
 bool isAggregateType(::mlir::Type type);
 

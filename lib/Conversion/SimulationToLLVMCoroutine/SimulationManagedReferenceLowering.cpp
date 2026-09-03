@@ -105,6 +105,18 @@ public:
   }
 };
 
+class ArgumentRefRetypeConversion final
+    : public OpConversionPattern<sim::SimArgumentRefRetypeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimArgumentRefRetypeOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOp(op, adaptor.getInput());
+    return success();
+  }
+};
+
 class ReferencePathIndexConversion final
     : public OpConversionPattern<sim::SimReferencePathIndexOp> {
 public:
@@ -925,7 +937,8 @@ void populateManagedReferenceToLLVMConversionPatterns(
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
   patterns.add<ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
-               ArgumentRefFromPathConversion>(converter, context);
+               ArgumentRefRetypeConversion, ArgumentRefFromPathConversion>(
+      converter, context);
   patterns.add<ReferencePathIndexConversion, ReferencePathAssocConversion>(
       converter, context, stateBitCount);
   patterns.add<ReferencePathStringCharacterConversion>(converter, context,

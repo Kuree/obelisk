@@ -803,6 +803,24 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       for (auto [actual, formal] : llvm::zip_equal(actuals, formals)) {
         if (formal.getDirection() != semantic::SVArgumentDirection::Ref)
           continue;
+        // IEEE 1800-2017 6.22.2(c) makes differently shaped packed types
+        // equivalent when width, state domain, and source signedness match.
+        // A direct task's typed-pointer fast path cannot express that view,
+        // so use the general opaque argument-reference ABI only for tasks
+        // that need it. Exact-type calls retain the zero-cost direct ABI.
+        auto actualSemantic = actual->getAttrOfType<TypeAttr>("semantic_type");
+        std::optional<Type> formalSemantic = formal.getSemanticType();
+        if (actualSemantic && formalSemantic &&
+            actualSemantic.getValue() != *formalSemantic) {
+          FailureOr<Type> actualType = getNormalizedSemanticType(actual);
+          FailureOr<Type> formalType = getNormalizedSemanticType(formal);
+          if (succeeded(actualType) && succeeded(formalType) &&
+              *actualType != *formalType &&
+              sim::haveCompatibleArgumentRefLayout(*actualType, *formalType)) {
+            result.indirectRefTasks.insert(target);
+            return;
+          }
+        }
         auto select = dyn_cast<semantic::SVElementSelectExpressionOp>(actual);
         if (!select)
           continue;

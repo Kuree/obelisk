@@ -1214,16 +1214,26 @@ LogicalResult SimReferencePathNBAEnqueueOp::verify() {
 }
 
 LogicalResult SimArgumentRefFromRefOp::verify() {
-  if (getInput().getType().getElementType() !=
-      getResult().getType().getElementType())
-    return emitOpError("input and result element types must match");
+  if (!haveCompatibleArgumentRefLayout(getInput().getType().getElementType(),
+                                       getResult().getType().getElementType()))
+    return emitOpError(
+        "input and result element types must have equivalent packed layouts");
   return success();
 }
 
 LogicalResult SimArgumentRefFromManagedOp::verify() {
-  if (getInput().getType().getElementType() !=
-      getResult().getType().getElementType())
-    return emitOpError("input and result element types must match");
+  if (!haveCompatibleArgumentRefLayout(getInput().getType().getElementType(),
+                                       getResult().getType().getElementType()))
+    return emitOpError(
+        "input and result element types must have equivalent packed layouts");
+  return success();
+}
+
+LogicalResult SimArgumentRefRetypeOp::verify() {
+  if (!haveCompatibleArgumentRefLayout(getInput().getType().getElementType(),
+                                       getResult().getType().getElementType()))
+    return emitOpError(
+        "input and result element types must have equivalent packed layouts");
   return success();
 }
 
@@ -1284,9 +1294,10 @@ LogicalResult SimReferencePathAggregateElementOp::verify() {
 }
 
 LogicalResult SimArgumentRefFromPathOp::verify() {
-  if (getInput().getType().getElementType() !=
-      getResult().getType().getElementType())
-    return emitOpError("input and result element types must match");
+  if (!haveCompatibleArgumentRefLayout(getInput().getType().getElementType(),
+                                       getResult().getType().getElementType()))
+    return emitOpError(
+        "input and result element types must have equivalent packed layouts");
   return success();
 }
 

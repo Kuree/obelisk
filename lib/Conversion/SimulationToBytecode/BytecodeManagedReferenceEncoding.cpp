@@ -76,6 +76,10 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimArgumentRefFromPathOp>(operation))
     return emitIntrinsic(plan, kIntrinsicArgumentRefFromPath, {op.getInput()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimArgumentRefRetypeOp>(operation)) {
+    emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimArgumentRefFromRefOp>(operation))
     return emitIntrinsic(plan, kIntrinsicArgumentRefFromRef, {op.getInput()},
                          {op.getResult()});
