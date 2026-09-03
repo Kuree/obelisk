@@ -1961,20 +1961,36 @@ def detect_descriptor_dpi_sources(descriptor: Path) -> list[Path]:
     return result
 
 
-def descriptor_dpi_compiler_flags(sources: list[Path], header: Path) -> list[str]:
+def descriptor_dpi_compiler_flags(
+        sources: list[Path], header: Path,
+        descriptor_defines: list[str] | tuple[str, ...] = (),
+) -> list[str]:
     """Return bounded compatibility flags for descriptor DPI sources."""
-    flags = ["-include", str(header), "-I", str(header.parent)]
+    flags = ["-include", str(header), "-I", str(header.parent),
+             *descriptor_defines]
     # These guarded branches are the sources' generic DPI implementations:
     # unlike their Verilator branches they need no generated model headers.
     # Select one only when it exposes NEED_EXTERNS for that simulator spelling.
+    selected_generic = False
     for source in sources:
         text = source.read_text(encoding="utf-8", errors="replace")
         if "defined(NC)" in text and "define NEED_EXTERNS" in text:
             flags.append("-DNC")
+            selected_generic = True
             break
         if "defined(CADENCE)" in text and "define NEED_EXTERNS" in text:
             flags.append("-DCADENCE")
+            selected_generic = True
             break
+    if not selected_generic:
+        for source in sources:
+            text = source.read_text(encoding="utf-8", errors="replace")
+            if re.search(
+                    r'defined\(VERILATOR\)[\s\S]*?'
+                    r'#\s*include\s*[<"]V[A-Za-z0-9_]+__Dpi\.h[>"]',
+                    text):
+                flags.append("-DVERILATOR")
+                break
     return flags
 
 
@@ -2308,7 +2324,8 @@ def judge_one(
             descriptor_native = runner.build_native_objects(
                 obelisk, [str(source) for source in descriptor_sources], tmp,
                 compiler_flags=descriptor_dpi_compiler_flags(
-                    descriptor_sources, native_header) + [
+                    descriptor_sources, native_header,
+                    descriptor_defines) + [
                         "-D" + definition
                         for definition in (*compatibility_defines,
                                            *native_defines)

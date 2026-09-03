@@ -578,6 +578,20 @@ class DescriptorDPISourcesTest(unittest.TestCase):
             self.assertEqual(selected.read_text(encoding="utf-8"),
                              "// expected\n")
 
+    def test_generated_header_verilator_branch_is_selected_for_portable_dpi(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            directory = Path(tmp)
+            source = directory / "implementation.cpp"
+            source.write_text(
+                '#if defined(VERILATOR)\n#include "Vt_x__Dpi.h"\n'
+                '#else\n#error "Unknown simulator"\n#endif\n',
+                encoding="utf-8")
+            header = directory / "descriptor_dpi.h"
+            flags = verilator.descriptor_dpi_compiler_flags(
+                [source], header, ["-DT_FUNC_WIDE_OUT"])
+        self.assertIn("-DVERILATOR", flags)
+        self.assertIn("-DT_FUNC_WIDE_OUT", flags)
+
 
 class RuntimeErrorTest(unittest.TestCase):
     def test_error_on_stderr_is_a_runtime_failure(self):
