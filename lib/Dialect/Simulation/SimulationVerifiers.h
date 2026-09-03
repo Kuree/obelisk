@@ -57,6 +57,13 @@ mlir::LogicalResult
 verifyElementType(llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
                   mlir::Type elementType);
 
+/// Verifies that immutable source-semantic VPI inventory normalizes to the
+/// executable declaration type that carries it.
+mlir::LogicalResult
+verifyVPITypeSemantics(llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+                       mlir::Type executableType,
+                       VPITypeSemanticsAttr semantics);
+
 } // namespace obelisk::sim
 
 #endif // OBELISK_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H

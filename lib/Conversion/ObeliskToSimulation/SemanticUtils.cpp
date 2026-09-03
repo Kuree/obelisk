@@ -623,23 +623,98 @@ bool isSignedSemanticType(Type type) {
 static FailureOr<Type> normalizeType(Type type, Location location,
                                      bool allowRealScalar = true);
 
-FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
-                                                          Location location) {
+static StringRef sourceSymbolName(StringRef symbol) {
+  size_t separator = symbol.find('.');
+  return separator == StringRef::npos ? symbol
+                                      : symbol.drop_front(separator + 1);
+}
+
+static bool isStandardClassHandle(semantic::ClassHandleType handle,
+                                  StringRef className) {
+  SymbolRefAttr name = handle.getClassName();
+  return name.getNestedReferences().size() == 1 &&
+         sourceSymbolName(name.getRootReference().getValue()) == "std" &&
+         sourceSymbolName(name.getLeafReference().getValue()) == className;
+}
+
+static FailureOr<Type> getMailboxElementType(Operation *owner,
+                                             semantic::ClassHandleType handle,
+                                             Location location) {
+  if (!owner) {
+    emitError(location)
+        << "mailbox VPI inventory requires its semantic class definition";
+    return failure();
+  }
+  semantic::SVClassTypeOp specialization;
+  Operation *root = owner;
+  while (root->getParentOp())
+    root = root->getParentOp();
+  root->walk([&](semantic::SVClassTypeOp candidate) {
+    if (candidate.getSemanticType() == handle) {
+      specialization = candidate;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (!specialization) {
+    emitError(location)
+        << "mailbox specialization has no semantic class definition";
+    return failure();
+  }
+  Type elementType;
+  for (Operation *child : getChildren(specialization)) {
+    auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
+    if (!parameter)
+      continue;
+    if (elementType) {
+      emitError(location)
+          << "mailbox specialization has multiple type parameters";
+      return failure();
+    }
+    elementType = parameter.getSemanticType().value_or(Type{});
+  }
+  if (!elementType) {
+    emitError(location)
+        << "mailbox specialization has no resolved element type";
+    return failure();
+  }
+  return elementType;
+}
+
+FailureOr<sim::VPITypeSemanticsAttr>
+makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
+                     Operation *semanticOwner) {
   MLIRContext *context = type.getContext();
+  struct Details {
+    SymbolRefAttr symbol;
+    StringAttr modport;
+    BoolAttr isTagged;
+    BoolAttr isSoft;
+    IntegerAttr bitWidth;
+    IntegerAttr selectableWidth;
+    IntegerAttr bitstreamWidth;
+    IntegerAttr tagBits;
+    IntegerAttr queueBound;
+    BoolAttr wildcardIndex;
+    DenseI64ArrayAttr childOrdinals;
+    DenseI64ArrayAttr childPackedOffsets;
+    ArrayAttr typedefAliases;
+  };
+  auto integerAttr = [&](uint64_t value) {
+    return IntegerAttr::get(IntegerType::get(context, 64), APInt(64, value));
+  };
   auto make = [&](sim::VPITypeKind kind, bool isSigned, bool isFourState,
                   StringAttr name = {}, ArrayRef<int64_t> range = {},
                   ArrayRef<Attribute> children = {},
-                  ArrayRef<Attribute> childNames = {}) {
+                  ArrayRef<Attribute> childNames = {}, Details details = {}) {
     return sim::VPITypeSemanticsAttr::get(
-        context, kind, isSigned, isFourState, name,
-        DenseI64ArrayAttr::get(context, range),
-        ArrayAttr::get(context, children), ArrayAttr::get(context, childNames));
-  };
-  auto symbolName = [&](SymbolRefAttr symbol) {
-    std::string text;
-    llvm::raw_string_ostream stream(text);
-    stream << symbol;
-    return StringAttr::get(context, text);
+        context, kind, isSigned, isFourState, name, details.symbol,
+        details.modport, DenseI64ArrayAttr::get(context, range),
+        ArrayAttr::get(context, children), ArrayAttr::get(context, childNames),
+        details.isTagged, details.isSoft, details.bitWidth,
+        details.selectableWidth, details.bitstreamWidth, details.tagBits,
+        details.queueBound, details.wildcardIndex, details.childOrdinals,
+        details.childPackedOffsets, details.typedefAliases);
   };
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Type)> lower =
       [&](Type current) -> FailureOr<sim::VPITypeSemanticsAttr> {
@@ -719,16 +794,22 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
 
     auto aggregate =
         [&](sim::VPITypeKind kind, StringAttr name, bool isSigned,
-            bool isFourState, ArrayAttr fields,
-            bool sourceInventory) -> FailureOr<sim::VPITypeSemanticsAttr> {
+            bool isFourState, ArrayAttr fields, bool sourceInventory,
+            Details details = {}) -> FailureOr<sim::VPITypeSemanticsAttr> {
       SmallVector<Attribute> children;
       SmallVector<Attribute> names;
+      SmallVector<int64_t> ordinals;
+      SmallVector<int64_t> packedOffsets;
       children.reserve(fields.size());
       names.reserve(fields.size());
+      ordinals.reserve(fields.size());
+      packedOffsets.reserve(fields.size());
       for (Attribute fieldAttr : fields) {
         StringAttr fieldName;
         Type fieldType;
         Attribute rawName;
+        IntegerAttr ordinal;
+        IntegerAttr packedOffset;
         if (sourceInventory) {
           auto field = dyn_cast<DictionaryAttr>(fieldAttr);
           rawName = field ? field.get("name") : Attribute{};
@@ -736,14 +817,20 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
           fieldName = dyn_cast_or_null<StringAttr>(rawName);
           auto typeAttr = dyn_cast_or_null<TypeAttr>(rawType);
           fieldType = typeAttr ? typeAttr.getValue() : Type{};
+          ordinal = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
+          packedOffset =
+              field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
         } else if (auto field = dyn_cast<sim::FieldAttr>(fieldAttr)) {
           fieldName = field.getName();
           fieldType = field.getType();
+          ordinal = integerAttr(field.getOrdinal());
+          packedOffset = integerAttr(field.getPackedOffset());
         }
-        if (!fieldName || !fieldType) {
+        if (!fieldName || !fieldType || !ordinal || !packedOffset ||
+            ordinal.getValue().isNegative() ||
+            packedOffset.getValue().isNegative()) {
           emitError(location) << "malformed aggregate field in VPI semantic "
-                                 "type inventory (missing "
-                              << (!fieldName ? "name" : "type") << ")";
+                                 "type inventory";
           return failure();
         }
         FailureOr<sim::VPITypeSemanticsAttr> child = lower(fieldType);
@@ -752,8 +839,14 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
         names.push_back(fieldName);
         children.push_back(*child);
         isFourState |= child->getIsFourState();
+        ordinals.push_back(ordinal.getValue().getSExtValue());
+        packedOffsets.push_back(packedOffset.getValue().getSExtValue());
       }
-      return make(kind, isSigned, isFourState, name, {}, children, names);
+      details.childOrdinals = DenseI64ArrayAttr::get(context, ordinals);
+      details.childPackedOffsets =
+          DenseI64ArrayAttr::get(context, packedOffsets);
+      return make(kind, isSigned, isFourState, name, {}, children, names,
+                  details);
     };
     if (auto record = dyn_cast<semantic::SourceAggregateType>(current)) {
       sim::VPITypeKind kind =
@@ -762,42 +855,24 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
                                      : sim::VPITypeKind::PackedStruct)
               : (record.getIsUnion() ? sim::VPITypeKind::UnpackedUnion
                                      : sim::VPITypeKind::UnpackedStruct);
+      Details details;
+      details.isTagged = BoolAttr::get(context, record.getIsTagged());
+      details.isSoft = BoolAttr::get(context, record.getIsSoft());
+      details.bitWidth = integerAttr(record.getBitWidth());
+      details.selectableWidth = integerAttr(record.getSelectableWidth());
+      details.bitstreamWidth = integerAttr(record.getBitstreamWidth());
+      details.tagBits = integerAttr(record.getTagBits());
       return aggregate(kind, record.getName(), record.getIsSigned(),
-                       record.getIsFourState(), record.getFields(), true);
+                       record.getIsFourState(), record.getFields(), true,
+                       details);
     }
-    auto dictionaryAggregate =
-        [&](sim::VPITypeKind kind,
-            DictionaryAttr fields) -> FailureOr<sim::VPITypeSemanticsAttr> {
-      SmallVector<Attribute> children;
-      SmallVector<Attribute> names;
-      for (NamedAttribute field : fields) {
-        auto typeAttr = dyn_cast<TypeAttr>(field.getValue());
-        if (!typeAttr) {
-          emitError(location)
-              << "aggregate field dictionary contains a non-type";
-          return failure();
-        }
-        FailureOr<sim::VPITypeSemanticsAttr> child = lower(typeAttr.getValue());
-        if (failed(child))
-          return failure();
-        names.push_back(field.getName());
-        children.push_back(*child);
-      }
-      return make(kind, isSignedSemanticType(current),
-                  isFourStateSemanticType(current), {}, {}, children, names);
-    };
-    if (auto record = dyn_cast<semantic::PackedStructType>(current))
-      return dictionaryAggregate(sim::VPITypeKind::PackedStruct,
-                                 record.getFields());
-    if (auto record = dyn_cast<semantic::UnpackedStructType>(current))
-      return dictionaryAggregate(sim::VPITypeKind::UnpackedStruct,
-                                 record.getFields());
-    if (auto unionType = dyn_cast<semantic::PackedUnionType>(current))
-      return dictionaryAggregate(sim::VPITypeKind::PackedUnion,
-                                 unionType.getFields());
-    if (auto unionType = dyn_cast<semantic::UnpackedUnionType>(current))
-      return dictionaryAggregate(sim::VPITypeKind::UnpackedUnion,
-                                 unionType.getFields());
+    if (isa<semantic::PackedStructType, semantic::UnpackedStructType,
+            semantic::PackedUnionType, semantic::UnpackedUnionType>(current)) {
+      emitError(location)
+          << "legacy dictionary aggregate has no declaration-order VPI "
+             "inventory";
+      return failure();
+    }
 
     auto oneChild = [&](sim::VPITypeKind kind, Type element) {
       FailureOr<sim::VPITypeSemanticsAttr> child = lower(element);
@@ -809,8 +884,17 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
     };
     if (auto array = dyn_cast<semantic::DynArrayType>(current))
       return oneChild(sim::VPITypeKind::DynamicArray, array.getElementType());
-    if (auto queue = dyn_cast<semantic::QueueType>(current))
-      return oneChild(sim::VPITypeKind::Queue, queue.getElementType());
+    if (auto queue = dyn_cast<semantic::QueueType>(current)) {
+      FailureOr<sim::VPITypeSemanticsAttr> child =
+          lower(queue.getElementType());
+      if (failed(child))
+        return failure();
+      Details details;
+      details.queueBound = integerAttr(queue.getBound());
+      Attribute childAttr = *child;
+      return make(sim::VPITypeKind::Queue, false, false, {}, {}, childAttr, {},
+                  details);
+    }
     if (auto array = dyn_cast<semantic::OpenArrayType>(current))
       return oneChild(array.getIsPacked() ? sim::VPITypeKind::PackedOpenArray
                                           : sim::VPITypeKind::UnpackedOpenArray,
@@ -822,38 +906,66 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
       if (failed(key) || failed(element))
         return failure();
       Attribute children[] = {*key, *element};
-      return make(sim::VPITypeKind::AssocArray, false, false, {}, {}, children);
+      Details details;
+      details.wildcardIndex = BoolAttr::get(context, array.getWildcardIndex());
+      return make(sim::VPITypeKind::AssocArray, false, false, {}, {}, children,
+                  {}, details);
     }
     if (auto handle = dyn_cast<semantic::ClassHandleType>(current)) {
-      auto sourceName = [](StringRef symbol) {
-        size_t separator = symbol.find('.');
-        return separator == StringRef::npos ? symbol
-                                            : symbol.drop_front(separator + 1);
-      };
       SymbolRefAttr className = handle.getClassName();
       if (className.getNestedReferences().size() == 1 &&
-          sourceName(className.getRootReference().getValue()) == "std") {
-        StringRef leaf = sourceName(className.getLeafReference().getValue());
+          sourceSymbolName(className.getRootReference().getValue()) == "std") {
+        StringRef leaf =
+            sourceSymbolName(className.getLeafReference().getValue());
         if (leaf == "process")
           return make(sim::VPITypeKind::Process, false, false);
         if (leaf == "semaphore")
           return make(sim::VPITypeKind::Semaphore, false, false);
+        if (leaf == "mailbox") {
+          FailureOr<Type> element =
+              getMailboxElementType(semanticOwner, handle, location);
+          if (failed(element))
+            return failure();
+          FailureOr<sim::VPITypeSemanticsAttr> child = lower(*element);
+          if (failed(child))
+            return failure();
+          Attribute childAttr = *child;
+          return make(sim::VPITypeKind::Mailbox, false, false, {}, {},
+                      childAttr);
+        }
       }
-      return make(sim::VPITypeKind::Class, false, false,
-                  symbolName(handle.getClassName()));
+      Details details;
+      details.symbol = FlatSymbolRefAttr::get(
+          getSimulationClassSymbol(handle.getClassName()));
+      return make(sim::VPITypeKind::Class, false, false, {}, {}, {}, {},
+                  details);
     }
     if (isa<semantic::ProcessType>(current))
       return make(sim::VPITypeKind::Process, false, false);
-    if (auto handle = dyn_cast<semantic::CovergroupHandleType>(current))
-      return make(sim::VPITypeKind::Covergroup, false, false,
-                  symbolName(handle.getCovergroupName()));
+    if (auto handle = dyn_cast<semantic::CovergroupHandleType>(current)) {
+      Details details;
+      details.symbol = FlatSymbolRefAttr::get(
+          getSimulationCovergroupSymbol(handle.getCovergroupName()));
+      return make(sim::VPITypeKind::Covergroup, false, false, {}, {}, {}, {},
+                  details);
+    }
     if (auto mailbox = dyn_cast<semantic::MailboxType>(current))
       return oneChild(sim::VPITypeKind::Mailbox, mailbox.getElementType());
     if (isa<semantic::SemaphoreType>(current))
       return make(sim::VPITypeKind::Semaphore, false, false);
-    if (auto interface = dyn_cast<semantic::VirtualInterfaceType>(current))
+    if (auto interface = dyn_cast<semantic::VirtualInterfaceType>(current)) {
+      Details details;
+      details.modport = interface.getModport();
+      // The virtual-interface specialization key is deliberately opaque in
+      // executable Simulation IR, not a resolvable symbol (see
+      // SimVirtualInterfaceType). Retain the exact printed semantic identity
+      // in the same string form used by its normalized executable type.
+      std::string identity;
+      llvm::raw_string_ostream stream(identity);
+      stream << interface.getInterfaceName();
       return make(sim::VPITypeKind::VirtualInterface, false, false,
-                  symbolName(interface.getInterfaceName()));
+                  StringAttr::get(context, identity), {}, {}, {}, details);
+    }
     if (isa<semantic::TimeType>(current)) {
       const int64_t sourceRange[] = {63, 0};
       return make(sim::VPITypeKind::Time, false, true, {}, sourceRange);
@@ -870,6 +982,10 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
       return make(sim::VPITypeKind::Chandle, false, false);
     if (isa<semantic::EventType>(current))
       return make(sim::VPITypeKind::Event, false, false);
+    if (isa<semantic::VoidType>(current))
+      return make(sim::VPITypeKind::Void, false, false);
+    if (isa<semantic::UntypedType>(current))
+      return make(sim::VPITypeKind::Untyped, false, false);
     if (auto logic = dyn_cast<sim::LogicType>(current)) {
       const int64_t sourceRange[] = {static_cast<int64_t>(logic.getWidth()) - 1,
                                      0};
@@ -881,22 +997,51 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
     if (auto array = dyn_cast<sim::UnpackedArrayType>(current))
       return fixedArray(sim::VPITypeKind::UnpackedArray, array.getElementType(),
                         array.getLeft(), array.getRight());
+    auto normalizedAggregateDetails = [&](bool packed, bool tagged,
+                                          uint64_t tagBits) {
+      Details details;
+      details.isTagged = BoolAttr::get(context, tagged);
+      details.isSoft = BoolAttr::get(context, false);
+      uint64_t packedWidth = sim::getPackedWidth(current).value_or(0);
+      uint64_t provenanceWidth =
+          sim::getProvenanceSpan(current).value_or(packedWidth);
+      details.bitWidth = integerAttr(packed ? packedWidth : 0);
+      details.selectableWidth = integerAttr(provenanceWidth);
+      details.bitstreamWidth = integerAttr(provenanceWidth);
+      details.tagBits = integerAttr(tagBits);
+      return details;
+    };
     if (auto record = dyn_cast<sim::PackedStructType>(current))
       return aggregate(sim::VPITypeKind::PackedStruct, {}, false, false,
-                       record.getFields(), false);
+                       record.getFields(), false,
+                       normalizedAggregateDetails(true, false, 0));
     if (auto record = dyn_cast<sim::UnpackedStructType>(current))
       return aggregate(sim::VPITypeKind::UnpackedStruct, {}, false, false,
-                       record.getFields(), false);
+                       record.getFields(), false,
+                       normalizedAggregateDetails(false, false, 0));
     if (auto unionType = dyn_cast<sim::PackedUnionType>(current))
       return aggregate(sim::VPITypeKind::PackedUnion, {}, false, false,
-                       unionType.getFields(), false);
+                       unionType.getFields(), false,
+                       normalizedAggregateDetails(true, unionType.getIsTagged(),
+                                                  unionType.getTagBits()));
     if (auto unionType = dyn_cast<sim::UnpackedUnionType>(current))
-      return aggregate(sim::VPITypeKind::UnpackedUnion, {}, false, false,
-                       unionType.getFields(), false);
+      return aggregate(
+          sim::VPITypeKind::UnpackedUnion, {}, false, false,
+          unionType.getFields(), false,
+          normalizedAggregateDetails(false, unionType.getIsTagged(), 0));
     if (auto array = dyn_cast<sim::DynamicArrayType>(current))
       return oneChild(sim::VPITypeKind::DynamicArray, array.getElementType());
-    if (auto queue = dyn_cast<sim::QueueType>(current))
-      return oneChild(sim::VPITypeKind::Queue, queue.getElementType());
+    if (auto queue = dyn_cast<sim::QueueType>(current)) {
+      FailureOr<sim::VPITypeSemanticsAttr> child =
+          lower(queue.getElementType());
+      if (failed(child))
+        return failure();
+      Details details;
+      details.queueBound = integerAttr(queue.getBound());
+      Attribute childAttr = *child;
+      return make(sim::VPITypeKind::Queue, false, false, {}, {}, childAttr, {},
+                  details);
+    }
     if (auto array = dyn_cast<sim::DPIOpenArrayType>(current))
       return oneChild(array.getIsPacked() ? sim::VPITypeKind::PackedOpenArray
                                           : sim::VPITypeKind::UnpackedOpenArray,
@@ -908,23 +1053,35 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
       if (failed(key) || failed(element))
         return failure();
       Attribute children[] = {*key, *element};
-      return make(sim::VPITypeKind::AssocArray, false, false, {}, {}, children);
+      Details details;
+      details.wildcardIndex = BoolAttr::get(context, array.getWildcardIndex());
+      return make(sim::VPITypeKind::AssocArray, false, false, {}, {}, children,
+                  {}, details);
     }
-    if (auto handle = dyn_cast<sim::ClassHandleType>(current))
-      return make(sim::VPITypeKind::Class, false, false,
-                  symbolName(handle.getClassName()));
+    if (auto handle = dyn_cast<sim::ClassHandleType>(current)) {
+      Details details;
+      details.symbol = handle.getClassName();
+      return make(sim::VPITypeKind::Class, false, false, {}, {}, {}, {},
+                  details);
+    }
     if (isa<sim::ProcessType>(current))
       return make(sim::VPITypeKind::Process, false, false);
-    if (auto handle = dyn_cast<sim::CovergroupHandleType>(current))
-      return make(sim::VPITypeKind::Covergroup, false, false,
-                  symbolName(handle.getCovergroupName()));
+    if (auto handle = dyn_cast<sim::CovergroupHandleType>(current)) {
+      Details details;
+      details.symbol = handle.getCovergroupName();
+      return make(sim::VPITypeKind::Covergroup, false, false, {}, {}, {}, {},
+                  details);
+    }
     if (auto mailbox = dyn_cast<sim::MailboxType>(current))
       return oneChild(sim::VPITypeKind::Mailbox, mailbox.getElementType());
     if (isa<sim::SemaphoreType>(current))
       return make(sim::VPITypeKind::Semaphore, false, false);
-    if (auto interface = dyn_cast<sim::VirtualInterfaceType>(current))
+    if (auto interface = dyn_cast<sim::VirtualInterfaceType>(current)) {
+      Details details;
+      details.modport = interface.getModport();
       return make(sim::VPITypeKind::VirtualInterface, false, false,
-                  interface.getInterfaceName());
+                  interface.getInterfaceName(), {}, {}, {}, details);
+    }
     if (isa<sim::TimeType>(current)) {
       const int64_t sourceRange[] = {63, 0};
       return make(sim::VPITypeKind::Time, false, true, {}, sourceRange);
@@ -945,9 +1102,85 @@ FailureOr<sim::VPITypeSemanticsAttr> makeVPITypeSemantics(Type type,
       return make(sim::VPITypeKind::ShortReal, false, false);
     if (current.isF64())
       return make(sim::VPITypeKind::Real, false, false);
-    return make(sim::VPITypeKind::Unknown, false, false);
+    emitError(location) << "unsupported VPI semantic type inventory "
+                        << current;
+    return failure();
   };
-  return lower(type);
+  FailureOr<sim::VPITypeSemanticsAttr> root = lower(type);
+  if (failed(root) || !typedefLayers)
+    return root;
+
+  struct TypedefLayer {
+    SmallVector<int64_t> path;
+    ArrayAttr aliases;
+    bool consumed = false;
+  };
+  SmallVector<TypedefLayer> layers;
+  layers.reserve(typedefLayers.size());
+  for (Attribute rawLayer : typedefLayers) {
+    auto layer = dyn_cast<DictionaryAttr>(rawLayer);
+    auto path =
+        layer ? layer.getAs<DenseI64ArrayAttr>("path") : DenseI64ArrayAttr{};
+    auto aliases = layer ? layer.getAs<ArrayAttr>("aliases") : ArrayAttr{};
+    if (!path || !aliases || aliases.empty() ||
+        llvm::any_of(path.asArrayRef(),
+                     [](int64_t value) { return value < 0; }) ||
+        llvm::any_of(aliases, [](Attribute alias) {
+          return !isa<SymbolRefAttr>(alias);
+        })) {
+      emitError(location) << "malformed VPI typedef-layer inventory";
+      return failure();
+    }
+    layers.push_back({SmallVector<int64_t>(path.asArrayRef()), aliases});
+  }
+
+  SmallVector<int64_t, 8> path;
+  std::function<FailureOr<sim::VPITypeSemanticsAttr>(sim::VPITypeSemanticsAttr)>
+      apply = [&](sim::VPITypeSemanticsAttr current)
+      -> FailureOr<sim::VPITypeSemanticsAttr> {
+    ArrayAttr aliases = current.getTypedefAliases();
+    for (TypedefLayer &layer : layers) {
+      if (ArrayRef<int64_t>(layer.path) != ArrayRef<int64_t>(path))
+        continue;
+      if (layer.consumed || aliases) {
+        emitError(location) << "duplicate VPI typedef-layer path";
+        return failure();
+      }
+      layer.consumed = true;
+      aliases = layer.aliases;
+    }
+    SmallVector<Attribute> children;
+    children.reserve(current.getChildren().size());
+    for (auto [index, childAttr] : llvm::enumerate(current.getChildren())) {
+      path.push_back(static_cast<int64_t>(index));
+      FailureOr<sim::VPITypeSemanticsAttr> child =
+          apply(cast<sim::VPITypeSemanticsAttr>(childAttr));
+      path.pop_back();
+      if (failed(child))
+        return failure();
+      children.push_back(*child);
+    }
+    return sim::VPITypeSemanticsAttr::get(
+        context, current.getKind(), current.getIsSigned(),
+        current.getIsFourState(), current.getName(), current.getSymbol(),
+        current.getModport(), current.getRange(),
+        ArrayAttr::get(context, children), current.getChildNames(),
+        current.getIsTagged(), current.getIsSoft(), current.getBitWidth(),
+        current.getSelectableWidth(), current.getBitstreamWidth(),
+        current.getTagBits(), current.getQueueBound(),
+        current.getWildcardIndex(), current.getChildOrdinals(),
+        current.getChildPackedOffsets(), aliases);
+  };
+  FailureOr<sim::VPITypeSemanticsAttr> result = apply(*root);
+  if (failed(result))
+    return failure();
+  if (llvm::any_of(layers,
+                   [](const TypedefLayer &layer) { return !layer.consumed; })) {
+    emitError(location)
+        << "VPI typedef-layer path does not select a semantic child";
+    return failure();
+  }
+  return result;
 }
 
 static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
@@ -1258,51 +1491,13 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
   }
   Type semanticType = typeAttr.getValue();
   if (auto handle = dyn_cast<semantic::ClassHandleType>(semanticType)) {
-    SymbolRefAttr name = handle.getClassName();
-    auto sourceName = [](StringRef symbol) {
-      size_t separator = symbol.find('.');
-      return separator == StringRef::npos ? symbol
-                                          : symbol.drop_front(separator + 1);
-    };
-    bool mailbox = name.getNestedReferences().size() == 1 &&
-                   sourceName(name.getRootReference().getValue()) == "std" &&
-                   sourceName(name.getLeafReference().getValue()) == "mailbox";
-    if (mailbox) {
-      semantic::SVClassTypeOp specialization;
-      Operation *root = op;
-      while (root->getParentOp())
-        root = root->getParentOp();
-      root->walk([&](semantic::SVClassTypeOp candidate) {
-        if (candidate.getSemanticType() == semanticType) {
-          specialization = candidate;
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      });
-      if (!specialization) {
-        emitError(getSemanticLocation(op))
-            << "mailbox specialization has no semantic class definition";
+    if (isStandardClassHandle(handle, "mailbox")) {
+      FailureOr<Type> elementType =
+          getMailboxElementType(op, handle, getSemanticLocation(op));
+      if (failed(elementType))
         return failure();
-      }
-      Type elementType;
-      for (Operation *child : getChildren(specialization)) {
-        auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
-        if (!parameter)
-          continue;
-        if (elementType) {
-          emitError(getSemanticLocation(op))
-              << "mailbox specialization has multiple type parameters";
-          return failure();
-        }
-        elementType = parameter.getSemanticType().value_or(Type{});
-      }
-      if (!elementType) {
-        emitError(getSemanticLocation(op))
-            << "mailbox specialization has no resolved element type";
-        return failure();
-      }
       FailureOr<Type> normalized =
-          normalizeType(elementType, getSemanticLocation(op));
+          normalizeType(*elementType, getSemanticLocation(op));
       return failed(normalized) ? FailureOr<Type>(failure())
                                 : FailureOr<Type>(sim::MailboxType::get(
                                       semanticType.getContext(), *normalized));

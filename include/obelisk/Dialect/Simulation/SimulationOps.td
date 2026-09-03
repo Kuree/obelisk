@@ -175,6 +175,27 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let hasVerifier = 1;
 }
 
+def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable named VPI typespec inventory";
+  let description = [{
+    Preserves a source typedef as a resolvable symbol after semantic IR is
+    erased. `target_type` retains the complete canonical source shape and its
+    ordered typedef-alias layers. The declaration is reflection inventory
+    only and never participates in executable type conversion or scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable mutable-storage descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,

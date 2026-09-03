@@ -96,6 +96,8 @@ def SimVPITypeCovergroup
     : I32EnumAttrCase<"Covergroup", 32, "covergroup">;
 def SimVPITypeMailbox : I32EnumAttrCase<"Mailbox", 33, "mailbox">;
 def SimVPITypeSemaphore : I32EnumAttrCase<"Semaphore", 34, "semaphore">;
+def SimVPITypeVoid : I32EnumAttrCase<"Void", 35, "void">;
+def SimVPITypeUntyped : I32EnumAttrCase<"Untyped", 36, "untyped">;
 def SimVPITypeKind : I32EnumAttr<
     "VPITypeKind", "source-semantic VPI reflection type category", [
       SimVPITypeUnknown, SimVPITypeGenericIntegral, SimVPITypeBit,
@@ -109,7 +111,8 @@ def SimVPITypeKind : I32EnumAttr<
       SimVPITypeAssocArray, SimVPITypeClass, SimVPITypeVirtualInterface,
       SimVPITypeEvent, SimVPITypePackedOpenArray,
       SimVPITypeUnpackedOpenArray, SimVPITypeProcess, SimVPITypeCovergroup,
-      SimVPITypeMailbox, SimVPITypeSemaphore
+      SimVPITypeMailbox, SimVPITypeSemaphore, SimVPITypeVoid,
+      SimVPITypeUntyped
     ]> {
   let cppNamespace = "::obelisk::sim";
 }

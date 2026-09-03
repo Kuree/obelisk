@@ -247,11 +247,24 @@ LogicalResult SimVPIStatementRelationDeclOp::verify() {
   return success();
 }
 
+LogicalResult SimVPITypespecDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty source names");
+  return success();
+}
+
 LogicalResult SimStorageDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "storage ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
     return failure();
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
+                      : success();
 }
 
 LogicalResult SimNetDeclOp::verify() {
@@ -295,7 +308,11 @@ LogicalResult SimNetDeclOp::verify() {
             "and a nonnegative or -1 third delay");
     }
   }
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
+                      : success();
 }
 
 LogicalResult SimNetConnectDeclOp::verify() {
@@ -399,7 +416,11 @@ LogicalResult SimPortDeclOp::verify() {
     return emitOpError("requires a nonempty hierarchical name");
   if (getOrdinalAttr().getValue().getActiveBits() > 24)
     return emitOpError("port ordinal must be an unsigned 24-bit integer");
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
+                      : success();
 }
 
 static SimCovergroupDeclOp lookupCovergroup(Operation *operation,

@@ -616,7 +616,12 @@ getNormalizedSemanticType(::mlir::Operation *op);
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
 /// Lossless source-semantic type inventory used only by VPI reflection.
 ::mlir::FailureOr<::obelisk::sim::VPITypeSemanticsAttr>
-makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location);
+makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location,
+                     ::mlir::ArrayAttr typedefLayers = {},
+                     ::mlir::Operation *semanticOwner = nullptr);
+
+inline constexpr ::llvm::StringLiteral vpiTypedefLayersAttrName =
+    "vpi_typedef_layers";
 ::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
 makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
                     ::mlir::Location location, ::mlir::Builder &builder,

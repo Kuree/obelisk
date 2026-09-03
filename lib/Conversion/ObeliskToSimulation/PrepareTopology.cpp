@@ -43,9 +43,19 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     path = hierarchical.getReferencedPath();
   if (!path.empty()) {
     FailureOr<Type> type = getNormalizedSemanticType(expression);
-    if (failed(type))
+    auto semanticType = expression->getAttrOfType<TypeAttr>("semantic_type");
+    if (failed(type) || !semanticType)
       return failure();
-    return StaticStorageView{path.str(), *type, *type, 0, 0, {}, *type};
+    return StaticStorageView{
+        path.str(),
+        *type,
+        *type,
+        semanticType.getValue(),
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName),
+        0,
+        0,
+        {},
+        *type};
   }
 
   SmallVector<Operation *> children = getChildren(expression);
@@ -54,6 +64,10 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   FailureOr<StaticStorageView> base = getStaticStorageView(children.front());
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
   if (failed(base) || failed(resultType))
+    return failure();
+  auto resultSemanticType =
+      expression->getAttrOfType<TypeAttr>("semantic_type");
+  if (!resultSemanticType)
     return failure();
   base->identity = false;
 
@@ -73,6 +87,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     base->offset += subelement->first;
     base->indices.push_back(ordinal.getValue().getZExtValue());
     base->viewType = *resultType;
+    base->semanticType = resultSemanticType.getValue();
+    base->typedefLayers =
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
     base->aggregateType = *resultType;
     return *base;
   }
@@ -114,6 +131,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     base->offset += subelement->first;
     base->indices.push_back(static_cast<unsigned>(ordinal.getZExtValue()));
     base->viewType = *resultType;
+    base->semanticType = resultSemanticType.getValue();
+    base->typedefLayers =
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
     base->aggregateType = *resultType;
     return *base;
   }
@@ -163,6 +183,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   base->offset += *low;
   base->packedOffset += *low;
   base->viewType = *resultType;
+  base->semanticType = resultSemanticType.getValue();
+  base->typedefLayers =
+      expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
   return *base;
 }
 
@@ -716,6 +739,146 @@ materializeDesignDescriptors(ModuleOp module,
       designObjects.push_back(op);
   });
 
+  // Source typedef symbols live in the semantic hierarchy, which is erased
+  // at finalization. Discover only aliases reachable from VPI-visible design
+  // declarations, give them flat simulation symbols, and remap every alias
+  // chain before embedding it in immutable VPI type inventory.
+  llvm::DenseSet<Operation *> neededAliases;
+  llvm::StringMap<semantic::SVTypeAliasTypeOp> aliasesBySymbolName;
+  semanticRoot.walk([&](semantic::SVTypeAliasTypeOp alias) {
+    aliasesBySymbolName.try_emplace(alias.getSymName(), alias);
+  });
+  auto resolveAlias = [&](SymbolRefAttr reference) {
+    auto found = aliasesBySymbolName.find(reference.getLeafReference());
+    return found == aliasesBySymbolName.end() ? semantic::SVTypeAliasTypeOp{}
+                                              : found->second;
+  };
+  auto collectAliases = [&](Operation *owner, ArrayAttr layers) {
+    if (!layers)
+      return;
+    for (Attribute rawLayer : layers) {
+      auto layer = dyn_cast<DictionaryAttr>(rawLayer);
+      auto sourceAliases =
+          layer ? layer.getAs<ArrayAttr>("aliases") : ArrayAttr{};
+      if (!sourceAliases) {
+        emitError(getSemanticLocation(owner))
+            << "malformed VPI typedef-layer inventory";
+        invalid = true;
+        continue;
+      }
+      for (Attribute rawAlias : sourceAliases) {
+        auto reference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto alias =
+            reference ? resolveAlias(reference) : semantic::SVTypeAliasTypeOp{};
+        if (!alias) {
+          emitError(getSemanticLocation(owner))
+              << "VPI typedef inventory references an unknown alias "
+              << rawAlias;
+          invalid = true;
+          continue;
+        }
+        neededAliases.insert(alias);
+      }
+    }
+  };
+  for (Operation *op : designObjects)
+    collectAliases(op, op->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName));
+  for (semantic::SVPortConnectionOp connection : portAliases.connections)
+    collectAliases(connection, connection->getAttrOfType<ArrayAttr>(
+                                   vpiTypedefLayersAttrName));
+  for (const auto &entry : portAliases.refViews)
+    collectAliases(semanticRoot, entry.second.typedefLayers);
+  for (const auto &entry : portAliases.interfaceViews)
+    collectAliases(semanticRoot, entry.second.typedefLayers);
+
+  SmallVector<semantic::SVTypeAliasTypeOp> aliases;
+  aliases.reserve(neededAliases.size());
+  for (Operation *operation : neededAliases)
+    aliases.push_back(cast<semantic::SVTypeAliasTypeOp>(operation));
+  llvm::sort(aliases, [](semantic::SVTypeAliasTypeOp left,
+                         semantic::SVTypeAliasTypeOp right) {
+    return left.getNodeId() < right.getNodeId();
+  });
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> aliasSymbols;
+  for (semantic::SVTypeAliasTypeOp alias : aliases) {
+    std::string name =
+        "__obelisk_vpi_typespec_" + std::to_string(alias.getNodeId());
+    aliasSymbols[alias] = FlatSymbolRefAttr::get(builder.getContext(), name);
+  }
+  auto remapTypedefLayers = [&](Operation *owner,
+                                ArrayAttr layers) -> FailureOr<ArrayAttr> {
+    if (!layers)
+      return ArrayAttr{};
+    SmallVector<Attribute> remappedLayers;
+    remappedLayers.reserve(layers.size());
+    for (Attribute rawLayer : layers) {
+      auto layer = dyn_cast<DictionaryAttr>(rawLayer);
+      auto path =
+          layer ? layer.getAs<DenseI64ArrayAttr>("path") : DenseI64ArrayAttr{};
+      auto sourceAliases =
+          layer ? layer.getAs<ArrayAttr>("aliases") : ArrayAttr{};
+      if (!path || !sourceAliases) {
+        emitError(getSemanticLocation(owner))
+            << "malformed VPI typedef-layer inventory";
+        return failure();
+      }
+      SmallVector<Attribute> remappedAliases;
+      remappedAliases.reserve(sourceAliases.size());
+      for (Attribute rawAlias : sourceAliases) {
+        auto sourceReference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto sourceAlias = sourceReference ? resolveAlias(sourceReference)
+                                           : semantic::SVTypeAliasTypeOp{};
+        auto mapped =
+            sourceAlias ? aliasSymbols.find(sourceAlias) : aliasSymbols.end();
+        if (mapped == aliasSymbols.end()) {
+          emitError(getSemanticLocation(owner))
+              << "VPI typedef layer cannot resolve its simulation alias";
+          return failure();
+        }
+        remappedAliases.push_back(mapped->second);
+      }
+      remappedLayers.push_back(builder.getDictionaryAttr(
+          {builder.getNamedAttr("path", path),
+           builder.getNamedAttr("aliases",
+                                builder.getArrayAttr(remappedAliases))}));
+    }
+    return builder.getArrayAttr(remappedLayers);
+  };
+  auto typedefLayersFor = [&](Operation *owner) -> ArrayAttr {
+    FailureOr<ArrayAttr> layers = remapTypedefLayers(
+        owner, owner->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName));
+    if (failed(layers)) {
+      invalid = true;
+      return {};
+    }
+    return *layers;
+  };
+  uint64_t nextTypespecId = 0;
+  for (semantic::SVTypeAliasTypeOp alias : aliases) {
+    auto semanticType = alias->getAttrOfType<TypeAttr>("semantic_type");
+    ArrayAttr layers = typedefLayersFor(alias);
+    FailureOr<sim::VPITypeSemanticsAttr> target =
+        semanticType
+            ? makeVPITypeSemantics(semanticType.getValue(),
+                                   getSemanticLocation(alias), layers, alias)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    StringRef hierarchy = getHierarchyName(alias);
+    StringRef debug = getDebugName(alias);
+    if (!semanticType || failed(target) || hierarchy.empty() || debug.empty()) {
+      if (!semanticType)
+        emitError(getSemanticLocation(alias))
+            << "VPI typedef is missing semantic type metadata";
+      invalid = true;
+      continue;
+    }
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(alias),
+        builder.getStringAttr(aliasSymbols.lookup(alias).getValue()),
+        nextTypespecId++, scopes.lookup(alias),
+        builder.getStringAttr(hierarchy), builder.getStringAttr(debug),
+        *target);
+  }
+
   auto emitDescriptor = [&](Operation *op) {
     bool storage =
         isa<semantic::SVVariableSymbolOp, semantic::SVFormalArgumentSymbolOp,
@@ -801,7 +964,7 @@ materializeDesignDescriptors(ModuleOp module,
           FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
                                                        getSemanticLocation(op));
           FailureOr<sim::VPITypeSemanticsAttr> vpiType = makeVPITypeSemantics(
-              semanticType.getValue(), getSemanticLocation(op));
+              semanticType.getValue(), getSemanticLocation(op), {}, op);
           if (failed(type) || failed(vpiType)) {
             invalid = true;
             continue;
@@ -826,7 +989,8 @@ materializeDesignDescriptors(ModuleOp module,
     auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
     FailureOr<sim::VPITypeSemanticsAttr> vpiType =
         semanticType ? makeVPITypeSemantics(semanticType.getValue(),
-                                            getSemanticLocation(op))
+                                            getSemanticLocation(op),
+                                            typedefLayersFor(op), op)
                      : FailureOr<sim::VPITypeSemanticsAttr>(failure());
     if (failed(type) || failed(vpiType)) {
       if (!semanticType)
@@ -1186,7 +1350,7 @@ materializeDesignDescriptors(ModuleOp module,
       auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
       FailureOr<sim::VPITypeSemanticsAttr> viewType = makeVPITypeSemantics(
           semanticType ? semanticType.getValue() : view->second.viewType,
-          getSemanticLocation(op));
+          getSemanticLocation(op), typedefLayersFor(op), op);
       if (failed(viewType)) {
         invalid = true;
         continue;
@@ -1258,8 +1422,15 @@ materializeDesignDescriptors(ModuleOp module,
         target->second.packedViewOffset + view->second.packedOffset;
     descriptors[path].viewIndices = std::move(viewIndices);
     descriptors[path].aggregateViewType = aggregateViewType;
+    FailureOr<ArrayAttr> viewTypedefLayers =
+        remapTypedefLayers(semanticRoot, view->second.typedefLayers);
+    if (failed(viewTypedefLayers)) {
+      invalid = true;
+      continue;
+    }
     FailureOr<sim::VPITypeSemanticsAttr> viewType =
-        makeVPITypeSemantics(view->second.viewType, module.getLoc());
+        makeVPITypeSemantics(view->second.semanticType, module.getLoc(),
+                             *viewTypedefLayers, semanticRoot);
     if (failed(viewType)) {
       invalid = true;
       continue;
@@ -1350,6 +1521,13 @@ materializeDesignDescriptors(ModuleOp module,
     }
     std::string portHierarchy =
         (Twine(portScopeHierarchy) + "." + formalName).str();
+    FailureOr<sim::VPITypeSemanticsAttr> formalVPIType = makeVPITypeSemantics(
+        connection.getFormalType(), getSemanticLocation(connection),
+        typedefLayersFor(connection), connection);
+    if (failed(formalVPIType)) {
+      invalid = true;
+      continue;
+    }
     sim::SimPortDeclOp::create(
         builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
         source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
@@ -1358,7 +1536,7 @@ materializeDesignDescriptors(ModuleOp module,
         connection.getFormalName()
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{},
-        source->second.vpiType);
+        *formalVPIType);
   }
   if (invalid)
     return failure();

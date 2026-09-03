@@ -41,9 +41,9 @@ module {
 // CHECK: obelisk_sim.scope.decl 0 hierarchy "\\$root "
 // CHECK: obelisk_sim.scope.decl 1 parent 0 hierarchy "top"
 // CHECK: obelisk_sim.storage.decl 0 in 1 {{.*}} hierarchy "top.sentinel"
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", ""> {{.*}} hierarchy "top.vif_a"
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", "m"> {{.*}} hierarchy "top.vif_a_m"
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s10.bus_if", ""> {{.*}} hierarchy "top.vif_b"
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", ""> {{.*}} hierarchy "top.vif_a" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if", modport = ""
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", "m"> {{.*}} hierarchy "top.vif_a_m" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if", modport = "m"
+// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s10.bus_if", ""> {{.*}} hierarchy "top.vif_b" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s10.bus_if", modport = ""
 // CHECK-NOT: hierarchy "top.bus_if
 // CHECK-NOT: synthetic_a
 // CHECK-NOT: synthetic_b

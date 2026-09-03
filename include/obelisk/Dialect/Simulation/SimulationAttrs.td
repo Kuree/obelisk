@@ -21,17 +21,30 @@ def SimVPITypeSemanticsAttr
     Preserves source type identity after executable lowering normalizes
     integer flavors, enums, time, and managed values. `children` contains the
     enum base type, array/container element type, associative key and element,
-    or declaration-ordered aggregate fields as appropriate. `child_names`
-    records field names without conflating them with a child's named semantic
-    type. `range` is empty or the source left/right pair. This attribute is
-    immutable inventory only and must not participate in executable type
-    conversion or scheduler decisions.
+    or declaration-ordered aggregate fields as appropriate. Aggregate layout,
+    container bounds, wildcard indexing, virtual-interface modports, symbolic
+    declaration identity, and typedef layers are retained in typed optional
+    payloads. This attribute is immutable inventory only and must not
+    participate in executable type conversion or scheduler decisions.
   }];
   let parameters = (ins EnumParameter<SimVPITypeKind>:$kind,
       "bool":$isSigned, "bool":$isFourState,
       OptionalParameter<"::mlir::StringAttr">:$name,
+      OptionalParameter<"::mlir::SymbolRefAttr">:$symbol,
+      OptionalParameter<"::mlir::StringAttr">:$modport,
       "::mlir::DenseI64ArrayAttr":$range, "::mlir::ArrayAttr":$children,
-      "::mlir::ArrayAttr":$childNames);
+      "::mlir::ArrayAttr":$childNames,
+      OptionalParameter<"::mlir::BoolAttr">:$isTagged,
+      OptionalParameter<"::mlir::BoolAttr">:$isSoft,
+      OptionalParameter<"::mlir::IntegerAttr">:$bitWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$selectableWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$bitstreamWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$tagBits,
+      OptionalParameter<"::mlir::IntegerAttr">:$queueBound,
+      OptionalParameter<"::mlir::BoolAttr">:$wildcardIndex,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childOrdinals,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childPackedOffsets,
+      OptionalParameter<"::mlir::ArrayAttr">:$typedefAliases);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

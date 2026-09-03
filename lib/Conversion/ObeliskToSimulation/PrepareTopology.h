@@ -39,6 +39,11 @@ struct StaticStorageView {
   std::string path;
   mlir::Type rootType;
   mlir::Type viewType;
+  /// Exact source-semantic type of the selected view. Unlike `viewType`, this
+  /// is never normalized and therefore retains integral flavor, typedef and
+  /// virtual-interface identity for immutable VPI inventory.
+  mlir::Type semanticType;
+  mlir::ArrayAttr typedefLayers;
   uint64_t offset = 0;
   uint64_t packedOffset = 0;
   mlir::SmallVector<int64_t> indices;

@@ -1566,6 +1566,136 @@ private:
     return result;
   }
 
+  /// Freeze every typedef layer before SlangTypeConverter canonicalizes the
+  /// type. Each descriptor names the VPI semantic-child path and the ordered
+  /// alias chain written at that layer. Keeping paths separate from the type
+  /// payload handles aliases nested below arrays and aggregate fields without
+  /// introducing executable wrapper types.
+  ArrayAttr getVPITypedefLayers(const slang::ast::Type &root) {
+    SmallVector<Attribute> layers;
+    SmallVector<int64_t, 8> path;
+    llvm::SmallPtrSet<const slang::ast::Type *, 8> active;
+    std::function<bool(const slang::ast::Type &)> collect =
+        [&](const slang::ast::Type &type) -> bool {
+      using SK = slang::ast::SymbolKind;
+      if (!active.insert(&type).second)
+        return false;
+      SmallVector<Attribute, 2> aliases;
+      const slang::ast::Type *current = &type;
+      while (current->kind == SK::TypeAlias) {
+        const auto &alias = current->as<slang::ast::TypeAliasType>();
+        aliases.push_back(getSemanticSymbolReference(alias));
+        current = &alias.targetType.getType();
+        if (!active.insert(current).second) {
+          active.erase(&type);
+          return false;
+        }
+      }
+      if (!aliases.empty()) {
+        NamedAttrList descriptor;
+        descriptor.set("path", builder.getDenseI64ArrayAttr(path));
+        descriptor.set("aliases", builder.getArrayAttr(aliases));
+        layers.push_back(builder.getDictionaryAttr(descriptor));
+      }
+
+      auto descend = [&](int64_t child, const slang::ast::Type &nested) {
+        path.push_back(child);
+        bool complete = collect(nested);
+        path.pop_back();
+        return complete;
+      };
+      bool complete = true;
+      switch (current->kind) {
+      case SK::EnumType:
+        complete = descend(0, current->as<slang::ast::EnumType>().baseType);
+        break;
+      case SK::PackedArrayType:
+        complete =
+            descend(0, current->as<slang::ast::PackedArrayType>().elementType);
+        break;
+      case SK::FixedSizeUnpackedArrayType:
+        complete = descend(
+            0,
+            current->as<slang::ast::FixedSizeUnpackedArrayType>().elementType);
+        break;
+      case SK::DynamicArrayType:
+        complete =
+            descend(0, current->as<slang::ast::DynamicArrayType>().elementType);
+        break;
+      case SK::DPIOpenArrayType:
+        complete =
+            descend(0, current->as<slang::ast::DPIOpenArrayType>().elementType);
+        break;
+      case SK::QueueType:
+        complete = descend(0, current->as<slang::ast::QueueType>().elementType);
+        break;
+      case SK::AssociativeArrayType: {
+        const auto &array = current->as<slang::ast::AssociativeArrayType>();
+        if (array.indexType)
+          complete = descend(0, *array.indexType);
+        if (complete)
+          complete = descend(1, array.elementType);
+        break;
+      }
+      case SK::PackedStructType:
+      case SK::UnpackedStructType:
+      case SK::PackedUnionType:
+      case SK::UnpackedUnionType: {
+        const slang::ast::Scope *scope = nullptr;
+        if (current->kind == SK::PackedStructType)
+          scope = &current->as<slang::ast::PackedStructType>();
+        else if (current->kind == SK::UnpackedStructType)
+          scope = &current->as<slang::ast::UnpackedStructType>();
+        else if (current->kind == SK::PackedUnionType)
+          scope = &current->as<slang::ast::PackedUnionType>();
+        else
+          scope = &current->as<slang::ast::UnpackedUnionType>();
+        for (const slang::ast::FieldSymbol &field :
+             scope->membersOfType<slang::ast::FieldSymbol>()) {
+          if (!descend(field.fieldIndex, field.getType())) {
+            complete = false;
+            break;
+          }
+        }
+        break;
+      }
+      default:
+        break;
+      }
+      // The alias walk inserts every node it crosses; remove the whole chain
+      // before returning so a legal repeated type in a sibling field is not
+      // mistaken for recursion.
+      current = &type;
+      active.erase(current);
+      while (current->kind == SK::TypeAlias) {
+        current =
+            &current->as<slang::ast::TypeAliasType>().targetType.getType();
+        active.erase(current);
+      }
+      return complete;
+    };
+    if (!collect(root) || layers.empty())
+      return {};
+    return builder.getArrayAttr(layers);
+  }
+
+  template <typename Node>
+  const slang::ast::Type *getUncanonicalizedSemanticType(const Node &node) {
+    if constexpr (std::derived_from<Node, slang::ast::Type>) {
+      return &node;
+    } else if constexpr (std::derived_from<Node, slang::ast::Expression>) {
+      return node.type;
+    } else if constexpr (requires { node.getType(); }) {
+      if constexpr (std::same_as<std::remove_cvref_t<decltype(node.getType())>,
+                                 slang::ast::Type>)
+        return &node.getType();
+    } else if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
+      if (const auto *declaredType = node.getDeclaredType())
+        return &declaredType->getType();
+    }
+    return nullptr;
+  }
+
   template <typename Node>
   slang::SourceRange getSourceRange(const Node &node) const {
     if constexpr (requires { node.sourceRange; }) {
@@ -4895,6 +5025,9 @@ private:
         llvm_unreachable(
             "semantic type produced for an operation without a type field");
       }
+      if (const slang::ast::Type *source = getUncanonicalizedSemanticType(node))
+        if (ArrayAttr layers = getVPITypedefLayers(*source))
+          attrs.set("vpi_typedef_layers", layers);
     }
     if constexpr (std::derived_from<Node, slang::ast::Expression>)
       attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));
@@ -5327,6 +5460,11 @@ private:
       attrs.set("direction", slangir::ArgumentDirectionAttr::get(
                                  builder.getContext(), convertEnum(direction)));
       attrs.set("formal_type", TypeAttr::get(formalType));
+      if (formal.kind == slang::ast::SymbolKind::Port) {
+        const auto &port = formal.as<slang::ast::PortSymbol>();
+        if (ArrayAttr layers = getVPITypedefLayers(port.getType()))
+          attrs.set("vpi_typedef_layers", layers);
+      }
       attrs.set("is_net", builder.getBoolAttr(isNet));
       attrs.set("is_ansi", builder.getBoolAttr(isAnsi));
       bool actualIsConstant = false;

@@ -111,7 +111,7 @@ module attributes {
         obelisk.sv.symbol.net attributes {hierarchical_name = "port_connections_inventory.net_value", is_implicit = false, name = "net_value", net_kind = 1 : i32, node_id = 50 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s44.net_value"} {
         }
         obelisk.sv.symbol.instance attributes {hierarchical_name = "port_connections_inventory.ordered", is_uninstantiated = false, name = "ordered", node_id = 51 : i64, referenced_path = "inventory_leaf", referenced_symbol = @s4.inventory_leaf, sym_name = "s45.ordered"} {
-          obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "defaulted", formal_ordinal = 0 : i64, formal_path = "port_connections_inventory.ordered.defaulted", formal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s45.ordered::@s46.inventory_leaf::@s47.defaulted, formal_type = !obelisk.integral<1, false, true, 0 : 0, logic>, internal_path = "port_connections_inventory.ordered.defaulted", internal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s45.ordered::@s46.inventory_leaf::@s48.defaulted, is_ansi = true, is_net = false, node_id = 52 : i64, provenance = 0 : i32} {
+          obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "defaulted", formal_ordinal = 0 : i64, formal_path = "port_connections_inventory.ordered.defaulted", formal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s45.ordered::@s46.inventory_leaf::@s47.defaulted, formal_type = !obelisk.integral<1, false, true, 0 : 0, reg>, internal_path = "port_connections_inventory.ordered.defaulted", internal_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s45.ordered::@s46.inventory_leaf::@s48.defaulted, is_ansi = true, is_net = false, node_id = 52 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.named_value attributes {node_id = 53 : i64, referenced_path = "port_connections_inventory.defaulted", referenced_symbol = @s10.$root::@s39.port_connections_inventory::@s40.port_connections_inventory::@s41.defaulted, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
@@ -760,7 +760,9 @@ module attributes {
 // hidden connection identities.
 // The port inventory keeps declaration order, direction, canonical source,
 // and the child module's scope independently of its backing descriptor.
-// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [0, 0], children = [], childNames = []>
+// The formal source kind wins over the backing storage kind when both share
+// the same executable representation.
+// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = reg, isSigned = false, isFourState = true, range = [0, 0], children = [], childNames = []>
 // LOWER-DAG: obelisk_sim.port.decl 1 in 9 source 7 net = false at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.ordered.input_value" debug "input_value"
 // LOWER-DAG: obelisk_sim.port.decl 2 in 9 source 8 net = false at 0 : !obelisk_sim.logic<1> output ordinal 2 hierarchy "port_connections_inventory.ordered.output_value" debug "output_value"
 // LOWER-DAG: obelisk_sim.port.decl 3 in 9 source 1 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 3 hierarchy "port_connections_inventory.ordered.net_value" debug "net_value"

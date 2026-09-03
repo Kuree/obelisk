@@ -12,6 +12,13 @@
       type = !int},
      {name = "flags", ordinal = 1 : i32, packed_offset = 0 : i64,
       type = !obelisk.ranged_packed_array<7 : 0 x !bit>}]>
+!tagged = !obelisk.source_aggregate<"choice_t", false, true, true, false,
+    false, false, 0, 4, 4, 0,
+    [{name = "none", ordinal = 0 : i32, packed_offset = 0 : i64,
+      type = !obelisk.void},
+     {name = "value", ordinal = 1 : i32, packed_offset = 0 : i64,
+      type = !obelisk.ranged_packed_array<3 : 0 x !bit>}]>
+!wild = !obelisk.assoc<!obelisk.untyped, !obelisk.string, true>
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
@@ -21,6 +28,12 @@ module {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "s4.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.flags_t", name = "flags_t", node_id = 23 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !bit>, sym_name = "s23.flags_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s23.flags_t], path = array<i64>}]} {
+        }
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.record_t", name = "record_t", node_id = 24 : i64, semantic_type = !record, sym_name = "s24.record_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s24.record_t], path = array<i64>}, {aliases = [@s1.$root::@s3.top::@s4.top::@s23.flags_t], path = array<i64: 1>}]} {
+        }
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.outer_t", name = "outer_t", node_id = 25 : i64, semantic_type = !record, sym_name = "s25.outer_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s25.outer_t, @s1.$root::@s3.top::@s4.top::@s24.record_t], path = array<i64>}, {aliases = [@s1.$root::@s3.top::@s4.top::@s23.flags_t], path = array<i64: 1>}]} {
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bit_value", lifetime = 1 : i32, name = "bit_value", node_id = 5 : i64, semantic_type = !bit, sym_name = "s5.bit_value"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.logic_up", lifetime = 1 : i32, name = "logic_up", node_id = 6 : i64, semantic_type = !logic_up, sym_name = "s6.logic_up"} {
@@ -55,6 +68,12 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.process_value", lifetime = 1 : i32, name = "process_value", node_id = 21 : i64, semantic_type = !obelisk.process, sym_name = "s21.process_value"} {
         }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.aliased_record", lifetime = 1 : i32, name = "aliased_record", node_id = 26 : i64, semantic_type = !record, sym_name = "s26.aliased_record", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s25.outer_t, @s1.$root::@s3.top::@s4.top::@s24.record_t], path = array<i64>}, {aliases = [@s1.$root::@s3.top::@s4.top::@s23.flags_t], path = array<i64: 1>}]} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.tagged", lifetime = 1 : i32, name = "tagged", node_id = 27 : i64, semantic_type = !tagged, sym_name = "s27.tagged"} {
+        }
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.wild", lifetime = 1 : i32, name = "wild", node_id = 28 : i64, semantic_type = !wild, sym_name = "s28.wild"} {
+        }
         obelisk.sv.symbol.net attributes {hierarchical_name = "top.net_value", is_implicit = false, name = "net_value", net_kind = 1 : i32, node_id = 22 : i64, semantic_type = !logic_up, sym_name = "s22.net_value"} {
         }
       }
@@ -70,7 +89,7 @@ module {
 // CHECK-DAG: hierarchy "top.integer_value" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = integer, isSigned = true, isFourState = true, range = [31, 0], children = [], childNames = []>
 // CHECK-DAG: hierarchy "top.state" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false, isFourState = true, name = "state_t"{{.*}}kind = logic{{.*}}range = [1, 0]
 // CHECK-DAG: hierarchy "top.packed" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = packed_array{{.*}}range = [0, 3]{{.*}}kind = bit
-// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"]
+// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"], isTagged = false, isSoft = false, bitWidth = 0 : i64, selectableWidth = 40 : i64, bitstreamWidth = 40 : i64, tagBits = 0 : i64, childOrdinals = [0, 1], childPackedOffsets = [0, 0]>
 // CHECK-DAG: hierarchy "top.time_value" {{.*}}kind = time{{.*}}isFourState = true{{.*}}range = [63, 0]
 // CHECK-DAG: hierarchy "top.shortreal_value" {{.*}}kind = shortreal
 // CHECK-DAG: hierarchy "top.real_value" {{.*}}kind = real
@@ -78,8 +97,14 @@ module {
 // CHECK-DAG: hierarchy "top.string_value" {{.*}}kind = string
 // CHECK-DAG: hierarchy "top.chandle_value" {{.*}}kind = chandle
 // CHECK-DAG: hierarchy "top.dynamic_value" {{.*}}kind = dynamic_array{{.*}}kind = int
-// CHECK-DAG: hierarchy "top.queue_value" {{.*}}kind = queue{{.*}}kind = bit
-// CHECK-DAG: hierarchy "top.assoc_value" {{.*}}kind = assoc_array{{.*}}kind = int{{.*}}kind = string
+// CHECK-DAG: hierarchy "top.queue_value" {{.*}}kind = queue{{.*}}kind = bit{{.*}}queueBound = 7 : i64
+// CHECK-DAG: hierarchy "top.assoc_value" {{.*}}kind = assoc_array{{.*}}kind = int{{.*}}kind = string{{.*}}wildcardIndex = false
 // CHECK-DAG: hierarchy "top.process_value" {{.*}}kind = process
+// CHECK-DAG: hierarchy "top.tagged" {{.*}}kind = unpacked_union{{.*}}name = "choice_t"{{.*}}kind = void{{.*}}childNames = ["none", "value"], isTagged = true, isSoft = false, bitWidth = 0 : i64, selectableWidth = 4 : i64, bitstreamWidth = 4 : i64, tagBits = 0 : i64{{.*}}childOrdinals = [0, 1], childPackedOffsets = [0, 0]
+// CHECK-DAG: hierarchy "top.wild" {{.*}}kind = assoc_array{{.*}}kind = untyped{{.*}}kind = string{{.*}}wildcardIndex = true
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_23 id 0 in 1 hierarchy "top.flags_t" debug "flags_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_24 id 1 in 1 hierarchy "top.record_t" debug "record_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_24]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_25 id 2 in 1 hierarchy "top.outer_t" debug "outer_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_25, @__obelisk_vpi_typespec_24]
+// CHECK-DAG: hierarchy "top.aliased_record" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_25, @__obelisk_vpi_typespec_24]
 // CHECK-DAG: obelisk_sim.net.decl {{.*}}hierarchy "top.net_value" {{.*}}kind = logic{{.*}}range = [-2, 5]
 // CHECK-NOT: obelisk.sv.
