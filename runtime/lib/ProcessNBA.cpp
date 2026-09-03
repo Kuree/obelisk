@@ -674,7 +674,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     uint64_t scheduled = 0;
     if ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0) {
       bool changed = false;
-      bool oldNonzero = false;
       bool oldHighZ = !realValue;
       bool newZero = true;
       bool newHighZ = true;
@@ -707,7 +706,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           bool newValue = sourceBit(targetValue, bit);
           bool newUnknown = sourceBit(targetUnknown, bit);
           changed |= oldValue != newValue || oldUnknown != newUnknown;
-          oldNonzero |= !oldUnknown && oldValue;
           oldHighZ &= oldUnknown && oldValue;
           newZero &= !newUnknown && !newValue;
           newHighZ &= newUnknown && newValue;
@@ -733,7 +731,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           return OBELISK_RT_OUT_OF_RESOURCES;
         uint64_t delay = realValue               ? riseDelay
                          : newHighZ              ? turnoffDelay
-                         : oldNonzero && newZero ? fallDelay
+                         : newZero               ? fallDelay
                                                  : riseDelay;
         if (!enqueue(0, bitWidth, delay, oldHighZ && !hasInitialProjection))
           return OBELISK_RT_OUT_OF_RESOURCES;
