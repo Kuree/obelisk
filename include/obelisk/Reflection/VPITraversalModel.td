@@ -154,6 +154,8 @@ class VPIPropertyValueKind<string cppName_, int value_> {
 
 def BooleanProperty : VPIPropertyValueKind<"Boolean", 0>;
 def IntegerProperty : VPIPropertyValueKind<"Integer", 1>;
+def Int64Property : VPIPropertyValueKind<"Int64", 2>;
+def StringProperty : VPIPropertyValueKind<"String", 3>;
 
 class VPIProperty<string apiName_, int value_,
                   VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
@@ -164,6 +166,41 @@ class VPIProperty<string apiName_, int value_,
   VPIObjectSet sources = sources_;
   string clause = clause_;
 }
+
+// Properties that apply independently of the per-object data-model diagrams.
+// AllConcreteObjects deliberately names every family instead of duplicating
+// the object inventory. Expansion retains only canonical concrete kinds.
+def AllConcreteObjects : VPIObjectSet<"AllConcreteObjects", [],
+  [ScopeFamily, DeclarationFamily, ProcessFamily, StatementFamily,
+   ExpressionFamily, VariableFamily, NetFamily, ArrayFamily, TypespecFamily,
+   PrimitiveFamily, TimingFamily, AssertionFamily, TransientFamily,
+   RuntimeFamily, OtherFamily]>;
+def SourceLocatedObjects : VPIObjectSet<"SourceLocatedObjects", [],
+  [ScopeFamily, DeclarationFamily, ProcessFamily, StatementFamily,
+   ExpressionFamily, VariableFamily, NetFamily, ArrayFamily, TypespecFamily,
+   PrimitiveFamily, TimingFamily, AssertionFamily, TransientFamily,
+   RuntimeFamily, OtherFamily],
+  [Callback, DelayTerm, DelayDevice, InterModPath, Iterator, TimeQueue,
+   GenScopeArray, GenScope]>;
+def InstanceAndRootObjects : VPIObjectSet<"InstanceAndRootObjects",
+  [Package, Module, Interface, Program], [], [], 1>;
+def ClassIdentityObjects : VPIObjectSet<"ClassIdentityObjects",
+  [ClassVar, ClassObj]>;
+
+def TypeProperty : VPIProperty<"vpiType", 1, IntegerProperty,
+  AllConcreteObjects, "37.3.2">;
+def FileProperty : VPIProperty<"vpiFile", 5, StringProperty,
+  SourceLocatedObjects, "37.3.3">;
+def LineNoProperty : VPIProperty<"vpiLineNo", 6, IntegerProperty,
+  SourceLocatedObjects, "37.3.3">;
+def TimeUnitProperty : VPIProperty<"vpiTimeUnit", 11, IntegerProperty,
+  InstanceAndRootObjects, "37.10; 38.6">;
+def TimePrecisionProperty : VPIProperty<"vpiTimePrecision", 12,
+  IntegerProperty, InstanceAndRootObjects, "37.10; 38.6">;
+def IsProtectedProperty : VPIProperty<"vpiIsProtected", 74, BooleanProperty,
+  AllConcreteObjects, "37.3.6">;
+def ObjIdProperty : VPIProperty<"vpiObjId", 660, Int64Property,
+  ClassIdentityObjects, "37.31">;
 
 def ScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
   ScalarVectorObjects, "37.14; 37.16; 37.17">;

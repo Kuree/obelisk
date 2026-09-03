@@ -4782,18 +4782,22 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   ASSERT_NE(scope, nullptr);
 
   EXPECT_EQ(vpi_get(vpiType, root), vpiModule);
+  EXPECT_STREQ(vpi_get_str(vpiType, root), "vpiModule");
+  EXPECT_EQ(vpi_get(vpiIsProtected, root), 0);
   EXPECT_EQ(vpi_get(vpiSize, root), 0);
   EXPECT_STREQ(vpi_get_str(vpiName, root), "top");
   EXPECT_EQ(vpi_get64(vpiType, value), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_EQ(vpi_get(vpiType, value), vpiReg);
+  EXPECT_STREQ(vpi_get_str(vpiType, value), "vpiReg");
+  EXPECT_EQ(vpi_get(vpiIsProtected, value), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get64(vpiObjId, value), vpiUndefined);
   s_vpi_error_info propertyError{};
   EXPECT_EQ(vpi_chk_error(&propertyError), vpiNotice);
   EXPECT_STREQ(propertyError.message,
-               "unsupported 64-bit integer VPI property");
+               "property is not defined for this VPI object");
   EXPECT_EQ(vpi_get(vpiType, value), vpiReg);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get(vpiSize, value), 65);
@@ -4809,6 +4813,8 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   vpiHandle iterator = vpi_iterate(vpiReg, root);
   ASSERT_NE(iterator, nullptr);
   EXPECT_EQ(vpi_get(vpiType, iterator), vpiIterator);
+  EXPECT_STREQ(vpi_get_str(vpiType, iterator), "vpiIterator");
+  EXPECT_EQ(vpi_get(vpiIsProtected, iterator), 0);
   EXPECT_EQ(vpi_get_str(vpiName, iterator), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   vpiHandle scanned = vpi_scan(iterator);

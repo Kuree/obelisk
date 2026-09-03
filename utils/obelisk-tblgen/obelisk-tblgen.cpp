@@ -852,7 +852,7 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"ParentScope", 2},
       {"DirectPortConnection", 3}};
   const std::pair<StringRef, uint32_t> supportedPropertyValueKinds[] = {
-      {"Boolean", 0}, {"Integer", 1}};
+      {"Boolean", 0}, {"Integer", 1}, {"Int64", 2}, {"String", 3}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
@@ -1007,11 +1007,11 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
     if (!isCppIdentifier(apiName) || !apiName.starts_with("vpi") ||
         !getU32(*property, "value", 1, value) ||
         property->getValueAsString("clause").empty() ||
-        sources->getValueAsBit("nullRoot") ||
-        expandedSets.lookup(sources).empty()) {
+        (expandedSets.lookup(sources).empty() &&
+         !sources->getValueAsBit("nullRoot"))) {
       PrintError(property->getLoc(),
                  "VPI property needs a unique API name and value, concrete "
-                 "non-root sources, and an LRM clause");
+                 "or null-root sources, and an LRM clause");
       return false;
     }
     if (!propertyNames.try_emplace(apiName, property).second ||
@@ -1501,6 +1501,12 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
          expandedSets.lookup(property->getValueAsDef("sources")))
       emittedProperties.push_back(
           {source, static_cast<uint32_t>(property->getValueAsInt("value")),
+           property->getValueAsDef("valueKind"),
+           property->getValueAsString("apiName"),
+           property->getValueAsString("clause")});
+    if (property->getValueAsDef("sources")->getValueAsBit("nullRoot"))
+      emittedProperties.push_back(
+          {0, static_cast<uint32_t>(property->getValueAsInt("value")),
            property->getValueAsDef("valueKind"),
            property->getValueAsString("apiName"),
            property->getValueAsString("clause")});
@@ -2063,7 +2069,7 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     bool ordered = index == 0 || previousSource < source ||
                    (previousSource == source && previousProperty < property);
     if (!ordered || record[4] > static_cast<uint8_t>(
-                                    VPIPropertyValueKind::Integer) ||
+                                    VPIPropertyValueKind::String) ||
         record[5] != 0 || readVPIObjectModelImage16(record, 6) != 0)
       return false;
     previousSource = source;

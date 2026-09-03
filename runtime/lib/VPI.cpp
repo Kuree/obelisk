@@ -439,6 +439,37 @@ PLI_INT32 vpiTypeForHandle(VPIHandleKind kind) {
   return vpiUndefined;
 }
 
+PLI_INT32 vpiTypeForHandle(__vpiHandle *handle) {
+  if (!handle)
+    return vpiUndefined;
+  if (handle->kind != VPIHandleKind::Object)
+    return vpiTypeForHandle(handle->kind);
+  if (handle->exactVpiType != 0)
+    return static_cast<PLI_INT32>(handle->exactVpiType);
+  uint32_t exact = 0;
+  if (obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                 &exact) == OBELISK_RT_OK &&
+      exact != 0) {
+    handle->exactVpiType = exact;
+    return static_cast<PLI_INT32>(exact);
+  }
+  obelisk_rt_design_info_v1 info{};
+  return infoFor(handle, info) ? vpiTypeFor(info.kind) : vpiUndefined;
+}
+
+const obelisk::reflection::VPIPropertyDescriptor *
+propertyFor(__vpiHandle *handle, PLI_INT32 property) {
+  PLI_INT32 type = vpiTypeForHandle(handle);
+  if (type == vpiUndefined)
+    return nullptr;
+  const auto *descriptor = obelisk::reflection::findVPIProperty(
+      static_cast<uint32_t>(type), static_cast<uint32_t>(property));
+  if (!descriptor)
+    setError(handle->owner, "property is not defined for this VPI object",
+             vpiNotice);
+  return descriptor;
+}
+
 int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
                  uint32_t fallbackKind) {
   uint32_t exact = 0;
@@ -1152,24 +1183,14 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
-  if (property == vpiType && handle->kind != VPIHandleKind::Object)
-    return vpiTypeForHandle(handle->kind);
+  if (property == vpiType)
+    return vpiTypeForHandle(handle);
+  if (property == vpiIsProtected)
+    return propertyFor(handle, property) ? 0 : vpiUndefined;
   if (handle->kind != VPIHandleKind::Object) {
     setError(handle->owner, "unsupported property for VPI handle kind",
              vpiNotice);
     return vpiUndefined;
-  }
-  if (property == vpiType) {
-    if (handle->exactVpiType != 0)
-      return static_cast<PLI_INT32>(handle->exactVpiType);
-    uint32_t exact = 0;
-    if (obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
-                                   &exact) == OBELISK_RT_OK) {
-      handle->exactVpiType = exact;
-      return exact == 0 ? vpiUndefined : static_cast<PLI_INT32>(exact);
-    }
-    obelisk_rt_design_info_v1 info{};
-    return infoFor(handle, info) ? vpiTypeFor(info.kind) : vpiUndefined;
   }
   if (property == vpiSize) {
     if (handle->statement)
@@ -1245,6 +1266,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                : static_cast<PLI_INT32>(shape == VPIValueShape::Vector);
   }
   if (property == vpiLineNo || property == vpiDefLineNo) {
+    if (property == vpiLineNo && !propertyFor(handle, property))
+      return vpiUndefined;
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
     uint32_t line = 0, column = 0;
@@ -1269,6 +1292,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
+  if (!propertyFor(handle, property))
+    return vpiUndefined;
   setError(handle->owner, "unsupported 64-bit integer VPI property", vpiNotice);
   return vpiUndefined;
 }
@@ -1276,10 +1301,36 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
   beginVPICall();
-  __vpiHandle *handle = validate(opaque);
+  __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return nullptr;
   std::string &scratch = handle->owner->propertyStringScratch;
+  if (property == vpiType) {
+    PLI_INT32 type = vpiTypeForHandle(handle);
+    const auto *descriptor = type == vpiUndefined
+                                 ? nullptr
+                                 : obelisk::reflection::findVPIObjectKind(
+                                       static_cast<uint32_t>(type));
+    if (!descriptor) {
+      setError(handle->owner, "VPI object type has no symbolic spelling",
+               vpiNotice);
+      return nullptr;
+    }
+    OBELISK_RT_TRY {
+      scratch = descriptor->apiName;
+      return scratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI type-name buffer is out of memory",
+               vpiSystem);
+      return nullptr;
+    }
+  }
+  if (handle->kind != VPIHandleKind::Object) {
+    setError(handle->owner, "unsupported string property for VPI handle kind",
+             vpiError);
+    return nullptr;
+  }
   if (property == vpiName || property == vpiFullName) {
     if (!nameFor(handle, scratch))
       return nullptr;
@@ -1298,6 +1349,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     return scratch.data();
   }
   if (property == vpiFile || property == vpiDefFile) {
+    if (property == vpiFile && !propertyFor(handle, property))
+      return nullptr;
     const uint8_t *file = nullptr;
     uint64_t size = 0;
     uint32_t line = 0, column = 0;
