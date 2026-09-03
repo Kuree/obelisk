@@ -274,6 +274,9 @@ EXPECTED_COMPILE_ERROR_NAMES = frozenset({
     # IEEE 1800-2017 A.8.2 footnote 37 does not permit omitted parentheses for
     # a nonvoid function that is not a class method.
     "t_func_no_parentheses_bad",
+    # IEEE 1800-2017 25.5 requires modport names to denote members of that
+    # interface; nonexist.sig cannot resolve in iface.
+    "t_interface_modport_expr_bad",
 })
 # A descriptor spells out where upstream expects the failure: `fails=True` on
 # `test.compile`/`test.lint` means the code never builds, while `fails=True` on
