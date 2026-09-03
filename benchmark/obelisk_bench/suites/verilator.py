@@ -948,6 +948,11 @@ DESIGN_REFERENCES_PROGRAM_INSTANCE = Exclusion(
     "calling program subroutines from a design module is illegal; module t "
     "calls prog1.run and prog1.stop, while its reads of prog1.v are also "
     "forbidden program-signal references under 24.3")
+VERILATOR_GENERATE_BLOCK_DISABLE_UNSUPPORTED = Exclusion(
+    "IEEE 1800-2017 9.6.2",
+    "a disable statement may name a hierarchical block without a "
+    "parent-child restriction; the descriptor expects compilation to fail "
+    "only because Verilator reports a generate-block target as unsupported")
 PROGRAM_COMPLETION_FINISHES_SIMULATION = Exclusion(
     "IEEE 1800-2017 24.3",
     "when every initial procedure in every program has ended, the simulation "
@@ -1083,6 +1088,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
+    "t_disable_genfor_unsup": VERILATOR_GENERATE_BLOCK_DISABLE_UNSUPPORTED,
     "t_bind": PROGRAM_COMPLETION_FINISHES_SIMULATION,
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,

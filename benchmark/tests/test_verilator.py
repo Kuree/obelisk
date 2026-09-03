@@ -1174,6 +1174,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("prog1.run", excluded.reason)
         self.assertIn("prog1.v", excluded.reason)
 
+    def test_generate_block_disable_is_not_a_verilator_failure_for_obelisk(self):
+        excluded = verilator.EXCLUDED["t_disable_genfor_unsup"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 9.6.2")
+        self.assertIn("hierarchical block", excluded.reason)
+        self.assertIn("Verilator", excluded.reason)
+
     def test_completed_programs_implicitly_finish_simulation(self):
         excluded = verilator.EXCLUDED["t_bind"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 24.3")
