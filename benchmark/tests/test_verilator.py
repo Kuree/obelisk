@@ -742,6 +742,13 @@ class ExpectationDescriptorTest(unittest.TestCase):
                 "test.compile(fails=test.vlt_all)\ntest.passes()\n"),
             verilator.Expectation(True, False))
 
+    def test_nonvoid_global_function_without_parentheses_is_a_compile_error(self):
+        self.assertEqual(
+            self.expectation(
+                "t_func_no_parentheses_bad",
+                "test.compile(fails=test.vlt_all)\ntest.passes()\n"),
+            verilator.Expectation(True, False))
+
     def test_a_multiline_compile_call_is_read_whole(self):
         self.assertEqual(
             self.expectation(
