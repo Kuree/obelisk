@@ -213,8 +213,18 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
            static_cast<unsigned>(drivenWidth), declaration.getStrength0(),
            declaration.getStrength1(), false, strengthGroup, strengthBank});
     } else if (auto drive =
+                   dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
+        initialXDrivers.insert(*id);
+    } else if (auto drive =
                    dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
+        initialXDrivers.insert(*id);
+    } else if (auto drive = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
+                   operation)) {
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getLowDriver()))
+        initialXDrivers.insert(*id);
+      if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
         initialXDrivers.insert(*id);
     } else if (auto drive =
                    dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
