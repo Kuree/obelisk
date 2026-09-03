@@ -122,6 +122,15 @@ uint32_t vpiKindForCodeUnit(sim::SimCodeUnitDeclOp codeUnit) {
   }
 }
 
+uint32_t vpiKindForScope(sim::SimScopeDeclOp scope) {
+  return scope.getVpiKind().value_or(
+      scope.getInterfaceType()
+          ? static_cast<uint16_t>(VPIObjectKind::Interface)
+          : (scope.getId() == 0
+                 ? 0
+                 : static_cast<uint16_t>(VPIObjectKind::Module)));
+}
+
 } // namespace
 
 SmallVector<uint8_t> serializeDesignDatabase(
@@ -152,6 +161,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     Type type;
     uint64_t stateOffset;
     Source source;
+    bool indexName = true;
   };
   struct StatementRecord {
     sim::SimStatementDeclOp declaration;
@@ -305,7 +315,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       sim::SimPortDeclOp direct =
           (port.getSourceIsNet() ? directNetPorts : directStoragePorts)
               .lookup(port.getSourceId());
-      if (direct == port)
+      if (direct == port && !includeStatements)
         continue;
       uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
       caps = addPortMetadata(port, caps);
@@ -316,7 +326,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          static_cast<uint16_t>(VPIObjectKind::Port), caps,
                          port.getId(), port.getScopeId(),
                          port.getHierarchicalName().str(), port.getType(),
-                         sourceOffset + port.getSourceLow(), sourceFor(port)});
+                         sourceOffset + port.getSourceLow(), sourceFor(port),
+                         direct != port});
     } else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
       objects.push_back(
           {(codeUnit.getCodeUnitKind() == sim::EntryKind::Function ||
@@ -348,13 +359,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
              [](StatementSiteRecord left, StatementSiteRecord right) {
                return left.declaration.getId() < right.declaration.getId();
              });
-  uint64_t relationRecordCount = 0;
-  for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations)
-    relationRecordCount += ((relation.getModeMask() & 1) != 0) +
-                           ((relation.getModeMask() & 2) != 0);
   if (scopes.size() > UINT32_MAX || objects.size() > UINT32_MAX ||
-      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX ||
-      relationRecordCount > UINT32_MAX) {
+      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX) {
     design.emitOpError("reflection table exceeds 32-bit compact indices");
     return {};
   }
@@ -388,6 +394,181 @@ SmallVector<uint8_t> serializeDesignDatabase(
       design.emitOpError("reflection object references an unknown scope");
       return {};
     }
+
+  DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
+      statementIndices;
+  for (auto [index, scope] : llvm::enumerate(scopes))
+    scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+  for (auto [index, object] : llvm::enumerate(objects))
+    if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+        object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
+  for (auto [index, statement] : llvm::enumerate(statements))
+    statementIndices[statement.declaration.getId()] =
+        static_cast<uint32_t>(index);
+
+  DenseMap<uint64_t, uint32_t> automaticOrdinals;
+  auto automaticEdges = [](uint32_t sourceKind) {
+    auto first = std::lower_bound(
+        std::begin(vpiTraversals), std::end(vpiTraversals), sourceKind,
+        [](const VPITraversalDescriptor &edge, uint32_t kind) {
+          return edge.sourceType < kind;
+        });
+    auto last = first;
+    while (last != std::end(vpiTraversals) && last->sourceType == sourceKind)
+      ++last;
+    return std::make_pair(first, last);
+  };
+  auto addAutomaticRelation =
+      [&](TableKind sourceTable, uint32_t sourceIndex, uint32_t sourceKind,
+          TableKind targetTable, uint32_t targetIndex, uint32_t targetKind,
+          VPIAutomaticRelation automaticKind) -> LogicalResult {
+    if (sourceKind == 0 || targetKind == 0)
+      return success();
+    uint32_t packedTarget = 0;
+    if (!tryPackTableIndex(targetTable, targetIndex, packedTarget))
+      return design.emitOpError(
+          "automatic VPI relation target index cannot be packed");
+    auto [first, last] = automaticEdges(sourceKind);
+    for (auto edge = first; edge != last; ++edge) {
+      if (edge->automaticRelation != automaticKind ||
+          !vpiObjectSetContains(edge->targets, targetKind))
+        continue;
+      bool iterate = edge->mode == VPITraversalMode::Iterate;
+      uint16_t packedSource = 0;
+      if (!tryPackRelationSource(sourceTable, sourceKind, iterate,
+                                 packedSource))
+        return design.emitOpError(
+            "automatic VPI relation source kind cannot be packed");
+      uint32_t ordinal = 0;
+      if (iterate) {
+        uint64_t ordinalKey =
+            (uint64_t{static_cast<uint8_t>(sourceTable)} << 48) |
+            (uint64_t{sourceIndex} << 18) | (uint64_t{edge->selector} << 2) | 1;
+        ordinal = automaticOrdinals[ordinalKey]++;
+      }
+      if (relations.size() == UINT32_MAX)
+        return design.emitOpError(
+            "reflection relation table exceeds 32-bit indices");
+      relations.push_back({sourceTable, sourceIndex, iterate, packedTarget,
+                           ordinal, static_cast<uint16_t>(edge->selector),
+                           packedSource});
+    }
+    return success();
+  };
+
+  if (includeStatements) {
+    // Emit forward relations in the same deterministic order as the immutable
+    // child chain: child scopes by stable ID, followed by objects in the
+    // normalized object-table order.
+    for (auto [targetIndex, scope] : llvm::enumerate(scopes)) {
+      if (!scope.getParent())
+        continue;
+      uint32_t ownerIndex = scopeIndices.lookup(*scope.getParent());
+      sim::SimScopeDeclOp owner = scopes[ownerIndex];
+      if (failed(addAutomaticRelation(
+              TableKind::Scope, ownerIndex, vpiKindForScope(owner),
+              TableKind::Scope, static_cast<uint32_t>(targetIndex),
+              vpiKindForScope(scope), VPIAutomaticRelation::DirectChild)) ||
+          failed(addAutomaticRelation(
+              TableKind::Scope, static_cast<uint32_t>(targetIndex),
+              vpiKindForScope(scope), TableKind::Scope, ownerIndex,
+              vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
+        return {};
+    }
+    for (auto [targetIndex, object] : llvm::enumerate(objects)) {
+      uint32_t ownerIndex = scopeIndices.lookup(object.scope);
+      sim::SimScopeDeclOp owner = scopes[ownerIndex];
+      if (failed(addAutomaticRelation(
+              TableKind::Scope, ownerIndex, vpiKindForScope(owner),
+              TableKind::Object, static_cast<uint32_t>(targetIndex),
+              object.vpiKind, VPIAutomaticRelation::DirectChild)) ||
+          failed(addAutomaticRelation(
+              TableKind::Object, static_cast<uint32_t>(targetIndex),
+              object.vpiKind, TableKind::Scope, ownerIndex,
+              vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
+        return {};
+    }
+  }
+
+  for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
+    TableKind sourceTable = TableKind::Scope;
+    uint32_t sourceIndex = 0;
+    switch (relation.getSourceKind()) {
+    case sim::VPIStatementSourceKind::Scope: {
+      auto source = scopeIndices.find(relation.getSourceId());
+      if (source == scopeIndices.end()) {
+        relation.emitOpError("relation source scope was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    case sim::VPIStatementSourceKind::CodeUnit: {
+      sourceTable = TableKind::Object;
+      auto source = codeUnitObjectIndices.find(relation.getSourceId());
+      if (source == codeUnitObjectIndices.end()) {
+        relation.emitOpError("relation source code unit was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    case sim::VPIStatementSourceKind::Statement: {
+      sourceTable = TableKind::Statement;
+      auto source = statementIndices.find(relation.getSourceId());
+      if (source == statementIndices.end()) {
+        relation.emitOpError("relation source statement was not serialized");
+        return {};
+      }
+      sourceIndex = source->second;
+      break;
+    }
+    }
+    auto target = statementIndices.find(relation.getTargetStatementId());
+    if (target == statementIndices.end()) {
+      relation.emitOpError("relation target statement was not serialized");
+      return {};
+    }
+    uint32_t targetIndexAndTable = 0;
+    if (!tryPackTableIndex(TableKind::Statement, target->second,
+                           targetIndexAndTable)) {
+      relation.emitOpError("relation target table index cannot be packed");
+      return {};
+    }
+    for (uint32_t mode = 0; mode != 2; ++mode) {
+      if ((relation.getModeMask() & (uint32_t{1} << mode)) == 0)
+        continue;
+      bool iterate = mode != 0;
+      uint16_t sourceKindAndTable = 0;
+      if (!tryPackRelationSource(sourceTable, relation.getSourceVpiKind(),
+                                 iterate, sourceKindAndTable)) {
+        relation.emitOpError("relation source VPI kind cannot be packed");
+        return {};
+      }
+      if (relations.size() == UINT32_MAX) {
+        relation.emitOpError(
+            "reflection relation table exceeds 32-bit indices");
+        return {};
+      }
+      relations.push_back(
+          {sourceTable, sourceIndex, iterate, targetIndexAndTable,
+           static_cast<uint32_t>(relation.getOrdinal()),
+           static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
+    }
+  }
+  if (relations.size() > UINT32_MAX) {
+    design.emitOpError("reflection relation table exceeds 32-bit indices");
+    return {};
+  }
+  llvm::sort(relations, [](const RelationRecord &left,
+                           const RelationRecord &right) {
+    return std::tie(left.sourceTable, left.sourceIndex, left.selector,
+                    left.iterate, left.ordinal, left.targetIndexAndTable) <
+           std::tie(right.sourceTable, right.sourceIndex, right.selector,
+                    right.iterate, right.ordinal, right.targetIndexAndTable);
+  });
+
   struct TypeRecord {
     uint32_t kind = 0;
     uint32_t flags = 0;
@@ -572,7 +753,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t relationOffset =
       statementSiteOffset + statementSites.size() * StatementSiteLayout.size;
   uint64_t stringOffset =
-      relationOffset + relationRecordCount * RelationLayout.size;
+      relationOffset + relations.size() * RelationLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -583,99 +764,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, object] : llvm::enumerate(objects))
     children[object.scope].push_back(objectOffset + index * ObjectLayout.size);
 
-  DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
-      statementIndices;
-  for (auto [index, scope] : llvm::enumerate(scopes))
-    scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
-  for (auto [index, object] : llvm::enumerate(objects))
-    if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-        object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
-      codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
-  for (auto [index, statement] : llvm::enumerate(statements))
-    statementIndices[statement.declaration.getId()] =
-        static_cast<uint32_t>(index);
-
-  relations.reserve(relationRecordCount);
-  for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
-    TableKind sourceTable = TableKind::Scope;
-    uint32_t sourceIndex = 0;
-    switch (relation.getSourceKind()) {
-    case sim::VPIStatementSourceKind::Scope: {
-      sourceTable = TableKind::Scope;
-      auto source = scopeIndices.find(relation.getSourceId());
-      if (source == scopeIndices.end()) {
-        relation.emitOpError("relation source scope was not serialized");
-        return {};
-      }
-      sourceIndex = source->second;
-      break;
-    }
-    case sim::VPIStatementSourceKind::CodeUnit: {
-      sourceTable = TableKind::Object;
-      auto source = codeUnitObjectIndices.find(relation.getSourceId());
-      if (source == codeUnitObjectIndices.end()) {
-        relation.emitOpError("relation source code unit was not serialized");
-        return {};
-      }
-      sourceIndex = source->second;
-      break;
-    }
-    case sim::VPIStatementSourceKind::Statement: {
-      sourceTable = TableKind::Statement;
-      auto source = statementIndices.find(relation.getSourceId());
-      if (source == statementIndices.end()) {
-        relation.emitOpError("relation source statement was not serialized");
-        return {};
-      }
-      sourceIndex = source->second;
-      break;
-    }
-    }
-    auto target = statementIndices.find(relation.getTargetStatementId());
-    if (target == statementIndices.end()) {
-      relation.emitOpError("relation target statement was not serialized");
-      return {};
-    }
-    uint32_t targetIndexAndTable = 0;
-    if (!tryPackTableIndex(TableKind::Statement, target->second,
-                           targetIndexAndTable)) {
-      relation.emitOpError("relation target table index cannot be packed");
-      return {};
-    }
-    for (uint32_t mode = 0; mode != 2; ++mode) {
-      if ((relation.getModeMask() & (uint32_t{1} << mode)) == 0)
-        continue;
-      bool iterate = mode != 0;
-      uint16_t sourceKindAndTable = 0;
-      if (!tryPackRelationSource(sourceTable, relation.getSourceVpiKind(),
-                                 iterate, sourceKindAndTable)) {
-        relation.emitOpError("relation source VPI kind cannot be packed");
-        return {};
-      }
-      relations.push_back(
-          {sourceTable, sourceIndex, iterate, targetIndexAndTable,
-           static_cast<uint32_t>(relation.getOrdinal()),
-           static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
-    }
-  }
-  llvm::sort(relations, [](const RelationRecord &left,
-                           const RelationRecord &right) {
-    return std::tie(left.sourceTable, left.sourceIndex, left.selector,
-                    left.iterate, left.ordinal, left.targetIndexAndTable) <
-           std::tie(right.sourceTable, right.sourceIndex, right.selector,
-                    right.iterate, right.ordinal, right.targetIndexAndTable);
-  });
-
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
     ScopeWriter writer(output.data() + self);
     uint32_t packedKind = 0;
-    uint32_t vpiKind = scope.getVpiKind().value_or(
-        scope.getInterfaceType()
-            ? static_cast<uint16_t>(VPIObjectKind::Interface)
-            : (scope.getId() == 0
-                   ? 0
-                   : static_cast<uint16_t>(VPIObjectKind::Module)));
+    uint32_t vpiKind = vpiKindForScope(scope);
     if (!tryPackRecordKindPayload(RecordKind::Scope, vpiKind, packedKind)) {
       scope.emitOpError("scope record or VPI kind cannot be packed");
       return {};
@@ -868,9 +961,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                      scopeOffsets.lookup(scope.getId()), name.str()});
   }
   for (auto [index, object] : llvm::enumerate(objects))
-    names.push_back({stableHash(object.name),
-                     stringOffset + intern(object.name),
-                     objectOffset + index * ObjectLayout.size, object.name});
+    if (object.indexName)
+      names.push_back({stableHash(object.name),
+                       stringOffset + intern(object.name),
+                       objectOffset + index * ObjectLayout.size, object.name});
   llvm::sort(names, [](const Index &left, const Index &right) {
     return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
   });

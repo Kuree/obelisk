@@ -4757,7 +4757,7 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
+TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   Fixture fixture;
   installStatementDatabase(fixture);
   constexpr size_t statements = 400;
@@ -4926,50 +4926,54 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
+TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   Fixture fixture;
   installStatementDatabase(fixture);
   constexpr size_t relations = 568;
 
-  put64(fixture.database, 168, 2);
-  auto relation = [&](size_t index, bool iterate, uint32_t targetScope) {
-    size_t offset = relations + index * 16;
-    put32(fixture.database, offset, 1);
-    put32(fixture.database, offset + 4, targetScope);
-    put32(fixture.database, offset + 8, 0);
-    put16(fixture.database, offset + 12, vpiModule);
-    put16(fixture.database, offset + 14,
-          designRelationSource(0, vpiModule, iterate));
-  };
-  // IEEE 1800-2017 37.5 assigns different meanings to these same-selector
-  // modes: the singular edge names the containing module while iteration
-  // enumerates child modules.
-  relation(0, false, 0);
-  relation(1, true, 1);
+  // A module cannot claim itself as a direct child.
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 1);
+  put32(fixture.database, relations + 4, 1);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiModule);
+  put16(fixture.database, relations + 14,
+        designRelationSource(0, vpiModule, true));
   put64(fixture.database, 32, imageChecksum(fixture.database));
-
   obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(
+  EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-  char moduleName[] = "top.child";
-  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
-  ASSERT_NE(module, nullptr);
+      OBELISK_RT_INVALID_DESIGN);
 
-  vpiHandle containing = vpi_handle(vpiModule, module);
-  ASSERT_NE(containing, nullptr);
-  EXPECT_STREQ(vpi_get_str(vpiFullName, containing), "top");
-  vpiHandle elements = vpi_iterate(vpiModule, module);
-  ASSERT_NE(elements, nullptr);
-  vpiHandle firstElement = vpi_scan(elements);
-  ASSERT_NE(firstElement, nullptr);
-  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child");
-  EXPECT_EQ(vpi_compare_objects(containing, firstElement), 0);
-  EXPECT_EQ(vpi_scan(elements), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  // A process must name its actual owning scope, not another same-kind scope.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 0);
+  put32(fixture.database, relations + 4, 0);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiModule);
+  put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+
+  // Dense ordinals cannot duplicate a valid child and hide the remainder.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 168, 2);
+  for (size_t index = 0; index != 2; ++index) {
+    size_t relation = relations + index * 16;
+    put32(fixture.database, relation, 1);
+    put32(fixture.database, relation + 4, uint32_t{1} << 30);
+    put32(fixture.database, relation + 8, static_cast<uint32_t>(index));
+    put16(fixture.database, relation + 12, vpiProcess);
+    put16(fixture.database, relation + 14,
+          designRelationSource(0, vpiModule, true));
+  }
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
