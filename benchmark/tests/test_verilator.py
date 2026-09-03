@@ -1234,6 +1234,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("packed 8-bit ASCII", excluded.reason)
         self.assertIn("non-standard", excluded.reason)
 
+    def test_runtime_wallclock_alarm_is_a_verilator_option(self):
+        excluded = verilator.EXCLUDED["t_flag_runtime_timeout_bad"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 20.18.1")
+        self.assertIn("C system()", excluded.reason)
+        self.assertIn("--debug-runtime-timeout", excluded.reason)
+
     def test_verilator_native_dpi_drivers_are_not_portable_dpi_bodies(self):
         for name in ("t_dpi_export_context_bad",
                      "t_dpi_export_context2_bad"):

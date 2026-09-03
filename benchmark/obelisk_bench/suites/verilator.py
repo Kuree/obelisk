@@ -717,6 +717,11 @@ VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "algorithm from Annex N; the test instead passes Verilator's private "
     "+verilator+seed+N runtime option and requires two Verilator-specific "
     "seed-to-value mappings")
+VERILATOR_RUNTIME_WALLCLOCK_ALARM = Exclusion(
+    "IEEE 1800-2017 20.18.1",
+    "$system calls the C system() function; the expected abort instead comes "
+    "from Verilator's private --debug-runtime-timeout wall-clock alarm, not "
+    "from any SystemVerilog behavior")
 NON_STANDARD_REWIND_SPELLING = Exclusion(
     "IEEE 1800-2017 21.3.5",
     "the standard spells the seek-to-start file function $rewind, which "
@@ -1139,6 +1144,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_func_ref_arg": STATIC_REF_ARGUMENT,
     "t_queue_inherit_call": ARRAY_ELEMENT_CLASS_COVARIANCE,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
+    "t_flag_runtime_timeout_bad": VERILATOR_RUNTIME_WALLCLOCK_ALARM,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
     "t_display_enum_format": PATTERN_FIELD_WIDTH,
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
