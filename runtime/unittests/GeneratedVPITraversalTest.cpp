@@ -117,6 +117,10 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   constexpr std::array<const char *, 6> expectedNames{
       "top.d.a", "top.d.io",    "top.d.p",
       "top.d.q", "top.d.slice", "top.d.zouter"};
+  constexpr std::array<PLI_INT32, 6> expectedOrdinals{0, 1, 3, 4, 2, 5};
+  constexpr std::array<PLI_INT32, 6> expectedDirections{
+      vpiInput, vpiInout, vpiInput, vpiInput, vpiOutput, vpiInput};
+  constexpr std::array<PLI_INT32, 6> expectedWidths{8, 1, 8, 8, 4, 16};
   std::array<vpiHandle, 6> ports{};
   for (size_t index = 0; index != ports.size(); ++index) {
     ports[index] = vpi_scan(iterator);
@@ -127,6 +131,14 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
     vpiHandle instance = vpi_handle(vpiInstance, ports[index]);
     ASSERT_NE(instance, nullptr);
     EXPECT_EQ(vpi_compare_objects(module, instance), 1);
+    EXPECT_EQ(vpi_get(vpiPortIndex, ports[index]), expectedOrdinals[index]);
+    EXPECT_EQ(vpi_get64(vpiPortIndex, ports[index]),
+              static_cast<PLI_INT64>(expectedOrdinals[index]));
+    EXPECT_EQ(vpi_get(vpiPortType, ports[index]), vpiPort);
+    EXPECT_EQ(vpi_get(vpiDirection, ports[index]), expectedDirections[index]);
+    EXPECT_EQ(vpi_get(vpiSize, ports[index]), expectedWidths[index]);
+    EXPECT_EQ(vpi_get(vpiScalar, ports[index]), expectedWidths[index] == 1);
+    EXPECT_EQ(vpi_get(vpiVector, ports[index]), expectedWidths[index] > 1);
   }
   EXPECT_EQ(vpi_scan(iterator), nullptr);
   EXPECT_EQ(vpi_compare_objects(input, ports[0]), 0);
@@ -159,6 +171,16 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   ASSERT_NE(anonymousRegister, nullptr);
   EXPECT_EQ(vpi_compare_objects(anonymousBacking, anonymousRegister), 1);
   EXPECT_EQ(vpi_scan(registers), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  // Port-only properties are undefined on the distinct backing object.
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_get(vpiDirection, input), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_EQ(vpi_get(vpiPortIndex, input), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_EQ(vpi_get(vpiPortType, input), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
 
   obelisk_rt_v1_context_destroy(context);
 }

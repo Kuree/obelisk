@@ -583,6 +583,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto objects = records.getAllDerivedDefinitions("VPIObjectKind");
   auto relations = records.getAllDerivedDefinitions("VPIRelation");
   auto objectSets = records.getAllDerivedDefinitions("VPIObjectSet");
+  auto propertyValueKinds =
+      records.getAllDerivedDefinitions("VPIPropertyValueKind");
+  auto properties = records.getAllDerivedDefinitions("VPIProperty");
   auto traversalModes = records.getAllDerivedDefinitions("VPITraversalMode");
   auto traversalOrders = records.getAllDerivedDefinitions("VPITraversalOrder");
   auto automaticRelations =
@@ -595,13 +598,14 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto callbackSpecs =
       records.getAllDerivedDefinitions("VPIStatementCallbackSpec");
   if (families.empty() || roles.empty() || objects.empty() ||
-      relations.empty() || objectSets.empty() || traversalModes.empty() ||
-      traversalOrders.empty() || automaticRelations.empty() ||
-      traversalEdges.empty() || callbackPhases.empty() ||
-      callbackPolicies.empty() || callbackSpecs.empty()) {
+      relations.empty() || objectSets.empty() || propertyValueKinds.empty() ||
+      properties.empty() || traversalModes.empty() || traversalOrders.empty() ||
+      automaticRelations.empty() || traversalEdges.empty() ||
+      callbackPhases.empty() || callbackPolicies.empty() ||
+      callbackSpecs.empty()) {
     PrintError("VPI object model needs families, roles, objects, relations, "
-               "object sets, traversal modes, orders, automatic relations, "
-               "edges, and statement callback policies");
+               "object sets, properties, traversal modes, orders, automatic "
+               "relations, edges, and statement callback policies");
     return false;
   }
   if (families.size() > 64) {
@@ -847,10 +851,14 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"DirectChild", 1},
       {"ParentScope", 2},
       {"DirectPortConnection", 3}};
+  const std::pair<StringRef, uint32_t> supportedPropertyValueKinds[] = {
+      {"Boolean", 0}, {"Integer", 1}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
                     "VPI automatic relation") ||
+      !validateEnum(propertyValueKinds, supportedPropertyValueKinds,
+                    "VPI property value kind") ||
       !validateEnum(callbackPhases, supportedCallbackPhases,
                     "VPI statement callback phase") ||
       !validateEnum(callbackPolicies, supportedCallbackPolicies,
@@ -986,6 +994,30 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
     if (expanded.empty()) {
       PrintError(iterateSourcesSet->getLoc(),
                  "derived iterator-source set expands to no concrete kinds");
+      return false;
+    }
+  }
+
+  StringMap<const Record *> propertyNames;
+  DenseMap<uint32_t, const Record *> propertyValues;
+  for (const Record *property : properties) {
+    StringRef apiName = property->getValueAsString("apiName");
+    uint32_t value = 0;
+    const Record *sources = property->getValueAsDef("sources");
+    if (!isCppIdentifier(apiName) || !apiName.starts_with("vpi") ||
+        !getU32(*property, "value", 1, value) ||
+        property->getValueAsString("clause").empty() ||
+        sources->getValueAsBit("nullRoot") ||
+        expandedSets.lookup(sources).empty()) {
+      PrintError(property->getLoc(),
+                 "VPI property needs a unique API name and value, concrete "
+                 "non-root sources, and an LRM clause");
+      return false;
+    }
+    if (!propertyNames.try_emplace(apiName, property).second ||
+        !propertyValues.try_emplace(value, property).second) {
+      PrintError(property->getLoc(),
+                 "duplicate VPI property API name or value");
       return false;
     }
   }
@@ -1442,6 +1474,82 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "         vpiObjectSetKinds[low] == kind;\n"
         "}\n\n";
 
+  auto propertyValueKindRecords =
+      records.getAllDerivedDefinitions("VPIPropertyValueKind");
+  SmallVector<const Record *> propertyValueKinds(
+      propertyValueKindRecords.begin(), propertyValueKindRecords.end());
+  llvm::sort(propertyValueKinds, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIPropertyValueKind : uint8_t {\n";
+  for (const Record *kind : propertyValueKinds)
+    os << formatv("  {0} = {1},\n", kind->getValueAsString("cppName"),
+                  kind->getValueAsInt("value"));
+  os << "};\n\n";
+
+  struct EmittedProperty {
+    uint32_t source;
+    uint32_t property;
+    const Record *valueKind;
+    StringRef apiName;
+    StringRef clause;
+  };
+  SmallVector<EmittedProperty> emittedProperties;
+  for (const Record *property :
+       records.getAllDerivedDefinitions("VPIProperty")) {
+    for (uint32_t source :
+         expandedSets.lookup(property->getValueAsDef("sources")))
+      emittedProperties.push_back(
+          {source, static_cast<uint32_t>(property->getValueAsInt("value")),
+           property->getValueAsDef("valueKind"),
+           property->getValueAsString("apiName"),
+           property->getValueAsString("clause")});
+  }
+  llvm::sort(emittedProperties,
+             [](const EmittedProperty &left, const EmittedProperty &right) {
+               return std::tie(left.source, left.property) <
+                      std::tie(right.source, right.property);
+             });
+  os << "struct VPIPropertyDescriptor {\n"
+        "  uint32_t sourceType;\n"
+        "  uint32_t property;\n"
+        "  VPIPropertyValueKind valueKind;\n"
+        "  const char *apiName;\n"
+        "  const char *clause;\n"
+        "};\n\n";
+  os << "inline constexpr VPIPropertyDescriptor vpiProperties[] = {\n";
+  for (const EmittedProperty &property : emittedProperties) {
+    os << formatv("  {{{0}, {1}, VPIPropertyValueKind::{2}, \"{3}\", "
+                  "\"{4}\"",
+                  property.source, property.property,
+                  property.valueKind->getValueAsString("cppName"),
+                  property.apiName, property.clause);
+    os << "},\n";
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIPropertyDescriptor *findVPIProperty(\n"
+        "    uint32_t sourceType, uint32_t property) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiProperties) / sizeof(vpiProperties[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    const auto &candidate = vpiProperties[middle];\n"
+        "    if (candidate.sourceType < sourceType ||\n"
+        "        (candidate.sourceType == sourceType &&\n"
+        "         candidate.property < property))\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  if (low == sizeof(vpiProperties) / sizeof(vpiProperties[0]))\n"
+        "    return nullptr;\n"
+        "  const auto &candidate = vpiProperties[low];\n"
+        "  return candidate.sourceType == sourceType &&\n"
+        "                 candidate.property == property\n"
+        "             ? &candidate\n"
+        "             : nullptr;\n"
+        "}\n\n";
+
   auto modeRecords = records.getAllDerivedDefinitions("VPITraversalMode");
   SmallVector<const Record *> modes(modeRecords.begin(), modeRecords.end());
   llvm::sort(modes, [](const Record *left, const Record *right) {
@@ -1622,12 +1730,19 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       PrintError("expanded VPI traversal key exceeds 16 bits");
       return true;
     }
+  for (const EmittedProperty &property : emittedProperties)
+    if (property.source > std::numeric_limits<uint16_t>::max() ||
+        property.property > std::numeric_limits<uint16_t>::max()) {
+      PrintError("expanded VPI property key exceeds 16 bits");
+      return true;
+    }
 
-  constexpr uint32_t imageHeaderSize = 64;
+  constexpr uint32_t imageHeaderSize = 72;
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
   constexpr uint32_t imageTraversalSize = 8;
+  constexpr uint32_t imagePropertySize = 8;
   SmallVector<uint8_t> image(imageHeaderSize, 0);
   auto append16 = [&](uint16_t value) {
     image.push_back(static_cast<uint8_t>(value));
@@ -1713,6 +1828,16 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         (edge.statementContainment ? 0x80 : 0)));
   }
 
+  size_t propertyOffset = image.size();
+  for (const EmittedProperty &property : emittedProperties) {
+    append16(static_cast<uint16_t>(property.source));
+    append16(static_cast<uint16_t>(property.property));
+    image.push_back(
+        static_cast<uint8_t>(property.valueKind->getValueAsInt("value")));
+    image.push_back(0);
+    append16(0);
+  }
+
   if (image.size() > std::numeric_limits<uint32_t>::max()) {
     PrintError("VPI object model image exceeds 32 bits");
     return true;
@@ -1729,6 +1854,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   write32(52, imageFirstKind);
   write32(56, static_cast<uint32_t>(traversalOffset));
   write32(60, static_cast<uint32_t>(emittedEdges.size()));
+  write32(64, static_cast<uint32_t>(propertyOffset));
+  write32(68, static_cast<uint32_t>(emittedProperties.size()));
   uint64_t imageChecksum = UINT64_C(14695981039346656037);
   for (uint8_t byte : image) {
     imageChecksum ^= byte;
@@ -1746,6 +1873,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imageSetSize << ";\n";
   os << "inline constexpr uint32_t vpiObjectModelImageTraversalSize = "
      << imageTraversalSize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImagePropertySize = "
+     << imagePropertySize << ";\n\n";
   os << "inline constexpr uint8_t "
         "vpiObjectModelImageOrderMask = 0x0f;\n"
         "inline constexpr uint8_t "
@@ -1822,6 +1951,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
   uint64_t kindCount = readVPIObjectModelImage32(data, 52);
   uint64_t traversalOffset = readVPIObjectModelImage32(data, 56);
   uint64_t traversalCount = readVPIObjectModelImage32(data, 60);
+  uint64_t propertyOffset = readVPIObjectModelImage32(data, 64);
+  uint64_t propertyCount = readVPIObjectModelImage32(data, 68);
   if (objectOffset != vpiObjectModelImageHeaderSize ||
       objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
       relationOffset !=
@@ -1836,8 +1967,12 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
       traversalOffset != kindOffset + kindCount * 2 ||
       traversalCount >
           (size - traversalOffset) / vpiObjectModelImageTraversalSize ||
-      traversalOffset + traversalCount * vpiObjectModelImageTraversalSize !=
-          size)
+      propertyOffset !=
+          traversalOffset +
+              traversalCount * vpiObjectModelImageTraversalSize ||
+      propertyCount >
+          (size - propertyOffset) / vpiObjectModelImagePropertySize ||
+      propertyOffset + propertyCount * vpiObjectModelImagePropertySize != size)
     return false;
 
   uint16_t previousValue = 0;
@@ -1918,6 +2053,22 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     previousSelector = selector;
     previousMode = mode;
   }
+  previousSource = 0;
+  uint16_t previousProperty = 0;
+  for (uint32_t index = 0; index != propertyCount; ++index) {
+    const uint8_t *record =
+        data + propertyOffset + index * vpiObjectModelImagePropertySize;
+    uint16_t source = readVPIObjectModelImage16(record, 0);
+    uint16_t property = readVPIObjectModelImage16(record, 2);
+    bool ordered = index == 0 || previousSource < source ||
+                   (previousSource == source && previousProperty < property);
+    if (!ordered || record[4] > static_cast<uint8_t>(
+                                    VPIPropertyValueKind::Integer) ||
+        record[5] != 0 || readVPIObjectModelImage16(record, 6) != 0)
+      return false;
+    previousSource = source;
+    previousProperty = property;
+  }
   return true;
 }
 
@@ -1982,6 +2133,42 @@ inline constexpr bool findVPIObjectModelImageTraversal(
          result.mode == mode;
 }
 
+struct VPIObjectModelImageProperty {
+  uint16_t sourceType;
+  uint16_t property;
+  VPIPropertyValueKind valueKind;
+};
+
+inline constexpr bool findVPIObjectModelImageProperty(
+    const uint8_t *data, uint32_t sourceType, uint32_t property,
+    VPIObjectModelImageProperty &result) {
+  if (sourceType > UINT16_MAX || property > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 64);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 68);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImagePropertySize;
+    uint16_t recordSource = readVPIObjectModelImage16(record, 0);
+    uint16_t recordProperty = readVPIObjectModelImage16(record, 2);
+    if (recordSource < sourceType ||
+        (recordSource == sourceType && recordProperty < property))
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 68))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImagePropertySize;
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage16(record, 2),
+            static_cast<VPIPropertyValueKind>(record[4])};
+  return result.sourceType == sourceType && result.property == property;
+}
+
 inline constexpr bool vpiObjectModelImageTargetContains(
     const uint8_t *data, uint16_t setID, uint32_t kind) {
   uint32_t setCount = readVPIObjectModelImage32(data, 44);
@@ -2022,6 +2209,18 @@ inline constexpr bool vpiObjectModelImageTargetContains(
     os << formatv("  M({0}, {1})", relation->getValueAsString("apiName"),
                   relation->getValueAsInt("value"));
     os << (index + 1 == relations.size() ? "\n\n" : " \\\n");
+  }
+  auto propertyRecords = records.getAllDerivedDefinitions("VPIProperty");
+  SmallVector<const Record *> properties(propertyRecords.begin(),
+                                          propertyRecords.end());
+  llvm::sort(properties, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "#define OBELISK_FOR_EACH_VPI_PROPERTY(M) \\\n";
+  for (auto [index, property] : llvm::enumerate(properties)) {
+    os << formatv("  M({0}, {1})", property->getValueAsString("apiName"),
+                  property->getValueAsInt("value"));
+    os << (index + 1 == properties.size() ? "\n\n" : " \\\n");
   }
   os << "#endif // OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n";
   return false;

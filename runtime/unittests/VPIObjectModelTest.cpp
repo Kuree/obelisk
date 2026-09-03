@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -22,11 +23,13 @@ using namespace obelisk::reflection;
 
 using Mode = VPITraversalMode;
 using Order = VPITraversalOrder;
+using PropertyKind = VPIPropertyValueKind;
 using KindSet = std::set<uint32_t>;
 
 constexpr size_t kExpectedTraversalCount = 1872;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
+static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) == 10);
 
 struct OracleKey {
   uint32_t source;
@@ -392,12 +395,51 @@ TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   expectAbsent(vpiIterator, vpiUse, Mode::Iterate);
 }
 
+TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
+  struct ExpectedProperty {
+    uint32_t value;
+    PropertyKind kind;
+  };
+  constexpr std::array<ExpectedProperty, 5> expected{{
+      {vpiScalar, PropertyKind::Boolean},
+      {vpiVector, PropertyKind::Boolean},
+      {vpiDirection, PropertyKind::Integer},
+      {vpiPortIndex, PropertyKind::Integer},
+      {vpiPortType, PropertyKind::Integer},
+  }};
+  for (const auto &property : expected) {
+    const auto *descriptor = findVPIProperty(vpiPort, property.value);
+    ASSERT_NE(descriptor, nullptr);
+    EXPECT_EQ(descriptor->valueKind, property.kind);
+    EXPECT_STREQ(descriptor->clause, "37.14");
+    const auto *bitDescriptor = findVPIProperty(vpiPortBit, property.value);
+    ASSERT_NE(bitDescriptor, nullptr);
+    EXPECT_EQ(bitDescriptor->valueKind, property.kind);
+    EXPECT_STREQ(bitDescriptor->clause, "37.14");
+    EXPECT_EQ(findVPIProperty(vpiModule, property.value), nullptr);
+    EXPECT_EQ(findVPIProperty(vpiReg, property.value), nullptr);
+    EXPECT_EQ(findVPIProperty(vpiNet, property.value), nullptr);
+
+    VPIObjectModelImageProperty imageProperty{};
+    ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage, vpiPort,
+                                                property.value, imageProperty));
+    EXPECT_EQ(imageProperty.valueKind, property.kind);
+    ASSERT_TRUE(findVPIObjectModelImageProperty(
+        vpiObjectModelImage, vpiPortBit, property.value, imageProperty));
+    EXPECT_EQ(imageProperty.valueKind, property.kind);
+    EXPECT_FALSE(findVPIObjectModelImageProperty(
+        vpiObjectModelImage, vpiReg, property.value, imageProperty));
+  }
+}
+
 TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
   ASSERT_TRUE(validateVPIObjectModelImage(vpiObjectModelImage,
                                           sizeof(vpiObjectModelImage)));
   EXPECT_LT(sizeof(vpiObjectModelImage), 32u * 1024u);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 60),
             kExpectedTraversalCount);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 68),
+            std::size(vpiProperties));
 
   size_t canonicalObjects = 0;
   for (const auto &object : vpiObjectKinds)
@@ -583,6 +625,26 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   reset();
   uint32_t relationOffset = readVPIObjectModelImage32(damaged.data(), 32);
   damaged[relationOffset + 2] = 3;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  uint32_t propertyOffset = readVPIObjectModelImage32(damaged.data(), 64);
+  damaged[propertyOffset + 4] = 2;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[propertyOffset + 5] = 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(propertyOffset + vpiObjectModelImagePropertySize + 2,
+          readVPIObjectModelImage16(damaged.data(), propertyOffset + 2));
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

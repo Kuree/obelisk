@@ -33,6 +33,10 @@ Int, Vector, and BinStr values. `vpiNoDelay`, `vpiForceFlag`, and
 limbs use the standard 32-bit encoding with `bval = unknown` and
 `aval = value XOR unknown`.
 
+Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
+`vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable
+design record. These queries do not inspect or materialize simulation state.
+
 Handles live in a context-owned arena. Releasing a handle marks it dead without
 reusing its record, so double release and exhausted iterators are diagnosed
 deterministically.

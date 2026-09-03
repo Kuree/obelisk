@@ -128,6 +128,38 @@ def ValueParameterObjects : VPIObjectSet<"ValueParameterObjects",
   [Parameter, SpecParam]>;
 def PortObjects : VPIObjectSet<"PortObjects", [Port, PortBit]>;
 def PortTargetObjects : VPIObjectSet<"PortTargetObjects", [Port]>;
+
+// Integer and Boolean properties use the same exact object-set machinery as
+// traversal edges. This keeps LRM applicability generated instead of letting
+// individual VPI entry points infer it from physical database record kinds.
+class VPIPropertyValueKind<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def BooleanProperty : VPIPropertyValueKind<"Boolean", 0>;
+def IntegerProperty : VPIPropertyValueKind<"Integer", 1>;
+
+class VPIProperty<string apiName_, int value_,
+                  VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
+                  string clause_> {
+  string apiName = apiName_;
+  int value = value_;
+  VPIPropertyValueKind valueKind = valueKind_;
+  VPIObjectSet sources = sources_;
+  string clause = clause_;
+}
+
+def PortScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
+  PortObjects, "37.14">;
+def PortVectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
+  PortObjects, "37.14">;
+def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
+  PortObjects, "37.14">;
+def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
+  PortObjects, "37.14">;
+def PortTypeProperty : VPIProperty<"vpiPortType", 611, IntegerProperty,
+  PortObjects, "37.14">;
 def SelectObjects : VPIObjectSet<"SelectObjects",
   [VarSelect, BitSelect, PartSelect, IndexedPartSelect]>;
 def NetVariableObjects : VPIObjectSet<"NetVariableObjects", [],

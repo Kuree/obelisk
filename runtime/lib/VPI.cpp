@@ -1034,6 +1034,45 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                : static_cast<PLI_INT32>(
                      std::min<uint64_t>(info.bit_width, INT32_MAX));
   }
+  if (property == vpiDirection || property == vpiPortIndex ||
+      property == vpiPortType || property == vpiScalar ||
+      property == vpiVector) {
+    uint32_t exactType = handle->exactVpiType;
+    if (exactType == 0 &&
+        obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                   &exactType) == OBELISK_RT_OK)
+      handle->exactVpiType = exactType;
+    if (!obelisk::reflection::findVPIProperty(exactType, property)) {
+      setError(handle->owner, "property is not defined for this VPI object",
+               vpiNotice);
+      return vpiUndefined;
+    }
+    obelisk_rt_design_info_v1 info{};
+    if (!infoFor(handle, info))
+      return vpiUndefined;
+    if (info.kind != OBELISK_RT_DESIGN_RECORD_PORT) {
+      setError(handle->owner, "port property requested for non-port object",
+               vpiNotice);
+      return vpiUndefined;
+    }
+    if (property == vpiDirection) {
+      bool input = (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
+      bool output =
+          (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
+      if (input && output)
+        return vpiInout;
+      return input ? vpiInput : vpiOutput;
+    }
+    if (property == vpiPortIndex)
+      return static_cast<PLI_INT32>(
+          (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT);
+    if (property == vpiPortType)
+      return vpiPort;
+    bool scalar = info.bit_width == 1;
+    return property == vpiScalar ? static_cast<PLI_INT32>(scalar)
+                                 : static_cast<PLI_INT32>(!scalar);
+  }
   if (property == vpiLineNo || property == vpiDefLineNo) {
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
