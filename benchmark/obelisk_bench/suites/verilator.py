@@ -703,6 +703,11 @@ VERILATOR_DPI_SYSTEM_TASK_ALIAS = Exclusion(
     "a user-defined system task or function is registered through the PLI "
     "callback registry; the test instead requires Verilator's private shortcut "
     "that aliases $dpii_* system calls to DPI imports")
+VERILATOR_INLINE_C_ESCAPE = Exclusion(
+    "IEEE 1800-2017 36.3.1",
+    "a user-defined system task requires PLI registration; the test instead "
+    "enables Verilator's private $c and $c32 inline-C escapes together with "
+    "verilator public metacomments")
 VERILATOR_EMBEDDED_MODEL = Exclusion(
     "IEEE 1800-2017 35.2",
     "DPI treats a foreign implementation as a black box with C linkage; this "
@@ -1193,6 +1198,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
     "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
     "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
+    "t_func_public": VERILATOR_INLINE_C_ESCAPE,
     "t_embed1": VERILATOR_EMBEDDED_MODEL,
     "t_dpi_export_context2_bad": VERILATOR_NATIVE_MODEL_DRIVER,
     "t_dpi_export_context_bad": VERILATOR_NATIVE_MODEL_DRIVER,

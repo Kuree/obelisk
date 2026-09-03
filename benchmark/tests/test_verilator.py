@@ -1276,6 +1276,12 @@ class ExcludedTest(unittest.TestCase):
                 self.assertIn("VM_PREFIX", excluded.reason)
                 self.assertIn("Verilated model APIs", excluded.reason)
 
+    def test_inline_c_escape_requires_verilator(self):
+        excluded = verilator.EXCLUDED["t_func_public"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 36.3.1")
+        self.assertIn("$c and $c32", excluded.reason)
+        self.assertIn("metacomments", excluded.reason)
+
     def test_associative_array_indices_must_be_equivalent(self):
         excluded = verilator.EXCLUDED["t_cast_types"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.22.2")
