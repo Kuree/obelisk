@@ -301,6 +301,12 @@ CONFIG_DECLARATION_LINE = re.compile(
 # Any name the corpus cannot also declare. Nothing in test_regress spells one
 # with this prefix, and the shell is the only file the harness itself writes.
 SHELL_ALTERNATE_NAME = "obelisk_bench_top"
+# The generated driver shell makes its DUT cease to be an implicit root. Most
+# tests have no other roots, but this one deliberately crosses between two
+# parallel top-level instances (IEEE 1800-2017 23.3.1 and 23.6).
+ADDITIONAL_TOPS: dict[str, tuple[str, ...]] = {
+    "t_multitop_xref": ("dut",),
+}
 # `clocking` joins driver.py's list because a clocking block's `input` lines sit
 # at the start of a line just as a non-ANSI port declaration does.
 STOP_SCANNING = re.compile(
@@ -1626,6 +1632,11 @@ def shell_module_name(top_text: str) -> str:
     return SHELL_ALTERNATE_NAME if MODULE_TOP.search(top_text) else "top"
 
 
+def additional_top_flags(name: str) -> list[str]:
+    """Keep exact parallel roots that a generated driver shell would hide."""
+    return [f"--top={top}" for top in ADDITIONAL_TOPS.get(name, ())]
+
+
 def detect_time_scope_declarations(
         top_text: str, module_name: str = "t") -> tuple[str, ...]:
     """Return one module's explicit timeunit/timeprecision declarations."""
@@ -2443,6 +2454,7 @@ def judge_one(
                      for definition in compatibility_defines)
         if selected_top:
             extra.append(f"--top={selected_top}")
+        extra.extend(additional_top_flags(name))
         if compile_threads is not None:
             extra.append(f"--compile-threads={compile_threads}")
         compiled = runner.compile_design(

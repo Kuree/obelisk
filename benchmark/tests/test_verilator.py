@@ -366,6 +366,15 @@ class CompileTopDescriptorTest(unittest.TestCase):
         self.assertIsNone(self.top(
             "test.compile(verilator_flags2=['--top ' + selected])\n"))
 
+    def test_parallel_multitop_root_is_kept_with_driver_shell(self):
+        self.assertEqual(
+            verilator.additional_top_flags("t_multitop_xref"),
+            ["--top=dut"],
+        )
+
+    def test_unlisted_test_does_not_gain_an_extra_root(self):
+        self.assertEqual(verilator.additional_top_flags("t_other"), [])
+
 
 class CompileParameterDescriptorTest(unittest.TestCase):
     def overrides(self, text: str) -> list[tuple[str, str]]:
