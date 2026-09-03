@@ -4703,6 +4703,8 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
 
   vpiHandle iterator = vpi_iterate(vpiCallback, nullptr);
   ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_handle(vpiUse, iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   vpiHandle firstEquivalent = nullptr;
   vpiHandle scanned = nullptr;
   while ((scanned = vpi_scan(iterator)) != nullptr) {
@@ -4815,6 +4817,12 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_get(vpiType, iterator), vpiIterator);
   EXPECT_STREQ(vpi_get_str(vpiType, iterator), "vpiIterator");
   EXPECT_EQ(vpi_get(vpiIsProtected, iterator), 0);
+  vpiHandle iteratorUse = vpi_handle(vpiUse, iterator);
+  ASSERT_NE(iteratorUse, nullptr);
+  EXPECT_EQ(vpi_compare_objects(iteratorUse, root), 1);
+  EXPECT_EQ(vpi_release_handle(iteratorUse), 1);
+  EXPECT_EQ(vpi_handle(vpiScope, iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get_str(vpiName, iterator), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   vpiHandle scanned = vpi_scan(iterator);
@@ -5315,6 +5323,11 @@ TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   ASSERT_NE(singular, nullptr);
   vpiHandle iterator = vpi_iterate(vpiForInitStmt, loop);
   ASSERT_NE(iterator, nullptr);
+  vpiHandle iteratorUse = vpi_handle(vpiUse, iterator);
+  ASSERT_NE(iteratorUse, nullptr);
+  EXPECT_EQ(vpi_compare_objects(iteratorUse, loop), 1);
+  EXPECT_EQ(vpi_get(vpiType, iteratorUse), vpiFor);
+  EXPECT_EQ(vpi_release_handle(iteratorUse), 1);
   vpiHandle first = vpi_scan(iterator);
   ASSERT_NE(first, nullptr);
   EXPECT_EQ(vpi_compare_objects(singular, first), 1);

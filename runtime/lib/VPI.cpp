@@ -76,6 +76,10 @@ struct __vpiHandle {
   bool callbackIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
+  bool hasUse = false;
+  bool useStatement = false;
+  uint32_t useType = 0;
+  obelisk_rt_design_cursor_v1 useCursor{};
   obelisk::reflection::VPIObjectSetID requestedTargets{};
   VPIRelationRange relationRange{};
   size_t next = 0;
@@ -928,9 +932,21 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
   beginVPICall();
-  __vpiHandle *handle = validate(reference);
+  __vpiHandle *handle = findHandle(reference);
   if (!handle)
     return nullptr;
+  if (handle->kind == VPIHandleKind::Iterator) {
+    if (type != vpiUse)
+      return nullptr;
+    return handle->hasUse
+               ? makeHandle(handle->owner, handle->useCursor, handle->useType,
+                            handle->useStatement)
+               : nullptr;
+  }
+  if (handle->kind != VPIHandleKind::Object) {
+    setError(handle->owner, "wrong-kind VPI handle");
+    return nullptr;
+  }
   VPIRelationRange range{};
   obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
       handle->owner->context, handle->cursor, static_cast<uint32_t>(type),
@@ -1028,11 +1044,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   }
   obelisk_rt_design_cursor_v1 parent{};
   uint32_t sourceType = 0;
+  bool sourceStatement = false;
   if (reference) {
     __vpiHandle *handle = validate(reference);
     if (!handle)
       return nullptr;
     parent = handle->cursor;
+    sourceStatement = handle->statement;
     sourceType = handle->exactVpiType;
     if (sourceType == 0 &&
         obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
@@ -1053,6 +1071,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->kind = VPIHandleKind::Iterator;
         iterator->relationIterator = true;
         iterator->relationRange = range;
+        iterator->hasUse = true;
+        iterator->useCursor = parent;
+        iterator->useType = sourceType;
+        iterator->useStatement = sourceStatement;
         return keepHandle(state, std::move(iterator));
       }
       OBELISK_RT_CATCH_ALL {
@@ -1082,6 +1104,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     iterator->designIterator = true;
     iterator->requestedTargets = edge->targets;
     iterator->cursor = cursor;
+    if (reference) {
+      iterator->hasUse = true;
+      iterator->useCursor = parent;
+      iterator->useType = sourceType;
+      iterator->useStatement = sourceStatement;
+    }
     return keepHandle(state, std::move(iterator));
   }
   OBELISK_RT_CATCH_ALL {
