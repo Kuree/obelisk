@@ -2070,7 +2070,7 @@ void ObeliskSimPreparePass::runOnOperation() {
 
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
       materializeDesignDescriptors(module, semanticRoot, *portAliases, *scopes,
-                                   designPrecisionFs, builder);
+                                   *classes, designPrecisionFs, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
@@ -3899,6 +3899,37 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &directCalleeNames = preparedUnits->directCalleeNames;
   auto &codeUnitDeclarations = preparedUnits->declarations;
   uint64_t rootCodeUnitID = preparedUnits->rootID;
+  for (const PreparedUnit &unit : preparedUnits->units) {
+    // Clocking blocks, sequences, properties, and other semantic objects may
+    // have executable helper units, but those helpers are not the physical
+    // identity of the corresponding VPI object.  Only task/function anchors
+    // are represented by their actual code-unit declaration.
+    auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+    if (!subroutine)
+      continue;
+    // DPI imports use ABI helpers rather than source task/function code units.
+    // Such a helper is executable machinery, not the imported object's
+    // physical identity, so leave the static VPI anchor unbacked.
+    if (subroutine.getIsDpiImport().value_or(false))
+      continue;
+    sim::EntryKind expectedKind =
+        subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
+            ? sim::EntryKind::Task
+            : sim::EntryKind::Function;
+    if (unit.entryKind != expectedKind)
+      continue;
+    auto anchorRef =
+        unit.source->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.vpi_anchor");
+    if (!anchorRef)
+      continue;
+    auto anchor = dyn_cast_or_null<sim::SimVPIObjectAnchorOp>(
+        SymbolTable::lookupSymbolIn(design, anchorRef));
+    if (!anchor || anchor.getBackingAttr())
+      continue;
+    anchor.setBackingAttr(sim::VPIObjectBackingAttr::get(
+        context, sim::VPIObjectBackingKind::CodeUnit,
+        builder.getI64IntegerAttr(unit.id), FlatSymbolRefAttr{}));
+  }
   auto resolveDirectCallee =
       [&](semantic::SVCallExpressionOp call) -> Operation * {
     return preparedUnits->resolveDirectCallee(call, semanticSymbols);

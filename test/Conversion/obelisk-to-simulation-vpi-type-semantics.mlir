@@ -34,6 +34,18 @@ module {
         }
         obelisk.sv.type.type_alias attributes {hierarchical_name = "top.outer_t", name = "outer_t", node_id = 25 : i64, semantic_type = !record, sym_name = "s25.outer_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s25.outer_t, @s1.$root::@s3.top::@s4.top::@s24.record_t], path = array<i64>}, {aliases = [@s1.$root::@s3.top::@s4.top::@s23.flags_t], path = array<i64: 1>}]} {
         }
+        // These declarations are deliberately unused by any value object.
+        // vpiTypedef still requires all three in the scope inventory.
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.unused_t", name = "unused_t", node_id = 29 : i64, semantic_type = !bit, sym_name = "s29.unused_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s29.unused_t], path = array<i64>}]} {
+        }
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.sequence_t", name = "sequence_t", node_id = 30 : i64, semantic_type = !obelisk.sequence, sym_name = "s30.sequence_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s30.sequence_t], path = array<i64>}]} {
+        }
+        obelisk.sv.type.type_alias attributes {hierarchical_name = "top.property_t", name = "property_t", node_id = 31 : i64, semantic_type = !obelisk.property, sym_name = "s31.property_t", vpi_typedef_layers = [{aliases = [@s1.$root::@s3.top::@s4.top::@s31.property_t], path = array<i64>}]} {
+        }
+        obelisk.sv.symbol.enum_value attributes {constant_value = "2'b00", hierarchical_name = "top.state_t.IDLE", name = "IDLE", node_id = 32 : i64, semantic_type = !state, sym_name = "s32.IDLE", vpi_source_type_identity = 7 : i64} {
+        }
+        obelisk.sv.symbol.enum_value attributes {constant_value = "2'b1x", hierarchical_name = "top.state_t.ACTIVE", name = "ACTIVE", node_id = 33 : i64, semantic_type = !state, sym_name = "s33.ACTIVE", vpi_source_type_identity = 7 : i64} {
+        }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bit_value", lifetime = 1 : i32, name = "bit_value", node_id = 5 : i64, semantic_type = !bit, sym_name = "s5.bit_value"} {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.logic_up", lifetime = 1 : i32, name = "logic_up", node_id = 6 : i64, semantic_type = !logic_up, sym_name = "s6.logic_up"} {
@@ -102,9 +114,16 @@ module {
 // CHECK-DAG: hierarchy "top.process_value" {{.*}}kind = process
 // CHECK-DAG: hierarchy "top.tagged" {{.*}}kind = unpacked_union{{.*}}name = "choice_t"{{.*}}kind = void{{.*}}childNames = ["none", "value"], isTagged = true, isSoft = false, bitWidth = 0 : i64, selectableWidth = 4 : i64, bitstreamWidth = 4 : i64, tagBits = 0 : i64{{.*}}childOrdinals = [0, 1], childPackedOffsets = [0, 0]
 // CHECK-DAG: hierarchy "top.wild" {{.*}}kind = assoc_array{{.*}}kind = untyped{{.*}}kind = string{{.*}}wildcardIndex = true
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_23 id 0 in 1 hierarchy "top.flags_t" debug "flags_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_24 id 1 in 1 hierarchy "top.record_t" debug "record_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_24]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_25 id 2 in 1 hierarchy "top.outer_t" debug "outer_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_25, @__obelisk_vpi_typespec_24]
-// CHECK-DAG: hierarchy "top.aliased_record" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_23]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_25, @__obelisk_vpi_typespec_24]
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_1]] id 1 type 32 in 1 {{.*}}hierarchy "top" debug "top"
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_0 id 0 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.flags_t" debug "flags_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_1 id 1 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.record_t" debug "record_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_1]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_2 id 2 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.outer_t" debug "outer_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_2, @__obelisk_vpi_typespec_1]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_3 id 3 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.unused_t" debug "unused_t" {{.*}}kind = bit{{.*}}typedefAliases = [@__obelisk_vpi_typespec_3]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_4 id 4 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.sequence_t" debug "sequence_t" {{.*}}kind = sequence{{.*}}typedefAliases = [@__obelisk_vpi_typespec_4]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_5 id 5 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.property_t" debug "property_t" {{.*}}kind = property{{.*}}typedefAliases = [@__obelisk_vpi_typespec_5]
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[STATE_TS:__obelisk_vpi_enum_typespec_6]] id 6 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.state_t" debug "state_t" {{.*}}origin = 2 : i32{{.*}}kind = enum
+// CHECK-DAG: obelisk_sim.vpi_enum_const.decl 0 enum @[[STATE_TS]] ordinal 0 name "IDLE" value "2'b00"
+// CHECK-DAG: obelisk_sim.vpi_enum_const.decl 1 enum @[[STATE_TS]] ordinal 1 name "ACTIVE" value "2'b1x"
+// CHECK-DAG: hierarchy "top.aliased_record" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_2, @__obelisk_vpi_typespec_1]
 // CHECK-DAG: obelisk_sim.net.decl {{.*}}hierarchy "top.net_value" {{.*}}kind = logic{{.*}}range = [-2, 5]
 // CHECK-NOT: obelisk.sv.

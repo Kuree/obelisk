@@ -622,6 +622,8 @@ makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location,
 
 inline constexpr ::llvm::StringLiteral vpiTypedefLayersAttrName =
     "vpi_typedef_layers";
+inline constexpr ::llvm::StringLiteral vpiSourceTypeIdentityAttrName =
+    "vpi_source_type_identity";
 ::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
 makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
                     ::mlir::Location location, ::mlir::Builder &builder,
@@ -640,6 +642,12 @@ bool storageDecidesTruth(::mlir::Operation *expression);
 getSimulationClassSymbol(::mlir::SymbolRefAttr semanticClass);
 ::mlir::StringAttr
 getSimulationCovergroupSymbol(::mlir::SymbolRefAttr semanticCovergroup);
+
+/// Stable flat reflection symbol for one elaborated virtual-interface
+/// specialization and optional modport view. Unlike the opaque executable
+/// specialization key, this names an immutable SimVPITypespecDeclOp.
+::mlir::StringAttr getSimulationVirtualInterfaceTypespecSymbol(
+    ::mlir::SymbolRefAttr semanticInterface, ::mlir::StringAttr modport);
 
 /// Classify a canonical source-semantic type for the initial DPI-C ABI.
 /// Diagnostics are issued at `location` for unsupported categories.

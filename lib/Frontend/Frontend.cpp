@@ -1244,14 +1244,24 @@ private:
   /// The number this type shares with every type it matches under IEEE
   /// 1800-2017 6.22.1. Matching is not an equivalence Slang exposes as a key,
   /// so representatives are collected and each new type is matched against
-  /// them; a compilation names few distinct types this way.
+  /// them. Cache exact AST type pointers so all members of the same enum and
+  /// repeated uses of a typedef pay for matching only once.
   int64_t matchingTypeIdentity(const slang::ast::Type &type) {
+    if (auto found = matchingTypeIdentities.find(&type);
+        found != matchingTypeIdentities.end())
+      return found->second;
     for (auto [index, representative] :
          llvm::enumerate(matchingTypeRepresentatives))
-      if (type.isMatching(*representative))
-        return static_cast<int64_t>(index);
+      if (type.isMatching(*representative)) {
+        int64_t identity = static_cast<int64_t>(index);
+        matchingTypeIdentities.try_emplace(&type, identity);
+        return identity;
+      }
     matchingTypeRepresentatives.push_back(&type);
-    return static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
+    int64_t identity =
+        static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
+    matchingTypeIdentities.try_emplace(&type, identity);
+    return identity;
   }
 
   /// slang represents code it deliberately never elaborates - the unselected
@@ -1572,6 +1582,10 @@ private:
   /// payload handles aliases nested below arrays and aggregate fields without
   /// introducing executable wrapper types.
   ArrayAttr getVPITypedefLayers(const slang::ast::Type &root) {
+    if (auto found = vpiTypedefLayerCache.find(&root);
+        found != vpiTypedefLayerCache.end())
+      return found->second;
+
     SmallVector<Attribute> layers;
     SmallVector<int64_t, 8> path;
     llvm::SmallPtrSet<const slang::ast::Type *, 8> active;
@@ -1674,9 +1688,13 @@ private:
       }
       return complete;
     };
-    if (!collect(root) || layers.empty())
+    if (!collect(root) || layers.empty()) {
+      vpiTypedefLayerCache.try_emplace(&root, ArrayAttr{});
       return {};
-    return builder.getArrayAttr(layers);
+    }
+    ArrayAttr result = builder.getArrayAttr(layers);
+    vpiTypedefLayerCache.try_emplace(&root, result);
+    return result;
   }
 
   template <typename Node>
@@ -4966,6 +4984,7 @@ private:
   }
 
   template <typename Op, typename Node> void importNode(const Node &node) {
+    using BareNode = std::remove_cvref_t<Node>;
     if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
       if (emittedSymbolPaths.contains(&node))
         return;
@@ -5028,6 +5047,17 @@ private:
       if (const slang::ast::Type *source = getUncanonicalizedSemanticType(node))
         if (ArrayAttr layers = getVPITypedefLayers(*source))
           attrs.set("vpi_typedef_layers", layers);
+      // A display name is not an enum identity: separate compilation units may
+      // each legally declare `$unit::state_t`.  Freeze Slang's exact matching
+      // type identity on only those semantic nodes that need to reconnect enum
+      // constants to their persistent typespec after the AST is erased.
+      if constexpr (std::same_as<BareNode, slang::ast::TypeAliasType> ||
+                    std::same_as<BareNode, slang::ast::EnumValueSymbol>)
+        if (const slang::ast::Type *source =
+                getUncanonicalizedSemanticType(node))
+          attrs.set("vpi_source_type_identity",
+                    builder.getI64IntegerAttr(
+                        matchingTypeIdentity(unwrapTypeAliases(*source))));
     }
     if constexpr (std::derived_from<Node, slang::ast::Expression>)
       attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));
@@ -5054,7 +5084,7 @@ private:
 
     OpBuilder::InsertionGuard guard{builder};
     builder.setInsertionPointToStart(&body);
-    using T = std::remove_cvref_t<Node>;
+    using T = BareNode;
     if constexpr (std::derived_from<Node, slang::ast::Scope>)
       currentScopes.push_back(&node);
     bool pushedProcedure = false;
@@ -5672,6 +5702,7 @@ private:
   const SDFAnnotationDatabase &sdfAnnotations;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> arrayQueryDimensionCache;
+  llvm::DenseMap<const slang::ast::Type *, ArrayAttr> vpiTypedefLayerCache;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
   llvm::StringMap<const slang::ast::Symbol *> claimedVariablePaths;
@@ -5703,6 +5734,7 @@ private:
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;
   SmallVector<PendingReferenceSeed, 2> currentPendingReferences;
   SmallVector<PendingReferenceArraySeed, 2> currentPendingReferenceArrays;
+  llvm::DenseMap<const slang::ast::Type *, int64_t> matchingTypeIdentities;
   SmallVector<const slang::ast::Type *, 4> matchingTypeRepresentatives;
   int64_t nextNodeId = 0;
   uint64_t nextAnonymousSymbolId = 0;

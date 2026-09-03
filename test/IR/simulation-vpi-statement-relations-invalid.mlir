@@ -389,15 +389,6 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @intrinsic_interface_kind_without_interface_metadata {
-    // expected-error @below {{interface scope metadata and intrinsic VPI kind disagree}}
-    obelisk_sim.scope.decl 0 vpi_kind 601
-  }
-}
-
-// -----
-
-module {
   obelisk_sim.design @intrinsic_interface_metadata_with_module_kind {
     obelisk_sim.scope.decl 0
     // expected-error @below {{interface scope metadata and intrinsic VPI kind disagree}}

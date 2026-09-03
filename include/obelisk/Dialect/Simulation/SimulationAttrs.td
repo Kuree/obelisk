@@ -14,6 +14,22 @@ class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
   let mnemonic = attrMnemonic;
 }
 
+def SimVPIObjectBackingAttr
+    : SimAttr<"VPIObjectBacking", "vpi_backing"> {
+  let summary = "physical executable descriptor backing a source VPI object";
+  let description = [{
+    Maps one immutable source-object anchor to an already materialized scope,
+    class, or code-unit descriptor.  Scope and code-unit backings use `id`;
+    class backings use `symbol`.  An anchor without this attribute is itself
+    serialized as a static-only reflection object.
+  }];
+  let parameters = (ins EnumParameter<SimVPIObjectBackingKind>:$kind,
+      OptionalParameter<"::mlir::IntegerAttr">:$id,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$symbol);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimVPITypeSemanticsAttr
     : SimAttr<"VPITypeSemantics", "vpi_type"> {
   let summary = "source-semantic type retained for VPI reflection";

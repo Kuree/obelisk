@@ -42,6 +42,28 @@ StringAttr getSimulationCovergroupSymbol(SymbolRefAttr semanticCovergroup) {
   return StringAttr::get(semanticCovergroup.getContext(), name);
 }
 
+StringAttr
+getSimulationVirtualInterfaceTypespecSymbol(SymbolRefAttr semanticInterface,
+                                            StringAttr modport) {
+  std::string identity;
+  llvm::raw_string_ostream stream(identity);
+  stream << semanticInterface;
+
+  // Encode every byte instead of sanitizing punctuation so distinct nested
+  // symbol paths cannot collapse onto the same flat Simulation symbol.
+  std::string name = "__obelisk_vpi_interface_typespec_";
+  auto appendHex = [&](StringRef text) {
+    for (unsigned char byte : text) {
+      name.push_back(llvm::hexdigit(byte >> 4));
+      name.push_back(llvm::hexdigit(byte & 0xf));
+    }
+  };
+  appendHex(identity);
+  name += "_modport_";
+  appendHex(modport ? modport.getValue() : StringRef{});
+  return StringAttr::get(semanticInterface.getContext(), name);
+}
+
 bool isSemanticOp(Operation *op) {
   return op->hasTrait<OpTrait::SemanticASTNode>();
 }
@@ -956,6 +978,9 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
     if (auto interface = dyn_cast<semantic::VirtualInterfaceType>(current)) {
       Details details;
       details.modport = interface.getModport();
+      details.symbol =
+          FlatSymbolRefAttr::get(getSimulationVirtualInterfaceTypespecSymbol(
+              interface.getInterfaceName(), interface.getModport()));
       // The virtual-interface specialization key is deliberately opaque in
       // executable Simulation IR, not a resolvable symbol (see
       // SimVirtualInterfaceType). Retain the exact printed semantic identity
@@ -986,6 +1011,10 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
       return make(sim::VPITypeKind::Void, false, false);
     if (isa<semantic::UntypedType>(current))
       return make(sim::VPITypeKind::Untyped, false, false);
+    if (isa<semantic::SequenceType>(current))
+      return make(sim::VPITypeKind::Sequence, false, false);
+    if (isa<semantic::PropertyType>(current))
+      return make(sim::VPITypeKind::Property, false, false);
     if (auto logic = dyn_cast<sim::LogicType>(current)) {
       const int64_t sourceRange[] = {static_cast<int64_t>(logic.getWidth()) - 1,
                                      0};

@@ -45,6 +45,24 @@ def SimVPIStatementSourceKind : I32EnumAttr<
   let cppNamespace = "::obelisk::sim";
 }
 
+// A source VPI identity may alias an executable descriptor that already has
+// a compact runtime representation.  Keeping the backing category explicit
+// lets serialization reuse that object instead of creating a duplicate
+// handle, while unbacked anchors become static reflection records directly.
+def SimVPIObjectBackingScope
+    : I32EnumAttrCase<"Scope", 0, "scope">;
+def SimVPIObjectBackingClass
+    : I32EnumAttrCase<"Class", 1, "class">;
+def SimVPIObjectBackingCodeUnit
+    : I32EnumAttrCase<"CodeUnit", 2, "code_unit">;
+def SimVPIObjectBackingKind : I32EnumAttr<
+    "VPIObjectBackingKind", "physical descriptor backing a VPI anchor", [
+      SimVPIObjectBackingScope, SimVPIObjectBackingClass,
+      SimVPIObjectBackingCodeUnit
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // Source-semantic type categories retained only in immutable reflection
 // inventory. Executable operations continue to use normalized simulation
 // types, so VPI metadata cannot inhibit canonicalization or tier formation.
@@ -98,6 +116,8 @@ def SimVPITypeMailbox : I32EnumAttrCase<"Mailbox", 33, "mailbox">;
 def SimVPITypeSemaphore : I32EnumAttrCase<"Semaphore", 34, "semaphore">;
 def SimVPITypeVoid : I32EnumAttrCase<"Void", 35, "void">;
 def SimVPITypeUntyped : I32EnumAttrCase<"Untyped", 36, "untyped">;
+def SimVPITypeSequence : I32EnumAttrCase<"Sequence", 37, "sequence">;
+def SimVPITypeProperty : I32EnumAttrCase<"Property", 38, "property">;
 def SimVPITypeKind : I32EnumAttr<
     "VPITypeKind", "source-semantic VPI reflection type category", [
       SimVPITypeUnknown, SimVPITypeGenericIntegral, SimVPITypeBit,
@@ -112,7 +132,7 @@ def SimVPITypeKind : I32EnumAttr<
       SimVPITypeEvent, SimVPITypePackedOpenArray,
       SimVPITypeUnpackedOpenArray, SimVPITypeProcess, SimVPITypeCovergroup,
       SimVPITypeMailbox, SimVPITypeSemaphore, SimVPITypeVoid,
-      SimVPITypeUntyped
+      SimVPITypeUntyped, SimVPITypeSequence, SimVPITypeProperty
     ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -702,6 +722,24 @@ def SimComputeObservabilityKind
     : I32EnumAttr<"ComputeObservabilityKind", "VPI state observability", [
         SimComputeObservabilityInvisible, SimComputeObservabilitySafePoint,
         SimComputeObservabilityExternallyWritable
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// How a persistent typespec entered the reflection inventory.  This is kept
+// distinct from the concrete VPI typespec kind: an enum typedef and an
+// anonymous enum definition have the same VPI kind but different ownership
+// and vpiTypedef behavior.
+def SimVPITypespecTypedef
+    : I32EnumAttrCase<"Typedef", 0, "typedef">;
+def SimVPITypespecInterface
+    : I32EnumAttrCase<"Interface", 1, "interface">;
+def SimVPITypespecAnonymousEnum
+    : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
+def SimVPITypespecOrigin
+    : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
+        SimVPITypespecTypedef, SimVPITypespecInterface,
+        SimVPITypespecAnonymousEnum
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

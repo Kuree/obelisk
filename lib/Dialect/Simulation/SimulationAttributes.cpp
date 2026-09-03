@@ -38,6 +38,30 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+LogicalResult
+VPIObjectBackingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                             VPIObjectBackingKind kind, IntegerAttr id,
+                             FlatSymbolRefAttr symbol) {
+  switch (kind) {
+  case VPIObjectBackingKind::Scope:
+  case VPIObjectBackingKind::CodeUnit:
+    if (!id || symbol)
+      return emitError()
+             << "VPI scope/code-unit backing requires only a numeric ID";
+    if (!id.getType().isSignlessInteger(64))
+      return emitError() << "VPI backing ID must be a signless i64";
+    if (id.getValue().isNegative())
+      return emitError() << "VPI backing ID must be nonnegative";
+    return success();
+  case VPIObjectBackingKind::Class:
+    if (id || !symbol)
+      return emitError()
+             << "VPI class backing requires only a flat class symbol";
+    return success();
+  }
+  llvm_unreachable("unknown VPI object backing kind");
+}
+
 LogicalResult VPITypeSemanticsAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, VPITypeKind kind,
     bool isSigned, bool isFourState, StringAttr name, SymbolRefAttr symbol,
@@ -93,7 +117,11 @@ LogicalResult VPITypeSemanticsAttr::verify(
     return emitError() << "VPI semantic type kind "
                        << stringifyVPITypeKind(kind)
                        << " requires a named-type identity";
-  if (name && symbol)
+  if (kind == VPITypeKind::VirtualInterface && !name)
+    return emitError()
+           << "VPI virtual-interface semantic type requires its opaque "
+              "specialization identity";
+  if (name && symbol && kind != VPITypeKind::VirtualInterface)
     return emitError()
            << "VPI semantic type cannot carry two named-type identities";
   if (modport && kind != VPITypeKind::VirtualInterface)
@@ -237,6 +265,9 @@ LogicalResult VPITypeSemanticsAttr::verify(
       return emitError() << "untagged VPI aggregate cannot reserve tag bits";
     const bool packed =
         kind == VPITypeKind::PackedStruct || kind == VPITypeKind::PackedUnion;
+    if (packed && bitWidth.getValue().isZero())
+      return emitError()
+             << "packed VPI aggregate must have a nonzero bit width";
     if (packed && (bitWidth.getValue() != selectableWidth.getValue() ||
                    bitWidth.getValue() != bitstreamWidth.getValue()))
       return emitError() << "packed VPI aggregate widths must agree";
@@ -282,6 +313,8 @@ LogicalResult VPITypeSemanticsAttr::verify(
   case VPITypeKind::UnpackedArray: {
     auto element = cast<VPITypeSemanticsAttr>(children[0]);
     if (isFourState != element.getIsFourState() ||
+        (kind == VPITypeKind::PackedArray &&
+         isSigned != element.getIsSigned()) ||
         (kind == VPITypeKind::UnpackedArray && isSigned))
       return emitError()
              << "VPI fixed-array flags contradict its element or packing";
@@ -1333,7 +1366,7 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       std::optional<uint64_t> extent = rangeWidth(semantic.getRange());
       std::optional<uint64_t> element = semanticPackedWidth(
           cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]));
-      if (!extent || !element ||
+      if (!extent || !element || *extent == 0 || *element == 0 ||
           *extent > std::numeric_limits<uint64_t>::max() / *element)
         return std::nullopt;
       return *extent * *element;
@@ -1492,8 +1525,10 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       }
       return keyMatches && matches(value.getElementType(), element);
     }
-    case VPITypeKind::Class:
-      return isa<ClassHandleType>(type);
+    case VPITypeKind::Class: {
+      auto value = dyn_cast<ClassHandleType>(type);
+      return value && value.getClassName() == semantic.getSymbol();
+    }
     case VPITypeKind::VirtualInterface: {
       auto value = dyn_cast<VirtualInterfaceType>(type);
       if (!value || value.getModport() != semantic.getModport())
@@ -1509,8 +1544,10 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       return isa<EventType>(type);
     case VPITypeKind::Process:
       return isa<ProcessType>(type);
-    case VPITypeKind::Covergroup:
-      return isa<CovergroupHandleType>(type);
+    case VPITypeKind::Covergroup: {
+      auto value = dyn_cast<CovergroupHandleType>(type);
+      return value && value.getCovergroupName() == semantic.getSymbol();
+    }
     case VPITypeKind::Mailbox: {
       auto value = dyn_cast<MailboxType>(type);
       return value &&
@@ -1535,6 +1572,9 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       return isa<IntegerType>(type) && cast<IntegerType>(type).getWidth() == 1;
     case VPITypeKind::Untyped:
       return isa<BoxType>(type);
+    case VPITypeKind::Sequence:
+    case VPITypeKind::Property:
+      return false;
     }
     llvm_unreachable("unhandled VPI semantic type kind");
   };

@@ -3758,7 +3758,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
               sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
               sim::SimPassSwitchDeclOp, sim::SimClassDeclOp,
-              sim::SimCovergroupDeclOp, sim::SimVPITypespecDeclOp,
+              sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
+              sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
               sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
               sim::SimRandomConstraintTemplateOp>(operation)) {
         operation->erase();

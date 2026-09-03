@@ -175,23 +175,87 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let hasVerifier = 1;
 }
 
+def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "canonical source identity for a persistent VPI object";
+  let description = [{
+    Separates source-language identity from executable descriptor identity.
+    `parent` preserves exact lexical ownership even when the display hierarchy
+    is ambiguous, as it is for multiple compilation units.  A backing maps the
+    anchor onto an existing scope, class, or code-unit record; otherwise the
+    serializer materializes a static-only reflection object.  Anchors never
+    participate in scheduling or executable lowering.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$inventory_id,
+                       I32Attr:$vpi_kind, I64Attr:$enclosing_scope_id,
+                       OptionalAttr<FlatSymbolRefAttr>:$parent,
+                       I64Attr:$owner_ordinal,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       OptionalAttr<UnitAttr>:$is_compilation_unit,
+                       OptionalAttr<SimVPIObjectBackingAttr>:$backing);
+  let assemblyFormat = [{
+    $sym_name `id` $inventory_id `type` $vpi_kind
+    `in` $enclosing_scope_id (`parent` $parent^)?
+    `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
-    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "immutable named VPI typespec inventory";
   let description = [{
-    Preserves a source typedef as a resolvable symbol after semantic IR is
-    erased. `target_type` retains the complete canonical source shape and its
-    ordered typedef-alias layers. The declaration is reflection inventory
-    only and never participates in executable type conversion or scheduling.
+    Preserves a source typespec as a resolvable symbol after semantic IR is
+    erased. For typedefs and anonymous enums, `owner` is the exact source VPI
+    anchor and, unlike `scope_id`, does not collapse lexical package,
+    compilation-unit, class, subroutine, property, or sequence scopes. An
+    interface typespec uses its enclosing persistent anchor as an image
+    namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
+    traversal. `target_type` retains the complete canonical source shape,
+    optional interface/modport identity, and ordered typedef-alias layers. The
+    declaration is reflection inventory only and never participates in
+    executable type conversion or scheduling.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
-                       I64Attr:$scope_id, StrAttr:$hierarchical_name,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       StrAttr:$hierarchical_name,
                        StrAttr:$debug_name,
-                       SimVPITypeSemanticsAttr:$target_type);
+                       SimVPITypeSemanticsAttr:$target_type,
+                       DefaultValuedAttr<SimVPITypespecOrigin,
+                         "::obelisk::sim::VPITypespecOrigin::Typedef">:$origin,
+                       OptionalAttr<I64Attr>:$source_type_identity);
   let assemblyFormat = [{
-    $sym_name `id` $id `in` $scope_id `hierarchy` $hierarchical_name
+    $sym_name `id` $id `in` $scope_id `owner` $owner
+    `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable VPI enum-constant inventory";
+  let description = [{
+    Preserves one enum member in declaration order after semantic IR is
+    erased. `enum_typespec` is an exact symbol relation to the owning enum
+    typespec, so escaped names and identically named compilation-unit enums
+    cannot collide. `value` retains the source four-state constant spelling
+    for later reflection-image encoding. This declaration never participates
+    in execution or scheduling.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$ordinal,
+                       FlatSymbolRefAttr:$enum_typespec,
+                       StrAttr:$name, StrAttr:$value);
+  let assemblyFormat = [{
+    $id `enum` $enum_typespec `ordinal` $ordinal
+    `name` $name `value` $value attr-dict
   }];
   let hasVerifier = 1;
 }

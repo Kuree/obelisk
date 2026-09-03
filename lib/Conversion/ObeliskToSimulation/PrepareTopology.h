@@ -83,7 +83,8 @@ bool isNestedInCodeUnit(mlir::Operation *operation);
 mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     mlir::ModuleOp module, ir::SVRootSymbolOp semanticRoot,
     const PreparedPortAliases &portAliases,
-    const PreparedScopeDeclarations &scopes, uint64_t designPrecisionFs,
+    const PreparedScopeDeclarations &scopes,
+    const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
