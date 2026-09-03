@@ -1200,6 +1200,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("values 1 through 11", excluded.reason)
         self.assertIn("exact warning text", excluded.reason)
 
+    def test_enum_percent_s_name_is_not_a_standard_format(self):
+        excluded = verilator.EXCLUDED["t_enum_huge_methods"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 21.2.1.8")
+        self.assertIn("packed 8-bit ASCII", excluded.reason)
+        self.assertIn("non-standard", excluded.reason)
+
     def test_verilator_native_dpi_drivers_are_not_portable_dpi_bodies(self):
         for name in ("t_dpi_export_context_bad",
                      "t_dpi_export_context2_bad"):

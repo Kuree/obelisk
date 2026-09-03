@@ -985,6 +985,11 @@ STRING_WILDCARD_EQUALITY = Exclusion(
     "Table 11-1 restricts wildcard equality to integral operands; the test "
     "requires Verilator's extension of ==? and !=? to a string expression, "
     "while Table 6-9 defines only ordinary equality for strings")
+ENUM_AS_STRING_FORMAT_EXTENSION = Exclusion(
+    "IEEE 1800-2017 21.2.1.8",
+    "%s interprets an integral argument as packed 8-bit ASCII character "
+    "codes; the test explicitly marks its expectation that a wide enum print "
+    "the enum identifier through %s as non-standard")
 DYNAMIC_OUTPUT_PORT_NET_SELECT = Exclusion(
     "IEEE 1800-2017 23.3.3",
     "an output-port connection drives its outside net as a continuous "
@@ -1096,6 +1101,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_disable_genfor_unsup": VERILATOR_GENERATE_BLOCK_DISABLE_UNSUPPORTED,
     "t_bind": PROGRAM_COMPLETION_FINISHES_SIMULATION,
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
+    "t_enum_huge_methods": ENUM_AS_STRING_FORMAT_EXTENSION,
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
     "t_eq_wild": STRING_WILDCARD_EQUALITY,
     "t_force_immediate_release_port_net": DYNAMIC_OUTPUT_PORT_NET_SELECT,
