@@ -1647,6 +1647,7 @@ class CompileSettings(NamedTuple):
     top: str | None
     library_flags: list[str]
     frontend_flags: list[str]
+    parameter_overrides: list[tuple[str, str]]
 
 
 def detect_compile_settings(descriptor: Path) -> CompileSettings:
@@ -1660,7 +1661,7 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
     being evaluated.
     """
     if not descriptor.exists():
-        return CompileSettings([], None, [], [])
+        return CompileSettings([], None, [], [], [])
     text = descriptor.read_text(encoding="utf-8", errors="replace")
     tokens: list[str] = []
 
@@ -1688,6 +1689,7 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
     selected_top = None
     library_flags: list[str] = []
     frontend_flags: list[str] = []
+    parameter_overrides: dict[str, str] = {}
     current_work_library = None
     regress = descriptor.parent.parent.resolve()
 
@@ -1711,6 +1713,14 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
             frontend_flags.extend(
                 ("-Xslang", f"--max-constexpr-depth={depth}"))
 
+    def add_parameter_override(spelling: str) -> None:
+        match = re.fullmatch(
+            r"([A-Za-z_][A-Za-z0-9_$]*)="
+            r"([+-]?\d+|\d*'[sS]?[bBoOdDhH][0-9a-fA-F_xXzZ?]+)",
+            spelling)
+        if match:
+            parameter_overrides[match.group(1)] = match.group(2)
+
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -1727,6 +1737,12 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
                 index += 1
         elif token.startswith(("--top=", "--top-module=")):
             selected_top = token.split("=", 1)[1] or selected_top
+        elif token == "-G":
+            if index + 1 < len(tokens):
+                add_parameter_override(tokens[index + 1])
+                index += 1
+        elif token.startswith("-G") and len(token) > 2:
+            add_parameter_override(token[2:])
         elif token.startswith("+libext+"):
             library_flags.extend(
                 option
@@ -1765,7 +1781,7 @@ def detect_compile_settings(descriptor: Path) -> CompileSettings:
             f"-D{name}={cycles.group(1)}"
             for name in DYNAMIC_CYCLES_DEFINE.findall(text))
     return CompileSettings(defines, selected_top, library_flags,
-                           frontend_flags)
+                           frontend_flags, list(parameter_overrides.items()))
 
 
 def detect_compile_defines(descriptor: Path) -> list[str]:
@@ -2083,16 +2099,27 @@ def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top",
                    instance_module: str = "t",
-                   time_scope_declarations: tuple[str, ...] = ()) -> str:
+                   time_scope_declarations: tuple[str, ...] = (),
+                   parameter_overrides: tuple[tuple[str, str], ...] = ()) -> str:
     """Generate the clock-driving top module, matching driver.py's _make_top_v."""
     ports = sorted(inputs)
     names = set(ports)
     lines = [f"module {module_name};"]
     lines.extend(f"    {declaration}"
                  for declaration in time_scope_declarations)
+    lines.extend(f"    parameter {name} = {value};"
+                 for name, value in parameter_overrides)
     for port in ports:
         lines.append(f"    reg {port};")
-    lines.append(f"    {instance_module} t (")
+    if parameter_overrides:
+        lines.append(f"    {instance_module} #(")
+        comma = ""
+        for name, _ in parameter_overrides:
+            lines.append(f"      {comma}.{name} ({name})")
+            comma = ","
+        lines.append("    ) t (")
+    else:
+        lines.append(f"    {instance_module} t (")
     comma = ""
     for port in ports:
         lines.append(f"      {comma}.{port} ({port})")
@@ -2273,7 +2300,8 @@ def judge_one(
                     detect_timing_loop(descriptor),
                     selected_top,
                     driver_module,
-                    detect_time_scope_declarations(top_text, driver_module)),
+                    detect_time_scope_declarations(top_text, driver_module),
+                    tuple(compile_settings.parameter_overrides)),
                 encoding="utf-8")
             design_sources.append(str(shell))
         binary = Path(tmp) / "sim"

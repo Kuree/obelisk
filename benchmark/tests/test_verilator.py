@@ -183,6 +183,12 @@ class TopShellTest(unittest.TestCase):
             ["clk"], instance_module="test")
         self.assertIn("test t (", shell)
 
+    def test_top_parameter_overrides_are_forwarded_through_the_shell(self):
+        shell = verilator.make_top_shell(
+            ["clk"], parameter_overrides=(("WIDTH", "12"),))
+        self.assertIn("parameter WIDTH = 12;", shell)
+        self.assertIn("t #(\n      .WIDTH (WIDTH)\n    ) t (", shell)
+
     def test_explicit_dut_time_scope_is_copied_to_the_shell(self):
         source = ("module t;\n"
                   "  timeunit 10s; timeprecision 1s;\n"
@@ -359,6 +365,28 @@ class CompileTopDescriptorTest(unittest.TestCase):
     def test_dynamic_top_flag_is_not_guessed(self):
         self.assertIsNone(self.top(
             "test.compile(verilator_flags2=['--top ' + selected])\n"))
+
+
+class CompileParameterDescriptorTest(unittest.TestCase):
+    def overrides(self, text: str) -> list[tuple[str, str]]:
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            path = Path(tmp) / "t_x.py"
+            path.write_text(text, encoding="utf-8")
+            return verilator.detect_compile_settings(path).parameter_overrides
+
+    def test_literal_top_parameter_overrides_are_recovered(self):
+        self.assertEqual(
+            self.overrides("test.compile(verilator_flags2=["
+                           "'-GWIDTH=12 -G DEPTH=4'])\n"),
+            [("WIDTH", "12"), ("DEPTH", "4")],
+        )
+
+    def test_hierarchical_or_nonliteral_overrides_are_not_injected(self):
+        self.assertEqual(
+            self.overrides("test.compile(verilator_flags2=["
+                           "'-Gtop.t.WIDTH=12 -GNAME=text'])\n"),
+            [],
+        )
 
 
 class CompileFrontendDescriptorTest(unittest.TestCase):
