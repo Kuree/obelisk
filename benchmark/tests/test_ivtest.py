@@ -111,6 +111,7 @@ class FixtureDirectoryTest(unittest.TestCase):
             "ERROR: /checkout/ivltests/sv_immediate_assert.v:11: "
             "immediate assertion failed.\n"
             "ERROR: /checkout/ivltests/sv_immediate_assert.v:19: "
+            "test.a_i_is_non_0: simulation time 0: "
             "Check 9 : this should be displayed\n")
 
         self.assertTrue(ivtest._matches_assertion_gold_override(

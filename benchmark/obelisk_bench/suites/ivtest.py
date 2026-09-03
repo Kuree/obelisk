@@ -342,15 +342,17 @@ _IMMEDIATE_ASSERTION_ORACLE = AssertionGoldOracle(
     stdout=(*_ASSERTION_ACTIONS, "Check 10 : this should be displayed"),
     errors=((7, "immediate assertion failed."),
             (11, "immediate assertion failed."),
-            (19, "Check 9 : this should be displayed")),
+            (19, "test.a_i_is_non_0: simulation time 0: "
+                 "Check 9 : this should be displayed")),
 )
 
 # Icarus's deferred gold files contain only its "unsupported" diagnostics;
 # the immediate gold files mix tool-specific error formatting into portable
-# action output. IEEE 1800-2017 16.3 and 16.4.1 define the semantic result, so
-# require every action and every default/explicit error instead of inheriting
-# either implementation's presentation. Lookup is O(1); matching is linear in
-# the short output of the one selected test.
+# action output. IEEE 1800-2017 16.3 and 16.4.1 define the semantic result, and
+# 20.10 requires the explicit $error to report its scope and simulation time,
+# so require every action and every default/explicit error instead of
+# inheriting either implementation's presentation. Lookup is O(1); matching is
+# linear in the short output of the one selected test.
 ASSERTION_GOLD_OVERRIDES: dict[str, AssertionGoldOracle] = {
     "sv_deferred_assert1": _DEFERRED_ASSERTION_ORACLE,
     "sv_deferred_assert2": _DEFERRED_ASSERTION_ORACLE,
