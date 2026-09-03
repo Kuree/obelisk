@@ -50,6 +50,12 @@ ASSERTION_FAILURE = re.compile(r"\bassert(?:ion)?\b.*\bfailed\b",
                                re.IGNORECASE)
 FINISH_DIAGNOSTIC = re.compile(
     r"\$finish: [^\n]*: simulation time [^\n]*(?:\n|\Z)")
+VERILATOR_STOP_SEQUENCE = re.compile(
+    r"(?m)^%Error: (?P<file>.*):(?P<line>\d+): Verilog \$stop\r?\n"
+    r"Aborting\.\.\.(?:\r?\n|\Z)")
+OBELISK_STOP_DIAGNOSTIC = re.compile(
+    r"(?m)^\$stop: (?P<file>.*):(?P<line>\d+): simulation time "
+    r"(?P<time>\d+)(?:\r?\n|\Z)")
 VERILATOR_SEVERITY_LINE = re.compile(
     r"^\[(?P<time>\d+)\] [-%](?P<severity>Info|Warning|Error|Fatal): "
     r"(?P<file>.*):(?P<line>\d+): (?P<scope>[^:]+)"
@@ -62,6 +68,13 @@ OBELISK_SEVERITY_LINE = re.compile(
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
 CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
+# These fixtures call $stop without advancing time. Their Verilator goldens
+# require Verilator's abort policy but omit the simulation time that 20.2
+# requires the default $stop diagnostic to print.
+STOP_GOLDEN_TIMES = {
+    "t_stop_bad": 0,
+    "t_stop_winos_bad": 0,
+}
 # These self-checks print from independent time-zero / Active-region processes.
 # The LRM gives those processes no relative order, so compare their complete
 # line multisets rather than Verilator's one observed sequence.
@@ -2235,6 +2248,49 @@ def runtime_errors_mismatch_golden(
     return contains_runtime_error(stdout, stderr)
 
 
+def _source_basename(path: str) -> str:
+    """Return a source basename for either POSIX or Windows spelling."""
+    return re.split(r"[/\\]", path)[-1]
+
+
+def stop_runtime_matches_golden(
+        descriptor: Path, stdout: str, stderr: str, timed_out: bool,
+) -> bool | None:
+    """Match a standard $stop event without requiring Verilator's abort.
+
+    IEEE 1800-2017 20.2 says $stop suspends simulation and that its default
+    diagnostic reports simulation time and location. It does not require the
+    nonzero exit, ``%Error`` spelling, or ``Aborting...`` text in Verilator's
+    golden. Preserve the rest of that golden byte-for-byte and require the
+    exact source basename, line, and fixture-specific time.
+    """
+    expected_time = STOP_GOLDEN_TIMES.get(descriptor.stem)
+    if expected_time is None:
+        return None
+    golden = _golden_output(descriptor)
+    if golden is None:
+        return False
+    expected = golden.read_text(encoding="utf-8", errors="replace")
+    expected_stops = list(VERILATOR_STOP_SEQUENCE.finditer(expected))
+    if len(expected_stops) != 1:
+        return False
+    actual = stdout + stderr
+    actual_stops = list(OBELISK_STOP_DIAGNOSTIC.finditer(actual))
+    if timed_out or len(actual_stops) != 1:
+        return False
+    expected_stop = expected_stops[0]
+    actual_stop = actual_stops[0]
+    if (_source_basename(expected_stop.group("file")) !=
+            _source_basename(actual_stop.group("file")) or
+            expected_stop.group("line") != actual_stop.group("line") or
+            int(actual_stop.group("time")) != expected_time):
+        return False
+    expected_output = (expected[:expected_stop.start()] +
+                       expected[expected_stop.end():])
+    actual_output = actual[:actual_stop.start()] + actual[actual_stop.end():]
+    return actual_output == expected_output
+
+
 def make_top_shell(inputs: list[str], sim_time: int = SIM_TIME,
                    timing_loop: bool = False,
                    module_name: str = "top",
@@ -2499,6 +2555,14 @@ def judge_one(
             args=detect_run_args(descriptor), cwd=tmp, merge_stderr=True)
         runtime_log = result.stdout + result.stderr
         runtime_error = contains_runtime_error(result.stdout, result.stderr)
+        stop_match = stop_runtime_matches_golden(
+            descriptor, result.stdout, result.stderr, result.timed_out)
+        if stop_match is not None:
+            if stop_match:
+                return model.Outcome(model.XFAIL_PASS)
+            return model.Outcome(
+                model.RUN_FAIL,
+                classify_dependency_failure(name, runtime_log))
         if expectation.run_error:
             # The design builds and the run is what has to fail. A timeout is
             # not that failure: it means the run never reached a verdict.

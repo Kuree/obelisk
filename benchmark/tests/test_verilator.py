@@ -642,6 +642,34 @@ class RuntimeErrorTest(unittest.TestCase):
             self.assertTrue(verilator.runtime_errors_mismatch_golden(
                 descriptor, "", ""))
 
+    def test_stop_golden_matches_standard_diagnostic_not_abort_policy(self):
+        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+            descriptor = Path(tmp) / "t_stop_bad.py"
+            descriptor.write_text(
+                "test.execute(fails=True, "
+                "expect_filename=test.golden_filename)\n",
+                encoding="utf-8")
+            descriptor.with_suffix(".out").write_text(
+                "Intentional stop\n"
+                "%Error: t/t_stop_bad.v:10: Verilog $stop\n"
+                "Aborting...\n",
+                encoding="utf-8")
+            diagnostic = (
+                "$stop: /checkout/t/t_stop_bad.v:10: simulation time 0\n")
+
+            self.assertTrue(verilator.stop_runtime_matches_golden(
+                descriptor, diagnostic + "Intentional stop\n", "", False))
+            self.assertFalse(verilator.stop_runtime_matches_golden(
+                descriptor, diagnostic + "Wrong output\n", "", False))
+            self.assertFalse(verilator.stop_runtime_matches_golden(
+                descriptor, diagnostic.replace(":10:", ":11:") +
+                "Intentional stop\n", "", False))
+            self.assertFalse(verilator.stop_runtime_matches_golden(
+                descriptor, diagnostic.replace("time 0", "time 1") +
+                "Intentional stop\n", "", False))
+            self.assertFalse(verilator.stop_runtime_matches_golden(
+                descriptor, diagnostic + "Intentional stop\n", "", True))
+
 
 class GoldenOutputTest(unittest.TestCase):
     def match(self, expected: str, stdout: str, stderr: str = "",
