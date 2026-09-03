@@ -71,6 +71,10 @@ static_assert(IndexLayout.size == 24);
 static_assert(StatementLayout.size == 40);
 static_assert(StatementSiteLayout.size == 16);
 static_assert(RelationLayout.size == 16);
+static_assert(tableIndexPackedShift == 30);
+static_assert(unpackTableIndexKind((uint32_t{2} << 30) | 17) ==
+              TableKind::Statement);
+static_assert(unpackTableIndex((uint32_t{2} << 30) | 17) == 17);
 
 static_assert(uint32_t(RecordKind::Scope) == OBELISK_RT_DESIGN_RECORD_SCOPE);
 static_assert(uint32_t(RecordKind::Storage) ==

@@ -166,20 +166,20 @@ def StatementSite : ReflectionLayout<"StatementSite", 16,
   [StatementSiteID, StatementSiteStatementIndex, StatementSitePhase,
    StatementSiteFlags]>;
 
-// Compact statement-traversal adjacency. Stable MLIR IDs are resolved to
-// 32-bit table indices during serialization. The source's exact VPI kind and
-// two-bit table tag share SourceKindAndTable; the target is always a statement
-// and its exact kind is authoritative in the statement table. Handle/iterate
-// legality is recovered from the generated VPI traversal model instead of
-// redundantly stored per design edge.
+// Compact VPI-traversal adjacency. Stable MLIR IDs are resolved to table
+// indices during serialization. The source's exact VPI kind, access-mode bit,
+// and two-bit table tag share SourceKindAndTable; the target table tag occupies
+// the high bits of TargetIndexAndTable. Traversal legality is recovered from
+// the generated VPI model instead of redundantly stored per design edge.
 def RelationSourceIndex : ReflectionField<"SourceIndex", 0, U32LE>;
-def RelationTargetIndex : ReflectionField<"TargetIndex", 4, U32LE>;
+def RelationTargetIndexAndTable
+    : ReflectionField<"TargetIndexAndTable", 4, U32LE>;
 def RelationOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
 def RelationSelector : ReflectionField<"Selector", 12, U16LE>;
 def RelationSourceKindAndTable
     : ReflectionField<"SourceKindAndTable", 14, U16LE>;
 def Relation : ReflectionLayout<"Relation", 16,
-  [RelationSourceIndex, RelationTargetIndex, RelationOrdinal,
+  [RelationSourceIndex, RelationTargetIndexAndTable, RelationOrdinal,
    RelationSelector, RelationSourceKindAndTable]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;

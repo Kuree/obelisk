@@ -2685,7 +2685,8 @@ obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
     const obelisk_rt_context *context, uint64_t relationIndex,
-    obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType) noexcept;
+    obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType,
+    bool *outStatement) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     obelisk_rt_design_cursor_v1 *outScope) noexcept;

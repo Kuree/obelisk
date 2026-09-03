@@ -112,13 +112,16 @@ for index in range(statement_site_count):
 
 for index in range(relation_count):
     offset = relation_offset + index * 16
-    source, target, ordinal, selector, packed_source = struct.unpack_from(
+    source, packed_target, ordinal, selector, packed_source = struct.unpack_from(
         "<IIIHH", image, offset
     )
     source_table = packed_source >> 14
-    source_kind = packed_source & 0x3FFF
+    source_mode = "iterate" if packed_source & 0x2000 else "handle"
+    source_kind = packed_source & 0x1FFF
+    target_table = packed_target >> 30
+    target = packed_target & 0x3FFFFFFF
     print(
         f"relation source_table={source_table} source={source} "
-        f"source_type={source_kind} selector={selector} ordinal={ordinal} "
-        f"target_statement={target}"
+        f"source_type={source_kind} mode={source_mode} selector={selector} ordinal={ordinal} "
+        f"target_table={target_table} target={target}"
     )

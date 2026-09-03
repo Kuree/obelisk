@@ -55,6 +55,49 @@ constexpr bool tableKindPackingIsStable() {
 }
 static_assert(tableKindPackingIsStable());
 
+static_assert(tableIndexPackedShift == 30);
+static_assert(tableIndexPayloadMask == 0x3fffffff);
+static_assert(canPackTableIndex(tableIndexPayloadMask));
+static_assert(!canPackTableIndex(tableIndexPayloadMask + 1));
+
+constexpr bool tableIndexPackingIsStable() {
+  for (TableKind table :
+       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+    uint32_t packed = 0;
+    if (!tryPackTableIndex(table, tableIndexPayloadMask, packed) ||
+        unpackTableIndexKind(packed) != table ||
+        unpackTableIndex(packed) != tableIndexPayloadMask)
+      return false;
+  }
+  uint32_t rejected = 0;
+  return !tryPackTableIndex(static_cast<TableKind>(3), 0, rejected) &&
+         !tryPackTableIndex(TableKind::Scope, tableIndexPayloadMask + 1,
+                            rejected);
+}
+static_assert(tableIndexPackingIsStable());
+
+static_assert(relationSourceKindMask == 0x1fff);
+constexpr bool relationSourcePackingIsStable() {
+  for (TableKind table :
+       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+    for (bool iterate : {false, true}) {
+      uint16_t packed = 0;
+      if (!tryPackRelationSource(table, relationSourceKindMask, iterate,
+                                 packed) ||
+          unpackRelationSourceTable(packed) != table ||
+          unpackRelationSourceKind(packed) != relationSourceKindMask ||
+          relationSourceIsIterate(packed) != iterate)
+        return false;
+    }
+  }
+  uint16_t rejected = 0;
+  return !tryPackRelationSource(static_cast<TableKind>(3), 0, false,
+                                rejected) &&
+         !tryPackRelationSource(TableKind::Scope, relationSourceKindMask + 1,
+                                false, rejected);
+}
+static_assert(relationSourcePackingIsStable());
+
 uint32_t vpiKindForCodeUnit(sim::SimCodeUnitDeclOp codeUnit) {
   if (codeUnit.getInternalAttr() ||
       !sim::isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
@@ -120,7 +163,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct RelationRecord {
     TableKind sourceTable;
     uint32_t sourceIndex;
-    uint32_t targetIndex;
+    bool iterate;
+    uint32_t targetIndexAndTable;
     uint32_t ordinal;
     uint16_t selector;
     uint16_t sourceKindAndTable;
@@ -304,9 +348,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
              [](StatementSiteRecord left, StatementSiteRecord right) {
                return left.declaration.getId() < right.declaration.getId();
              });
+  uint64_t relationRecordCount = 0;
+  for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations)
+    relationRecordCount += ((relation.getModeMask() & 1) != 0) +
+                           ((relation.getModeMask() & 2) != 0);
   if (scopes.size() > UINT32_MAX || objects.size() > UINT32_MAX ||
       statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX ||
-      relationDeclarations.size() > UINT32_MAX) {
+      relationRecordCount > UINT32_MAX) {
     design.emitOpError("reflection table exceeds 32-bit compact indices");
     return {};
   }
@@ -524,7 +572,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t relationOffset =
       statementSiteOffset + statementSites.size() * StatementSiteLayout.size;
   uint64_t stringOffset =
-      relationOffset + relationDeclarations.size() * RelationLayout.size;
+      relationOffset + relationRecordCount * RelationLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -547,7 +595,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     statementIndices[statement.declaration.getId()] =
         static_cast<uint32_t>(index);
 
-  relations.reserve(relationDeclarations.size());
+  relations.reserve(relationRecordCount);
   for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
     TableKind sourceTable = TableKind::Scope;
     uint32_t sourceIndex = 0;
@@ -588,24 +636,35 @@ SmallVector<uint8_t> serializeDesignDatabase(
       relation.emitOpError("relation target statement was not serialized");
       return {};
     }
-    uint16_t sourceKindAndTable = 0;
-    if (!tryPackTableKindPayload(sourceTable, relation.getSourceVpiKind(),
-                                 sourceKindAndTable)) {
-      relation.emitOpError("relation source VPI kind cannot be packed");
+    uint32_t targetIndexAndTable = 0;
+    if (!tryPackTableIndex(TableKind::Statement, target->second,
+                           targetIndexAndTable)) {
+      relation.emitOpError("relation target table index cannot be packed");
       return {};
     }
-    relations.push_back({sourceTable, sourceIndex, target->second,
-                         static_cast<uint32_t>(relation.getOrdinal()),
-                         static_cast<uint16_t>(relation.getSelector()),
-                         sourceKindAndTable});
+    for (uint32_t mode = 0; mode != 2; ++mode) {
+      if ((relation.getModeMask() & (uint32_t{1} << mode)) == 0)
+        continue;
+      bool iterate = mode != 0;
+      uint16_t sourceKindAndTable = 0;
+      if (!tryPackRelationSource(sourceTable, relation.getSourceVpiKind(),
+                                 iterate, sourceKindAndTable)) {
+        relation.emitOpError("relation source VPI kind cannot be packed");
+        return {};
+      }
+      relations.push_back(
+          {sourceTable, sourceIndex, iterate, targetIndexAndTable,
+           static_cast<uint32_t>(relation.getOrdinal()),
+           static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
+    }
   }
-  llvm::sort(
-      relations, [](const RelationRecord &left, const RelationRecord &right) {
-        return std::tie(left.sourceTable, left.sourceIndex, left.selector,
-                        left.ordinal, left.targetIndex) <
-               std::tie(right.sourceTable, right.sourceIndex, right.selector,
-                        right.ordinal, right.targetIndex);
-      });
+  llvm::sort(relations, [](const RelationRecord &left,
+                           const RelationRecord &right) {
+    return std::tie(left.sourceTable, left.sourceIndex, left.selector,
+                    left.iterate, left.ordinal, left.targetIndexAndTable) <
+           std::tie(right.sourceTable, right.sourceIndex, right.selector,
+                    right.iterate, right.ordinal, right.targetIndexAndTable);
+  });
 
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
@@ -788,7 +847,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     RelationWriter writer(output.data() + relationOffset +
                           index * RelationLayout.size);
     writer.setSourceIndex(relation.sourceIndex);
-    writer.setTargetIndex(relation.targetIndex);
+    writer.setTargetIndexAndTable(relation.targetIndexAndTable);
     writer.setOrdinal(relation.ordinal);
     writer.setSelector(relation.selector);
     writer.setSourceKindAndTable(relation.sourceKindAndTable);
