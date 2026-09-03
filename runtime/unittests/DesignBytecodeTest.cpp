@@ -5019,6 +5019,62 @@ TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
   }
 }
 
+TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
+  constexpr uint64_t scopeOffset = 176;
+  Fixture fixture;
+  fixture.database = makeDatabase();
+  put32(fixture.database, scopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiClassDefn));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  // Physical ownership is not the restriction in 37.29 detail 2: a static
+  // member reached independently by hierarchical name remains readable.
+  char absoluteMemberName[] = "top.value";
+  vpiHandle direct = vpi_handle_by_name(absoluteMemberName, nullptr);
+  ASSERT_NE(direct, nullptr);
+  s_vpi_value directValue{};
+  directValue.format = vpiIntVal;
+  directValue.value.integer = 73;
+  vpi_get_value(direct, &directValue);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(directValue.value.integer, 0);
+
+  // The same object handle obtained relative to a class-definition handle is
+  // provenance-restricted even though both paths resolve to one record.
+  char className[] = "top";
+  vpiHandle classDefinition = vpi_handle_by_name(className, nullptr);
+  ASSERT_NE(classDefinition, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, classDefinition), vpiClassDefn);
+  char relativeMemberName[] = "value";
+  vpiHandle derived = vpi_handle_by_name(relativeMemberName, classDefinition);
+  ASSERT_NE(derived, nullptr);
+  s_vpi_value derivedValue{};
+  derivedValue.format = vpiIntVal;
+  derivedValue.value.integer = 91;
+  vpi_get_value(derived, &derivedValue);
+  EXPECT_EQ(derivedValue.value.integer, 91);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "vpi_get_value is not defined for a variable or event handle "
+               "obtained from a class definition");
+
+  EXPECT_EQ(vpi_release_handle(derived), 1);
+  EXPECT_EQ(vpi_release_handle(classDefinition), 1);
+  EXPECT_EQ(vpi_release_handle(direct), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 void installStatementDatabase(Fixture &fixture) {
   fixture.database = makeStatementDatabase();
   fixture.execution.design_database = fixture.database.data();
