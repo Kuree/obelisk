@@ -825,6 +825,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     Value destination = sim::SimRefAllocOp::create(
         builder, location,
         sim::RefType::get(function.getContext(), initial.getType()), initial);
+    recordImplicitEventActivationLocal(destination);
     // An automatic declaration executes on each entry to this statement.
     // Keep that reset explicit so SSA promotion does not mistake the
     // allocator's default value for a once-per-function initialization when

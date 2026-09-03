@@ -943,6 +943,11 @@ void UnitLowering::recordSensitivity(Value value) {
     sensitivity.insert(value);
 }
 
+void UnitLowering::recordImplicitEventActivationLocal(Value reference) {
+  if (implicitEventActivationLocals)
+    implicitEventActivationLocals->insert(reference);
+}
+
 void UnitLowering::recordManagedRead(Value reference, Location location) {
   if (!observedDependencies || !isa<sim::ManagedRefType>(reference.getType()))
     return;

@@ -531,6 +531,7 @@ UnitLowering::lowerQualifiedConditional(semantic::SVConditionalStatementOp op) {
       Value destination = sim::SimRefAllocOp::create(
           builder, getSemanticLocation(variable),
           sim::RefType::get(function.getContext(), initial.getType()), initial);
+      recordImplicitEventActivationLocal(destination);
       branch.captures[path] = destination;
       values[path] = destination;
       lvalues[path] = destination;
@@ -836,6 +837,7 @@ FailureOr<Value> UnitLowering::lowerPattern(Value input, Operation *pattern,
       destination = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), input.getType()), input);
+      recordImplicitEventActivationLocal(destination);
     }
     values[path] = destination;
     lvalues[path] = destination;

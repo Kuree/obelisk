@@ -495,6 +495,7 @@ private:
   /// observed instead.
   bool hasWatchableSignalHandle(::mlir::Operation *expression);
   void recordSensitivity(::mlir::Value value);
+  void recordImplicitEventActivationLocal(::mlir::Value reference);
   void recordManagedRead(::mlir::Value reference, ::mlir::Location location);
   void recordContainerSizeRead(::mlir::Value container,
                                ::mlir::Location location);
@@ -771,6 +772,9 @@ private:
   /// a branch-local merge argument.
   ::llvm::DenseMap<::mlir::Value, ::mlir::Value> materializedContainerSources;
   ::llvm::SetVector<::mlir::Value> *observedDependencies = nullptr;
+  /// References allocated while lowering the statement controlled by @*.
+  /// They do not exist yet at that statement's pre-entry wait point.
+  ::llvm::DenseSet<::mlir::Value> *implicitEventActivationLocals = nullptr;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Operation *topLevelWildcardControl = nullptr;
   ::mlir::Operation *activeSampledClock = nullptr;

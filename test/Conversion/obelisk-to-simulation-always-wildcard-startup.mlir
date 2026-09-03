@@ -16,6 +16,10 @@ module {
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "always_wildcard_startup.destination_sum", lifetime = 1 : i32, name = "destination_sum", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s8.destination_sum"} {
         }
+        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "always_wildcard_startup", node_id = 25 : i64, sym_name = "s25"} {
+          obelisk.sv.symbol.variable attributes {hierarchical_name = "always_wildcard_startup.local", name = "local", node_id = 26 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s26.local"} {
+          }
+        }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "always_wildcard_startup", node_id = 9 : i64, procedure_kind = 2 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 10 : i64} {
             obelisk.sv.timing.implicit_event attributes {node_id = 11 : i64} {
@@ -48,6 +52,34 @@ module {
             }
           }
         }
+        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "always_wildcard_startup", node_id = 27 : i64, procedure_kind = 2 : i32, sym_name = "s27", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.statement.timed attributes {node_id = 28 : i64} {
+            obelisk.sv.timing.implicit_event attributes {node_id = 29 : i64} {
+            }
+            obelisk.sv.statement.block attributes {node_id = 30 : i64} {
+              obelisk.sv.statement.list attributes {node_id = 31 : i64} {
+                obelisk.sv.statement.variable_declaration attributes {node_id = 32 : i64, referenced_path = "always_wildcard_startup.local", referenced_symbol = @s1.$root::@s3.always_wildcard_startup::@s4.always_wildcard_startup::@s25::@s26.local} {
+                }
+                obelisk.sv.statement.expression_statement attributes {node_id = 33 : i64} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 34 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 35 : i64, referenced_path = "always_wildcard_startup.local", referenced_symbol = @s1.$root::@s3.always_wildcard_startup::@s4.always_wildcard_startup::@s25::@s26.local, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.named_value attributes {node_id = 36 : i64, referenced_path = "always_wildcard_startup.source", referenced_symbol = @s1.$root::@s3.always_wildcard_startup::@s4.always_wildcard_startup::@s5.source, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+                obelisk.sv.statement.expression_statement attributes {node_id = 37 : i64} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 38 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.named_value attributes {node_id = 39 : i64, referenced_path = "always_wildcard_startup.destination", referenced_symbol = @s1.$root::@s3.always_wildcard_startup::@s4.always_wildcard_startup::@s6.destination, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    obelisk.sv.expression.named_value attributes {node_id = 40 : i64, referenced_path = "always_wildcard_startup.local", referenced_symbol = @s1.$root::@s3.always_wildcard_startup::@s4.always_wildcard_startup::@s25::@s26.local, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -74,4 +106,16 @@ module {
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
 // CHECK: cf.br ^[[MULTI_WAIT]]
+// An activation-local variable does not exist at the pre-entry wait. Keep the
+// design-lifetime source in the implicit event set without capturing the local.
+// CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
+// CHECK: cf.br ^[[LOCAL_WAIT:bb[0-9]+]]
+// CHECK: ^[[LOCAL_WAIT]]:
+// CHECK-NOT: obelisk_sim.suspend.any
+// CHECK: obelisk_sim.suspend.change {{.*}} to ^[[LOCAL_BODY:bb[0-9]+]]
+// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK: ^[[LOCAL_BODY]]:
+// CHECK: obelisk_sim.ref.load
+// CHECK: obelisk_sim.ref.store
+// CHECK: cf.br ^[[LOCAL_WAIT]]
 // CHECK-NOT: obelisk.sv.

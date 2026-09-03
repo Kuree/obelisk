@@ -1150,6 +1150,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_select_plus": PARTIAL_PART_SELECT_WRITE,
     "t_select_negative": UNSIGNED_SELECT_INDEX,
     "t_enum_func": IMPLICIT_SENSITIVITY_STARTUP,
+    "t_wait_iface_vif": IMPLICIT_SENSITIVITY_STARTUP,
     "t_scheduling_3": DECLARATION_INITIALIZER_EVENT,
     "t_sequence_sexpr_throughout": THROUGHOUT_TEMPORAL_AND,
     "t_math_shortreal": SHORTREAL_COMPARISON_PRECISION,

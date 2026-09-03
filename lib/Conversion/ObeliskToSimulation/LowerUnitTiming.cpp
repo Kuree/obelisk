@@ -1174,11 +1174,96 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     setCurrent(continuation);
     llvm::SetVector<Value> dependencies;
     llvm::SetVector<Value> *saved = observedDependencies;
+    llvm::DenseSet<Value> activationLocals;
+    llvm::DenseSet<Value> *savedActivationLocals =
+        implicitEventActivationLocals;
     observedDependencies = &dependencies;
+    implicitEventActivationLocals = &activationLocals;
     LogicalResult result = lowerControlledStatement(nullptr);
     observedDependencies = saved;
+    implicitEventActivationLocals = savedActivationLocals;
     if (failed(result))
       return failure();
+    // IEEE 1800-2017 9.4.2.2 includes variables read by the controlled
+    // statement in an implicit event expression. An automatic variable
+    // declared inside that statement, however, has not been created when the
+    // pre-entry event control is reached and ceases to exist when its block
+    // exits (6.21). Do not make that wait capture an activation-local
+    // reference. Design-lifetime references and automatic variables declared
+    // by an enclosing activation still dominate the wait and remain in the
+    // dependency set.
+    auto referenceRoot = [](Value value) {
+      while (value) {
+        if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefDynExtractOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefArrayElementOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        break;
+      }
+      return value;
+    };
+    auto isLocallyConsumedReference = [](Value root) {
+      llvm::DenseSet<Value> visited;
+      SmallVector<Value> pending{root};
+      while (!pending.empty()) {
+        Value reference = pending.pop_back_val();
+        if (!visited.insert(reference).second)
+          continue;
+        for (OpOperand &use : reference.getUses()) {
+          Operation *user = use.getOwner();
+          if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimRefCopyOp,
+                  sim::SimRefReleaseOwnerOp>(user))
+            continue;
+          Value view;
+          if (auto extract = dyn_cast<sim::SimRefExtractOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefDynExtractOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefSubelementOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefArrayElementOp>(user))
+            view = extract.getResult();
+          if (!view)
+            return false;
+          pending.push_back(view);
+        }
+      }
+      return true;
+    };
+    SmallVector<Value> activationLocalDependencies;
+    for (Value dependency : dependencies) {
+      Value root = referenceRoot(dependency);
+      if (!activationLocals.contains(root))
+        continue;
+      // Reads and writes performed synchronously by this process finish before
+      // it returns to the outer event control, so they cannot trigger that
+      // wait. A reference captured by any other operation may outlive the
+      // statement (for example through a detached fork); rejecting that case
+      // preserves its required sensitivity instead of silently dropping it.
+      if (!isLocallyConsumedReference(root))
+        return emitError(location)
+                   << "implicit event dependency on an activation-local "
+                      "variable escapes its controlled statement",
+               failure();
+      activationLocalDependencies.push_back(dependency);
+    }
+    for (Value dependency : activationLocalDependencies)
+      dependencies.remove(dependency);
+    if (savedActivationLocals)
+      savedActivationLocals->insert(activationLocals.begin(),
+                                    activationLocals.end());
     // IEEE 1800-2017 9.4.2.2: an enclosing implicit event list covers every
     // read of the statement it controls, and this nested statement is part of
     // it. Only the identifiers of a nested event *expression* are excluded,
