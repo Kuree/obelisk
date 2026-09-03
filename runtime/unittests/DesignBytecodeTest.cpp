@@ -4936,6 +4936,89 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
   }
 }
 
+TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
+  {
+    Fixture fixture;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+    char valueName[] = "top.value";
+    vpiHandle valueHandle = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(valueHandle, nullptr);
+
+    s_vpi_value value{};
+    value.format = vpiSuppressVal;
+    value.value.integer = 73;
+    vpi_get_value(valueHandle, &value);
+    EXPECT_EQ(value.format, vpiSuppressVal);
+    EXPECT_EQ(value.value.integer, 73);
+    s_vpi_error_info error{};
+    EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+    EXPECT_STREQ(error.message,
+                 "value format is not valid for this VPI object");
+
+    vpi_get_value(valueHandle, nullptr);
+    EXPECT_EQ(vpi_chk_error(&error), vpiError);
+    EXPECT_STREQ(error.message, "VPI value destination is null");
+    EXPECT_EQ(vpi_release_handle(valueHandle), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  struct RejectedCase {
+    VPIShapeType shape;
+    uint32_t exactType;
+    const char *message;
+  };
+  constexpr RejectedCase cases[] = {
+      {VPIShapeType::UnpackedArrayOfScalar, vpiRegArray,
+       "vpi_get_value is not defined for this VPI object"},
+      // The compiler currently emits generic storage/net exact kinds. The
+      // runtime must still reject the physical root shape before reading.
+      {VPIShapeType::UnpackedArrayOfScalar, vpiReg,
+       "vpi_get_value is not defined for a whole unpacked aggregate"},
+      {VPIShapeType::UnpackedArrayOfVector, vpiNet,
+       "vpi_get_value is not defined for a whole unpacked aggregate"},
+      {VPIShapeType::UnpackedStruct, vpiStructVar,
+       "vpi_get_value is not defined for a whole unpacked aggregate"},
+      {VPIShapeType::UnpackedStruct, vpiReg,
+       "vpi_get_value is not defined for a whole unpacked aggregate"},
+      {VPIShapeType::UnpackedUnion, vpiNet,
+       "vpi_get_value is not defined for a whole unpacked aggregate"},
+  };
+  for (const RejectedCase &testCase : cases) {
+    SCOPED_TRACE(static_cast<unsigned>(testCase.shape));
+    Fixture fixture;
+    fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char valueName[] = "top.value";
+    vpiHandle valueHandle = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(valueHandle, nullptr);
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    value.value.integer = 91;
+    vpi_get_value(valueHandle, &value);
+    EXPECT_EQ(value.value.integer, 91);
+    s_vpi_error_info error{};
+    EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+    EXPECT_STREQ(error.message, testCase.message);
+    EXPECT_EQ(vpi_release_handle(valueHandle), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 void installStatementDatabase(Fixture &fixture) {
   fixture.database = makeStatementDatabase();
   fixture.execution.design_database = fixture.database.data();

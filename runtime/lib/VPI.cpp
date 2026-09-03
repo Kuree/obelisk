@@ -395,6 +395,8 @@ bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
 
 enum class VPIValueShape { Neither, Scalar, Vector };
 
+PLI_INT32 vpiTypeForHandle(__vpiHandle *handle);
+
 bool valueShapeFor(__vpiHandle *handle,
                    const obelisk_rt_design_info_v1 &objectInfo,
                    VPIValueShape &shape) {
@@ -432,6 +434,76 @@ bool valueShapeFor(__vpiHandle *handle,
     shape = VPIValueShape::Neither;
     return true;
   }
+}
+
+bool hasValueRequirement(
+    const obelisk::reflection::VPIValuePolicyDescriptor &policy,
+    obelisk::reflection::VPIValueRequirement requirement) {
+  return (policy.requirements & static_cast<uint8_t>(requirement)) != 0;
+}
+
+const obelisk::reflection::VPIValuePolicyDescriptor *
+valuePolicyFor(__vpiHandle *handle) {
+  PLI_INT32 type = vpiTypeForHandle(handle);
+  const auto *policy =
+      type == vpiUndefined
+          ? nullptr
+          : obelisk::reflection::findVPIValuePolicy(
+                static_cast<uint32_t>(type));
+  if (!policy)
+    setError(handle->owner, "vpi_get_value is not defined for this VPI object",
+             vpiNotice);
+  return policy;
+}
+
+bool valueRequirementsSatisfied(
+    __vpiHandle *handle, const obelisk_rt_design_info_v1 &objectInfo,
+    const obelisk::reflection::VPIValuePolicyDescriptor &policy) {
+  using Requirement = obelisk::reflection::VPIValueRequirement;
+  obelisk_rt_design_type_info_v1 type{};
+  if (objectInfo.type_offset == 0 ||
+      obelisk_rt_cached_design_type_info(
+          handle->owner->context, {objectInfo.type_offset}, &type) !=
+          OBELISK_RT_OK) {
+    setError(handle->owner, "design type metadata lookup failed", vpiInternal);
+    return false;
+  }
+  // Inspect the physical root shape independently of its exact VPI kind.
+  // Compiler-emitted databases predating semantic-kind preservation label
+  // storage/net records generically as vpiReg/vpiNet; they must not thereby
+  // make a whole unpacked aggregate readable.
+  if ((type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0 &&
+      (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY ||
+       type.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
+       type.kind == OBELISK_RT_DESIGN_TYPE_UNION)) {
+    setError(handle->owner,
+             "vpi_get_value is not defined for a whole unpacked aggregate",
+             vpiNotice);
+    return false;
+  }
+  if (hasValueRequirement(policy, Requirement::RejectClassDefinitionOrigin)) {
+    obelisk_rt_design_cursor_v1 parent{};
+    if (obelisk_rt_cached_design_parent(handle->owner->context, handle->cursor,
+                                        &parent) == OBELISK_RT_OK) {
+      uint32_t parentType = 0;
+      if (obelisk_rt_cached_vpi_type(handle->owner->context, parent,
+                                     &parentType) == OBELISK_RT_OK &&
+          parentType == static_cast<uint32_t>(
+                            obelisk::reflection::VPIObjectKind::ClassDefn)) {
+        setError(handle->owner,
+                 "vpi_get_value is not defined for a class-definition member",
+                 vpiNotice);
+        return false;
+      }
+    }
+  }
+  // The current immutable database contains runtime design storage only: it
+  // has no physical record kind for variables reached from a non-static class
+  // typespec, nor for constants. Consequently the remaining two generated
+  // origin/string requirements are structurally unreachable until those
+  // object records are introduced; their serializer must add provenance at
+  // the same time.
+  return true;
 }
 
 int vpiTypeFor(uint32_t kind) {
@@ -686,11 +758,10 @@ bool checkedWordCount(uint64_t width, uint64_t bitsPerWord, size_t &count) {
   return true;
 }
 
-bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info,
+bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
                std::vector<uint64_t> &value,
                std::vector<uint64_t> &unknown) {
-  if (!infoFor(handle, info) || info.bit_width == 0 ||
-      info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
+  if (info.bit_width == 0 || info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
              "VPI value access requires readable storage or net");
     return false;
@@ -1555,9 +1626,25 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                                                  p_vpi_value destination) {
   beginVPICall();
   __vpiHandle *handle = validate(opaque);
-  if (!handle || !destination)
+  if (!handle)
     return;
+  if (!destination) {
+    setError(handle->owner, "VPI value destination is null");
+    return;
+  }
+  const auto *policy = valuePolicyFor(handle);
+  if (!policy)
+    return;
+  if (!obelisk::reflection::acceptsVPIValueFormat(
+          *policy, static_cast<uint32_t>(destination->format))) {
+    setError(handle->owner, "value format is not valid for this VPI object",
+             vpiNotice);
+    return;
+  }
   obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info) ||
+      !valueRequirementsSatisfied(handle, info, *policy))
+    return;
   std::vector<uint64_t> &value = handle->owner->readValueScratch;
   std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
   if (!readValue(handle, info, value, unknown))
