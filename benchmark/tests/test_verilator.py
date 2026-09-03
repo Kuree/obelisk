@@ -1246,6 +1246,14 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("C system()", excluded.reason)
         self.assertIn("--debug-runtime-timeout", excluded.reason)
 
+    def test_verilator_four_state_mode_flags_are_not_language_semantics(self):
+        names = ("t_fourstate_fourstate_unsup", "t_fourstate_no_fourstate")
+        excluded = verilator.EXCLUDED[names[0]]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.3.1")
+        self.assertIn("logic is a four-state type", excluded.reason)
+        self.assertIn("--no-fourstate", excluded.reason)
+        self.assertIs(verilator.EXCLUDED[names[1]], excluded)
+
     def test_verilator_native_dpi_drivers_are_not_portable_dpi_bodies(self):
         for name in ("t_dpi_export_context_bad",
                      "t_dpi_export_context2_bad"):

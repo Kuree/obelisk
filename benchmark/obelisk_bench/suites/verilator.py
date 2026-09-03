@@ -722,6 +722,11 @@ VERILATOR_RUNTIME_WALLCLOCK_ALARM = Exclusion(
     "$system calls the C system() function; the expected abort instead comes "
     "from Verilator's private --debug-runtime-timeout wall-clock alarm, not "
     "from any SystemVerilog behavior")
+VERILATOR_FOUR_STATE_MODE_OPTIONS = Exclusion(
+    "IEEE 1800-2017 6.3.1",
+    "logic is a four-state type; these descriptors test Verilator's private "
+    "--fourstate and --no-fourstate modes, either expecting the unfinished "
+    "option to be rejected or requiring Z/X values to be collapsed")
 NON_STANDARD_REWIND_SPELLING = Exclusion(
     "IEEE 1800-2017 21.3.5",
     "the standard spells the seek-to-start file function $rewind, which "
@@ -1151,6 +1156,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_queue_inherit_call": ARRAY_ELEMENT_CLASS_COVARIANCE,
     "t_runflag_seed": VERILATOR_RANDOM_SEED_RUNFLAG,
     "t_flag_runtime_timeout_bad": VERILATOR_RUNTIME_WALLCLOCK_ALARM,
+    "t_fourstate_fourstate_unsup": VERILATOR_FOUR_STATE_MODE_OPTIONS,
+    "t_fourstate_no_fourstate": VERILATOR_FOUR_STATE_MODE_OPTIONS,
     "t_display": NONSTANDARD_DISPLAY_FORMS,
     "t_display_enum_format": PATTERN_FIELD_WIDTH,
     "t_display_string": DEFAULT_REAL_DECIMAL_FORMAT,
