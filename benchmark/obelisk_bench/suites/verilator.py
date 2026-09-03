@@ -1087,6 +1087,11 @@ PARENLESS_INTERFACE_FUNCTION = Exclusion(
     "IEEE 1800-2017 A.8.2",
     "footnote 37 permits omitted call parentheses only for a task, void "
     "function, or class method; i.get_status is a nonvoid interface function")
+PARENLESS_PARAMETER_ASSIGNMENT = Exclusion(
+    "IEEE 1800-2017 A.4.1.1",
+    "parameter_value_assignment has the grammar # ( [ "
+    "list_of_parameter_assignments ] ); the test instead requires "
+    "Verilator's nonstandard #PAR and #10 module-instantiation spellings")
 CONSTANT_TO_IMPLICIT_INOUT_PORT = Exclusion(
     "IEEE 1800-2017 23.2.2.3",
     "an ANSI port whose direction is omitted defaults to inout, and following "
@@ -1263,6 +1268,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_infinite_recursion": TASK_RANDOMIZE_CALLBACK,
     "t_inside_unbounded_both": BOTH_BOUNDS_UNBOUNDED_RANGE,
     "t_interface_func_no_paren": PARENLESS_INTERFACE_FUNCTION,
+    "t_param_no_parentheses": PARENLESS_PARAMETER_ASSIGNMENT,
     "t_interface_generic2": CONSTANT_TO_IMPLICIT_INOUT_PORT,
     "t_interface_modport_expr_array": CHILD_INTERFACE_MODPORT_MEMBER,
     "t_interface_modport_expr_hier": CHILD_INTERFACE_MODPORT_MEMBER,

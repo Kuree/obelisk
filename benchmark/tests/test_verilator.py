@@ -1059,6 +1059,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("footnote 37", excluded.reason)
         self.assertIn("nonvoid interface function", excluded.reason)
 
+    def test_parenless_parameter_assignment_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_param_no_parentheses"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 A.4.1.1")
+        self.assertIn("parameter_value_assignment", excluded.reason)
+        self.assertIn("#PAR and #10", excluded.reason)
+
     def test_literal_implicit_inout_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_generic2"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
