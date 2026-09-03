@@ -58,11 +58,9 @@ static_assert(field::HeaderStatementSiteCount ==
               offsetof(obelisk_rt_design_database_header_v1,
                        statement_site_count));
 static_assert(field::HeaderRelationOffset ==
-              offsetof(obelisk_rt_design_database_header_v1,
-                       relation_offset));
+              offsetof(obelisk_rt_design_database_header_v1, relation_offset));
 static_assert(field::HeaderRelationCount ==
-              offsetof(obelisk_rt_design_database_header_v1,
-                       relation_count));
+              offsetof(obelisk_rt_design_database_header_v1, relation_count));
 
 static_assert(ScopeLayout.size == 64);
 static_assert(ObjectLayout.size == 96);
@@ -87,6 +85,8 @@ static_assert(uint32_t(RecordKind::Type) == OBELISK_RT_DESIGN_RECORD_TYPE);
 static_assert(uint32_t(RecordKind::Function) ==
               OBELISK_RT_DESIGN_RECORD_FUNCTION);
 static_assert(uint32_t(RecordKind::Port) == OBELISK_RT_DESIGN_RECORD_PORT);
+static_assert(uint32_t(RecordKind::StaticObject) ==
+              OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
 
 constexpr bool recordKindPackingIsStable() {
   uint32_t packed = 0;

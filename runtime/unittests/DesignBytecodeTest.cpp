@@ -8723,6 +8723,70 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
             OBELISK_RT_INVALID_DESIGN);
 }
 
+TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
+  Fixture fixture;
+  fixture.database = makeDatabase(false);
+  constexpr uint64_t objectOffset = 240;
+  put32(fixture.database, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         vpiEnumTypespec));
+  put32(fixture.database, objectOffset + 4, 0);
+  // Static type metadata is independent of the 65-bit executable state image.
+  put64(fixture.database, objectOffset + 56, 130);
+  put64(fixture.database, objectOffset + 64, 129);
+  constexpr uint64_t typeOffset = 336;
+  put64(fixture.database, typeOffset + 8, 130);
+  put64(fixture.database, typeOffset + 16, 129);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  obelisk_rt_design_cursor_v1 object{};
+  constexpr std::string_view name = "top.value";
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(name.data()), name.size(),
+                &object),
+            OBELISK_RT_OK);
+  obelisk_rt_design_info_v1 info{};
+  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, object, &info),
+            OBELISK_RT_OK);
+  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
+  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_INVALID);
+  EXPECT_EQ(info.bit_width, 130u);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  uint32_t exactType = 0;
+  ASSERT_EQ(obelisk_rt_cached_vpi_type(context, object, &exactType),
+            OBELISK_RT_OK);
+  EXPECT_EQ(exactType, vpiEnumTypespec);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char mutableName[] = "top.value";
+  vpiHandle handle = vpi_handle_by_name(mutableName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, handle), vpiEnumTypespec);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  for (uint32_t forbiddenKind : {vpiClassObj, vpiCallback, vpiIterator}) {
+    std::vector<uint8_t> malformed = fixture.database;
+    put32(malformed, objectOffset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                           forbiddenKind));
+    put64(malformed, 32, imageChecksum(malformed));
+    fixture.execution.design_database = malformed.data();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  }
+}
+
 TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
   auto expectRejected = [](std::vector<uint8_t> database) {
     put64(database, 32, imageChecksum(database));

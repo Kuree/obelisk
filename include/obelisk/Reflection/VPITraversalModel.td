@@ -229,6 +229,17 @@ def ConcreteTypespecObjects : VPIObjectSet<"ConcreteTypespecObjects",
    BitTypespec, LogicTypespec, ArrayTypespec, VoidTypespec,
    PackedArrayTypespec, SequenceTypespec, PropertyTypespec, EventTypespec,
    InterfaceTypespec]>;
+// Exact source-only identities that may occupy an immutable static-object
+// image record. Runtime-created handles, executable processes, statements,
+// nets, and ordinary design storage use their dedicated representations.
+def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
+  [Package, ClassDefn, Task, Function, ClockingBlock, GenScope, PropertyDecl,
+   SequenceDecl, LongIntTypespec, ShortRealTypespec, ByteTypespec,
+   ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
+   ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
+   RealTypespec, StructTypespec, UnionTypespec, BitTypespec, LogicTypespec,
+   ArrayTypespec, VoidTypespec, PackedArrayTypespec, SequenceTypespec,
+   PropertyTypespec, EventTypespec, InterfaceTypespec, EnumConst]>;
 def RangeObjects : VPIObjectSet<"RangeObjects", [Range]>;
 def IndexExpressionObjects : VPIObjectSet<"IndexExpressionObjects", [],
   [ExpressionFamily]>;

@@ -84,6 +84,9 @@ bool recordKindSupportsVPI(uint32_t physicalKind, uint32_t vpiKind) {
     return vpiKind == static_cast<uint16_t>(VPIKind::Function);
   case OBELISK_RT_DESIGN_RECORD_PORT:
     return vpiKind == static_cast<uint16_t>(VPIKind::Port);
+  case OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT:
+    return obelisk::reflection::vpiObjectSetContains(
+        obelisk::reflection::VPIObjectSetID::StaticImageObjects, vpiKind);
   default:
     return false;
   }
@@ -485,7 +488,8 @@ bool getRecord(const Database &database, uint64_t offset,
   return (kind >= OBELISK_RT_DESIGN_RECORD_STORAGE &&
           kind <= OBELISK_RT_DESIGN_RECORD_PROCESS) ||
          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
-         kind == OBELISK_RT_DESIGN_RECORD_PORT;
+         kind == OBELISK_RT_DESIGN_RECORD_PORT ||
+         kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
 }
 
 bool getString(const Database &database, uint64_t offset,
@@ -556,7 +560,8 @@ bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
 bool validateDatabaseImpl(const Database &database) {
   if (database.scopeCount == 0 || !isScopeOffset(database, database.root))
     return false;
-  std::array<std::unordered_set<uint64_t>, OBELISK_RT_DESIGN_RECORD_PORT + 1>
+  std::array<std::unordered_set<uint64_t>,
+             OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT + 1>
       stableIDs;
   std::unordered_set<uint64_t> reached;
   std::vector<uint64_t> pending{database.root};
@@ -626,8 +631,18 @@ bool validateDatabaseImpl(const Database &database) {
       if (!isScopeOffset(database, read64(record + 16)) ||
           !validSource(database, read64(record + 32), read64(record + 88)))
         return false;
-      if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
+      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+        if (caps != 0 || read64(record + 80) != 0 ||
+            (typeOffset == 0
+                 ? read64(record + 56) != 0 || read64(record + 64) != 0 ||
+                       read64(record + 72) != 0
+                 : !isTypeOffset(database, typeOffset) ||
+                       read64(record + 56) == 0 ||
+                       read64(database.data + typeOffset + 8) !=
+                           read64(record + 56)))
+          return false;
+      } else if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+                 kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
         if ((caps & ~OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 || typeOffset != 0 ||
             read64(record + 56) != 0 || read64(record + 64) != 0 ||
             read64(record + 72) != 0 || read64(record + 80) != 0)
@@ -660,8 +675,9 @@ bool validateDatabaseImpl(const Database &database) {
       }
       uint64_t stateOffset = read64(record + 80);
       uint64_t width = read64(record + 56);
-      if (stateOffset > database.stateBitCount ||
-          width > database.stateBitCount - stateOffset)
+      if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          (stateOffset > database.stateBitCount ||
+           width > database.stateBitCount - stateOffset))
         return false;
     }
   }
@@ -874,6 +890,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t kind = recordKind(record);
     if (kind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
         kind != OBELISK_RT_DESIGN_RECORD_FUNCTION &&
+        !(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          read64(record + 48) == 0) &&
         !visitType(read64(record + 48)))
       return false;
   }
@@ -1466,6 +1484,8 @@ uint32_t descriptorKind(uint32_t recordKind) {
     return OBELISK_RT_DESCRIPTOR_FUNCTION;
   case OBELISK_RT_DESIGN_RECORD_PORT:
     return OBELISK_RT_DESCRIPTOR_PORT;
+  case OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT:
+    return OBELISK_RT_DESCRIPTOR_INVALID;
   default:
     return OBELISK_RT_DESCRIPTOR_INVALID;
   }

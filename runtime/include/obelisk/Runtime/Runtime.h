@@ -1501,7 +1501,9 @@ enum {
   OBELISK_RT_DESIGN_RECORD_PROCESS = 5,
   OBELISK_RT_DESIGN_RECORD_TYPE = 6,
   OBELISK_RT_DESIGN_RECORD_FUNCTION = 7,
-  OBELISK_RT_DESIGN_RECORD_PORT = 8
+  OBELISK_RT_DESIGN_RECORD_PORT = 8,
+  // Immutable source object with no executable descriptor or live state.
+  OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT = 9
 };
 
 typedef uint32_t obelisk_rt_design_capability;

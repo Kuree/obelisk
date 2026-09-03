@@ -190,3 +190,7 @@ def ProcessRecord : ReflectionRecordKind<"Process", 5, Object>;
 def TypeRecord : ReflectionRecordKind<"Type", 6, Type>;
 def FunctionRecord : ReflectionRecordKind<"Function", 7, Object>;
 def PortRecord : ReflectionRecordKind<"Port", 8, Object>;
+// Source-only VPI identities share the pointer-free object layout. Their
+// state offset is always zero; any immutable value payload is represented by
+// explicit metadata and relations rather than executable design state.
+def StaticObjectRecord : ReflectionRecordKind<"StaticObject", 9, Object>;
