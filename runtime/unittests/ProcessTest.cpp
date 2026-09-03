@@ -407,6 +407,19 @@ obelisk_rt_status runObserverPlaneAuthority(AOTTestState *state,
   return status;
 }
 
+obelisk_rt_status runDirectSelfTransition(AOTTestState *state,
+                                          obelisk_rt_context *context) {
+  if (!state || !context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  obelisk_rt_status status =
+      obelisk_rt_v1_scheduler_direct_fragment_enter(context, 0, 1, &instance);
+  if (status != OBELISK_RT_OK || instance != state->actors[0])
+    return status != OBELISK_RT_OK ? status : OBELISK_RT_INVALID_LIFECYCLE;
+  obelisk_rt_v1_scheduler_static_transition(context, 1, 0, 1, 0, 0, 1, 0);
+  return obelisk_rt_v1_scheduler_direct_fragment_leave(context, 0);
+}
+
 obelisk_rt_status aotRunNodes(void *opaque, obelisk_rt_context *context) {
   if (!opaque)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -3178,6 +3191,55 @@ TEST(Scheduler, AOTStaticTransitionCanSuppressTheExecutingWait) {
   EXPECT_EQ(schedulerSelfTriggerCount, 1u);
   EXPECT_TRUE(context->nativeScheduleReadyNodes.empty() ||
               context->nativeScheduleReadyNodes.front() == 0);
+  schedulerSelfTriggerStaticState = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AOTDirectFragmentRetainsSelfRetrigger) {
+  AOTTestState state;
+  state.runHook = runDirectSelfTransition;
+  const obelisk_rt_static_fanout_entry fanout[] = {
+      {1, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE, 1, 0, 0, 1},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.fanout_entries = fanout;
+  plan.fanout_entry_count = std::size(fanout);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  SchedulerFixture fixture(45);
+  fixture.descriptor.execution = &execution;
+  fixture.descriptor.native_execute = schedulerSelfTriggerExecute;
+  schedulerWaitHandle = obelisk_rt_v1_native_state_static_handle(1);
+  schedulerWaitWidth = 1;
+  schedulerSelfTriggerCount = 0;
+  schedulerSelfTriggerStaticState = 1;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  constexpr obelisk_rt_native_schedule_node initial[] = {
+      {0, 0, UINT32_MAX},
+      {0, 1, UINT32_MAX},
+  };
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(context, initial,
+                                                  std::size(initial)),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_TRUE(context->scheduledProcesses.front().signalTriggered);
+  EXPECT_NE(context->nativeScheduleReadyNodes.front() & (uint64_t{1} << 1), 0u);
   schedulerSelfTriggerStaticState = 0;
   obelisk_rt_v1_context_destroy(context);
 }

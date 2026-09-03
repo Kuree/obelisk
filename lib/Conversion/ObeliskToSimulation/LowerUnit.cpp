@@ -5784,15 +5784,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     }
   }
 
-  // Keep track of the outer event control so graph construction can
-  // distinguish its process-local writes from external activations. Nested
-  // implicit event controls remain ordinary procedural waits.
+  // Keep track of the outer timing control. An always procedure returns to
+  // this same control after every iteration, unlike a nested control that has
+  // not necessarily been reached when an earlier statement updates a signal.
   if (entryKind == sim::EntryKind::Always && roots.size() == 1) {
     if (auto timed = dyn_cast<semantic::SVTimedStatementOp>(roots.front())) {
       SmallVector<Operation *> children = getChildren(timed);
-      if (children.size() == 2 &&
-          isa<semantic::SVImplicitEventControlOp>(children.front()))
-        topLevelWildcardControl = children.front();
+      if (children.size() == 2) {
+        topLevelAlwaysControl = children.front();
+        if (isa<semantic::SVImplicitEventControlOp>(children.front()))
+          topLevelWildcardControl = children.front();
+      }
     }
   }
 

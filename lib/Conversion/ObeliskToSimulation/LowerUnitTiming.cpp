@@ -1348,6 +1348,9 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
                  semantic::SVEventListControlOp>(control)) {
     if (failed(emitEventSuspend(control, continuation)))
       return failure();
+    if (control == topLevelAlwaysControl)
+      current->getTerminator()->setAttr(sim::metadata::repeatingAlwaysWait,
+                                        builder.getUnitAttr());
   } else {
     unsupported(control) << " (timing control)";
     return failure();

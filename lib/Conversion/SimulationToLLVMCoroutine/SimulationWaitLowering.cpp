@@ -48,7 +48,8 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
   } else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
   if ((operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
-      operation->hasAttr(sim::metadata::proceduralEventWait)) &&
+       operation->hasAttr(sim::metadata::proceduralEventWait)) &&
+      !operation->hasAttr(sim::metadata::repeatingAlwaysWait) &&
       isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
           sim::SimSuspendEdgeIffOp, sim::SimSuspendAnyOp>(operation))
     waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;

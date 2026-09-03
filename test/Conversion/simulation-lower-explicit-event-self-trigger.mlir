@@ -1,8 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
-// IEEE 1800-2017 9.4.2: an event control triggers execution of its following
-// statement. While that statement executes, its writes cannot satisfy the
-// procedural wait that will only be entered again afterward.
+// IEEE 1800-2017 9.2.2: an always procedure repeats continuously. Distinguish
+// its outer event control from nested procedural controls so an event enabled
+// by one iteration can enqueue the next iteration.
 
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
 
@@ -17,7 +17,7 @@ module {
 
     // CHECK-LABEL: obelisk_sim.func @event_loop
     // CHECK: obelisk_sim.suspend.any
-    // CHECK-SAME: {obelisk_sim.procedural_event_wait}
+    // CHECK-SAME: {obelisk_sim.procedural_event_wait, obelisk_sim.repeating_always_wait}
     obelisk_sim.func @event_loop(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %a: !obelisk_sim.ref<!obelisk_sim.logic<1>>

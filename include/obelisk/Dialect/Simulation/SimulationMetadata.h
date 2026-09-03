@@ -107,8 +107,7 @@ inline constexpr llvm::StringLiteral staticSpecialization =
     "obelisk_sim.static_specialization";
 inline constexpr llvm::StringLiteral staticSuperstep =
     "obelisk_sim.static_superstep";
-/// Marks the outer implicit wait of an `always @*` process. Publications from
-/// the active process itself cannot satisfy the wait it will reach next.
+/// Marks the outer implicit wait of an `always @*` process.
 inline constexpr llvm::StringLiteral topLevelWildcardWait =
     "obelisk_sim.top_level_wildcard_wait";
 /// Marks a source-language procedural event control. Its controlled statement
@@ -116,6 +115,11 @@ inline constexpr llvm::StringLiteral topLevelWildcardWait =
 /// the active logical process.
 inline constexpr llvm::StringLiteral proceduralEventWait =
     "obelisk_sim.procedural_event_wait";
+/// Marks an outer explicit event control of a general-purpose `always`
+/// procedure. The procedure returns to this wait after every iteration, so an
+/// event enabled by its body can enqueue the next iteration.
+inline constexpr llvm::StringLiteral repeatingAlwaysWait =
+    "obelisk_sim.repeating_always_wait";
 /// Logical DPI output-formal indices whose unused internal copy-in operands
 /// were removed while preserving the externally visible DPI signature.
 inline constexpr llvm::StringLiteral dpiElidedInputs =
@@ -217,7 +221,8 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == staticFusion || name == computeKernels ||
          name == threeTierSchedule || name == staticSpecialization ||
          name == staticSuperstep || name == topLevelWildcardWait ||
-         name == proceduralEventWait || name == dpiElidedInputs;
+         name == proceduralEventWait || name == repeatingAlwaysWait ||
+         name == dpiElidedInputs;
 }
 
 } // namespace obelisk::sim::metadata

@@ -944,11 +944,12 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         disableExactFanout("watch has unsupported trigger", function);
         continue;
       }
+      bool suppressActiveSelf =
+          (terminator->hasAttr(sim::metadata::proceduralEventWait) ||
+           terminator->hasAttr(sim::metadata::topLevelWildcardWait)) &&
+          !terminator->hasAttr(sim::metadata::repeatingAlwaysWait);
       uint32_t flags =
-          terminator->hasAttr(sim::metadata::proceduralEventWait) ||
-                  terminator->hasAttr(sim::metadata::topLevelWildcardWait)
-              ? OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF
-              : 0;
+          suppressActiveSelf ? OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF : 0;
       // IEEE 1800-2017 9.4.2 defines a vector edge event in terms of the
       // expression's least significant bit. Keep the full watched range for
       // ordinary change sensitivity, but encode edge-sensitive fanout as its

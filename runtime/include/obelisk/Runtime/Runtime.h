@@ -1877,8 +1877,8 @@ enum {
   // entry. The condition is sampled only when the primary event occurs.
   OBELISK_RT_WAIT_EDGE_IFF = UINT32_C(1) << 1,
   // A direct signal wait ignores publications from the currently executing
-  // logical process. This models an always @* wait that is inactive while its
-  // controlled statement evaluates.
+  // logical process when a write must not satisfy the future wait, such as a
+  // nested control that has not been reached yet.
   OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF = UINT32_C(1) << 2,
   // A compiler-generated assertion coordinator records every occurrence of
   // up to 64 frozen direct clocks, grouped by exact scheduler publication
@@ -3098,9 +3098,8 @@ typedef struct obelisk_rt_static_nba_site {
 #define OBELISK_RT_FANOUT_DIRECT UINT32_C(1)
 #define OBELISK_RT_FANOUT_PERIODIC_ALIAS UINT32_C(2)
 #define OBELISK_RT_FANOUT_ROUTE_MASK UINT32_C(3)
-// The source event control is inactive while its controlled statement runs.
-// A blocking write from that same logical process must therefore not satisfy
-// the wait that the process will re-enter after the statement completes.
+// Suppress a publication from the same logical process when that write must
+// not satisfy the future wait, such as a nested control not reached yet.
 #define OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF (UINT32_C(1) << 2)
 
 typedef struct obelisk_rt_static_fanout_entry {

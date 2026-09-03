@@ -1627,7 +1627,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
        scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE &&
        scheduled.suspendKind != OBELISK_RT_SUSPEND_OBSERVER))
     return OBELISK_RT_INVALID_LIFECYCLE;
-  scheduled.signalTriggered = true;
+  // The generated ready bit selected this activation and was consumed before
+  // entering the wrapper. Keep the runtime occurrence bit clear while the
+  // body runs so a transition published by the body can represent a distinct
+  // activation of the same wait.
   actor->context = context;
   actor->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
   context->nativeScheduleDirectActorSlot = actorSlot;
@@ -1660,10 +1663,11 @@ obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
   if (!actor || context->activeNativeProcess != actor ||
       index >= context->scheduledProcesses.size())
     return OBELISK_RT_INVALID_LIFECYCLE;
-  ScheduledProcess &scheduled = context->scheduledProcesses[index];
   actor->context = nullptr;
   actor->lifecycle = OBELISK_RT_PROCESS_SUSPENDED;
-  scheduled.signalTriggered = false;
+  // Do not clear signalTriggered here: the direct body can update a signal in
+  // its own event expression before suspending on the same wait again. Such a
+  // publication is the next activation, not the one consumed on entry.
   context->nativeScheduleDirectActorSlot = UINT32_MAX;
   context->activeNativeProcess = nullptr;
   context->activeHomeRegion = UINT32_MAX;

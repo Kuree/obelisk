@@ -7,10 +7,12 @@ using namespace mlir;
 namespace obelisk::bytecode {
 
 static uint32_t directSignalWaitFlags(Operation *operation) {
-  return (operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
-          operation->hasAttr(sim::metadata::proceduralEventWait))
-             ? OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF
-             : OBELISK_RT_WAIT_FLAGS_NONE;
+  bool suppressActiveSelf =
+      (operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
+       operation->hasAttr(sim::metadata::proceduralEventWait)) &&
+      !operation->hasAttr(sim::metadata::repeatingAlwaysWait);
+  return suppressActiveSelf ? OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF
+                            : OBELISK_RT_WAIT_FLAGS_NONE;
 }
 
 std::optional<LogicalResult>

@@ -777,6 +777,7 @@ private:
   ::llvm::DenseSet<::mlir::Value> *implicitEventActivationLocals = nullptr;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Operation *topLevelWildcardControl = nullptr;
+  ::mlir::Operation *topLevelAlwaysControl = nullptr;
   ::mlir::Operation *activeSampledClock = nullptr;
   bool observeNonblockingWrites = false;
   ::mlir::Value expressionPlaceholder;

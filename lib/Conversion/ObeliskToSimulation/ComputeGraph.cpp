@@ -1562,15 +1562,18 @@ void ComputeGraphBuilder::buildDataEdges() {
         continue;
       watchedEffects.forEachAlias(produced.target, [&](IndexedEffect consumed) {
         Fragment &consumer = fragments[consumed.owner];
-        // A top-level wildcard wait is inactive while its process evaluates
-        // the controlled statement. The same is true of every source-language
-        // procedural event control. Writes from that process cannot activate
-        // the wait it will reach next; writes from other processes can.
+        // A nested procedural control might not have been reached when an
+        // earlier statement writes its operand, and an implicit wildcard
+        // excludes its controlled write from activating the inferred wait.
+        // An outer explicit always control repeats continuously, so an event
+        // enabled by one iteration can enqueue the next iteration.
         if (producer.function == consumer.function &&
             (consumer.block->getTerminator()->hasAttr(
                  sim::metadata::topLevelWildcardWait) ||
              consumer.block->getTerminator()->hasAttr(
-                 sim::metadata::proceduralEventWait)))
+                 sim::metadata::proceduralEventWait)) &&
+            !consumer.block->getTerminator()->hasAttr(
+                sim::metadata::repeatingAlwaysWait))
           return;
         if (provenancesAlias(produced.target, consumed.effect->target))
           addEdge(producer.id, consumer.id, sim::ComputeEdgeKind::Sensitivity,
