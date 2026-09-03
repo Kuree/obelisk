@@ -162,3 +162,43 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
               (UINT32_C(1) << OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT));
   rejects(std::move(wrongOrdinal));
 }
+
+TEST(GeneratedVPITraversal, FallsBackWhenAutomaticRelationsAreAbsent) {
+  const auto *execution = dumpDescriptor.execution;
+  ASSERT_NE(execution, nullptr);
+  std::vector<uint8_t> database(execution->design_database,
+                                execution->design_database +
+                                    execution->design_database_size);
+  ASSERT_GE(database.size(), OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  write64(database, 168, 0);
+  write64(database, 32, imageChecksum(database));
+  obelisk_rt_execution_descriptor_v1 relationFree{};
+  relationFree.version = OBELISK_RT_VERSION;
+  relationFree.flags = OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                       OBELISK_RT_EXECUTION_VPI_READ;
+  relationFree.design_database = database.data();
+  relationFree.design_database_size = database.size();
+  relationFree.state_bit_count = execution->state_bit_count;
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&relationFree), OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&relationFree, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top.d";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiPort, module);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle port = vpi_scan(iterator);
+  ASSERT_NE(port, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, port), vpiPort);
+  vpiHandle instance = vpi_handle(vpiInstance, port);
+  ASSERT_NE(instance, nullptr);
+  EXPECT_EQ(vpi_compare_objects(module, instance), 1);
+
+  obelisk_rt_v1_context_destroy(context);
+}

@@ -5038,6 +5038,36 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   EXPECT_EQ(vpi_compare_objects(containing, firstElement), 0);
   EXPECT_EQ(vpi_scan(elements), nullptr);
   obelisk_rt_v1_context_destroy(context);
+
+  // An entirely absent automatic parent group uses the same immutable
+  // hierarchy fallback as an absent automatic child group.
+  fixture.database = makeNestedModuleRelationDatabase();
+  constexpr size_t relationOffset = 368;
+  std::memcpy(fixture.database.data() + relationOffset,
+              fixture.database.data() + relationOffset + 16, 16);
+  put64(fixture.database, 168, 1);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  containing = vpi_handle(vpiModule, module);
+  ASSERT_NE(containing, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, containing), "top");
+  elements = vpi_iterate(vpiModule, module);
+  ASSERT_NE(elements, nullptr);
+  firstElement = vpi_scan(elements);
+  ASSERT_NE(firstElement, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child.leaf");
+  EXPECT_EQ(vpi_scan(elements), nullptr);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {

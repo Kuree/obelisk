@@ -792,6 +792,29 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return nullptr;
     return makeHandle(handle->owner, target, targetType, targetIsStatement);
   }
+  if (relationStatus != OBELISK_RT_EOF)
+    return nullptr;
+  uint32_t sourceType = handle->exactVpiType;
+  if (sourceType == 0 &&
+      obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                 &sourceType) != OBELISK_RT_OK)
+    return nullptr;
+  const auto *edge = obelisk::reflection::findVPITraversal(
+      sourceType, static_cast<uint32_t>(type),
+      obelisk::reflection::VPITraversalMode::Handle);
+  if (!handle->statement && edge &&
+      edge->automaticRelation ==
+          obelisk::reflection::VPIAutomaticRelation::ParentScope) {
+    obelisk_rt_design_cursor_v1 parent{};
+    uint32_t parentType = 0;
+    if (obelisk_rt_cached_design_parent(handle->owner->context, handle->cursor,
+                                        &parent) != OBELISK_RT_OK ||
+        obelisk_rt_cached_vpi_type(handle->owner->context, parent,
+                                   &parentType) != OBELISK_RT_OK ||
+        !obelisk::reflection::vpiObjectSetContains(edge->targets, parentType))
+      return nullptr;
+    return makeHandle(handle->owner, parent, parentType);
+  }
   if (type != vpiScope)
     return nullptr;
   if (handle->statement) {

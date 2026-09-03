@@ -1406,6 +1406,19 @@ obelisk_rt_status designRoot(const Database &database,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status designParent(const Database &database,
+                               obelisk_rt_design_cursor_v1 cursor,
+                               obelisk_rt_design_cursor_v1 *outCursor) {
+  const uint8_t *record;
+  uint32_t kind;
+  if (!getRecord(database, cursor.offset, record, kind) ||
+      (kind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
+       !isObjectOffset(database, cursor.offset)))
+    return OBELISK_RT_INVALID_HANDLE;
+  outCursor->offset = read64(record + 16);
+  return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
+}
+
 obelisk_rt_status designChild(const Database &database,
                               obelisk_rt_design_cursor_v1 cursor,
                               obelisk_rt_design_cursor_v1 *outCursor) {
@@ -1801,6 +1814,16 @@ obelisk_rt_cached_design_root(const obelisk_rt_context *context,
   const Database *database = cachedDatabase(context);
   return database ? designRoot(*database, outCursor)
                   : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_parent(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designParent(*database, cursor, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
 }
 
 obelisk_rt_status obelisk_rt_cached_design_child(
