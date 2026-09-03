@@ -1331,6 +1331,14 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("prog1.run", excluded.reason)
         self.assertIn("prog1.v", excluded.reason)
 
+    def test_late_timescale_does_not_legalize_hierarchical_calls(self):
+        excluded = verilator.EXCLUDED["t_timescale_nobackwards"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 24.5")
+        self.assertIn("prg.f", excluded.reason)
+        self.assertIn("chk.f", excluded.reason)
+        self.assertIn("3.14.2.1", excluded.reason)
+        self.assertIn("implementation-specific", excluded.reason)
+
     def test_generate_block_disable_is_not_a_verilator_failure_for_obelisk(self):
         excluded = verilator.EXCLUDED["t_disable_genfor_unsup"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 9.6.2")

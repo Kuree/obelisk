@@ -1012,6 +1012,14 @@ DESIGN_REFERENCES_PROGRAM_INSTANCE = Exclusion(
     "calling program subroutines from a design module is illegal; module t "
     "calls prog1.run and prog1.stop, while its reads of prog1.v are also "
     "forbidden program-signal references under 24.3")
+TIMESCALE_AFTER_ILLEGAL_HIERARCHICAL_CALLS = Exclusion(
+    "IEEE 1800-2017 24.5",
+    "calling PRG::f from module mod through prg.f is illegal; chk.f also "
+    "treats a checker instance as a hierarchical path node even though the "
+    "hierarchy defined by 23.6 does not include checker instances, and the "
+    "trailing `timescale cannot affect preceding declarations under "
+    "3.14.2.1 (whose default time unit is implementation-specific under "
+    "3.14.2.3)")
 VERILATOR_GENERATE_BLOCK_DISABLE_UNSUPPORTED = Exclusion(
     "IEEE 1800-2017 9.6.2",
     "a disable statement may name a hierarchical block without a "
@@ -1317,6 +1325,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_no_parentheses": PARENLESS_PARAMETER_ASSIGNMENT,
     "t_lint_assigneqexpr": NONPROCEDURAL_ASSIGNMENT_EXPRESSION,
     "t_param_type_bit": TYPE_REFERENCE_VARIABLE_WITHOUT_VAR,
+    "t_timescale_nobackwards": TIMESCALE_AFTER_ILLEGAL_HIERARCHICAL_CALLS,
     "t_timescale_udp": MALFORMED_SEQUENTIAL_UDP,
     "t_interface_generic2": CONSTANT_TO_IMPLICIT_INOUT_PORT,
     "t_interface_modport_expr_array": CHILD_INTERFACE_MODPORT_MEMBER,
