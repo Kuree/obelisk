@@ -5736,6 +5736,54 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ValueResultStorageOutlivesHandlesAndIsSharedAcrossQueries) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char objectName[] = "top.value";
+  vpiHandle first = vpi_handle_by_name(objectName, nullptr);
+  vpiHandle second = vpi_handle_by_name(objectName, nullptr);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  ASSERT_NE(first, second);
+
+  s_vpi_value firstValue{};
+  firstValue.format = vpiVectorVal;
+  vpi_get_value(first, &firstValue);
+  ASSERT_NE(firstValue.value.vector, nullptr);
+  std::array<s_vpi_vecval, 3> saved{};
+  for (size_t index = 0; index != saved.size(); ++index)
+    saved[index] = firstValue.value.vector[index];
+
+  s_vpi_value secondValue{};
+  secondValue.format = vpiVectorVal;
+  vpi_get_value(second, &secondValue);
+  ASSERT_NE(secondValue.value.vector, nullptr);
+  // The two live handles must share the routine-family result storage.  A
+  // per-handle buffer cannot satisfy this equality while both handles live.
+  EXPECT_EQ(secondValue.value.vector, firstValue.value.vector);
+  for (size_t index = 0; index != saved.size(); ++index) {
+    EXPECT_EQ(secondValue.value.vector[index].aval, saved[index].aval);
+    EXPECT_EQ(secondValue.value.vector[index].bval, saved[index].bval);
+  }
+
+  EXPECT_EQ(vpi_release_handle(first), 1);
+  EXPECT_EQ(vpi_release_handle(second), 1);
+  // Releasing every originating handle is not a vpi_get_value call and must
+  // not invalidate the last result buffer.
+  for (size_t index = 0; index != saved.size(); ++index) {
+    EXPECT_EQ(secondValue.value.vector[index].aval, saved[index].aval);
+    EXPECT_EQ(secondValue.value.vector[index].bval, saved[index].bval);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, QueriesSimulationAndObjectTimeWithoutSchedulerRegistration) {
   Fixture fixture;
   static constexpr char rootName[] = "$root";

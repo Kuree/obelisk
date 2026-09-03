@@ -89,9 +89,6 @@ struct __vpiHandle {
   VPIRelationRange relationRange{};
   size_t next = 0;
   std::string scratch;
-  std::vector<s_vpi_vecval> vectorScratch;
-  std::vector<uint64_t> valueScratch;
-  std::vector<uint64_t> unknownScratch;
   void *userData = nullptr;
 };
 
@@ -135,6 +132,10 @@ struct VPIState {
   std::string propertyStringScratch;
   std::string valueStringScratch;
   std::vector<s_vpi_vecval> vectorScratch;
+  // Private design-read planes are reusable across ordinary snapshot queries.
+  // Unlike returned value buffers these never escape the active VPI call.
+  std::vector<uint64_t> readValueScratch;
+  std::vector<uint64_t> readUnknownScratch;
 };
 
 // VPI is callable only from the simulation thread (startup, callbacks, and
@@ -675,25 +676,42 @@ bool lookup(VPIState *state, const std::string &name,
              name.size(), &cursor) == OBELISK_RT_OK;
 }
 
-bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
+bool checkedWordCount(uint64_t width, uint64_t bitsPerWord, size_t &count) {
+  if (width == 0 || bitsPerWord == 0)
+    return false;
+  uint64_t words = (width - 1) / bitsPerWord + 1;
+  if (words > std::numeric_limits<size_t>::max())
+    return false;
+  count = static_cast<size_t>(words);
+  return true;
+}
+
+bool readValue(__vpiHandle *handle, obelisk_rt_design_info_v1 &info,
+               std::vector<uint64_t> &value,
+               std::vector<uint64_t> &unknown) {
   if (!infoFor(handle, info) || info.bit_width == 0 ||
       info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
              "VPI value access requires readable storage or net");
     return false;
   }
+  size_t limbs = 0;
+  if (!checkedWordCount(info.bit_width, 64, limbs)) {
+    setError(handle->owner, "VPI value width exceeds host capacity",
+             vpiSystem);
+    return false;
+  }
   OBELISK_RT_TRY {
-    size_t limbs = static_cast<size_t>((info.bit_width + 63) / 64);
-    handle->valueScratch.assign(limbs, 0);
-    handle->unknownScratch.assign(limbs, 0);
+    value.assign(limbs, 0);
+    unknown.assign(limbs, 0);
   }
   OBELISK_RT_CATCH_ALL {
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
   obelisk_rt_status status = obelisk_rt_v1_design_read(
-      handle->owner->context, handle->cursor, handle->valueScratch.data(),
-      handle->unknownScratch.data(), info.bit_width);
+      handle->owner->context, handle->cursor, value.data(), unknown.data(),
+      info.bit_width);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "VPI design read failed");
     return false;
@@ -1540,10 +1558,10 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   if (!handle || !destination)
     return;
   obelisk_rt_design_info_v1 info{};
-  if (!readValue(handle, info))
+  std::vector<uint64_t> &value = handle->owner->readValueScratch;
+  std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
+  if (!readValue(handle, info, value, unknown))
     return;
-  const std::vector<uint64_t> &value = handle->valueScratch;
-  const std::vector<uint64_t> &unknown = handle->unknownScratch;
   switch (destination->format) {
   case vpiVectorVal: {
     OBELISK_RT_TRY {
@@ -1693,17 +1711,18 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
     setError(handle->owner, "delayed VPI writes are not supported");
     return nullptr;
   }
-  if (!decodeValue(handle, source, info.bit_width, handle->valueScratch,
-                   handle->unknownScratch))
+  std::vector<uint64_t> value;
+  std::vector<uint64_t> unknown;
+  if (!decodeValue(handle, source, info.bit_width, value, unknown))
     return nullptr;
   obelisk_rt_status status =
       flags == vpiForceFlag
           ? obelisk_rt_v1_design_force(
-                context, handle->cursor, handle->valueScratch.data(),
-                handle->unknownScratch.data(), info.bit_width)
+                context, handle->cursor, value.data(), unknown.data(),
+                info.bit_width)
           : obelisk_rt_v1_design_write(
-                context, handle->cursor, handle->valueScratch.data(),
-                handle->unknownScratch.data(), info.bit_width);
+                context, handle->cursor, value.data(), unknown.data(),
+                info.bit_width);
   if (status != OBELISK_RT_OK)
     setError(handle->owner, "VPI write failed");
   return nullptr;
