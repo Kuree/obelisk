@@ -1159,6 +1159,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("prog1.run", excluded.reason)
         self.assertIn("prog1.v", excluded.reason)
 
+    def test_completed_programs_implicitly_finish_simulation(self):
+        excluded = verilator.EXCLUDED["t_bind"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 24.3")
+        self.assertIn("implicit $finish", excluded.reason)
+        self.assertIn("time zero", excluded.reason)
+
     def test_associative_array_indices_must_be_equivalent(self):
         excluded = verilator.EXCLUDED["t_cast_types"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.22.2")

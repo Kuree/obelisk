@@ -934,6 +934,12 @@ DESIGN_REFERENCES_PROGRAM_INSTANCE = Exclusion(
     "calling program subroutines from a design module is illegal; module t "
     "calls prog1.run and prog1.stop, while its reads of prog1.v are also "
     "forbidden program-signal references under 24.3")
+PROGRAM_COMPLETION_FINISHES_SIMULATION = Exclusion(
+    "IEEE 1800-2017 24.3",
+    "when every initial procedure in every program has ended, the simulation "
+    "must terminate through an implicit $finish; all three program initial "
+    "procedures end at time zero, but the test expects a later module-clock "
+    "process to print its success marker")
 ASSOCIATIVE_INDEX_SIGNEDNESS = Exclusion(
     "IEEE 1800-2017 6.22.2",
     "associative arrays are equivalent only when their index types are "
@@ -1063,6 +1069,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_cover_fsm_case_next_ok_multi": ALWAYS_COMB_MULTIPLE_WRITER,
     "t_cover_toggle": MIXED_CONTINUOUS_PROCEDURAL_MEMBER,
     "t_disable_task_by_name": DESIGN_REFERENCES_PROGRAM_INSTANCE,
+    "t_bind": PROGRAM_COMPLETION_FINISHES_SIMULATION,
     "t_enum_size": SIZED_ENUM_ENCODING_WIDTH,
     "t_event_control_pass": EVENT_TRIGGER_METHOD_CALL,
     "t_eq_wild": STRING_WILDCARD_EQUALITY,
