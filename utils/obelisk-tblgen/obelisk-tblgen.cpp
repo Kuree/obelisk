@@ -586,6 +586,14 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto propertyValueKinds =
       records.getAllDerivedDefinitions("VPIPropertyValueKind");
   auto properties = records.getAllDerivedDefinitions("VPIProperty");
+  auto valueFormats = records.getAllDerivedDefinitions("VPIValueFormat");
+  auto valueDefaults =
+      records.getAllDerivedDefinitions("VPIValueDefaultFormat");
+  auto valueReadSemantics =
+      records.getAllDerivedDefinitions("VPIValueReadSemantics");
+  auto valueRequirements =
+      records.getAllDerivedDefinitions("VPIValueRequirement");
+  auto valuePolicies = records.getAllDerivedDefinitions("VPIValuePolicy");
   auto traversalModes = records.getAllDerivedDefinitions("VPITraversalMode");
   auto traversalOrders = records.getAllDerivedDefinitions("VPITraversalOrder");
   auto automaticRelations =
@@ -599,13 +607,16 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       records.getAllDerivedDefinitions("VPIStatementCallbackSpec");
   if (families.empty() || roles.empty() || objects.empty() ||
       relations.empty() || objectSets.empty() || propertyValueKinds.empty() ||
-      properties.empty() || traversalModes.empty() || traversalOrders.empty() ||
-      automaticRelations.empty() || traversalEdges.empty() ||
-      callbackPhases.empty() || callbackPolicies.empty() ||
-      callbackSpecs.empty()) {
+      properties.empty() || valueFormats.empty() || valueDefaults.empty() ||
+      valueReadSemantics.empty() || valueRequirements.empty() ||
+      valuePolicies.empty() || traversalModes.empty() ||
+      traversalOrders.empty() || automaticRelations.empty() ||
+      traversalEdges.empty() || callbackPhases.empty() ||
+      callbackPolicies.empty() || callbackSpecs.empty()) {
     PrintError("VPI object model needs families, roles, objects, relations, "
-               "object sets, properties, traversal modes, orders, automatic "
-               "relations, edges, and statement callback policies");
+               "object sets, properties, value policies, traversal modes, "
+               "orders, automatic relations, edges, and statement callback "
+               "policies");
     return false;
   }
   if (families.size() > 64) {
@@ -853,12 +864,35 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"DirectPortConnection", 3}};
   const std::pair<StringRef, uint32_t> supportedPropertyValueKinds[] = {
       {"Boolean", 0}, {"Integer", 1}, {"Int64", 2}, {"String", 3}};
+  const std::pair<StringRef, uint32_t> supportedValueFormats[] = {
+      {"BinStr", 1},   {"OctStr", 2},  {"DecStr", 3},
+      {"HexStr", 4},   {"Scalar", 5},  {"Int", 6},
+      {"Real", 7},     {"String", 8},  {"Vector", 9},
+      {"Strength", 10}, {"Time", 11},   {"ObjType", 12}};
+  const std::pair<StringRef, uint32_t> supportedValueDefaults[] = {
+      {"Semantic", 0}, {"ScalarOrVector", 1}, {"Integer", 2},
+      {"Real", 3},     {"String", 4},         {"Time", 5}};
+  const std::pair<StringRef, uint32_t> supportedValueReadSemantics[] = {
+      {"Snapshot", 0}, {"Evaluate", 1}};
+  const std::pair<StringRef, uint32_t> supportedValueRequirements[] = {
+      {"RejectWholeUnpacked", 1},
+      {"RejectClassDefinitionOrigin", 2},
+      {"RejectNonStaticClassTypespecOrigin", 4},
+      {"RestrictStringConstant", 8}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
                     "VPI automatic relation") ||
       !validateEnum(propertyValueKinds, supportedPropertyValueKinds,
                     "VPI property value kind") ||
+      !validateEnum(valueFormats, supportedValueFormats,
+                    "VPI value format") ||
+      !validateEnum(valueDefaults, supportedValueDefaults,
+                    "VPI value default format") ||
+      !validateEnum(valueReadSemantics, supportedValueReadSemantics,
+                    "VPI value read semantics") ||
+      !validateEnum(valueRequirements, supportedValueRequirements,
+                    "VPI value requirement") ||
       !validateEnum(callbackPhases, supportedCallbackPhases,
                     "VPI statement callback phase") ||
       !validateEnum(callbackPolicies, supportedCallbackPolicies,
@@ -1019,6 +1053,57 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       PrintError(property->getLoc(),
                  "duplicate VPI property API name or value");
       return false;
+    }
+  }
+
+  DenseMap<uint32_t, const Record *> valuePolicySources;
+  for (const Record *policy : valuePolicies) {
+    const Record *sources = policy->getValueAsDef("sources");
+    if (sources->getValueAsBit("nullRoot") ||
+        policy->getValueAsString("clause").empty()) {
+      PrintError(policy->getLoc(),
+                 "VPI value policy needs non-root sources and an LRM clause");
+      return false;
+    }
+    DenseSet<const Record *> seenFormats;
+    uint32_t formatMask = 0;
+    for (const Record *format : policy->getValueAsListOfDefs("formats")) {
+      uint32_t value = static_cast<uint32_t>(format->getValueAsInt("value"));
+      if (!seenFormats.insert(format).second || value == 0 || value >= 16) {
+        PrintError(policy->getLoc(),
+                   "VPI value policy has duplicate or unencodable formats");
+        return false;
+      }
+      formatMask |= uint32_t{1} << value;
+    }
+    if (formatMask == 0) {
+      PrintError(policy->getLoc(), "VPI value policy needs a format");
+      return false;
+    }
+    DenseSet<const Record *> seenRequirements;
+    uint32_t requirementMask = 0;
+    for (const Record *requirement :
+         policy->getValueAsListOfDefs("requirements")) {
+      uint32_t value =
+          static_cast<uint32_t>(requirement->getValueAsInt("value"));
+      if (!seenRequirements.insert(requirement).second || value == 0 ||
+          (value & (value - 1)) != 0 || value > UINT8_MAX) {
+        PrintError(policy->getLoc(),
+                   "VPI value policy has duplicate or invalid requirements");
+        return false;
+      }
+      requirementMask |= value;
+    }
+    for (const Record *source : expandedSets.lookup(sources)) {
+      uint32_t value = static_cast<uint32_t>(source->getValueAsInt("value"));
+      auto [existing, inserted] = valuePolicySources.try_emplace(value, policy);
+      if (!inserted) {
+        PrintError(policy->getLoc(),
+                   Twine("duplicate VPI value policy for source ") +
+                       Twine(value) + "; first declared by " +
+                       existing->second->getName());
+        return false;
+      }
     }
   }
 
@@ -1556,6 +1641,136 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "             : nullptr;\n"
         "}\n\n";
 
+  auto valueFormatRecords =
+      records.getAllDerivedDefinitions("VPIValueFormat");
+  SmallVector<const Record *> valueFormats(valueFormatRecords.begin(),
+                                            valueFormatRecords.end());
+  llvm::sort(valueFormats, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIValueFormat : uint8_t {\n";
+  for (const Record *format : valueFormats)
+    os << formatv("  {0} = {1},\n", format->getValueAsString("cppName"),
+                  format->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto valueDefaultRecords =
+      records.getAllDerivedDefinitions("VPIValueDefaultFormat");
+  SmallVector<const Record *> valueDefaults(valueDefaultRecords.begin(),
+                                             valueDefaultRecords.end());
+  llvm::sort(valueDefaults, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIValueDefaultFormat : uint8_t {\n";
+  for (const Record *format : valueDefaults)
+    os << formatv("  {0} = {1},\n", format->getValueAsString("cppName"),
+                  format->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto valueReadRecords =
+      records.getAllDerivedDefinitions("VPIValueReadSemantics");
+  SmallVector<const Record *> valueReads(valueReadRecords.begin(),
+                                          valueReadRecords.end());
+  llvm::sort(valueReads, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIValueReadSemantics : uint8_t {\n";
+  for (const Record *read : valueReads)
+    os << formatv("  {0} = {1},\n", read->getValueAsString("cppName"),
+                  read->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto valueRequirementRecords =
+      records.getAllDerivedDefinitions("VPIValueRequirement");
+  SmallVector<const Record *> valueRequirements(
+      valueRequirementRecords.begin(), valueRequirementRecords.end());
+  llvm::sort(valueRequirements,
+             [](const Record *left, const Record *right) {
+               return left->getValueAsInt("value") <
+                      right->getValueAsInt("value");
+             });
+  os << "enum class VPIValueRequirement : uint8_t {\n";
+  for (const Record *requirement : valueRequirements)
+    os << formatv("  {0} = {1},\n",
+                  requirement->getValueAsString("cppName"),
+                  requirement->getValueAsInt("value"));
+  os << "};\n\n";
+
+  struct EmittedValuePolicy {
+    uint32_t source;
+    uint16_t formatMask;
+    const Record *defaultFormat;
+    const Record *readSemantics;
+    uint8_t requirements;
+    StringRef clause;
+  };
+  SmallVector<EmittedValuePolicy> emittedValuePolicies;
+  for (const Record *policy :
+       records.getAllDerivedDefinitions("VPIValuePolicy")) {
+    uint16_t formatMask = 0;
+    for (const Record *format : policy->getValueAsListOfDefs("formats"))
+      formatMask |= uint16_t{1} << format->getValueAsInt("value");
+    uint8_t requirements = 0;
+    for (const Record *requirement :
+         policy->getValueAsListOfDefs("requirements"))
+      requirements |=
+          static_cast<uint8_t>(requirement->getValueAsInt("value"));
+    for (uint32_t source :
+         expandedSets.lookup(policy->getValueAsDef("sources")))
+      emittedValuePolicies.push_back(
+          {source, formatMask, policy->getValueAsDef("defaultFormat"),
+           policy->getValueAsDef("readSemantics"), requirements,
+           policy->getValueAsString("clause")});
+  }
+  llvm::sort(emittedValuePolicies,
+             [](const EmittedValuePolicy &left,
+                const EmittedValuePolicy &right) {
+               return left.source < right.source;
+             });
+  os << "struct VPIValuePolicyDescriptor {\n"
+        "  uint32_t sourceType;\n"
+        "  uint16_t formatMask;\n"
+        "  VPIValueDefaultFormat defaultFormat;\n"
+        "  VPIValueReadSemantics readSemantics;\n"
+        "  uint8_t requirements;\n"
+        "  const char *clause;\n"
+        "};\n\n";
+  os << "inline constexpr VPIValuePolicyDescriptor vpiValuePolicies[] = {\n";
+  for (const EmittedValuePolicy &policy : emittedValuePolicies) {
+    os << formatv(
+        "  {{{0}, {1}, VPIValueDefaultFormat::{2}, "
+        "VPIValueReadSemantics::{3}, {4}, \"{5}\"",
+        policy.source, policy.formatMask,
+        policy.defaultFormat->getValueAsString("cppName"),
+        policy.readSemantics->getValueAsString("cppName"),
+        policy.requirements, policy.clause);
+    os << "},\n";
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIValuePolicyDescriptor *\n"
+        "findVPIValuePolicy(uint32_t sourceType) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiValuePolicies) /\n"
+        "                sizeof(vpiValuePolicies[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiValuePolicies[middle].sourceType < sourceType)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != sizeof(vpiValuePolicies) /\n"
+        "                    sizeof(vpiValuePolicies[0]) &&\n"
+        "                 vpiValuePolicies[low].sourceType == sourceType\n"
+        "             ? &vpiValuePolicies[low]\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool acceptsVPIValueFormat(\n"
+        "    const VPIValuePolicyDescriptor &policy, uint32_t format) {\n"
+        "  return format < 16 &&\n"
+        "         (policy.formatMask & (uint16_t{1} << format)) != 0;\n"
+        "}\n\n";
+
   auto modeRecords = records.getAllDerivedDefinitions("VPITraversalMode");
   SmallVector<const Record *> modes(modeRecords.begin(), modeRecords.end());
   llvm::sort(modes, [](const Record *left, const Record *right) {
@@ -1742,13 +1957,19 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       PrintError("expanded VPI property key exceeds 16 bits");
       return true;
     }
+  for (const EmittedValuePolicy &policy : emittedValuePolicies)
+    if (policy.source > std::numeric_limits<uint16_t>::max()) {
+      PrintError("expanded VPI value-policy key exceeds 16 bits");
+      return true;
+    }
 
-  constexpr uint32_t imageHeaderSize = 72;
+  constexpr uint32_t imageHeaderSize = 80;
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
   constexpr uint32_t imageTraversalSize = 8;
   constexpr uint32_t imagePropertySize = 8;
+  constexpr uint32_t imageValuePolicySize = 8;
   SmallVector<uint8_t> image(imageHeaderSize, 0);
   auto append16 = [&](uint16_t value) {
     image.push_back(static_cast<uint8_t>(value));
@@ -1844,6 +2065,18 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     append16(0);
   }
 
+  size_t valuePolicyOffset = image.size();
+  for (const EmittedValuePolicy &policy : emittedValuePolicies) {
+    append16(static_cast<uint16_t>(policy.source));
+    append16(policy.formatMask);
+    image.push_back(static_cast<uint8_t>(
+        policy.defaultFormat->getValueAsInt("value")));
+    image.push_back(static_cast<uint8_t>(
+        policy.readSemantics->getValueAsInt("value")));
+    image.push_back(policy.requirements);
+    image.push_back(0);
+  }
+
   if (image.size() > std::numeric_limits<uint32_t>::max()) {
     PrintError("VPI object model image exceeds 32 bits");
     return true;
@@ -1862,6 +2095,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   write32(60, static_cast<uint32_t>(emittedEdges.size()));
   write32(64, static_cast<uint32_t>(propertyOffset));
   write32(68, static_cast<uint32_t>(emittedProperties.size()));
+  write32(72, static_cast<uint32_t>(valuePolicyOffset));
+  write32(76, static_cast<uint32_t>(emittedValuePolicies.size()));
   uint64_t imageChecksum = UINT64_C(14695981039346656037);
   for (uint8_t byte : image) {
     imageChecksum ^= byte;
@@ -1881,6 +2116,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imageTraversalSize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImagePropertySize = "
      << imagePropertySize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageValuePolicySize = "
+     << imageValuePolicySize << ";\n\n";
   os << "inline constexpr uint8_t "
         "vpiObjectModelImageOrderMask = 0x0f;\n"
         "inline constexpr uint8_t "
@@ -1959,6 +2196,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
   uint64_t traversalCount = readVPIObjectModelImage32(data, 60);
   uint64_t propertyOffset = readVPIObjectModelImage32(data, 64);
   uint64_t propertyCount = readVPIObjectModelImage32(data, 68);
+  uint64_t valuePolicyOffset = readVPIObjectModelImage32(data, 72);
+  uint64_t valuePolicyCount = readVPIObjectModelImage32(data, 76);
   if (objectOffset != vpiObjectModelImageHeaderSize ||
       objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
       relationOffset !=
@@ -1978,7 +2217,14 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
               traversalCount * vpiObjectModelImageTraversalSize ||
       propertyCount >
           (size - propertyOffset) / vpiObjectModelImagePropertySize ||
-      propertyOffset + propertyCount * vpiObjectModelImagePropertySize != size)
+      valuePolicyOffset !=
+          propertyOffset +
+              propertyCount * vpiObjectModelImagePropertySize ||
+      valuePolicyCount >
+          (size - valuePolicyOffset) / vpiObjectModelImageValuePolicySize ||
+      valuePolicyOffset +
+              valuePolicyCount * vpiObjectModelImageValuePolicySize !=
+          size)
     return false;
 
   uint16_t previousValue = 0;
@@ -2074,6 +2320,34 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
       return false;
     previousSource = source;
     previousProperty = property;
+  }
+  previousSource = 0;
+  constexpr uint16_t validValueFormats = 0x1ffe;
+  constexpr uint8_t validValueRequirements = 0x0f;
+  for (uint32_t index = 0; index != valuePolicyCount; ++index) {
+    const uint8_t *record =
+        data + valuePolicyOffset +
+        index * vpiObjectModelImageValuePolicySize;
+    uint16_t source = readVPIObjectModelImage16(record, 0);
+    uint16_t formats = readVPIObjectModelImage16(record, 2);
+    bool concrete = false;
+    for (uint32_t objectIndex = 0; objectIndex != objectCount;
+         ++objectIndex) {
+      const uint8_t *object =
+          data + objectOffset +
+          objectIndex * vpiObjectModelImageObjectSize;
+      if (readVPIObjectModelImage16(object, 0) == source) {
+        concrete = object[2] == static_cast<uint8_t>(VPIObjectRole::Concrete);
+        break;
+      }
+    }
+    if ((index != 0 && source <= previousSource) || !concrete ||
+        formats == 0 || (formats & ~validValueFormats) != 0 ||
+        record[4] > static_cast<uint8_t>(VPIValueDefaultFormat::Time) ||
+        record[5] > static_cast<uint8_t>(VPIValueReadSemantics::Evaluate) ||
+        (record[6] & ~validValueRequirements) != 0 || record[7] != 0)
+      return false;
+    previousSource = source;
   }
   return true;
 }
@@ -2173,6 +2447,42 @@ inline constexpr bool findVPIObjectModelImageProperty(
             readVPIObjectModelImage16(record, 2),
             static_cast<VPIPropertyValueKind>(record[4])};
   return result.sourceType == sourceType && result.property == property;
+}
+
+struct VPIObjectModelImageValuePolicy {
+  uint16_t sourceType;
+  uint16_t formatMask;
+  VPIValueDefaultFormat defaultFormat;
+  VPIValueReadSemantics readSemantics;
+  uint8_t requirements;
+};
+
+inline constexpr bool findVPIObjectModelImageValuePolicy(
+    const uint8_t *data, uint32_t sourceType,
+    VPIObjectModelImageValuePolicy &result) {
+  if (sourceType > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 72);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 76);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageValuePolicySize;
+    if (readVPIObjectModelImage16(record, 0) < sourceType)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 76))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageValuePolicySize;
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage16(record, 2),
+            static_cast<VPIValueDefaultFormat>(record[4]),
+            static_cast<VPIValueReadSemantics>(record[5]), record[6]};
+  return result.sourceType == sourceType;
 }
 
 inline constexpr bool vpiObjectModelImageTargetContains(

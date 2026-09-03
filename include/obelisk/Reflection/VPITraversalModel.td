@@ -543,3 +543,4 @@ def RootActiveTimeFormat : VPITraversalEdge<RootSource, ActiveTimeFormatRel,
 
 include "VPITraversalEarly.td"
 include "VPITraversalLate.td"
+include "VPIValueModel.td"

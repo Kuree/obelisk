@@ -24,6 +24,8 @@ using namespace obelisk::reflection;
 using Mode = VPITraversalMode;
 using Order = VPITraversalOrder;
 using PropertyKind = VPIPropertyValueKind;
+using ValueDefault = VPIValueDefaultFormat;
+using ValueRead = VPIValueReadSemantics;
 using KindSet = std::set<uint32_t>;
 
 constexpr size_t kExpectedTraversalCount = 1872;
@@ -32,6 +34,9 @@ static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
 constexpr size_t kExpectedPropertyCount = 906;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
+constexpr size_t kExpectedValuePolicyCount = 56;
+static_assert(sizeof(vpiValuePolicies) / sizeof(vpiValuePolicies[0]) ==
+              kExpectedValuePolicyCount);
 
 struct OracleKey {
   uint32_t source;
@@ -463,6 +468,143 @@ TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
   }
 }
 
+TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
+  struct ExpectedPolicy {
+    uint16_t formats;
+    ValueDefault defaultFormat;
+    ValueRead readSemantics;
+    uint8_t requirements;
+    const char *clause;
+  };
+  constexpr uint16_t fullFormats = 0x1ffe;
+  constexpr uint16_t tableEntryFormats =
+      (uint16_t{1} << vpiStringVal) | (uint16_t{1} << vpiVectorVal);
+  constexpr uint8_t rejectWholeUnpacked = static_cast<uint8_t>(
+      VPIValueRequirement::RejectWholeUnpacked);
+  constexpr uint8_t rejectDefinitionOrigin = static_cast<uint8_t>(
+      VPIValueRequirement::RejectClassDefinitionOrigin);
+  constexpr uint8_t rejectTypespecOrigin = static_cast<uint8_t>(
+      VPIValueRequirement::RejectNonStaticClassTypespecOrigin);
+  constexpr uint8_t restrictStringConstant = static_cast<uint8_t>(
+      VPIValueRequirement::RestrictStringConstant);
+  constexpr uint8_t rejectNonRuntimeOrigin =
+      rejectDefinitionOrigin | rejectTypespecOrigin;
+
+  std::map<uint32_t, ExpectedPolicy> oracle;
+  auto add = [&](std::initializer_list<uint32_t> objects,
+                 uint16_t formats, ValueDefault defaultFormat,
+                 ValueRead readSemantics, uint8_t requirements,
+                 const char *clause) {
+    for (uint32_t object : objects)
+      ASSERT_TRUE(oracle
+                      .emplace(object,
+                               ExpectedPolicy{formats, defaultFormat,
+                                              readSemantics, requirements,
+                                              clause})
+                      .second)
+          << objectName(object);
+  };
+
+  add({vpiNet, vpiNetBit, vpiBitNet, vpiInterconnectNet,
+       vpiPackedArrayNet},
+      fullFormats, ValueDefault::ScalarOrVector, ValueRead::Snapshot, 0,
+      "37.16; 38.15");
+  add({vpiEnumNet}, fullFormats, ValueDefault::Semantic,
+      ValueRead::Snapshot, 0, "37.16; 38.15");
+  add({vpiIntegerNet, vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet},
+      fullFormats, ValueDefault::Integer, ValueRead::Snapshot, 0,
+      "37.16; 38.15");
+  add({vpiShortRealNet, vpiRealNet}, fullFormats, ValueDefault::Real,
+      ValueRead::Snapshot, 0, "37.16; 38.15");
+  add({vpiTimeNet}, fullFormats, ValueDefault::Time, ValueRead::Snapshot, 0,
+      "37.16; 38.15");
+  add({vpiStructNet, vpiUnionNet}, fullFormats,
+      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
+      rejectWholeUnpacked, "37.16; 38.15");
+
+  add({vpiReg, vpiRegBit, vpiBitVar, vpiPackedArrayVar}, fullFormats,
+      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
+      rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiEnumVar, vpiChandleVar}, fullFormats, ValueDefault::Semantic,
+      ValueRead::Snapshot, rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiIntegerVar, vpiByteVar, vpiShortIntVar, vpiIntVar, vpiLongIntVar},
+      fullFormats, ValueDefault::Integer, ValueRead::Snapshot,
+      rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiShortRealVar, vpiRealVar}, fullFormats, ValueDefault::Real,
+      ValueRead::Snapshot, rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiTimeVar}, fullFormats, ValueDefault::Time, ValueRead::Snapshot,
+      rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiStringVar}, fullFormats, ValueDefault::String, ValueRead::Snapshot,
+      rejectNonRuntimeOrigin, "37.17; 38.15");
+  add({vpiStructVar, vpiUnionVar}, fullFormats,
+      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
+      rejectWholeUnpacked | rejectNonRuntimeOrigin,
+      "37.17; 37.24; 38.15");
+
+  add({vpiVarSelect, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect,
+       vpiOperation, vpiFuncCall, vpiMethodFuncCall, vpiSysFuncCall,
+       vpiLetExpr},
+      fullFormats, ValueDefault::Semantic, ValueRead::Evaluate,
+      rejectNonRuntimeOrigin, "37.19; 37.57; 38.15");
+  add({vpiConstant}, fullFormats, ValueDefault::Semantic,
+      ValueRead::Snapshot, restrictStringConstant, "37.57; 38.15");
+  add({vpiParameter, vpiSpecParam, vpiEnumConst, vpiAttribute}, fullFormats,
+      ValueDefault::Semantic, ValueRead::Snapshot, 0,
+      "37.23; 37.26; 37.81; 38.15");
+  add({vpiGate, vpiSwitch, vpiUdp, vpiPrimTerm, vpiDelayTerm,
+       vpiContAssign, vpiContAssignBit},
+      fullFormats, ValueDefault::Semantic, ValueRead::Snapshot, 0,
+      "37.33; 37.43; 37.45; 38.15");
+  add({vpiFsmHandle}, fullFormats, ValueDefault::Semantic,
+      ValueRead::Snapshot, 0, "40.5.3");
+  add({vpiTableEntry}, tableEntryFormats, ValueDefault::String,
+      ValueRead::Snapshot, 0, "37.34; 38.15");
+
+  ASSERT_EQ(oracle.size(), kExpectedValuePolicyCount);
+  const VPIValuePolicyDescriptor *previous = nullptr;
+  for (const auto &policy : vpiValuePolicies) {
+    SCOPED_TRACE(objectName(policy.sourceType));
+    auto expected = oracle.find(policy.sourceType);
+    ASSERT_NE(expected, oracle.end());
+    EXPECT_EQ(policy.formatMask, expected->second.formats);
+    EXPECT_EQ(policy.defaultFormat, expected->second.defaultFormat);
+    EXPECT_EQ(policy.readSemantics, expected->second.readSemantics);
+    EXPECT_EQ(policy.requirements, expected->second.requirements);
+    EXPECT_STREQ(policy.clause, expected->second.clause);
+    EXPECT_EQ(findVPIValuePolicy(policy.sourceType), &policy);
+    if (previous) {
+      EXPECT_LT(previous->sourceType, policy.sourceType);
+    }
+    previous = &policy;
+
+    for (uint32_t format = 0; format != 19; ++format)
+      EXPECT_EQ(acceptsVPIValueFormat(policy, format),
+                (policy.formatMask & (uint16_t{1} << format)) != 0)
+          << "format " << format;
+
+    VPIObjectModelImageValuePolicy imagePolicy{};
+    ASSERT_TRUE(findVPIObjectModelImageValuePolicy(
+        vpiObjectModelImage, policy.sourceType, imagePolicy));
+    EXPECT_EQ(imagePolicy.formatMask, policy.formatMask);
+    EXPECT_EQ(imagePolicy.defaultFormat, policy.defaultFormat);
+    EXPECT_EQ(imagePolicy.readSemantics, policy.readSemantics);
+    EXPECT_EQ(imagePolicy.requirements, policy.requirements);
+  }
+
+  for (const auto &object : vpiObjectKinds) {
+    if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+      continue;
+    const bool expected = oracle.count(object.value) != 0;
+    EXPECT_EQ(findVPIValuePolicy(object.value) != nullptr, expected)
+        << object.apiName;
+    VPIObjectModelImageValuePolicy imagePolicy{};
+    EXPECT_EQ(findVPIObjectModelImageValuePolicy(
+                  vpiObjectModelImage, object.value, imagePolicy),
+              expected)
+        << object.apiName;
+  }
+}
+
 TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
   for (const auto &object : vpiObjectKinds) {
     if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
@@ -577,6 +719,8 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
             kExpectedTraversalCount);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 68),
             kExpectedPropertyCount);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 76),
+            kExpectedValuePolicyCount);
 
   size_t canonicalObjects = 0;
   for (const auto &object : vpiObjectKinds)
@@ -782,6 +926,47 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   reset();
   write16(propertyOffset + vpiObjectModelImagePropertySize + 2,
           readVPIObjectModelImage16(damaged.data(), propertyOffset + 2));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  uint32_t valuePolicyOffset =
+      readVPIObjectModelImage32(damaged.data(), 72);
+  reset();
+  damaged[valuePolicyOffset + 4] =
+      static_cast<uint8_t>(VPIValueDefaultFormat::Time) + 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[valuePolicyOffset + 5] =
+      static_cast<uint8_t>(VPIValueReadSemantics::Evaluate) + 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(valuePolicyOffset + 2, 1);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[valuePolicyOffset + 6] = 0x80;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[valuePolicyOffset + 7] = 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(valuePolicyOffset + vpiObjectModelImageValuePolicySize,
+          readVPIObjectModelImage16(damaged.data(), valuePolicyOffset));
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

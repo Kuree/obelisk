@@ -17,6 +17,7 @@ using namespace obelisk::reflection;
 
 static_assert(vpiObjectModelImageTraversalSize == 8);
 static_assert(vpiObjectModelImagePropertySize == 8);
+static_assert(vpiObjectModelImageValuePolicySize == 8);
 static_assert(findVPIProperty(vpiPort, vpiDirection)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiPort, vpiScalar)->valueKind ==
@@ -28,6 +29,32 @@ static_assert(findVPIProperty(vpiNet, vpiVector)->valueKind ==
 static_assert(findVPIProperty(vpiPortBit, vpiPortIndex)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiReg, vpiDirection) == nullptr);
+
+static_assert(static_cast<uint8_t>(VPIValueFormat::BinStr) == vpiBinStrVal);
+static_assert(static_cast<uint8_t>(VPIValueFormat::ObjType) == vpiObjTypeVal);
+static_assert(findVPIValuePolicy(vpiReg)->defaultFormat ==
+              VPIValueDefaultFormat::ScalarOrVector);
+static_assert(findVPIValuePolicy(vpiIntVar)->defaultFormat ==
+              VPIValueDefaultFormat::Integer);
+static_assert(findVPIValuePolicy(vpiRealVar)->defaultFormat ==
+              VPIValueDefaultFormat::Real);
+static_assert(findVPIValuePolicy(vpiStringVar)->defaultFormat ==
+              VPIValueDefaultFormat::String);
+static_assert(findVPIValuePolicy(vpiTimeVar)->defaultFormat ==
+              VPIValueDefaultFormat::Time);
+static_assert(findVPIValuePolicy(vpiOperation)->readSemantics ==
+              VPIValueReadSemantics::Evaluate);
+static_assert(findVPIValuePolicy(vpiNet)->readSemantics ==
+              VPIValueReadSemantics::Snapshot);
+static_assert(acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
+                                   vpiStringVal));
+static_assert(!acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
+                                    vpiIntVal));
+static_assert(findVPIValuePolicy(vpiPort) == nullptr);
+static_assert(findVPIValuePolicy(vpiPortBit) == nullptr);
+static_assert(findVPIValuePolicy(vpiRegArray) == nullptr);
+static_assert(findVPIValuePolicy(vpiClassVar) == nullptr);
+static_assert(findVPIValuePolicy(vpiVirtualInterfaceVar) == nullptr);
 
 static_assert(findVPIObjectKind(vpiModule)->role == VPIObjectRole::Concrete);
 static_assert(findVPIObjectKind(vpiReturn) == nullptr);
