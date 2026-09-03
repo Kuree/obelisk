@@ -9,12 +9,21 @@
 
 OBELISK_FOR_EACH_VPI_OBJECT_KIND(OBELISK_CHECK_VPI_VALUE)
 OBELISK_FOR_EACH_VPI_RELATION(OBELISK_CHECK_VPI_VALUE)
+OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
 
 #undef OBELISK_CHECK_VPI_VALUE
 
 using namespace obelisk::reflection;
 
 static_assert(vpiObjectModelImageTraversalSize == 8);
+static_assert(vpiObjectModelImagePropertySize == 8);
+static_assert(findVPIProperty(vpiPort, vpiDirection)->valueKind ==
+              VPIPropertyValueKind::Integer);
+static_assert(findVPIProperty(vpiPort, vpiScalar)->valueKind ==
+              VPIPropertyValueKind::Boolean);
+static_assert(findVPIProperty(vpiPortBit, vpiPortIndex)->valueKind ==
+              VPIPropertyValueKind::Integer);
+static_assert(findVPIProperty(vpiReg, vpiDirection) == nullptr);
 
 static_assert(findVPIObjectKind(vpiModule)->role == VPIObjectRole::Concrete);
 static_assert(findVPIObjectKind(vpiReturn) == nullptr);
