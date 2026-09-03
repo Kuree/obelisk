@@ -38,7 +38,7 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   EXPECT_FALSE(
       hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiClassTypespec));
   EXPECT_FALSE(
-      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiInstance));
+      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiModule));
   EXPECT_FALSE(
       hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiFunction));
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiReg, true, vpiTypespec));
@@ -48,7 +48,7 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   // the typespec and turn that conditional rule into an unconditional one.
   EXPECT_FALSE(
       hasClassDefinitionValueOrigin(vpiClassTypespec, false, vpiReg));
-  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiInstance, false, vpiReg));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
 constexpr size_t kExpectedTraversalCount = 1872;
