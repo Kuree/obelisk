@@ -616,6 +616,20 @@ class GoldenOutputTest(unittest.TestCase):
             "data=beef$finish: t_x.v:12: simulation time 5\n",
         ))
 
+    def test_severity_output_compares_lrm_fields_not_tool_punctuation(self):
+        self.assertTrue(self.match(
+            "[0] -Info: t_x.v:23: top.t\n"
+            "[0] %Warning: t_x.v:24: top.t: User warning\n",
+            "INFO: /tmp/t_x.v:23: top.t: simulation time 0: $info called.\n"
+            "WARNING: /tmp/t_x.v:24: top.t: simulation time 0: User warning\n",
+        ))
+
+    def test_severity_semantic_mismatch_remains_a_failure(self):
+        self.assertFalse(self.match(
+            "[0] %Warning: t_x.v:24: top.t: Expected warning\n",
+            "WARNING: /tmp/t_x.v:24: top.t: simulation time 0: Other warning\n",
+        ))
+
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
@@ -1009,7 +1023,8 @@ class ExcludedTest(unittest.TestCase):
 
     def test_virtual_modport_member_selection_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_virtual_modport_sel"]
-        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.5 and 25.9")
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 25.9")
+        self.assertIn("25.5", excluded.reason)
         self.assertIn("unselected virtual interface", excluded.reason)
         self.assertIn("virtual_handle.modport", excluded.reason)
 

@@ -1080,6 +1080,14 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     }
     SmallVector<Value> items;
     SmallVector<int32_t> flags;
+    StringAttr lexicalScope = op.getSystemScopePathAttr();
+    if (!lexicalScope)
+      lexicalScope =
+          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    if (!lexicalScope) {
+      op.emitError("display call has no elaborated lexical scope");
+      return failure();
+    }
     if (!display->severity.empty()) {
       std::string file = "<unknown>";
       unsigned line = 0;
@@ -1090,18 +1098,21 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       std::string prefix =
           (Twine(display->severity) + ": " + file + ":" + Twine(line) + ": ")
               .str();
-      if (children.size() == firstItem)
-        prefix += name.str() + " called.";
+      prefix += lexicalScope.getValue().str();
       std::string escaped;
-      escaped.reserve(prefix.size());
-      for (char character : prefix) {
-        escaped.push_back(character);
-        if (character == '%')
-          escaped.push_back('%');
-      }
+      escaped.reserve(prefix.size() + 40);
+      appendFormatText(escaped, prefix);
+      escaped += ": simulation time %0t: ";
+      if (children.size() == firstItem)
+        escaped += name.str() + " called.";
       items.push_back(
           sim::SimBytesConstantOp::create(builder, location, escaped)
               .getResult());
+      flags.push_back(0);
+      FailureOr<Value> time = currentTimeInUnits(location);
+      if (failed(time))
+        return failure();
+      items.push_back(*time);
       flags.push_back(0);
     }
     FailureOr<LoweredOutputList> output =
@@ -1165,14 +1176,6 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
     if (!timeMultiplier) {
       function.emitError("code unit has no frozen time scale");
-      return failure();
-    }
-    StringAttr lexicalScope = op.getSystemScopePathAttr();
-    if (!lexicalScope)
-      lexicalScope =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-    if (!lexicalScope) {
-      op.emitError("display call has no elaborated lexical scope");
       return failure();
     }
     // %t rescales against the design's precision when $timeformat has changed

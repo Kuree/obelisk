@@ -50,6 +50,14 @@ ASSERTION_FAILURE = re.compile(r"\bassert(?:ion)?\b.*\bfailed\b",
                                re.IGNORECASE)
 FINISH_DIAGNOSTIC = re.compile(
     r"\$finish: [^\n]*: simulation time [^\n]*(?:\n|\Z)")
+VERILATOR_SEVERITY_LINE = re.compile(
+    r"^\[(?P<time>\d+)\] [-%](?P<severity>Info|Warning|Error|Fatal): "
+    r"(?P<file>.*):(?P<line>\d+): (?P<scope>[^:]+)"
+    r"(?:: (?P<message>.*))?$")
+OBELISK_SEVERITY_LINE = re.compile(
+    r"^(?P<severity>INFO|WARNING|ERROR|FATAL): "
+    r"(?P<file>.*):(?P<line>\d+): (?P<scope>[^:]+): "
+    r"simulation time (?P<time>\d+): (?P<message>.*)$")
 # A small number of upstream self-checks call $finish after their checks and
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
@@ -1044,7 +1052,7 @@ WRITE_THROUGH_INPUT_MODPORT = Exclusion(
     "so a member listed as input is read-only through that selected modport; "
     "the test writes pa.addr and pb.addr through virtual PBus.phy handles")
 VIRTUAL_INTERFACE_MODPORT_MEMBER_SELECTION = Exclusion(
-    "IEEE 1800-2017 25.5 and 25.9",
+    "IEEE 1800-2017 25.9",
     "25.5 defines instance.modport selection for an interface-instance port "
     "connection, while 25.9 instead makes an unselected virtual interface "
     "directly assignment-compatible with a selected-modport virtual variable; "
@@ -1956,7 +1964,35 @@ def runtime_output_matches_golden(
     if _runtime_assertion_error_signature(expected)[1] != 0:
         return None
     actual = FINISH_DIAGNOSTIC.sub("", stdout + stderr)
-    return actual == expected
+    return (_normalize_golden_severity_lines(actual) ==
+            _normalize_golden_severity_lines(expected))
+
+
+def _normalize_golden_severity_lines(output: str) -> str:
+    """Canonicalize the LRM-defined fields of tool-specific severity text."""
+    normalized = []
+    for line in output.splitlines(keepends=True):
+        ending = "\n" if line.endswith("\n") else ""
+        text = line[:-1] if ending else line
+        match = (VERILATOR_SEVERITY_LINE.fullmatch(text) or
+                 OBELISK_SEVERITY_LINE.fullmatch(text))
+        if not match:
+            normalized.append(line)
+            continue
+        severity = match.group("severity").lower()
+        message = match.group("message") or ""
+        if message == f"${severity} called.":
+            message = ""
+        normalized.append(
+            "severity\x1f" + "\x1f".join((
+                severity,
+                match.group("time"),
+                Path(match.group("file")).name,
+                match.group("line"),
+                match.group("scope"),
+                message,
+            )) + ending)
+    return "".join(normalized)
 
 
 def _runtime_assertion_error_signature(

@@ -111,9 +111,10 @@ module {
 // CHECK-NEXT: obelisk_sim.return
 // CHECK: obelisk_sim.stop
 // CHECK-NEXT: obelisk_sim.return
-// CHECK-DAG: obelisk_sim.bytes.constant "INFO:
-// CHECK-DAG: obelisk_sim.bytes.constant "WARNING:
-// CHECK-DAG: obelisk_sim.bytes.constant "ERROR:
+// CHECK-DAG: obelisk_sim.bytes.constant "INFO: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK-DAG: obelisk_sim.bytes.constant "WARNING: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK-DAG: obelisk_sim.bytes.constant "ERROR: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK: obelisk_sim.time.now
 // CHECK: obelisk_sim.error
 // CHECK-NEXT: obelisk_sim.display
 // CHECK: obelisk_sim.bytes.constant "FATAL:
