@@ -36,6 +36,7 @@ add_executable(ObeliskRuntimeTests
 if(UNIX AND NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_library(ObeliskVPICallbackTestModule MODULE
     Inputs/VPICallbackModule.c
+    Inputs/VPICallbackThrow.cpp
   )
   target_include_directories(ObeliskVPICallbackTestModule SYSTEM PRIVATE
     ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800

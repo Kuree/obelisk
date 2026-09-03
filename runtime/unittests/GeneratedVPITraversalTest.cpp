@@ -132,8 +132,8 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
     ASSERT_NE(instance, nullptr);
     EXPECT_EQ(vpi_compare_objects(module, instance), 1);
     EXPECT_EQ(vpi_get(vpiPortIndex, ports[index]), expectedOrdinals[index]);
-    EXPECT_EQ(vpi_get64(vpiPortIndex, ports[index]),
-              static_cast<PLI_INT64>(expectedOrdinals[index]));
+    EXPECT_EQ(vpi_get64(vpiPortIndex, ports[index]), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
     EXPECT_EQ(vpi_get(vpiPortType, ports[index]), vpiPort);
     EXPECT_EQ(vpi_get(vpiDirection, ports[index]), expectedDirections[index]);
     EXPECT_EQ(vpi_get(vpiSize, ports[index]), expectedWidths[index]);

@@ -42,9 +42,16 @@ vectors even at width one, and unpacked aggregates and real values are neither.
 These queries do not inspect or materialize simulation state, register a
 callback, or affect scheduler tier selection.
 
-Handles live in a context-owned arena. Releasing a handle marks it dead without
-reusing its record, so double release and exhausted iterators are diagnosed
-deterministically.
+Handles live in a context-owned registry. `vpi_release_handle` returns their
+storage immediately, and scanning an iterator through exhaustion automatically
+frees the iterator as required by 38.38. Context teardown frees any handles and
+callbacks the application did not explicitly release.
+
+Error status follows IEEE 1800-2017 38.2: `vpi_chk_error` observes without
+consuming the previous status, and the next call to any other VPI routine
+resets it before reporting that call's result. `vpi_get64` accepts only
+64-bit integer properties; ordinary integer and Boolean properties must be
+queried with `vpi_get`.
 
 Traversal uses the design database encoded into the final simulator. Scope,
 module, net, and packed-storage handles wrap validated database cursors; their

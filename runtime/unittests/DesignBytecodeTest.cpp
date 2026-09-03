@@ -2,6 +2,7 @@
 
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
+#include "../lib/VPIHandleToken.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "sv_vpi_user.h"
@@ -15,7 +16,9 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
+#include <unordered_set>
 #include <vector>
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
@@ -4317,6 +4320,30 @@ PLI_INT32 registerLaterLifecycleCallbacks(p_cb_data data) {
   return 0;
 }
 
+struct VPIDestroyProbe {
+  obelisk_rt_context *context = nullptr;
+  bool destroyReturned = false;
+  bool vpiRemainedUsable = false;
+};
+
+PLI_INT32 destroyContextFromCallback(p_cb_data data) {
+  auto *probe = reinterpret_cast<VPIDestroyProbe *>(data->user_data);
+  obelisk_rt_v1_context_destroy(probe->context);
+  probe->destroyReturned = true;
+  s_vpi_vlog_info info{};
+  probe->vpiRemainedUsable = vpi_get_vlog_info(&info) == 1;
+  return 0;
+}
+
+PLI_INT32 shutdownVPIFromCallback(p_cb_data data) {
+  auto *probe = reinterpret_cast<VPIDestroyProbe *>(data->user_data);
+  obelisk_rt_v1_vpi_shutdown(probe->context);
+  probe->destroyReturned = true;
+  s_vpi_vlog_info info{};
+  probe->vpiRemainedUsable = vpi_get_vlog_info(&info) == 1;
+  return 0;
+}
+
 TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
   EXPECT_EQ(obelisk_rt_v1_vpi_startup(nullptr, nullptr, 0),
             OBELISK_RT_INVALID_ARGUMENT);
@@ -4349,6 +4376,86 @@ TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
   char rootName[] = "$root";
   EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ContextDestroyRevokesAndFreesStateAcrossThreads) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char rootName[] = "$root";
+  ASSERT_NE(vpi_handle_by_name(rootName, nullptr), nullptr);
+  s_cb_data callback{};
+  callback.reason = cbEndOfSimulation;
+  callback.cb_rtn = lifecycleProbeCallback;
+  ASSERT_NE(vpi_register_cb(&callback), nullptr);
+
+  obelisk_rt_status duplicateStartup = OBELISK_RT_OK;
+  std::thread starter([&] {
+    duplicateStartup = obelisk_rt_v1_vpi_startup(context, nullptr, 0);
+  });
+  starter.join();
+  EXPECT_EQ(duplicateStartup, OBELISK_RT_INVALID_ARGUMENT);
+
+  std::thread destroyer([&] { obelisk_rt_v1_context_destroy(context); });
+  destroyer.join();
+
+  // Cross-thread destruction atomically revokes the originating simulation
+  // thread's binding. A fresh context can then activate VPI on this thread.
+  EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
+  context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ContextCanOutliveItsVPIOwnerThread) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  std::array<obelisk_rt_status, 4> statuses{};
+  std::thread owner([&] {
+    statuses[0] =
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context);
+    if (statuses[0] != OBELISK_RT_OK)
+      return;
+    statuses[1] = obelisk_rt_v1_vpi_startup(context, nullptr, 0);
+    statuses[2] = obelisk_rt_v1_vpi_end_compile(context);
+    statuses[3] = obelisk_rt_v1_vpi_start_simulation(context);
+    char rootName[] = "$root";
+    EXPECT_NE(vpi_handle_by_name(rootName, nullptr), nullptr);
+  });
+  owner.join();
+  EXPECT_EQ(statuses,
+            (std::array<obelisk_rt_status, 4>{OBELISK_RT_OK, OBELISK_RT_OK,
+                                              OBELISK_RT_OK, OBELISK_RT_OK}));
+  ASSERT_NE(context, nullptr);
+
+  // The shared revocation slot remains valid after its thread-local owner has
+  // exited, so destruction on this thread releases the complete VPI state.
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, OpaqueHandleTokenAllocationSaturatesWithoutWrapping) {
+  const uintptr_t exhausted = std::numeric_limits<uintptr_t>::max();
+  std::atomic<uintptr_t> next{exhausted - 1};
+  uintptr_t token = 0;
+  EXPECT_TRUE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_EQ(token, exhausted - 1);
+  EXPECT_EQ(next.load(), exhausted);
+
+  token = 17;
+  EXPECT_FALSE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_EQ(token, 17u);
+  EXPECT_EQ(next.load(), exhausted);
+  EXPECT_FALSE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_EQ(next.load(), exhausted);
 }
 
 #if defined(OBELISK_VPI_CALLBACK_TEST_MODULE)
@@ -4415,9 +4522,70 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   obelisk_rt_v1_vpi_end_simulation(context);
   obelisk_rt_v1_context_destroy(context);
 
+  Fixture throwingFixture;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&throwingFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  reset(3);
+  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context->vpiState, nullptr);
+  EXPECT_EQ(query(0), 1);
+  // Exception rollback revokes the TLS binding, so activation can be retried.
+  reset(0);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+
   EXPECT_EQ(dlclose(module), 0);
 }
 #endif
+
+TEST(VPI, LifecycleCallbackDefersContextDestruction) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  VPIDestroyProbe probe{context};
+  s_cb_data callback{};
+  callback.reason = cbStartOfSimulation;
+  callback.cb_rtn = destroyContextFromCallback;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  ASSERT_NE(vpi_register_cb(&callback), nullptr);
+  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_TRUE(probe.destroyReturned);
+  EXPECT_TRUE(probe.vpiRemainedUsable);
+
+  // The transaction destroys the context only after callback dispatch and the
+  // lifecycle transition are finished, and revokes this thread's VPI binding.
+  char rootName[] = "$root";
+  EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
+}
+
+TEST(VPI, LifecycleCallbackCannotDirectlyShutdownActiveVPI) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  VPIDestroyProbe probe{context};
+  s_cb_data callback{};
+  callback.reason = cbStartOfSimulation;
+  callback.cb_rtn = shutdownVPIFromCallback;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  ASSERT_NE(vpi_register_cb(&callback), nullptr);
+  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_TRUE(probe.destroyReturned);
+  EXPECT_TRUE(probe.vpiRemainedUsable);
+  EXPECT_NE(context->vpiState, nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
 
 TEST(VPI, CopiesAndDispatchesLifecycleCallbackData) {
   Fixture fixture;
@@ -4616,7 +4784,18 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_get(vpiType, root), vpiModule);
   EXPECT_EQ(vpi_get(vpiSize, root), 0);
   EXPECT_STREQ(vpi_get_str(vpiName, root), "top");
-  EXPECT_EQ(vpi_get64(vpiType, value), vpiReg);
+  EXPECT_EQ(vpi_get64(vpiType, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_get(vpiType, value), vpiReg);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_get64(vpiObjId, value), vpiUndefined);
+  s_vpi_error_info propertyError{};
+  EXPECT_EQ(vpi_chk_error(&propertyError), vpiNotice);
+  EXPECT_STREQ(propertyError.message,
+               "unsupported 64-bit integer VPI property");
+  EXPECT_EQ(vpi_get(vpiType, value), vpiReg);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get(vpiSize, value), 65);
   EXPECT_STREQ(vpi_get_str(vpiName, value), "value");
   EXPECT_STREQ(vpi_get_str(vpiFullName, value), "top.value");
@@ -4645,7 +4824,7 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
   EXPECT_STREQ(error.product, "Obelisk");
   EXPECT_STREQ(error.code, "OBELISK_VPI");
-  EXPECT_EQ(vpi_chk_error(&error), 0);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
 
   EXPECT_EQ(vpi_release_handle(scanned), 1);
   EXPECT_EQ(vpi_release_handle(scanned), 0);
@@ -4654,6 +4833,43 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_release_handle(scope), 1);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReleasedAndExhaustedHandlesDoNotAliasNewObjects) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  std::unordered_set<uintptr_t> tokens;
+  auto remember = [&](vpiHandle handle) {
+    ASSERT_NE(handle, nullptr);
+    EXPECT_TRUE(tokens.insert(reinterpret_cast<uintptr_t>(handle)).second);
+  };
+  char rootName[] = "$root";
+  for (unsigned iteration = 0; iteration != 1024; ++iteration) {
+    vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+    remember(root);
+    vpiHandle iterator = vpi_iterate(vpiReg, root);
+    remember(iterator);
+    vpiHandle value = vpi_scan(iterator);
+    remember(value);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_release_handle(value), 1);
+
+    s_cb_data callback{};
+    callback.reason = cbEndOfSimulation;
+    callback.cb_rtn = lifecycleProbeCallback;
+    vpiHandle registration = vpi_register_cb(&callback);
+    remember(registration);
+    EXPECT_EQ(vpi_remove_cb(registration), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+  }
   obelisk_rt_v1_context_destroy(context);
 }
 
