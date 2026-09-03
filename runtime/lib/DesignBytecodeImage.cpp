@@ -913,14 +913,18 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(input(2));
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE:
-    if (signature.flags != 0 || site.inputCount != 10 ||
+    if (signature.flags != 0 ||
+        (site.inputCount != 10 && site.inputCount != 11) ||
         site.outputCount != 1 || !managed(output(0)))
       return false;
     for (uint32_t index = 0; index != 7; ++index)
       if (!twoStateBits(input(index), 64))
         return false;
-    return bytes(input(7)) && twoStateBits(input(8), 64) &&
-           twoStateBits(input(9), 64);
+    if (!bytes(input(7)) ||
+        (site.inputCount == 11 && !bytes(input(8))))
+      return false;
+    return twoStateBits(input(site.inputCount - 2), 64) &&
+           twoStateBits(input(site.inputCount - 1), 64);
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && managed(output(0));

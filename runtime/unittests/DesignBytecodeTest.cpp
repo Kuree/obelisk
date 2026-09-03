@@ -7006,6 +7006,52 @@ TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
   }
 }
 
+TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {
+  constexpr uint64_t layoutOffset = 0;
+  constexpr uint64_t intrinsicOffset = 12 * 40;
+  constexpr uint64_t siteOffset = intrinsicOffset + 16;
+  constexpr uint64_t operandOffset = siteOffset + 16;
+  std::vector<uint8_t> bytes(operandOffset + 12 * 8, 0);
+  auto layout = [&](uint32_t index, uint8_t kind, uint32_t width = 0) {
+    uint64_t record = layoutOffset + uint64_t{index} * 40;
+    bytes[record] = kind;
+    put32(bytes, record + 4, width);
+  };
+  for (uint32_t index = 0; index != 7; ++index)
+    layout(index, OBELISK_RT_DBREG_BITS, 64);
+  layout(7, OBELISK_RT_DBREG_BYTES);
+  layout(8, OBELISK_RT_DBREG_BYTES);
+  layout(9, OBELISK_RT_DBREG_BITS, 64);
+  layout(10, OBELISK_RT_DBREG_BITS, 64);
+  layout(11, OBELISK_RT_DBREG_MANAGED);
+  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE);
+  put32(bytes, intrinsicOffset + 4, 11);
+  put32(bytes, intrinsicOffset + 8, 1);
+  put32(bytes, siteOffset + 8, 11);
+  put32(bytes, siteOffset + 12, 1);
+  for (uint32_t index = 0; index != 11; ++index)
+    put32(bytes, operandOffset + uint64_t{index} * 8 + 4, index);
+  put32(bytes, operandOffset + 11 * 8, 11);
+
+  obelisk::designbytecode::Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.layouts = layoutOffset;
+  image.layoutCount = 12;
+  image.intrinsics = intrinsicOffset;
+  image.intrinsicCount = 1;
+  image.sites = siteOffset;
+  image.siteCount = 1;
+  image.operands = operandOffset;
+  image.operandCount = 12;
+  obelisk::designbytecode::Function function{};
+  function.layoutCount = 12;
+
+  EXPECT_TRUE(obelisk::designbytecode::validIntrinsic(image, function, 0));
+  bytes[8 * 40] = OBELISK_RT_DBREG_BITS;
+  EXPECT_FALSE(obelisk::designbytecode::validIntrinsic(image, function, 0));
+}
+
 TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
   auto validate = [](uint64_t bitOffset) {
     Fixture fixture;
