@@ -825,6 +825,12 @@ DEFAULT_ASSERT_FAILURE_ACTION = Exclusion(
     "when it fails, even if it has an explicit pass statement; 20.12 also "
     "identifies this as the default fail action, but the test deliberately "
     "fails two such assertions and expects a clean run")
+INVALID_ASSERTCONTROL_DIAGNOSTIC = Exclusion(
+    "IEEE 1800-2017 20.12",
+    "Table 20-5 defines only control_type values 1 through 11 and does not "
+    "prescribe the wording of a diagnostic for a different run-time value; "
+    "Obelisk emits a warning and leaves assertion control unchanged, while "
+    "the golden requires Verilator's exact warning text")
 DEFERRED_REPORT_QUEUE = Exclusion(
     "IEEE 1800-2017 16.4.1",
     "deferred reports remain queued until they mature or the process reaches "
@@ -1103,6 +1109,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_assert_pre": USE_BEFORE_DECLARATION,
     "t_assert_ctl_arg": DEFERRED_REPORT_QUEUE,
     "t_assert_ctl_pass_actions": ACTIVE_ASSERTION_ACTION_CONTROL,
+    "t_assert_ctl_type_runtime_bad": INVALID_ASSERTCONTROL_DIAGNOSTIC,
     "t_assert_sampled": DEFAULT_ASSERT_FAILURE_ACTION,
     "t_assert_seq_event_unsup": LEGAL_SEQUENCE_ENDPOINT_TOPOLOGY,
     "t_assert_unique_case_bad": TOOL_SPECIFIC_VIOLATION_REPORT_SEVERITY,

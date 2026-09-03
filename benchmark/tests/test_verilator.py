@@ -1180,6 +1180,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("implicit $finish", excluded.reason)
         self.assertIn("time zero", excluded.reason)
 
+    def test_invalid_assertcontrol_warning_text_is_tool_specific(self):
+        excluded = verilator.EXCLUDED["t_assert_ctl_type_runtime_bad"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 20.12")
+        self.assertIn("values 1 through 11", excluded.reason)
+        self.assertIn("exact warning text", excluded.reason)
+
     def test_associative_array_indices_must_be_equivalent(self):
         excluded = verilator.EXCLUDED["t_cast_types"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 6.22.2")
