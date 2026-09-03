@@ -1004,6 +1004,11 @@ VARIABLE_FORCE_SELECT = Exclusion(
     "IEEE 1800-2017 10.6.2",
     "a force/release lvalue shall not be a bit-select or part-select of a "
     "variable; the test requires Verilator's extension for variable selects")
+VERILATOR_FORCED_REF_ARGUMENT_UNSUPPORTED = Exclusion(
+    "IEEE 1800-2017 13.5.2",
+    "a ref formal is an alias for its actual variable, and 10.6.2 does not "
+    "forbid referencing a variable while its value is forced; the descriptor "
+    "expects failure only because Verilator rejects that combination")
 INTEGRAL_OUTPUT_TO_ENUM = Exclusion(
     "IEEE 1800-2017 6.22.3",
     "port connections require assignment-compatible types under IEEE "
@@ -1113,6 +1118,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_force_unpacked": VARIABLE_FORCE_SELECT,
     "t_force_unpacked_bitsel": VARIABLE_FORCE_SELECT,
     "t_force_wide_sel": VARIABLE_FORCE_SELECT,
+    "t_force_readwrite_unsup": VERILATOR_FORCED_REF_ARGUMENT_UNSUPPORTED,
     "t_foreach_const": CONSTANT_FOREACH_EXTENSIONS,
     "t_fsm_register_wrapper": INTEGRAL_OUTPUT_TO_ENUM,
     "t_fsm_register_wrapper_noinline": INTEGRAL_OUTPUT_TO_ENUM,

@@ -927,6 +927,12 @@ class ExcludedTest(unittest.TestCase):
                 self.assertIn("shall not be a bit-select or part-select",
                               excluded.reason)
 
+    def test_forced_variable_may_be_passed_by_reference(self):
+        excluded = verilator.EXCLUDED["t_force_readwrite_unsup"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 13.5.2")
+        self.assertIn("10.6.2", excluded.reason)
+        self.assertIn("Verilator", excluded.reason)
+
     def test_constant_foreach_extensions_are_not_compiler_failures(self):
         excluded = verilator.EXCLUDED["t_foreach_const"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4.3")
