@@ -984,7 +984,8 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
   result.declarations.push_back(sim::SimScopeDeclOp::create(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
-      builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{}));
+      builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{},
+      IntegerAttr{}));
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](semantic::SVInstanceBodySymbolOp body) {
         Operation *parent = body->getParentOp();
@@ -1009,7 +1010,8 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
             builder, getSemanticLocation(body), id,
             builder.getI64IntegerAttr(parentId),
             builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body)), interfaceType);
+            builder.getStringAttr(getDebugName(body)), interfaceType,
+            body->getAttrOfType<IntegerAttr>("vpi_scope_kind"));
         if (interfaceType) {
           auto instance =
               dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());

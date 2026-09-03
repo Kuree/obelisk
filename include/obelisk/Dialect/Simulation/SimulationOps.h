@@ -112,6 +112,11 @@ bool isSuspensionOp(::mlir::Operation *operation);
 /// suspension or termination before ordinary initial actors begin.
 bool isStartupEntryKind(EntryKind kind);
 
+/// Whether a source-visible code unit has a corresponding VPI object. Other
+/// entry kinds are compiler/runtime infrastructure and are intrinsically
+/// internal even when they do not carry the optional `internal` marker.
+bool isVPIVisibleEntryKind(EntryKind kind);
+
 /// Marks a process of a startup entry kind that nonetheless begins by running
 /// rather than by waiting, so the prepare pass spawns it among the initial
 /// procedures instead of ahead of them. IEEE 1800-2017 9.2.2.1 leaves an

@@ -40,6 +40,10 @@ void put64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value) {
     bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
 }
 
+uint32_t designRecordKind(uint32_t physicalKind, uint32_t vpiKind) {
+  return physicalKind | (vpiKind << 16);
+}
+
 uint64_t get64(const std::vector<uint8_t> &bytes, size_t offset) {
   uint64_t value = 0;
   for (unsigned index = 0; index != 8; ++index)
@@ -1862,7 +1866,8 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   put64(bytes, 144, stringOffset);
   put64(bytes, 160, stringOffset);
 
-  put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, scopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, objectOffset);
@@ -1872,7 +1877,8 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
     put64(bytes, scopeOffset + 56, (uint64_t{3} << 32) | 1);
   }
 
-  put32(bytes, objectOffset, OBELISK_RT_DESIGN_RECORD_STORAGE);
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiReg));
   put32(bytes, objectOffset + 4,
         OBELISK_RT_DESIGN_CAP_READ |
             (writable ? OBELISK_RT_DESIGN_CAP_WRITE : 0));
@@ -1952,19 +1958,22 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   put64(bytes, 144, stringOffset);
   put64(bytes, 160, stringOffset);
 
-  put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, scopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, processOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
-  put32(bytes, processOffset, OBELISK_RT_DESIGN_RECORD_PROCESS);
+  put32(bytes, processOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiInitial));
   put64(bytes, processOffset + 8, 71);
   put64(bytes, processOffset + 16, scopeOffset);
   put64(bytes, processOffset + 24, functionOffset);
   put64(bytes, processOffset + 40, stringOffset + 4);
 
-  put32(bytes, functionOffset, OBELISK_RT_DESIGN_RECORD_FUNCTION);
+  put32(bytes, functionOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
   put64(bytes, functionOffset + 8, 72);
   put64(bytes, functionOffset + 16, scopeOffset);
   put64(bytes, functionOffset + 40, stringOffset + 13);
@@ -2029,20 +2038,23 @@ std::vector<uint8_t> makeStatementDatabase() {
   put64(bytes, 160, relationOffset);
   put64(bytes, 168, 3);
 
-  put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, scopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
   put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, childScopeOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
-  put32(bytes, childScopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, childScopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
   put32(bytes, childScopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
   put64(bytes, childScopeOffset + 8, 2);
   put64(bytes, childScopeOffset + 16, scopeOffset);
   put64(bytes, childScopeOffset + 24, processOffset);
   put64(bytes, childScopeOffset + 40, stringOffset + 4);
 
-  put32(bytes, processOffset, OBELISK_RT_DESIGN_RECORD_PROCESS);
+  put32(bytes, processOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiInitial));
   put64(bytes, processOffset + 8, 10);
   put64(bytes, processOffset + 16, childScopeOffset);
   put64(bytes, processOffset + 40, stringOffset + 14);
@@ -2063,9 +2075,11 @@ std::vector<uint8_t> makeStatementDatabase() {
     put16(bytes, offset + 38, flags);
   };
   statement(0, 100, UINT32_MAX, vpiNamedBegin,
-            OBELISK_RT_DESIGN_STATEMENT_PROTECTED, 8, 1, 37);
+            OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
+                OBELISK_RT_DESIGN_STATEMENT_SCOPE,
+            8, 1, 37);
   statement(1, 200, 0, vpiFor, 0, 9, 3, 0);
-  statement(2, 300, 0, vpiNullStmt, 0, 10, 5, 0);
+  statement(2, 300, 1, vpiNullStmt, 0, 10, 5, 0);
   auto site = [&](size_t index, uint64_t id, uint32_t statement,
                   uint16_t phase) {
     size_t offset = siteOffset + index * 16;
@@ -2089,7 +2103,7 @@ std::vector<uint8_t> makeStatementDatabase() {
   };
   relation(0, 0, 0, 0, vpiStmt, uint16_t{1u << 14} | vpiInitial);
   relation(1, 0, 1, 0, vpiStmt, uint16_t{2u << 14} | vpiNamedBegin);
-  relation(2, 0, 2, 1, vpiStmt, uint16_t{2u << 14} | vpiNamedBegin);
+  relation(2, 1, 2, 0, vpiStmt, uint16_t{2u << 14} | vpiFor);
 
   std::memcpy(bytes.data() + stringOffset,
               "top\0top.child\0top.child.proc\0test.sv\0body\0", stringSize);
@@ -2153,7 +2167,8 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, scopeOffset + 24, objectOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
-  put32(bytes, objectOffset, OBELISK_RT_DESIGN_RECORD_STORAGE);
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiReg));
   put32(bytes, objectOffset + 4,
         OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE);
   put64(bytes, objectOffset + 8, 7);
@@ -3246,7 +3261,8 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   Fixture fixture;
   fixture.bytecode = makeDriverBytecode();
   fixture.database = makeDatabase();
-  put32(fixture.database, 240, OBELISK_RT_DESIGN_RECORD_NET);
+  put32(fixture.database, 240,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -3839,7 +3855,8 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   Fixture fixture;
   fixture.bytecode = makeConnectedDriverBytecode();
   fixture.database = makeDatabase();
-  put32(fixture.database, 240, OBELISK_RT_DESIGN_RECORD_NET);
+  put32(fixture.database, 240,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -4425,6 +4442,418 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_release_handle(scope), 1);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+void installStatementDatabase(Fixture &fixture) {
+  fixture.database = makeStatementDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+}
+
+TEST(VPI, TraversesProcessAndStatementRelationsWithExactTypes) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char childName[] = "top.child";
+  char processName[] = "top.child.proc";
+  vpiHandle child = vpi_handle_by_name(childName, nullptr);
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(child, nullptr);
+  ASSERT_NE(process, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, process), vpiInitial);
+
+  // Generic hierarchy iteration streams the immutable sibling chain, while
+  // exact process kinds are recovered from the relation source metadata.
+  vpiHandle processes = vpi_iterate(vpiProcess, child);
+  ASSERT_NE(processes, nullptr);
+  vpiHandle scannedProcess = vpi_scan(processes);
+  ASSERT_NE(scannedProcess, nullptr);
+  EXPECT_EQ(vpi_compare_objects(process, scannedProcess), 1);
+  EXPECT_EQ(vpi_scan(processes), nullptr);
+  // vpiInitial is a concrete vpiType, not an iteration selector. Static
+  // processes are selected through the generated vpiProcess relation.
+  EXPECT_EQ(vpi_iterate(vpiInitial, child), nullptr);
+
+  vpiHandle body = vpi_handle(vpiStmt, process);
+  ASSERT_NE(body, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, body), vpiNamedBegin);
+  EXPECT_EQ(vpi_get(vpiSize, body), 0);
+  EXPECT_STREQ(vpi_get_str(vpiName, body), "body");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, body), "top.child.body");
+  EXPECT_STREQ(vpi_get_str(vpiFile, body), "test.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, body), 8);
+  vpiHandle statementScope = vpi_handle(vpiScope, body);
+  ASSERT_NE(statementScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(child, statementScope), 1);
+
+  // The image records the LRM mode. A process has a singular vpiStmt, while
+  // a begin block exposes its ordered children only through iteration.
+  EXPECT_EQ(vpi_iterate(vpiStmt, process), nullptr);
+  EXPECT_EQ(vpi_handle(vpiStmt, body), nullptr);
+  vpiHandle statements = vpi_iterate(vpiStmt, body);
+  ASSERT_NE(statements, nullptr);
+  vpiHandle first = vpi_scan(statements);
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, first), vpiFor);
+  EXPECT_EQ(vpi_get(vpiLineNo, first), 9);
+  EXPECT_EQ(vpi_get_str(vpiName, first), nullptr);
+  EXPECT_EQ(vpi_get_str(vpiFullName, first), nullptr);
+  vpiHandle nestedScope = vpi_handle(vpiScope, first);
+  ASSERT_NE(nestedScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(body, nestedScope), 1);
+  EXPECT_EQ(vpi_scan(statements), nullptr);
+
+  vpiHandle second = vpi_handle(vpiStmt, first);
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, second), vpiNullStmt);
+  EXPECT_EQ(vpi_get(vpiLineNo, second), 10);
+  EXPECT_EQ(vpi_get_str(vpiName, second), nullptr);
+  // A for statement is a scope only when its occurrence declares a loop
+  // variable. This declaration-free loop is skipped in favor of its named
+  // enclosing block.
+  vpiHandle secondScope = vpi_handle(vpiScope, second);
+  ASSERT_NE(secondScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(body, secondScope), 1);
+  EXPECT_EQ(vpi_scan(statements), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  vpiHandle released = vpi_iterate(vpiStmt, body);
+  ASSERT_NE(released, nullptr);
+  EXPECT_EQ(vpi_release_handle(released), 1);
+  EXPECT_EQ(vpi_scan(released), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
+  struct ProcessCase {
+    uint32_t encodedKind;
+    PLI_INT32 expectedKind;
+    bool staticProcess;
+  };
+  for (ProcessCase processCase : {
+           ProcessCase{vpiInitial, vpiInitial, true},
+           ProcessCase{vpiFinal, vpiFinal, true},
+           ProcessCase{vpiAlways, vpiAlways, true},
+           ProcessCase{vpiTask, vpiTask, false},
+           ProcessCase{0, vpiUndefined, false},
+       }) {
+    SCOPED_TRACE(processCase.expectedKind);
+    Fixture fixture;
+    fixture.database = makeCodeUnitDatabase();
+    put32(fixture.database, 240,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS,
+                           processCase.encodedKind));
+    put32(fixture.database, 244,
+          processCase.encodedKind == 0
+              ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_INTERNAL)
+              : 0);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              OBELISK_RT_EXECUTION_VPI_READ;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char rootName[] = "top";
+    char processName[] = "top.proc";
+    vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+    vpiHandle process = vpi_handle_by_name(processName, nullptr);
+    ASSERT_NE(root, nullptr);
+    if (processCase.expectedKind == vpiUndefined) {
+      EXPECT_EQ(process, nullptr);
+      obelisk_rt_v1_context_destroy(context);
+      continue;
+    }
+    ASSERT_NE(process, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, process), processCase.expectedKind);
+    vpiHandle processes = vpi_iterate(vpiProcess, root);
+    if (processCase.staticProcess) {
+      ASSERT_NE(processes, nullptr);
+      EXPECT_EQ(vpi_compare_objects(process, vpi_scan(processes)), 1);
+      EXPECT_EQ(vpi_scan(processes), nullptr);
+    } else {
+      EXPECT_EQ(processes, nullptr);
+    }
+    if (processCase.expectedKind == vpiTask) {
+      vpiHandle taskFunctions = vpi_iterate(vpiTaskFunc, root);
+      ASSERT_NE(taskFunctions, nullptr);
+      EXPECT_EQ(vpi_compare_objects(process, vpi_scan(taskFunctions)), 1);
+      EXPECT_EQ(vpi_get(vpiType, vpi_scan(taskFunctions)), vpiFunction);
+      EXPECT_EQ(vpi_scan(taskFunctions), nullptr);
+    }
+    EXPECT_EQ(vpi_iterate(processCase.expectedKind, root), nullptr);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  for (uint32_t scopeKind :
+       {uint32_t{vpiModule}, uint32_t{vpiInterface}, uint32_t{vpiProgram}}) {
+    SCOPED_TRACE(scopeKind);
+    Fixture fixture;
+    fixture.database = makeCodeUnitDatabase();
+    put32(fixture.database, 176,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeKind));
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              OBELISK_RT_EXECUTION_VPI_READ;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char rootName[] = "top";
+    vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+    ASSERT_NE(root, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, root), scopeKind);
+    // No statement relation is present; source dispatch still uses the
+    // intrinsic interface/program/module kind.
+    vpiHandle processes = vpi_iterate(vpiProcess, root);
+    ASSERT_NE(processes, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, vpi_scan(processes)), vpiInitial);
+    EXPECT_EQ(vpi_scan(processes), nullptr);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  put32(fixture.database, 240,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiInterface));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char rootName[] = "top";
+  char childName[] = "top.child";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  vpiHandle child = vpi_handle_by_name(childName, nullptr);
+  ASSERT_NE(root, nullptr);
+  ASSERT_NE(child, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, child), vpiInterface);
+  EXPECT_EQ(vpi_iterate(vpiModule, root), nullptr);
+  vpiHandle interfaces = vpi_iterate(vpiInterface, root);
+  ASSERT_NE(interfaces, nullptr);
+  EXPECT_EQ(vpi_compare_objects(child, vpi_scan(interfaces)), 1);
+  EXPECT_EQ(vpi_scan(interfaces), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, BuildsStatementNamesFromCanonicalScopeOwners) {
+  auto check = [](uint32_t processKind, uint32_t scopeKind,
+                  const char *expectedFullName, bool expectProcessScope) {
+    Fixture fixture;
+    installStatementDatabase(fixture);
+    constexpr size_t childScope = 240;
+    constexpr size_t process = 304;
+    constexpr size_t relations = 568;
+    put32(fixture.database, childScope,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeKind));
+    put32(fixture.database, process,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, processKind));
+    put16(fixture.database, relations + 14,
+          uint16_t{1u << 14} | static_cast<uint16_t>(processKind));
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char processName[] = "top.child.proc";
+    vpiHandle codeUnit = vpi_handle_by_name(processName, nullptr);
+    ASSERT_NE(codeUnit, nullptr);
+    vpiHandle body = vpi_handle(vpiStmt, codeUnit);
+    ASSERT_NE(body, nullptr);
+    EXPECT_STREQ(vpi_get_str(vpiFullName, body), expectedFullName);
+    vpiHandle scope = vpi_handle(vpiScope, body);
+    ASSERT_NE(scope, nullptr);
+    if (expectProcessScope) {
+      EXPECT_EQ(vpi_compare_objects(codeUnit, scope), 1);
+      EXPECT_EQ(vpi_get(vpiType, scope), static_cast<PLI_INT32>(processKind));
+      EXPECT_STREQ(vpi_get_str(vpiName, scope), "proc");
+      EXPECT_STREQ(vpi_get_str(vpiFullName, scope), "top.child.proc");
+      vpiHandle ownerScope = vpi_handle(vpiScope, scope);
+      ASSERT_NE(ownerScope, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, ownerScope),
+                static_cast<PLI_INT32>(scopeKind));
+    } else {
+      EXPECT_EQ(vpi_get(vpiType, scope), static_cast<PLI_INT32>(scopeKind));
+    }
+    obelisk_rt_v1_context_destroy(context);
+  };
+
+  check(vpiTask, vpiModule, "top.child.proc.body", true);
+  check(vpiInitial, vpiPackage, "top.child::body", false);
+}
+
+TEST(VPI, HonorsPerOccurrenceStatementScopes) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  put16(fixture.database, 400 + 36, vpiForeachStmt);
+  put16(fixture.database, 400 + 38, OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+  put32(fixture.database, 400 + 24, 0);
+  put32(fixture.database, 520 + 8, 1);
+  put16(fixture.database, 520 + 12, 1);
+  put32(fixture.database, 520 + 16 + 8, 1);
+  put16(fixture.database, 520 + 16 + 12, 2);
+  put16(fixture.database, 568 + 16 + 14,
+        uint16_t{2u << 14} | static_cast<uint16_t>(vpiForeachStmt));
+  put64(fixture.database, 152, 2);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle body = vpi_handle(vpiStmt, process);
+  ASSERT_NE(body, nullptr);
+  vpiHandle loop = vpi_handle(vpiStmt, body);
+  ASSERT_NE(loop, nullptr);
+  vpiHandle nested = vpi_handle(vpiStmt, loop);
+  ASSERT_NE(nested, nullptr);
+  vpiHandle scope = vpi_handle(vpiScope, nested);
+  ASSERT_NE(scope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(body, scope), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t statements = 400;
+  constexpr size_t sites = 520;
+  constexpr size_t relations = 568;
+  put16(fixture.database, statements + 36, vpiFor);
+  put16(fixture.database, statements + 38, 0);
+  put32(fixture.database, statements + 24, 0);
+  put16(fixture.database, statements + 40 + 36, vpiNullStmt);
+  put32(fixture.database, statements + 80 + 16, 0);
+  put64(fixture.database, 152, 2);
+  put32(fixture.database, sites + 8, 0);
+  put16(fixture.database, sites + 12, 1);
+  put32(fixture.database, sites + 16 + 8, 0);
+  put16(fixture.database, sites + 16 + 12, 2);
+  put16(fixture.database, relations + 16 + 12, vpiForInitStmt);
+  put16(fixture.database, relations + 16 + 14, uint16_t{2u << 14} | vpiFor);
+  put16(fixture.database, relations + 32 + 12, vpiForInitStmt);
+  put16(fixture.database, relations + 32 + 14, uint16_t{2u << 14} | vpiFor);
+  put32(fixture.database, relations + 32, 0);
+  put32(fixture.database, relations + 32 + 8, 1);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle loop = vpi_handle(vpiStmt, process);
+  ASSERT_NE(loop, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, loop), vpiFor);
+
+  vpiHandle singular = vpi_handle(vpiForInitStmt, loop);
+  ASSERT_NE(singular, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiForInitStmt, loop);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle first = vpi_scan(iterator);
+  vpiHandle second = vpi_scan(iterator);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(vpi_compare_objects(singular, first), 1);
+  EXPECT_EQ(vpi_get(vpiType, first), vpiNullStmt);
+  EXPECT_EQ(vpi_get(vpiType, second), vpiNullStmt);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, TraversesScopeOwnedStatementRelations) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t statements = 400;
+  constexpr size_t relations = 568;
+  for (size_t index = 0; index != 3; ++index) {
+    size_t statement = statements + index * 40;
+    put32(fixture.database, statement + 8, UINT32_MAX);
+    put32(fixture.database, statement + 16, UINT32_MAX);
+    put32(fixture.database, statement + 24, 0);
+    put16(fixture.database, statement + 38, 0);
+  }
+  put16(fixture.database, statements + 36, vpiContAssign);
+  put16(fixture.database, statements + 40 + 36, vpiContAssign);
+  put16(fixture.database, statements + 80 + 36, vpiAliasStmt);
+  put64(fixture.database, 152, 0);
+  auto relation = [&](size_t index, uint32_t target, uint32_t ordinal,
+                      uint16_t selector) {
+    size_t offset = relations + index * 16;
+    put32(fixture.database, offset, 1);
+    put32(fixture.database, offset + 4, target);
+    put32(fixture.database, offset + 8, ordinal);
+    put16(fixture.database, offset + 12, selector);
+    put16(fixture.database, offset + 14, vpiModule);
+  };
+  relation(0, 0, 0, vpiContAssign);
+  relation(1, 1, 1, vpiContAssign);
+  relation(2, 2, 0, vpiAliasStmt);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char childName[] = "top.child";
+  vpiHandle child = vpi_handle_by_name(childName, nullptr);
+  ASSERT_NE(child, nullptr);
+  EXPECT_EQ(vpi_handle(vpiContAssign, child), nullptr);
+  vpiHandle assigns = vpi_iterate(vpiContAssign, child);
+  ASSERT_NE(assigns, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, vpi_scan(assigns)), vpiContAssign);
+  EXPECT_EQ(vpi_get(vpiType, vpi_scan(assigns)), vpiContAssign);
+  EXPECT_EQ(vpi_scan(assigns), nullptr);
+  vpiHandle aliases = vpi_iterate(vpiAliasStmt, child);
+  ASSERT_NE(aliases, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, vpi_scan(aliases)), vpiAliasStmt);
+  EXPECT_EQ(vpi_scan(aliases), nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -6744,6 +7173,45 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
             OBELISK_RT_INVALID_DESIGN);
 }
 
+TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
+  auto expectRejected = [](std::vector<uint8_t> database) {
+    put64(database, 32, imageChecksum(database));
+    Fixture fixture;
+    fixture.database = std::move(database);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  std::vector<uint8_t> missingStorageKind = makeDatabase();
+  put32(missingStorageKind, 240, OBELISK_RT_DESIGN_RECORD_STORAGE);
+  expectRejected(std::move(missingStorageKind));
+
+  std::vector<uint8_t> nonConcreteStorageKind = makeDatabase();
+  put32(nonConcreteStorageKind, 240,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiMemory));
+  expectRejected(std::move(nonConcreteStorageKind));
+
+  std::vector<uint8_t> reservedTypePayload = makeDatabase();
+  put32(reservedTypePayload, 336,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_TYPE, vpiReg));
+  expectRejected(std::move(reservedTypePayload));
+
+  std::vector<uint8_t> missingNestedScopeKind = makeStatementDatabase();
+  put32(missingNestedScopeKind, 240, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  expectRejected(std::move(missingNestedScopeKind));
+
+  std::vector<uint8_t> missingRelationSourceKind = makeStatementDatabase();
+  put16(missingRelationSourceKind, 568 + 14, uint16_t{1u << 14});
+  expectRejected(std::move(missingRelationSourceKind));
+
+  std::vector<uint8_t> unmarkedInternalProcess = makeCodeUnitDatabase();
+  put32(unmarkedInternalProcess, 240,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, 0));
+  expectRejected(std::move(unmarkedInternalProcess));
+}
+
 TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   Fixture fixture;
   fixture.database = makeStatementDatabase();
@@ -6771,11 +7239,12 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put32(dualMode, sites + 16 + 8, 0);
   put16(dualMode, sites + 16 + 12, 2);
   put16(dualMode, relations + 16 + 12, vpiForInitStmt);
-  put16(dualMode, relations + 16 + 14,
-        uint16_t{2u << 14} | vpiFor);
+  put16(dualMode, relations + 16 + 14, uint16_t{2u << 14} | vpiFor);
   put16(dualMode, relations + 32 + 12, vpiForInitStmt);
-  put16(dualMode, relations + 32 + 14,
-        uint16_t{2u << 14} | vpiFor);
+  put16(dualMode, relations + 32 + 14, uint16_t{2u << 14} | vpiFor);
+  put32(dualMode, statements + 80 + 16, 0);
+  put32(dualMode, relations + 32, 0);
+  put32(dualMode, relations + 32 + 8, 1);
   put64(dualMode, 32, imageChecksum(dualMode));
   fixture.execution.design_database = dualMode.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
@@ -6816,6 +7285,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   std::vector<uint8_t> scopeOwned = fixture.database;
   put32(scopeOwned, 400 + 40 + 8, UINT32_MAX);
   put32(scopeOwned, 400 + 40 + 16, UINT32_MAX);
+  put32(scopeOwned, 400 + 80 + 16, 0);
   put64(scopeOwned, 152, 1);
   put64(scopeOwned, 168, 0);
   for (uint16_t kind : {vpiContAssign, vpiContAssignBit, vpiAliasStmt}) {
@@ -6857,10 +7327,23 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   // for cbStmt, provided they have no semantic callback sites.
   std::vector<uint8_t> nonCallback = fixture.database;
   put16(nonCallback, 400 + 40 + 36, vpiNullStmt);
+  put32(nonCallback, 400 + 80 + 16, 0);
+  put32(nonCallback, relations + 32, 0);
+  put32(nonCallback, relations + 32 + 8, 1);
+  put16(nonCallback, relations + 32 + 14, uint16_t{2u << 14} | vpiNamedBegin);
   put64(nonCallback, 152, 1);
   put64(nonCallback, 32, imageChecksum(nonCallback));
   fixture.execution.design_database = nonCallback.data();
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+
+  std::vector<uint8_t> foreachWithoutScope = fixture.database;
+  put16(foreachWithoutScope, statements + 40 + 36, vpiForeachStmt);
+  put16(foreachWithoutScope, relations + 16 + 14,
+        uint16_t{2u << 14} | static_cast<uint16_t>(vpiForeachStmt));
+  put64(foreachWithoutScope, 32, imageChecksum(foreachWithoutScope));
+  fixture.execution.design_database = foreachWithoutScope.data();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
 
   auto rejected = [&](size_t offset, uint64_t value, unsigned width = 4) {
     std::vector<uint8_t> malformed = fixture.database;
@@ -6887,7 +7370,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(statements + 20, 42);                  // source string out of range
   rejected(statements + 24, 0);                   // named block without name
   rejected(statements + 40 + 24, 37);             // name on non-named statement
-  rejected(statements + 38, 2, 2);                // reserved statement flags
+  rejected(statements + 38, 4, 2);                // reserved statement flags
   rejected(sites, 0, 8);                          // zero site ID
   rejected(sites + 16, 1000, 8);                  // duplicate site ID
   rejected(sites + 16, 900, 8);                   // unsorted site IDs
@@ -6910,10 +7393,10 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(relations + 12, 0, 2);                 // illegal selector
   rejected(relations + 14, uint16_t{3u << 14} | vpiInitial, 2);
   rejected(relations + 16 + 14, uint16_t{2u << 14} | vpiFor, 2);
-  rejected(relations + 16 + 4, 0);                 // duplicate incoming edge
-  rejected(relations + 32 + 8, 2);                 // iterate ordinal gap
-  rejected(relations + 32 + 14,
-           uint16_t{2u << 14} | vpiNamedFork, 2); // source kind inconsistency
+  rejected(relations + 16 + 4, 0); // duplicate incoming edge
+  rejected(relations + 32 + 8, 2); // iterate ordinal gap
+  rejected(relations + 32 + 14, uint16_t{2u << 14} | vpiNamedFork,
+           2);                                    // source kind inconsistency
   rejected(statements + 80 + 16, UINT32_MAX);     // target ownership mismatch
   rejected(statements + 80 + 36, vpiCaseItem, 2); // illegal traversal target
   {
@@ -6926,11 +7409,11 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
     EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
               OBELISK_RT_INVALID_DESIGN);
   }
-  rejected(160, 176, 8);                           // relation/header overlap
-  rejected(160, statements, 8);                    // relation/statement overlap
-  rejected(160, fixture.database.size() + 1, 8);   // relation past image
-  rejected(168, UINT64_MAX, 8);                    // relation span overflow
-  rejected(168, uint64_t{UINT32_MAX} + 1, 8);      // relation index cap
+  rejected(160, 176, 8);                         // relation/header overlap
+  rejected(160, statements, 8);                  // relation/statement overlap
+  rejected(160, fixture.database.size() + 1, 8); // relation past image
+  rejected(168, UINT64_MAX, 8);                  // relation span overflow
+  rejected(168, uint64_t{UINT32_MAX} + 1, 8);    // relation index cap
 
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |

@@ -1511,6 +1511,8 @@ enum {
   OBELISK_RT_DESIGN_CAP_ITERATE = UINT32_C(1) << 2,
   OBELISK_RT_DESIGN_CAP_PORT_INPUT = UINT32_C(1) << 3,
   OBELISK_RT_DESIGN_CAP_PORT_OUTPUT = UINT32_C(1) << 4,
+  // Marks a compiler-generated record that is deliberately absent from VPI.
+  OBELISK_RT_DESIGN_CAP_INTERNAL = UINT32_C(1) << 5,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };
@@ -1561,6 +1563,7 @@ typedef struct obelisk_rt_design_type_info_v1 {
 } obelisk_rt_design_type_info_v1;
 
 #define OBELISK_RT_DESIGN_STATEMENT_PROTECTED (UINT32_C(1) << 0)
+#define OBELISK_RT_DESIGN_STATEMENT_SCOPE (UINT32_C(1) << 1)
 
 // Every code form returns through this action ABI. A continuation identifies
 // the next fixed fragment state. Suspend payloads are interpreted according to

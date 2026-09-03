@@ -1185,15 +1185,17 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   sim::SimCodeUnitDeclOp::create(
       builder, module.getLoc(), result.rootID, uint64_t{0},
       sim::EntryKind::RootInitializer, builder.getStringAttr("__obelisk_root"),
-      builder.getStringAttr("root initializer"), UnitAttr{});
+      builder.getStringAttr("root initializer"), builder.getUnitAttr());
   for (PreparedUnit &unit : result.units) {
     auto declaration = sim::SimCodeUnitDeclOp::create(
         builder, getSemanticLocation(unit.source), unit.id,
         scopes.lookup(unit.source), unit.entryKind,
         builder.getStringAttr(unit.hierarchy),
         builder.getStringAttr(getDebugName(unit.source)),
-        isa<semantic::SVPortConnectionOp>(unit.source) ? builder.getUnitAttr()
-                                                       : UnitAttr{});
+        (isa<semantic::SVPortConnectionOp>(unit.source) ||
+         !sim::isVPIVisibleEntryKind(unit.entryKind))
+            ? builder.getUnitAttr()
+            : UnitAttr{});
     result.declarations[unit.source] = declaration;
   }
   return result;

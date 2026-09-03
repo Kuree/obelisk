@@ -23,6 +23,39 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @named_block_not_marked_scope {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    // expected-error @below {{named begin/fork and foreach statements must be marked is_scope}}
+    obelisk_sim.statement.decl 1 in 1 scope 0 type 33 name "body"
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @foreach_not_marked_scope {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    // expected-error @below {{named begin/fork and foreach statements must be marked is_scope}}
+    obelisk_sim.statement.decl 1 in 1 scope 0 type 675
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @non_scope_marked_scope {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    // expected-error @below {{only a scope-capable statement may be marked is_scope}}
+    obelisk_sim.statement.decl 1 in 1 scope 0 type 38 {is_scope}
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unknown_owner {
     obelisk_sim.scope.decl 0
     // expected-error @below {{references an unknown code-unit ID}}

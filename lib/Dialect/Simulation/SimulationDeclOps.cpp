@@ -43,6 +43,15 @@ namespace obelisk::sim {
 static constexpr uint64_t interfaceDispatchSlot =
     std::numeric_limits<uint32_t>::max();
 
+static uint32_t effectiveScopeVPIKind(SimScopeDeclOp scope) {
+  using VPIKind = reflection::VPIObjectKind;
+  if (scope.getVpiKind())
+    return *scope.getVpiKind();
+  if (scope.getInterfaceType())
+    return static_cast<uint16_t>(VPIKind::Interface);
+  return scope.getId() == 0 ? 0 : static_cast<uint16_t>(VPIKind::Module);
+}
+
 static bool isEntirelyFourState(Type type) {
   if (isa<LogicType>(type))
     return true;
@@ -111,11 +120,26 @@ LogicalResult SimScopeDeclOp::verify() {
     return failure();
   if (getParentAttr() && getParentAttr() == getIdAttr())
     return emitOpError("scope cannot be its own parent");
-  if (StringAttr interfaceType = getInterfaceTypeAttr()) {
+  StringAttr interfaceType = getInterfaceTypeAttr();
+  if (interfaceType) {
     if (interfaceType.getValue().empty())
       return emitOpError("interface specialization key cannot be empty");
     if (getId() == 0)
       return emitOpError("root scope cannot be an interface instance");
+  }
+  if (IntegerAttr vpiKindAttr = getVpiKindAttr()) {
+    if (failed(verifyNonnegative(*this, vpiKindAttr, "VPI object kind")))
+      return failure();
+    uint64_t value = getVpiKind().value();
+    const auto *kind = reflection::findVPIObjectKind(value);
+    if (value > UINT16_MAX || !kind ||
+        kind->role != reflection::VPIObjectRole::Concrete ||
+        (kind->families &
+         reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) == 0)
+      return emitOpError("VPI kind is not a concrete scope object");
+    if (bool(interfaceType) != (StringRef(kind->apiName) == "vpiInterface"))
+      return emitOpError(
+          "interface scope metadata and intrinsic VPI kind disagree");
   }
   return success();
 }
@@ -162,9 +186,20 @@ LogicalResult SimStatementDeclOp::verify() {
                            : "behavioral statement requires a code-unit ID");
   bool named = kind && (StringRef(kind->apiName) == "vpiNamedBegin" ||
                         StringRef(kind->apiName) == "vpiNamedFork");
+  bool requiresScope =
+      named || getVpiKind() == static_cast<uint16_t>(
+                                   reflection::VPIObjectKind::ForeachStmt);
   if (named != getName().has_value() || (getName() && getName()->empty()))
     return emitOpError(named ? "named block requires a nonempty name"
                              : "only named begin/fork may carry a name");
+  bool mayBeScope =
+      (kind->families &
+       reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) != 0;
+  if (getIsScope() && !mayBeScope)
+    return emitOpError("only a scope-capable statement may be marked is_scope");
+  if (requiresScope && !getIsScope())
+    return emitOpError(
+        "named begin/fork and foreach statements must be marked is_scope");
   auto source = getLoc()->findInstanceOf<FileLineColLoc>();
   if (!source || source.getLine() == 0 || source.getColumn() == 0)
     return emitOpError("requires a concrete source file, line, and column");
@@ -1600,6 +1635,10 @@ LogicalResult SimDesignOp::verifyRegions() {
             (StringRef(sourceKind->apiName) == "vpiInterface"))
           return relation.emitOpError(
               "interface scope metadata and source VPI kind disagree");
+        if (effectiveScopeVPIKind(source->second) !=
+            relation.getSourceVpiKind())
+          return relation.emitOpError(
+              "source VPI kind does not match the scope declaration");
         if (auto [iterator, inserted] = scopeSourceKinds.try_emplace(
                 relation.getSourceId(), relation.getSourceVpiKind());
             !inserted && iterator->second != relation.getSourceVpiKind())

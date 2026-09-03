@@ -70,11 +70,11 @@ module {
 
 module {
   obelisk_sim.design @inconsistent_scope_kinds {
-    obelisk_sim.scope.decl 0
+    obelisk_sim.scope.decl 0 vpi_kind 32
     obelisk_sim.statement.decl 10 scope 0 type 8 loc("test.sv":1:1)
     obelisk_sim.statement.decl 20 scope 0 type 646 loc("test.sv":2:1)
     obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 10
-    // expected-error @below {{source scope has inconsistent exact VPI kinds}}
+    // expected-error @below {{source VPI kind does not match the scope declaration}}
     obelisk_sim.vpi_statement_relation.decl scope 0 type 134 selector 646 ordinal 0 modes 2 to 20
   }
 }
@@ -365,5 +365,42 @@ module {
     obelisk_sim.statement.decl 20 in 1 scope 0 type 3 parent 10
     obelisk_sim.statement_site.decl 21 on 20 phase 0
     obelisk_sim.vpi_statement_relation.decl code_unit 1 type 24 selector 104 ordinal 0 modes 1 to 10
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @intrinsic_scope_kind_is_not_concrete {
+    // expected-error @below {{VPI kind is not a concrete scope object}}
+    obelisk_sim.scope.decl 0 vpi_kind 99
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @intrinsic_scope_kind_is_not_scope {
+    // expected-error @below {{VPI kind is not a concrete scope object}}
+    obelisk_sim.scope.decl 0 vpi_kind 24
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @intrinsic_interface_kind_without_interface_metadata {
+    // expected-error @below {{interface scope metadata and intrinsic VPI kind disagree}}
+    obelisk_sim.scope.decl 0 vpi_kind 601
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @intrinsic_interface_metadata_with_module_kind {
+    obelisk_sim.scope.decl 0
+    // expected-error @below {{interface scope metadata and intrinsic VPI kind disagree}}
+    obelisk_sim.scope.decl 1 parent 0 interface "I" vpi_kind 32
   }
 }

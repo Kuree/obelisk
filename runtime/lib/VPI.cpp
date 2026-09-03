@@ -7,6 +7,7 @@
 #include "RuntimeInternal.h"
 
 #include "VPIInternal.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 
 // VPI startup loads a caller-provided shared object and reads the ELF symbol
 // size of its vlog_startup_routines table. WebAssembly has neither, and a
@@ -58,10 +59,19 @@ struct __vpiHandle {
   bool alive = true;
   VPIHandleKind kind = VPIHandleKind::Object;
   obelisk_rt_design_cursor_v1 cursor{};
+  uint32_t exactVpiType = 0;
+  bool statement = false;
   bool hasInfo = false;
   obelisk_rt_design_info_v1 info{};
+  // Callback iteration snapshots registrations because callbacks may remove
+  // peers during dispatch. Immutable design iterators use cursors or relation
+  // indices directly and never populate this vector.
   std::vector<obelisk_rt_design_cursor_v1> items;
   bool callbackIterator = false;
+  bool designIterator = false;
+  bool relationIterator = false;
+  obelisk::reflection::VPIObjectSetID requestedTargets{};
+  VPIRelationRange relationRange{};
   size_t next = 0;
   std::string scratch;
   std::vector<s_vpi_vecval> vectorScratch;
@@ -166,12 +176,15 @@ vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
   return reinterpret_cast<vpiHandle>(result);
 }
 
-vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor) {
+vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+                     uint32_t exactVpiType = 0, bool statement = false) {
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::Object;
     handle->cursor = cursor;
+    handle->exactVpiType = exactVpiType;
+    handle->statement = statement;
     return keepHandle(state, std::move(handle));
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) {
@@ -295,8 +308,10 @@ int vpiTypeFor(uint32_t kind) {
     return vpiReg;
   case OBELISK_RT_DESIGN_RECORD_NET:
     return vpiNet;
-  case OBELISK_RT_DESIGN_RECORD_DRIVER:
-    return vpiDriver;
+  case OBELISK_RT_DESIGN_RECORD_FUNCTION:
+    return vpiFunction;
+  case OBELISK_RT_DESIGN_RECORD_PORT:
+    return vpiPort;
   default:
     return vpiUndefined;
   }
@@ -318,10 +333,13 @@ PLI_INT32 vpiTypeForHandle(VPIHandleKind kind) {
   return vpiUndefined;
 }
 
-bool matchesType(uint32_t kind, int requested) {
-  int actual = vpiTypeFor(kind);
-  return requested == actual || (requested == vpiInternalScope &&
-                                 kind == OBELISK_RT_DESIGN_RECORD_SCOPE);
+int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+                 uint32_t fallbackKind) {
+  uint32_t exact = 0;
+  if (obelisk_rt_cached_vpi_type(state->context, cursor, &exact) ==
+      OBELISK_RT_OK)
+    return static_cast<int>(exact);
+  return vpiTypeFor(fallbackKind);
 }
 
 bool nameFor(__vpiHandle *handle, std::string &name) {
@@ -334,14 +352,114 @@ bool nameFor(__vpiHandle *handle, std::string &name) {
     return false;
   }
   OBELISK_RT_TRY {
-    name.assign(reinterpret_cast<const char *>(data),
-                static_cast<size_t>(size));
+    if (size == 0)
+      name.clear();
+    else
+      name.assign(reinterpret_cast<const char *>(data),
+                  static_cast<size_t>(size));
     return true;
   }
   OBELISK_RT_CATCH_ALL {
     setError(handle->owner, "could not materialize design name", vpiSystem);
     return false;
   }
+}
+
+bool fullNameForStatement(__vpiHandle *handle, std::string &name) {
+  OBELISK_RT_TRY {
+    std::vector<std::string> components;
+    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    while (true) {
+      const uint8_t *data = nullptr;
+      uint64_t size = 0;
+      if (obelisk_rt_cached_design_name(handle->owner->context, cursor, &data,
+                                        &size) != OBELISK_RT_OK)
+        return false;
+      if (size != 0)
+        components.emplace_back(reinterpret_cast<const char *>(data),
+                                static_cast<size_t>(size));
+      obelisk_rt_design_cursor_v1 parent{};
+      obelisk_rt_status status = obelisk_rt_cached_vpi_statement_parent(
+          handle->owner->context, cursor, &parent);
+      if (status == OBELISK_RT_EOF)
+        break;
+      if (status != OBELISK_RT_OK)
+        return false;
+      cursor = parent;
+    }
+    obelisk_rt_design_cursor_v1 base{};
+    uint32_t baseType = 0;
+    bool useCodeUnit = false;
+    obelisk_rt_design_cursor_v1 owner{};
+    obelisk_rt_status ownerStatus = obelisk_rt_cached_vpi_statement_owner(
+        handle->owner->context, handle->cursor, &owner);
+    if (ownerStatus == OBELISK_RT_OK &&
+        obelisk_rt_cached_vpi_type(handle->owner->context, owner, &baseType) ==
+            OBELISK_RT_OK) {
+      using VPIKind = obelisk::reflection::VPIObjectKind;
+      useCodeUnit = baseType == static_cast<uint16_t>(VPIKind::Task) ||
+                    baseType == static_cast<uint16_t>(VPIKind::Function);
+      if (useCodeUnit)
+        base = owner;
+    } else if (ownerStatus != OBELISK_RT_EOF) {
+      return false;
+    }
+    if (!useCodeUnit) {
+      if (obelisk_rt_cached_vpi_statement_scope(
+              handle->owner->context, handle->cursor, &base) != OBELISK_RT_OK ||
+          obelisk_rt_cached_vpi_type(handle->owner->context, base, &baseType) !=
+              OBELISK_RT_OK)
+        return false;
+    }
+    const uint8_t *baseName = nullptr;
+    uint64_t baseNameSize = 0;
+    if (obelisk_rt_cached_design_name(handle->owner->context, base, &baseName,
+                                      &baseNameSize) != OBELISK_RT_OK ||
+        baseNameSize == 0)
+      return false;
+    name.assign(reinterpret_cast<const char *>(baseName),
+                static_cast<size_t>(baseNameSize));
+    using VPIKind = obelisk::reflection::VPIObjectKind;
+    bool namespaceBase =
+        !useCodeUnit && (baseType == static_cast<uint16_t>(VPIKind::Package) ||
+                         baseType == static_cast<uint16_t>(VPIKind::ClassDefn));
+    bool first = true;
+    for (auto component = components.rbegin(); component != components.rend();
+         ++component) {
+      name.append(first && namespaceBase ? "::" : ".");
+      name.append(*component);
+      first = false;
+    }
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "could not materialize statement full name",
+             vpiSystem);
+    return false;
+  }
+}
+
+obelisk_rt_status
+findMatchingDesignObject(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+                         obelisk::reflection::VPIObjectSetID targets,
+                         obelisk_rt_design_cursor_v1 *outCursor) {
+  while (cursor.offset != 0) {
+    obelisk_rt_design_info_v1 info{};
+    obelisk_rt_status status =
+        obelisk_rt_cached_design_info(state->context, cursor, &info);
+    if (status != OBELISK_RT_OK)
+      return status;
+    uint32_t exact =
+        static_cast<uint32_t>(exactTypeFor(state, cursor, info.kind));
+    if (obelisk::reflection::vpiObjectSetContains(targets, exact)) {
+      *outCursor = cursor;
+      return OBELISK_RT_OK;
+    }
+    status = obelisk_rt_cached_design_sibling(state->context, cursor, &cursor);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  return OBELISK_RT_EOF;
 }
 
 bool lookup(VPIState *state, const std::string &name,
@@ -640,14 +758,86 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     setError(state, "hierarchical VPI name was not found", vpiNotice);
     return nullptr;
   }
+  obelisk_rt_design_info_v1 info{};
+  uint32_t exactType = 0;
+  if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
+          OBELISK_RT_OK ||
+      obelisk_rt_cached_vpi_type(state->context, cursor, &exactType) !=
+          OBELISK_RT_OK ||
+      exactType == 0 ||
+      (info.capabilities & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0) {
+    setError(state, "hierarchical name does not identify a VPI object",
+             vpiNotice);
+    return nullptr;
+  }
   return makeHandle(state, cursor);
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
   __vpiHandle *handle = validate(reference);
-  if (!handle || type != vpiScope)
+  if (!handle)
     return nullptr;
+  VPIRelationRange range{};
+  obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
+      handle->owner->context, handle->cursor, static_cast<uint32_t>(type),
+      false, &range);
+  if (relationStatus == OBELISK_RT_OK) {
+    obelisk_rt_design_cursor_v1 target{};
+    uint32_t targetType = 0;
+    if (obelisk_rt_cached_vpi_relation_target(handle->owner->context,
+                                              range.first, &target,
+                                              &targetType) != OBELISK_RT_OK)
+      return nullptr;
+    return makeHandle(handle->owner, target, targetType, true);
+  }
+  if (type != vpiScope)
+    return nullptr;
+  if (handle->statement) {
+    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    while (true) {
+      obelisk_rt_design_cursor_v1 parent{};
+      obelisk_rt_status status = obelisk_rt_cached_vpi_statement_parent(
+          handle->owner->context, cursor, &parent);
+      if (status == OBELISK_RT_EOF)
+        break;
+      if (status != OBELISK_RT_OK)
+        return nullptr;
+      bool parentIsScope = false;
+      if (obelisk_rt_cached_vpi_statement_is_scope(
+              handle->owner->context, parent, &parentIsScope) != OBELISK_RT_OK)
+        return nullptr;
+      if (parentIsScope) {
+        uint32_t parentType = 0;
+        if (obelisk_rt_cached_vpi_type(handle->owner->context, parent,
+                                       &parentType) != OBELISK_RT_OK)
+          return nullptr;
+        return makeHandle(handle->owner, parent, parentType, true);
+      }
+      cursor = parent;
+    }
+    obelisk_rt_design_cursor_v1 owner{};
+    obelisk_rt_status ownerStatus = obelisk_rt_cached_vpi_statement_owner(
+        handle->owner->context, handle->cursor, &owner);
+    if (ownerStatus == OBELISK_RT_OK) {
+      uint32_t ownerType = 0;
+      if (obelisk_rt_cached_vpi_type(handle->owner->context, owner,
+                                     &ownerType) != OBELISK_RT_OK)
+        return nullptr;
+      const auto *kind = obelisk::reflection::findVPIObjectKind(ownerType);
+      if (kind && (kind->families &
+                   obelisk::reflection::vpiFamilyMask(
+                       obelisk::reflection::VPIObjectFamily::Scope)) != 0)
+        return makeHandle(handle->owner, owner, ownerType);
+    } else if (ownerStatus != OBELISK_RT_EOF) {
+      return nullptr;
+    }
+    obelisk_rt_design_cursor_v1 scope{};
+    return obelisk_rt_cached_vpi_statement_scope(
+               handle->owner->context, handle->cursor, &scope) == OBELISK_RT_OK
+               ? makeHandle(handle->owner, scope)
+               : nullptr;
+  }
   std::string fullName;
   if (!nameFor(handle, fullName))
     return nullptr;
@@ -693,35 +883,61 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     }
   }
   obelisk_rt_design_cursor_v1 parent{};
+  uint32_t sourceType = 0;
   if (reference) {
     __vpiHandle *handle = validate(reference);
     if (!handle)
       return nullptr;
     parent = handle->cursor;
+    sourceType = handle->exactVpiType;
+    if (sourceType == 0 &&
+        obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
+            OBELISK_RT_OK)
+      return nullptr;
   } else if (obelisk_rt_cached_design_root(state->context, &parent) !=
              OBELISK_RT_OK) {
     return nullptr;
   }
-  std::vector<obelisk_rt_design_cursor_v1> items;
+  if (reference) {
+    VPIRelationRange range{};
+    obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
+        state->context, parent, static_cast<uint32_t>(type), true, &range);
+    if (relationStatus == OBELISK_RT_OK) {
+      OBELISK_RT_TRY {
+        auto iterator = std::make_unique<__vpiHandle>();
+        iterator->owner = state;
+        iterator->kind = VPIHandleKind::Iterator;
+        iterator->relationIterator = true;
+        iterator->relationRange = range;
+        return keepHandle(state, std::move(iterator));
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(state, "could not allocate VPI relation iterator", vpiSystem);
+        return nullptr;
+      }
+    }
+    if (sourceType == 0)
+      return nullptr;
+  }
+  const auto *edge = obelisk::reflection::findVPITraversal(
+      sourceType, static_cast<uint32_t>(type),
+      obelisk::reflection::VPITraversalMode::Iterate);
+  if (!edge || edge->statementContainment)
+    return nullptr;
   obelisk_rt_design_cursor_v1 cursor{};
   obelisk_rt_status status =
       obelisk_rt_cached_design_child(state->context, parent, &cursor);
-  while (status == OBELISK_RT_OK) {
-    obelisk_rt_design_info_v1 info{};
-    if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
-        OBELISK_RT_OK)
-      return nullptr;
-    if (matchesType(info.kind, type))
-      items.push_back(cursor);
-    status = obelisk_rt_cached_design_sibling(state->context, cursor, &cursor);
-  }
-  if (status != OBELISK_RT_EOF || items.empty())
+  if (status == OBELISK_RT_OK)
+    status = findMatchingDesignObject(state, cursor, edge->targets, &cursor);
+  if (status != OBELISK_RT_OK)
     return nullptr;
   OBELISK_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = state;
     iterator->kind = VPIHandleKind::Iterator;
-    iterator->items = std::move(items);
+    iterator->designIterator = true;
+    iterator->requestedTargets = edge->targets;
+    iterator->cursor = cursor;
     return keepHandle(state, std::move(iterator));
   }
   OBELISK_RT_CATCH_ALL {
@@ -744,6 +960,46 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     iterator->alive = false;
     return nullptr;
   }
+  if (iterator->relationIterator) {
+    if (iterator->next == iterator->relationRange.count) {
+      iterator->alive = false;
+      return nullptr;
+    }
+    obelisk_rt_design_cursor_v1 target{};
+    uint32_t targetType = 0;
+    obelisk_rt_status status = obelisk_rt_cached_vpi_relation_target(
+        iterator->owner->context,
+        iterator->relationRange.first + iterator->next, &target, &targetType);
+    if (status != OBELISK_RT_OK) {
+      iterator->alive = false;
+      setError(iterator->owner, "VPI relation target lookup failed",
+               vpiInternal);
+      return nullptr;
+    }
+    ++iterator->next;
+    return makeHandle(iterator->owner, target, targetType, true);
+  }
+  if (iterator->designIterator) {
+    if (iterator->cursor.offset == 0) {
+      iterator->alive = false;
+      return nullptr;
+    }
+    obelisk_rt_design_cursor_v1 current = iterator->cursor;
+    obelisk_rt_design_cursor_v1 candidate{};
+    obelisk_rt_status status = obelisk_rt_cached_design_sibling(
+        iterator->owner->context, current, &candidate);
+    if (status == OBELISK_RT_OK)
+      status = findMatchingDesignObject(iterator->owner, candidate,
+                                        iterator->requestedTargets, &candidate);
+    if (status == OBELISK_RT_OK)
+      iterator->cursor = candidate;
+    else
+      iterator->cursor = {};
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+      setError(iterator->owner, "VPI design iterator lookup failed",
+               vpiInternal);
+    return makeHandle(iterator->owner, current);
+  }
   if (iterator->next == iterator->items.size()) {
     iterator->alive = false;
     return nullptr;
@@ -763,16 +1019,29 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
-  obelisk_rt_design_info_v1 info{};
-  if (!infoFor(handle, info))
-    return vpiUndefined;
-  if (property == vpiType)
-    return vpiTypeFor(info.kind);
-  if (property == vpiSize)
+  if (property == vpiType) {
+    if (handle->exactVpiType != 0)
+      return static_cast<PLI_INT32>(handle->exactVpiType);
+    uint32_t exact = 0;
+    if (obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                   &exact) == OBELISK_RT_OK) {
+      handle->exactVpiType = exact;
+      return exact == 0 ? vpiUndefined : static_cast<PLI_INT32>(exact);
+    }
+    obelisk_rt_design_info_v1 info{};
+    return infoFor(handle, info) ? vpiTypeFor(info.kind) : vpiUndefined;
+  }
+  if (property == vpiSize) {
+    if (handle->statement)
+      return 0;
+    obelisk_rt_design_info_v1 info{};
+    if (!infoFor(handle, info))
+      return vpiUndefined;
     return info.kind == OBELISK_RT_DESIGN_RECORD_SCOPE
                ? 0
                : static_cast<PLI_INT32>(
                      std::min<uint64_t>(info.bit_width, INT32_MAX));
+  }
   if (property == vpiLineNo || property == vpiDefLineNo) {
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
@@ -801,6 +1070,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   if (property == vpiName || property == vpiFullName) {
     if (!nameFor(handle, scratch))
       return nullptr;
+    if (scratch.empty())
+      return nullptr;
+    if (property == vpiFullName && handle->statement) {
+      if (!fullNameForStatement(handle, scratch))
+        return nullptr;
+      return scratch.data();
+    }
     if (property == vpiName) {
       size_t separator = scratch.rfind('.');
       if (separator != std::string::npos)

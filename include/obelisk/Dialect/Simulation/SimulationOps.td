@@ -83,10 +83,11 @@ def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryRe
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
-                       OptionalAttr<StrAttr>:$interface_type);
+                       OptionalAttr<StrAttr>:$interface_type,
+                       OptionalAttr<I32Attr>:$vpi_kind);
   let assemblyFormat = [{$id (`parent` $parent^)?
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
-    (`interface` $interface_type^)? attr-dict}];
+    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)? attr-dict}];
   let hasVerifier = 1;
 }
 
@@ -97,7 +98,9 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let description = [{
     Retains the elaborated identity and lexical hierarchy of a code unit even
     when IPO erases its executable `obelisk_sim.func`. The ID is stable across
-    compilation modes and is also the runtime process handle ID.
+    compilation modes and is also the runtime process handle ID. Entry kinds
+    without a source-level VPI object are intrinsically internal. The optional
+    `internal` marker additionally hides a normally source-visible entry kind.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
                        SimEntryKind:$code_unit_kind,
@@ -126,6 +129,7 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
                        I64Attr:$scope_id, I32Attr:$vpi_kind,
                        OptionalAttr<I64Attr>:$parent_id,
                        OptionalAttr<StrAttr>:$name,
+                       OptionalAttr<UnitAttr>:$is_scope,
                        OptionalAttr<UnitAttr>:$is_protected);
   let assemblyFormat = [{$id (`in` $code_unit_id^)? `scope` $scope_id
     `type` $vpi_kind (`parent` $parent_id^)? (`name` $name^)? attr-dict}];

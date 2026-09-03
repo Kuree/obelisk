@@ -1404,6 +1404,14 @@ struct DesignDatabaseCache {
   bool validated = false;
 };
 
+// A validated half-open range in the immutable design relation table. These
+// views are created only by explicit VPI queries; keeping them as table
+// indices avoids materializing per-iterator cursor vectors.
+struct VPIRelationRange {
+  uint64_t first = 0;
+  uint64_t count = 0;
+};
+
 struct CoverageTypeState {
   std::vector<uint32_t> coverpointBins;
   std::vector<uint64_t> instances;
@@ -2668,5 +2676,28 @@ obelisk_rt_status obelisk_rt_cached_design_source(
 obelisk_rt_status obelisk_rt_cached_design_name(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept;
+
+obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
+                                             obelisk_rt_design_cursor_v1 cursor,
+                                             uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+    uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
+    const obelisk_rt_context *context, uint64_t relationIndex,
+    obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outScope) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_parent(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outParent) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_owner(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outOwner) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
+                                         obelisk_rt_design_cursor_v1 statement,
+                                         bool *outIsScope) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

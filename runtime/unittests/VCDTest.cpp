@@ -4,6 +4,8 @@
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
+#include "sv_vpi_user.h"
+
 #include "gtest/gtest.h"
 
 #include <array>
@@ -25,6 +27,10 @@ void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
 void put64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value) {
   for (unsigned index = 0; index != 8; ++index)
     bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
+}
+
+uint32_t designRecordKind(uint32_t physicalKind, uint32_t vpiKind) {
+  return physicalKind | (vpiKind << 16);
 }
 
 uint64_t nameHash(const std::string &name) {
@@ -167,7 +173,8 @@ struct DesignImage {
     put64(bytes, scopeOffset + 24, clkOffset);
     put64(bytes, scopeOffset + 40, topName);
 
-    put32(bytes, subScopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
+    put32(bytes, subScopeOffset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
     put32(bytes, subScopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
     put64(bytes, subScopeOffset + 8, 2);
     put64(bytes, subScopeOffset + 16, scopeOffset);
@@ -179,7 +186,8 @@ struct DesignImage {
                       uint64_t parent, uint64_t next, uint64_t name,
                       uint64_t type, uint64_t width, int64_t left,
                       int64_t right, uint64_t stateBit) {
-      put32(bytes, offset, kind);
+      uint32_t vpiKind = kind == OBELISK_RT_DESIGN_RECORD_NET ? vpiNet : vpiReg;
+      put32(bytes, offset, designRecordKind(kind, vpiKind));
       put32(bytes, offset + 4, OBELISK_RT_DESIGN_CAP_READ);
       put64(bytes, offset + 8, stableID);
       put64(bytes, offset + 16, parent);

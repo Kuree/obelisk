@@ -68,6 +68,22 @@ bool isStartupEntryKind(EntryKind kind) {
   }
 }
 
+bool isVPIVisibleEntryKind(EntryKind kind) {
+  switch (kind) {
+  case EntryKind::Initial:
+  case EntryKind::Final:
+  case EntryKind::Always:
+  case EntryKind::AlwaysComb:
+  case EntryKind::AlwaysFF:
+  case EntryKind::AlwaysLatch:
+  case EntryKind::Function:
+  case EntryKind::Task:
+    return true;
+  default:
+    return false;
+  }
+}
+
 uint32_t getWaitEntryCount(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<SimSuspendChangeOp, SimSuspendLevelOp, SimSuspendEdgeOp,

@@ -8,6 +8,7 @@
 #include "BytecodeSerialization.h"
 
 #include "obelisk/Reflection/DesignReflection.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -49,10 +50,34 @@ constexpr bool tableKindPackingIsStable() {
   }
   uint16_t rejected = 0;
   return !tryPackTableKindPayload(static_cast<TableKind>(3), 0, rejected) &&
-         !tryPackTableKindPayload(TableKind::Scope,
-                                  tableKindPayloadMask + 1, rejected);
+         !tryPackTableKindPayload(TableKind::Scope, tableKindPayloadMask + 1,
+                                  rejected);
 }
 static_assert(tableKindPackingIsStable());
+
+uint32_t vpiKindForCodeUnit(sim::SimCodeUnitDeclOp codeUnit) {
+  if (codeUnit.getInternalAttr() ||
+      !sim::isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
+    return 0;
+  using VPIKind = VPIObjectKind;
+  switch (codeUnit.getCodeUnitKind()) {
+  case sim::EntryKind::Initial:
+    return static_cast<uint16_t>(VPIKind::Initial);
+  case sim::EntryKind::Final:
+    return static_cast<uint16_t>(VPIKind::Final);
+  case sim::EntryKind::Always:
+  case sim::EntryKind::AlwaysComb:
+  case sim::EntryKind::AlwaysFF:
+  case sim::EntryKind::AlwaysLatch:
+    return static_cast<uint16_t>(VPIKind::Always);
+  case sim::EntryKind::Function:
+    return static_cast<uint16_t>(VPIKind::Function);
+  case sim::EntryKind::Task:
+    return static_cast<uint16_t>(VPIKind::Task);
+  default:
+    return 0;
+  }
+}
 
 } // namespace
 
@@ -76,6 +101,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
   struct Record {
     uint32_t kind;
+    uint32_t vpiKind;
     uint32_t caps;
     uint64_t id;
     uint64_t scope;
@@ -194,7 +220,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({2, caps, storage.getId(), storage.getScopeId(),
+      objects.push_back({2, static_cast<uint16_t>(VPIObjectKind::Reg), caps,
+                         storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
                              .value_or(storage.getDebugName().value_or(
                                  fallbackName("storage", storage.getId())))
@@ -208,7 +235,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({3, caps, net.getId(), net.getScopeId(),
+      objects.push_back({3, static_cast<uint16_t>(VPIObjectKind::Net), caps,
+                         net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
                              .value_or(net.getDebugName().value_or(
                                  fallbackName("net", net.getId())))
@@ -218,7 +246,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       if (!isReflectableType(driver.getType()))
         continue;
-      objects.push_back({4, profile & kDatabaseProfileWrite ? 3u : 1u,
+      objects.push_back({4, 0, profile & kDatabaseProfileWrite ? 3u : 1u,
                          driver.getId(), driver.getScopeId(),
                          (driver.getHierarchicalName().value_or(
                               driver.getDebugName().value_or(
@@ -240,17 +268,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint64_t sourceOffset = port.getSourceIsNet()
                                   ? netOffsets.lookup(port.getSourceId())
                                   : storageOffsets.lookup(port.getSourceId());
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_PORT, caps, port.getId(),
-                         port.getScopeId(), port.getHierarchicalName().str(),
-                         port.getType(), sourceOffset + port.getSourceLow(),
-                         sourceFor(port)});
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_PORT,
+                         static_cast<uint16_t>(VPIObjectKind::Port), caps,
+                         port.getId(), port.getScopeId(),
+                         port.getHierarchicalName().str(), port.getType(),
+                         sourceOffset + port.getSourceLow(), sourceFor(port)});
     } else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation))
       objects.push_back(
           {(codeUnit.getCodeUnitKind() == sim::EntryKind::Function ||
             codeUnit.getCodeUnitKind() == sim::EntryKind::Observer)
                ? 7u
                : 5u,
-           0, codeUnit.getId(), codeUnit.getScopeId(),
+           vpiKindForCodeUnit(codeUnit),
+           (codeUnit.getInternalAttr() ||
+            !sim::isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
+               ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_INTERNAL)
+               : 0,
+           codeUnit.getId(), codeUnit.getScopeId(),
            codeUnit.getHierarchicalName().str(), Type{}, 0,
            sourceFor(codeUnit)});
   }
@@ -560,23 +594,34 @@ SmallVector<uint8_t> serializeDesignDatabase(
       relation.emitOpError("relation source VPI kind cannot be packed");
       return {};
     }
-    relations.push_back(
-        {sourceTable, sourceIndex, target->second,
-         static_cast<uint32_t>(relation.getOrdinal()),
-         static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
+    relations.push_back({sourceTable, sourceIndex, target->second,
+                         static_cast<uint32_t>(relation.getOrdinal()),
+                         static_cast<uint16_t>(relation.getSelector()),
+                         sourceKindAndTable});
   }
-  llvm::sort(relations, [](const RelationRecord &left,
-                           const RelationRecord &right) {
-    return std::tie(left.sourceTable, left.sourceIndex, left.selector,
-                    left.ordinal, left.targetIndex) <
-           std::tie(right.sourceTable, right.sourceIndex, right.selector,
-                    right.ordinal, right.targetIndex);
-  });
+  llvm::sort(
+      relations, [](const RelationRecord &left, const RelationRecord &right) {
+        return std::tie(left.sourceTable, left.sourceIndex, left.selector,
+                        left.ordinal, left.targetIndex) <
+               std::tie(right.sourceTable, right.sourceIndex, right.selector,
+                        right.ordinal, right.targetIndex);
+      });
 
   for (auto scope : scopes) {
     uint64_t self = scopeOffsets.lookup(scope.getId());
     ScopeWriter writer(output.data() + self);
-    writer.setKind(static_cast<uint32_t>(RecordKind::Scope));
+    uint32_t packedKind = 0;
+    uint32_t vpiKind = scope.getVpiKind().value_or(
+        scope.getInterfaceType()
+            ? static_cast<uint16_t>(VPIObjectKind::Interface)
+            : (scope.getId() == 0
+                   ? 0
+                   : static_cast<uint16_t>(VPIObjectKind::Module)));
+    if (!tryPackRecordKindPayload(RecordKind::Scope, vpiKind, packedKind)) {
+      scope.emitOpError("scope record or VPI kind cannot be packed");
+      return {};
+    }
+    writer.setKindAndVPIKind(packedKind);
     writer.setCaps(OBELISK_RT_DESIGN_CAP_ITERATE);
     writer.setID(scope.getId());
     writer.setParent(scope.getParent() ? scopeOffsets.lookup(*scope.getParent())
@@ -603,7 +648,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, object] : llvm::enumerate(objects)) {
     uint64_t self = objectOffset + index * ObjectLayout.size;
     ObjectWriter writer(output.data() + self);
-    writer.setKind(object.kind);
+    uint32_t packedKind = 0;
+    if (!tryPackRecordKindPayload(static_cast<RecordKind>(object.kind),
+                                  object.vpiKind, packedKind)) {
+      design.emitOpError("object record or VPI kind cannot be packed");
+      return {};
+    }
+    writer.setKindAndVPIKind(packedKind);
     writer.setCaps(object.caps);
     writer.setID(object.id);
     writer.setOwner(scopeOffsets.lookup(object.scope));
@@ -712,7 +763,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       writer.setName(0);
     }
     writer.setVPIKind(static_cast<uint16_t>(statement.getVpiKind()));
-    writer.setFlags(statement.getIsProtected() ? 1 : 0);
+    uint16_t flags = 0;
+    if (statement.getIsProtected())
+      flags |= OBELISK_RT_DESIGN_STATEMENT_PROTECTED;
+    if (statement.getIsScope())
+      flags |= OBELISK_RT_DESIGN_STATEMENT_SCOPE;
+    writer.setFlags(flags);
   }
   for (auto [index, entry] : llvm::enumerate(statementSites)) {
     sim::SimStatementSiteDeclOp site = entry.declaration;

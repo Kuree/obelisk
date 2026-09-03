@@ -26,10 +26,11 @@ class ReflectionLayout<string cppName_, int size_,
 }
 
 class ReflectionRecordKind<string cppName_, int value_,
-                           ReflectionLayout layout_> {
+                           ReflectionLayout layout_, int packedWidth_ = 16> {
   string cppName = cppName_;
   int value = value_;
   ReflectionLayout layout = layout_;
+  int packedWidth = packedWidth_;
 }
 
 class ReflectionTableKind<string cppName_, int value_, int packedWidth_ = 2> {
@@ -77,7 +78,11 @@ def Header : ReflectionLayout<"Header", 176,
    HeaderStatementSiteOffset, HeaderStatementSiteCount, HeaderRelationOffset,
    HeaderRelationCount]>;
 
-def ScopeKindField : ReflectionField<"Kind", 0, U32LE>;
+// The low half identifies the physical record layout. The high half carries
+// the concrete VPI object kind intrinsically, including for objects with no
+// outgoing relations. The packing helpers are generated from
+// ReflectionRecordKind::packedWidth.
+def ScopeKindField : ReflectionField<"KindAndVPIKind", 0, U32LE>;
 def ScopeCaps : ReflectionField<"Caps", 4, U32LE>;
 def ScopeID : ReflectionField<"ID", 8, U64LE>;
 def ScopeParent : ReflectionField<"Parent", 16, U64LE>;
@@ -90,7 +95,7 @@ def Scope : ReflectionLayout<"Scope", 64,
   [ScopeKindField, ScopeCaps, ScopeID, ScopeParent, ScopeFirstChild,
    ScopeNextSibling, ScopeName, ScopeSourceFile, ScopeSourceLineColumn]>;
 
-def ObjectKindField : ReflectionField<"Kind", 0, U32LE>;
+def ObjectKindField : ReflectionField<"KindAndVPIKind", 0, U32LE>;
 def ObjectCaps : ReflectionField<"Caps", 4, U32LE>;
 def ObjectID : ReflectionField<"ID", 8, U64LE>;
 def ObjectOwner : ReflectionField<"Owner", 16, U64LE>;
