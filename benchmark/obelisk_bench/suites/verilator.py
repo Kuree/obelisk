@@ -62,6 +62,16 @@ OBELISK_SEVERITY_LINE = re.compile(
 # accidentally leave the conventional marker later in unreachable source.
 # Their descriptor still calls test.passes(), so a clean exit is the verdict.
 CLEAN_EXIT_WITH_UNREACHABLE_MARKER = frozenset({"t_foreach_noivar"})
+# These self-checks print from independent time-zero / Active-region processes.
+# The LRM gives those processes no relative order, so compare their complete
+# line multisets rather than Verilator's one observed sequence.
+ORDER_INDEPENDENT_GOLDEN_LINES = frozenset({
+    "t_gen_upscope",
+    "t_genfor_signed",
+})
+# Verilator exposes a generated name for an unlabeled procedural block in %m.
+# IEEE 1800-2017 21.2.1.6 does not make such a block part of the hierarchy.
+VERILATOR_SYNTHETIC_UNNAMED_BLOCK = frozenset({"t_genfor_signed"})
 # Verilator defines `verilator` while compiling this test, and its source uses
 # that exact macro to exclude a covergroup section marked "Unsupported". Do
 # not define the macro suite-wide: other portable scenarios use it to select
@@ -2057,8 +2067,14 @@ def runtime_output_matches_golden(
     if _runtime_assertion_error_signature(expected)[1] != 0:
         return None
     actual = FINISH_DIAGNOSTIC.sub("", stdout + stderr)
-    return (_normalize_golden_severity_lines(actual) ==
-            _normalize_golden_severity_lines(expected))
+    actual = _normalize_golden_severity_lines(actual)
+    expected = _normalize_golden_severity_lines(expected)
+    if descriptor.stem in VERILATOR_SYNTHETIC_UNNAMED_BLOCK:
+        actual = re.sub(r"\.unnamedblk\d+\b", "", actual)
+        expected = re.sub(r"\.unnamedblk\d+\b", "", expected)
+    if descriptor.stem in ORDER_INDEPENDENT_GOLDEN_LINES:
+        return sorted(actual.splitlines()) == sorted(expected.splitlines())
+    return actual == expected
 
 
 def _normalize_golden_severity_lines(output: str) -> str:

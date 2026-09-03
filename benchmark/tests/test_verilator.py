@@ -635,9 +635,10 @@ class RuntimeErrorTest(unittest.TestCase):
 
 
 class GoldenOutputTest(unittest.TestCase):
-    def match(self, expected: str, stdout: str, stderr: str = "") -> bool:
+    def match(self, expected: str, stdout: str, stderr: str = "",
+              name: str = "t_x") -> bool:
         with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
-            descriptor = Path(tmp) / "t_x.py"
+            descriptor = Path(tmp) / f"{name}.py"
             descriptor.write_text(
                 "test.execute(expect_filename=test.golden_filename)\n",
                 encoding="utf-8",
@@ -678,6 +679,20 @@ class GoldenOutputTest(unittest.TestCase):
         self.assertFalse(self.match(
             "[0] %Warning: t_x.v:24: top.t: Expected warning\n",
             "WARNING: /tmp/t_x.v:24: top.t: simulation time 0: Other warning\n",
+        ))
+
+    def test_exact_active_region_fixture_compares_lines_without_order(self):
+        self.assertTrue(self.match(
+            "second\nfirst\n*-* All Finished *-*\n",
+            "first\nsecond\n*-* All Finished *-*\n",
+            name="t_gen_upscope",
+        ))
+
+    def test_verilator_synthetic_unnamed_block_is_not_part_of_percent_m(self):
+        self.assertTrue(self.match(
+            "top.t.u.unnamedblk1 value\n*-* All Finished *-*\n",
+            "top.t.u value\n*-* All Finished *-*\n",
+            name="t_genfor_signed",
         ))
 
 
