@@ -35,6 +35,8 @@ module attributes {
     // correctly have no semantic callback-site record.
     obelisk_sim.statement.decl 150 in 10 scope 0 type 38 parent 100 loc("test.sv":8:7)
     obelisk_sim.statement.decl 250 in 10 scope 0 type 38 parent 200 loc("test.sv":9:9)
+    // A task is itself the effective VPI scope of its top-level statements.
+    obelisk_sim.statement.decl 300 in 60 scope 0 type 38 loc("test.sv":11:3)
     obelisk_sim.statement_site.decl 1200 on 200 phase 2
     obelisk_sim.statement_site.decl 1000 on 100 phase 0
     obelisk_sim.statement_site.decl 1100 on 200 phase 1
@@ -46,6 +48,7 @@ module attributes {
     obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 50
     obelisk_sim.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 0 modes 2 to 150
     obelisk_sim.vpi_statement_relation.decl statement 200 type 15 selector 75 ordinal 0 modes 3 to 250
+    obelisk_sim.vpi_statement_relation.decl code_unit 60 type 59 selector 104 ordinal 0 modes 1 to 300
 
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context
         {obelisk_sim.capture_kind = 0 : i32})
@@ -74,6 +77,7 @@ module attributes {
 // DATABASE-NEXT: statement id=150 owner=0 scope=0 parent=1 type=38 flags=0x0 source=test.sv:8:7 name=
 // DATABASE-NEXT: statement id=200 owner=0 scope=0 parent=1 type=15 flags=0x0 source=test.sv:9:3 name=
 // DATABASE-NEXT: statement id=250 owner=0 scope=0 parent=3 type=38 flags=0x0 source=test.sv:9:9 name=
+// DATABASE-NEXT: statement id=300 owner=6 scope=0 parent=4294967295 type=38 flags=0x0 source=test.sv:11:3 name=
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0
 // DATABASE-NEXT: statement_site id=1200 statement=3 phase=2 flags=0x0
@@ -103,10 +107,19 @@ module attributes {
 // DATABASE-NEXT: relation source_table=1 source=3 source_type=20 mode=handle selector=84 ordinal=0 target_table=0 target=0
 // DATABASE-NEXT: relation source_table=1 source=6 source_type=59 mode=handle selector=32 ordinal=0 target_table=0 target=0
 // DATABASE-NEXT: relation source_table=1 source=6 source_type=59 mode=handle selector=84 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=6 source_type=59 mode=handle selector=104 ordinal=0 target_table=2 target=5
+// DATABASE-NEXT: relation source_table=2 source=0 source_type=8 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=2 source=0 source_type=8 mode=handle selector=745 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=handle selector=84 ordinal=0 target_table=0 target=0
 // DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=iterate selector=104 ordinal=0 target_table=2 target=2
 // DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=iterate selector=104 ordinal=1 target_table=2 target=3
+// DATABASE-NEXT: relation source_table=2 source=2 source_type=38 mode=handle selector=84 ordinal=0 target_table=2 target=1
 // DATABASE-NEXT: relation source_table=2 source=3 source_type=15 mode=handle selector=75 ordinal=0 target_table=2 target=4
 // DATABASE-NEXT: relation source_table=2 source=3 source_type=15 mode=iterate selector=75 ordinal=0 target_table=2 target=4
+// DATABASE-NEXT: relation source_table=2 source=3 source_type=15 mode=handle selector=84 ordinal=0 target_table=2 target=1
+// DATABASE-NEXT: relation source_table=2 source=4 source_type=38 mode=handle selector=84 ordinal=0 target_table=2 target=1
+// DATABASE-NEXT: relation source_table=2 source=5 source_type=38 mode=handle selector=84 ordinal=0 target_table=1 target=6
 
 // WAVEFORM-NOT: statement
 // WAVEFORM-NOT: relation

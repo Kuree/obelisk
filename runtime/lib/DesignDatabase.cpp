@@ -310,6 +310,65 @@ bool isStatementOffset(const Database &database, uint64_t offset) {
          (offset - database.statements) % kStatementSize == 0;
 }
 
+bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
+                             obelisk::reflection::TableKind &targetTable,
+                             uint32_t &targetIndex) {
+  if (sourceIndex >= database.statementCount)
+    return false;
+  const uint8_t *source = database.data + database.statements +
+                          uint64_t{sourceIndex} * kStatementSize;
+  uint32_t parent = read32(source + 16);
+  for (uint64_t depth = 0; parent != UINT32_MAX; ++depth) {
+    if (depth >= database.statementCount || parent >= database.statementCount)
+      return false;
+    const uint8_t *record =
+        database.data + database.statements + uint64_t{parent} * kStatementSize;
+    if ((read16(record + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) != 0) {
+      targetTable = obelisk::reflection::TableKind::Statement;
+      targetIndex = parent;
+      return true;
+    }
+    parent = read32(record + 16);
+  }
+
+  uint32_t owner = read32(source + 8);
+  if (owner != UINT32_MAX) {
+    if (owner >= database.objectCount)
+      return false;
+    const uint8_t *record =
+        database.data + database.objects + uint64_t{owner} * kObjectSize;
+    const auto *kind =
+        obelisk::reflection::findVPIObjectKind(recordVPIKind(record));
+    if (kind && (kind->families &
+                 obelisk::reflection::vpiFamilyMask(
+                     obelisk::reflection::VPIObjectFamily::Scope)) != 0) {
+      targetTable = obelisk::reflection::TableKind::Object;
+      targetIndex = owner;
+      return true;
+    }
+  }
+
+  uint32_t scope = read32(source + 12);
+  if (scope >= database.scopeCount)
+    return false;
+  targetTable = obelisk::reflection::TableKind::Scope;
+  targetIndex = scope;
+  return true;
+}
+
+uint64_t tableOffset(const Database &database,
+                     obelisk::reflection::TableKind table, uint32_t index) {
+  switch (table) {
+  case obelisk::reflection::TableKind::Scope:
+    return database.scopes + uint64_t{index} * kScopeSize;
+  case obelisk::reflection::TableKind::Object:
+    return database.objects + uint64_t{index} * kObjectSize;
+  case obelisk::reflection::TableKind::Statement:
+    return database.statements + uint64_t{index} * kStatementSize;
+  }
+  return 0;
+}
+
 bool relationSourceForCursor(const Database &database, uint64_t offset,
                              obelisk::reflection::TableKind &table,
                              uint32_t &index) {
@@ -1128,10 +1187,17 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       break;
     case obelisk::reflection::VPIAutomaticRelation::ParentScope:
-      if (sourceTable == obelisk::reflection::TableKind::Statement ||
-          targetTable != obelisk::reflection::TableKind::Scope ||
-          read64(sourceRecord + 16) != targetOffset)
+      if (sourceTable == obelisk::reflection::TableKind::Statement) {
+        obelisk::reflection::TableKind expectedTable;
+        uint32_t expectedIndex = 0;
+        if (!effectiveStatementScope(database, sourceIndex, expectedTable,
+                                     expectedIndex) ||
+            targetTable != expectedTable || targetIndex != expectedIndex)
+          return false;
+      } else if (targetTable != obelisk::reflection::TableKind::Scope ||
+                 read64(sourceRecord + 16) != targetOffset) {
         return false;
+      }
       break;
     }
 
@@ -1695,6 +1761,22 @@ designVPIStatementScope(const Database &database,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status designVPIStatementEnclosingScope(
+    const Database &database, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) {
+  if (!isStatementOffset(database, statement.offset))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t sourceIndex = static_cast<uint32_t>(
+      (statement.offset - database.statements) / kStatementSize);
+  obelisk::reflection::TableKind targetTable;
+  uint32_t targetIndex = 0;
+  if (!effectiveStatementScope(database, sourceIndex, targetTable, targetIndex))
+    return OBELISK_RT_INVALID_DESIGN;
+  outScope->offset = tableOffset(database, targetTable, targetIndex);
+  *outStatement = targetTable == obelisk::reflection::TableKind::Statement;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 designVPIStatementParent(const Database &database,
                          obelisk_rt_design_cursor_v1 statement,
@@ -1993,6 +2075,17 @@ obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
     return OBELISK_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementScope(*database, statement, outScope)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_statement_enclosing_scope(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept {
+  if (!outScope || !outStatement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIStatementEnclosingScope(*database, statement,
+                                                     outScope, outStatement)
                   : OBELISK_RT_INVALID_HANDLE;
 }
 

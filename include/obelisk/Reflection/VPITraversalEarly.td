@@ -311,7 +311,7 @@ def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,
 def VPIEarlyScopeMemories : VPITraversalEdge<NonInstanceScopeObjects, Memory,
   IterateMode, RegArrayObjects, NoOrder, "37.12; 37.20; 37.83">;
 def VPIEarlyScopeOfChild : VPITraversalEdge<StatementObjects, ScopeRel,
-  HandleMode, ScopeObjects, NoOrder, "37.12">;
+  HandleMode, ScopeObjects, NoOrder, "37.12", 0, AutomaticParentScope>;
 def VPIEarlyScopeOfDeclaredChild : VPITraversalEdge<VPIEarlyScopeChildren,
   ScopeRel, HandleMode, ScopeObjects, NoOrder, "37.12", 0,
   AutomaticParentScope>;

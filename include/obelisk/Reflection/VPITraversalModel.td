@@ -45,7 +45,8 @@ def TimeOrder : VPITraversalOrder<"Time", 4>;
 // Static relations are recoverable directly from the elaborated design
 // inventory.  DirectChild means that the edge enumerates records whose
 // scope/owner is the source scope.  ParentScope means that the edge returns
-// the record named by the source record's scope/parent field.
+// the source's effective enclosing scope: the record named by a scope/parent
+// field for ordinary records, or the nearest lexical scope for statements.
 class VPIAutomaticRelation<string cppName_, int value_> {
   string cppName = cppName_;
   int value = value_;

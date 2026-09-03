@@ -2693,6 +2693,9 @@ obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
 obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     obelisk_rt_design_cursor_v1 *outScope) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_enclosing_scope(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_statement_parent(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     obelisk_rt_design_cursor_v1 *outParent) noexcept;

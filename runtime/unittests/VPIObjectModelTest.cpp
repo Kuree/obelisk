@@ -359,6 +359,9 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
       requireTraversal(vpiInitial, vpiScope, Mode::Handle).automaticRelation,
       Automatic::ParentScope);
   EXPECT_EQ(
+      requireTraversal(vpiIfElse, vpiScope, Mode::Handle).automaticRelation,
+      Automatic::ParentScope);
+  EXPECT_EQ(
       requireTraversal(vpiPort, vpiInstance, Mode::Handle).automaticRelation,
       Automatic::ParentScope);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
