@@ -131,6 +131,177 @@ uint32_t vpiKindForScope(sim::SimScopeDeclOp scope) {
                  : static_cast<uint16_t>(VPIObjectKind::Module)));
 }
 
+sim::VPITypeSemanticsAttr packedArrayElement(sim::VPITypeSemanticsAttr type) {
+  while (type && type.getKind() == sim::VPITypeKind::PackedArray) {
+    if (type.getChildren().size() != 1)
+      return {};
+    type = dyn_cast<sim::VPITypeSemanticsAttr>(type.getChildren()[0]);
+  }
+  return type;
+}
+
+uint32_t vpiKindForStorage(sim::VPITypeSemanticsAttr type) {
+  using Kind = sim::VPITypeKind;
+  using VPIKind = VPIObjectKind;
+  if (!type)
+    return static_cast<uint16_t>(VPIKind::Reg);
+  switch (type.getKind()) {
+  case Kind::Unknown:
+    return static_cast<uint16_t>(VPIKind::Reg);
+  case Kind::GenericIntegral:
+    return static_cast<uint16_t>(type.getIsFourState() ? VPIKind::LogicVar
+                                                       : VPIKind::BitVar);
+  case Kind::Bit:
+    return static_cast<uint16_t>(VPIKind::BitVar);
+  case Kind::Logic:
+    return static_cast<uint16_t>(VPIKind::LogicVar);
+  case Kind::Reg:
+    return static_cast<uint16_t>(VPIKind::Reg);
+  case Kind::Byte:
+    return static_cast<uint16_t>(VPIKind::ByteVar);
+  case Kind::ShortInt:
+    return static_cast<uint16_t>(VPIKind::ShortIntVar);
+  case Kind::Int:
+    return static_cast<uint16_t>(VPIKind::IntVar);
+  case Kind::LongInt:
+    return static_cast<uint16_t>(VPIKind::LongIntVar);
+  case Kind::Integer:
+    return static_cast<uint16_t>(VPIKind::IntegerVar);
+  case Kind::Enum:
+    return static_cast<uint16_t>(VPIKind::EnumVar);
+  case Kind::Time:
+    return static_cast<uint16_t>(VPIKind::TimeVar);
+  case Kind::ShortReal:
+    return static_cast<uint16_t>(VPIKind::ShortRealVar);
+  case Kind::Real:
+  case Kind::Realtime:
+    return static_cast<uint16_t>(VPIKind::RealVar);
+  case Kind::String:
+    return static_cast<uint16_t>(VPIKind::StringVar);
+  case Kind::Chandle:
+    return static_cast<uint16_t>(VPIKind::ChandleVar);
+  case Kind::PackedArray: {
+    sim::VPITypeSemanticsAttr element = packedArrayElement(type);
+    if (!element)
+      return static_cast<uint16_t>(VPIKind::Reg);
+    switch (element.getKind()) {
+    case Kind::Enum:
+    case Kind::PackedStruct:
+    case Kind::PackedUnion:
+      return static_cast<uint16_t>(VPIKind::PackedArrayVar);
+    default:
+      return vpiKindForStorage(element);
+    }
+  }
+  case Kind::UnpackedArray:
+  case Kind::DynamicArray:
+  case Kind::Queue:
+  case Kind::AssocArray:
+  case Kind::PackedOpenArray:
+  case Kind::UnpackedOpenArray:
+    return static_cast<uint16_t>(VPIKind::ArrayVar);
+  case Kind::PackedStruct:
+  case Kind::UnpackedStruct:
+    return static_cast<uint16_t>(VPIKind::StructVar);
+  case Kind::PackedUnion:
+  case Kind::UnpackedUnion:
+    return static_cast<uint16_t>(VPIKind::UnionVar);
+  case Kind::Class:
+  case Kind::Process:
+  case Kind::Covergroup:
+  case Kind::Mailbox:
+  case Kind::Semaphore:
+    return static_cast<uint16_t>(VPIKind::ClassVar);
+  case Kind::VirtualInterface:
+    return static_cast<uint16_t>(VPIKind::VirtualInterfaceVar);
+  case Kind::Event:
+    return static_cast<uint16_t>(VPIKind::NamedEvent);
+  case Kind::Void:
+  case Kind::Untyped:
+  case Kind::Sequence:
+  case Kind::Property:
+    return static_cast<uint16_t>(VPIKind::Reg);
+  }
+  llvm_unreachable("unhandled VPI semantic type kind");
+}
+
+uint32_t vpiKindForNet(sim::VPITypeSemanticsAttr type) {
+  using Kind = sim::VPITypeKind;
+  using VPIKind = VPIObjectKind;
+  if (!type)
+    return static_cast<uint16_t>(VPIKind::Net);
+  switch (type.getKind()) {
+  case Kind::GenericIntegral:
+    return static_cast<uint16_t>(type.getIsFourState() ? VPIKind::LogicNet
+                                                       : VPIKind::BitNet);
+  case Kind::Bit:
+    return static_cast<uint16_t>(VPIKind::BitNet);
+  case Kind::Logic:
+  case Kind::Reg:
+    return static_cast<uint16_t>(VPIKind::LogicNet);
+  case Kind::Byte:
+    return static_cast<uint16_t>(VPIKind::ByteNet);
+  case Kind::ShortInt:
+    return static_cast<uint16_t>(VPIKind::ShortIntNet);
+  case Kind::Int:
+    return static_cast<uint16_t>(VPIKind::IntNet);
+  case Kind::LongInt:
+    return static_cast<uint16_t>(VPIKind::LongIntNet);
+  case Kind::Integer:
+    return static_cast<uint16_t>(VPIKind::IntegerNet);
+  case Kind::Enum:
+    return static_cast<uint16_t>(VPIKind::EnumNet);
+  case Kind::Time:
+    return static_cast<uint16_t>(VPIKind::TimeNet);
+  case Kind::ShortReal:
+    return static_cast<uint16_t>(VPIKind::ShortRealNet);
+  case Kind::Real:
+  case Kind::Realtime:
+    return static_cast<uint16_t>(VPIKind::RealNet);
+  case Kind::PackedArray: {
+    sim::VPITypeSemanticsAttr element = packedArrayElement(type);
+    if (!element)
+      return static_cast<uint16_t>(VPIKind::Net);
+    switch (element.getKind()) {
+    case Kind::Enum:
+    case Kind::PackedStruct:
+      return static_cast<uint16_t>(VPIKind::PackedArrayNet);
+    default:
+      return vpiKindForNet(element);
+    }
+  }
+  case Kind::UnpackedArray:
+  case Kind::DynamicArray:
+  case Kind::Queue:
+  case Kind::AssocArray:
+  case Kind::PackedOpenArray:
+  case Kind::UnpackedOpenArray:
+    return static_cast<uint16_t>(VPIKind::ArrayNet);
+  case Kind::PackedStruct:
+  case Kind::UnpackedStruct:
+    return static_cast<uint16_t>(VPIKind::StructNet);
+  case Kind::PackedUnion:
+  case Kind::UnpackedUnion:
+    return static_cast<uint16_t>(VPIKind::UnionNet);
+  case Kind::Unknown:
+  case Kind::String:
+  case Kind::Chandle:
+  case Kind::Class:
+  case Kind::VirtualInterface:
+  case Kind::Event:
+  case Kind::Process:
+  case Kind::Covergroup:
+  case Kind::Mailbox:
+  case Kind::Semaphore:
+  case Kind::Void:
+  case Kind::Untyped:
+  case Kind::Sequence:
+  case Kind::Property:
+    return static_cast<uint16_t>(VPIKind::Net);
+  }
+  llvm_unreachable("unhandled VPI semantic type kind");
+}
+
 } // namespace
 
 SmallVector<uint8_t> serializeDesignDatabase(
@@ -200,7 +371,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   std::function<bool(Type)> isReflectableType = [&](Type type) {
     if (!simulationWidth(type))
       return false;
-    if (isa<IntegerType, sim::LogicType>(type) || type.isF64())
+    if (isa<IntegerType, sim::LogicType>(type) || type.isF32() || type.isF64())
       return true;
     if (auto array = dyn_cast<sim::PackedArrayType>(type))
       return isReflectableType(array.getElementType());
@@ -295,7 +466,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({2, static_cast<uint16_t>(VPIObjectKind::Reg), caps,
+      objects.push_back({2, vpiKindForStorage(storage.getVpiTypeAttr()), caps,
                          storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
                              .value_or(storage.getDebugName().value_or(
@@ -310,7 +481,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({3, static_cast<uint16_t>(VPIObjectKind::Net), caps,
+      objects.push_back({3, vpiKindForNet(net.getVpiTypeAttr()), caps,
                          net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
                              .value_or(net.getDebugName().value_or(
@@ -706,6 +877,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       record.flags |= integer.isSigned() ? 2 : 0;
       record.flags |= 4;
       record.name = "bits";
+    } else if (type.isF32()) {
+      record.kind = 1;
+      record.name = "shortreal";
     } else if (type.isF64()) {
       record.kind = 1;
       record.name = "real";

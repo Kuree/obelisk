@@ -58,6 +58,8 @@ module vpi_top;
 endmodule
 
 // OFF: exports vlog_startup_routines but --vpi=off
+// Packed dimensions on bit/logic variables retain the vpiBitVar/vpiLogicVar
+// kind, so both logic declarations remain visible through vpiReg.
 // OUTPUT: traverse module=vpi_top scope=vpi_top regs=2 same=1
 // OUTPUT-NEXT: startup vpi_top.value size=64 aval=ffffffff bval=ffffffff
 // OUTPUT-NEXT: binary underscore=9

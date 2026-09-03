@@ -96,8 +96,9 @@ struct DesignImage {
     // Records carry the full hierarchical path; VCD declares the leaf.
     const std::string strings = std::string(
         "top\0top.sub\0top.clk\0top.data\0top.bus\0top.sub.count\0top.rv\0top."
-        "\\x.y \0top.st\0top.mem\0logic\0real\0pair\0hi\0lo\0nibbles\0",
-        113);
+        "\\x.y \0top.st\0top.mem\0logic\0real\0pair\0hi\0lo\0nibbles\0"
+        "shortreal\0",
+        123);
     // Name offsets stored in records are absolute image offsets.
     const uint64_t topName = stringOffset + 0;
     const uint64_t subName = stringOffset + 4;
@@ -595,6 +596,42 @@ TEST(VCD, RealsAreDumpedAsNumbersNotBitPatterns) {
   ASSERT_FALSE(rv.empty());
   // No bit range is declared for a real.
   EXPECT_NE(text.find("$var real 64 " + rv + " rv $end"), std::string::npos);
+  EXPECT_EQ(valueRecords(text, rv),
+            (std::vector<std::string>{"r1.5", "r-2.25"}));
+}
+
+TEST(VCD, ShortRealsArePromotedAndDumpedAsNumbers) {
+  Fixture fixture;
+  constexpr uint64_t realObject = 176 + 2 * 64 + 4 * 96;
+  constexpr uint64_t realType = 176 + 2 * 64 + 8 * 96 + 3 * 80;
+  constexpr uint64_t stringOffset = 176 + 2 * 64 + 8 * 96 + 8 * 80;
+  put32(fixture.image.bytes, realObject,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiShortRealVar));
+  put64(fixture.image.bytes, realObject + 56, 32);
+  put64(fixture.image.bytes, realObject + 64, 31);
+  put64(fixture.image.bytes, realType + 8, 32);
+  put64(fixture.image.bytes, realType + 16, 31);
+  put64(fixture.image.bytes, realType + 72, stringOffset + 113);
+  put64(fixture.image.bytes, 32, imageChecksum(fixture.image.bytes));
+
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  float value = 1.5f;
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  fixture.setBits(kRealBit, 32, bits, 0);
+  fixture.advanceTo(10);
+  value = -2.25f;
+  std::memcpy(&bits, &value, sizeof(bits));
+  fixture.setBits(kRealBit, 32, bits, 0);
+  fixture.advanceTo(20);
+  std::string text = fixture.read();
+
+  std::string rv = identifierFor(text, "rv");
+  ASSERT_FALSE(rv.empty());
+  EXPECT_NE(text.find("$var real 32 " + rv + " rv $end"), std::string::npos);
   EXPECT_EQ(valueRecords(text, rv),
             (std::vector<std::string>{"r1.5", "r-2.25"}));
 }

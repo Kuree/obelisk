@@ -2332,6 +2332,7 @@ enum class VPIShapeType {
   PackedUnionOneBit,
   UnpackedStruct,
   UnpackedUnion,
+  ShortReal,
   Real,
 };
 
@@ -2348,13 +2349,15 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
                                     ? OBELISK_RT_DESIGN_RECORD_NET
                                     : OBELISK_RT_DESIGN_RECORD_STORAGE;
   if (shape == VPIShapeType::BasicScalar ||
-      shape == VPIShapeType::BasicVector || shape == VPIShapeType::Real) {
+      shape == VPIShapeType::BasicVector || shape == VPIShapeType::ShortReal ||
+      shape == VPIShapeType::Real) {
     std::vector<uint8_t> bytes = makeDatabase();
     const uint64_t width = shape == VPIShapeType::BasicScalar   ? 1
                            : shape == VPIShapeType::BasicVector ? 8
+                           : shape == VPIShapeType::ShortReal   ? 32
                                                                 : 64;
     const uint32_t flags =
-        shape == VPIShapeType::Real
+        shape == VPIShapeType::ShortReal || shape == VPIShapeType::Real
             ? 0
             : OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED;
     put32(bytes, objectOffset, designRecordKind(physicalKind, exactVpiType));
@@ -2399,6 +2402,7 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
   switch (shape) {
   case VPIShapeType::BasicScalar:
   case VPIShapeType::BasicVector:
+  case VPIShapeType::ShortReal:
   case VPIShapeType::Real:
     break;
   case VPIShapeType::PackedArrayOneBit:
@@ -4894,7 +4898,7 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     bool scalar;
     bool vector;
   };
-  constexpr std::array<Case, 12> cases{{
+  constexpr std::array<Case, 13> cases{{
       {VPIShapeType::BasicScalar, vpiReg, true, false},
       {VPIShapeType::BasicVector, vpiNet, false, true},
       {VPIShapeType::BasicVector, vpiNetBit, true, false},
@@ -4906,6 +4910,7 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
       {VPIShapeType::PackedUnionOneBit, vpiUnionVar, false, true},
       {VPIShapeType::UnpackedStruct, vpiStructVar, false, false},
       {VPIShapeType::UnpackedUnion, vpiUnionVar, false, false},
+      {VPIShapeType::ShortReal, vpiShortRealVar, false, false},
       {VPIShapeType::Real, vpiRealVar, false, false},
   }};
 
@@ -4934,6 +4939,95 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     EXPECT_EQ(vpi_release_handle(value), 1);
     obelisk_rt_v1_context_destroy(context);
   }
+}
+
+TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
+  struct Case {
+    VPIShapeType shape;
+    uint32_t exactType;
+    double first;
+    double second;
+  };
+  for (const Case &testCase : {
+           Case{VPIShapeType::ShortReal, vpiShortRealVar, 1.5, -2.25},
+           Case{VPIShapeType::Real, vpiRealVar, 3.25, -7.5},
+       }) {
+    SCOPED_TRACE(testCase.exactType);
+    Fixture fixture;
+    fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+    char valueName[] = "top.value";
+    vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(value, nullptr);
+    ASSERT_EQ(vpi_get(vpiType, value), testCase.exactType);
+
+    s_vpi_value written{};
+    written.format = vpiRealVal;
+    written.value.real = testCase.first;
+    EXPECT_EQ(vpi_put_value(value, &written, nullptr, vpiNoDelay), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    s_vpi_value read{};
+    read.format = vpiObjTypeVal;
+    vpi_get_value(value, &read);
+    EXPECT_EQ(read.format, vpiRealVal);
+    EXPECT_DOUBLE_EQ(read.value.real, testCase.first);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    written.value.real = testCase.second;
+    EXPECT_EQ(vpi_put_value(value, &written, nullptr, vpiNoDelay), nullptr);
+    read = {};
+    read.format = vpiRealVal;
+    vpi_get_value(value, &read);
+    EXPECT_DOUBLE_EQ(read.value.real, testCase.second);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    EXPECT_EQ(vpi_release_handle(value), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  // Cross-kind real conversion needs signedness and arbitrary-width support.
+  // Until that metadata and conversion path exist, reject it explicitly
+  // instead of interpreting a non-real object's first limb as IEEE bits.
+  Fixture fixture;
+  fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char valueName[] = "top.value";
+  vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(value, nullptr);
+  s_vpi_value real{};
+  real.format = vpiRealVal;
+  real.value.real = -1.0;
+  vpi_get_value(value, &real);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "vpiRealVal conversion is not implemented for non-real "
+               "objects");
+  EXPECT_EQ(vpi_put_value(value, &real, nullptr, vpiNoDelay), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "vpiRealVal conversion is not implemented for non-real "
+               "objects");
+  EXPECT_EQ(vpi_release_handle(value), 1);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {

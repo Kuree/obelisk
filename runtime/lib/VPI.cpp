@@ -453,11 +453,10 @@ bool hasValueRequirement(
 const obelisk::reflection::VPIValuePolicyDescriptor *
 valuePolicyFor(__vpiHandle *handle) {
   PLI_INT32 type = vpiTypeForHandle(handle);
-  const auto *policy =
-      type == vpiUndefined
-          ? nullptr
-          : obelisk::reflection::findVPIValuePolicy(
-                static_cast<uint32_t>(type));
+  const auto *policy = type == vpiUndefined
+                           ? nullptr
+                           : obelisk::reflection::findVPIValuePolicy(
+                                 static_cast<uint32_t>(type));
   if (!policy)
     setError(handle->owner, "vpi_get_value is not defined for this VPI object",
              vpiNotice);
@@ -470,9 +469,9 @@ bool valueRequirementsSatisfied(
   using Requirement = obelisk::reflection::VPIValueRequirement;
   obelisk_rt_design_type_info_v1 type{};
   if (objectInfo.type_offset == 0 ||
-      obelisk_rt_cached_design_type_info(
-          handle->owner->context, {objectInfo.type_offset}, &type) !=
-          OBELISK_RT_OK) {
+      obelisk_rt_cached_design_type_info(handle->owner->context,
+                                         {objectInfo.type_offset},
+                                         &type) != OBELISK_RT_OK) {
     setError(handle->owner, "design type metadata lookup failed", vpiInternal);
     return false;
   }
@@ -505,6 +504,14 @@ bool valueRequirementsSatisfied(
   // object records are introduced; their serializer must add provenance at
   // the same time.
   return true;
+}
+
+void resolveObjectTypeValueFormat(
+    const obelisk::reflection::VPIValuePolicyDescriptor &policy,
+    PLI_INT32 &format) {
+  using Default = obelisk::reflection::VPIValueDefaultFormat;
+  if (policy.defaultFormat == Default::Real)
+    format = vpiRealVal;
 }
 
 int vpiTypeFor(uint32_t kind) {
@@ -759,9 +766,70 @@ bool checkedWordCount(uint64_t width, uint64_t bitsPerWord, size_t &count) {
   return true;
 }
 
+bool isShortRealVPIType(PLI_INT32 type) {
+  return type == vpiShortRealVar || type == vpiShortRealNet;
+}
+
+bool decodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
+                    uint64_t bits, double &result) {
+  if (isShortRealVPIType(type)) {
+    if (width != 32) {
+      setError(handle->owner, "shortreal VPI object does not have 32 bits",
+               vpiInternal);
+      return false;
+    }
+    uint32_t shortBits = static_cast<uint32_t>(bits);
+    float value = 0;
+    std::memcpy(&value, &shortBits, sizeof(value));
+    result = value;
+    return true;
+  }
+  if (type == vpiRealVar || type == vpiRealNet) {
+    if (width != 64) {
+      setError(handle->owner, "real VPI object does not have 64 bits",
+               vpiInternal);
+      return false;
+    }
+    std::memcpy(&result, &bits, sizeof(result));
+    return true;
+  }
+  setError(handle->owner,
+           "vpiRealVal conversion is not implemented for non-real objects",
+           vpiNotice);
+  return false;
+}
+
+bool encodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
+                    double source, uint64_t &result) {
+  if (isShortRealVPIType(type)) {
+    if (width != 32) {
+      setError(handle->owner, "shortreal VPI object does not have 32 bits",
+               vpiInternal);
+      return false;
+    }
+    float value = static_cast<float>(source);
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    result = bits;
+    return true;
+  }
+  if (type == vpiRealVar || type == vpiRealNet) {
+    if (width != 64) {
+      setError(handle->owner, "real VPI object does not have 64 bits",
+               vpiInternal);
+      return false;
+    }
+    std::memcpy(&result, &source, sizeof(result));
+    return true;
+  }
+  setError(handle->owner,
+           "vpiRealVal conversion is not implemented for non-real objects",
+           vpiNotice);
+  return false;
+}
+
 bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
-               std::vector<uint64_t> &value,
-               std::vector<uint64_t> &unknown) {
+               std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
   if (info.bit_width == 0 || info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
              "VPI value access requires readable storage or net");
@@ -769,8 +837,7 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
   }
   size_t limbs = 0;
   if (!checkedWordCount(info.bit_width, 64, limbs)) {
-    setError(handle->owner, "VPI value width exceeds host capacity",
-             vpiSystem);
+    setError(handle->owner, "VPI value width exceeds host capacity", vpiSystem);
     return false;
   }
   OBELISK_RT_TRY {
@@ -781,9 +848,9 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
-  obelisk_rt_status status = obelisk_rt_v1_design_read(
-      handle->owner->context, handle->cursor, value.data(), unknown.data(),
-      info.bit_width);
+  obelisk_rt_status status =
+      obelisk_rt_v1_design_read(handle->owner->context, handle->cursor,
+                                value.data(), unknown.data(), info.bit_width);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "VPI design read failed");
     return false;
@@ -792,7 +859,8 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
 }
 
 bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
-                 std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
+                 PLI_INT32 exactType, std::vector<uint64_t> &value,
+                 std::vector<uint64_t> &unknown) {
   if (!source) {
     setError(handle->owner, "VPI write value is null");
     return false;
@@ -834,6 +902,11 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
         setError(handle->owner, "invalid VPI scalar value");
         return false;
       }
+      break;
+    case vpiRealVal:
+      if (!encodeRealBits(handle, exactType, width, source->value.real,
+                          value[0]))
+        return false;
       break;
     case vpiBinStrVal: {
       if (!source->value.str)
@@ -1085,10 +1158,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
              vpiNotice);
     return nullptr;
   }
-  return makeHandle(
-      state, cursor, exactType, false,
-      obelisk::runtime::hasClassDefinitionValueOrigin(
-          sourceType, sourceClassDefinitionOrigin, exactType));
+  return makeHandle(state, cursor, exactType, false,
+                    obelisk::runtime::hasClassDefinitionValueOrigin(
+                        sourceType, sourceClassDefinitionOrigin, exactType));
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
@@ -1670,15 +1742,18 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   const auto *policy = valuePolicyFor(handle);
   if (!policy)
     return;
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return;
+  if (destination->format == vpiObjTypeVal)
+    resolveObjectTypeValueFormat(*policy, destination->format);
   if (!obelisk::reflection::acceptsVPIValueFormat(
           *policy, static_cast<uint32_t>(destination->format))) {
     setError(handle->owner, "value format is not valid for this VPI object",
              vpiNotice);
     return;
   }
-  obelisk_rt_design_info_v1 info{};
-  if (!infoFor(handle, info) ||
-      !valueRequirementsSatisfied(handle, info, *policy))
+  if (!valueRequirementsSatisfied(handle, info, *policy))
     return;
   std::vector<uint64_t> &value = handle->owner->readValueScratch;
   std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
@@ -1721,6 +1796,11 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
     break;
   }
+  case vpiRealVal:
+    if (!decodeRealBits(handle, vpiTypeForHandle(handle), info.bit_width,
+                        value[0], destination->value.real))
+      return;
+    break;
   case vpiBinStrVal:
     OBELISK_RT_TRY {
       handle->owner->valueStringScratch.assign(
@@ -1835,16 +1915,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   }
   std::vector<uint64_t> value;
   std::vector<uint64_t> unknown;
-  if (!decodeValue(handle, source, info.bit_width, value, unknown))
+  if (!decodeValue(handle, source, info.bit_width, vpiTypeForHandle(handle),
+                   value, unknown))
     return nullptr;
   obelisk_rt_status status =
       flags == vpiForceFlag
-          ? obelisk_rt_v1_design_force(
-                context, handle->cursor, value.data(), unknown.data(),
-                info.bit_width)
-          : obelisk_rt_v1_design_write(
-                context, handle->cursor, value.data(), unknown.data(),
-                info.bit_width);
+          ? obelisk_rt_v1_design_force(context, handle->cursor, value.data(),
+                                       unknown.data(), info.bit_width)
+          : obelisk_rt_v1_design_write(context, handle->cursor, value.data(),
+                                       unknown.data(), info.bit_width);
   if (status != OBELISK_RT_OK)
     setError(handle->owner, "VPI write failed");
   return nullptr;
