@@ -692,6 +692,12 @@ VERILATOR_DPI_SYSTEM_TASK_ALIAS = Exclusion(
     "a user-defined system task or function is registered through the PLI "
     "callback registry; the test instead requires Verilator's private shortcut "
     "that aliases $dpii_* system calls to DPI imports")
+VERILATOR_EMBEDDED_MODEL = Exclusion(
+    "IEEE 1800-2017 35.2",
+    "DPI treats a foreign implementation as a black box with C linkage; this "
+    "test's descriptor first asks Verilator to generate a private C++ child "
+    "model and archive, and its foreign source includes that generated model "
+    "API rather than providing a portable DPI implementation")
 VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "IEEE 1800-2017 20.15.1",
     "$random uses the standard's normative probabilistic-distribution "
@@ -1119,6 +1125,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_qw": DPI_EXPORTED_TASK_VOID_RETURN,
     "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
     "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
+    "t_embed1": VERILATOR_EMBEDDED_MODEL,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class1": CLASS_PATTERN,
