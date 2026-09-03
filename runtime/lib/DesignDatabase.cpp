@@ -529,6 +529,30 @@ uint64_t nextOffset(const uint8_t *record, uint32_t kind) {
   return read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
 }
 
+constexpr uint32_t kPortIdentityCaps = OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                                       OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+                                       OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+
+bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
+  uint32_t canonicalKind = recordKind(canonical);
+  if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT ||
+      (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) == 0 ||
+      (canonicalKind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+       canonicalKind != OBELISK_RT_DESIGN_RECORD_NET) ||
+      read64(port + 16) != read64(canonical + 16) ||
+      read64(port + 48) != read64(canonical + 48) ||
+      read64(port + 56) != read64(canonical + 56) ||
+      read64(port + 64) != read64(canonical + 64) ||
+      read64(port + 72) != read64(canonical + 72) ||
+      read64(port + 80) != read64(canonical + 80))
+    return false;
+  // Same-name port aliases duplicate the canonical object's port metadata;
+  // explicitly renamed formals keep their own direction and ordinal.
+  return read64(port + 40) != read64(canonical + 40) ||
+         (read32(port + 4) & kPortIdentityCaps) ==
+             (read32(canonical + 4) & kPortIdentityCaps);
+}
+
 bool validateDatabaseImpl(const Database &database) {
   if (database.scopeCount == 0 || !isScopeOffset(database, database.root))
     return false;
@@ -562,6 +586,7 @@ bool validateDatabaseImpl(const Database &database) {
         OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
         OBELISK_RT_DESIGN_CAP_ITERATE | OBELISK_RT_DESIGN_CAP_PORT_INPUT |
         OBELISK_RT_DESIGN_CAP_PORT_OUTPUT | OBELISK_RT_DESIGN_CAP_INTERNAL |
+        OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
         OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
@@ -618,9 +643,14 @@ bool validateDatabaseImpl(const Database &database) {
       uint32_t portCaps = caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
                                   OBELISK_RT_DESIGN_CAP_PORT_OUTPUT);
       uint32_t ordinalCaps = caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+      bool wholePortSource =
+          (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0;
+      if (wholePortSource && kind != OBELISK_RT_DESIGN_RECORD_PORT)
+        return false;
       if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
         if (portCaps == 0 ||
-            caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps))
+            caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps |
+                     (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE)))
           return false;
       } else if (portCaps != 0 && kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
                  kind != OBELISK_RT_DESIGN_RECORD_NET) {
@@ -1001,6 +1031,44 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
 
+  using PortConnectionIdentity =
+      std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>;
+  auto portConnectionIdentity = [](const uint8_t *record) {
+    return PortConnectionIdentity{read64(record + 16), read64(record + 48),
+                                  read64(record + 56), read64(record + 64),
+                                  read64(record + 72), read64(record + 80)};
+  };
+  std::optional<std::vector<std::pair<PortConnectionIdentity, uint32_t>>>
+      connectionObjects;
+  auto hasUniqueConnectionTarget = [&](const uint8_t *port,
+                                       uint32_t targetIndex) {
+    if (!connectionObjects) {
+      connectionObjects.emplace();
+      connectionObjects->reserve(static_cast<size_t>(database.objectCount));
+      for (uint32_t index = 0; index != database.objectCount; ++index) {
+        const uint8_t *record =
+            database.data + database.objects + uint64_t{index} * kObjectSize;
+        uint32_t kind = recordKind(record);
+        if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
+            kind == OBELISK_RT_DESIGN_RECORD_NET)
+          connectionObjects->emplace_back(portConnectionIdentity(record),
+                                          index);
+      }
+      std::sort(connectionObjects->begin(), connectionObjects->end());
+    }
+    PortConnectionIdentity identity = portConnectionIdentity(port);
+    auto first = std::lower_bound(
+        connectionObjects->begin(), connectionObjects->end(), identity,
+        [](const auto &entry, const PortConnectionIdentity &key) {
+          return entry.first < key;
+        });
+    auto last =
+        std::upper_bound(first, connectionObjects->end(), identity,
+                         [](const PortConnectionIdentity &key,
+                            const auto &entry) { return key < entry.first; });
+    return last - first == 1 && first->second == targetIndex;
+  };
+
   struct IncomingRelation {
     uint8_t modeMask = 0;
     uint8_t sourceTable = 0;
@@ -1199,6 +1267,13 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       }
       break;
+    case obelisk::reflection::VPIAutomaticRelation::DirectPortConnection:
+      if (sourceTable != obelisk::reflection::TableKind::Object ||
+          targetTable != obelisk::reflection::TableKind::Object ||
+          !isWholePortConnection(sourceRecord, target) ||
+          !hasUniqueConnectionTarget(sourceRecord, targetIndex))
+        return false;
+      break;
     }
 
     if (!edge->statementContainment)
@@ -1290,17 +1365,55 @@ bool validateDatabaseImpl(const Database &database) {
     if (indexedRecords.find(database.scopes + index * kScopeSize) ==
         indexedRecords.end())
       return false;
-  constexpr uint32_t portIdentityCaps =
-      OBELISK_RT_DESIGN_CAP_PORT_INPUT | OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
-      OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
-  // Direct whole-source ports need distinct vpiPort identity but share their
-  // hierarchical name and storage with the canonical vpiReg/vpiNet object.
-  // They are the only records intentionally omitted from name lookup.
+  const obelisk::reflection::VPITraversalDescriptor *portConnectionEdge =
+      nullptr;
+  for (const auto &edge : obelisk::reflection::vpiTraversals) {
+    if (edge.sourceType !=
+            static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) ||
+        edge.automaticRelation !=
+            obelisk::reflection::VPIAutomaticRelation::DirectPortConnection)
+      continue;
+    if (portConnectionEdge)
+      return false;
+    portConnectionEdge = &edge;
+  }
+  if (!portConnectionEdge ||
+      portConnectionEdge->mode != obelisk::reflection::VPITraversalMode::Handle)
+    return false;
+  auto lowConnectionTarget = [&](uint32_t sourceIndex, uint32_t &targetIndex) {
+    uint64_t relationIndex = lowerBoundRelation(
+        database, obelisk::reflection::TableKind::Object, sourceIndex,
+        static_cast<uint16_t>(portConnectionEdge->selector), false);
+    if (relationIndex == database.relationCount)
+      return false;
+    auto relation = relationAt(database, relationIndex);
+    if (!relationMatches(
+            relation, obelisk::reflection::TableKind::Object, sourceIndex,
+            static_cast<uint16_t>(portConnectionEdge->selector), false) ||
+        obelisk::reflection::unpackTableIndexKind(
+            relation.getTargetIndexAndTable()) !=
+            obelisk::reflection::TableKind::Object)
+      return false;
+    targetIndex = obelisk::reflection::unpackTableIndex(
+        relation.getTargetIndexAndTable());
+    return true;
+  };
+  // Whole-source ports require an exact generated vpiLowConn relation.
+  // Same-name ports are the only objects intentionally omitted from name
+  // lookup; explicitly renamed whole ports remain ordinary indexed records.
   for (uint64_t index = 0; index != database.objectCount; ++index) {
     uint64_t offset = database.objects + index * kObjectSize;
-    if (indexedRecords.find(offset) != indexedRecords.end())
-      continue;
     const uint8_t *port = database.data + offset;
+    bool indexed = indexedRecords.find(offset) != indexedRecords.end();
+    if (indexed) {
+      if (recordKind(port) == OBELISK_RT_DESIGN_RECORD_PORT &&
+          (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0) {
+        uint32_t targetIndex = 0;
+        if (!lowConnectionTarget(static_cast<uint32_t>(index), targetIndex))
+          return false;
+      }
+      continue;
+    }
     if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT)
       return false;
     auto canonicalName = indexedNames.find(read64(port + 40));
@@ -1308,17 +1421,14 @@ bool validateDatabaseImpl(const Database &database) {
         !isObjectOffset(database, canonicalName->second))
       return false;
     const uint8_t *canonical = database.data + canonicalName->second;
-    uint32_t canonicalKind = recordKind(canonical);
-    if ((canonicalKind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-         canonicalKind != OBELISK_RT_DESIGN_RECORD_NET) ||
-        read64(port + 16) != read64(canonical + 16) ||
-        read64(port + 48) != read64(canonical + 48) ||
-        read64(port + 56) != read64(canonical + 56) ||
-        read64(port + 64) != read64(canonical + 64) ||
-        read64(port + 72) != read64(canonical + 72) ||
-        read64(port + 80) != read64(canonical + 80) ||
-        (read32(port + 4) & portIdentityCaps) !=
-            (read32(canonical + 4) & portIdentityCaps))
+    if (!isWholePortConnection(port, canonical))
+      return false;
+    uint32_t sourceIndex = static_cast<uint32_t>(index);
+    uint32_t targetIndex = 0;
+    if (!lowConnectionTarget(sourceIndex, targetIndex) ||
+        targetIndex !=
+            static_cast<uint32_t>((canonicalName->second - database.objects) /
+                                  kObjectSize))
       return false;
   }
   return true;

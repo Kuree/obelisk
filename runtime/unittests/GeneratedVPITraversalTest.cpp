@@ -26,6 +26,10 @@ uint32_t read32(const std::vector<uint8_t> &bytes, size_t offset) {
   return value;
 }
 
+uint16_t read16(const std::vector<uint8_t> &bytes, size_t offset) {
+  return uint16_t{bytes[offset]} | (uint16_t{bytes[offset + 1]} << 8);
+}
+
 uint64_t read64(const std::vector<uint8_t> &bytes, size_t offset) {
   uint64_t value = 0;
   for (unsigned index = 0; index != 8; ++index)
@@ -78,16 +82,15 @@ size_t findDirectPortAlias(const std::vector<uint8_t> &database) {
 
 TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  EXPECT_EQ(dumpDescriptor.execution->flags &
-                (OBELISK_RT_EXECUTION_VPI_READ |
-                 OBELISK_RT_EXECUTION_VPI_WRITE),
+  EXPECT_EQ(dumpDescriptor.execution->flags & (OBELISK_RT_EXECUTION_VPI_READ |
+                                               OBELISK_RT_EXECUTION_VPI_WRITE),
             OBELISK_RT_EXECUTION_VPI_READ);
   ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
             OBELISK_RT_OK);
 
   obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
-                dumpDescriptor.execution, &context),
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+                                                    &context),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
@@ -96,20 +99,25 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   char moduleName[] = "top.d";
   char inputName[] = "top.d.a";
   char inoutName[] = "top.d.io";
+  char anonymousBackingName[] = "zzBacking";
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
   vpiHandle input = vpi_handle_by_name(inputName, nullptr);
   vpiHandle inout = vpi_handle_by_name(inoutName, nullptr);
+  vpiHandle anonymousBacking =
+      vpi_handle_by_name(anonymousBackingName, nullptr);
   ASSERT_NE(module, nullptr);
   ASSERT_NE(input, nullptr);
   ASSERT_NE(inout, nullptr);
+  ASSERT_NE(anonymousBacking, nullptr);
   EXPECT_EQ(vpi_get(vpiType, input), vpiReg);
   EXPECT_EQ(vpi_get(vpiType, inout), vpiNet);
 
   vpiHandle iterator = vpi_iterate(vpiPort, module);
   ASSERT_NE(iterator, nullptr);
-  constexpr std::array<const char *, 3> expectedNames{
-      "top.d.a", "top.d.io", "top.d.slice"};
-  std::array<vpiHandle, 3> ports{};
+  constexpr std::array<const char *, 6> expectedNames{
+      "top.d.a", "top.d.io",    "top.d.p",
+      "top.d.q", "top.d.slice", "top.d.zouter"};
+  std::array<vpiHandle, 6> ports{};
   for (size_t index = 0; index != ports.size(); ++index) {
     ports[index] = vpi_scan(iterator);
     ASSERT_NE(ports[index], nullptr);
@@ -123,12 +131,33 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   EXPECT_EQ(vpi_scan(iterator), nullptr);
   EXPECT_EQ(vpi_compare_objects(input, ports[0]), 0);
   EXPECT_EQ(vpi_compare_objects(inout, ports[1]), 0);
+  vpiHandle inputLowConnection = vpi_handle(vpiLowConn, ports[0]);
+  vpiHandle inoutLowConnection = vpi_handle(vpiLowConn, ports[1]);
+  vpiHandle renamedInputLowConnection = vpi_handle(vpiLowConn, ports[2]);
+  vpiHandle anonymousLowConnection = vpi_handle(vpiLowConn, ports[3]);
+  ASSERT_NE(inputLowConnection, nullptr);
+  ASSERT_NE(inoutLowConnection, nullptr);
+  ASSERT_NE(renamedInputLowConnection, nullptr);
+  ASSERT_NE(anonymousLowConnection, nullptr);
+  EXPECT_EQ(vpi_compare_objects(input, inputLowConnection), 1);
+  EXPECT_EQ(vpi_compare_objects(inout, inoutLowConnection), 1);
+  EXPECT_EQ(vpi_compare_objects(input, renamedInputLowConnection), 1);
+  EXPECT_EQ(vpi_compare_objects(anonymousBacking, anonymousLowConnection), 1);
+  // A selected port needs a select/ref-object identity before it can expose a
+  // low connection; it must never be redirected to the whole backing object.
+  EXPECT_EQ(vpi_handle(vpiLowConn, ports[4]), nullptr);
+  // A full-width source in another scope is a higher-side connection, not the
+  // formal's same-scope lower connection.
+  EXPECT_EQ(vpi_handle(vpiLowConn, ports[5]), nullptr);
 
   vpiHandle registers = vpi_iterate(vpiReg, module);
   ASSERT_NE(registers, nullptr);
   vpiHandle canonicalInput = vpi_scan(registers);
   ASSERT_NE(canonicalInput, nullptr);
   EXPECT_EQ(vpi_compare_objects(input, canonicalInput), 1);
+  vpiHandle anonymousRegister = vpi_scan(registers);
+  ASSERT_NE(anonymousRegister, nullptr);
+  EXPECT_EQ(vpi_compare_objects(anonymousBacking, anonymousRegister), 1);
   EXPECT_EQ(vpi_scan(registers), nullptr);
 
   obelisk_rt_v1_context_destroy(context);
@@ -161,9 +190,70 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
           read32(wrongOrdinal, port + 4) ^
               (UINT32_C(1) << OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT));
   rejects(std::move(wrongOrdinal));
+
+  constexpr size_t objectSize = 96;
+  constexpr size_t relationSize = 16;
+  uint64_t objects = read64(original, 64);
+  uint64_t objectCount = read64(original, 72);
+  uint64_t relations = read64(original, 160);
+  uint64_t relationCount = read64(original, 168);
+  std::vector<size_t> lowConnections;
+  for (uint64_t index = 0; index != relationCount; ++index) {
+    size_t relation = static_cast<size_t>(relations + index * relationSize);
+    if (read16(original, relation + 12) == vpiLowConn)
+      lowConnections.push_back(relation);
+  }
+  ASSERT_EQ(lowConnections.size(), 4u);
+
+  std::vector<uint8_t> redirected = original;
+  size_t lowConnection = lowConnections.front();
+  uint32_t canonicalTarget = read32(original, lowConnection + 4) & 0x3fffffff;
+  size_t canonicalObject =
+      static_cast<size_t>(objects + uint64_t{canonicalTarget} * objectSize);
+  uint32_t wrongTarget = UINT32_MAX;
+  for (uint32_t index = 0; index != objectCount; ++index) {
+    size_t candidate = static_cast<size_t>(objects + index * objectSize);
+    uint32_t kind = read32(original, candidate) & 0xffff;
+    if (index != canonicalTarget &&
+        (kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
+         kind == OBELISK_RT_DESIGN_RECORD_NET) &&
+        read64(original, candidate + 16) ==
+            read64(original, canonicalObject + 16) &&
+        read64(original, candidate + 48) ==
+            read64(original, canonicalObject + 48) &&
+        read64(original, candidate + 56) ==
+            read64(original, canonicalObject + 56) &&
+        read64(original, candidate + 64) ==
+            read64(original, canonicalObject + 64) &&
+        read64(original, candidate + 72) ==
+            read64(original, canonicalObject + 72)) {
+      wrongTarget = index;
+      break;
+    }
+  }
+  ASSERT_NE(wrongTarget, UINT32_MAX);
+  size_t wrongObject =
+      static_cast<size_t>(objects + uint64_t{wrongTarget} * objectSize);
+  write64(redirected, wrongObject + 80, read64(original, canonicalObject + 80));
+  write32(redirected, lowConnection + 4, (UINT32_C(1) << 30) | wrongTarget);
+  rejects(std::move(redirected));
+
+  std::vector<uint8_t> misplacedWholeSource = original;
+  write32(misplacedWholeSource, canonicalObject + 4,
+          read32(misplacedWholeSource, canonicalObject + 4) |
+              OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
+  rejects(std::move(misplacedWholeSource));
+
+  // Truncate immediately before the last low-connection record. Missing
+  // hierarchy compatibility relations after it remain legal, so rejection
+  // specifically proves that every direct port connection is mandatory.
+  std::vector<uint8_t> omitted = original;
+  size_t lastLowConnection = lowConnections.back();
+  write64(omitted, 168, (lastLowConnection - relations) / relationSize);
+  rejects(std::move(omitted));
 }
 
-TEST(GeneratedVPITraversal, FallsBackWhenAutomaticRelationsAreAbsent) {
+TEST(GeneratedVPITraversal, RejectsRelationFreeDirectPortAliases) {
   const auto *execution = dumpDescriptor.execution;
   ASSERT_NE(execution, nullptr);
   std::vector<uint8_t> database(execution->design_database,
@@ -172,33 +262,9 @@ TEST(GeneratedVPITraversal, FallsBackWhenAutomaticRelationsAreAbsent) {
   ASSERT_GE(database.size(), OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
   write64(database, 168, 0);
   write64(database, 32, imageChecksum(database));
-  obelisk_rt_execution_descriptor_v1 relationFree{};
-  relationFree.version = OBELISK_RT_VERSION;
-  relationFree.flags = OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                       OBELISK_RT_EXECUTION_VPI_READ;
+  obelisk_rt_execution_descriptor_v1 relationFree = *execution;
   relationFree.design_database = database.data();
   relationFree.design_database_size = database.size();
-  relationFree.state_bit_count = execution->state_bit_count;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&relationFree), OBELISK_RT_OK);
-
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&relationFree, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-
-  char moduleName[] = "top.d";
-  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
-  ASSERT_NE(module, nullptr);
-  vpiHandle iterator = vpi_iterate(vpiPort, module);
-  ASSERT_NE(iterator, nullptr);
-  vpiHandle port = vpi_scan(iterator);
-  ASSERT_NE(port, nullptr);
-  EXPECT_EQ(vpi_get(vpiType, port), vpiPort);
-  vpiHandle instance = vpi_handle(vpiInstance, port);
-  ASSERT_NE(instance, nullptr);
-  EXPECT_EQ(vpi_compare_objects(module, instance), 1);
-
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&relationFree),
+            OBELISK_RT_INVALID_DESIGN);
 }

@@ -843,7 +843,10 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                                                             {"Index", 3},
                                                             {"Time", 4}};
   const std::pair<StringRef, uint32_t> supportedAutomaticRelations[] = {
-      {"None", 0}, {"DirectChild", 1}, {"ParentScope", 2}};
+      {"None", 0},
+      {"DirectChild", 1},
+      {"ParentScope", 2},
+      {"DirectPortConnection", 3}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
@@ -1052,6 +1055,21 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         if (!acceptsScope) {
           PrintError(edge->getLoc(),
                      "automatic parent-scope edge cannot target a scope");
+          return false;
+        }
+      }
+      if (automaticName == "DirectPortConnection") {
+        for (const Record *source : expandedSets.lookup(sources))
+          if (source->getValueAsString("apiName") != "vpiPort") {
+            PrintError(edge->getLoc(),
+                       "automatic direct-port connection source is not a "
+                       "port");
+            return false;
+          }
+        if (selector->getValueAsString("apiName") != "vpiLowConn") {
+          PrintError(edge->getLoc(),
+                     "automatic direct-port connection selector is not "
+                     "vpiLowConn");
           return false;
         }
       }
@@ -1884,8 +1902,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
                     (previousSelector < selector ||
                      (previousSelector == selector && previousMode < mode)));
     if (!ordered || targets >= setCount || mode > 1 || order > 4 ||
-        automaticRelation >
-            static_cast<uint8_t>(VPIAutomaticRelation::ParentScope) ||
+        automaticRelation > static_cast<uint8_t>(
+                                VPIAutomaticRelation::DirectPortConnection) ||
         (flagsAndOrder & 0x40) != 0 ||
         (automaticRelation !=
              static_cast<uint8_t>(VPIAutomaticRelation::None) &&
