@@ -42,13 +42,28 @@ def DeclarationOrder : VPITraversalOrder<"Declaration", 2>;
 def IndexOrder : VPITraversalOrder<"Index", 3>;
 def TimeOrder : VPITraversalOrder<"Time", 4>;
 
+// Static relations are recoverable directly from the elaborated design
+// inventory.  DirectChild means that the edge enumerates records whose
+// scope/owner is the source scope.  ParentScope means that the edge returns
+// the record named by the source record's scope/parent field.
+class VPIAutomaticRelation<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def NoAutomaticRelation : VPIAutomaticRelation<"None", 0>;
+def AutomaticDirectChild : VPIAutomaticRelation<"DirectChild", 1>;
+def AutomaticParentScope : VPIAutomaticRelation<"ParentScope", 2>;
+
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other
 // statements. Cross-references and reverse parent/scope edges do not set it.
 class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
                        VPITraversalMode mode_, VPIObjectSet targets_,
                        VPITraversalOrder order_, string clause_,
-                       bit statementContainment_ = 0> {
+                       bit statementContainment_ = 0,
+                       VPIAutomaticRelation automaticRelation_ =
+                           NoAutomaticRelation> {
   VPIObjectSet sources = sources_;
   VPISelector selector = selector_;
   VPITraversalMode mode = mode_;
@@ -56,6 +71,7 @@ class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
   VPITraversalOrder order = order_;
   string clause = clause_;
   bit statementContainment = statementContainment_;
+  VPIAutomaticRelation automaticRelation = automaticRelation_;
 }
 
 // Abstract target classes.  Expansion always discards aliases and
@@ -293,17 +309,17 @@ def ScopeWithoutModuleObjects : VPIObjectSet<"ScopeWithoutModuleObjects", [],
 
 // Instance and scope contents (37.5-37.12).
 def ModulePorts : VPITraversalEdge<ModuleSource, Port, IterateMode,
-  PortTargetObjects, NoOrder, "37.5">;
+  PortTargetObjects, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleInterfaces : VPITraversalEdge<ModuleSource, Interface, IterateMode,
-  InterfaceObjects, NoOrder, "37.5">;
+  InterfaceObjects, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleInterfaceArrays : VPITraversalEdge<ModuleSource, InterfaceArray,
   IterateMode, InterfaceArrayObjects, NoOrder, "37.5">;
 def ModuleProcesses : VPITraversalEdge<ModuleSource, ProcessRel, IterateMode,
-  StaticProcessObjects, NoOrder, "37.5">;
+  StaticProcessObjects, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleContAssigns : VPITraversalEdge<ModuleSource, ContAssign, IterateMode,
   ContAssignObjects, NoOrder, "37.5", 1>;
 def ModuleChildren : VPITraversalEdge<ModuleSource, Module, IterateMode,
-  ModuleTarget, NoOrder, "37.5">;
+  ModuleTarget, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleArrays : VPITraversalEdge<ModuleSource, ModuleArray, IterateMode,
   ModuleArrayObjects, NoOrder, "37.5">;
 def ModulePrimitives : VPITraversalEdge<ModuleSource, PrimitiveRel,
@@ -323,7 +339,7 @@ def ModuleAliasStmts : VPITraversalEdge<ModuleSource, AliasStmt, IterateMode,
 def ModuleClockingBlocks : VPITraversalEdge<ModuleSource, ClockingBlock,
   IterateMode, ClockingBlockObjects, NoOrder, "37.5">;
 def ModuleInternalScopes : VPITraversalEdge<ModuleSource, InternalScopeRel,
-  IterateMode, ScopeObjects, NoOrder, "37.5">;
+  IterateMode, ScopeObjects, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleInstanceArrays : VPITraversalEdge<ModuleSource, InstanceArrayRel,
   HandleMode, InstanceArrayObjects, NoOrder, "37.5">;
 
@@ -338,11 +354,13 @@ def InterfaceContAssigns : VPITraversalEdge<InterfaceObjects, ContAssign,
 def InterfaceClockingBlocks : VPITraversalEdge<InterfaceObjects,
   ClockingBlock, IterateMode, ClockingBlockObjects, NoOrder, "37.6">;
 def InterfaceChildren : VPITraversalEdge<InterfaceObjects, Interface,
-  IterateMode, InterfaceObjects, NoOrder, "37.6">;
+  IterateMode, InterfaceObjects, NoOrder, "37.6", 0,
+  AutomaticDirectChild>;
 def InterfaceArrays : VPITraversalEdge<InterfaceObjects, InterfaceArray,
   IterateMode, InterfaceArrayObjects, NoOrder, "37.6">;
 def InterfaceProcesses : VPITraversalEdge<InterfaceObjects, ProcessRel,
-  IterateMode, StaticProcessObjects, NoOrder, "37.6">;
+  IterateMode, StaticProcessObjects, NoOrder, "37.6", 0,
+  AutomaticDirectChild>;
 def InterfaceInstanceArrays : VPITraversalEdge<InterfaceObjects,
   InstanceArrayRel, HandleMode, InstanceArrayObjects, NoOrder, "37.6">;
 
@@ -351,24 +369,27 @@ def ProgramContAssigns : VPITraversalEdge<ProgramObjects, ContAssign,
 def ProgramClockingBlocks : VPITraversalEdge<ProgramObjects, ClockingBlock,
   IterateMode, ClockingBlockObjects, NoOrder, "37.9">;
 def ProgramInterfaces : VPITraversalEdge<ProgramObjects, Interface,
-  IterateMode, InterfaceObjects, NoOrder, "37.9">;
+  IterateMode, InterfaceObjects, NoOrder, "37.9", 0, AutomaticDirectChild>;
 def ProgramInterfaceArrays : VPITraversalEdge<ProgramObjects, InterfaceArray,
   IterateMode, InterfaceArrayObjects, NoOrder, "37.9">;
 def ProgramProcesses : VPITraversalEdge<ProgramObjects, ProcessRel,
-  IterateMode, StaticProcessObjects, NoOrder, "37.9">;
+  IterateMode, StaticProcessObjects, NoOrder, "37.9", 0,
+  AutomaticDirectChild>;
 def ProgramInstanceArrays : VPITraversalEdge<ProgramObjects, InstanceArrayRel,
   HandleMode, InstanceArrayObjects, NoOrder, "37.9">;
 
 def InstanceTaskFunctions : VPITraversalEdge<InstanceObjects, TaskFuncRel,
-  IterateMode, TaskFunctionDeclObjects, NoOrder, "37.10">;
+  IterateMode, TaskFunctionDeclObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceNets : VPITraversalEdge<InstanceObjects, Net, IterateMode,
-  NetObjects, NoOrder, "37.10">;
+  NetObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceNetArrays : VPITraversalEdge<InstanceObjects, NetArray,
   IterateMode, NetArrayObjects, NoOrder, "37.10">;
 def InstanceVariables : VPITraversalEdge<InstanceObjects, VariablesRel,
-  IterateMode, DataVariableObjects, NoOrder, "37.10">;
+  IterateMode, DataVariableObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceRegs : VPITraversalEdge<InstanceObjects, Reg, IterateMode,
-  RegObjects, NoOrder, "37.10">;
+  RegObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceRegArrays : VPITraversalEdge<InstanceObjects, RegArray,
   IterateMode, RegArrayObjects, NoOrder, "37.10">;
 def InstanceNamedEvents : VPITraversalEdge<InstanceObjects, NamedEvent,

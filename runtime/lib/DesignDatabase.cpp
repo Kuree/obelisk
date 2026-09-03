@@ -211,7 +211,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.statementCount > UINT32_MAX ||
       database.statementSiteCount > UINT32_MAX ||
       database.relationCount > UINT32_MAX ||
-      database.indexCount != database.scopeCount + database.objectCount ||
+      database.indexCount > database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
@@ -960,6 +960,32 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t previousOrdinal = 0;
   uint16_t currentSourceKind = 0;
   uint32_t expectedOrdinal = 0;
+  const obelisk::reflection::VPITraversalDescriptor *automaticEdge = nullptr;
+  uint64_t automaticChildCursor = 0;
+  // Once an automatic group is present, it must be the exact filtered child
+  // chain. An entirely absent group remains valid because VPI deliberately
+  // falls back to walking that immutable chain for compatibility.
+  auto nextAutomaticChild = [&](uint64_t &cursor) {
+    while (cursor != 0) {
+      const uint8_t *record;
+      uint32_t kind;
+      if (!getRecord(database, cursor, record, kind) ||
+          kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+        return uint64_t{0};
+      uint64_t current = cursor;
+      cursor = nextOffset(record, kind);
+      if (obelisk::reflection::vpiObjectSetContains(automaticEdge->targets,
+                                                    recordVPIKind(record)))
+        return current;
+    }
+    return uint64_t{0};
+  };
+  auto automaticGroupComplete = [&] {
+    return !automaticEdge ||
+           automaticEdge->automaticRelation !=
+               obelisk::reflection::VPIAutomaticRelation::DirectChild ||
+           nextAutomaticChild(automaticChildCursor) == 0;
+  };
   for (uint64_t index = 0; index != database.relationCount; ++index) {
     const uint8_t *bytes =
         database.data + database.relations + index * kRelationSize;
@@ -1077,6 +1103,38 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     ++expectedOrdinal;
 
+    uint64_t sourceOffset = static_cast<uint64_t>(sourceRecord - database.data);
+    uint64_t targetOffset = static_cast<uint64_t>(target - database.data);
+    if (!sameGroup) {
+      if (!automaticGroupComplete())
+        return false;
+      automaticEdge = edge;
+      automaticChildCursor =
+          edge->automaticRelation ==
+                  obelisk::reflection::VPIAutomaticRelation::DirectChild
+              ? read64(sourceRecord + 24)
+              : 0;
+    } else if (automaticEdge != edge) {
+      return false;
+    }
+    switch (edge->automaticRelation) {
+    case obelisk::reflection::VPIAutomaticRelation::None:
+      break;
+    case obelisk::reflection::VPIAutomaticRelation::DirectChild:
+      if (sourceTable != obelisk::reflection::TableKind::Scope ||
+          targetTable == obelisk::reflection::TableKind::Statement ||
+          read64(target + 16) != sourceOffset ||
+          nextAutomaticChild(automaticChildCursor) != targetOffset)
+        return false;
+      break;
+    case obelisk::reflection::VPIAutomaticRelation::ParentScope:
+      if (sourceTable == obelisk::reflection::TableKind::Statement ||
+          targetTable != obelisk::reflection::TableKind::Scope ||
+          read64(sourceRecord + 16) != targetOffset)
+        return false;
+      break;
+    }
+
     if (!edge->statementContainment)
       continue;
     if (targetTable != obelisk::reflection::TableKind::Statement)
@@ -1125,6 +1183,8 @@ bool validateDatabaseImpl(const Database &database) {
       break;
     }
   }
+  if (!automaticGroupComplete())
+    return false;
   if (haveStatementContainment &&
       std::any_of(incomingRelations.begin(), incomingRelations.end(),
                   [](const IncomingRelation &incoming) {
@@ -1135,6 +1195,9 @@ bool validateDatabaseImpl(const Database &database) {
   uint64_t previousHash = 0;
   std::string_view previousName;
   std::unordered_set<uint64_t> indexedRecords;
+  std::unordered_map<uint64_t, uint64_t> indexedNames;
+  indexedRecords.reserve(static_cast<size_t>(database.indexCount));
+  indexedNames.reserve(static_cast<size_t>(database.indexCount));
   for (uint64_t index = 0; index != database.indexCount; ++index) {
     const uint8_t *entry = database.data + database.index + index * kIndexSize;
     uint64_t hash = read64(entry);
@@ -1149,12 +1212,48 @@ bool validateDatabaseImpl(const Database &database) {
         hash != nameHash(reinterpret_cast<const uint8_t *>(name.data()),
                          name.size()) ||
         !indexedRecords.insert(recordOffset).second ||
+        !indexedNames.emplace(read64(entry + 8), recordOffset).second ||
         read64(record + 40) != read64(entry + 8) ||
         (index != 0 && (hash < previousHash ||
                         (hash == previousHash && name <= previousName))))
       return false;
     previousHash = hash;
     previousName = name;
+  }
+  for (uint64_t index = 0; index != database.scopeCount; ++index)
+    if (indexedRecords.find(database.scopes + index * kScopeSize) ==
+        indexedRecords.end())
+      return false;
+  constexpr uint32_t portIdentityCaps =
+      OBELISK_RT_DESIGN_CAP_PORT_INPUT | OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+      OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+  // Direct whole-source ports need distinct vpiPort identity but share their
+  // hierarchical name and storage with the canonical vpiReg/vpiNet object.
+  // They are the only records intentionally omitted from name lookup.
+  for (uint64_t index = 0; index != database.objectCount; ++index) {
+    uint64_t offset = database.objects + index * kObjectSize;
+    if (indexedRecords.find(offset) != indexedRecords.end())
+      continue;
+    const uint8_t *port = database.data + offset;
+    if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT)
+      return false;
+    auto canonicalName = indexedNames.find(read64(port + 40));
+    if (canonicalName == indexedNames.end() ||
+        !isObjectOffset(database, canonicalName->second))
+      return false;
+    const uint8_t *canonical = database.data + canonicalName->second;
+    uint32_t canonicalKind = recordKind(canonical);
+    if ((canonicalKind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+         canonicalKind != OBELISK_RT_DESIGN_RECORD_NET) ||
+        read64(port + 16) != read64(canonical + 16) ||
+        read64(port + 48) != read64(canonical + 48) ||
+        read64(port + 56) != read64(canonical + 56) ||
+        read64(port + 64) != read64(canonical + 64) ||
+        read64(port + 72) != read64(canonical + 72) ||
+        read64(port + 80) != read64(canonical + 80) ||
+        (read32(port + 4) & portIdentityCaps) !=
+            (read32(canonical + 4) & portIdentityCaps))
+      return false;
   }
   return true;
 }
@@ -1305,6 +1404,19 @@ obelisk_rt_status designRoot(const Database &database,
                              obelisk_rt_design_cursor_v1 *outCursor) {
   outCursor->offset = database.root;
   return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designParent(const Database &database,
+                               obelisk_rt_design_cursor_v1 cursor,
+                               obelisk_rt_design_cursor_v1 *outCursor) {
+  const uint8_t *record;
+  uint32_t kind;
+  if (!getRecord(database, cursor.offset, record, kind) ||
+      (kind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
+       !isObjectOffset(database, cursor.offset)))
+    return OBELISK_RT_INVALID_HANDLE;
+  outCursor->offset = read64(record + 16);
+  return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
 obelisk_rt_status designChild(const Database &database,
@@ -1702,6 +1814,16 @@ obelisk_rt_cached_design_root(const obelisk_rt_context *context,
   const Database *database = cachedDatabase(context);
   return database ? designRoot(*database, outCursor)
                   : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status obelisk_rt_cached_design_parent(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designParent(*database, cursor, outCursor)
+                  : OBELISK_RT_INVALID_HANDLE;
 }
 
 obelisk_rt_status obelisk_rt_cached_design_child(

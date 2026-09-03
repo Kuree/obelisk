@@ -78,7 +78,31 @@ module attributes {
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0
 // DATABASE-NEXT: statement_site id=1200 statement=3 phase=2 flags=0x0
 // DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=8 ordinal=0 target_table=2 target=0
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=92 ordinal=0 target_table=0 target=1
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=92 ordinal=1 target_table=1 target=3
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=92 ordinal=2 target_table=1 target=6
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=99 ordinal=0 target_table=1 target=0
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=99 ordinal=1 target_table=1 target=1
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=99 ordinal=2 target_table=1 target=2
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=127 ordinal=0 target_table=1 target=3
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=127 ordinal=1 target_table=1 target=6
+// DATABASE-NEXT: relation source_table=0 source=0 source_type=32 mode=iterate selector=601 ordinal=0 target_table=0 target=1
+// DATABASE-NEXT: relation source_table=0 source=1 source_type=601 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=0 source=1 source_type=601 mode=handle selector=745 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=0 source_type=24 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=0 source_type=24 mode=handle selector=84 ordinal=0 target_table=0 target=0
 // DATABASE-NEXT: relation source_table=1 source=0 source_type=24 mode=handle selector=104 ordinal=0 target_table=2 target=1
+// DATABASE-NEXT: relation source_table=1 source=0 source_type=24 mode=handle selector=745 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=1 source_type=1 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=1 source_type=1 mode=handle selector=84 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=1 source_type=1 mode=handle selector=745 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=2 source_type=676 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=2 source_type=676 mode=handle selector=84 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=2 source_type=676 mode=handle selector=745 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=3 source_type=20 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=3 source_type=20 mode=handle selector=84 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=6 source_type=59 mode=handle selector=32 ordinal=0 target_table=0 target=0
+// DATABASE-NEXT: relation source_table=1 source=6 source_type=59 mode=handle selector=84 ordinal=0 target_table=0 target=0
 // DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=iterate selector=104 ordinal=0 target_table=2 target=2
 // DATABASE-NEXT: relation source_table=2 source=1 source_type=33 mode=iterate selector=104 ordinal=1 target_table=2 target=3
 // DATABASE-NEXT: relation source_table=2 source=3 source_type=15 mode=handle selector=75 ordinal=0 target_table=2 target=4

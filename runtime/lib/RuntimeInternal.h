@@ -2645,6 +2645,9 @@ void obelisk_rt_unregister_design_database(
 obelisk_rt_status
 obelisk_rt_cached_design_root(const obelisk_rt_context *context,
                               obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_parent(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 obelisk_rt_status
 obelisk_rt_cached_design_child(const obelisk_rt_context *context,
                                obelisk_rt_design_cursor_v1 cursor,

@@ -204,7 +204,7 @@ def VPIEarlyModuleContainingArray : VPITraversalEdge<ModuleSource,
 def VPIEarlyModuleArrayElements : VPITraversalEdge<ModuleArrayObjects, Module,
   IterateMode, ModuleTarget, IndexOrder, "37.5; 37.11">;
 def VPIEarlyModuleOfChild : VPITraversalEdge<VPIEarlyModuleChildren, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.5">;
+  HandleMode, ModuleTarget, NoOrder, "37.5", 0, AutomaticParentScope>;
 
 // 37.6 Interface.
 def VPIEarlyInterfaceIndex : VPITraversalEdge<InterfaceObjects, IndexRel,
@@ -221,7 +221,7 @@ def VPIEarlyInterfaceContainingArray : VPITraversalEdge<InterfaceObjects,
   InterfaceArray, HandleMode, InterfaceArrayObjects, NoOrder, "37.6">;
 def VPIEarlyInstanceOfInterfaceChild : VPITraversalEdge<
   VPIEarlyInterfaceChildren, InstanceRel, HandleMode, VPIEarlyInstances,
-  NoOrder, "37.6; 37.9; 37.37; 37.46">;
+  NoOrder, "37.6; 37.9; 37.37; 37.46", 0, AutomaticParentScope>;
 def VPIEarlyModPathInstance : VPITraversalEdge<ModPathObjects, InstanceRel,
   HandleMode, VPIEarlyModPathInstances, NoOrder, "37.37">;
 
@@ -304,7 +304,8 @@ def VPIEarlyScopeStatement : VPITraversalEdge<TaskFunctionDeclObjects,
 def VPIEarlyBlockStatements : VPITraversalEdge<VPIEarlyBlockScopes, StmtRel,
   IterateMode, StatementObjects, NoOrder, "37.12", 1>;
 def VPIEarlyScopeRegs : VPITraversalEdge<NonInstanceScopeObjects, Reg,
-  IterateMode, RegObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, RegObjects, NoOrder, "37.12; 37.83", 0,
+  AutomaticDirectChild>;
 def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,
   RegArray, IterateMode, RegArrayObjects, NoOrder, "37.12">;
 def VPIEarlyScopeMemories : VPITraversalEdge<NonInstanceScopeObjects, Memory,
@@ -312,7 +313,8 @@ def VPIEarlyScopeMemories : VPITraversalEdge<NonInstanceScopeObjects, Memory,
 def VPIEarlyScopeOfChild : VPITraversalEdge<StatementObjects, ScopeRel,
   HandleMode, ScopeObjects, NoOrder, "37.12">;
 def VPIEarlyScopeOfDeclaredChild : VPITraversalEdge<VPIEarlyScopeChildren,
-  ScopeRel, HandleMode, ScopeObjects, NoOrder, "37.12">;
+  ScopeRel, HandleMode, ScopeObjects, NoOrder, "37.12", 0,
+  AutomaticParentScope>;
 
 // 37.13 IO declaration.
 def VPIEarlyContainersIODecls : VPITraversalEdge<
@@ -340,9 +342,11 @@ def VPIEarlyIODeclTaskFunc : VPITraversalEdge<IODeclObjects, TaskFuncRel,
 // 37.14 Ports and 37.15 reference objects.
 def VPIEarlyInstancePorts : VPITraversalEdge<
   VPIObjectSet<"EarlyNonModulePortInstances", [Interface, Program]>, Port,
-  IterateMode, PortTargetObjects, NoOrder, "37.14">;
+  IterateMode, PortTargetObjects, NoOrder, "37.14", 0,
+  AutomaticDirectChild>;
 def VPIEarlyPortInstance : VPITraversalEdge<PortTargetObjects, InstanceRel,
-  HandleMode, VPIEarlyInstances, NoOrder, "37.14">;
+  HandleMode, VPIEarlyInstances, NoOrder, "37.14", 0,
+  AutomaticParentScope>;
 def VPIEarlyPortBits : VPITraversalEdge<
   VPIObjectSet<"EarlyPortBitIterationSource", [Port]>, BitRel, IterateMode,
   VPIObjectSet<"EarlyPortBitTargets", [PortBit]>, IndexOrder, "37.14">;
@@ -437,9 +441,11 @@ def VPIEarlyPackedNetElementIndices : VPITraversalEdge<
 def VPIEarlyVariableExpr : VPITraversalEdge<VPIEarlyNonVirtualVariables,
   ExprRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.17">;
 def VPIEarlyVariableModule : VPITraversalEdge<VPIEarlyVariables, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.17; 37.20">;
+  HandleMode, ModuleTarget, NoOrder, "37.17; 37.20", 0,
+  AutomaticParentScope>;
 def VPIEarlyVariableInstance : VPITraversalEdge<VPIEarlyVariables,
-  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.17">;
+  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.17", 0,
+  AutomaticParentScope>;
 def VPIEarlyVariablePortInsts : VPITraversalEdge<VPIEarlyVariables,
   PortInstRel, IterateMode, VPIEarlyPorts, NoOrder, "37.17">;
 def VPIEarlyVariableDriversEdge : VPITraversalEdge<VPIEarlyVariables, DriverRel,

@@ -370,9 +370,9 @@ def LateEventStmtEvent : VPITraversalEdge<LateEventStmtSource, NamedEvent,
 
 // 37.61 Process.
 def LateProcessModule : VPITraversalEdge<LateProcessSource, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.61">;
+  HandleMode, ModuleTarget, NoOrder, "37.61", 0, AutomaticParentScope>;
 def LateProcessScope : VPITraversalEdge<LateProcessSource, ScopeRel,
-  HandleMode, ScopeObjects, NoOrder, "37.61">;
+  HandleMode, ScopeObjects, NoOrder, "37.61", 0, AutomaticParentScope>;
 def LateProcessStmt : VPITraversalEdge<LateProcessSource, StmtRel, HandleMode,
   StatementObjects, NoOrder, "37.61", 1>;
 

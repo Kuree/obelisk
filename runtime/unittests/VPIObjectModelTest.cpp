@@ -77,6 +77,7 @@ const VPITraversalDescriptor &requireTraversal(uint32_t source,
       Order::None,
       static_cast<VPIObjectSetID>(0),
       false,
+      VPIAutomaticRelation::None,
       "missing",
       "missing"};
   return edge ? *edge : missing;
@@ -326,6 +327,53 @@ TEST(VPIObjectModel, StatementContainmentIsDistinctFromCrossReferences) {
   }
 }
 
+TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
+  using Automatic = VPIAutomaticRelation;
+  for (const auto &edge : vpiTraversals) {
+    if (edge.automaticRelation == Automatic::None)
+      continue;
+    EXPECT_FALSE(edge.statementContainment)
+        << keyName(edge.sourceType, edge.selector, edge.mode);
+    EXPECT_EQ(edge.mode, edge.automaticRelation == Automatic::DirectChild
+                             ? Mode::Iterate
+                             : Mode::Handle)
+        << keyName(edge.sourceType, edge.selector, edge.mode);
+  }
+
+  EXPECT_EQ(
+      requireTraversal(vpiModule, vpiProcess, Mode::Iterate).automaticRelation,
+      Automatic::DirectChild);
+  EXPECT_EQ(
+      requireTraversal(vpiModule, vpiTaskFunc, Mode::Iterate).automaticRelation,
+      Automatic::DirectChild);
+  EXPECT_EQ(
+      requireTraversal(vpiModule, vpiNet, Mode::Iterate).automaticRelation,
+      Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiModule, vpiVariables, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(
+      requireTraversal(vpiInitial, vpiModule, Mode::Handle).automaticRelation,
+      Automatic::ParentScope);
+  EXPECT_EQ(
+      requireTraversal(vpiInitial, vpiScope, Mode::Handle).automaticRelation,
+      Automatic::ParentScope);
+  EXPECT_EQ(
+      requireTraversal(vpiPort, vpiInstance, Mode::Handle).automaticRelation,
+      Automatic::ParentScope);
+  EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
+            Automatic::ParentScope);
+
+  // Connectivity and expression relations cannot be inferred from structural
+  // ownership and must remain explicit producer data.
+  EXPECT_EQ(
+      requireTraversal(vpiNet, vpiDriver, Mode::Iterate).automaticRelation,
+      Automatic::None);
+  EXPECT_EQ(
+      requireTraversal(vpiAssignment, vpiLhs, Mode::Handle).automaticRelation,
+      Automatic::None);
+}
+
 TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   KindSet expectedSources;
   for (const auto &edge : vpiTraversals)
@@ -393,6 +441,7 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
                                                  edge.mode, imageEdge));
     EXPECT_EQ(imageEdge.order, edge.order);
     EXPECT_EQ(imageEdge.statementContainment, edge.statementContainment);
+    EXPECT_EQ(imageEdge.automaticRelation, edge.automaticRelation);
     for (const auto &object : vpiObjectKinds) {
       if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
         continue;
@@ -448,6 +497,32 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
                       index * vpiObjectModelImageTraversalSize;
     if (record[6] == static_cast<uint8_t>(Mode::Handle)) {
       record[7] = static_cast<uint8_t>(Order::Source);
+      break;
+    }
+  }
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+
+  reset();
+  traversalOffset = readVPIObjectModelImage32(damaged.data(), 56);
+  damaged[traversalOffset + 7] |= 0x40;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
+
+  reset();
+  traversalOffset = readVPIObjectModelImage32(damaged.data(), 56);
+  traversalCount = readVPIObjectModelImage32(damaged.data(), 60);
+  for (uint32_t index = 0; index != traversalCount; ++index) {
+    uint8_t *record = damaged.data() + traversalOffset +
+                      index * vpiObjectModelImageTraversalSize;
+    if ((record[7] & vpiObjectModelImageAutomaticRelationMask) != 0) {
+      record[7] = static_cast<uint8_t>(
+          (record[7] & ~vpiObjectModelImageAutomaticRelationMask) |
+          (3u << vpiObjectModelImageAutomaticRelationShift));
       break;
     }
   }

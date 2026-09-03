@@ -2135,6 +2135,84 @@ std::vector<uint8_t> makeStatementDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makeNestedModuleRelationDatabase() {
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t childScopeOffset = 240;
+  constexpr uint64_t leafScopeOffset = 304;
+  constexpr uint64_t relationOffset = 368;
+  constexpr uint64_t stringOffset = 400;
+  constexpr uint64_t stringSize = 29;
+  constexpr uint64_t indexOffset = 432;
+  std::vector<uint8_t> bytes(indexOffset + 72, 0);
+  std::memcpy(bytes.data(), "OBDSGN1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, scopeOffset);
+  put64(bytes, 48, scopeOffset);
+  put64(bytes, 56, 3);
+  put64(bytes, 64, relationOffset);
+  put64(bytes, 80, relationOffset);
+  put64(bytes, 96, stringOffset);
+  put64(bytes, 104, stringSize);
+  put64(bytes, 112, indexOffset);
+  put64(bytes, 120, 3);
+  put64(bytes, 128, relationOffset);
+  put64(bytes, 144, relationOffset);
+  put64(bytes, 160, relationOffset);
+  put64(bytes, 168, 2);
+
+  auto scope = [&](uint64_t offset, uint64_t id, uint64_t parent,
+                   uint64_t firstChild, uint64_t name) {
+    put32(bytes, offset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
+    put32(bytes, offset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+    put64(bytes, offset + 8, id);
+    put64(bytes, offset + 16, parent);
+    put64(bytes, offset + 24, firstChild);
+    put64(bytes, offset + 40, name);
+  };
+  scope(scopeOffset, 1, 0, childScopeOffset, stringOffset);
+  scope(childScopeOffset, 2, scopeOffset, leafScopeOffset, stringOffset + 4);
+  scope(leafScopeOffset, 3, childScopeOffset, 0, stringOffset + 14);
+
+  auto relation = [&](size_t index, bool iterate, uint32_t targetScope) {
+    size_t offset = relationOffset + index * 16;
+    put32(bytes, offset, 1);
+    put32(bytes, offset + 4, targetScope);
+    put32(bytes, offset + 8, 0);
+    put16(bytes, offset + 12, vpiModule);
+    put16(bytes, offset + 14,
+          designRelationSource(0, vpiModule, iterate));
+  };
+  relation(0, false, 0);
+  relation(1, true, 2);
+
+  std::memcpy(bytes.data() + stringOffset,
+              "top\0top.child\0top.child.leaf\0", stringSize);
+  struct Entry {
+    uint64_t hash, name, record;
+  };
+  std::array<Entry, 3> index{{
+      {nameHash("top"), stringOffset, scopeOffset},
+      {nameHash("top.child"), stringOffset + 4, childScopeOffset},
+      {nameHash("top.child.leaf"), stringOffset + 14, leafScopeOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeAggregateDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t objectOffset = 240;
@@ -4928,25 +5006,12 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
 
 TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   Fixture fixture;
-  installStatementDatabase(fixture);
-  constexpr size_t relations = 568;
-
-  put64(fixture.database, 168, 2);
-  auto relation = [&](size_t index, bool iterate, uint32_t targetScope) {
-    size_t offset = relations + index * 16;
-    put32(fixture.database, offset, 1);
-    put32(fixture.database, offset + 4, targetScope);
-    put32(fixture.database, offset + 8, 0);
-    put16(fixture.database, offset + 12, vpiModule);
-    put16(fixture.database, offset + 14,
-          designRelationSource(0, vpiModule, iterate));
-  };
-  // IEEE 1800-2017 37.5 assigns different meanings to these same-selector
-  // modes: the singular edge names the containing module while iteration
-  // enumerates child modules.
-  relation(0, false, 0);
-  relation(1, true, 1);
-  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.database = makeNestedModuleRelationDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
@@ -4959,6 +5024,9 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
   ASSERT_NE(module, nullptr);
 
+  // IEEE 1800-2017 37.5 assigns different meanings to these same-selector
+  // modes: the singular edge names the containing module while iteration
+  // enumerates child modules.
   vpiHandle containing = vpi_handle(vpiModule, module);
   ASSERT_NE(containing, nullptr);
   EXPECT_STREQ(vpi_get_str(vpiFullName, containing), "top");
@@ -4966,10 +5034,90 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   ASSERT_NE(elements, nullptr);
   vpiHandle firstElement = vpi_scan(elements);
   ASSERT_NE(firstElement, nullptr);
-  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child.leaf");
   EXPECT_EQ(vpi_compare_objects(containing, firstElement), 0);
   EXPECT_EQ(vpi_scan(elements), nullptr);
   obelisk_rt_v1_context_destroy(context);
+
+  // An entirely absent automatic parent group uses the same immutable
+  // hierarchy fallback as an absent automatic child group.
+  fixture.database = makeNestedModuleRelationDatabase();
+  constexpr size_t relationOffset = 368;
+  std::memcpy(fixture.database.data() + relationOffset,
+              fixture.database.data() + relationOffset + 16, 16);
+  put64(fixture.database, 168, 1);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  containing = vpi_handle(vpiModule, module);
+  ASSERT_NE(containing, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, containing), "top");
+  elements = vpi_iterate(vpiModule, module);
+  ASSERT_NE(elements, nullptr);
+  firstElement = vpi_scan(elements);
+  ASSERT_NE(firstElement, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child.leaf");
+  EXPECT_EQ(vpi_scan(elements), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t relations = 568;
+
+  // A module cannot claim itself as a direct child.
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 1);
+  put32(fixture.database, relations + 4, 1);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiModule);
+  put16(fixture.database, relations + 14,
+        designRelationSource(0, vpiModule, true));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+
+  // A process must name its actual owning scope, not another same-kind scope.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relations, 0);
+  put32(fixture.database, relations + 4, 0);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiModule);
+  put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+
+  // Dense ordinals cannot duplicate a valid child and hide the remainder.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 168, 2);
+  for (size_t index = 0; index != 2; ++index) {
+    size_t relation = relations + index * 16;
+    put32(fixture.database, relation, 1);
+    put32(fixture.database, relation + 4, uint32_t{1} << 30);
+    put32(fixture.database, relation + 8, static_cast<uint32_t>(index));
+    put16(fixture.database, relation + 12, vpiProcess);
+    put16(fixture.database, relation + 14,
+          designRelationSource(0, vpiModule, true));
+  }
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
 }
 
 TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
