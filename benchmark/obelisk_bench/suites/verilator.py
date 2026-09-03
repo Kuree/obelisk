@@ -1014,6 +1014,12 @@ VERILATOR_FORCED_REF_ARGUMENT_UNSUPPORTED = Exclusion(
     "a ref formal is an alias for its actual variable, and 10.6.2 does not "
     "forbid referencing a variable while its value is forced; the descriptor "
     "expects failure only because Verilator rejects that combination")
+EAGER_PROCEDURAL_CONTINUOUS_REEVALUATION = Exclusion(
+    "IEEE 1800-2017 4.9.2",
+    "an RHS change schedules an Active update event for the procedural "
+    "continuous assignment, and 4.4.2.2 permits Active events in either "
+    "order; the test checks the target in the same process without yielding "
+    "and requires Verilator's eager reevaluation order")
 INTEGRAL_OUTPUT_TO_ENUM = Exclusion(
     "IEEE 1800-2017 6.22.3",
     "port connections require assignment-compatible types under IEEE "
@@ -1124,6 +1130,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_force_unpacked_bitsel": VARIABLE_FORCE_SELECT,
     "t_force_wide_sel": VARIABLE_FORCE_SELECT,
     "t_force_readwrite_unsup": VERILATOR_FORCED_REF_ARGUMENT_UNSUPPORTED,
+    "t_force_assign": EAGER_PROCEDURAL_CONTINUOUS_REEVALUATION,
     "t_foreach_const": CONSTANT_FOREACH_EXTENSIONS,
     "t_fsm_register_wrapper": INTEGRAL_OUTPUT_TO_ENUM,
     "t_fsm_register_wrapper_noinline": INTEGRAL_OUTPUT_TO_ENUM,

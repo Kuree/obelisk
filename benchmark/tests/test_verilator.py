@@ -933,6 +933,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("10.6.2", excluded.reason)
         self.assertIn("Verilator", excluded.reason)
 
+    def test_same_active_region_override_check_has_no_fixed_order(self):
+        excluded = verilator.EXCLUDED["t_force_assign"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 4.9.2")
+        self.assertIn("4.4.2.2", excluded.reason)
+        self.assertIn("without yielding", excluded.reason)
+
     def test_constant_foreach_extensions_are_not_compiler_failures(self):
         excluded = verilator.EXCLUDED["t_foreach_const"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 13.4.3")
