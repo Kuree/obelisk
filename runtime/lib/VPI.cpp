@@ -70,7 +70,7 @@ struct __vpiHandle {
   obelisk_rt_design_cursor_v1 cursor{};
   uint32_t exactVpiType = 0;
   bool statement = false;
-  // IEEE 1800-2023 37.29 detail 2 restricts value access based on the
+  // IEEE 1800-2017 37.29 detail 2 restricts value access based on the
   // traversal that produced a handle, not on the declaration's physical
   // owner.  Keep that provenance on the opaque handle itself so a direct
   // hierarchical lookup of a static class member remains usable.
@@ -1054,16 +1054,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   bool absolute = requested.rfind("$root.", 0) == 0;
   if (absolute)
     requested.erase(0, 6);
-  bool classDefinitionOrigin = false;
+  uint32_t sourceType = 0;
+  bool sourceClassDefinitionOrigin = false;
   if (scope && !absolute) {
     __vpiHandle *base = validate(scope);
     if (!base)
       return nullptr;
-    classDefinitionOrigin =
-        base->classDefinitionOrigin ||
-        vpiTypeForHandle(base) ==
-            static_cast<PLI_INT32>(
-                obelisk::reflection::VPIObjectKind::ClassDefn);
+    sourceType = static_cast<uint32_t>(vpiTypeForHandle(base));
+    sourceClassDefinitionOrigin = base->classDefinitionOrigin;
     std::string prefix;
     if (!nameFor(base, prefix))
       return nullptr;
@@ -1087,7 +1085,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
              vpiNotice);
     return nullptr;
   }
-  return makeHandle(state, cursor, 0, false, classDefinitionOrigin);
+  return makeHandle(
+      state, cursor, exactType, false,
+      obelisk::runtime::hasClassDefinitionValueOrigin(
+          sourceType, sourceClassDefinitionOrigin, exactType));
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
@@ -1115,10 +1116,6 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
-  const bool classDefinitionOrigin =
-      handle->classDefinitionOrigin ||
-      sourceType ==
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::ClassDefn);
   VPIRelationRange range{};
   obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
       handle->owner->context, handle->cursor, static_cast<uint32_t>(type),
@@ -1131,8 +1128,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
             handle->owner->context, range.first, &target, &targetType,
             &targetIsStatement) != OBELISK_RT_OK)
       return nullptr;
-    return makeHandle(handle->owner, target, targetType, targetIsStatement,
-                      classDefinitionOrigin);
+    return makeHandle(
+        handle->owner, target, targetType, targetIsStatement,
+        obelisk::runtime::hasClassDefinitionValueOrigin(
+            sourceType, handle->classDefinitionOrigin, targetType));
   }
   if (relationStatus != OBELISK_RT_EOF)
     return nullptr;
@@ -1156,8 +1155,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                    &parentType) != OBELISK_RT_OK ||
         !obelisk::reflection::vpiObjectSetContains(edge->targets, parentType))
       return nullptr;
-    return makeHandle(handle->owner, parent, parentType, parentIsStatement,
-                      classDefinitionOrigin);
+    return makeHandle(
+        handle->owner, parent, parentType, parentIsStatement,
+        obelisk::runtime::hasClassDefinitionValueOrigin(
+            sourceType, handle->classDefinitionOrigin, parentType));
   }
   // Generated traversal legality is authoritative for statement objects.
   // Helper/container statement kinds deliberately have no vpiScope edge and
@@ -1175,13 +1176,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     if (obelisk_rt_cached_design_root(handle->owner->context, &root) !=
         OBELISK_RT_OK)
       return nullptr;
-    return makeHandle(handle->owner, root, 0, false, classDefinitionOrigin);
+    return makeHandle(handle->owner, root);
   }
   fullName.resize(separator);
   obelisk_rt_design_cursor_v1 parent{};
   return lookup(handle->owner, fullName, parent)
-             ? makeHandle(handle->owner, parent, 0, false,
-                          classDefinitionOrigin)
+             ? makeHandle(handle->owner, parent)
              : nullptr;
 }
 
@@ -1288,10 +1288,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->useType = sourceType;
         iterator->useStatement = sourceStatement;
         iterator->useClassDefinitionOrigin = sourceClassDefinitionOrigin;
-        iterator->classDefinitionOrigin =
-            sourceClassDefinitionOrigin ||
-            sourceType == static_cast<uint32_t>(
-                              obelisk::reflection::VPIObjectKind::ClassDefn);
+        iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
         return keepHandle(state, std::move(iterator));
       }
       OBELISK_RT_CATCH_ALL {
@@ -1327,10 +1324,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       iterator->useType = sourceType;
       iterator->useStatement = sourceStatement;
       iterator->useClassDefinitionOrigin = sourceClassDefinitionOrigin;
-      iterator->classDefinitionOrigin =
-          sourceClassDefinitionOrigin ||
-          sourceType == static_cast<uint32_t>(
-                            obelisk::reflection::VPIObjectKind::ClassDefn);
+      iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
     }
     return keepHandle(state, std::move(iterator));
   }
@@ -1395,8 +1389,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     ++iterator->next;
     VPIState *state = iterator->owner;
     const uintptr_t iteratorToken = iterator->token;
-    vpiHandle result = makeHandle(state, target, targetType, targetIsStatement,
-                                  iterator->classDefinitionOrigin);
+    vpiHandle result = makeHandle(
+        state, target, targetType, targetIsStatement,
+        obelisk::runtime::hasClassDefinitionValueOrigin(
+            iterator->useType, iterator->classDefinitionOrigin, targetType));
     if (!result)
       state->handles.erase(iteratorToken);
     return result;
@@ -1424,8 +1420,18 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       setError(state, "VPI design iterator lookup failed", vpiInternal);
       return nullptr;
     }
-    vpiHandle result =
-        makeHandle(state, current, 0, false, iterator->classDefinitionOrigin);
+    uint32_t targetType = 0;
+    if (obelisk_rt_cached_vpi_type(state->context, current, &targetType) !=
+        OBELISK_RT_OK) {
+      state->handles.erase(iteratorToken);
+      setError(state, "VPI design iterator target type lookup failed",
+               vpiInternal);
+      return nullptr;
+    }
+    vpiHandle result = makeHandle(
+        state, current, targetType, false,
+        obelisk::runtime::hasClassDefinitionValueOrigin(
+            iterator->useType, iterator->classDefinitionOrigin, targetType));
     if (!result)
       state->handles.erase(iteratorToken);
     return result;
@@ -1436,8 +1442,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
   }
   VPIState *state = iterator->owner;
   const uintptr_t iteratorToken = iterator->token;
-  vpiHandle result = makeHandle(state, iterator->items[iterator->next++], 0,
-                                false, iterator->classDefinitionOrigin);
+  vpiHandle result = makeHandle(state, iterator->items[iterator->next++]);
   if (!result)
     state->handles.erase(iteratorToken);
   return result;

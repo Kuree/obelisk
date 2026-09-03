@@ -28,6 +28,29 @@ using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
 using KindSet = std::set<uint32_t>;
 
+TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
+  using obelisk::runtime::hasClassDefinitionValueOrigin;
+  EXPECT_TRUE(hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiReg));
+  EXPECT_TRUE(
+      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiNamedEvent));
+  EXPECT_TRUE(hasClassDefinitionValueOrigin(vpiReg, true, vpiRegBit));
+
+  EXPECT_FALSE(
+      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiClassTypespec));
+  EXPECT_FALSE(
+      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiInstance));
+  EXPECT_FALSE(
+      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiFunction));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiReg, true, vpiTypespec));
+
+  // A class specialization has a distinct LRM rule: only its non-static
+  // members are restricted. Class-definition provenance must not escape into
+  // the typespec and turn that conditional rule into an unconditional one.
+  EXPECT_FALSE(
+      hasClassDefinitionValueOrigin(vpiClassTypespec, false, vpiReg));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiInstance, false, vpiReg));
+}
+
 constexpr size_t kExpectedTraversalCount = 1872;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
