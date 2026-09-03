@@ -959,11 +959,6 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         block->dropAllReferences();
     for (Block *block : unreachable)
       block->dropAllReferences();
-    for (Block *block : checkpointBlocks)
-      if (reachable.contains(block))
-        block->dropAllDefinedValueUses();
-    for (Block *block : unreachable)
-      block->dropAllDefinedValueUses();
     for (Block *block : unreachable)
       block->erase();
     for (auto [block, location] : checkpoints) {
