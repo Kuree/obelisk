@@ -61,7 +61,11 @@ parent-statement index. Per-design VPI relation edges (such as `vpiStmt`,
 rather than being overloaded onto either field. Structural statement scope
 relations are emitted automatically from the nearest scope-bearing parent
 statement, a scope-capable code-unit owner, or the physical hierarchy scope, in
-that order.
+that order. Direct whole-source ports also carry an automatically emitted
+`vpiLowConn` relation to their canonical net or variable object, including
+explicitly renamed formals. Selected ports remain distinct until
+select/ref-object identities are serialized and are never widened to the whole
+backing object.
 These immutable tables are emitted only for a VPI profile, not for VCD-only
 reflection, and do not install executable probes or change the scheduler.
 Production SV lowering, tier/fragment/bytecode bindings, and cbStmt dispatch are

@@ -227,18 +227,30 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t scope;
     Type type;
   };
+  struct PortConnection {
+    uint64_t sourceID;
+    bool sourceIsNet;
+  };
   llvm::DenseMap<uint64_t, PortSource> storageSources, netSources;
   llvm::DenseMap<uint64_t, sim::SimPortDeclOp> directStoragePorts,
       directNetPorts;
+  llvm::DenseMap<uint64_t, PortConnection> wholePortConnections;
+  llvm::DenseSet<uint64_t> wholeStoragePortSources, wholeNetPortSources;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (auto name = storage.getHierarchicalName())
         storageSources[storage.getId()] =
             PortSource{*name, storage.getScopeId(), storage.getType()};
+      else if (includeStatements)
+        storageSources[storage.getId()] =
+            PortSource{{}, storage.getScopeId(), storage.getType()};
     } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
       if (auto name = net.getHierarchicalName())
         netSources[net.getId()] =
             PortSource{*name, net.getScopeId(), net.getType()};
+      else if (includeStatements)
+        netSources[net.getId()] =
+            PortSource{{}, net.getScopeId(), net.getType()};
     }
   }
   for (sim::SimPortDeclOp port :
@@ -246,9 +258,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     const auto &sources = port.getSourceIsNet() ? netSources : storageSources;
     auto source = sources.find(port.getSourceId());
     if (port.getSourceLow() != 0 || source == sources.end() ||
-        source->second.name != port.getHierarchicalName() ||
         source->second.scope != port.getScopeId() ||
         source->second.type != port.getType())
+      continue;
+    if (includeStatements) {
+      (port.getSourceIsNet() ? wholeNetPortSources : wholeStoragePortSources)
+          .insert(port.getSourceId());
+      wholePortConnections.try_emplace(
+          port.getId(),
+          PortConnection{port.getSourceId(), port.getSourceIsNet()});
+    }
+    if (source->second.name != port.getHierarchicalName() ||
+        source->second.name.empty())
       continue;
     auto &directPorts =
         port.getSourceIsNet() ? directNetPorts : directStoragePorts;
@@ -319,6 +340,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
       caps = addPortMetadata(port, caps);
+      bool wholeSource = wholePortConnections.count(port.getId()) != 0;
+      if (wholeSource)
+        caps |= OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
       uint64_t sourceOffset = port.getSourceIsNet()
                                   ? netOffsets.lookup(port.getSourceId())
                                   : storageOffsets.lookup(port.getSourceId());
@@ -397,12 +421,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
 
   DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
       statementIndices;
+  DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
+      canonicalNetTargetIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
-  for (auto [index, object] : llvm::enumerate(objects))
+  for (auto [index, object] : llvm::enumerate(objects)) {
     if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
         object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
+    if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
+        wholeStoragePortSources.contains(object.id))
+      canonicalStorageTargetIndices.try_emplace(object.id,
+                                                static_cast<uint32_t>(index));
+    if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_NET &&
+        wholeNetPortSources.contains(object.id))
+      canonicalNetTargetIndices.try_emplace(object.id,
+                                            static_cast<uint32_t>(index));
+  }
   for (auto [index, statement] : llvm::enumerate(statements))
     statementIndices[statement.declaration.getId()] =
         static_cast<uint32_t>(index);
@@ -458,6 +493,31 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
 
   if (includeStatements) {
+    // A whole-source port's vpiLowConn is the canonical vpiReg/vpiNet object.
+    // Same-name ports have a distinct, deliberately unindexed vpiPort
+    // identity; explicitly renamed ports retain their indexed formal name.
+    for (auto [sourceIndex, object] : llvm::enumerate(objects)) {
+      if (object.kind != OBELISK_RT_DESIGN_RECORD_PORT)
+        continue;
+      auto connection = wholePortConnections.find(object.id);
+      if (connection == wholePortConnections.end())
+        continue;
+      const auto &targets = connection->second.sourceIsNet
+                                ? canonicalNetTargetIndices
+                                : canonicalStorageTargetIndices;
+      auto target = targets.find(connection->second.sourceID);
+      if (target == targets.end()) {
+        design.emitOpError("direct VPI port has no canonical low connection");
+        return {};
+      }
+      const Record &canonical = objects[target->second];
+      if (failed(addAutomaticRelation(
+              TableKind::Object, static_cast<uint32_t>(sourceIndex),
+              object.vpiKind, TableKind::Object, target->second,
+              canonical.vpiKind, VPIAutomaticRelation::DirectPortConnection)))
+        return {};
+    }
+
     // Emit forward relations in the same deterministic order as the immutable
     // child chain: child scopes by stable ID, followed by objects in the
     // normalized object-table order.

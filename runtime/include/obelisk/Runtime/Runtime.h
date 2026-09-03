@@ -1513,6 +1513,9 @@ enum {
   OBELISK_RT_DESIGN_CAP_PORT_OUTPUT = UINT32_C(1) << 4,
   // Marks a compiler-generated record that is deliberately absent from VPI.
   OBELISK_RT_DESIGN_CAP_INTERNAL = UINT32_C(1) << 5,
+  // Marks a VPI-profile port whose lower connection is an unselected whole
+  // storage or net object. Its vpiLowConn relation is mandatory.
+  OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE = UINT32_C(1) << 6,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };

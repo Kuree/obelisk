@@ -364,11 +364,15 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(
       requireTraversal(vpiPort, vpiInstance, Mode::Handle).automaticRelation,
       Automatic::ParentScope);
+  EXPECT_EQ(
+      requireTraversal(vpiPort, vpiLowConn, Mode::Handle).automaticRelation,
+      Automatic::DirectPortConnection);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
 
-  // Connectivity and expression relations cannot be inferred from structural
-  // ownership and must remain explicit producer data.
+  // General connectivity and expression relations cannot be inferred from
+  // structural ownership and must remain explicit producer data. Direct
+  // whole-source port aliases are the narrow connectivity exception above.
   EXPECT_EQ(
       requireTraversal(vpiNet, vpiDriver, Mode::Iterate).automaticRelation,
       Automatic::None);
@@ -522,10 +526,12 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   for (uint32_t index = 0; index != traversalCount; ++index) {
     uint8_t *record = damaged.data() + traversalOffset +
                       index * vpiObjectModelImageTraversalSize;
-    if ((record[7] & vpiObjectModelImageAutomaticRelationMask) != 0) {
+    if (record[6] == static_cast<uint8_t>(Mode::Iterate) &&
+        (record[7] & vpiObjectModelImageAutomaticRelationMask) != 0) {
       record[7] = static_cast<uint8_t>(
           (record[7] & ~vpiObjectModelImageAutomaticRelationMask) |
-          (3u << vpiObjectModelImageAutomaticRelationShift));
+          (static_cast<uint8_t>(VPIAutomaticRelation::DirectPortConnection)
+           << vpiObjectModelImageAutomaticRelationShift));
       break;
     }
   }

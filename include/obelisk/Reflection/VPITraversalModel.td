@@ -47,6 +47,8 @@ def TimeOrder : VPITraversalOrder<"Time", 4>;
 // scope/owner is the source scope.  ParentScope means that the edge returns
 // the source's effective enclosing scope: the record named by a scope/parent
 // field for ordinary records, or the nearest lexical scope for statements.
+// DirectPortConnection identifies the canonical net or variable backing a
+// direct whole-source port alias.
 class VPIAutomaticRelation<string cppName_, int value_> {
   string cppName = cppName_;
   int value = value_;
@@ -55,6 +57,8 @@ class VPIAutomaticRelation<string cppName_, int value_> {
 def NoAutomaticRelation : VPIAutomaticRelation<"None", 0>;
 def AutomaticDirectChild : VPIAutomaticRelation<"DirectChild", 1>;
 def AutomaticParentScope : VPIAutomaticRelation<"ParentScope", 2>;
+def AutomaticDirectPortConnection :
+    VPIAutomaticRelation<"DirectPortConnection", 3>;
 
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other
