@@ -35,7 +35,12 @@ limbs use the standard 32-bit encoding with `bval = unknown` and
 
 Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
 `vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable
-design record. These queries do not inspect or materialize simulation state.
+design record. Net and variable handles expose the LRM-defined `vpiScalar` and
+`vpiVector` properties from their immutable serialized type graph: unpacked
+arrays recursively use their element shape, packed arrays/structs/unions are
+vectors even at width one, and unpacked aggregates and real values are neither.
+These queries do not inspect or materialize simulation state, register a
+callback, or affect scheduler tier selection.
 
 Handles live in a context-owned arena. Releasing a handle marks it dead without
 reusing its record, so double release and exhausted iterators are diagnosed

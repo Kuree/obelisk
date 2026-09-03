@@ -21,6 +21,10 @@ static_assert(findVPIProperty(vpiPort, vpiDirection)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiPort, vpiScalar)->valueKind ==
               VPIPropertyValueKind::Boolean);
+static_assert(findVPIProperty(vpiReg, vpiScalar)->valueKind ==
+              VPIPropertyValueKind::Boolean);
+static_assert(findVPIProperty(vpiNet, vpiVector)->valueKind ==
+              VPIPropertyValueKind::Boolean);
 static_assert(findVPIProperty(vpiPortBit, vpiPortIndex)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiReg, vpiDirection) == nullptr);

@@ -300,6 +300,47 @@ bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
   return true;
 }
 
+enum class VPIValueShape { Neither, Scalar, Vector };
+
+bool valueShapeFor(__vpiHandle *handle,
+                   const obelisk_rt_design_info_v1 &objectInfo,
+                   VPIValueShape &shape) {
+  obelisk_rt_design_cursor_v1 cursor{objectInfo.type_offset};
+  for (;;) {
+    obelisk_rt_design_type_info_v1 type{};
+    if (cursor.offset == 0 ||
+        obelisk_rt_cached_design_type_info(handle->owner->context, cursor,
+                                           &type) != OBELISK_RT_OK) {
+      setError(handle->owner, "design type metadata lookup failed",
+               vpiInternal);
+      return false;
+    }
+
+    const bool packed = (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+    if (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY && !packed) {
+      cursor = type.element_type;
+      continue;
+    }
+    if (type.kind == OBELISK_RT_DESIGN_TYPE_SCALAR) {
+      // Non-packed scalar metadata represents real-valued objects. They are
+      // neither scalar nor vector in the VPI net/variable diagrams.
+      shape = !packed               ? VPIValueShape::Neither
+              : type.bit_width == 1 ? VPIValueShape::Scalar
+                                    : VPIValueShape::Vector;
+      return true;
+    }
+    if (packed && (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY ||
+                   type.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
+                   type.kind == OBELISK_RT_DESIGN_TYPE_UNION)) {
+      // Packed aggregates are vectors even when their flattened width is one.
+      shape = VPIValueShape::Vector;
+      return true;
+    }
+    shape = VPIValueShape::Neither;
+    return true;
+  }
+}
+
 int vpiTypeFor(uint32_t kind) {
   switch (kind) {
   case OBELISK_RT_DESIGN_RECORD_SCOPE:
@@ -1050,12 +1091,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     obelisk_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;
-    if (info.kind != OBELISK_RT_DESIGN_RECORD_PORT) {
-      setError(handle->owner, "port property requested for non-port object",
-               vpiNotice);
-      return vpiUndefined;
-    }
+    const bool isPort = info.kind == OBELISK_RT_DESIGN_RECORD_PORT;
     if (property == vpiDirection) {
+      if (!isPort) {
+        setError(handle->owner, "port property requested for non-port object",
+                 vpiNotice);
+        return vpiUndefined;
+      }
       bool input = (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
       bool output =
           (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
@@ -1063,15 +1105,37 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         return vpiInout;
       return input ? vpiInput : vpiOutput;
     }
-    if (property == vpiPortIndex)
+    if (property == vpiPortIndex) {
+      if (!isPort) {
+        setError(handle->owner, "port property requested for non-port object",
+                 vpiNotice);
+        return vpiUndefined;
+      }
       return static_cast<PLI_INT32>(
           (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
           OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT);
-    if (property == vpiPortType)
+    }
+    if (property == vpiPortType) {
+      if (!isPort) {
+        setError(handle->owner, "port property requested for non-port object",
+                 vpiNotice);
+        return vpiUndefined;
+      }
       return vpiPort;
-    bool scalar = info.bit_width == 1;
-    return property == vpiScalar ? static_cast<PLI_INT32>(scalar)
-                                 : static_cast<PLI_INT32>(!scalar);
+    }
+    if (isPort) {
+      bool scalar = info.bit_width == 1;
+      return property == vpiScalar ? static_cast<PLI_INT32>(scalar)
+                                   : static_cast<PLI_INT32>(!scalar);
+    }
+    if (exactType == vpiNetBit || exactType == vpiRegBit)
+      return property == vpiScalar;
+    VPIValueShape shape = VPIValueShape::Neither;
+    if (!valueShapeFor(handle, info, shape))
+      return vpiUndefined;
+    return property == vpiScalar
+               ? static_cast<PLI_INT32>(shape == VPIValueShape::Scalar)
+               : static_cast<PLI_INT32>(shape == VPIValueShape::Vector);
   }
   if (property == vpiLineNo || property == vpiDefLineNo) {
     const uint8_t *file = nullptr;

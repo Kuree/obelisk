@@ -72,19 +72,32 @@ for index in range(object_count):
     width, left, right, state = struct.unpack_from("<QqqQ", image, offset + 56)
     type_kind = 0
     type_flags = 0
+    element_kind = 0
+    element_flags = 0
+    element_width = 0
     if type_record:
         if type_record < type_offset or type_record + 80 > type_offset + type_count * 80:
             raise SystemExit("invalid design-database type offset")
         packed_type = struct.unpack_from("<I", image, type_record + 4)[0]
         type_kind = packed_type & 0xFF
         type_flags = packed_type >> 8
+        element_record = struct.unpack_from("<Q", image, type_record + 32)[0]
+        if element_record:
+            if element_record < type_offset or element_record + 80 > type_offset + type_count * 80:
+                raise SystemExit("invalid design-database element type offset")
+            packed_element = struct.unpack_from("<I", image, element_record + 4)[0]
+            element_kind = packed_element & 0xFF
+            element_flags = packed_element >> 8
+            element_width = struct.unpack_from("<Q", image, element_record + 8)[0]
     ordinal = (capabilities >> 8) & 0xFFFFFF
     print(
         f"object name={name} kind={kind} vpi_kind={vpi_kind} "
         f"caps=0x{capabilities:x} "
         f"id={stable_id} scope={scope_names.get(scope, '?')} width={width} "
         f"range=[{left}:{right}] state={state} type_kind={type_kind} "
-        f"type_flags=0x{type_flags:x} port_ordinal={ordinal}"
+        f"type_flags=0x{type_flags:x} port_ordinal={ordinal} "
+        f"element_kind={element_kind} element_flags=0x{element_flags:x} "
+        f"element_width={element_width}"
     )
 
 for index in range(statement_count):

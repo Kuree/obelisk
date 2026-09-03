@@ -29,7 +29,7 @@ using KindSet = std::set<uint32_t>;
 constexpr size_t kExpectedTraversalCount = 1872;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) == 10);
+static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) == 86);
 
 struct OracleKey {
   uint32_t source;
@@ -395,14 +395,78 @@ TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
   expectAbsent(vpiIterator, vpiUse, Mode::Iterate);
 }
 
-TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
+TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
+  const KindSet expected{
+      vpiPort,
+      vpiPortBit,
+      vpiNet,
+      vpiNetBit,
+      vpiNetArray,
+      vpiEnumNet,
+      vpiIntegerNet,
+      vpiTimeNet,
+      vpiUnionNet,
+      vpiShortRealNet,
+      vpiRealNet,
+      vpiByteNet,
+      vpiShortIntNet,
+      vpiIntNet,
+      vpiLongIntNet,
+      vpiBitNet,
+      vpiInterconnectNet,
+      vpiInterconnectArray,
+      vpiStructNet,
+      vpiPackedArrayNet,
+      vpiShortRealVar,
+      vpiRealVar,
+      vpiByteVar,
+      vpiShortIntVar,
+      vpiIntVar,
+      vpiLongIntVar,
+      vpiIntegerVar,
+      vpiTimeVar,
+      vpiRegArray,
+      vpiPackedArrayVar,
+      vpiBitVar,
+      vpiReg,
+      vpiStructVar,
+      vpiUnionVar,
+      vpiEnumVar,
+      vpiStringVar,
+      vpiChandleVar,
+      vpiClassVar,
+      vpiVirtualInterfaceVar,
+      vpiRegBit,
+  };
+  for (const auto &object : vpiObjectKinds) {
+    if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+      continue;
+    for (uint32_t property : {uint32_t(vpiScalar), uint32_t(vpiVector)}) {
+      const bool shouldExist = expected.count(object.value) != 0;
+      const auto *descriptor = findVPIProperty(object.value, property);
+      EXPECT_EQ(descriptor != nullptr, shouldExist) << object.apiName;
+      if (descriptor) {
+        EXPECT_EQ(descriptor->valueKind, PropertyKind::Boolean);
+        EXPECT_STREQ(descriptor->clause, "37.14; 37.16; 37.17");
+      }
+      VPIObjectModelImageProperty imageProperty{};
+      EXPECT_EQ(findVPIObjectModelImageProperty(
+                    vpiObjectModelImage, object.value, property, imageProperty),
+                shouldExist)
+          << object.apiName;
+      if (shouldExist) {
+        EXPECT_EQ(imageProperty.valueKind, PropertyKind::Boolean);
+      }
+    }
+  }
+}
+
+TEST(VPIObjectModel, PortOnlyPropertiesHaveExactLrmApplicability) {
   struct ExpectedProperty {
     uint32_t value;
     PropertyKind kind;
   };
-  constexpr std::array<ExpectedProperty, 5> expected{{
-      {vpiScalar, PropertyKind::Boolean},
-      {vpiVector, PropertyKind::Boolean},
+  constexpr std::array<ExpectedProperty, 3> expected{{
       {vpiDirection, PropertyKind::Integer},
       {vpiPortIndex, PropertyKind::Integer},
       {vpiPortType, PropertyKind::Integer},
@@ -424,8 +488,8 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
     ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage, vpiPort,
                                                 property.value, imageProperty));
     EXPECT_EQ(imageProperty.valueKind, property.kind);
-    ASSERT_TRUE(findVPIObjectModelImageProperty(
-        vpiObjectModelImage, vpiPortBit, property.value, imageProperty));
+    ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage, vpiPortBit,
+                                                property.value, imageProperty));
     EXPECT_EQ(imageProperty.valueKind, property.kind);
     EXPECT_FALSE(findVPIObjectModelImageProperty(
         vpiObjectModelImage, vpiReg, property.value, imageProperty));

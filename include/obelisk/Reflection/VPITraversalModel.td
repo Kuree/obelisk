@@ -129,6 +129,21 @@ def ValueParameterObjects : VPIObjectSet<"ValueParameterObjects",
 def PortObjects : VPIObjectSet<"PortObjects", [Port, PortBit]>;
 def PortTargetObjects : VPIObjectSet<"PortTargetObjects", [Port]>;
 
+// Exact union of the concrete objects whose scalar/vector properties are
+// defined by the port, net, and variable diagrams. Keep this explicit: the
+// broad NetFamily and VariableFamily also contain objects for which those
+// properties are not defined (for example named events and parameters).
+// Aliased API spellings are represented by their canonical object kinds.
+def ScalarVectorObjects : VPIObjectSet<"ScalarVectorObjects",
+  [Port, PortBit,
+   Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
+   ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, InterconnectArray, StructNet, PackedArrayNet,
+   ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit]>;
+
 // Integer and Boolean properties use the same exact object-set machinery as
 // traversal edges. This keeps LRM applicability generated instead of letting
 // individual VPI entry points infer it from physical database record kinds.
@@ -150,10 +165,10 @@ class VPIProperty<string apiName_, int value_,
   string clause = clause_;
 }
 
-def PortScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
-  PortObjects, "37.14">;
-def PortVectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
-  PortObjects, "37.14">;
+def ScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
+  ScalarVectorObjects, "37.14; 37.16; 37.17">;
+def VectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
+  ScalarVectorObjects, "37.14; 37.16; 37.17">;
 def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
   PortObjects, "37.14">;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,

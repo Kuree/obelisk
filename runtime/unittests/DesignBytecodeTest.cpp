@@ -2319,6 +2319,135 @@ std::vector<uint8_t> makeAggregateDatabase() {
   return bytes;
 }
 
+enum class VPIShapeType {
+  BasicScalar,
+  BasicVector,
+  PackedArrayOneBit,
+  UnpackedArrayOfScalar,
+  UnpackedArrayOfVector,
+  PackedStructOneBit,
+  PackedUnionOneBit,
+  UnpackedStruct,
+  UnpackedUnion,
+  Real,
+};
+
+std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
+                                          uint32_t exactVpiType) {
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t rootTypeOffset = 336;
+  constexpr uint64_t nestedTypeOffset = rootTypeOffset + 80;
+  constexpr uint64_t leafTypeOffset = nestedTypeOffset + 80;
+  constexpr uint64_t stringOffset = leafTypeOffset + 80;
+  const uint32_t physicalKind = exactVpiType == vpiNet ||
+                                        exactVpiType == vpiNetBit ||
+                                        exactVpiType == vpiNetArray
+                                    ? OBELISK_RT_DESIGN_RECORD_NET
+                                    : OBELISK_RT_DESIGN_RECORD_STORAGE;
+  if (shape == VPIShapeType::BasicScalar ||
+      shape == VPIShapeType::BasicVector || shape == VPIShapeType::Real) {
+    std::vector<uint8_t> bytes = makeDatabase();
+    const uint64_t width = shape == VPIShapeType::BasicScalar   ? 1
+                           : shape == VPIShapeType::BasicVector ? 8
+                                                                : 64;
+    const uint32_t flags =
+        shape == VPIShapeType::Real
+            ? 0
+            : OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED;
+    put32(bytes, objectOffset, designRecordKind(physicalKind, exactVpiType));
+    put64(bytes, objectOffset + 56, width);
+    put64(bytes, objectOffset + 64, width - 1);
+    put32(bytes, rootTypeOffset + 4,
+          OBELISK_RT_DESIGN_TYPE_SCALAR | (flags << 8));
+    put64(bytes, rootTypeOffset + 8, width);
+    put64(bytes, rootTypeOffset + 16, width - 1);
+    put64(bytes, 32, imageChecksum(bytes));
+    return bytes;
+  }
+
+  std::vector<uint8_t> bytes = makeAggregateDatabase();
+  put32(bytes, objectOffset, designRecordKind(physicalKind, exactVpiType));
+
+  auto type = [&](uint64_t offset, uint32_t kind, uint32_t flags,
+                  uint64_t width, uint64_t element, uint64_t firstChild,
+                  uint64_t childCount, uint64_t ordinalOrTag,
+                  uint64_t packedOffset, uint64_t name) {
+    std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
+    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset + 4, kind | (flags << 8));
+    put64(bytes, offset + 8, width);
+    put64(bytes, offset + 16, width - 1);
+    put64(bytes, offset + 24, 0);
+    put64(bytes, offset + 32, element);
+    put64(bytes, offset + 40, firstChild);
+    put64(bytes, offset + 48, childCount);
+    put64(bytes, offset + 56, ordinalOrTag);
+    put64(bytes, offset + 64, packedOffset);
+    put64(bytes, offset + 72, name);
+  };
+  auto setObjectWidth = [&](uint64_t width) {
+    put64(bytes, objectOffset + 56, width);
+    put64(bytes, objectOffset + 64, width - 1);
+    put64(bytes, objectOffset + 72, 0);
+  };
+
+  const uint32_t fourState = OBELISK_RT_DESIGN_TYPE_FOUR_STATE;
+  const uint32_t packed = OBELISK_RT_DESIGN_TYPE_PACKED;
+  switch (shape) {
+  case VPIShapeType::BasicScalar:
+  case VPIShapeType::BasicVector:
+  case VPIShapeType::Real:
+    break;
+  case VPIShapeType::PackedArrayOneBit:
+    type(rootTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
+         nestedTypeOffset, 0, 0, 0, 0, stringOffset + 14);
+    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
+         leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
+    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
+         0, 0, 0, 0, 0, stringOffset + 27);
+    put64(bytes, 88, 3);
+    setObjectWidth(1);
+    break;
+  case VPIShapeType::UnpackedArrayOfScalar:
+  case VPIShapeType::UnpackedArrayOfVector: {
+    const uint64_t width = shape == VPIShapeType::UnpackedArrayOfScalar ? 1 : 8;
+    type(rootTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState, width,
+         nestedTypeOffset, 0, 0, 0, 0, stringOffset + 14);
+    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState, width,
+         leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
+    put64(bytes, rootTypeOffset + 16, 0);
+    put64(bytes, nestedTypeOffset + 16, 0);
+    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed,
+         width, 0, 0, 0, 0, 0, stringOffset + 27);
+    put64(bytes, 88, 3);
+    setObjectWidth(width);
+    break;
+  }
+  case VPIShapeType::PackedStructOneBit:
+  case VPIShapeType::PackedUnionOneBit:
+  case VPIShapeType::UnpackedStruct:
+  case VPIShapeType::UnpackedUnion: {
+    const bool isUnion = shape == VPIShapeType::PackedUnionOneBit ||
+                         shape == VPIShapeType::UnpackedUnion;
+    const bool isPacked = shape == VPIShapeType::PackedStructOneBit ||
+                          shape == VPIShapeType::PackedUnionOneBit;
+    type(rootTypeOffset,
+         isUnion ? OBELISK_RT_DESIGN_TYPE_UNION : OBELISK_RT_DESIGN_TYPE_STRUCT,
+         fourState | (isPacked ? packed : 0), 1, 0, nestedTypeOffset, 1, 0, 0,
+         stringOffset + 14);
+    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_FIELD, fourState, 1,
+         leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
+    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
+         0, 0, 0, 0, 0, stringOffset + 27);
+    put64(bytes, 88, 3);
+    setObjectWidth(1);
+    break;
+  }
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 struct Fixture {
   std::vector<uint8_t> bytecode = makeBytecode();
   std::vector<uint8_t> database = makeDatabase();
@@ -4526,6 +4655,55 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
+  struct Case {
+    VPIShapeType shape;
+    uint32_t exactType;
+    bool scalar;
+    bool vector;
+  };
+  constexpr std::array<Case, 12> cases{{
+      {VPIShapeType::BasicScalar, vpiReg, true, false},
+      {VPIShapeType::BasicVector, vpiNet, false, true},
+      {VPIShapeType::BasicVector, vpiNetBit, true, false},
+      {VPIShapeType::BasicVector, vpiRegBit, true, false},
+      {VPIShapeType::PackedArrayOneBit, vpiPackedArrayVar, false, true},
+      {VPIShapeType::UnpackedArrayOfScalar, vpiRegArray, true, false},
+      {VPIShapeType::UnpackedArrayOfVector, vpiNetArray, false, true},
+      {VPIShapeType::PackedStructOneBit, vpiStructVar, false, true},
+      {VPIShapeType::PackedUnionOneBit, vpiUnionVar, false, true},
+      {VPIShapeType::UnpackedStruct, vpiStructVar, false, false},
+      {VPIShapeType::UnpackedUnion, vpiUnionVar, false, false},
+      {VPIShapeType::Real, vpiRealVar, false, false},
+  }};
+
+  for (const Case &testCase : cases) {
+    SCOPED_TRACE(static_cast<unsigned>(testCase.shape));
+    Fixture fixture;
+    fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+    char valueName[] = "top.value";
+    vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, value), testCase.exactType);
+    EXPECT_EQ(vpi_get(vpiScalar, value), testCase.scalar);
+    EXPECT_EQ(vpi_get(vpiVector, value), testCase.vector);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    EXPECT_EQ(vpi_release_handle(value), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 void installStatementDatabase(Fixture &fixture) {
