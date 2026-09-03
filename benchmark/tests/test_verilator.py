@@ -1065,6 +1065,12 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("parameter_value_assignment", excluded.reason)
         self.assertIn("#PAR and #10", excluded.reason)
 
+    def test_nonprocedural_assignment_expression_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_lint_assigneqexpr"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 11.3.6")
+        self.assertIn("not within a procedural statement", excluded.reason)
+        self.assertIn("continuous-assignment", excluded.reason)
+
     def test_literal_implicit_inout_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_generic2"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
