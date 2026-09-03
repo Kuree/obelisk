@@ -3224,6 +3224,18 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
       snapshot.element->value_size > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_DESIGN;
 
+  std::shared_ptr<const std::vector<uint64_t>> aggregatePattern;
+  if (snapshot.element->kind == OBELISK_RT_ELEMENT_AGGREGATE) {
+    obelisk_rt_context *context = obelisk_rt_managed_object_context(container);
+    if (!context)
+      return OBELISK_RT_INVALID_HANDLE;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto found =
+        context->managedOwnedElementTypes.find(snapshot.element->type_id);
+    if (found != context->managedOwnedElementTypes.end())
+      aggregatePattern = found->second->pattern;
+  }
+
   size_t valueSize = static_cast<size_t>(snapshot.element->value_size);
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
@@ -3280,6 +3292,68 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
       }
     }
     output.push_back('"');
+    return OBELISK_RT_OK;
+  };
+
+  auto appendFixedArrayPattern = [&]() -> obelisk_rt_status {
+    if (!aggregatePattern)
+      return OBELISK_RT_INVALID_DESIGN;
+    const std::vector<uint64_t> &plan = *aggregatePattern;
+    uint64_t dimensionCount = plan[1];
+    uint64_t leafFlags = plan[3];
+    size_t leafSize = static_cast<size_t>(plan[4]);
+    uint64_t leafWidth = plan[5];
+    struct Frame {
+      uint64_t dimension;
+      uint64_t index;
+      uint64_t base;
+      bool opened;
+    };
+    std::vector<Frame> stack;
+    OBELISK_RT_TRY {
+      stack.reserve(static_cast<size_t>(dimensionCount));
+      stack.push_back({0, 0, 0, false});
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    while (!stack.empty()) {
+      Frame &frame = stack.back();
+      uint64_t record =
+          OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS + frame.dimension * 2;
+      uint64_t extent = plan[record];
+      uint64_t stride = plan[record + 1];
+      if (!frame.opened) {
+        output += "'{";
+        frame.opened = true;
+      }
+      if (frame.index == extent) {
+        output.push_back('}');
+        stack.pop_back();
+        continue;
+      }
+      if (frame.index != 0)
+        output += ", ";
+      uint64_t offset = frame.base + frame.index * stride;
+      ++frame.index;
+      if (frame.dimension + 1 != dimensionCount) {
+        uint64_t childDimension = frame.dimension + 1;
+        OBELISK_RT_TRY { stack.push_back({childDimension, 0, offset, false}); }
+        OBELISK_RT_CATCH(const std::bad_alloc &) {
+          return OBELISK_RT_OUT_OF_MEMORY;
+        }
+        continue;
+      }
+      std::fill(valueWords.begin(), valueWords.end(), 0);
+      std::fill(unknownWords.begin(), unknownWords.end(), 0);
+      std::memcpy(valueWords.data(), value.data() + offset, leafSize);
+      if ((leafFlags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0)
+        std::memcpy(unknownWords.data(), unknown.data() + offset, leafSize);
+      output += obelisk_rt_pattern_integer_text(
+          leafWidth, (leafFlags & OBELISK_RT_ELEMENT_SIGNED) != 0,
+          valueWords.data(),
+          unknownWords.empty() ? nullptr : unknownWords.data());
+    }
     return OBELISK_RT_OK;
   };
 
@@ -3502,12 +3576,18 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
       break;
     }
     case OBELISK_RT_ELEMENT_AGGREGATE:
-      output += "'h";
-      for (size_t position = value.size(); position != 0; --position) {
-        static constexpr char digits[] = "0123456789abcdef";
-        uint8_t byte = value[position - 1];
-        output.push_back(digits[byte >> 4]);
-        output.push_back(digits[byte & 15]);
+      if (aggregatePattern) {
+        status = appendFixedArrayPattern();
+        if (status != OBELISK_RT_OK)
+          return status;
+      } else {
+        output += "'h";
+        for (size_t position = value.size(); position != 0; --position) {
+          static constexpr char digits[] = "0123456789abcdef";
+          uint8_t byte = value[position - 1];
+          output.push_back(digits[byte >> 4]);
+          output.push_back(digits[byte & 15]);
+        }
       }
       break;
     default:
@@ -3570,13 +3650,76 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_like(
                              selected.bound, outContainer);
 }
 
+static uint64_t readContainerPatternWord(const uint8_t *bytes,
+                                         uint64_t wordIndex) {
+  uint64_t value = 0;
+  for (uint64_t byte = 0; byte != sizeof(uint64_t); ++byte)
+    value |= uint64_t{bytes[wordIndex * sizeof(uint64_t) + byte]} << (byte * 8);
+  return value;
+}
+
+static bool validateContainerPatternPlan(uint32_t elementKind,
+                                         uint32_t elementFlags,
+                                         uint64_t valueSize,
+                                         const uint8_t *bytes,
+                                         uint64_t byteCount) {
+  if (byteCount == 0)
+    return bytes == nullptr;
+  if (!bytes || byteCount % sizeof(uint64_t) != 0)
+    return false;
+  uint64_t wordCount = byteCount / sizeof(uint64_t);
+  uint64_t dimensionCount = wordCount > 1
+                                ? readContainerPatternWord(bytes, 1)
+                                : std::numeric_limits<uint64_t>::max();
+  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE ||
+      wordCount < OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS ||
+      readContainerPatternWord(bytes, 0) !=
+          OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION ||
+      dimensionCount == 0 ||
+      dimensionCount >
+          (UINT64_MAX - OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS) / 2 ||
+      wordCount !=
+          OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS + dimensionCount * 2)
+    return false;
+  uint64_t leafKind = readContainerPatternWord(bytes, 2);
+  uint64_t leafFlags = readContainerPatternWord(bytes, 3);
+  uint64_t leafSize = readContainerPatternWord(bytes, 4);
+  uint64_t leafWidth = readContainerPatternWord(bytes, 5);
+  if ((leafKind != OBELISK_RT_ELEMENT_BITS &&
+       leafKind != OBELISK_RT_ELEMENT_LOGIC) ||
+      (leafFlags &
+       ~(OBELISK_RT_ELEMENT_FOUR_STATE | OBELISK_RT_ELEMENT_SIGNED)) != 0 ||
+      leafSize == 0 || leafWidth == 0 || leafSize > UINT64_MAX / 8 ||
+      leafWidth > leafSize * 8 ||
+      ((leafKind == OBELISK_RT_ELEMENT_LOGIC) !=
+       ((leafFlags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0)) ||
+      (((leafFlags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0) !=
+       ((elementFlags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0)))
+    return false;
+  uint64_t span = leafSize;
+  for (uint64_t dimension = dimensionCount; dimension != 0; --dimension) {
+    uint64_t index =
+        OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS + (dimension - 1) * 2;
+    uint64_t extent = readContainerPatternWord(bytes, index);
+    uint64_t stride = readContainerPatternWord(bytes, index + 1);
+    if (extent == 0 || stride == 0 || span > stride ||
+        extent - 1 > (UINT64_MAX - span) / stride)
+      return false;
+    span += (extent - 1) * stride;
+  }
+  return span <= valueSize;
+}
+
 static obelisk_rt_status internElementType(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,
     uint64_t bitWidth, const obelisk_rt_element_trace_slot_v1 *traceSlots,
-    uint64_t traceSlotCount, const obelisk_rt_element_type_v1 **outElement) {
+    uint64_t traceSlotCount, const uint8_t *patternBytes,
+    uint64_t patternByteCount, const obelisk_rt_element_type_v1 **outElement) {
   if (!lane || !outElement || typeID == 0 ||
       (traceSlotCount != 0 && !traceSlots) ||
+      !validateContainerPatternPlan(elementKind, elementFlags, valueSize,
+                                    patternBytes, patternByteCount) ||
       traceSlotCount >
           std::numeric_limits<size_t>::max() - (elementKind != 0 ? 1 : 0))
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -3639,6 +3782,14 @@ static obelisk_rt_status internElementType(
   if (obelisk_rt_v1_element_type_validate(&owned->descriptor) != OBELISK_RT_OK)
     return OBELISK_RT_INVALID_ARGUMENT;
 
+  uint64_t patternWordCount = patternByteCount / sizeof(uint64_t);
+  auto decodePattern = [&]() {
+    auto decoded = std::make_shared<std::vector<uint64_t>>(patternWordCount);
+    for (uint64_t word = 0; word != patternWordCount; ++word)
+      (*decoded)[word] = readContainerPatternWord(patternBytes, word);
+    return std::shared_ptr<const std::vector<uint64_t>>(std::move(decoded));
+  };
+
   obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
   const obelisk_rt_element_type_v1 *element = nullptr;
   OBELISK_RT_TRY {
@@ -3649,8 +3800,25 @@ static obelisk_rt_status internElementType(
           obelisk_rt_v1_element_type_register(context, &owned->descriptor);
       if (status != OBELISK_RT_OK)
         return status;
+      auto existing = context->managedOwnedElementTypes.find(typeID);
+      if (patternByteCount != 0) {
+        if (existing == context->managedOwnedElementTypes.end())
+          return OBELISK_RT_INVALID_DESIGN;
+        if (!existing->second->pattern)
+          existing->second->pattern = decodePattern();
+        else {
+          if (existing->second->pattern->size() != patternWordCount)
+            return OBELISK_RT_INVALID_DESIGN;
+          for (uint64_t word = 0; word != patternWordCount; ++word)
+            if ((*existing->second->pattern)[word] !=
+                readContainerPatternWord(patternBytes, word))
+              return OBELISK_RT_INVALID_DESIGN;
+        }
+      }
       element = found->second;
     } else {
+      if (patternByteCount != 0)
+        owned->pattern = decodePattern();
       auto [stored, inserted] = context->managedOwnedElementTypes.try_emplace(
           typeID, std::move(owned));
       if (!inserted)
@@ -3689,7 +3857,35 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed(
   const obelisk_rt_element_type_v1 *element = nullptr;
   obelisk_rt_status status = internElementType(
       lane, typeID, elementKind, elementFlags, valueSize, alignment, bitWidth,
-      traceSlots, traceSlotCount, &element);
+      traceSlots, traceSlotCount, nullptr, 0, &element);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return initializeContainer(
+      lane, static_cast<obelisk_rt_container_kind_v1>(containerKind), element,
+      containerKind == OBELISK_RT_CONTAINER_QUEUE ? 0 : size, bound,
+      outContainer);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed_pattern(
+    obelisk_rt_gc_lane_v1 *lane, uint32_t containerKind, uint64_t typeID,
+    uint32_t elementKind, uint32_t elementFlags, uint64_t valueSize,
+    uint64_t alignment, uint64_t bitWidth,
+    const obelisk_rt_element_trace_slot_v1 *traceSlots, uint64_t traceSlotCount,
+    const uint8_t *patternBytes, uint64_t patternByteCount, uint64_t size,
+    uint64_t bound, obelisk_rt_object_v1 **outContainer) {
+  if (!lane || !outContainer)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outContainer = nullptr;
+  if (containerKind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+      containerKind != OBELISK_RT_CONTAINER_QUEUE)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+      size > uint64_t{INT64_MAX})
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  obelisk_rt_status status = internElementType(
+      lane, typeID, elementKind, elementFlags, valueSize, alignment, bitWidth,
+      traceSlots, traceSlotCount, patternBytes, patternByteCount, &element);
   if (status != OBELISK_RT_OK)
     return status;
   return initializeContainer(
@@ -6257,7 +6453,7 @@ obelisk_rt_v1_reference_path_aggregate_element_create(
   const obelisk_rt_element_type_v1 *element = nullptr;
   obelisk_rt_status status = internElementType(
       lane, typeID, elementKind, elementFlags, valueSize, alignment, bitWidth,
-      traceSlots, traceSlotCount, &element);
+      traceSlots, traceSlotCount, nullptr, 0, &element);
   if (status != OBELISK_RT_OK)
     return status;
   *outPath = nullptr;

@@ -520,6 +520,11 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
        managedI64, managedI64, managedI64, managedPointer, managedI64,
        managedI64, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_container_create_typed_pattern", managedI32,
+      {managedPointer, managedI32, managedI64, managedI32, managedI32,
+       managedI64, managedI64, managedI64, managedPointer, managedI64,
+       managedPointer, managedI64, managedI64, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_create_typed",
                            managedI32,
                            {managedPointer, managedI64, managedI32, managedI32,

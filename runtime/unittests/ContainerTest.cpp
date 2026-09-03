@@ -459,6 +459,63 @@ TEST_F(ManagedValueTest, CreatesTypedContainersAndFormatsPatterns) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+TEST_F(ManagedValueTest, FormatsFixedArrayElementsAsNestedPatterns) {
+  constexpr std::array<uint64_t, 8> words{
+      OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION,
+      1,
+      OBELISK_RT_ELEMENT_BITS,
+      0,
+      sizeof(uint32_t),
+      32,
+      2,
+      sizeof(uint32_t),
+  };
+  auto writeWord = [](uint8_t *bytes, size_t index, uint64_t word) {
+    for (size_t byte = 0; byte != sizeof(word); ++byte)
+      bytes[index * sizeof(word) + byte] =
+          static_cast<uint8_t>(word >> (byte * 8));
+  };
+  // Offset the plan by one byte to exercise the byte-oriented ABI's explicit
+  // support for metadata globals that do not have native integer alignment.
+  std::array<uint8_t, sizeof(words) + 1> patternStorage{};
+  uint8_t *pattern = patternStorage.data() + 1;
+  for (size_t index = 0; index != words.size(); ++index)
+    writeWord(pattern, index, words[index]);
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed_pattern(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 779,
+                OBELISK_RT_ELEMENT_AGGREGATE, 0, 2 * sizeof(uint32_t), 1, 64,
+                nullptr, 0, pattern, sizeof(words), 1, 0, &array),
+            OBELISK_RT_OK);
+  std::array<uint32_t, 2> value{1, 2};
+  ASSERT_EQ(
+      obelisk_rt_v1_container_write(lane, array, 0, value.data(), nullptr),
+      OBELISK_RT_OK);
+
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array,
+                             nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, &environment,
+                                 &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "'{'{1, 2}}");
+  obelisk_rt_v1_buffer_release(&output);
+
+  std::array<uint8_t, sizeof(words) + 1> invalidStorage = patternStorage;
+  uint8_t *invalid = invalidStorage.data() + 1;
+  writeWord(invalid, 7, 1);
+  obelisk_rt_object_v1 *rejected = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_container_create_typed_pattern(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 780,
+                OBELISK_RT_ELEMENT_AGGREGATE, 0, 2 * sizeof(uint32_t), 1, 64,
+                nullptr, 0, invalid, sizeof(words), 1, 0, &rejected),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(ManagedValueTest, SeededBoundedRandomIsRepeatableAndBounded) {
   std::vector<uint64_t> first;
   std::vector<uint64_t> second;

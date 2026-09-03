@@ -308,6 +308,9 @@ typedef struct obelisk_rt_element_type_v1 {
   const obelisk_rt_trace_layout_v1 *trace;
 } obelisk_rt_element_type_v1;
 
+#define OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION UINT64_C(1)
+#define OBELISK_RT_CONTAINER_PATTERN_PLAN_HEADER_WORDS UINT64_C(6)
+
 // Registered descriptors and every trace-layout object reachable from them
 // are immutable and must remain alive until their context is destroyed.
 
@@ -2587,6 +2590,17 @@ obelisk_rt_status obelisk_rt_v1_container_create_typed(
     uint64_t alignment, uint64_t bit_width,
     const obelisk_rt_element_trace_slot_v1 *trace_slots,
     uint64_t trace_slot_count, uint64_t size, uint64_t bound,
+    obelisk_rt_object_v1 **out_container);
+// Extended typed creation used when a fixed unpacked aggregate element needs
+// explicit assignment-pattern shape. pattern_bytes is a versioned sequence of
+// little-endian 64-bit words; the runtime copies it while interning the type.
+obelisk_rt_status obelisk_rt_v1_container_create_typed_pattern(
+    obelisk_rt_gc_lane_v1 *lane, uint32_t container_kind, uint64_t type_id,
+    uint32_t element_kind, uint32_t element_flags, uint64_t value_size,
+    uint64_t alignment, uint64_t bit_width,
+    const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t trace_slot_count, const uint8_t *pattern_bytes,
+    uint64_t pattern_byte_count, uint64_t size, uint64_t bound,
     obelisk_rt_object_v1 **out_container);
 obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t type_id, uint32_t element_kind,

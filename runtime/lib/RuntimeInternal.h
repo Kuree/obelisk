@@ -198,6 +198,7 @@ struct OwnedElementTypeDescriptor {
   obelisk_rt_element_type_v1 descriptor{};
   obelisk_rt_trace_layout_v1 trace{};
   std::vector<obelisk_rt_trace_entry_v1> entries;
+  std::shared_ptr<const std::vector<uint64_t>> pattern;
 };
 
 // Append an IEEE-style recursive assignment-pattern representation of a

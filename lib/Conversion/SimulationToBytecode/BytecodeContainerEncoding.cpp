@@ -38,17 +38,30 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
       append32(traceSlots, static_cast<uint32_t>(kind));
       append32(traceSlots, 0);
     }
-    return emitIntrinsicRegisters(plan, kIntrinsicContainerCreate,
-                                  {emitU64Constant(plan, op.getContainerKind()),
-                                   emitU64Constant(plan, op.getTypeId()),
-                                   emitU64Constant(plan, op.getElementKind()),
-                                   emitU64Constant(plan, op.getElementFlags()),
-                                   emitU64Constant(plan, op.getValueSize()),
-                                   emitU64Constant(plan, op.getAlignment()),
-                                   emitU64Constant(plan, op.getBitWidth()),
-                                   emitBytesConstant(plan, traceSlots),
-                                   reg(plan, op.getSize()),
-                                   emitU64Constant(plan, op.getBound())},
+    std::optional<SmallVector<uint64_t>> patternPlan =
+        sim::getFixedArrayPatternPlan(
+            sim::getContainerElement(op.getResult().getType()));
+    if (!patternPlan)
+      return op.emitOpError("container pattern has no stable layout");
+    SmallVector<uint32_t, 11> inputs{
+        emitU64Constant(plan, op.getContainerKind()),
+        emitU64Constant(plan, op.getTypeId()),
+        emitU64Constant(plan, op.getElementKind()),
+        emitU64Constant(plan, op.getElementFlags()),
+        emitU64Constant(plan, op.getValueSize()),
+        emitU64Constant(plan, op.getAlignment()),
+        emitU64Constant(plan, op.getBitWidth()),
+        emitBytesConstant(plan, traceSlots)};
+    if (!patternPlan->empty()) {
+      SmallVector<uint8_t> pattern;
+      pattern.reserve(patternPlan->size() * sizeof(uint64_t));
+      for (uint64_t word : *patternPlan)
+        append64(pattern, word);
+      inputs.push_back(emitBytesConstant(plan, pattern));
+    }
+    inputs.push_back(reg(plan, op.getSize()));
+    inputs.push_back(emitU64Constant(plan, op.getBound()));
+    return emitIntrinsicRegisters(plan, kIntrinsicContainerCreate, inputs,
                                   {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimContainerCloneOp>(operation))

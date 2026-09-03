@@ -460,6 +460,70 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamImportPlan(Type type) {
   return getFixedBitStreamPlanImpl(type, true, false);
 }
 
+std::optional<SmallVector<uint64_t>> getFixedArrayPatternPlan(Type type) {
+  SmallVector<std::pair<uint64_t, uint64_t>, 4> dimensions;
+  Type leaf = type;
+  while (auto array = dyn_cast<UnpackedArrayType>(leaf)) {
+    uint64_t count = getAggregateNumElements(array);
+    if (count == 0)
+      return std::nullopt;
+    Type child = array.getElementType();
+    std::optional<uint64_t> span = getElementStorageSpan(child);
+    std::optional<uint64_t> alignment = getProvenanceAlignment(child);
+    if (!span || !alignment || *alignment == 0 ||
+        *span > std::numeric_limits<uint64_t>::max() - (*alignment - 1))
+      return std::nullopt;
+    uint64_t strideBits = (*span + *alignment - 1) & ~(*alignment - 1);
+    if ((strideBits & 7) != 0)
+      return std::nullopt;
+    dimensions.emplace_back(count, strideBits / 8);
+    leaf = child;
+  }
+  if (dimensions.empty())
+    return SmallVector<uint64_t>{};
+
+  uint32_t kind = 0;
+  uint32_t flags = 0;
+  uint64_t valueSize = 0;
+  uint64_t bitWidth = 0;
+  if (auto integer = dyn_cast<IntegerType>(leaf)) {
+    kind = OBELISK_RT_ELEMENT_BITS;
+    flags = integer.isSigned() ? OBELISK_RT_ELEMENT_SIGNED : 0;
+    valueSize = (integer.getWidth() + 7) / 8;
+    bitWidth = integer.getWidth();
+  } else if (auto logic = dyn_cast<LogicType>(leaf)) {
+    kind = OBELISK_RT_ELEMENT_LOGIC;
+    flags = OBELISK_RT_ELEMENT_FOUR_STATE;
+    valueSize = (logic.getWidth() + 7) / 8;
+    bitWidth = logic.getWidth();
+  } else if (Type scalar = getPackedScalarType(leaf)) {
+    std::optional<unsigned> width = getPackedWidth(leaf);
+    if (!width || *width == 0)
+      return std::nullopt;
+    bool fourState = isa<LogicType>(scalar);
+    kind = fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
+    flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
+    valueSize = (*width + 7) / 8;
+    bitWidth = *width;
+  } else {
+    // Other aggregate leaves need richer per-leaf metadata. Keep their
+    // established representation until such a complete plan is available.
+    return SmallVector<uint64_t>{};
+  }
+
+  SmallVector<uint64_t> plan{OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION,
+                             dimensions.size(),
+                             kind,
+                             flags,
+                             valueSize,
+                             bitWidth};
+  for (auto [count, stride] : dimensions) {
+    plan.push_back(count);
+    plan.push_back(stride);
+  }
+  return plan;
+}
+
 std::optional<SmallVector<uint64_t>> getDPIAggregateBitStreamPlan(Type type) {
   return getFixedBitStreamPlanImpl(type, false, true);
 }

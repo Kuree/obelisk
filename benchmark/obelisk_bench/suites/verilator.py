@@ -1264,6 +1264,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_display_time": PARTIAL_TIMEFORMAT_ARGUMENTS,
     "t_gen_genblk": DECIMAL_FIELD_ZERO_PADDING,
     "t_dynarray": PATTERN_RADIX,
+    "t_dynarray_concat": PATTERN_RADIX,
     "t_dynarray_method": PATTERN_RADIX,
     "t_stream_bitqueue": PATTERN_RADIX,
     "t_stream_crc_example": PATTERN_RADIX,

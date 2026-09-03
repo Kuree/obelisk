@@ -123,17 +123,45 @@ public:
       traceSlots =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
+    auto patternName =
+        op->getAttrOfType<StringAttr>(nativeContainerPatternPlanGlobalAttr);
+    auto patternSize =
+        op->getAttrOfType<IntegerAttr>(nativeContainerPatternPlanSizeAttr);
+    if (static_cast<bool>(patternName) != static_cast<bool>(patternSize))
+      return failure();
+    Value pattern;
+    if (patternName) {
+      if (patternSize.getValue().getActiveBits() > 64 ||
+          patternSize.getValue().getZExtValue() == 0)
+        return failure();
+      pattern = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                          patternName.getValue());
+    }
+    SmallVector<Value> arguments{lane,
+                                 c32(op.getContainerKind()),
+                                 c64(op.getTypeId()),
+                                 c32(op.getElementKind()),
+                                 c32(op.getElementFlags()),
+                                 c64(op.getValueSize()),
+                                 c64(op.getAlignment()),
+                                 c64(op.getBitWidth()),
+                                 traceSlots,
+                                 c64(traceOffsets.size())};
+    if (patternName) {
+      arguments.push_back(pattern);
+      arguments.push_back(c64(patternSize.getValue().getZExtValue()));
+    }
+    arguments.push_back(adaptor.getSize().front());
+    arguments.push_back(c64(op.getBound()));
+    arguments.push_back(output);
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_create_typed"),
-            ValueRange{lane, c32(op.getContainerKind()), c64(op.getTypeId()),
-                       c32(op.getElementKind()), c32(op.getElementFlags()),
-                       c64(op.getValueSize()), c64(op.getAlignment()),
-                       c64(op.getBitWidth()), traceSlots,
-                       c64(traceOffsets.size()), adaptor.getSize().front(),
-                       c64(op.getBound()), output})
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                patternName ? "obelisk_rt_v1_container_create_typed_pattern"
+                            : "obelisk_rt_v1_container_create_typed"),
+            arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value result =

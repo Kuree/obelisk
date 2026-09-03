@@ -450,11 +450,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         unknown ? storagePlaneSize : 0);
   }
   case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE: {
+    bool hasPattern = site.inputCount == 11;
+    if (!hasPattern && site.inputCount != 10)
+      return OBELISK_RT_INVALID_BYTECODE;
     std::array<std::optional<uint64_t>, 9> inputs;
     for (uint32_t index = 0; index != 7; ++index)
       inputs[index] = scalar(index);
-    inputs[7] = scalar(8);
-    inputs[8] = scalar(9);
+    inputs[7] = scalar(hasPattern ? 9 : 8);
+    inputs[8] = scalar(hasPattern ? 10 : 9);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
       return OBELISK_RT_INVALID_BYTECODE;
@@ -466,15 +469,31 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
     if (!traceSlots.empty())
       std::memcpy(traceSlots.data(), trace->data, trace->size);
+    std::optional<ByteSpan> pattern;
+    if (hasPattern) {
+      pattern = readByteSpan(image, frame, inputRegister(8));
+      if (!pattern || pattern->size % sizeof(uint64_t) != 0)
+        return OBELISK_RT_INVALID_BYTECODE;
+    }
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
     obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_container_create_typed(
-        lane, static_cast<uint32_t>(*inputs[0]), *inputs[1],
-        static_cast<uint32_t>(*inputs[2]), static_cast<uint32_t>(*inputs[3]),
-        *inputs[4], *inputs[5], *inputs[6], traceSlots.data(),
-        traceSlots.size(), *inputs[7], *inputs[8], &result);
+    obelisk_rt_status status =
+        hasPattern
+            ? obelisk_rt_v1_container_create_typed_pattern(
+                  lane, static_cast<uint32_t>(*inputs[0]), *inputs[1],
+                  static_cast<uint32_t>(*inputs[2]),
+                  static_cast<uint32_t>(*inputs[3]), *inputs[4], *inputs[5],
+                  *inputs[6], traceSlots.data(), traceSlots.size(),
+                  pattern->size == 0 ? nullptr : pattern->data, pattern->size,
+                  *inputs[7], *inputs[8], &result)
+            : obelisk_rt_v1_container_create_typed(
+                  lane, static_cast<uint32_t>(*inputs[0]), *inputs[1],
+                  static_cast<uint32_t>(*inputs[2]),
+                  static_cast<uint32_t>(*inputs[3]), *inputs[4], *inputs[5],
+                  *inputs[6], traceSlots.data(), traceSlots.size(), *inputs[7],
+                  *inputs[8], &result);
     return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;

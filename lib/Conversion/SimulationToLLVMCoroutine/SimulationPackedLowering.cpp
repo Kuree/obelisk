@@ -138,6 +138,15 @@ std::string encodeBitstreamPlan(ArrayRef<int64_t> plan) {
   return bytes;
 }
 
+std::string encodeUnsignedPlan(ArrayRef<uint64_t> plan) {
+  std::string bytes;
+  bytes.reserve(plan.size() * sizeof(uint64_t));
+  for (uint64_t word : plan)
+    for (unsigned index = 0; index != sizeof(word); ++index)
+      bytes.push_back(static_cast<char>(word >> (index * 8)));
+  return bytes;
+}
+
 void fuseWideManagedBitStores(ModuleOp module) {
   SmallVector<sim::SimManagedStoreOp> stores;
   module.walk([&](sim::SimManagedStoreOp store) { stores.push_back(store); });
@@ -486,6 +495,25 @@ LogicalResult lowerPackedSimulationOperations(
                               create.getTypeId(), create.getTraceOffsets(),
                               create.getTraceKinds())))
         return WalkResult::interrupt();
+      Type element = sim::getContainerElement(create.getResult().getType());
+      std::optional<SmallVector<uint64_t>> plan =
+          sim::getFixedArrayPatternPlan(element);
+      if (!plan) {
+        create.emitOpError("container pattern has no stable layout");
+        return WalkResult::interrupt();
+      }
+      if (!plan->empty()) {
+        std::string name =
+            "__obelisk_element_pattern_" + std::to_string(create.getTypeId());
+        operation->setAttr(nativeContainerPatternPlanGlobalAttr,
+                           StringAttr::get(context, name));
+        std::string bytes = encodeUnsignedPlan(*plan);
+        operation->setAttr(
+            nativeContainerPatternPlanSizeAttr,
+            IntegerAttr::get(IntegerType::get(context, 64), bytes.size()));
+        if (failed(reserveByteGlobal(create.getLoc(), name, bytes)))
+          return WalkResult::interrupt();
+      }
       return WalkResult::advance();
     }
     if (isa<sim::SimContainerExportBitstreamOp>(operation)) {

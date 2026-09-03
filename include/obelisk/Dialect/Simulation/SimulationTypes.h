@@ -75,6 +75,12 @@ getFixedBitStreamPlan(::mlir::Type type);
 std::optional<::llvm::SmallVector<uint64_t>>
 getFixedBitStreamImportPlan(::mlir::Type type);
 
+/// Build explicit formatting metadata for a fixed unpacked-array element.
+/// The plan records every array extent and byte stride plus the singular leaf
+/// representation; an empty plan means the type is not such an array.
+std::optional<::llvm::SmallVector<uint64_t>>
+getFixedArrayPatternPlan(::mlir::Type type);
+
 /// Build equivalent plans against structural provenance storage. These are
 /// reserved for DPI aggregate marshalling, where naturally aligned managed
 /// handles and padding must not change language bit-stream cast semantics.

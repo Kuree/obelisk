@@ -1266,6 +1266,8 @@ class ExcludedTest(unittest.TestCase):
     def test_elaboration_pattern_radix_is_not_a_compiler_failure(self):
         self.assertIs(verilator.EXCLUDED["t_display_p_elab"],
                       verilator.PATTERN_RADIX)
+        self.assertIs(verilator.EXCLUDED["t_dynarray_concat"],
+                      verilator.PATTERN_RADIX)
 
     def test_partial_timeformat_arguments_are_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_display_time"]
