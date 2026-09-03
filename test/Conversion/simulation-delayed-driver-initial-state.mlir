@@ -1,9 +1,10 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
 
-// IEEE 1800-2017 4.9.1, 10.3.3, 28.16, and 30.5: time-zero evaluation of an
-// inertial driver schedules its first propagated value after the selected
-// delay. Its contribution is X before that update, including module paths.
+// IEEE 1800-2017 4.9.1, 6.7.1, 10.3.3, and 30.5: a net and an ordinary
+// continuous-assignment contribution start at Z while the time-zero
+// evaluation schedules its first propagated value. Module paths instead use
+// X as the initial transition source for path-delay selection.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -120,17 +121,17 @@ module attributes {
   }
 }
 
-// Each net starts at Z and every delayed driver starts at X. Thus every
-// four-state slot has its unknown plane set, while only the nets have their
-// value plane set.
+// Each net and ordinary delayed driver starts at Z. Module-path delayed
+// drivers start at X. Every four-state slot therefore has its unknown plane
+// set, while the value plane distinguishes Z from X.
 // NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\01\01\01\01\01\01\00\00\00\00\00\00\00\00")
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\00\00\01\00\00\01\00\00\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\01\00\01\01\01\01\00\00\00\00\00\00\00\00\00\00")
 
-// Bit 14 records initial X on every delayed-driver descriptor, including both
-// strength banks.
-// BYTECODE: state 7: kind=driver flags=17337 value=8 target=0 width=1
+// Bit 14 records initial X only on module-path driver descriptors, including
+// both strength banks.
+// BYTECODE: state 7: kind=driver flags=953 value=8 target=0 width=1
 // BYTECODE: state 8: kind=driver flags=17337 value=16 target=0 width=1
-// BYTECODE: state 9: kind=driver flags=16569 value=32 target=24 width=1
-// BYTECODE: state 10: kind=driver flags=19337 value=40 target=24 width=1
+// BYTECODE: state 9: kind=driver flags=185 value=32 target=24 width=1
+// BYTECODE: state 10: kind=driver flags=2953 value=40 target=24 width=1
 // BYTECODE: state 11: kind=driver flags=16569 value=56 target=48 width=1
 // BYTECODE: state 12: kind=driver flags=19337 value=64 target=48 width=1
