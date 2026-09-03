@@ -7274,6 +7274,35 @@ TEST(Scheduler, InertialVectorDriversRejectPulsesAndKeepStableDeadlines) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, InertialVectorInitialHighZToZeroUsesFallDelay) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+
+  // IEEE 1800-2017 10.3.3: the initial Z-to-zero vector transition uses the
+  // falling delay, not the rising delay.
+  context->stateValue[0] = 0xf;
+  context->stateUnknown[0] = 0xf;
+  uint8_t zero = 0;
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint32_t flags = OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                   OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_driver(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 4,
+                handle, 4, 24, 10, flags, 5, 3, 5, &zero, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 1u);
+  EXPECT_EQ(context->scheduledNBAs.front().dueTime, 3u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, InertialDriversAcceptGeneratedSchedulePlanes) {
   // IEEE 1800-2017 10.3.3: a delayed continuous assignment drives its net
   // through the inertial driver. A generated schedule owns its state planes
