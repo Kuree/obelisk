@@ -802,66 +802,32 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   const auto *edge = obelisk::reflection::findVPITraversal(
       sourceType, static_cast<uint32_t>(type),
       obelisk::reflection::VPITraversalMode::Handle);
-  if (!handle->statement && edge &&
-      edge->automaticRelation ==
-          obelisk::reflection::VPIAutomaticRelation::ParentScope) {
+  if (edge && edge->automaticRelation ==
+                  obelisk::reflection::VPIAutomaticRelation::ParentScope) {
     obelisk_rt_design_cursor_v1 parent{};
     uint32_t parentType = 0;
-    if (obelisk_rt_cached_design_parent(handle->owner->context, handle->cursor,
-                                        &parent) != OBELISK_RT_OK ||
+    bool parentIsStatement = false;
+    obelisk_rt_status parentStatus =
+        handle->statement
+            ? obelisk_rt_cached_vpi_statement_enclosing_scope(
+                  handle->owner->context, handle->cursor, &parent,
+                  &parentIsStatement)
+            : obelisk_rt_cached_design_parent(handle->owner->context,
+                                              handle->cursor, &parent);
+    if (parentStatus != OBELISK_RT_OK ||
         obelisk_rt_cached_vpi_type(handle->owner->context, parent,
                                    &parentType) != OBELISK_RT_OK ||
         !obelisk::reflection::vpiObjectSetContains(edge->targets, parentType))
       return nullptr;
-    return makeHandle(handle->owner, parent, parentType);
+    return makeHandle(handle->owner, parent, parentType, parentIsStatement);
   }
+  // Generated traversal legality is authoritative for statement objects.
+  // Helper/container statement kinds deliberately have no vpiScope edge and
+  // must not fall through to the name-based hierarchy compatibility path.
+  if (handle->statement)
+    return nullptr;
   if (type != vpiScope)
     return nullptr;
-  if (handle->statement) {
-    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
-    while (true) {
-      obelisk_rt_design_cursor_v1 parent{};
-      obelisk_rt_status status = obelisk_rt_cached_vpi_statement_parent(
-          handle->owner->context, cursor, &parent);
-      if (status == OBELISK_RT_EOF)
-        break;
-      if (status != OBELISK_RT_OK)
-        return nullptr;
-      bool parentIsScope = false;
-      if (obelisk_rt_cached_vpi_statement_is_scope(
-              handle->owner->context, parent, &parentIsScope) != OBELISK_RT_OK)
-        return nullptr;
-      if (parentIsScope) {
-        uint32_t parentType = 0;
-        if (obelisk_rt_cached_vpi_type(handle->owner->context, parent,
-                                       &parentType) != OBELISK_RT_OK)
-          return nullptr;
-        return makeHandle(handle->owner, parent, parentType, true);
-      }
-      cursor = parent;
-    }
-    obelisk_rt_design_cursor_v1 owner{};
-    obelisk_rt_status ownerStatus = obelisk_rt_cached_vpi_statement_owner(
-        handle->owner->context, handle->cursor, &owner);
-    if (ownerStatus == OBELISK_RT_OK) {
-      uint32_t ownerType = 0;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, owner,
-                                     &ownerType) != OBELISK_RT_OK)
-        return nullptr;
-      const auto *kind = obelisk::reflection::findVPIObjectKind(ownerType);
-      if (kind && (kind->families &
-                   obelisk::reflection::vpiFamilyMask(
-                       obelisk::reflection::VPIObjectFamily::Scope)) != 0)
-        return makeHandle(handle->owner, owner, ownerType);
-    } else if (ownerStatus != OBELISK_RT_EOF) {
-      return nullptr;
-    }
-    obelisk_rt_design_cursor_v1 scope{};
-    return obelisk_rt_cached_vpi_statement_scope(
-               handle->owner->context, handle->cursor, &scope) == OBELISK_RT_OK
-               ? makeHandle(handle->owner, scope)
-               : nullptr;
-  }
   std::string fullName;
   if (!nameFor(handle, fullName))
     return nullptr;

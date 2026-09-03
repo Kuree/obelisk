@@ -489,6 +489,44 @@ SmallVector<uint8_t> serializeDesignDatabase(
               vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
         return {};
     }
+    for (auto [sourceIndex, entry] : llvm::enumerate(statements)) {
+      sim::SimStatementDeclOp statement = entry.declaration;
+      TableKind targetTable = TableKind::Scope;
+      uint32_t targetIndex = scopeIndices.lookup(statement.getScopeId());
+      uint32_t targetKind = vpiKindForScope(scopes[targetIndex]);
+
+      for (std::optional<uint64_t> parentID = statement.getParentId();
+           parentID;) {
+        uint32_t parentIndex = statementIndices.lookup(*parentID);
+        sim::SimStatementDeclOp parent = statements[parentIndex].declaration;
+        if (parent.getIsScope()) {
+          targetTable = TableKind::Statement;
+          targetIndex = parentIndex;
+          targetKind = static_cast<uint32_t>(parent.getVpiKind());
+          break;
+        }
+        parentID = parent.getParentId();
+      }
+
+      if (targetTable == TableKind::Scope)
+        if (auto ownerID = statement.getCodeUnitId()) {
+          uint32_t ownerIndex = codeUnitObjectIndices.lookup(*ownerID);
+          uint32_t ownerKind = objects[ownerIndex].vpiKind;
+          const auto *ownerDescriptor = findVPIObjectKind(ownerKind);
+          if (ownerDescriptor && (ownerDescriptor->families &
+                                  vpiFamilyMask(VPIObjectFamily::Scope)) != 0) {
+            targetTable = TableKind::Object;
+            targetIndex = ownerIndex;
+            targetKind = ownerKind;
+          }
+        }
+
+      if (failed(addAutomaticRelation(
+              TableKind::Statement, static_cast<uint32_t>(sourceIndex),
+              static_cast<uint32_t>(statement.getVpiKind()), targetTable,
+              targetIndex, targetKind, VPIAutomaticRelation::ParentScope)))
+        return {};
+    }
   }
 
   for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {

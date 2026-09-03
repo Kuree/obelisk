@@ -57,13 +57,15 @@ identifies its exact elaborated scope. Behavioral statements also name their
 owning process/function object; scope-owned continuous assignments and alias
 statements use the absent-owner sentinel. Lexical statement nesting uses the
 parent-statement index. Per-design VPI relation edges (such as `vpiStmt`,
-`vpiElseStmt`, and ordered case/for children) are a separate future table rather
-than being overloaded onto either field.
+`vpiElseStmt`, and ordered case/for children) are stored in a separate table
+rather than being overloaded onto either field. Structural statement scope
+relations are emitted automatically from the nearest scope-bearing parent
+statement, a scope-capable code-unit owner, or the physical hierarchy scope, in
+that order.
 These immutable tables are emitted only for a VPI profile, not for VCD-only
 reflection, and do not install executable probes or change the scheduler.
-This chunk defines and validates the schema; production SV lowering, relation
-edges, tier/fragment/bytecode bindings, and cbStmt dispatch are not yet
-implemented.
+Production SV lowering, tier/fragment/bytecode bindings, and cbStmt dispatch are
+not yet implemented.
 
 An immediate deposit with an exact descriptor/root mapping also reuses
 the generated static fanout index. After updating both four-state planes, the

@@ -2183,14 +2183,13 @@ std::vector<uint8_t> makeNestedModuleRelationDatabase() {
     put32(bytes, offset + 4, targetScope);
     put32(bytes, offset + 8, 0);
     put16(bytes, offset + 12, vpiModule);
-    put16(bytes, offset + 14,
-          designRelationSource(0, vpiModule, iterate));
+    put16(bytes, offset + 14, designRelationSource(0, vpiModule, iterate));
   };
   relation(0, false, 0);
   relation(1, true, 2);
 
-  std::memcpy(bytes.data() + stringOffset,
-              "top\0top.child\0top.child.leaf\0", stringSize);
+  std::memcpy(bytes.data() + stringOffset, "top\0top.child\0top.child.leaf\0",
+              stringSize);
   struct Entry {
     uint64_t hash, name, record;
   };
@@ -4835,6 +4834,42 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, RejectsScopeTraversalForStatementHelperKinds) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  constexpr size_t statements = 400;
+  constexpr size_t sites = 520;
+  constexpr size_t relations = 568;
+
+  put16(fixture.database, statements + 40 + 36, vpiCase);
+  put16(fixture.database, statements + 80 + 36, vpiCaseItem);
+  put16(fixture.database, sites + 16 + 12, 0);
+  put64(fixture.database, 152, 2);
+  put16(fixture.database, relations + 32 + 12, vpiCaseItem);
+  put16(fixture.database, relations + 32 + 14,
+        designRelationSource(2, vpiCase, true));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle body = vpi_handle(vpiStmt, process);
+  ASSERT_NE(body, nullptr);
+  vpiHandle caseStatement = vpi_scan(vpi_iterate(vpiStmt, body));
+  ASSERT_NE(caseStatement, nullptr);
+  vpiHandle caseItem = vpi_scan(vpi_iterate(vpiCaseItem, caseStatement));
+  ASSERT_NE(caseItem, nullptr);
+  EXPECT_EQ(vpi_handle(vpiScope, caseItem), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   Fixture fixture;
   installStatementDatabase(fixture);
@@ -5101,6 +5136,54 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   EXPECT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_INVALID_DESIGN);
+
+  // A statement must name its effective lexical scope. A same-kind physical
+  // scope cannot replace the nearest scope-bearing parent statement.
+  installStatementDatabase(fixture);
+  put64(fixture.database, 136, 2);
+  put64(fixture.database, 168, 3);
+  put32(fixture.database, relations, 0);
+  put32(fixture.database, relations + 4, (uint32_t{2} << 30) | 0);
+  put32(fixture.database, relations + 8, 0);
+  put16(fixture.database, relations + 12, vpiStmt);
+  put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
+  put32(fixture.database, relations + 16, 0);
+  put32(fixture.database, relations + 16 + 4, (uint32_t{2} << 30) | 1);
+  put32(fixture.database, relations + 16 + 8, 0);
+  put16(fixture.database, relations + 16 + 12, vpiStmt);
+  put16(fixture.database, relations + 16 + 14,
+        designRelationSource(2, vpiNamedBegin, true));
+  put32(fixture.database, relations + 32, 1);
+  put32(fixture.database, relations + 32 + 4, 1); // Wrong: physical child.
+  put32(fixture.database, relations + 32 + 8, 0);
+  put16(fixture.database, relations + 32 + 12, vpiScope);
+  put16(fixture.database, relations + 32 + 14, designRelationSource(2, vpiFor));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+
+  // The exact lexical target is accepted and returned by the relation-backed
+  // query path.
+  put32(fixture.database, relations + 32 + 4, (uint32_t{2} << 30) | 0);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle body = vpi_handle(vpiStmt, process);
+  ASSERT_NE(body, nullptr);
+  vpiHandle nested = vpi_scan(vpi_iterate(vpiStmt, body));
+  ASSERT_NE(nested, nullptr);
+  vpiHandle lexicalScope = vpi_handle(vpiScope, nested);
+  ASSERT_NE(lexicalScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(body, lexicalScope), 1);
+  obelisk_rt_v1_context_destroy(context);
 
   // Dense ordinals cannot duplicate a valid child and hide the remainder.
   installStatementDatabase(fixture);
