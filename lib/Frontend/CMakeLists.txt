@@ -9,6 +9,7 @@ add_mlir_library(ObeliskFrontend
   DEPENDS
   SlangEnumsIncGen
   SlangOpsIncGen
+  ObeliskVPIObjectModelIncGen
   check-slang-ast-inventory
 
   LINK_LIBS PUBLIC

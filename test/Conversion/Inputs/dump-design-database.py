@@ -51,16 +51,21 @@ def string_at(offset):
 scope_names = {}
 for index in range(scope_count):
     offset = scope_offset + index * 64
-    kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
+    packed_kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
+    kind = packed_kind & 0xFFFF
+    vpi_kind = packed_kind >> 16
     name = string_at(struct.unpack_from("<Q", image, offset + 40)[0])
     scope_names[offset] = name
     print(
-        f"scope name={name} kind={kind} caps=0x{capabilities:x} id={stable_id}"
+        f"scope name={name} kind={kind} vpi_kind={vpi_kind} "
+        f"caps=0x{capabilities:x} id={stable_id}"
     )
 
 for index in range(object_count):
     offset = object_offset + index * 96
-    kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
+    packed_kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
+    kind = packed_kind & 0xFFFF
+    vpi_kind = packed_kind >> 16
     scope = struct.unpack_from("<Q", image, offset + 16)[0]
     name = string_at(struct.unpack_from("<Q", image, offset + 40)[0])
     type_record = struct.unpack_from("<Q", image, offset + 48)[0]
@@ -75,7 +80,8 @@ for index in range(object_count):
         type_flags = packed_type >> 8
     ordinal = (capabilities >> 8) & 0xFFFFFF
     print(
-        f"object name={name} kind={kind} caps=0x{capabilities:x} "
+        f"object name={name} kind={kind} vpi_kind={vpi_kind} "
+        f"caps=0x{capabilities:x} "
         f"id={stable_id} scope={scope_names.get(scope, '?')} width={width} "
         f"range=[{left}:{right}] state={state} type_kind={type_kind} "
         f"type_flags=0x{type_flags:x} port_ordinal={ordinal}"

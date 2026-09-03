@@ -10,6 +10,7 @@
 
 #include "ProcessContext.h"
 #include "RuntimeInternal.h"
+#include "obelisk/Reflection/DesignReflection.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -97,7 +98,8 @@ bool getRecord(const DesignDatabaseCache &database, uint64_t offset,
     record = database.data + offset;
   else
     return false;
-  kind = read32(record);
+  kind = static_cast<uint32_t>(
+      obelisk::reflection::unpackRecordKind(read32(record)));
   return true;
 }
 
@@ -755,7 +757,9 @@ struct PlanBuilder {
     }
     declareType(objectTypeOffset(record), objectStateBit(record),
                 objectBitWidth(record), leaf,
-                read32(record) == OBELISK_RT_DESIGN_RECORD_NET, 0);
+                static_cast<uint32_t>(obelisk::reflection::unpackRecordKind(
+                    read32(record))) == OBELISK_RT_DESIGN_RECORD_NET,
+                0);
   }
 
   void emitScope(uint64_t scopeOffset, std::string_view parentName) {

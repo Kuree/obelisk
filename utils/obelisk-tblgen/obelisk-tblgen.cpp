@@ -192,12 +192,32 @@ bool validateReflectionSchema(const RecordKeeper &records) {
 
   DenseSet<uint32_t> kindValues;
   StringMap<const Record *> kindNames;
+  std::optional<uint32_t> recordKindPackedWidth;
   for (const Record *kind : kinds) {
     StringRef kindName;
     uint32_t value = 0;
+    uint32_t packedWidth = 0;
     if (!getCppName(*kind, "reflection record kind", kindName) ||
-        !getU32(*kind, "value", 1, value))
+        !getU32(*kind, "value", 1, value) ||
+        !getU32(*kind, "packedWidth", 1, packedWidth))
       return false;
+    if (packedWidth >= 32) {
+      PrintError(kind->getLoc(),
+                 "reflection record kind packed width must be below 32");
+      return false;
+    }
+    if (!recordKindPackedWidth)
+      recordKindPackedWidth = packedWidth;
+    else if (*recordKindPackedWidth != packedWidth) {
+      PrintError(kind->getLoc(),
+                 "reflection record kinds must use one packed width");
+      return false;
+    }
+    if (value >= (uint32_t{1} << packedWidth)) {
+      PrintError(kind->getLoc(),
+                 "reflection record kind does not fit its packed width");
+      return false;
+    }
     if (!kindNames.try_emplace(kindName, kind).second ||
         !kindValues.insert(value).second) {
       PrintError(kind->getLoc(), "duplicate record kind name or value");
@@ -425,6 +445,42 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
     os << "},\n";
   }
   os << "};\n\n";
+  os << "constexpr bool isValidRecordKind(RecordKind kind) {\n"
+        "  switch (kind) {\n";
+  for (const Record *kind : kinds)
+    os << formatv("  case RecordKind::{0}:\n",
+                  kind->getValueAsString("cppName"));
+  os << "    return true;\n"
+        "  }\n"
+        "  return false;\n"
+        "}\n\n";
+  const uint32_t recordKindWidth = kinds.front()->getValueAsInt("packedWidth");
+  os << "inline constexpr unsigned recordKindPackedWidth = " << recordKindWidth
+     << ";\n"
+        "inline constexpr unsigned recordKindPayloadShift = "
+        "recordKindPackedWidth;\n"
+        "inline constexpr uint32_t recordKindMask = "
+        "(uint32_t{1} << recordKindPackedWidth) - 1;\n"
+        "inline constexpr uint32_t recordKindPayloadMask = "
+        "UINT32_MAX >> recordKindPayloadShift;\n\n"
+        "constexpr bool canPackRecordKindPayload(uint32_t payload) {\n"
+        "  return payload <= recordKindPayloadMask;\n"
+        "}\n\n"
+        "constexpr bool tryPackRecordKindPayload(RecordKind kind, "
+        "uint32_t payload, uint32_t &packed) {\n"
+        "  if (!isValidRecordKind(kind) || "
+        "!canPackRecordKindPayload(payload))\n"
+        "    return false;\n"
+        "  packed = (payload << recordKindPayloadShift) | "
+        "static_cast<uint32_t>(kind);\n"
+        "  return true;\n"
+        "}\n\n"
+        "constexpr RecordKind unpackRecordKind(uint32_t value) {\n"
+        "  return static_cast<RecordKind>(value & recordKindMask);\n"
+        "}\n\n"
+        "constexpr uint32_t unpackRecordKindPayload(uint32_t value) {\n"
+        "  return value >> recordKindPayloadShift;\n"
+        "}\n\n";
 
   auto tableKindRecords =
       records.getAllDerivedDefinitions("ReflectionTableKind");
@@ -1014,6 +1070,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
                                     right->getValueAsString("apiName"));
     return leftKey < rightKey;
   });
+  os << "enum class VPIObjectKind : uint16_t {\n";
+  for (const Record *object : objects)
+    os << formatv("  {0} = {1},\n", object->getName(),
+                  object->getValueAsInt("value"));
+  os << "};\n\n";
   os << "struct VPIObjectKindDescriptor {\n"
         "  const char *apiName;\n"
         "  uint32_t value;\n"

@@ -10,13 +10,24 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @statement_reflection {
-    obelisk_sim.scope.decl 0 hierarchy "top"
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    // An omitted intrinsic kind is derived from interface metadata.
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.bus" interface "@bus"
     obelisk_sim.code_unit.decl 10 in 0 initial hierarchy "top.initial"
+    // Exact kinds are intrinsic even when a code unit has no statement edge.
+    obelisk_sim.code_unit.decl 20 in 0 always hierarchy "top.zalways"
+    obelisk_sim.code_unit.decl 30 in 0 final hierarchy "top.zfinal"
+    obelisk_sim.code_unit.decl 40 in 0 function hierarchy "top.zfunction"
+    // Infrastructure kinds are intrinsically internal; no redundant marker is
+    // needed for a valid kind-zero/cap-internal compact record.
+    obelisk_sim.code_unit.decl 50 in 0 root_initializer hierarchy "top.zinternal"
+    obelisk_sim.code_unit.decl 55 in 0 continuous hierarchy "top.zinternal_continuous"
+    obelisk_sim.code_unit.decl 60 in 0 task hierarchy "top.ztask"
 
     // Deliberately reverse declaration and site order. The wire inventory is
     // normalized by stable ID, not by mutable MLIR block order or source loc.
     obelisk_sim.statement.decl 200 in 10 scope 0 type 15 parent 100 loc("test.sv":9:3)
-    obelisk_sim.statement.decl 100 in 10 scope 0 type 33 name "body" {is_protected} loc("test.sv":8:1)
+    obelisk_sim.statement.decl 100 in 10 scope 0 type 33 name "body" {is_protected, is_scope} loc("test.sv":8:1)
     // Scope-owned continuous assignments are owned directly by the exact
     // elaborated scope and therefore omit a behavioral code-unit owner.
     obelisk_sim.statement.decl 50 scope 0 type 8 loc("test.sv":7:1)
@@ -47,8 +58,17 @@ module attributes {
   }
 }
 
+// DATABASE: scope name=top kind=1 vpi_kind=32 caps=0x4 id=0
+// DATABASE-NEXT: scope name=top.bus kind=1 vpi_kind=601 caps=0x4 id=1
+// DATABASE: object name=top.initial kind=5 vpi_kind=24 caps=0x0 id=10 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.zalways kind=5 vpi_kind=1 caps=0x0 id=20 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.zfinal kind=5 vpi_kind=676 caps=0x0 id=30 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.zfunction kind=7 vpi_kind=20 caps=0x0 id=40 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.zinternal kind=5 vpi_kind=0 caps=0x20 id=50 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.zinternal_continuous kind=5 vpi_kind=0 caps=0x20 id=55 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
+// DATABASE-NEXT: object name=top.ztask kind=5 vpi_kind=59 caps=0x0 id=60 scope=top width=0 range=[0:0] state=0 type_kind=0 type_flags=0x0 port_ordinal=0
 // DATABASE: statement id=50 owner=4294967295 scope=0 parent=4294967295 type=8 flags=0x0 source=test.sv:7:1 name=
-// DATABASE-NEXT: statement id=100 owner=0 scope=0 parent=4294967295 type=33 flags=0x1 source=test.sv:8:1 name=body
+// DATABASE-NEXT: statement id=100 owner=0 scope=0 parent=4294967295 type=33 flags=0x3 source=test.sv:8:1 name=body
 // DATABASE-NEXT: statement id=150 owner=0 scope=0 parent=1 type=38 flags=0x0 source=test.sv:8:7 name=
 // DATABASE-NEXT: statement id=200 owner=0 scope=0 parent=1 type=15 flags=0x0 source=test.sv:9:3 name=
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0

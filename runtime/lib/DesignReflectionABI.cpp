@@ -83,3 +83,16 @@ static_assert(uint32_t(RecordKind::Type) == OBELISK_RT_DESIGN_RECORD_TYPE);
 static_assert(uint32_t(RecordKind::Function) ==
               OBELISK_RT_DESIGN_RECORD_FUNCTION);
 static_assert(uint32_t(RecordKind::Port) == OBELISK_RT_DESIGN_RECORD_PORT);
+
+constexpr bool recordKindPackingIsStable() {
+  uint32_t packed = 0;
+  return recordKindPackedWidth == 16 && recordKindMask == UINT32_C(0xffff) &&
+         recordKindPayloadMask == UINT32_C(0xffff) &&
+         tryPackRecordKindPayload(RecordKind::Scope, 601, packed) &&
+         unpackRecordKind(packed) == RecordKind::Scope &&
+         unpackRecordKindPayload(packed) == 601 &&
+         !tryPackRecordKindPayload(static_cast<RecordKind>(0), 0, packed) &&
+         !tryPackRecordKindPayload(RecordKind::Scope, UINT32_C(0x10000),
+                                   packed);
+}
+static_assert(recordKindPackingIsStable());

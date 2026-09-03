@@ -4,7 +4,7 @@ module {
   obelisk_sim.design @statement_relations {
     // Relation verification is independent of mutable block order.
     obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 50
-    obelisk_sim.scope.decl 0 hierarchy "top"
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
 
     obelisk_sim.statement.decl 50 scope 0 type 8 loc("test.sv":1:1)
@@ -14,6 +14,7 @@ module {
     obelisk_sim.statement.decl 120 in 1 scope 0 type 15 parent 100 loc("test.sv":4:3)
     obelisk_sim.statement.decl 121 in 1 scope 0 type 3 parent 120 loc("test.sv":4:8)
     obelisk_sim.statement.decl 122 in 1 scope 0 type 3 parent 120 loc("test.sv":4:12)
+    obelisk_sim.statement.decl 130 in 1 scope 0 type 675 parent 100 {is_scope} loc("test.sv":5:3)
 
     obelisk_sim.statement_site.decl 1000 on 100 phase 0
     obelisk_sim.statement_site.decl 1100 on 110 phase 0
@@ -30,6 +31,7 @@ module {
     // though the LRM does not promise an API-visible order.
     obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 0 modes 2 to 110
     obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 1 modes 2 to 120
+    obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 2 modes 2 to 130
     // Singular and iterative for-init access name the same semantic child.
     obelisk_sim.vpi_statement_relation.decl statement 120 type 15 selector 75 ordinal 0 modes 3 to 121
     // Later list entries are iterative only.
@@ -52,6 +54,7 @@ module {
 // CHECK: obelisk_sim.vpi_statement_relation.decl code_unit 1 type 24 selector 104 ordinal 0 modes 1 to 100
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 0 modes 2 to 110
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 1 modes 2 to 120
+// CHECK: obelisk_sim.vpi_statement_relation.decl statement 100 type 4 selector 104 ordinal 2 modes 2 to 130
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 120 type 15 selector 75 ordinal 0 modes 3 to 121
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 120 type 15 selector 75 ordinal 1 modes 2 to 122
 // CHECK-LABEL: obelisk_sim.design @legacy_without_relations

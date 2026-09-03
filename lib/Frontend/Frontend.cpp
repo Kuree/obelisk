@@ -7,6 +7,7 @@
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -3057,6 +3058,21 @@ private:
                   typeConverter.getVirtualInterfaceIdentity(
                       node, *node.parentInstance));
       if (node.parentInstance) {
+        using VPIKind = reflection::VPIObjectKind;
+        VPIKind scopeKind = VPIKind::Module;
+        switch (node.parentInstance->getDefinition().definitionKind) {
+        case slang::ast::DefinitionKind::Module:
+          scopeKind = VPIKind::Module;
+          break;
+        case slang::ast::DefinitionKind::Interface:
+          scopeKind = VPIKind::Interface;
+          break;
+        case slang::ast::DefinitionKind::Program:
+          scopeKind = VPIKind::Program;
+          break;
+        }
+        attrs.set("vpi_scope_kind",
+                  builder.getI32IntegerAttr(static_cast<uint16_t>(scopeKind)));
         bool isScopeMember = false;
         if (const slang::ast::Scope *parent =
                 node.parentInstance->getParentScope())
