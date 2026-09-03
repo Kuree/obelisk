@@ -6,6 +6,7 @@
 
 #include "RuntimeInternal.h"
 
+#include "VPIHandleToken.h"
 #include "VPIInternal.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
@@ -20,6 +21,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -44,6 +46,10 @@ namespace {
 
 struct VPIState;
 
+struct VPIActiveSlot {
+  std::atomic<VPIState *> state{nullptr};
+};
+
 enum class VPIHandleKind : uint8_t {
   Object,
   Iterator,
@@ -56,7 +62,7 @@ enum class VPIHandleKind : uint8_t {
 
 struct __vpiHandle {
   VPIState *owner = nullptr;
-  bool alive = true;
+  uintptr_t token = 0;
   VPIHandleKind kind = VPIHandleKind::Object;
   obelisk_rt_design_cursor_v1 cursor{};
   uint32_t exactVpiType = 0;
@@ -102,13 +108,17 @@ struct VPICallback {
 
 struct VPIState {
   obelisk_rt_context *context = nullptr;
-  std::unordered_map<__vpiHandle *, std::unique_ptr<__vpiHandle>> handles;
+  // Keep the simulation thread's binding slot alive even if that thread exits
+  // before another thread destroys the context.
+  std::shared_ptr<VPIActiveSlot> ownerSlot;
+  std::unordered_map<uintptr_t, std::unique_ptr<__vpiHandle>> handles;
   std::string errorMessage;
   std::string errorCode;
   int errorLevel = 0;
   bool unsupportedStartup = false;
   VPIPhase phase = VPIPhase::StartupRestricted;
   uint64_t nextCallbackId = 1;
+  uint32_t callbackDepth = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
   std::vector<uint64_t> callbackOrder;
   // IEEE temporary results are invalidated by the next routine call of the
@@ -119,9 +129,41 @@ struct VPIState {
 };
 
 // VPI is callable only from the simulation thread (startup, callbacks, and
-// reentrant DPI on that thread).  A process-global binding would accidentally
+// reentrant DPI on that thread). A process-global binding would accidentally
 // authorize debugger transport/signal threads and race callback scratch state.
-thread_local VPIState *activeState = nullptr;
+// The indirection lets context destruction on another thread atomically revoke
+// the simulation thread's binding before freeing the context-owned state.
+thread_local std::shared_ptr<VPIActiveSlot> activeSlot;
+std::atomic<uintptr_t> nextHandleToken{1};
+
+VPIState *currentState() {
+  return activeSlot ? activeSlot->state.load(std::memory_order_acquire)
+                    : nullptr;
+}
+
+void clearActiveState(VPIState *state) {
+  if (!state || !state->ownerSlot)
+    return;
+  VPIState *expected = state;
+  state->ownerSlot->state.compare_exchange_strong(
+      expected, nullptr, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+class ActiveStateGuard {
+public:
+  explicit ActiveStateGuard(VPIState *state) : state(state) {}
+  ~ActiveStateGuard() { clearActiveState(state); }
+  void release() { state = nullptr; }
+
+private:
+  VPIState *state;
+};
+
+#if defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
+struct DynamicModuleCloser {
+  void operator()(void *module) const noexcept { (void)dlclose(module); }
+};
+#endif
 
 void setError(VPIState *state, const char *message, int level = vpiError,
               const char *code = "OBELISK_VPI") {
@@ -135,29 +177,38 @@ void setError(VPIState *state, const char *message, int level = vpiError,
   OBELISK_RT_CATCH_ALL {}
 }
 
+void beginVPICall() {
+  if (VPIState *state = currentState())
+    state->errorLevel = 0;
+}
+
 VPIState *requireState() {
-  if (!activeState)
+  VPIState *state = currentState();
+  if (!state)
     return nullptr;
-  if (activeState->phase == VPIPhase::StartupRestricted ||
-      activeState->phase == VPIPhase::BeforeEndCompile) {
-    setError(activeState,
+  if (state->phase == VPIPhase::StartupRestricted ||
+      state->phase == VPIPhase::BeforeEndCompile) {
+    setError(state,
              "only callback and system-task registration is allowed during "
              "VPI startup");
     return nullptr;
   }
-  return activeState;
+  return state;
 }
 
 __vpiHandle *findHandle(vpiHandle opaque) {
   VPIState *state = requireState();
-  auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
-  if (!state || !handle ||
-      state->handles.find(handle) == state->handles.end() ||
-      handle->owner != state || !handle->alive) {
+  const uintptr_t token = reinterpret_cast<uintptr_t>(opaque);
+  if (!state || !token) {
     setError(state, "invalid or released VPI handle");
     return nullptr;
   }
-  return handle;
+  auto found = state->handles.find(token);
+  if (found == state->handles.end() || found->second->owner != state) {
+    setError(state, "invalid or released VPI handle");
+    return nullptr;
+  }
+  return found->second.get();
 }
 
 __vpiHandle *validate(vpiHandle opaque,
@@ -171,9 +222,18 @@ __vpiHandle *validate(vpiHandle opaque,
 }
 
 vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
-  __vpiHandle *result = handle.get();
-  state->handles.try_emplace(result, std::move(handle));
-  return reinterpret_cast<vpiHandle>(result);
+  uintptr_t token = 0;
+  if (!obelisk::runtime::allocateVPIHandleToken(nextHandleToken, token)) {
+    setError(state, "VPI handle identifier space is exhausted", vpiSystem);
+    return nullptr;
+  }
+  handle->token = token;
+  auto inserted = state->handles.try_emplace(token, std::move(handle));
+  if (!inserted.second) {
+    setError(state, "VPI handle identifier collision", vpiInternal);
+    return nullptr;
+  }
+  return reinterpret_cast<vpiHandle>(token);
 }
 
 vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
@@ -242,6 +302,7 @@ obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
     return OBELISK_RT_OUT_OF_MEMORY;
   }
   obelisk_rt_status status = OBELISK_RT_OK;
+  ++state->callbackDepth;
   for (uint64_t id : scheduled) {
     auto found = state->callbacks.find(id);
     if (found == state->callbacks.end() || found->second.reason != reason)
@@ -258,11 +319,12 @@ obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
       status = OBELISK_RT_FATAL;
     }
   }
+  --state->callbackDepth;
   return status;
 }
 
 PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
-  if (!state || !handle || handle->owner != state || !handle->alive ||
+  if (!state || !handle || handle->owner != state ||
       handle->kind != VPIHandleKind::Callback) {
     setError(state, "invalid VPI callback handle");
     return 0;
@@ -277,12 +339,15 @@ PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
   state->callbackOrder.erase(
       std::remove(state->callbackOrder.begin(), state->callbackOrder.end(), id),
       state->callbackOrder.end());
-  // The callback object no longer exists, so invalidate every equivalent
-  // handle, including handles returned by callback iteration.
-  for (auto &entry : state->handles)
-    if (entry.second->kind == VPIHandleKind::Callback &&
-        entry.second->cursor.offset == id)
-      entry.second->alive = false;
+  // The callback object no longer exists, so free every equivalent handle,
+  // including handles returned by callback iteration.
+  for (auto entry = state->handles.begin(); entry != state->handles.end();) {
+    if (entry->second->kind == VPIHandleKind::Callback &&
+        entry->second->cursor.offset == id)
+      entry = state->handles.erase(entry);
+    else
+      ++entry;
+  }
   return 1;
 }
 
@@ -627,7 +692,7 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
 }
 
 void unsupportedStartup(const char *feature) {
-  VPIState *state = activeState;
+  VPIState *state = currentState();
   if (state)
     state->unsupportedStartup = true;
   setError(state, feature, vpiError, "OBELISK_VPI_UNSUPPORTED_STARTUP");
@@ -638,8 +703,13 @@ void unsupportedStartup(const char *feature) {
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
                           const char *const *modules, uint64_t moduleCount) {
-  if (!context || (moduleCount != 0 && !modules) || activeState)
+  if (!context || (moduleCount != 0 && !modules) || context->vpiState ||
+      currentState())
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (!activeSlot) {
+    OBELISK_RT_TRY { activeSlot = std::make_shared<VPIActiveSlot>(); }
+    OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
+  }
   if (!context->execution ||
       (context->execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0)
     return OBELISK_RT_PERMISSION_DENIED;
@@ -647,11 +717,12 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
   OBELISK_RT_TRY { state = std::make_unique<VPIState>(); }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
   state->context = context;
-  activeState = state.get();
+  state->ownerSlot = activeSlot;
+  activeSlot->state.store(state.get(), std::memory_order_release);
+  ActiveStateGuard bindingGuard(state.get());
   for (uint64_t moduleIndex = 0; moduleIndex != moduleCount; ++moduleIndex) {
     const char *name = modules[moduleIndex];
     if (!name || !*name) {
-      activeState = nullptr;
       return OBELISK_RT_INVALID_ARGUMENT;
     }
 #if !defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
@@ -661,24 +732,21 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
              "loading VPI startup modules requires a dynamic loader, which "
              "this target does not provide",
              vpiSystem);
-    activeState = nullptr;
     return OBELISK_RT_IO_ERROR;
 #else
     void *module = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
     if (!module) {
       setError(state.get(), dlerror(), vpiSystem);
-      activeState = nullptr;
       return OBELISK_RT_IO_ERROR;
     }
+    std::unique_ptr<void, DynamicModuleCloser> moduleGuard(module);
     dlerror();
-    void *symbol = dlsym(module, "vlog_startup_routines");
+    void *symbol = dlsym(moduleGuard.get(), "vlog_startup_routines");
     const char *symbolError = dlerror();
     if (!symbol || symbolError) {
       setError(state.get(),
                symbolError ? symbolError : "VPI startup table is missing",
                vpiSystem);
-      dlclose(module);
-      activeState = nullptr;
       return OBELISK_RT_INVALID_DESIGN;
     }
     size_t entries = 0;
@@ -690,26 +758,29 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
     }
     if (entries == 0 || entries > 65536) {
       setError(state.get(), "VPI startup table has no bounded ELF symbol size");
-      dlclose(module);
-      activeState = nullptr;
       return OBELISK_RT_INVALID_DESIGN;
     }
     auto *routines = static_cast<void (**)(void)>(symbol);
     bool terminated = false;
+    bool routineFailed = false;
     for (size_t index = 0; index != entries; ++index) {
       if (!routines[index]) {
         terminated = true;
         break;
       }
-      routines[index]();
+      OBELISK_RT_TRY { routines[index](); }
+      OBELISK_RT_CATCH_ALL {
+        setError(state.get(), "VPI startup routine raised an exception",
+                 vpiInternal);
+        routineFailed = true;
+        break;
+      }
       if (state->unsupportedStartup)
         break;
     }
-    dlclose(module);
-    if (!terminated || state->unsupportedStartup) {
-      if (!terminated)
+    if (!terminated || routineFailed || state->unsupportedStartup) {
+      if (!terminated && !routineFailed)
         setError(state.get(), "VPI startup table is not null terminated");
-      activeState = nullptr;
       return OBELISK_RT_INVALID_DESIGN;
     }
 #endif
@@ -717,13 +788,15 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
   state->phase = VPIPhase::BeforeEndCompile;
   // Ownership moves only after all startup modules have succeeded.
   context->vpiState = state.release();
+  bindingGuard.release();
   return OBELISK_RT_OK;
 }
 
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_end_compile(obelisk_rt_context *context) {
-  if (!context || context->vpiState != activeState)
+  if (!context || context->vpiState != currentState())
     return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::BeforeEndCompile)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -735,8 +808,9 @@ obelisk_rt_v1_vpi_end_compile(obelisk_rt_context *context) {
 
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context) {
-  if (!context || context->vpiState != activeState)
+  if (!context || context->vpiState != currentState())
     return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::BeforeStartSimulation)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -748,8 +822,9 @@ obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context) {
 
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context) {
-  if (!context || context->vpiState != activeState)
+  if (!context || context->vpiState != currentState())
     return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::Running)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -761,16 +836,21 @@ obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context) {
 
 extern "C" OBELISK_VPI_EXPORT void
 obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
-  if (!context || context->vpiState != activeState)
+  if (!context || !context->vpiState)
     return;
   auto *state = static_cast<VPIState *>(context->vpiState);
+  if (state->callbackDepth != 0) {
+    setError(state, "VPI shutdown is not allowed from a VPI callback");
+    return;
+  }
   context->vpiState = nullptr;
-  activeState = nullptr;
+  clearActiveState(state);
   delete state;
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
                                                            vpiHandle scope) {
+  beginVPICall();
   VPIState *state = requireState();
   if (!state || !name)
     return nullptr;
@@ -816,6 +896,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
+  beginVPICall();
   __vpiHandle *handle = validate(reference);
   if (!handle)
     return nullptr;
@@ -889,6 +970,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
                                                     vpiHandle reference) {
+  beginVPICall();
   VPIState *state = requireState();
   if (!state)
     return nullptr;
@@ -978,6 +1060,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
+  beginVPICall();
   __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
     return nullptr;
@@ -985,15 +1068,21 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     while (iterator->next != iterator->items.size()) {
       uint64_t id = iterator->items[iterator->next++].offset;
       if (iterator->owner->callbacks.find(id) !=
-          iterator->owner->callbacks.end())
-        return makeCallbackHandle(iterator->owner, id);
+          iterator->owner->callbacks.end()) {
+        VPIState *state = iterator->owner;
+        const uintptr_t iteratorToken = iterator->token;
+        vpiHandle result = makeCallbackHandle(state, id);
+        if (!result)
+          state->handles.erase(iteratorToken);
+        return result;
+      }
     }
-    iterator->alive = false;
+    iterator->owner->handles.erase(iterator->token);
     return nullptr;
   }
   if (iterator->relationIterator) {
     if (iterator->next == iterator->relationRange.count) {
-      iterator->alive = false;
+      iterator->owner->handles.erase(iterator->token);
       return nullptr;
     }
     obelisk_rt_design_cursor_v1 target{};
@@ -1004,17 +1093,22 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         iterator->relationRange.first + iterator->next, &target, &targetType,
         &targetIsStatement);
     if (status != OBELISK_RT_OK) {
-      iterator->alive = false;
-      setError(iterator->owner, "VPI relation target lookup failed",
-               vpiInternal);
+      VPIState *state = iterator->owner;
+      state->handles.erase(iterator->token);
+      setError(state, "VPI relation target lookup failed", vpiInternal);
       return nullptr;
     }
     ++iterator->next;
-    return makeHandle(iterator->owner, target, targetType, targetIsStatement);
+    VPIState *state = iterator->owner;
+    const uintptr_t iteratorToken = iterator->token;
+    vpiHandle result = makeHandle(state, target, targetType, targetIsStatement);
+    if (!result)
+      state->handles.erase(iteratorToken);
+    return result;
   }
   if (iterator->designIterator) {
     if (iterator->cursor.offset == 0) {
-      iterator->alive = false;
+      iterator->owner->handles.erase(iterator->token);
       return nullptr;
     }
     obelisk_rt_design_cursor_v1 current = iterator->cursor;
@@ -1028,20 +1122,33 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       iterator->cursor = candidate;
     else
       iterator->cursor = {};
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
-      setError(iterator->owner, "VPI design iterator lookup failed",
-               vpiInternal);
-    return makeHandle(iterator->owner, current);
+    VPIState *state = iterator->owner;
+    const uintptr_t iteratorToken = iterator->token;
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+      state->handles.erase(iteratorToken);
+      setError(state, "VPI design iterator lookup failed", vpiInternal);
+      return nullptr;
+    }
+    vpiHandle result = makeHandle(state, current);
+    if (!result)
+      state->handles.erase(iteratorToken);
+    return result;
   }
   if (iterator->next == iterator->items.size()) {
-    iterator->alive = false;
+    iterator->owner->handles.erase(iterator->token);
     return nullptr;
   }
-  return makeHandle(iterator->owner, iterator->items[iterator->next++]);
+  VPIState *state = iterator->owner;
+  const uintptr_t iteratorToken = iterator->token;
+  vpiHandle result = makeHandle(state, iterator->items[iterator->next++]);
+  if (!result)
+    state->handles.erase(iteratorToken);
+  return result;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
+  beginVPICall();
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
@@ -1152,12 +1259,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
-                                                  vpiHandle object) {
-  return vpi_get(property, object);
+                                                  vpiHandle opaque) {
+  beginVPICall();
+  __vpiHandle *handle = findHandle(opaque);
+  if (!handle)
+    return vpiUndefined;
+  if (property != vpiObjId) {
+    setError(handle->owner, "property is not a 64-bit integer VPI property",
+             vpiNotice);
+    return vpiUndefined;
+  }
+  setError(handle->owner, "unsupported 64-bit integer VPI property", vpiNotice);
+  return vpiUndefined;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
+  beginVPICall();
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return nullptr;
@@ -1201,6 +1319,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                                                  p_vpi_value destination) {
+  beginVPICall();
   __vpiHandle *handle = validate(opaque);
   if (!handle || !destination)
     return;
@@ -1273,6 +1392,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
                                                       p_vpi_value source,
                                                       p_vpi_time,
                                                       PLI_INT32 flags) {
+  beginVPICall();
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return nullptr;
@@ -1314,6 +1434,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
                                                             vpiHandle second) {
+  beginVPICall();
   __vpiHandle *left = findHandle(first);
   __vpiHandle *right = findHandle(second);
   if (!left || !right || left->kind != right->kind)
@@ -1328,15 +1449,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
+  beginVPICall();
   VPIState *state = requireState();
-  auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
-  if (!state || !handle ||
-      state->handles.find(handle) == state->handles.end() ||
-      handle->owner != state || !handle->alive) {
+  const uintptr_t token = reinterpret_cast<uintptr_t>(opaque);
+  if (!state || !token) {
     setError(state, "VPI handle was already released or is invalid");
     return 0;
   }
-  handle->alive = false;
+  auto found = state->handles.find(token);
+  if (found == state->handles.end() || found->second->owner != state) {
+    setError(state, "VPI handle was already released or is invalid");
+    return 0;
+  }
+  state->handles.erase(found);
   return 1;
 }
 
@@ -1346,7 +1471,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_free_object(vpiHandle object) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32
 vpi_chk_error(p_vpi_error_info destination) {
-  VPIState *state = requireState();
+  VPIState *state = currentState();
   if (!state || state->errorLevel == 0)
     return 0;
   int level = state->errorLevel;
@@ -1358,12 +1483,12 @@ vpi_chk_error(p_vpi_error_info destination) {
     destination->product = const_cast<char *>("Obelisk");
     destination->code = state->errorCode.data();
   }
-  state->errorLevel = 0;
   return level;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_vprintf(PLI_BYTE8 *format,
                                                     va_list arguments) {
+  beginVPICall();
   return requireState() && format ? std::vprintf(format, arguments) : -1;
 }
 
@@ -1376,16 +1501,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_printf(PLI_BYTE8 *format, ...) {
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_flush(void) {
+  beginVPICall();
   return requireState() ? std::fflush(nullptr) : -1;
 }
 
 extern "C" OBELISK_VPI_EXPORT void *vpi_get_userdata(vpiHandle opaque) {
+  beginVPICall();
   __vpiHandle *handle = validate(opaque);
   return handle ? handle->userData : nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
                                                          void *data) {
+  beginVPICall();
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return 0;
@@ -1395,7 +1523,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle
 vpi_register_cb(p_cb_data callbackData) {
-  VPIState *state = activeState;
+  beginVPICall();
+  VPIState *state = currentState();
   if (!state || !callbackData || !callbackData->cb_rtn) {
     setError(state, "VPI callback registration requires data and a routine");
     return nullptr;
@@ -1444,19 +1573,22 @@ vpi_register_cb(p_cb_data callbackData) {
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
+  beginVPICall();
   VPIState *state = requireState();
   if (!state)
     return 0;
-  auto *handle = reinterpret_cast<__vpiHandle *>(opaque);
-  if (!handle || state->handles.find(handle) == state->handles.end()) {
+  const uintptr_t token = reinterpret_cast<uintptr_t>(opaque);
+  auto found = token ? state->handles.find(token) : state->handles.end();
+  if (!token || found == state->handles.end()) {
     setError(state, "invalid VPI callback handle");
     return 0;
   }
-  return removeCallbackHandle(state, handle);
+  return removeCallbackHandle(state, found->second.get());
 }
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
                                                    p_cb_data destination) {
+  beginVPICall();
   if (!destination)
     return;
   *destination = {};
@@ -1470,6 +1602,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_register_systf(p_vpi_systf_data) {
+  beginVPICall();
   unsupportedStartup(
       "VPI system task/function registration is not supported during startup");
   return nullptr;
@@ -1477,6 +1610,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_register_systf(p_vpi_systf_data) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32
 vpi_get_vlog_info(p_vpi_vlog_info info) {
+  beginVPICall();
   static char product[] = "Obelisk";
   static char version[] = "0.1";
   if (!requireState() || !info)
@@ -1489,12 +1623,14 @@ vpi_get_vlog_info(p_vpi_vlog_info info) {
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle,
                                                             PLI_INT32) {
+  beginVPICall();
   VPIState *state = requireState();
   setError(state, "indexed VPI handles are not supported");
   return nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32, ...) {
+  beginVPICall();
   VPIState *state = requireState();
   setError(state, "VPI control operations are not supported");
   return 0;
