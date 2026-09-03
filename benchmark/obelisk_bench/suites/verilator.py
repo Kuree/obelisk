@@ -717,6 +717,11 @@ TOOL_SPECIFIC_SYSTEM_TASK = Exclusion(
     "tasks and system functions are not part of this standard\"; the test is "
     "written around Verilator's inline-C escape ($c, $c1, $c32, $cpure), which "
     "it uses to hide a value from constant folding")
+TOOL_SPECIFIC_STACKTRACE = Exclusion(
+    "IEEE 1800-2017 5.6.3",
+    "additional system tasks and functions may be tool-specific and are not "
+    "part of the standard; the test requires Verilator's $stacktrace task "
+    "and function to return and print its generated native call stack")
 VERILATOR_MAIN_TOP_NAME = Exclusion(
     "IEEE 1800-2017 21.2.1.6",
     "%m prints the hierarchy of the SystemVerilog design element that invokes "
@@ -1403,6 +1408,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_param_in_func": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sc_vl_assign_sbw": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_scheduling_7": TOOL_SPECIFIC_SYSTEM_TASK,
+    "t_stacktrace": TOOL_SPECIFIC_STACKTRACE,
     "t_struct_cons_cast": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_struct_unpacked_clean": TOOL_SPECIFIC_SYSTEM_TASK,
     "t_sys_sformat": UNFORMATTED_UNPACKED_EXPRESSION,

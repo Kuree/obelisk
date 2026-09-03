@@ -1109,6 +1109,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("generated C++ model", excluded.reason)
         self.assertIn("rootp", excluded.reason)
 
+    def test_stacktrace_system_task_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_stacktrace"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 5.6.3")
+        self.assertIn("tool-specific", excluded.reason)
+        self.assertIn("not part of the standard", excluded.reason)
+        self.assertIn("$stacktrace", excluded.reason)
+
     def test_literal_implicit_inout_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_generic2"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
