@@ -706,6 +706,11 @@ VERILATOR_EMBEDDED_MODEL = Exclusion(
     "test's descriptor first asks Verilator to generate a private C++ child "
     "model and archive, and its foreign source includes that generated model "
     "API rather than providing a portable DPI implementation")
+VERILATOR_NATIVE_MODEL_DRIVER = Exclusion(
+    "IEEE 1800-2017 35.2",
+    "the descriptor's C++ input is a Verilator-native simulator driver that "
+    "constructs VM_PREFIX and calls Verilated model APIs rather than a "
+    "portable DPI foreign implementation")
 VERILATOR_RANDOM_SEED_RUNFLAG = Exclusion(
     "IEEE 1800-2017 20.15.1",
     "$random uses the standard's normative probabilistic-distribution "
@@ -1154,6 +1159,8 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_dpi_result_type": POST_2017_DPI_RESULT_TYPES,
     "t_dpi_sys": VERILATOR_DPI_SYSTEM_TASK_ALIAS,
     "t_embed1": VERILATOR_EMBEDDED_MODEL,
+    "t_dpi_export_context2_bad": VERILATOR_NATIVE_MODEL_DRIVER,
+    "t_dpi_export_context_bad": VERILATOR_NATIVE_MODEL_DRIVER,
     "t_tri_assigndly_nba": CONCURRENT_NBA_TRISTATE_RESOLUTION,
     "t_struct_nest_uarray": PATTERN_RADIX,
     "t_class1": CLASS_PATTERN,
@@ -2158,6 +2165,10 @@ def prepare_generated_fixtures(name: str, directory: str | Path) -> None:
         # but does not inspect its contents. Keep the runtime setup valid so
         # the verdict remains about the exported unpacked-array task.
         (Path(directory) / "dummy").write_bytes(b"")
+    elif name == "t_dpi_export_scope_bad":
+        # This DPI body includes the Verilator header but uses no model API.
+        # Keep its portable wrong-scope call active under another simulator.
+        (Path(directory) / "verilated.h").write_text("", encoding="utf-8")
 
 
 def classify_dependency_failure(name: str, log: str) -> str:

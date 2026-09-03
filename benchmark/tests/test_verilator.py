@@ -221,6 +221,14 @@ class GeneratedFixtureTest(unittest.TestCase):
             data = (Path(directory) / "dummy").read_bytes()
         self.assertEqual(data, b"")
 
+    def test_scope_bad_gets_only_its_unused_verilator_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            verilator.prepare_generated_fixtures(
+                "t_dpi_export_scope_bad", directory)
+            header = Path(directory) / "verilated.h"
+            self.assertTrue(header.exists())
+            self.assertEqual(header.read_text(encoding="utf-8"), "")
+
 
 class ShellModuleNameTest(unittest.TestCase):
     def test_a_design_without_its_own_top_keeps_driver_pys_name(self):
@@ -1191,6 +1199,15 @@ class ExcludedTest(unittest.TestCase):
         self.assertEqual(excluded.clause, "IEEE 1800-2017 20.12")
         self.assertIn("values 1 through 11", excluded.reason)
         self.assertIn("exact warning text", excluded.reason)
+
+    def test_verilator_native_dpi_drivers_are_not_portable_dpi_bodies(self):
+        for name in ("t_dpi_export_context_bad",
+                     "t_dpi_export_context2_bad"):
+            with self.subTest(name=name):
+                excluded = verilator.EXCLUDED[name]
+                self.assertEqual(excluded.clause, "IEEE 1800-2017 35.2")
+                self.assertIn("VM_PREFIX", excluded.reason)
+                self.assertIn("Verilated model APIs", excluded.reason)
 
     def test_associative_array_indices_must_be_equivalent(self):
         excluded = verilator.EXCLUDED["t_cast_types"]
