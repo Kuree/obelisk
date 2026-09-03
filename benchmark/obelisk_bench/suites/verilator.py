@@ -437,6 +437,12 @@ TWO_STATE_INITIALIZATION = Exclusion(
     "it with (4.4.2.2 also leaves the time-zero order of initial and always "
     "blocks arbitrary, since the Active region's events \"can be processed "
     "in any order\")")
+TWO_STATE_CONDITIONAL_STARTUP = Exclusion(
+    "IEEE 1800-2017 6.8",
+    "Table 6-7 initializes the unassigned four-state reg_35 to x, and "
+    "11.4.11 merges the unequal conditional branches bit by bit when its "
+    "condition is x, making out18 x; the golden instead requires Verilator's "
+    "two-state zero startup and out18=1 before reset")
 VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP = Exclusion(
     "IEEE 1800-2017 3.14.2.3",
     "with no timeunit or `timescale, the default time unit and precision are "
@@ -1244,6 +1250,7 @@ EXCLUDED: dict[str, Exclusion] = {
     "t_interface_virtual_sched_nba": (
         VERILATOR_DEFAULT_TIME_AND_TWO_STATE_STARTUP),
     "t_math_cmp": TWO_STATE_INITIALIZATION,
+    "t_opt_expand_keep_widths": TWO_STATE_CONDITIONAL_STARTUP,
     "t_multidriven_simple": ACTIVE_REGION_COMBINATIONAL_READ_RACE,
     "t_split_var_types": UNTIMED_ALWAYS,
     "t_static_task_args": STATIC_SUBROUTINE_RECURSION,

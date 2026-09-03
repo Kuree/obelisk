@@ -1071,6 +1071,13 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("not within a procedural statement", excluded.reason)
         self.assertIn("continuous-assignment", excluded.reason)
 
+    def test_two_state_conditional_startup_is_not_a_compiler_failure(self):
+        excluded = verilator.EXCLUDED["t_opt_expand_keep_widths"]
+        self.assertEqual(excluded.clause, "IEEE 1800-2017 6.8")
+        self.assertIn("11.4.11", excluded.reason)
+        self.assertIn("reg_35", excluded.reason)
+        self.assertIn("out18=1", excluded.reason)
+
     def test_literal_implicit_inout_is_not_a_compiler_failure(self):
         excluded = verilator.EXCLUDED["t_interface_generic2"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 23.2.2.3")
