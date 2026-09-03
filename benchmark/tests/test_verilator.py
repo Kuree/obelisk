@@ -934,6 +934,17 @@ class DependencyFailureTest(unittest.TestCase):
         self.assertIn("23.3.3.1", log)
         self.assertTrue(log.endswith("cannot assign to input port 'clk'\n"))
 
+    def test_modport_exported_task_slang_bug_stays_visible(self):
+        log = verilator.classify_dependency_failure(
+            "t_modport_export_task",
+            "could not find target for export of 'send'\n")
+        self.assertIn("known Slang bug:", log)
+        self.assertIn("IEEE 1800-2017 25.7", log)
+        self.assertIn("25.7.3", log)
+        self.assertIn("task a.Read", log)
+        self.assertTrue(log.endswith(
+            "could not find target for export of 'send'\n"))
+
     def test_explicit_package_export_slang_bug_stays_visible(self):
         log = verilator.classify_dependency_failure(
             "t_package_export",

@@ -196,6 +196,12 @@ KNOWN_SLANG_BUGS = {
         "data type, and 23.3.3.1 permits that net port to be coerced when "
         "driven externally; pinned Slang instead treats logic_if.clk as a "
         "variable input and rejects the continuous assignment"),
+    "t_modport_export_task": (
+        "IEEE 1800-2017 25.7 permits subroutines to be defined in a module "
+        "using a hierarchical interface-port name when the connected modport "
+        "exports them, and 25.7.3 gives task a.Read as the normative example; "
+        "pinned Slang rejects the exported port.send and port.accumulate "
+        "definitions before emitting IR"),
     "t_package_export": (
         "IEEE 1800-2017 26.6 makes an explicit package export of an "
         "unreferenced wildcard-import candidate import that declaration and "
