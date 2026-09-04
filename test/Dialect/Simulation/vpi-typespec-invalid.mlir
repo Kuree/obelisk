@@ -178,6 +178,19 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @missing_class_identity {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @root id 0 type 600 in 0 ordinal 0 hierarchy "top" debug "top"
+    // expected-error @+1 {{VPI class semantics require a class-definition identity anchor for @missing}}
+    obelisk_sim.vpi_typespec.decl @class_t id 0 in 0 owner @root hierarchy "top.class_t" debug "class_t" {
+      target_type = #obelisk_sim.vpi_type<kind = class, isSigned = false, isFourState = false, symbol = @missing, range = [], children = [], childNames = []>
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @dangling_interface {
     obelisk_sim.scope.decl 0
     obelisk_sim.vpi_object.anchor @root id 0 type 600 in 0 ordinal 0 hierarchy "top" debug "top"

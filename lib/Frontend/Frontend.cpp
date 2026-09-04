@@ -946,6 +946,10 @@ public:
                     StringAttr::get(context, "packed_offset"),
                     IntegerAttr::get(IntegerType::get(context, 64),
                                      isPacked ? field.bitOffset : 0)),
+                NamedAttribute(
+                    StringAttr::get(context, "rand_mode"),
+                    IntegerAttr::get(IntegerType::get(context, 32),
+                                     static_cast<uint32_t>(field.randMode))),
             }));
       }
       result = slangir::AggregateType::get(

@@ -546,6 +546,14 @@ module {
 // -----
 
 module {
+  // expected-error @+1 {{aggregate field has invalid randomization mode}}
+  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_rand_mode", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  }
+}
+
+// -----
+
+module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+1 {{packed union fields must have equal widths}}
   %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_union<{a = !obelisk.logic<4>, b = !obelisk.logic<8>}>>

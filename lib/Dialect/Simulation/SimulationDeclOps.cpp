@@ -1801,6 +1801,14 @@ LogicalResult SimDesignOp::verifyRegions() {
               "modport typespec requires its parent interface typespec");
   }
 
+  llvm::SmallDenseSet<Attribute, 8> classVPIIdentities;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    VPIObjectBackingAttr backing = anchor.getBackingAttr();
+    if (backing && backing.getKind() == VPIObjectBackingKind::Class &&
+        backing.getSymbol())
+      classVPIIdentities.insert(backing.getSymbol());
+  }
+
   std::function<LogicalResult(Operation *, VPITypeSemanticsAttr)>
       verifyTypeReferences =
           [&](Operation *owner,
@@ -1838,6 +1846,15 @@ LogicalResult SimDesignOp::verifyRegions() {
                << "VPI virtual-interface identity " << semantic.getSymbol()
                << " references a different interface specialization";
     }
+    if (semantic.getKind() == VPITypeKind::Class &&
+        (!semantic.getSymbol() ||
+         !classVPIIdentities.contains(FlatSymbolRefAttr::get(
+             getContext(),
+             semantic.getSymbol().getRootReference().getValue()))))
+      return owner->emitError()
+             << "VPI class semantics require a class-definition identity "
+                "anchor for "
+             << semantic.getSymbol();
     for (Attribute child : semantic.getChildren())
       if (failed(
               verifyTypeReferences(owner, cast<VPITypeSemanticsAttr>(child))))

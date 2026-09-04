@@ -17,6 +17,39 @@ module attributes {
   obelisk_sim.design @dumpports {
     obelisk_sim.scope.decl 0 hierarchy "top"
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d"
+    obelisk_sim.vpi_object.anchor @top_d id 0 type 32 in 1 ordinal 0
+        hierarchy "top.d" debug "d" {
+      backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>
+    }
+    obelisk_sim.vpi_typespec.decl @iface_t id 0 in 1 owner @top_d
+        hierarchy "iface_t" debug "iface_t" {
+      origin = 1 : i32,
+      target_type = #obelisk_sim.vpi_type<kind = virtual_interface,
+          isSigned = false, isFourState = false, name = "iface_t",
+          symbol = @iface_t, modport = "", range = [], children = [],
+          childNames = []>
+    }
+    // This typedef deliberately shares the raw interface identity. It must
+    // not replace @iface_t as the canonical semantic identity target.
+    obelisk_sim.vpi_typespec.decl @iface_alias_t id 1 in 1 owner @top_d
+        hierarchy "top.d.iface_alias_t" debug "iface_alias_t" {
+      target_type = #obelisk_sim.vpi_type<kind = virtual_interface,
+          isSigned = false, isFourState = false, name = "iface_t",
+          symbol = @iface_t, modport = "", range = [], children = [],
+          childNames = [], typedefAliases = [@iface_alias_t]>
+    }
+    obelisk_sim.vpi_typespec.decl @base_t id 2 in 1 owner @top_d
+        hierarchy "top.d.base_t" debug "base_t" {
+      target_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = [],
+          typedefAliases = [@base_t]>
+    }
+    obelisk_sim.vpi_typespec.decl @alias_t id 3 in 1 owner @top_d
+        hierarchy "top.d.alias_t" debug "alias_t" {
+      target_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = [],
+          typedefAliases = [@alias_t, @base_t]>
+    }
     obelisk_sim.storage.decl 0 in 1 : i8 design hierarchy "top.d.a"
     obelisk_sim.storage.decl 1 in 0 : i16 design hierarchy "top.backing"
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<1> design hierarchy "top.d.io"
@@ -80,8 +113,12 @@ module attributes {
 // no relation declaration ops are needed. A direct whole-source port has a
 // distinct vpiPort identity sharing its variable/net state, while name lookup
 // remains canonical on the storage or net record.
+// VPI: object name=iface_t kind=9 vpi_kind=906
 // VPI: object name=top.d.a kind=2 vpi_kind=48
 // VPI-NEXT: object name=top.d.a kind=8 vpi_kind=44
+// VPI-NEXT: object name=top.d.alias_t kind=9 vpi_kind=640
+// VPI-NEXT: object name=top.d.base_t kind=9 vpi_kind=640
+// VPI-NEXT: object name=top.d.iface_alias_t kind=9 vpi_kind=906
 // VPI-NEXT: object name=top.d.io kind=3 vpi_kind=36
 // VPI-NEXT: object name=top.d.io kind=8 vpi_kind=44
 // VPI-NEXT: object name=top.d.p kind=8 vpi_kind=44
@@ -89,36 +126,45 @@ module attributes {
 // VPI-NEXT: object name=top.d.slice kind=8 vpi_kind=44
 // VPI-NEXT: object name=top.d.zouter kind=8 vpi_kind=44
 // VPI-NEXT: object name=zzBacking kind=2 vpi_kind=48
-// VPI: relation source_table=0 source=1 source_type=32 mode=iterate selector=36 ordinal=0 target_table=1 target=4
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=0 target_table=1 target=3
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=1 target_table=1 target=5
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=2 target_table=1 target=6
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=3 target_table=1 target=7
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=4 target_table=1 target=8
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=5 target_table=1 target=9
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=0 target_table=1 target=2
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=1 target_table=1 target=10
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=0 target_table=1 target=2
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=1 target_table=1 target=10
-// VPI-NEXT: relation source_table=1 source=2 source_type=48 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=2 source_type=48 mode=handle selector=84 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=2 source_type=48 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=3 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=3 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=2
-// VPI-NEXT: relation source_table=1 source=3 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=5 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=5 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=4
-// VPI-NEXT: relation source_table=1 source=5 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=6 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=6 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=2
-// VPI-NEXT: relation source_table=1 source=6 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=7 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=7 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=10
-// VPI-NEXT: relation source_table=1 source=7 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=8 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=8 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI: relation source_table=0 source=1 source_type=32 mode=iterate selector=36 ordinal=0 target_table=1 target=8
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=0 target_table=1 target=4
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=1 target_table=1 target=9
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=2 target_table=1 target=10
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=3 target_table=1 target=11
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=4 target_table=1 target=12
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=5 target_table=1 target=13
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=0 target_table=1 target=3
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=1 target_table=1 target=14
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=0 target_table=1 target=3
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=1 target_table=1 target=14
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=605 ordinal=0 target_table=1 target=2
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=0 target_table=1 target=7
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=1 target_table=1 target=6
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=2 target_table=1 target=5
+// VPI-NEXT: relation source_table=1 source=2 source_type=906 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=84 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=3
+// VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=5 source_type=640 mode=handle selector=701 ordinal=0 target_table=1 target=6
+// VPI-NEXT: relation source_table=1 source=5 source_type=640 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=6 source_type=640 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=7 source_type=906 mode=handle selector=745 ordinal=0 target_table=0 target=1
 // VPI-NEXT: relation source_table=1 source=9 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=9 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=8
 // VPI-NEXT: relation source_table=1 source=9 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=10 source_type=48 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=10 source_type=48 mode=handle selector=84 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=10 source_type=48 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=10 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=10 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=3
+// VPI-NEXT: relation source_table=1 source=10 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=11 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=11 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=14
+// VPI-NEXT: relation source_table=1 source=11 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=12 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=12 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=13 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=13 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=14 source_type=48 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=14 source_type=48 mode=handle selector=84 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=14 source_type=48 mode=handle selector=745 ordinal=0 target_table=0 target=1

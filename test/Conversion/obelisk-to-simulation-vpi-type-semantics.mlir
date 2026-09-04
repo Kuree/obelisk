@@ -104,7 +104,7 @@ module {
 // CHECK-DAG: hierarchy "top.integer_value" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = integer, isSigned = true, isFourState = true, range = [31, 0], children = [], childNames = []>
 // CHECK-DAG: hierarchy "top.state" {{.*}}obelisk_sim.vpi_source_type_identity = 7 : i64{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false, isFourState = true, name = "state_t"{{.*}}kind = logic{{.*}}range = [1, 0]
 // CHECK-DAG: hierarchy "top.packed" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = packed_array{{.*}}range = [0, 3]{{.*}}kind = bit
-// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"], isTagged = false, isSoft = false, bitWidth = 0 : i64, selectableWidth = 40 : i64, bitstreamWidth = 40 : i64, tagBits = 0 : i64, childOrdinals = [0, 1], childPackedOffsets = [0, 0]>
+// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"], isTagged = false, isSoft = false, bitWidth = 0 : i64, selectableWidth = 40 : i64, bitstreamWidth = 40 : i64, tagBits = 0 : i64, childOrdinals = [0, 1], childPackedOffsets = [0, 0], childRandTypes = [1, 1]>
 // CHECK-DAG: hierarchy "top.time_value" {{.*}}kind = time{{.*}}isFourState = true{{.*}}range = [63, 0]
 // CHECK-DAG: hierarchy "top.shortreal_value" {{.*}}kind = shortreal
 // CHECK-DAG: hierarchy "top.real_value" {{.*}}kind = real
@@ -115,7 +115,7 @@ module {
 // CHECK-DAG: hierarchy "top.queue_value" {{.*}}kind = queue{{.*}}kind = bit{{.*}}queueBound = 7 : i64
 // CHECK-DAG: hierarchy "top.assoc_value" {{.*}}kind = assoc_array{{.*}}kind = int{{.*}}kind = string{{.*}}wildcardIndex = false
 // CHECK-DAG: hierarchy "top.process_value" {{.*}}kind = process
-// CHECK-DAG: hierarchy "top.tagged" {{.*}}kind = unpacked_union{{.*}}name = "choice_t"{{.*}}kind = void{{.*}}childNames = ["none", "value"], isTagged = true, isSoft = false, bitWidth = 0 : i64, selectableWidth = 4 : i64, bitstreamWidth = 4 : i64, tagBits = 0 : i64{{.*}}childOrdinals = [0, 1], childPackedOffsets = [0, 0]
+// CHECK-DAG: hierarchy "top.tagged" {{.*}}kind = unpacked_union{{.*}}name = "choice_t"{{.*}}kind = void{{.*}}childNames = ["none", "value"], isTagged = true, isSoft = false, bitWidth = 0 : i64, selectableWidth = 4 : i64, bitstreamWidth = 4 : i64, tagBits = 0 : i64{{.*}}childOrdinals = [0, 1], childPackedOffsets = [0, 0], childRandTypes = [1, 1]
 // CHECK-DAG: hierarchy "top.wild" {{.*}}kind = assoc_array{{.*}}kind = untyped{{.*}}kind = string{{.*}}wildcardIndex = true
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_ANCHOR:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 {{.*}}hierarchy "$unit" debug ""
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_1]] id 1 type 32 in 1 {{.*}}hierarchy "top" debug "top"

@@ -1400,6 +1400,12 @@ struct DesignDatabaseCache {
   uint64_t statementSiteCount = 0;
   uint64_t relations = 0;
   uint64_t relationCount = 0;
+  uint64_t semanticTypes = 0;
+  uint64_t semanticTypeCount = 0;
+  uint64_t semanticTypeEdges = 0;
+  uint64_t semanticTypeEdgeCount = 0;
+  uint64_t objectSemanticRoots = 0;
+  uint64_t objectSemanticRootCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -2726,6 +2732,16 @@ obelisk_rt_status obelisk_rt_cached_design_type_info(
 obelisk_rt_status obelisk_rt_cached_design_type_child(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_root(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index,
+    obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_source(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,

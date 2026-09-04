@@ -144,6 +144,8 @@ LogicalResult SourceAggregateType::verify(
     auto index = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
     auto offset =
         field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+    auto randMode =
+        field ? field.getAs<IntegerAttr>("rand_mode") : IntegerAttr{};
     if (!name || name.getValue().empty() || !type || !index || !offset)
       return emitError() << "aggregate fields require name, type, ordinal, and "
                             "packed_offset metadata";
@@ -154,6 +156,9 @@ LogicalResult SourceAggregateType::verify(
     if (offset.getValue().isNegative() ||
         (!isPacked && !offset.getValue().isZero()))
       return emitError() << "aggregate field has invalid packed offset";
+    if (randMode && (randMode.getValue().isNegative() ||
+                     randMode.getValue().getZExtValue() > 2))
+      return emitError() << "aggregate field has invalid randomization mode";
     if (!names.insert(name.getValue()).second)
       return emitError() << "aggregate field names must be unique";
   }

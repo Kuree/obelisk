@@ -37,24 +37,21 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
 
   EXPECT_FALSE(
       hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiClassTypespec));
-  EXPECT_FALSE(
-      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiModule));
-  EXPECT_FALSE(
-      hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiFunction));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiModule));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiFunction));
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiReg, true, vpiTypespec));
 
   // A class specialization has a distinct LRM rule: only its non-static
   // members are restricted. Class-definition provenance must not escape into
   // the typespec and turn that conditional rule into an unconditional one.
-  EXPECT_FALSE(
-      hasClassDefinitionValueOrigin(vpiClassTypespec, false, vpiReg));
+  EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiClassTypespec, false, vpiReg));
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
 constexpr size_t kExpectedTraversalCount = 1872;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-constexpr size_t kExpectedPropertyCount = 906;
+constexpr size_t kExpectedPropertyCount = 917;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
 constexpr size_t kExpectedValuePolicyCount = 56;
@@ -474,16 +471,24 @@ TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
       vpiVirtualInterfaceVar,
       vpiRegBit,
   };
+  KindSet expectedVector = expected;
+  expectedVector.insert(vpiBitTypespec);
+  expectedVector.insert(vpiLogicTypespec);
+  expectedVector.insert(vpiPackedArrayTypespec);
   for (const auto &object : vpiObjectKinds) {
     if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
       continue;
     for (uint32_t property : {uint32_t(vpiScalar), uint32_t(vpiVector)}) {
-      const bool shouldExist = expected.count(object.value) != 0;
+      const bool shouldExist =
+          (property == vpiVector ? expectedVector : expected)
+              .count(object.value) != 0;
       const auto *descriptor = findVPIProperty(object.value, property);
       EXPECT_EQ(descriptor != nullptr, shouldExist) << object.apiName;
       if (descriptor) {
         EXPECT_EQ(descriptor->valueKind, PropertyKind::Boolean);
-        EXPECT_STREQ(descriptor->clause, "37.14; 37.16; 37.17");
+        EXPECT_STREQ(descriptor->clause, property == vpiVector
+                                             ? "37.14; 37.16; 37.17; 37.23"
+                                             : "37.14; 37.16; 37.17");
       }
       VPIObjectModelImageProperty imageProperty{};
       EXPECT_EQ(findVPIObjectModelImageProperty(
@@ -492,6 +497,48 @@ TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
           << object.apiName;
       if (shouldExist) {
         EXPECT_EQ(imageProperty.valueKind, PropertyKind::Boolean);
+      }
+    }
+  }
+}
+
+TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
+  struct Expected {
+    uint32_t property;
+    KindSet objects;
+    PropertyKind kind;
+    const char *clause;
+  };
+  const std::array<Expected, 6> expected{{
+      {vpiSize, {vpiRange, vpiConstant}, PropertyKind::Integer, "37.22; 37.57"},
+      {vpiPacked,
+       {vpiStructTypespec, vpiUnionTypespec},
+       PropertyKind::Boolean,
+       "37.23"},
+      {vpiTagged, {vpiUnionTypespec}, PropertyKind::Boolean, "37.23"},
+      {vpiArrayType, {vpiArrayTypespec}, PropertyKind::Integer, "37.23"},
+      {vpiRandType, {vpiTypespecMember}, PropertyKind::Integer, "37.23"},
+      {vpiConstType, {vpiConstant}, PropertyKind::Integer, "37.22; 37.57"},
+  }};
+  for (const Expected &item : expected) {
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      bool shouldExist = item.objects.count(object.value) != 0;
+      const auto *descriptor = findVPIProperty(object.value, item.property);
+      EXPECT_EQ(descriptor != nullptr, shouldExist) << object.apiName;
+      if (descriptor) {
+        EXPECT_EQ(descriptor->valueKind, item.kind) << object.apiName;
+        EXPECT_STREQ(descriptor->clause, item.clause) << object.apiName;
+      }
+      VPIObjectModelImageProperty imageProperty{};
+      EXPECT_EQ(findVPIObjectModelImageProperty(vpiObjectModelImage,
+                                                object.value, item.property,
+                                                imageProperty),
+                shouldExist)
+          << object.apiName;
+      if (shouldExist) {
+        EXPECT_EQ(imageProperty.valueKind, item.kind) << object.apiName;
       }
     }
   }
@@ -508,38 +555,35 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
   constexpr uint16_t fullFormats = 0x1ffe;
   constexpr uint16_t tableEntryFormats =
       (uint16_t{1} << vpiStringVal) | (uint16_t{1} << vpiVectorVal);
-  constexpr uint8_t rejectWholeUnpacked = static_cast<uint8_t>(
-      VPIValueRequirement::RejectWholeUnpacked);
-  constexpr uint8_t rejectDefinitionOrigin = static_cast<uint8_t>(
-      VPIValueRequirement::RejectClassDefinitionOrigin);
+  constexpr uint8_t rejectWholeUnpacked =
+      static_cast<uint8_t>(VPIValueRequirement::RejectWholeUnpacked);
+  constexpr uint8_t rejectDefinitionOrigin =
+      static_cast<uint8_t>(VPIValueRequirement::RejectClassDefinitionOrigin);
   constexpr uint8_t rejectTypespecOrigin = static_cast<uint8_t>(
       VPIValueRequirement::RejectNonStaticClassTypespecOrigin);
-  constexpr uint8_t restrictStringConstant = static_cast<uint8_t>(
-      VPIValueRequirement::RestrictStringConstant);
+  constexpr uint8_t restrictStringConstant =
+      static_cast<uint8_t>(VPIValueRequirement::RestrictStringConstant);
   constexpr uint8_t rejectNonRuntimeOrigin =
       rejectDefinitionOrigin | rejectTypespecOrigin;
 
   std::map<uint32_t, ExpectedPolicy> oracle;
-  auto add = [&](std::initializer_list<uint32_t> objects,
-                 uint16_t formats, ValueDefault defaultFormat,
-                 ValueRead readSemantics, uint8_t requirements,
-                 const char *clause) {
+  auto add = [&](std::initializer_list<uint32_t> objects, uint16_t formats,
+                 ValueDefault defaultFormat, ValueRead readSemantics,
+                 uint8_t requirements, const char *clause) {
     for (uint32_t object : objects)
       ASSERT_TRUE(oracle
-                      .emplace(object,
-                               ExpectedPolicy{formats, defaultFormat,
-                                              readSemantics, requirements,
-                                              clause})
+                      .emplace(object, ExpectedPolicy{formats, defaultFormat,
+                                                      readSemantics,
+                                                      requirements, clause})
                       .second)
           << objectName(object);
   };
 
-  add({vpiNet, vpiNetBit, vpiBitNet, vpiInterconnectNet,
-       vpiPackedArrayNet},
+  add({vpiNet, vpiNetBit, vpiBitNet, vpiInterconnectNet, vpiPackedArrayNet},
       fullFormats, ValueDefault::ScalarOrVector, ValueRead::Snapshot, 0,
       "37.16; 38.15");
-  add({vpiEnumNet}, fullFormats, ValueDefault::Semantic,
-      ValueRead::Snapshot, 0, "37.16; 38.15");
+  add({vpiEnumNet}, fullFormats, ValueDefault::Semantic, ValueRead::Snapshot, 0,
+      "37.16; 38.15");
   add({vpiIntegerNet, vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet},
       fullFormats, ValueDefault::Integer, ValueRead::Snapshot, 0,
       "37.16; 38.15");
@@ -547,13 +591,12 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
       ValueRead::Snapshot, 0, "37.16; 38.15");
   add({vpiTimeNet}, fullFormats, ValueDefault::Time, ValueRead::Snapshot, 0,
       "37.16; 38.15");
-  add({vpiStructNet, vpiUnionNet}, fullFormats,
-      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
-      rejectWholeUnpacked, "37.16; 38.15");
+  add({vpiStructNet, vpiUnionNet}, fullFormats, ValueDefault::ScalarOrVector,
+      ValueRead::Snapshot, rejectWholeUnpacked, "37.16; 38.15");
 
   add({vpiReg, vpiRegBit, vpiBitVar, vpiPackedArrayVar}, fullFormats,
-      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
-      rejectNonRuntimeOrigin, "37.17; 38.15");
+      ValueDefault::ScalarOrVector, ValueRead::Snapshot, rejectNonRuntimeOrigin,
+      "37.17; 38.15");
   add({vpiEnumVar, vpiChandleVar}, fullFormats, ValueDefault::Semantic,
       ValueRead::Snapshot, rejectNonRuntimeOrigin, "37.17; 38.15");
   add({vpiIntegerVar, vpiByteVar, vpiShortIntVar, vpiIntVar, vpiLongIntVar},
@@ -565,9 +608,8 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
       rejectNonRuntimeOrigin, "37.17; 38.15");
   add({vpiStringVar}, fullFormats, ValueDefault::String, ValueRead::Snapshot,
       rejectNonRuntimeOrigin, "37.17; 38.15");
-  add({vpiStructVar, vpiUnionVar}, fullFormats,
-      ValueDefault::ScalarOrVector, ValueRead::Snapshot,
-      rejectWholeUnpacked | rejectNonRuntimeOrigin,
+  add({vpiStructVar, vpiUnionVar}, fullFormats, ValueDefault::ScalarOrVector,
+      ValueRead::Snapshot, rejectWholeUnpacked | rejectNonRuntimeOrigin,
       "37.17; 37.24; 38.15");
 
   add({vpiVarSelect, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect,
@@ -575,17 +617,17 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
        vpiLetExpr},
       fullFormats, ValueDefault::Semantic, ValueRead::Evaluate,
       rejectNonRuntimeOrigin, "37.19; 37.57; 38.15");
-  add({vpiConstant}, fullFormats, ValueDefault::Semantic,
-      ValueRead::Snapshot, restrictStringConstant, "37.57; 38.15");
+  add({vpiConstant}, fullFormats, ValueDefault::Semantic, ValueRead::Snapshot,
+      restrictStringConstant, "37.57; 38.15");
   add({vpiParameter, vpiSpecParam, vpiEnumConst, vpiAttribute}, fullFormats,
       ValueDefault::Semantic, ValueRead::Snapshot, 0,
       "37.23; 37.26; 37.81; 38.15");
-  add({vpiGate, vpiSwitch, vpiUdp, vpiPrimTerm, vpiDelayTerm,
-       vpiContAssign, vpiContAssignBit},
+  add({vpiGate, vpiSwitch, vpiUdp, vpiPrimTerm, vpiDelayTerm, vpiContAssign,
+       vpiContAssignBit},
       fullFormats, ValueDefault::Semantic, ValueRead::Snapshot, 0,
       "37.33; 37.43; 37.45; 38.15");
-  add({vpiFsmHandle}, fullFormats, ValueDefault::Semantic,
-      ValueRead::Snapshot, 0, "40.5.3");
+  add({vpiFsmHandle}, fullFormats, ValueDefault::Semantic, ValueRead::Snapshot,
+      0, "40.5.3");
   add({vpiTableEntry}, tableEntryFormats, ValueDefault::String,
       ValueRead::Snapshot, 0, "37.34; 38.15");
 
@@ -627,8 +669,8 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
     EXPECT_EQ(findVPIValuePolicy(object.value) != nullptr, expected)
         << object.apiName;
     VPIObjectModelImageValuePolicy imagePolicy{};
-    EXPECT_EQ(findVPIObjectModelImageValuePolicy(
-                  vpiObjectModelImage, object.value, imagePolicy),
+    EXPECT_EQ(findVPIObjectModelImageValuePolicy(vpiObjectModelImage,
+                                                 object.value, imagePolicy),
               expected)
         << object.apiName;
   }
@@ -656,8 +698,8 @@ TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
 }
 
 TEST(VPIObjectModel, SourceLocationPropertiesHaveExactGlobalExclusions) {
-  const KindSet excluded{vpiCallback,   vpiDelayTerm, vpiDelayDevice,
-                         vpiInterModPath, vpiIterator,  vpiTimeQueue,
+  const KindSet excluded{vpiCallback,      vpiDelayTerm, vpiDelayDevice,
+                         vpiInterModPath,  vpiIterator,  vpiTimeQueue,
                          vpiGenScopeArray, vpiGenScope};
   for (const auto &object : vpiObjectKinds) {
     if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
@@ -686,8 +728,8 @@ TEST(VPIObjectModel, SourceLocationPropertiesHaveExactGlobalExclusions) {
 }
 
 TEST(VPIObjectModel, NullRootAndClassIdentityPropertiesAreExact) {
-  for (uint32_t property : {uint32_t(vpiTimeUnit),
-                            uint32_t(vpiTimePrecision)}) {
+  for (uint32_t property :
+       {uint32_t(vpiTimeUnit), uint32_t(vpiTimePrecision)}) {
     const auto *root = findVPIProperty(0, property);
     ASSERT_NE(root, nullptr);
     EXPECT_EQ(root->valueKind, PropertyKind::Integer);
@@ -959,8 +1001,7 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
 
-  uint32_t valuePolicyOffset =
-      readVPIObjectModelImage32(damaged.data(), 72);
+  uint32_t valuePolicyOffset = readVPIObjectModelImage32(damaged.data(), 72);
   reset();
   damaged[valuePolicyOffset + 4] =
       static_cast<uint8_t>(VPIValueDefaultFormat::Time) + 1;

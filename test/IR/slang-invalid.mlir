@@ -739,6 +739,17 @@ module {
 // -----
 
 module {
+  slang.symbol.variable attributes {
+    node_id = 0 : i64, sym_name = "bad_field_rand_mode",
+    // expected-error @+1 {{aggregate field has invalid randomization mode}}
+    semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
+  } {
+  }
+}
+
+// -----
+
+module {
   slang.symbol.subroutine attributes {
     node_id = 0 : i64, sym_name = "bad_signature",
     // expected-error @+1 {{subroutine signature must be a function type}}

@@ -23,6 +23,21 @@ string_offset, string_size = struct.unpack_from("<QQ", image, 96)
 statement_offset, statement_count = struct.unpack_from("<QQ", image, 128)
 statement_site_offset, statement_site_count = struct.unpack_from("<QQ", image, 144)
 relation_offset, relation_count = struct.unpack_from("<QQ", image, 160)
+semantic_directory = struct.unpack_from("<I", image, 12)[0]
+semantic_type_offset = semantic_type_count = 0
+semantic_edge_offset = semantic_edge_count = 0
+semantic_root_offset = semantic_root_count = 0
+if semantic_directory:
+    if semantic_directory > len(image) - 48:
+        raise SystemExit("invalid design-database semantic directory")
+    (
+        semantic_type_offset,
+        semantic_type_count,
+        semantic_edge_offset,
+        semantic_edge_count,
+        semantic_root_offset,
+        semantic_root_count,
+    ) = struct.unpack_from("<QQQQQQ", image, semantic_directory)
 
 
 def checked_range(offset, count, size, description):
@@ -37,6 +52,9 @@ checked_range(string_offset, string_size, 1, "string")
 checked_range(statement_offset, statement_count, 40, "statement")
 checked_range(statement_site_offset, statement_site_count, 16, "statement site")
 checked_range(relation_offset, relation_count, 16, "relation")
+checked_range(semantic_type_offset, semantic_type_count, 64, "semantic type")
+checked_range(semantic_edge_offset, semantic_edge_count, 24, "semantic type edge")
+checked_range(semantic_root_offset, semantic_root_count, 4, "semantic root")
 
 
 def string_at(offset):
@@ -102,6 +120,55 @@ for index in range(object_count):
         f"type_flags=0x{type_flags:x} port_ordinal={ordinal} "
         f"element_kind={element_kind} element_flags=0x{element_flags:x} "
         f"element_width={element_width}"
+    )
+
+for index in range(semantic_type_count):
+    offset = semantic_type_offset + index * 64
+    (
+        kind_and_flags,
+        first_edge,
+        edge_count,
+        alias_object,
+        identity_target,
+        name,
+        modport,
+        queue_bound,
+        left,
+        right,
+        bit_width,
+        tag_bits,
+    ) = struct.unpack_from("<IIIIIIIIqqQQ", image, offset)
+    kind = kind_and_flags & 0xFF
+    flags = kind_and_flags & 0x3F00
+    public_vpi_kind = kind_and_flags >> 16
+    semantic_name = string_at(string_offset + name) if name else ""
+    semantic_modport = string_at(string_offset + modport) if modport else ""
+    print(
+        f"semantic_type index={index} kind={kind} flags=0x{flags:x} "
+        f"public_vpi_kind={public_vpi_kind} "
+        f"first_edge={first_edge} edge_count={edge_count} alias={alias_object} "
+        f"identity={identity_target} name={semantic_name} modport={semantic_modport} "
+        f"queue_bound={queue_bound} range=[{left}:{right}] "
+        f"bit_width={bit_width} tag_bits={tag_bits}"
+    )
+
+for index in range(semantic_edge_count):
+    offset = semantic_edge_offset + index * 24
+    child, role_and_flags, ordinal, name, packed_offset = struct.unpack_from(
+        "<IIIIQ", image, offset
+    )
+    edge_name = string_at(string_offset + name) if name else ""
+    print(
+        f"semantic_edge index={index} child={child} role={role_and_flags & 0xff} "
+        f"flags=0x{role_and_flags >> 8:x} ordinal={ordinal} name={edge_name} "
+        f"packed_offset={packed_offset}"
+    )
+
+for index in range(semantic_root_count):
+    semantic_type = struct.unpack_from("<I", image, semantic_root_offset + index * 4)[0]
+    print(
+        f"semantic_root object={index} object_name={object_index_names[index]} "
+        f"semantic_type={semantic_type}"
     )
 
 statement_index_names = []

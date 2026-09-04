@@ -1938,6 +1938,192 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   return bytes;
 }
 
+std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
+  std::vector<uint8_t> bytes = makeDatabase(false, true);
+  constexpr uint32_t typeCount = 11;
+  constexpr uint32_t edgeCount = 10;
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
+  const uint64_t typeOffset = directoryOffset + 48;
+  const uint64_t edgeOffset = typeOffset + uint64_t{typeCount} * 64;
+  const uint64_t rootOffset = edgeOffset + uint64_t{edgeCount} * 24;
+  bytes.resize(rootOffset + 4, 0);
+
+  // HeaderReserved points at the optional semantic extension directory.
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset, typeOffset);
+  put64(bytes, directoryOffset + 8, typeCount);
+  put64(bytes, directoryOffset + 16, edgeOffset);
+  put64(bytes, directoryOffset + 24, edgeCount);
+  put64(bytes, directoryOffset + 32, rootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+
+  auto type = [&](uint32_t index, uint32_t kind, uint32_t flags,
+                  uint32_t firstEdge, uint32_t edges, int64_t left = 0,
+                  int64_t right = 0, uint64_t bitWidth = 0,
+                  uint32_t queueBound = 0) {
+    const uint64_t offset = typeOffset + uint64_t{index} * 64;
+    uint32_t publicKind = 0;
+    switch (kind) {
+    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+    case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+    case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+    case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
+      publicKind = vpiArrayTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+      publicKind = vpiStringTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+      publicKind = vpiPackedArrayTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+      publicKind = vpiLogicTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+      publicKind = vpiStructTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
+      publicKind = vpiEnumTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+      publicKind = vpiClassTypespec;
+      break;
+    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+      publicKind = vpiBitTypespec;
+      break;
+    default:
+      break;
+    }
+    put32(bytes, offset,
+          kind | flags |
+              (publicKind << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+    put32(bytes, offset + 4, firstEdge);
+    put32(bytes, offset + 8, edges);
+    put32(bytes, offset + 12, UINT32_MAX);
+    put32(bytes, offset + 16, UINT32_MAX);
+    put32(bytes, offset + 28, queueBound);
+    put64(bytes, offset + 32, static_cast<uint64_t>(left));
+    put64(bytes, offset + 40, static_cast<uint64_t>(right));
+    put64(bytes, offset + 48, bitWidth);
+  };
+  type(0, OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY,
+       OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE, 0, 1, 3, 0);
+  type(1, OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY, 0, 1, 1);
+  type(2, OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY,
+       wildcardAssoc ? OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX : 0, 2, 2);
+  type(3,
+       wildcardAssoc ? OBELISK_RT_DESIGN_SEMANTIC_UNTYPED
+                     : OBELISK_RT_DESIGN_SEMANTIC_STRING,
+       0, 4, 0);
+  type(4, OBELISK_RT_DESIGN_SEMANTIC_QUEUE, 0, 4, 1, 0, 0, 0, 9);
+  type(5, OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY,
+       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
+           OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE,
+       5, 1, 7, 4);
+  type(6, OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT,
+       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, 6, 2, 0, 0, 2);
+  type(7, OBELISK_RT_DESIGN_SEMANTIC_LOGIC,
+       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, 8, 0);
+  type(8, OBELISK_RT_DESIGN_SEMANTIC_ENUM, 0, 8, 1);
+  type(9, OBELISK_RT_DESIGN_SEMANTIC_BIT, 0, 9, 0);
+  type(10, OBELISK_RT_DESIGN_SEMANTIC_MAILBOX, 0, 9, 1);
+
+  auto edge = [&](uint32_t index, uint32_t child, uint32_t role,
+                  uint32_t ordinal, uint32_t name = 0,
+                  uint64_t packedOffset = 0, uint32_t flags = 0) {
+    const uint64_t offset = edgeOffset + uint64_t{index} * 24;
+    put32(bytes, offset, child);
+    put32(bytes, offset + 4,
+          role | ((role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER
+                       ? (flags == 0
+                              ? static_cast<uint32_t>(
+                                    OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM)
+                              : flags)
+                       : 0)
+                  << 8));
+    put32(bytes, offset + 8, ordinal);
+    put32(bytes, offset + 12, name);
+    put64(bytes, offset + 16, packedOffset);
+  };
+  edge(0, 1, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(1, 2, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(2, 3, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX, 0);
+  edge(3, 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 1);
+  edge(4, 5, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(5, 6, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  // Relative string-table offsets 14 and 8 spell "logic" and "value".
+  edge(6, 7, OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 0, 14, 1,
+       OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM);
+  edge(7, 8, OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 1, 8, 0,
+       OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC);
+  edge(8, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE, 0);
+  edge(9, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  put32(bytes, rootOffset, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeNamedSemanticTypespecDatabase() {
+  std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t directoryOffset = 496;
+  constexpr uint64_t semanticTypeOffset = directoryOffset + 48;
+  constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
+  constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 10 * 24;
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         vpiStructTypespec));
+  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  put64(bytes, objectOffset + 80, 0);
+  // A primary named aggregate has no typedef alias. Its semantic name proves
+  // that this declaration defines the type rather than aliasing a built-in.
+  put32(bytes, semanticTypeOffset + 6 * 64 + 20, 14);
+  put32(bytes, semanticRootOffset, 6);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeBuiltinAliasTypespecDatabase() {
+  std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         vpiLogicTypespec));
+  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  put64(bytes, objectOffset + 80, 0);
+  put32(bytes, semanticRootOffset, 7);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeDirectIntegralVectorDatabase() {
+  std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
+  constexpr uint64_t semanticTypeOffset = 496 + 48;
+  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  constexpr uint64_t logic = semanticTypeOffset + 7 * 64;
+  put32(bytes, logic,
+        OBELISK_RT_DESIGN_SEMANTIC_LOGIC |
+            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+            (vpiLogicTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put64(bytes, logic + 32, static_cast<uint64_t>(-2));
+  put64(bytes, logic + 40, 5);
+  put32(bytes, semanticRootOffset, 7);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeMailboxSemanticDatabase() {
+  std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
+  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  put32(bytes, semanticRootOffset, 10);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeRootStaticRelationDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t objectOffset = 240;
@@ -5206,6 +5392,346 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     EXPECT_EQ(vpi_release_handle(value), 1);
     obelisk_rt_v1_context_destroy(context);
   }
+}
+
+TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
+  Fixture fixture;
+  fixture.database = makeSemanticTraversalDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  auto integerValue = [](vpiHandle handle) {
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    vpi_get_value(handle, &value);
+    return value.value.integer;
+  };
+  auto release = [](vpiHandle handle) {
+    if (handle) {
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+    }
+  };
+
+  char name[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(object, nullptr);
+  vpiHandle array = vpi_handle(vpiTypespec, object);
+  ASSERT_NE(array, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, array), vpiArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiArrayType, array), vpiStaticArray);
+  EXPECT_EQ(vpi_get_str(vpiName, array), nullptr);
+  vpiHandle instance = vpi_handle(vpiInstance, array);
+  ASSERT_NE(instance, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, instance), vpiModule);
+  EXPECT_STREQ(vpi_get_str(vpiName, instance), "top");
+  release(instance);
+
+  vpiHandle ranges = vpi_iterate(vpiRange, array);
+  ASSERT_NE(ranges, nullptr);
+  vpiHandle use = vpi_handle(vpiUse, ranges);
+  ASSERT_NE(use, nullptr);
+  EXPECT_EQ(vpi_compare_objects(use, array), 1);
+  release(use);
+
+  vpiHandle outerRange = vpi_scan(ranges);
+  ASSERT_NE(outerRange, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, outerRange), vpiRange);
+  EXPECT_EQ(vpi_get(vpiSize, outerRange), 4);
+  vpiHandle left = vpi_handle(vpiLeftRange, outerRange);
+  vpiHandle right = vpi_handle(vpiRightRange, outerRange);
+  ASSERT_NE(left, nullptr);
+  ASSERT_NE(right, nullptr);
+  EXPECT_EQ(integerValue(left), 3);
+  EXPECT_EQ(integerValue(right), 0);
+  release(left);
+  release(right);
+  release(outerRange);
+
+  for (unsigned dimension = 0; dimension != 3; ++dimension) {
+    vpiHandle emptyRange = vpi_scan(ranges);
+    ASSERT_NE(emptyRange, nullptr);
+    EXPECT_EQ(vpi_get(vpiSize, emptyRange), 0);
+    EXPECT_EQ(vpi_handle(vpiLeftRange, emptyRange), nullptr);
+    EXPECT_EQ(vpi_handle(vpiRightRange, emptyRange), nullptr);
+    release(emptyRange);
+  }
+  EXPECT_EQ(vpi_scan(ranges), nullptr);
+
+  vpiHandle dynamic = vpi_handle(vpiElemTypespec, array);
+  ASSERT_NE(dynamic, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, dynamic), vpiArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiArrayType, dynamic), vpiDynamicArray);
+  vpiHandle associative = vpi_handle(vpiElemTypespec, dynamic);
+  ASSERT_NE(associative, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, associative), vpiArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiArrayType, associative), vpiAssocArray);
+  EXPECT_EQ(vpi_handle(vpiLeftRange, associative), nullptr);
+  vpiHandle indexType = vpi_handle(vpiIndexTypespec, associative);
+  ASSERT_NE(indexType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, indexType), vpiStringTypespec);
+  release(indexType);
+  vpiHandle queue = vpi_handle(vpiElemTypespec, associative);
+  ASSERT_NE(queue, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, queue), vpiArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiArrayType, queue), vpiQueueArray);
+  vpiHandle packed = vpi_handle(vpiElemTypespec, queue);
+  ASSERT_NE(packed, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, packed), vpiPackedArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiVector, packed), 1);
+  left = vpi_handle(vpiLeftRange, packed);
+  right = vpi_handle(vpiRightRange, packed);
+  ASSERT_NE(left, nullptr);
+  ASSERT_NE(right, nullptr);
+  EXPECT_EQ(integerValue(left), 7);
+  EXPECT_EQ(integerValue(right), 4);
+  release(left);
+  release(right);
+
+  vpiHandle structure = vpi_handle(vpiElemTypespec, packed);
+  ASSERT_NE(structure, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, structure), vpiStructTypespec);
+  EXPECT_EQ(vpi_get(vpiPacked, structure), 1);
+  EXPECT_EQ(vpi_handle(vpiElemTypespec, structure), nullptr);
+  vpiHandle members = vpi_iterate(vpiTypespecMember, structure);
+  ASSERT_NE(members, nullptr);
+
+  vpiHandle member = vpi_scan(members);
+  ASSERT_NE(member, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, member), vpiTypespecMember);
+  EXPECT_STREQ(vpi_get_str(vpiName, member), "logic");
+  EXPECT_EQ(vpi_get(vpiRandType, member), vpiRand);
+  vpiHandle memberType = vpi_handle(vpiTypespec, member);
+  ASSERT_NE(memberType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, memberType), vpiLogicTypespec);
+  EXPECT_EQ(vpi_get(vpiVector, memberType), 0);
+  EXPECT_EQ(vpi_iterate(vpiRange, memberType), nullptr);
+  release(memberType);
+  release(member);
+
+  member = vpi_scan(members);
+  ASSERT_NE(member, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiName, member), "value");
+  EXPECT_EQ(vpi_get(vpiRandType, member), vpiRandC);
+  memberType = vpi_handle(vpiTypespec, member);
+  ASSERT_NE(memberType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, memberType), vpiEnumTypespec);
+  vpiHandle base = vpi_handle(vpiBaseTypespec, memberType);
+  ASSERT_NE(base, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, base), vpiBitTypespec);
+  EXPECT_EQ(vpi_handle(vpiElemTypespec, base), nullptr);
+  release(base);
+  release(memberType);
+  release(member);
+  EXPECT_EQ(vpi_scan(members), nullptr);
+
+  release(structure);
+  release(packed);
+  release(queue);
+  release(associative);
+  release(dynamic);
+  release(array);
+  release(object);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, WildcardAssociativeTypespecHasNoIndexTypespec) {
+  Fixture fixture;
+  fixture.database = makeSemanticTraversalDatabase(true);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(object, nullptr);
+  vpiHandle outer = vpi_handle(vpiTypespec, object);
+  ASSERT_NE(outer, nullptr);
+  vpiHandle dynamic = vpi_handle(vpiElemTypespec, outer);
+  ASSERT_NE(dynamic, nullptr);
+  vpiHandle associative = vpi_handle(vpiElemTypespec, dynamic);
+  ASSERT_NE(associative, nullptr);
+  EXPECT_EQ(vpi_get(vpiArrayType, associative), vpiAssocArray);
+  EXPECT_EQ(vpi_handle(vpiIndexTypespec, associative), nullptr);
+  vpiHandle element = vpi_handle(vpiElemTypespec, associative);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(vpi_get(vpiArrayType, element), vpiQueueArray);
+
+  EXPECT_EQ(vpi_release_handle(element), 1);
+  EXPECT_EQ(vpi_release_handle(associative), 1);
+  EXPECT_EQ(vpi_release_handle(dynamic), 1);
+  EXPECT_EQ(vpi_release_handle(outer), 1);
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, PrimaryNamedTypespecHasNoTypedefAlias) {
+  Fixture fixture;
+  fixture.database = makeNamedSemanticTypespecDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle named = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(named, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, named), vpiStructTypespec);
+  EXPECT_EQ(vpi_get(vpiPacked, named), 1);
+  EXPECT_EQ(vpi_handle(vpiTypedefAlias, named), nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFile, named), "test.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, named), 7);
+  EXPECT_EQ(vpi_get_str(vpiFullName, named), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  EXPECT_EQ(vpi_release_handle(named), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, BuiltinTypedefAliasReturnsOneUnnamedUnderlyingTypespec) {
+  Fixture fixture;
+  fixture.database = makeBuiltinAliasTypespecDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle named = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(named, nullptr);
+  vpiHandle underlying = vpi_handle(vpiTypedefAlias, named);
+  ASSERT_NE(underlying, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, underlying), vpiLogicTypespec);
+  EXPECT_EQ(vpi_get_str(vpiName, underlying), nullptr);
+  EXPECT_EQ(vpi_handle(vpiTypedefAlias, underlying), nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFile, underlying), "test.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, underlying), 7);
+
+  EXPECT_EQ(vpi_release_handle(underlying), 1);
+  EXPECT_EQ(vpi_release_handle(named), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, DirectIntegralVectorTraversesOneLazyPackedDimension) {
+  Fixture fixture;
+  fixture.database = makeDirectIntegralVectorDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  auto integerValue = [](vpiHandle handle) {
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    vpi_get_value(handle, &value);
+    return value.value.integer;
+  };
+  char name[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(object, nullptr);
+  vpiHandle vector = vpi_handle(vpiTypespec, object);
+  ASSERT_NE(vector, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, vector), vpiLogicTypespec);
+  EXPECT_EQ(vpi_get(vpiVector, vector), 1);
+  vpiHandle left = vpi_handle(vpiLeftRange, vector);
+  vpiHandle right = vpi_handle(vpiRightRange, vector);
+  ASSERT_NE(left, nullptr);
+  ASSERT_NE(right, nullptr);
+  EXPECT_EQ(integerValue(left), -2);
+  EXPECT_EQ(integerValue(right), 5);
+
+  vpiHandle ranges = vpi_iterate(vpiRange, vector);
+  ASSERT_NE(ranges, nullptr);
+  vpiHandle range = vpi_scan(ranges);
+  ASSERT_NE(range, nullptr);
+  EXPECT_EQ(vpi_scan(ranges), nullptr);
+  vpiHandle element = vpi_handle(vpiElemTypespec, vector);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, element), vpiLogicTypespec);
+  EXPECT_EQ(vpi_get(vpiVector, element), 0);
+  EXPECT_EQ(vpi_iterate(vpiRange, element), nullptr);
+  EXPECT_EQ(vpi_handle(vpiElemTypespec, element), nullptr);
+  EXPECT_EQ(vpi_compare_objects(vector, element), 0);
+
+  for (vpiHandle handle : {element, range, right, left, vector, object})
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, NonArraySemanticPayloadIsNotAnElementTypespec) {
+  Fixture fixture;
+  fixture.database = makeMailboxSemanticDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(object, nullptr);
+  vpiHandle mailbox = vpi_handle(vpiTypespec, object);
+  ASSERT_NE(mailbox, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, mailbox), vpiClassTypespec);
+  EXPECT_EQ(vpi_handle(vpiElemTypespec, mailbox), nullptr);
+
+  EXPECT_EQ(vpi_release_handle(mailbox), 1);
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
@@ -9068,6 +9594,121 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
     EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
               OBELISK_RT_INVALID_DESIGN);
   }
+}
+
+TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
+  Fixture fixture;
+  fixture.database = makeSemanticTraversalDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+
+  constexpr uint64_t directoryOffset = 496;
+  constexpr uint64_t semanticTypeOffset = directoryOffset + 48;
+  constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
+  auto reject = [&](std::vector<uint8_t> malformed) {
+    put64(malformed, 32, imageChecksum(malformed));
+    fixture.execution.design_database = malformed.data();
+    fixture.execution.design_database_size = malformed.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  std::vector<uint8_t> malformed = fixture.database;
+  put32(malformed, 12, static_cast<uint32_t>(malformed.size() - 4));
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  // The extension directory may not alias one of the sections it describes.
+  put64(malformed, directoryOffset, directoryOffset);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put64(malformed, directoryOffset + 40, 2);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put64(malformed, directoryOffset + 40, 0);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset,
+        OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(
+      malformed, semanticTypeOffset,
+      OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
+          OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+          (vpiBitTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticEdgeOffset, 99);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticEdgeOffset + 2 * 24, 2);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticEdgeOffset + 6 * 24 + 12, 0);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 12, 0);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 16, 0);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 2 * 64,
+        OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY |
+            OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 3 * 64,
+        OBELISK_RT_DESIGN_SEMANTIC_UNTYPED);
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(
+      malformed, semanticTypeOffset + 9 * 64,
+      OBELISK_RT_DESIGN_SEMANTIC_BIT | OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
+          (vpiBitTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 6 * 64,
+        OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT |
+            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
+            (vpiStructTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  reject(std::move(malformed));
+
+  malformed = fixture.database;
+  put32(malformed, semanticTypeOffset + 5 * 64,
+        OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY |
+            OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
+            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+            (vpiPackedArrayTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  reject(std::move(malformed));
+
+  malformed = makeNamedSemanticTypespecDatabase();
+  put32(
+      malformed, 240,
+      designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiIntTypespec));
+  reject(std::move(malformed));
 }
 
 TEST(VPI, StaticObjectsRequireExplicitTraversalRelations) {

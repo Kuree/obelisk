@@ -143,6 +143,15 @@ def ScalarVectorObjects : VPIObjectSet<"ScalarVectorObjects",
    IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
    UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
    RegBit]>;
+def VectorPropertyObjects : VPIObjectSet<"VectorPropertyObjects",
+  [Port, PortBit,
+   Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
+   ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, InterconnectArray, StructNet, PackedArrayNet,
+   ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit, BitTypespec, LogicTypespec, PackedArrayTypespec]>;
 
 // Integer and Boolean properties use the same exact object-set machinery as
 // traversal edges. This keeps LRM applicability generated instead of letting
@@ -205,7 +214,7 @@ def ObjIdProperty : VPIProperty<"vpiObjId", 660, Int64Property,
 def ScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
   ScalarVectorObjects, "37.14; 37.16; 37.17">;
 def VectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
-  ScalarVectorObjects, "37.14; 37.16; 37.17">;
+  VectorPropertyObjects, "37.14; 37.16; 37.17; 37.23">;
 def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
   PortObjects, "37.14">;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
@@ -229,6 +238,30 @@ def ConcreteTypespecObjects : VPIObjectSet<"ConcreteTypespecObjects",
    BitTypespec, LogicTypespec, ArrayTypespec, VoidTypespec,
    PackedArrayTypespec, SequenceTypespec, PropertyTypespec, EventTypespec,
    InterfaceTypespec]>;
+def StructuralSizeObjects : VPIObjectSet<"StructuralSizeObjects",
+  [Range, Constant]>;
+def PackedTypespecObjects : VPIObjectSet<"PackedTypespecObjects",
+  [StructTypespec, UnionTypespec]>;
+def TaggedTypespecObjects : VPIObjectSet<"TaggedTypespecObjects",
+  [UnionTypespec]>;
+def ArrayTypespecObjects : VPIObjectSet<"ArrayTypespecObjects",
+  [ArrayTypespec]>;
+def TypespecMemberObjects : VPIObjectSet<"TypespecMemberObjects",
+  [TypespecMember]>;
+def ConstantObjects : VPIObjectSet<"ConstantObjects", [Constant]>;
+
+def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
+  StructuralSizeObjects, "37.22; 37.57">;
+def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
+  BooleanProperty, PackedTypespecObjects, "37.23">;
+def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
+  BooleanProperty, TaggedTypespecObjects, "37.23">;
+def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
+  IntegerProperty, ArrayTypespecObjects, "37.23">;
+def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
+  IntegerProperty, TypespecMemberObjects, "37.23">;
+def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
+  IntegerProperty, ConstantObjects, "37.22; 37.57">;
 // Exact source-only identities that may occupy an immutable static-object
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.

@@ -70,7 +70,8 @@ LogicalResult VPITypeSemanticsAttr::verify(
     IntegerAttr bitWidth, IntegerAttr selectableWidth,
     IntegerAttr bitstreamWidth, IntegerAttr tagBits, IntegerAttr queueBound,
     BoolAttr wildcardIndex, DenseI64ArrayAttr childOrdinals,
-    DenseI64ArrayAttr childPackedOffsets, ArrayAttr typedefAliases) {
+    DenseI64ArrayAttr childPackedOffsets, DenseI64ArrayAttr childRandTypes,
+    ArrayAttr typedefAliases) {
   if (!range || (range.size() != 0 && range.size() != 2))
     return emitError() << "VPI semantic type range must be empty or contain "
                           "one left/right pair";
@@ -214,8 +215,10 @@ LogicalResult VPITypeSemanticsAttr::verify(
                           kind == VPITypeKind::AssocArray)) ||
       failed(
           rejectDetail(childOrdinals, "field-ordinal metadata", aggregate)) ||
-      failed(
-          rejectDetail(childPackedOffsets, "field-offset metadata", aggregate)))
+      failed(rejectDetail(childPackedOffsets, "field-offset metadata",
+                          aggregate)) ||
+      failed(rejectDetail(childRandTypes, "field-randomization metadata",
+                          aggregate)))
     return failure();
   if (kind == VPITypeKind::Queue && !queueBound)
     return emitError() << "VPI queue semantic type requires bound metadata";
@@ -244,7 +247,9 @@ LogicalResult VPITypeSemanticsAttr::verify(
       return emitError()
              << "VPI aggregate semantic type requires complete layout metadata";
     if (static_cast<size_t>(childOrdinals.size()) != childCount ||
-        static_cast<size_t>(childPackedOffsets.size()) != childCount)
+        static_cast<size_t>(childPackedOffsets.size()) != childCount ||
+        (childRandTypes &&
+         static_cast<size_t>(childRandTypes.size()) != childCount))
       return emitError() << "VPI aggregate layout must describe every field";
     for (auto [index, ordinal] : llvm::enumerate(childOrdinals.asArrayRef()))
       if (ordinal != static_cast<int64_t>(index))
@@ -253,6 +258,13 @@ LogicalResult VPITypeSemanticsAttr::verify(
     if (llvm::any_of(childPackedOffsets.asArrayRef(),
                      [](int64_t offset) { return offset < 0; }))
       return emitError() << "VPI aggregate field offsets must be nonnegative";
+    if (childRandTypes &&
+        llvm::any_of(childRandTypes.asArrayRef(), [](int64_t randType) {
+          return randType < 1 || randType > 3;
+        }))
+      return emitError()
+             << "VPI aggregate field randomization types must be vpiNotRand, "
+                "vpiRand, or vpiRandC";
     const bool unionType =
         kind == VPITypeKind::PackedUnion || kind == VPITypeKind::UnpackedUnion;
     if (isTagged.getValue() && !unionType)

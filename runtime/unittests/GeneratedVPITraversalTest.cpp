@@ -185,6 +185,79 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(GeneratedVPITraversal, VirtualInterfaceTypedefKeepsRawCanonicalIdentity) {
+  ASSERT_NE(dumpDescriptor.execution, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
+            OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top.d";
+  char aliasName[] = "top.d.iface_alias_t";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle alias = vpi_handle_by_name(aliasName, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(alias, nullptr);
+  vpiHandle interfaces = vpi_iterate(vpiTypespec, module);
+  ASSERT_NE(interfaces, nullptr);
+  vpiHandle raw = vpi_scan(interfaces);
+  ASSERT_NE(raw, nullptr);
+  EXPECT_EQ(vpi_scan(interfaces), nullptr);
+  EXPECT_EQ(vpi_get(vpiType, raw), vpiInterfaceTypespec);
+  EXPECT_EQ(vpi_get(vpiType, alias), vpiInterfaceTypespec);
+  EXPECT_EQ(vpi_handle(vpiTypedefAlias, raw), nullptr);
+  vpiHandle target = vpi_handle(vpiTypedefAlias, alias);
+  ASSERT_NE(target, nullptr);
+  EXPECT_EQ(vpi_compare_objects(target, raw), 1);
+
+  EXPECT_EQ(vpi_release_handle(target), 1);
+  EXPECT_EQ(vpi_release_handle(alias), 1);
+  EXPECT_EQ(vpi_release_handle(raw), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedVPITraversal, TypedefAliasChainEndsAtUnnamedBuiltinType) {
+  ASSERT_NE(dumpDescriptor.execution, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
+            OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char baseName[] = "top.d.base_t";
+  char aliasName[] = "top.d.alias_t";
+  vpiHandle base = vpi_handle_by_name(baseName, nullptr);
+  vpiHandle alias = vpi_handle_by_name(aliasName, nullptr);
+  ASSERT_NE(base, nullptr);
+  ASSERT_NE(alias, nullptr);
+  vpiHandle aliasTarget = vpi_handle(vpiTypedefAlias, alias);
+  ASSERT_NE(aliasTarget, nullptr);
+  EXPECT_EQ(vpi_compare_objects(aliasTarget, base), 1);
+  vpiHandle builtin = vpi_handle(vpiTypedefAlias, base);
+  ASSERT_NE(builtin, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, builtin), vpiBitTypespec);
+  EXPECT_EQ(vpi_get_str(vpiName, builtin), nullptr);
+  EXPECT_EQ(vpi_handle(vpiTypedefAlias, builtin), nullptr);
+
+  EXPECT_EQ(vpi_release_handle(builtin), 1);
+  EXPECT_EQ(vpi_release_handle(aliasTarget), 1);
+  EXPECT_EQ(vpi_release_handle(alias), 1);
+  EXPECT_EQ(vpi_release_handle(base), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
   const auto *execution = dumpDescriptor.execution;
   ASSERT_NE(execution, nullptr);

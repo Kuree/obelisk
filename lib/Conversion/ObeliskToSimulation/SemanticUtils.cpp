@@ -720,6 +720,7 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
     BoolAttr wildcardIndex;
     DenseI64ArrayAttr childOrdinals;
     DenseI64ArrayAttr childPackedOffsets;
+    DenseI64ArrayAttr childRandTypes;
     ArrayAttr typedefAliases;
   };
   auto integerAttr = [&](uint64_t value) {
@@ -736,7 +737,8 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         details.isTagged, details.isSoft, details.bitWidth,
         details.selectableWidth, details.bitstreamWidth, details.tagBits,
         details.queueBound, details.wildcardIndex, details.childOrdinals,
-        details.childPackedOffsets, details.typedefAliases);
+        details.childPackedOffsets, details.childRandTypes,
+        details.typedefAliases);
   };
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Type)> lower =
       [&](Type current) -> FailureOr<sim::VPITypeSemanticsAttr> {
@@ -822,16 +824,19 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
       SmallVector<Attribute> names;
       SmallVector<int64_t> ordinals;
       SmallVector<int64_t> packedOffsets;
+      SmallVector<int64_t> randTypes;
       children.reserve(fields.size());
       names.reserve(fields.size());
       ordinals.reserve(fields.size());
       packedOffsets.reserve(fields.size());
+      randTypes.reserve(fields.size());
       for (Attribute fieldAttr : fields) {
         StringAttr fieldName;
         Type fieldType;
         Attribute rawName;
         IntegerAttr ordinal;
         IntegerAttr packedOffset;
+        IntegerAttr randMode;
         if (sourceInventory) {
           auto field = dyn_cast<DictionaryAttr>(fieldAttr);
           rawName = field ? field.get("name") : Attribute{};
@@ -842,15 +847,22 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
           ordinal = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
           packedOffset =
               field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+          randMode =
+              field ? field.getAs<IntegerAttr>("rand_mode") : IntegerAttr{};
+          if (!randMode)
+            randMode = integerAttr(0);
         } else if (auto field = dyn_cast<sim::FieldAttr>(fieldAttr)) {
           fieldName = field.getName();
           fieldType = field.getType();
           ordinal = integerAttr(field.getOrdinal());
           packedOffset = integerAttr(field.getPackedOffset());
+          randMode = integerAttr(0);
         }
         if (!fieldName || !fieldType || !ordinal || !packedOffset ||
-            ordinal.getValue().isNegative() ||
-            packedOffset.getValue().isNegative()) {
+            !randMode || ordinal.getValue().isNegative() ||
+            packedOffset.getValue().isNegative() ||
+            randMode.getValue().isNegative() ||
+            randMode.getValue().getZExtValue() > 2) {
           emitError(location) << "malformed aggregate field in VPI semantic "
                                  "type inventory";
           return failure();
@@ -863,10 +875,13 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         isFourState |= child->getIsFourState();
         ordinals.push_back(ordinal.getValue().getSExtValue());
         packedOffsets.push_back(packedOffset.getValue().getSExtValue());
+        // Slang/Obelisk use 0/1/2 for none/rand/randc; VPI uses 1/2/3.
+        randTypes.push_back(randMode.getValue().getSExtValue() + 1);
       }
       details.childOrdinals = DenseI64ArrayAttr::get(context, ordinals);
       details.childPackedOffsets =
           DenseI64ArrayAttr::get(context, packedOffsets);
+      details.childRandTypes = DenseI64ArrayAttr::get(context, randTypes);
       return make(kind, isSigned, isFourState, name, {}, children, names,
                   details);
     };
@@ -1198,7 +1213,7 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         current.getSelectableWidth(), current.getBitstreamWidth(),
         current.getTagBits(), current.getQueueBound(),
         current.getWildcardIndex(), current.getChildOrdinals(),
-        current.getChildPackedOffsets(), aliases);
+        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases);
   };
   FailureOr<sim::VPITypeSemanticsAttr> result = apply(*root);
   if (failed(result))

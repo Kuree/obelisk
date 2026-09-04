@@ -60,6 +60,7 @@ def SimVPITypeSemanticsAttr
       OptionalParameter<"::mlir::BoolAttr">:$wildcardIndex,
       OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childOrdinals,
       OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childPackedOffsets,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childRandTypes,
       OptionalParameter<"::mlir::ArrayAttr">:$typedefAliases);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;

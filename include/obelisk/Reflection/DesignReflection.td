@@ -182,6 +182,66 @@ def Relation : ReflectionLayout<"Relation", 16,
   [RelationSourceIndex, RelationTargetIndexAndTable, RelationOrdinal,
    RelationSelector, RelationSourceKindAndTable]>;
 
+// Exact source-semantic VPI types form a compact graph separate from the
+// executable Type table.  The latter is also consumed by VCD and value-layout
+// code and deliberately remains normalized and nonzero-width.  Semantic graph
+// cursors are table indices; UINT32_MAX denotes an absent edge/object/string.
+def SemanticTypeKindAndFlags : ReflectionField<"KindAndFlags", 0, U32LE>;
+def SemanticTypeFirstEdge : ReflectionField<"FirstEdge", 4, U32LE>;
+def SemanticTypeEdgeCount : ReflectionField<"EdgeCount", 8, U32LE>;
+def SemanticTypeAliasObject : ReflectionField<"AliasObject", 12, U32LE>;
+def SemanticTypeIdentityTarget
+    : ReflectionField<"IdentityTarget", 16, U32LE>;
+def SemanticTypeName : ReflectionField<"Name", 20, U32LE>;
+def SemanticTypeModport : ReflectionField<"Modport", 24, U32LE>;
+def SemanticTypeQueueBound : ReflectionField<"QueueBound", 28, U32LE>;
+def SemanticTypeLeft : ReflectionField<"Left", 32, I64LE>;
+def SemanticTypeRight : ReflectionField<"Right", 40, I64LE>;
+def SemanticTypeBitWidth : ReflectionField<"BitWidth", 48, U64LE>;
+def SemanticTypeTagBits : ReflectionField<"TagBits", 56, U64LE>;
+def SemanticType : ReflectionLayout<"SemanticType", 64,
+  [SemanticTypeKindAndFlags, SemanticTypeFirstEdge, SemanticTypeEdgeCount,
+   SemanticTypeAliasObject, SemanticTypeIdentityTarget, SemanticTypeName,
+   SemanticTypeModport, SemanticTypeQueueBound, SemanticTypeLeft,
+   SemanticTypeRight, SemanticTypeBitWidth, SemanticTypeTagBits]>;
+
+def SemanticTypeEdgeChild : ReflectionField<"Child", 0, U32LE>;
+def SemanticTypeEdgeRoleAndFlags
+    : ReflectionField<"RoleAndFlags", 4, U32LE>;
+def SemanticTypeEdgeOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def SemanticTypeEdgeName : ReflectionField<"Name", 12, U32LE>;
+def SemanticTypeEdgePackedOffset
+    : ReflectionField<"PackedOffset", 16, U64LE>;
+def SemanticTypeEdge : ReflectionLayout<"SemanticTypeEdge", 24,
+  [SemanticTypeEdgeChild, SemanticTypeEdgeRoleAndFlags,
+   SemanticTypeEdgeOrdinal, SemanticTypeEdgeName,
+   SemanticTypeEdgePackedOffset]>;
+
+def ObjectSemanticRootType : ReflectionField<"SemanticType", 0, U32LE>;
+def ObjectSemanticRoot : ReflectionLayout<"ObjectSemanticRoot", 4,
+  [ObjectSemanticRootType]>;
+
+// HeaderReserved is zero when no extension is present, otherwise it is the
+// absolute 32-bit image offset of this directory. Keeping the fixed header
+// stable lets future reflection producers add orthogonal generated sections
+// without rebuilding every existing consumer image.
+def SemanticDirectoryTypeOffset
+    : ReflectionField<"SemanticTypeOffset", 0, U64LE>;
+def SemanticDirectoryTypeCount
+    : ReflectionField<"SemanticTypeCount", 8, U64LE>;
+def SemanticDirectoryEdgeOffset
+    : ReflectionField<"SemanticTypeEdgeOffset", 16, U64LE>;
+def SemanticDirectoryEdgeCount
+    : ReflectionField<"SemanticTypeEdgeCount", 24, U64LE>;
+def SemanticDirectoryRootOffset
+    : ReflectionField<"ObjectSemanticRootOffset", 32, U64LE>;
+def SemanticDirectoryRootCount
+    : ReflectionField<"ObjectSemanticRootCount", 40, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 48,
+  [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
+   SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
+   SemanticDirectoryRootOffset, SemanticDirectoryRootCount]>;
+
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;
 def NetRecord : ReflectionRecordKind<"Net", 3, Object>;

@@ -90,6 +90,27 @@ module attributes {
                 childNames = []>
           ], childNames = []>
     }
+    obelisk_sim.vpi_typespec.decl @record_t id 7 in 1 owner @top
+        hierarchy "top.record_t" debug "record_t" {
+      target_type = #obelisk_sim.vpi_type<kind = packed_struct,
+          isSigned = false, isFourState = true, name = "record_t", range = [],
+          children = [
+            #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+                isFourState = true, range = [0, 0], children = [],
+                childNames = []>,
+            #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+                isFourState = false, name = "nested_state", range = [],
+                children = [
+                  #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+                      isFourState = false, range = [0, 0], children = [],
+                      childNames = []>
+                ], childNames = []>
+          ], childNames = ["flag", "state"], isTagged = false,
+          isSoft = false, bitWidth = 2 : i64, selectableWidth = 2 : i64,
+          bitstreamWidth = 2 : i64, tagBits = 0 : i64,
+          childOrdinals = [0, 1], childPackedOffsets = [1, 0],
+          childRandTypes = [2, 3]>
+    }
     obelisk_sim.vpi_enum_const.decl 0 enum @state_t ordinal 0
         name "IDLE" value "2'b00"
     obelisk_sim.vpi_enum_const.decl 1 enum @state_t ordinal 1
@@ -131,6 +152,7 @@ module attributes {
 // CHECK: object name=top.alias_t kind=9 vpi_kind=640 caps=0x80 id=4
 // CHECK: object name=top.base_t kind=9 vpi_kind=640 caps=0x80 id=1
 // CHECK: object name=top.enum_array_t kind=9 vpi_kind=692 caps=0x80 id=10
+// CHECK: object name=top.record_t kind=9 vpi_kind=638 caps=0x80
 // CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=7
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
 // CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=5
@@ -148,6 +170,7 @@ module attributes {
 // CHECK-DAG: relation {{.*}} source_type=32 mode=iterate selector=725 ordinal=0 {{.*}} source_name=top target_name=top.base_t
 // CHECK-DAG: relation {{.*}} source_type=32 mode=iterate selector=725 ordinal=1 {{.*}} source_name=top target_name=top.alias_t
 // CHECK-DAG: relation {{.*}} source_type=32 mode=iterate selector=725 ordinal=2 {{.*}} source_name=top target_name=top.enum_array_t
+// CHECK-DAG: relation {{.*}} source_type=32 mode=iterate selector=725 ordinal=3 {{.*}} source_name=top target_name=top.record_t
 // CHECK-DAG: relation {{.*}} source_type=640 mode=handle selector=701 ordinal=0 {{.*}} source_name=top.alias_t target_name=top.base_t
 // CHECK-DAG: relation {{.*}} source_type=640 mode=handle selector=745 ordinal=0 {{.*}} source_name=top.base_t target_name=top
 // CHECK-DAG: relation {{.*}} source_type=633 mode=handle selector=745 ordinal=0 {{.*}} source_name=top.state_t target_name=top
@@ -162,3 +185,16 @@ module attributes {
 // CHECK-DAG: relation {{.*}} source_type=620 mode=handle selector=605 ordinal=0 {{.*}} source_name=top.value target_name=top.alias_t
 // CHECK-DAG: relation {{.*}} mode=handle selector=605 ordinal=0 {{.*}} source_name=top.anon_value target_name=top
 // CHECK-DAG: relation {{.*}} source_type=633 mode=handle selector=745 ordinal=0 {{.*}} source_name=top target_name=top
+
+// The semantic side graph retains recursive anonymous types without creating
+// one static database object per range or member. Integral [0:0] bounds are
+// intrinsic widths, not explicit VPI dimensions; only array nodes set 0x400.
+// CHECK-DAG: semantic_type {{.*}} kind=17 flags=0x400 public_vpi_kind=640 {{.*}} range=[7:0]
+// CHECK-DAG: semantic_type {{.*}} kind=19 flags=0x200 public_vpi_kind=638 {{.*}} name=record_t {{.*}} bit_width=2
+// CHECK-DAG: semantic_type {{.*}} kind=3 flags=0x200 public_vpi_kind=641 {{.*}} range=[0:0]
+// CHECK-DAG: semantic_type {{.*}} kind=10 flags=0x0 public_vpi_kind=633 {{.*}} name=nested_state
+// CHECK-DAG: semantic_type {{.*}} kind=2 flags=0x0 public_vpi_kind=640 {{.*}} range=[0:0]
+// CHECK-DAG: semantic_edge {{.*}} role=4 flags=0x2 ordinal=0 name=flag packed_offset=1
+// CHECK-DAG: semantic_edge {{.*}} role=4 flags=0x3 ordinal=1 name=state packed_offset=0
+// CHECK-DAG: semantic_edge {{.*}} role=1 {{.*}} ordinal=0 name= packed_offset=0
+// CHECK-DAG: semantic_root {{.*}} object_name=top.record_t semantic_type={{[0-9]+}}

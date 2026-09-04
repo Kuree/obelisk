@@ -210,6 +210,20 @@ module attributes {
 
 // -----
 
+// expected-error @+2 {{VPI aggregate field randomization types must be vpiNotRand, vpiRand, or vpiRandC}}
+module attributes {
+  obelisk_sim.test = #obelisk_sim.vpi_type<kind = packed_struct,
+    isSigned = false, isFourState = false, range = [],
+    children = [#obelisk_sim.vpi_type<kind = bit, isSigned = false,
+      isFourState = false, range = [0, 0], children = [], childNames = []>],
+    childNames = ["member"], isTagged = false, isSoft = false,
+    bitWidth = 1 : i64, selectableWidth = 1 : i64,
+    bitstreamWidth = 1 : i64, tagBits = 0 : i64, childOrdinals = [0],
+    childPackedOffsets = [0], childRandTypes = [4]>
+} {}
+
+// -----
+
 // expected-error @+2 {{only VPI aggregate semantic types may name child fields}}
 module attributes {
   obelisk_sim.test = #obelisk_sim.vpi_type<kind = queue, isSigned = false,
