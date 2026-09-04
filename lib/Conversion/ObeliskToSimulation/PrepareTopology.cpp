@@ -1292,6 +1292,10 @@ materializeDesignDescriptors(ModuleOp module,
     StringRef name = target.getName() ? target.getName().getValue()
                                       : getDebugName(enumValue);
     size_t separator = hierarchy.rfind('.');
+    size_t namespaceSeparator = hierarchy.rfind("::");
+    if (namespaceSeparator != StringRef::npos &&
+        (separator == StringRef::npos || namespaceSeparator > separator))
+      separator = namespaceSeparator;
     if (separator != StringRef::npos)
       hierarchy = hierarchy.take_front(separator);
     if (hierarchy.empty() || name.empty()) {
@@ -1340,6 +1344,15 @@ materializeDesignDescriptors(ModuleOp module,
     // deliberately deferred with that owner.
     return ownerAnchorFor(owner) ? type : sim::VPITypeSemanticsAttr{};
   };
+  auto retainVPISourceTypeIdentity =
+      [&](Operation *source, Operation *declaration,
+          sim::VPITypeSemanticsAttr retainedType) {
+        if (!retainedType)
+          return;
+        if (auto identity = source->getAttrOfType<IntegerAttr>(
+                vpiSourceTypeIdentityAttrName))
+          declaration->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+      };
 
   auto emitDescriptor = [&](Operation *op) {
     bool storage =
@@ -1439,13 +1452,14 @@ materializeDesignDescriptors(ModuleOp module,
           sim::VPITypeSemanticsAttr retainedVPIType =
               retainVPITypeForPersistentOwner(op, *vpiType);
           descriptors[leafPath.getValue()].vpiType = retainedVPIType;
-          sim::SimNetDeclOp::create(
+          auto declaration = sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
               DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
               retainedVPIType);
+          retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
         }
         return;
       }
@@ -1492,6 +1506,7 @@ materializeDesignDescriptors(ModuleOp module,
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{},
           retainedVPIType);
+      retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&
@@ -1629,6 +1644,7 @@ materializeDesignDescriptors(ModuleOp module,
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
         UnitAttr{}, retainedVPIType);
+    retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",
@@ -1996,7 +2012,7 @@ materializeDesignDescriptors(ModuleOp module,
       invalid = true;
       continue;
     }
-    sim::SimPortDeclOp::create(
+    auto declaration = sim::SimPortDeclOp::create(
         builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
         source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
         source->second.viewOffset, source->second.type, direction,
@@ -2005,6 +2021,7 @@ materializeDesignDescriptors(ModuleOp module,
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{},
         *formalVPIType);
+    retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
   }
   if (invalid)
     return failure();

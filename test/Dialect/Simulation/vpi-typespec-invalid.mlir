@@ -346,6 +346,34 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @dpi_import_code_unit_backing {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top"
+    obelisk_sim.code_unit.decl 1 in 1 function hierarchy "top.f" debug "f" {
+      obelisk_sim.dpi_import
+    }
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0 hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>}
+    // expected-error @+1 {{backing code unit must be a VPI-visible task or function}}
+    obelisk_sim.vpi_object.anchor @function id 1 type 20 in 1 parent @top ordinal 0 hierarchy "top.f" debug "f" {backing = #obelisk_sim.vpi_backing<kind = code_unit, id = 1 : i64>}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @internal_code_unit_backing {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top"
+    obelisk_sim.code_unit.decl 1 in 1 function hierarchy "top.f" debug "f" {internal}
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0 hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>}
+    // expected-error @+1 {{backing code unit must be a VPI-visible task or function}}
+    obelisk_sim.vpi_object.anchor @function id 1 type 20 in 1 parent @top ordinal 0 hierarchy "top.f" debug "f" {backing = #obelisk_sim.vpi_backing<kind = code_unit, id = 1 : i64>}
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @wrong_code_unit_backing_scope {
     obelisk_sim.scope.decl 0
     obelisk_sim.scope.decl 1 parent 0 hierarchy "left"

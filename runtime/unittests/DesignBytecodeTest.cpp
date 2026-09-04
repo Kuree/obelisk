@@ -1938,6 +1938,273 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   return bytes;
 }
 
+std::vector<uint8_t> makeRootStaticRelationDatabase() {
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t classOffset = 336;
+  constexpr uint64_t nestedClassOffset = 432;
+  constexpr uint64_t methodOffset = 528;
+  constexpr uint64_t relationOffset = 624;
+  constexpr uint64_t stringOffset = 736;
+  constexpr uint64_t stringSize = 49;
+  constexpr uint64_t indexOffset = 792;
+  std::vector<uint8_t> bytes(indexOffset + 120, 0);
+  std::memcpy(bytes.data(), "OBDSGN1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, scopeOffset);
+  put64(bytes, 48, scopeOffset);
+  put64(bytes, 56, 1);
+  put64(bytes, 64, objectOffset);
+  put64(bytes, 72, 4);
+  put64(bytes, 80, relationOffset);
+  put64(bytes, 96, stringOffset);
+  put64(bytes, 104, stringSize);
+  put64(bytes, 112, indexOffset);
+  put64(bytes, 120, 5);
+  put64(bytes, 128, relationOffset);
+  put64(bytes, 144, relationOffset);
+  put64(bytes, 160, relationOffset);
+  put64(bytes, 168, 7);
+
+  put32(bytes, scopeOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, 0));
+  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put64(bytes, scopeOffset + 8, 1);
+  put64(bytes, scopeOffset + 24, objectOffset);
+  put64(bytes, scopeOffset + 40, stringOffset);
+
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
+  put64(bytes, objectOffset + 8, 2);
+  put64(bytes, objectOffset + 16, scopeOffset);
+  put64(bytes, objectOffset + 24, classOffset);
+  put64(bytes, objectOffset + 40, stringOffset + 6);
+
+  put32(bytes, classOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+  put64(bytes, classOffset + 8, 3);
+  put64(bytes, classOffset + 16, scopeOffset);
+  put64(bytes, classOffset + 24, nestedClassOffset);
+  put64(bytes, classOffset + 40, stringOffset + 12);
+
+  put32(bytes, nestedClassOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+  put64(bytes, nestedClassOffset + 8, 4);
+  put64(bytes, nestedClassOffset + 16, scopeOffset);
+  put64(bytes, nestedClassOffset + 24, methodOffset);
+  put64(bytes, nestedClassOffset + 40, stringOffset + 19);
+
+  // A source-visible class method keeps its executable code-unit record, but
+  // lexical containment is relation-backed just like a static class record.
+  put32(bytes, methodOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
+  put32(bytes, methodOffset + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+  put64(bytes, methodOffset + 8, 5);
+  put64(bytes, methodOffset + 16, scopeOffset);
+  put64(bytes, methodOffset + 40, stringOffset + 34);
+
+  put32(bytes, relationOffset, 0);
+  put32(bytes, relationOffset + 4, uint32_t{1} << 30);
+  put32(bytes, relationOffset + 8, 0);
+  put16(bytes, relationOffset + 12, vpiInstance);
+  put16(bytes, relationOffset + 14, designRelationSource(0, 0, true));
+
+  // The static records' physical sibling chain only provides image
+  // reachability. These paired relations encode their actual lexical graph.
+  put32(bytes, relationOffset + 16, 0);
+  put32(bytes, relationOffset + 16 + 4, (uint32_t{1} << 30) | uint32_t{1});
+  put16(bytes, relationOffset + 16 + 12, vpiClassDefn);
+  put16(bytes, relationOffset + 16 + 14,
+        designRelationSource(1, vpiPackage, true));
+
+  put32(bytes, relationOffset + 32, 1);
+  put32(bytes, relationOffset + 32 + 4, uint32_t{1} << 30);
+  put16(bytes, relationOffset + 32 + 12, vpiScope);
+  put16(bytes, relationOffset + 32 + 14, designRelationSource(1, vpiClassDefn));
+
+  put32(bytes, relationOffset + 48, 1);
+  put32(bytes, relationOffset + 48 + 4, (uint32_t{1} << 30) | uint32_t{2});
+  put16(bytes, relationOffset + 48 + 12, vpiInternalScope);
+  put16(bytes, relationOffset + 48 + 14,
+        designRelationSource(1, vpiClassDefn, true));
+
+  put32(bytes, relationOffset + 64, 1);
+  put32(bytes, relationOffset + 64 + 4, (uint32_t{1} << 30) | uint32_t{3});
+  put32(bytes, relationOffset + 64 + 8, 1);
+  put16(bytes, relationOffset + 64 + 12, vpiInternalScope);
+  put16(bytes, relationOffset + 64 + 14,
+        designRelationSource(1, vpiClassDefn, true));
+
+  put32(bytes, relationOffset + 80, 2);
+  put32(bytes, relationOffset + 80 + 4, (uint32_t{1} << 30) | uint32_t{1});
+  put16(bytes, relationOffset + 80 + 12, vpiScope);
+  put16(bytes, relationOffset + 80 + 14, designRelationSource(1, vpiClassDefn));
+
+  put32(bytes, relationOffset + 96, 3);
+  put32(bytes, relationOffset + 96 + 4, (uint32_t{1} << 30) | uint32_t{1});
+  put16(bytes, relationOffset + 96 + 12, vpiScope);
+  put16(bytes, relationOffset + 96 + 14, designRelationSource(1, vpiFunction));
+
+  std::memcpy(bytes.data() + stringOffset,
+              "$root\0pkg::\0pkg::C\0pkg::C::Nested\0pkg::C::method\0",
+              stringSize);
+  struct Entry {
+    uint64_t hash, name, record;
+  };
+  std::array<Entry, 5> index{{
+      {nameHash("$root"), stringOffset, scopeOffset},
+      {nameHash("pkg::"), stringOffset + 6, objectOffset},
+      {nameHash("pkg::C"), stringOffset + 12, classOffset},
+      {nameHash("pkg::C::Nested"), stringOffset + 19, nestedClassOffset},
+      {nameHash("pkg::C::method"), stringOffset + 34, methodOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeClassMethodRelationDatabase() {
+  constexpr uint64_t rootOffset = 176;
+  constexpr uint64_t moduleOffset = 240;
+  constexpr uint64_t packageOffset = 304;
+  constexpr uint64_t classOffset = 400;
+  constexpr uint64_t methodOffset = 496;
+  constexpr uint64_t relationOffset = 592;
+  constexpr uint64_t stringOffset = 704;
+  constexpr uint64_t stringSize = 38;
+  constexpr uint64_t indexOffset = 744;
+  std::vector<uint8_t> bytes(indexOffset + 120, 0);
+  std::memcpy(bytes.data(), "OBDSGN1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, rootOffset);
+  put64(bytes, 48, rootOffset);
+  put64(bytes, 56, 2);
+  put64(bytes, 64, packageOffset);
+  put64(bytes, 72, 3);
+  put64(bytes, 80, relationOffset);
+  put64(bytes, 96, stringOffset);
+  put64(bytes, 104, stringSize);
+  put64(bytes, 112, indexOffset);
+  put64(bytes, 120, 5);
+  put64(bytes, 128, relationOffset);
+  put64(bytes, 144, relationOffset);
+  put64(bytes, 160, relationOffset);
+  put64(bytes, 168, 7);
+
+  put32(bytes, rootOffset, designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, 0));
+  put32(bytes, rootOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put64(bytes, rootOffset + 8, 1);
+  put64(bytes, rootOffset + 24, moduleOffset);
+  put64(bytes, rootOffset + 40, stringOffset);
+
+  put32(bytes, moduleOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, moduleOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put64(bytes, moduleOffset + 8, 2);
+  put64(bytes, moduleOffset + 16, rootOffset);
+  put64(bytes, moduleOffset + 24, packageOffset);
+  put64(bytes, moduleOffset + 40, stringOffset + 6);
+
+  put32(bytes, packageOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
+  put64(bytes, packageOffset + 8, 3);
+  put64(bytes, packageOffset + 16, moduleOffset);
+  put64(bytes, packageOffset + 24, classOffset);
+  put64(bytes, packageOffset + 40, stringOffset + 10);
+
+  put32(bytes, classOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+  put64(bytes, classOffset + 8, 4);
+  put64(bytes, classOffset + 16, moduleOffset);
+  put64(bytes, classOffset + 24, methodOffset);
+  put64(bytes, classOffset + 40, stringOffset + 16);
+
+  put32(bytes, methodOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
+  put32(bytes, methodOffset + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+  put64(bytes, methodOffset + 8, 5);
+  put64(bytes, methodOffset + 16, moduleOffset);
+  put64(bytes, methodOffset + 40, stringOffset + 23);
+
+  put32(bytes, relationOffset, 0);
+  put32(bytes, relationOffset + 4, 1);
+  put16(bytes, relationOffset + 12, vpiModule);
+  put16(bytes, relationOffset + 14, designRelationSource(0, 0, true));
+
+  put32(bytes, relationOffset + 16, 0);
+  put32(bytes, relationOffset + 16 + 4, uint32_t{1} << 30);
+  put16(bytes, relationOffset + 16 + 12, vpiInstance);
+  put16(bytes, relationOffset + 16 + 14, designRelationSource(0, 0, true));
+
+  put32(bytes, relationOffset + 32, 0);
+  put32(bytes, relationOffset + 32 + 4, (uint32_t{1} << 30) | uint32_t{1});
+  put16(bytes, relationOffset + 32 + 12, vpiClassDefn);
+  put16(bytes, relationOffset + 32 + 14,
+        designRelationSource(1, vpiPackage, true));
+
+  put32(bytes, relationOffset + 48, 1);
+  put32(bytes, relationOffset + 48 + 4, uint32_t{1} << 30);
+  put16(bytes, relationOffset + 48 + 12, vpiScope);
+  put16(bytes, relationOffset + 48 + 14, designRelationSource(1, vpiClassDefn));
+
+  put32(bytes, relationOffset + 64, 1);
+  put32(bytes, relationOffset + 64 + 4, (uint32_t{1} << 30) | uint32_t{2});
+  put16(bytes, relationOffset + 64 + 12, vpiInternalScope);
+  put16(bytes, relationOffset + 64 + 14,
+        designRelationSource(1, vpiClassDefn, true));
+
+  put32(bytes, relationOffset + 80, 1);
+  put32(bytes, relationOffset + 80 + 4, (uint32_t{1} << 30) | uint32_t{2});
+  put16(bytes, relationOffset + 80 + 12, vpiMethods);
+  put16(bytes, relationOffset + 80 + 14,
+        designRelationSource(1, vpiClassDefn, true));
+
+  put32(bytes, relationOffset + 96, 2);
+  put32(bytes, relationOffset + 96 + 4, (uint32_t{1} << 30) | uint32_t{1});
+  put16(bytes, relationOffset + 96 + 12, vpiScope);
+  put16(bytes, relationOffset + 96 + 14, designRelationSource(1, vpiFunction));
+
+  std::memcpy(bytes.data() + stringOffset,
+              "$root\0top\0pkg::\0pkg::C\0pkg::C::method\0", stringSize);
+  struct Entry {
+    uint64_t hash, name, record;
+  };
+  std::array<Entry, 5> index{{
+      {nameHash("$root"), stringOffset, rootOffset},
+      {nameHash("top"), stringOffset + 6, moduleOffset},
+      {nameHash("pkg::"), stringOffset + 10, packageOffset},
+      {nameHash("pkg::C"), stringOffset + 16, classOffset},
+      {nameHash("pkg::C::method"), stringOffset + 23, methodOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeCodeUnitDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t processOffset = 240;
@@ -8772,6 +9039,22 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
   vpiHandle handle = vpi_handle_by_name(mutableName, nullptr);
   ASSERT_NE(handle, nullptr);
   EXPECT_EQ(vpi_get(vpiType, handle), vpiEnumTypespec);
+  EXPECT_EQ(vpi_get_str(vpiName, handle), nullptr);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  put32(fixture.database, objectOffset + 4,
+        OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  handle = vpi_handle_by_name(mutableName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiName, handle), "value");
   EXPECT_EQ(vpi_release_handle(handle), 1);
   obelisk_rt_v1_context_destroy(context);
 
@@ -8785,6 +9068,223 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
     EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
               OBELISK_RT_INVALID_DESIGN);
   }
+}
+
+TEST(VPI, StaticObjectsRequireExplicitTraversalRelations) {
+  Fixture fixture;
+  fixture.database = makeDatabase(false);
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t stringOffset = 416;
+  constexpr uint64_t indexOffset = 448;
+  put32(fixture.database, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+  put32(fixture.database, objectOffset + 4, 0);
+  put64(fixture.database, objectOffset + 80, 0);
+  std::memcpy(fixture.database.data() + stringOffset + 4, "pkg::Name", 9);
+  struct Entry {
+    uint64_t hash;
+    uint64_t name;
+    uint64_t record;
+  };
+  std::array<Entry, 2> index{{
+      {nameHash("top"), stringOffset, 176},
+      {nameHash("pkg::Name"), stringOffset + 4, objectOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(fixture.database, indexOffset + entry * 24, index[entry].hash);
+    put64(fixture.database, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(fixture.database, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top";
+  char className[] = "pkg::Name";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle classDefinition = vpi_handle_by_name(className, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(classDefinition, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, classDefinition), vpiClassDefn);
+  EXPECT_STREQ(vpi_get_str(vpiName, classDefinition), "Name");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, classDefinition), "pkg::Name");
+  // The static record is physically linked below top for image reachability,
+  // but no semantic relation exposes it from this module.
+  EXPECT_EQ(vpi_iterate(vpiClassDefn, module), nullptr);
+
+  EXPECT_EQ(vpi_release_handle(classDefinition), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, TraversesExplicitStaticRelationsFromNullRoot) {
+  Fixture fixture;
+  fixture.database = makeRootStaticRelationDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  vpiHandle iterator = vpi_iterate(vpiInstance, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle package = vpi_scan(iterator);
+  ASSERT_NE(package, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, package), vpiPackage);
+  EXPECT_STREQ(vpi_get_str(vpiName, package), "pkg");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, package), "pkg::");
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+
+  char packageName[] = "pkg";
+  vpiHandle byName = vpi_handle_by_name(packageName, nullptr);
+  ASSERT_NE(byName, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, byName), vpiPackage);
+
+  char className[] = "C";
+  vpiHandle classDefinition = vpi_handle_by_name(className, package);
+  ASSERT_NE(classDefinition, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, classDefinition), vpiClassDefn);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, classDefinition), "pkg::C");
+
+  vpiHandle classes = vpi_iterate(vpiClassDefn, package);
+  ASSERT_NE(classes, nullptr);
+  vpiHandle traversedClass = vpi_scan(classes);
+  ASSERT_NE(traversedClass, nullptr);
+  EXPECT_EQ(vpi_compare_objects(traversedClass, classDefinition), 1);
+  EXPECT_EQ(vpi_scan(classes), nullptr);
+  vpiHandle classParent = vpi_handle(vpiScope, classDefinition);
+  ASSERT_NE(classParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(classParent, package), 1);
+
+  char nestedName[] = "Nested";
+  vpiHandle nestedClass = vpi_handle_by_name(nestedName, classDefinition);
+  ASSERT_NE(nestedClass, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, nestedClass), vpiClassDefn);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, nestedClass), "pkg::C::Nested");
+
+  vpiHandle nestedScopes = vpi_iterate(vpiInternalScope, classDefinition);
+  ASSERT_NE(nestedScopes, nullptr);
+  vpiHandle traversedNested = vpi_scan(nestedScopes);
+  ASSERT_NE(traversedNested, nullptr);
+  EXPECT_EQ(vpi_compare_objects(traversedNested, nestedClass), 1);
+  vpiHandle method = vpi_scan(nestedScopes);
+  ASSERT_NE(method, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, method), vpiFunction);
+  EXPECT_STREQ(vpi_get_str(vpiName, method), "method");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, method), "pkg::C::method");
+  EXPECT_EQ(vpi_scan(nestedScopes), nullptr);
+  vpiHandle nestedParent = vpi_handle(vpiScope, nestedClass);
+  ASSERT_NE(nestedParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(nestedParent, classDefinition), 1);
+  vpiHandle methodParent = vpi_handle(vpiScope, method);
+  ASSERT_NE(methodParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(methodParent, classDefinition), 1);
+
+  EXPECT_EQ(vpi_release_handle(methodParent), 1);
+  EXPECT_EQ(vpi_release_handle(method), 1);
+  EXPECT_EQ(vpi_release_handle(nestedParent), 1);
+  EXPECT_EQ(vpi_release_handle(traversedNested), 1);
+  EXPECT_EQ(vpi_release_handle(nestedClass), 1);
+  EXPECT_EQ(vpi_release_handle(classParent), 1);
+  EXPECT_EQ(vpi_release_handle(traversedClass), 1);
+  EXPECT_EQ(vpi_release_handle(classDefinition), 1);
+  EXPECT_EQ(vpi_release_handle(byName), 1);
+  EXPECT_EQ(vpi_release_handle(package), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, LexicalMethodDoesNotLeakThroughItsPhysicalModule) {
+  Fixture fixture;
+  fixture.database = makeClassMethodRelationDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top";
+  char className[] = "pkg::C";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle classDefinition = vpi_handle_by_name(className, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(classDefinition, nullptr);
+
+  // The executable record is physically reachable below top, but only its
+  // generated lexical relations expose it through VPI.
+  EXPECT_EQ(vpi_iterate(vpiTaskFunc, module), nullptr);
+
+  vpiHandle internalScopes = vpi_iterate(vpiInternalScope, classDefinition);
+  ASSERT_NE(internalScopes, nullptr);
+  vpiHandle internalMethod = vpi_scan(internalScopes);
+  ASSERT_NE(internalMethod, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, internalMethod), vpiFunction);
+  EXPECT_EQ(vpi_scan(internalScopes), nullptr);
+
+  vpiHandle methods = vpi_iterate(vpiMethods, classDefinition);
+  ASSERT_NE(methods, nullptr);
+  vpiHandle method = vpi_scan(methods);
+  ASSERT_NE(method, nullptr);
+  EXPECT_EQ(vpi_compare_objects(method, internalMethod), 1);
+  EXPECT_EQ(vpi_scan(methods), nullptr);
+
+  vpiHandle owner = vpi_handle(vpiScope, method);
+  ASSERT_NE(owner, nullptr);
+  EXPECT_EQ(vpi_compare_objects(owner, classDefinition), 1);
+
+  EXPECT_EQ(vpi_release_handle(owner), 1);
+  EXPECT_EQ(vpi_release_handle(method), 1);
+  EXPECT_EQ(vpi_release_handle(internalMethod), 1);
+  EXPECT_EQ(vpi_release_handle(classDefinition), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, DoesNotTreatDerivedClassesAsLexicalContainment) {
+  Fixture fixture;
+  fixture.database = makeRootStaticRelationDatabase();
+  constexpr uint64_t relations = 624;
+  // Replace the nested-class containment pair with two legal semantic
+  // vpiDerivedClasses edges. Neither direction implies lexical ownership.
+  put32(fixture.database, relations + 48 + 4,
+        (uint32_t{1} << 30) | uint32_t{3});
+  put32(fixture.database, relations + 64 + 4,
+        (uint32_t{1} << 30) | uint32_t{2});
+  put32(fixture.database, relations + 64 + 8, 0);
+  put16(fixture.database, relations + 64 + 12, vpiDerivedClasses);
+  put16(fixture.database, relations + 80 + 12, vpiDerivedClasses);
+  put16(fixture.database, relations + 80 + 14,
+        designRelationSource(1, vpiClassDefn, true));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
 }
 
 TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
@@ -8819,6 +9319,21 @@ TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
   std::vector<uint8_t> missingRelationSourceKind = makeStatementDatabase();
   put16(missingRelationSourceKind, 568 + 14, designRelationSource(1, 0));
   expectRejected(std::move(missingRelationSourceKind));
+
+  std::vector<uint8_t> rootKindOnObject = makeRootStaticRelationDatabase();
+  put16(rootKindOnObject, 624 + 16 + 14, designRelationSource(1, 0, true));
+  expectRejected(std::move(rootKindOnObject));
+
+  std::vector<uint8_t> mismatchedStaticParent =
+      makeRootStaticRelationDatabase();
+  put32(mismatchedStaticParent, 624 + 32 + 4,
+        (uint32_t{1} << 30) | uint32_t{2});
+  expectRejected(std::move(mismatchedStaticParent));
+
+  std::vector<uint8_t> rootKindOnNestedScope =
+      makeNestedModuleRelationDatabase();
+  put16(rootKindOnNestedScope, 368 + 16 + 14, designRelationSource(0, 0, true));
+  expectRejected(std::move(rootKindOnNestedScope));
 
   std::vector<uint8_t> unmarkedInternalProcess = makeCodeUnitDatabase();
   put32(unmarkedInternalProcess, 240,

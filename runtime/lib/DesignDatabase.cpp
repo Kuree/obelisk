@@ -578,6 +578,9 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t caps = read32(record + 4);
     uint32_t intrinsicKind = recordVPIKind(record);
     bool internal = (caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0;
+    bool lexicalAnchor = (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
+                         (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+                          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION);
     bool mayOmitIntrinsic =
         (kind == OBELISK_RT_DESIGN_RECORD_SCOPE && offset == database.root) ||
         kind == OBELISK_RT_DESIGN_RECORD_DRIVER ||
@@ -592,11 +595,21 @@ bool validateDatabaseImpl(const Database &database) {
         OBELISK_RT_DESIGN_CAP_ITERATE | OBELISK_RT_DESIGN_CAP_PORT_INPUT |
         OBELISK_RT_DESIGN_CAP_PORT_OUTPUT | OBELISK_RT_DESIGN_CAP_INTERNAL |
         OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
+        OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
         OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
          (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
       return false;
+    if ((caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor) {
+      const auto *descriptor =
+          obelisk::reflection::findVPIObjectKind(intrinsicKind);
+      if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT || !descriptor ||
+          (descriptor->families &
+           obelisk::reflection::vpiFamilyMask(
+               obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
+        return false;
+    }
     uint64_t stableID = read64(record + 8);
     if (!stableIDs[kind].insert(stableID).second)
       return false;
@@ -632,7 +645,8 @@ bool validateDatabaseImpl(const Database &database) {
           !validSource(database, read64(record + 32), read64(record + 88)))
         return false;
       if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
-        if (caps != 0 || read64(record + 80) != 0 ||
+        if ((caps & ~OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 ||
+            read64(record + 80) != 0 ||
             (typeOffset == 0
                  ? read64(record + 56) != 0 || read64(record + 64) != 0 ||
                        read64(record + 72) != 0
@@ -643,7 +657,9 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
       } else if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
                  kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
-        if ((caps & ~OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 || typeOffset != 0 ||
+        if ((caps & ~(OBELISK_RT_DESIGN_CAP_INTERNAL |
+                      OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR)) != 0 ||
+            (internal && lexicalAnchor) || typeOffset != 0 ||
             read64(record + 56) != 0 || read64(record + 64) != 0 ||
             read64(record + 72) != 0 || read64(record + 80) != 0)
           return false;
@@ -1107,6 +1123,15 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t expectedOrdinal = 0;
   const obelisk::reflection::VPITraversalDescriptor *automaticEdge = nullptr;
   uint64_t automaticChildCursor = 0;
+  std::unordered_set<uint64_t> staticLexicalChildren;
+  std::unordered_set<uint64_t> staticLexicalParents;
+  auto relationEndpoint = [](obelisk::reflection::TableKind table,
+                             uint32_t index) {
+    return (static_cast<uint32_t>(table) << 30) | index;
+  };
+  auto lexicalPair = [](uint32_t parent, uint32_t child) {
+    return (uint64_t{parent} << 32) | child;
+  };
   // Once an automatic group is present, it must be the exact filtered child
   // chain. An entirely absent group remains valid because VPI deliberately
   // falls back to walking that immutable chain for compatibility.
@@ -1119,6 +1144,12 @@ bool validateDatabaseImpl(const Database &database) {
         return uint64_t{0};
       uint64_t current = cursor;
       cursor = nextOffset(record, kind);
+      // Static records are physically chained below a scope only to make the
+      // pointer-free image reachable. Their generated relations carry the
+      // actual lexical owner and declaration order.
+      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
+        continue;
       if (obelisk::reflection::vpiObjectSetContains(automaticEdge->targets,
                                                     recordVPIKind(record)))
         return current;
@@ -1175,31 +1206,36 @@ bool validateDatabaseImpl(const Database &database) {
     previousIterate = iterate;
     previousOrdinal = ordinal;
 
+    const uint8_t *sourceRecord = nullptr;
     const auto *sourceDescriptor =
         obelisk::reflection::findVPIObjectKind(sourceKind);
-    if (!sourceDescriptor ||
-        sourceDescriptor->role != obelisk::reflection::VPIObjectRole::Concrete)
+    bool rootSource = sourceKind == 0;
+    if (!rootSource &&
+        (!sourceDescriptor || sourceDescriptor->role !=
+                                  obelisk::reflection::VPIObjectRole::Concrete))
       return false;
-    const uint8_t *sourceRecord = nullptr;
     switch (sourceTable) {
     case obelisk::reflection::TableKind::Scope:
       if (sourceIndex >= database.scopeCount ||
-          (sourceDescriptor->families &
-           obelisk::reflection::vpiFamilyMask(
-               obelisk::reflection::VPIObjectFamily::Scope)) == 0)
+          (!rootSource &&
+           (sourceDescriptor->families &
+            obelisk::reflection::vpiFamilyMask(
+                obelisk::reflection::VPIObjectFamily::Scope)) == 0))
         return false;
       sourceRecord =
           database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize;
+      if (rootSource && sourceRecord != database.data + database.root)
+        return false;
       break;
     case obelisk::reflection::TableKind::Object: {
-      if (sourceIndex >= database.objectCount)
+      if (rootSource || sourceIndex >= database.objectCount)
         return false;
       sourceRecord = database.data + database.objects +
                      uint64_t{sourceIndex} * kObjectSize;
       break;
     }
     case obelisk::reflection::TableKind::Statement:
-      if (sourceIndex >= database.statementCount)
+      if (rootSource || sourceIndex >= database.statementCount)
         return false;
       sourceRecord = database.data + database.statements +
                      uint64_t{sourceIndex} * kStatementSize;
@@ -1248,6 +1284,39 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     ++expectedOrdinal;
 
+    auto relationBacked = [](const uint8_t *record) {
+      uint32_t kind = recordKind(record);
+      return kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+             ((kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+               kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) &&
+              (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0);
+    };
+    bool relationBackedTarget =
+        targetTable == obelisk::reflection::TableKind::Object &&
+        relationBacked(target);
+    bool lexicalForward =
+        selector == targetKind ||
+        edge->automaticRelation ==
+            obelisk::reflection::VPIAutomaticRelation::DirectChild;
+    // Relation-backed lexical containment is independent of the physical
+    // record chain. Pair each real declaration edge with the generated
+    // reverse vpiScope relation so malformed images cannot disagree by query
+    // direction. Semantic cross-references such as vpiDerivedClasses are not
+    // declaration edges even though they also target a class definition.
+    if (iterate && !rootSource && relationBackedTarget && lexicalForward) {
+      const auto *parentEdge = obelisk::reflection::findVPITraversal(
+          targetKind,
+          static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
+          obelisk::reflection::VPITraversalMode::Handle);
+      if (parentEdge &&
+          parentEdge->automaticRelation ==
+              obelisk::reflection::VPIAutomaticRelation::ParentScope &&
+          obelisk::reflection::vpiObjectSetContains(parentEdge->targets,
+                                                    sourceKind))
+        staticLexicalChildren.insert(lexicalPair(
+            relationEndpoint(sourceTable, sourceIndex), packedTarget));
+    }
+
     uint64_t sourceOffset = static_cast<uint64_t>(sourceRecord - database.data);
     uint64_t targetOffset = static_cast<uint64_t>(target - database.data);
     if (!sameGroup) {
@@ -1256,7 +1325,8 @@ bool validateDatabaseImpl(const Database &database) {
       automaticEdge = edge;
       automaticChildCursor =
           edge->automaticRelation ==
-                  obelisk::reflection::VPIAutomaticRelation::DirectChild
+                      obelisk::reflection::VPIAutomaticRelation::DirectChild &&
+                  sourceTable == obelisk::reflection::TableKind::Scope
               ? read64(sourceRecord + 24)
               : 0;
     } else if (automaticEdge != edge) {
@@ -1266,6 +1336,9 @@ bool validateDatabaseImpl(const Database &database) {
     case obelisk::reflection::VPIAutomaticRelation::None:
       break;
     case obelisk::reflection::VPIAutomaticRelation::DirectChild:
+      if (relationBackedTarget) {
+        break;
+      }
       if (sourceTable != obelisk::reflection::TableKind::Scope ||
           targetTable == obelisk::reflection::TableKind::Statement ||
           read64(target + 16) != sourceOffset ||
@@ -1280,6 +1353,13 @@ bool validateDatabaseImpl(const Database &database) {
                                      expectedIndex) ||
             targetTable != expectedTable || targetIndex != expectedIndex)
           return false;
+      } else if (sourceTable == obelisk::reflection::TableKind::Object &&
+                 relationBacked(sourceRecord)) {
+        // The relation itself is the canonical lexical owner. The physical
+        // scope field only keeps this immutable record reachable and may name
+        // a different container (for example a package or enclosing class).
+        staticLexicalParents.insert(lexicalPair(
+            packedTarget, relationEndpoint(sourceTable, sourceIndex)));
       } else if (targetTable != obelisk::reflection::TableKind::Scope ||
                  read64(sourceRecord + 16) != targetOffset) {
         return false;
@@ -1343,6 +1423,8 @@ bool validateDatabaseImpl(const Database &database) {
     }
   }
   if (!automaticGroupComplete())
+    return false;
+  if (staticLexicalChildren != staticLexicalParents)
     return false;
   if (haveStatementContainment &&
       std::any_of(incomingRelations.begin(), incomingRelations.end(),
@@ -1432,6 +1514,15 @@ bool validateDatabaseImpl(const Database &database) {
       }
       continue;
     }
+    uint32_t caps = read32(port + 4);
+    // Compiler/runtime machinery is deliberately absent from the public name
+    // index. Static records without the named-typespec capability are reached
+    // exclusively through generated VPI relations (for example anonymous
+    // typespecs and interface-type variants).
+    if ((caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 ||
+        (recordKind(port) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+         (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
+      continue;
     if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT)
       return false;
     auto canonicalName = indexedNames.find(read64(port + 40));

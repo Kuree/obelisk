@@ -414,8 +414,11 @@ LogicalResult SimVPITypespecDeclOp::verify() {
           "raw interface hierarchy must equal its specialization identity");
   }
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
-      getTargetType().getKind() != VPITypeKind::Enum)
-    return emitOpError("anonymous-enum origin requires an enum typespec");
+      (getTargetType().getKind() != VPITypeKind::Enum ||
+       !getSourceTypeIdentityAttr()))
+    return emitOpError(
+        "anonymous-enum origin requires an enum typespec and exact source "
+        "type identity");
   return success();
 }
 
@@ -1763,6 +1766,7 @@ LogicalResult SimDesignOp::verifyRegions() {
 
   llvm::DenseMap<Attribute, SmallVector<SimVPITypespecDeclOp>>
       interfaceTypespecs;
+  llvm::DenseMap<uint64_t, SimVPITypespecDeclOp> anonymousEnumTypespecs;
   for (SimVPITypespecDeclOp typespec : typespecs) {
     VPITypeSemanticsAttr target = typespec.getTargetType();
     if (typespec.getOrigin() == VPITypespecOrigin::Interface &&
@@ -1770,6 +1774,13 @@ LogicalResult SimDesignOp::verifyRegions() {
       Attribute specializationOwner = ArrayAttr::get(
           getContext(), {typespec.getOwnerAttr(), target.getName()});
       interfaceTypespecs[specializationOwner].push_back(typespec);
+    }
+    if (typespec.getOrigin() == VPITypespecOrigin::AnonymousEnum) {
+      auto [entry, inserted] = anonymousEnumTypespecs.try_emplace(
+          *typespec.getSourceTypeIdentity(), typespec);
+      if (!inserted)
+        return typespec.emitOpError(
+            "duplicates an anonymous enum source type identity");
     }
   }
   for (const auto &entry : interfaceTypespecs) {
@@ -1844,8 +1855,22 @@ LogicalResult SimDesignOp::verifyRegions() {
       semantic = net.getVpiTypeAttr();
     else if (auto port = dyn_cast<SimPortDeclOp>(op))
       semantic = port.getVpiTypeAttr();
-    if (semantic && failed(verifyTypeReferences(&op, semantic)))
+    if (!semantic)
+      continue;
+    if (failed(verifyTypeReferences(&op, semantic)))
       return failure();
+    if (semantic.getKind() == VPITypeKind::Enum &&
+        !semantic.getTypedefAliases()) {
+      auto identity =
+          op.getAttrOfType<IntegerAttr>(metadata::vpiSourceTypeIdentity);
+      if (!identity)
+        return op.emitError(
+            "anonymous enum VPI value requires an exact source type "
+            "identity");
+      if (!anonymousEnumTypespecs.contains(identity.getValue().getZExtValue()))
+        return op.emitError(
+            "anonymous enum VPI value has no matching typespec identity");
+    }
   }
   llvm::DenseMap<Attribute, llvm::DenseSet<uint64_t>> enumOrdinals;
   for (SimVPIEnumConstDeclOp enumConstant : enumConstants) {
@@ -2289,32 +2314,34 @@ LogicalResult SimDesignOp::verifyRegions() {
       break;
     case VPIObjectBackingKind::Class:
       break;
-    case VPIObjectBackingKind::CodeUnit:
+    case VPIObjectBackingKind::CodeUnit: {
       if (!codeUnitIds.count(backing.getId().getValue().getZExtValue()))
         return anchor.emitOpError("references an unknown backing code-unit ID");
-      if (SimCodeUnitDeclOp codeUnit =
-              codeUnits.lookup(backing.getId().getValue().getZExtValue());
-          codeUnit.getScopeId() != anchor.getEnclosingScopeId())
+      SimCodeUnitDeclOp codeUnit =
+          codeUnits.lookup(backing.getId().getValue().getZExtValue());
+      if (codeUnit.getInternalAttr() ||
+          codeUnit->hasAttr("obelisk_sim.dpi_import") ||
+          !isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
+        return anchor.emitOpError(
+            "backing code unit must be a VPI-visible task or function");
+      if (codeUnit.getScopeId() != anchor.getEnclosingScopeId())
         return anchor.emitOpError(
             "backing code-unit scope must equal the anchor's enclosing "
             "scope");
-      if (SimCodeUnitDeclOp codeUnit =
-              codeUnits.lookup(backing.getId().getValue().getZExtValue());
-          codeUnit.getHierarchicalNameAttr() !=
+      if (codeUnit.getHierarchicalNameAttr() !=
           anchor.getHierarchicalNameAttr())
         return anchor.emitOpError(
             "backing code-unit hierarchy must equal the anchor hierarchy");
       if ((anchor.getVpiKind() ==
                static_cast<uint32_t>(reflection::VPIObjectKind::Task) &&
-           codeUnits.lookup(backing.getId().getValue().getZExtValue())
-                   .getCodeUnitKind() != EntryKind::Task) ||
+           codeUnit.getCodeUnitKind() != EntryKind::Task) ||
           (anchor.getVpiKind() ==
                static_cast<uint32_t>(reflection::VPIObjectKind::Function) &&
-           codeUnits.lookup(backing.getId().getValue().getZExtValue())
-                   .getCodeUnitKind() != EntryKind::Function))
+           codeUnit.getCodeUnitKind() != EntryKind::Function))
         return anchor.emitOpError(
             "VPI anchor kind does not match its backing code-unit kind");
       break;
+    }
     }
   }
   for (const auto &entry : anchorOrdinals)

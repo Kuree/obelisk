@@ -485,7 +485,7 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
   auto tableKindRecords =
       records.getAllDerivedDefinitions("ReflectionTableKind");
   SmallVector<const Record *> tableKinds(tableKindRecords.begin(),
-                                          tableKindRecords.end());
+                                         tableKindRecords.end());
   llvm::sort(tableKinds, [](const Record *left, const Record *right) {
     return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
@@ -503,75 +503,75 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
         "  }\n"
         "  return false;\n"
         "}\n\n";
-  const uint32_t packedWidth =
-      tableKinds.front()->getValueAsInt("packedWidth");
+  const uint32_t packedWidth = tableKinds.front()->getValueAsInt("packedWidth");
   os << "inline constexpr unsigned tableKindPackedWidth = " << packedWidth
      << ";\n"
-      "inline constexpr unsigned tableKindPackedShift = 16 - "
-      "tableKindPackedWidth;\n"
-      "inline constexpr uint16_t tableKindPayloadMask = "
-      "(uint16_t{1} << tableKindPackedShift) - 1;\n\n"
-      "constexpr bool canPackTableKindPayload(uint32_t payload) {\n"
-      "  return payload <= tableKindPayloadMask;\n"
-      "}\n\n"
-      "constexpr bool tryPackTableKindPayload(TableKind table, "
-      "uint32_t payload, uint16_t &packed) {\n"
-      "  if (!isValidTableKind(table) || "
-      "!canPackTableKindPayload(payload))\n"
-      "    return false;\n"
-      "  packed = (static_cast<uint16_t>(table) << "
-      "tableKindPackedShift) | static_cast<uint16_t>(payload);\n"
-      "  return true;\n"
-      "}\n\n"
-      "constexpr TableKind unpackTableKind(uint16_t value) {\n"
-      "  return static_cast<TableKind>(value >> tableKindPackedShift);\n"
-      "}\n\n"
-      "constexpr uint16_t unpackTableKindPayload(uint16_t value) {\n"
-      "  return value & tableKindPayloadMask;\n"
-      "}\n\n"
-      "inline constexpr uint16_t relationSourceKindMask =\n"
-      "    tableKindPayloadMask >> 1;\n"
-      "inline constexpr uint16_t relationSourceIterateBit =\n"
-      "    relationSourceKindMask + 1;\n\n"
-      "constexpr bool tryPackRelationSource(TableKind table, uint32_t kind,\n"
-      "                                     bool iterate, uint16_t &packed) {\n"
-      "  if (!isValidTableKind(table) || kind > relationSourceKindMask)\n"
-      "    return false;\n"
-      "  packed = (static_cast<uint16_t>(table) << tableKindPackedShift) |\n"
-      "           (iterate ? relationSourceIterateBit : 0) |\n"
-      "           static_cast<uint16_t>(kind);\n"
-      "  return true;\n"
-      "}\n\n"
-      "constexpr TableKind unpackRelationSourceTable(uint16_t value) {\n"
-      "  return unpackTableKind(value);\n"
-      "}\n\n"
-      "constexpr uint16_t unpackRelationSourceKind(uint16_t value) {\n"
-      "  return value & relationSourceKindMask;\n"
-      "}\n\n"
-      "constexpr bool relationSourceIsIterate(uint16_t value) {\n"
-      "  return (value & relationSourceIterateBit) != 0;\n"
-      "}\n\n"
-      "inline constexpr unsigned tableIndexPackedShift = 32 - "
-      "tableKindPackedWidth;\n"
-      "inline constexpr uint32_t tableIndexPayloadMask = "
-      "    (uint32_t{1} << tableIndexPackedShift) - 1;\n\n"
-      "constexpr bool canPackTableIndex(uint32_t index) {\n"
-      "  return index <= tableIndexPayloadMask;\n"
-      "}\n\n"
-      "constexpr bool tryPackTableIndex(TableKind table, uint32_t index,\n"
-      "                                 uint32_t &packed) {\n"
-      "  if (!isValidTableKind(table) || !canPackTableIndex(index))\n"
-      "    return false;\n"
-      "  packed = (static_cast<uint32_t>(table) << tableIndexPackedShift) |\n"
-      "           index;\n"
-      "  return true;\n"
-      "}\n\n"
-      "constexpr TableKind unpackTableIndexKind(uint32_t value) {\n"
-      "  return static_cast<TableKind>(value >> tableIndexPackedShift);\n"
-      "}\n\n"
-      "constexpr uint32_t unpackTableIndex(uint32_t value) {\n"
-      "  return value & tableIndexPayloadMask;\n"
-      "}\n\n";
+        "inline constexpr unsigned tableKindPackedShift = 16 - "
+        "tableKindPackedWidth;\n"
+        "inline constexpr uint16_t tableKindPayloadMask = "
+        "(uint16_t{1} << tableKindPackedShift) - 1;\n\n"
+        "constexpr bool canPackTableKindPayload(uint32_t payload) {\n"
+        "  return payload <= tableKindPayloadMask;\n"
+        "}\n\n"
+        "constexpr bool tryPackTableKindPayload(TableKind table, "
+        "uint32_t payload, uint16_t &packed) {\n"
+        "  if (!isValidTableKind(table) || "
+        "!canPackTableKindPayload(payload))\n"
+        "    return false;\n"
+        "  packed = (static_cast<uint16_t>(table) << "
+        "tableKindPackedShift) | static_cast<uint16_t>(payload);\n"
+        "  return true;\n"
+        "}\n\n"
+        "constexpr TableKind unpackTableKind(uint16_t value) {\n"
+        "  return static_cast<TableKind>(value >> tableKindPackedShift);\n"
+        "}\n\n"
+        "constexpr uint16_t unpackTableKindPayload(uint16_t value) {\n"
+        "  return value & tableKindPayloadMask;\n"
+        "}\n\n"
+        "inline constexpr uint16_t relationSourceKindMask =\n"
+        "    tableKindPayloadMask >> 1;\n"
+        "inline constexpr uint16_t relationSourceIterateBit =\n"
+        "    relationSourceKindMask + 1;\n\n"
+        "constexpr bool tryPackRelationSource(TableKind table, uint32_t kind,\n"
+        "                                     bool iterate, uint16_t &packed) "
+        "{\n"
+        "  if (!isValidTableKind(table) || kind > relationSourceKindMask)\n"
+        "    return false;\n"
+        "  packed = (static_cast<uint16_t>(table) << tableKindPackedShift) |\n"
+        "           (iterate ? relationSourceIterateBit : 0) |\n"
+        "           static_cast<uint16_t>(kind);\n"
+        "  return true;\n"
+        "}\n\n"
+        "constexpr TableKind unpackRelationSourceTable(uint16_t value) {\n"
+        "  return unpackTableKind(value);\n"
+        "}\n\n"
+        "constexpr uint16_t unpackRelationSourceKind(uint16_t value) {\n"
+        "  return value & relationSourceKindMask;\n"
+        "}\n\n"
+        "constexpr bool relationSourceIsIterate(uint16_t value) {\n"
+        "  return (value & relationSourceIterateBit) != 0;\n"
+        "}\n\n"
+        "inline constexpr unsigned tableIndexPackedShift = 32 - "
+        "tableKindPackedWidth;\n"
+        "inline constexpr uint32_t tableIndexPayloadMask = "
+        "    (uint32_t{1} << tableIndexPackedShift) - 1;\n\n"
+        "constexpr bool canPackTableIndex(uint32_t index) {\n"
+        "  return index <= tableIndexPayloadMask;\n"
+        "}\n\n"
+        "constexpr bool tryPackTableIndex(TableKind table, uint32_t index,\n"
+        "                                 uint32_t &packed) {\n"
+        "  if (!isValidTableKind(table) || !canPackTableIndex(index))\n"
+        "    return false;\n"
+        "  packed = (static_cast<uint32_t>(table) << tableIndexPackedShift) |\n"
+        "           index;\n"
+        "  return true;\n"
+        "}\n\n"
+        "constexpr TableKind unpackTableIndexKind(uint32_t value) {\n"
+        "  return static_cast<TableKind>(value >> tableIndexPackedShift);\n"
+        "}\n\n"
+        "constexpr uint32_t unpackTableIndex(uint32_t value) {\n"
+        "  return value & tableIndexPayloadMask;\n"
+        "}\n\n";
   os << "} // namespace obelisk::reflection\n\n";
   os << "#endif // OBELISK_REFLECTION_DESIGNREFLECTIONLAYOUT_H_INC\n";
   return false;
@@ -865,10 +865,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   const std::pair<StringRef, uint32_t> supportedPropertyValueKinds[] = {
       {"Boolean", 0}, {"Integer", 1}, {"Int64", 2}, {"String", 3}};
   const std::pair<StringRef, uint32_t> supportedValueFormats[] = {
-      {"BinStr", 1},   {"OctStr", 2},  {"DecStr", 3},
-      {"HexStr", 4},   {"Scalar", 5},  {"Int", 6},
-      {"Real", 7},     {"String", 8},  {"Vector", 9},
-      {"Strength", 10}, {"Time", 11},   {"ObjType", 12}};
+      {"BinStr", 1}, {"OctStr", 2},    {"DecStr", 3}, {"HexStr", 4},
+      {"Scalar", 5}, {"Int", 6},       {"Real", 7},   {"String", 8},
+      {"Vector", 9}, {"Strength", 10}, {"Time", 11},  {"ObjType", 12}};
   const std::pair<StringRef, uint32_t> supportedValueDefaults[] = {
       {"Semantic", 0}, {"ScalarOrVector", 1}, {"Integer", 2},
       {"Real", 3},     {"String", 4},         {"Time", 5}};
@@ -885,8 +884,7 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                     "VPI automatic relation") ||
       !validateEnum(propertyValueKinds, supportedPropertyValueKinds,
                     "VPI property value kind") ||
-      !validateEnum(valueFormats, supportedValueFormats,
-                    "VPI value format") ||
+      !validateEnum(valueFormats, supportedValueFormats, "VPI value format") ||
       !validateEnum(valueDefaults, supportedValueDefaults,
                     "VPI value default format") ||
       !validateEnum(valueReadSemantics, supportedValueReadSemantics,
@@ -1444,6 +1442,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
                                     right->getValueAsString("apiName"));
     return leftKey < rightKey;
   });
+  os << "enum class VPIRelationKind : uint16_t {\n";
+  for (const Record *relation : relations)
+    os << formatv("  {0} = {1},\n", relation->getName(),
+                  relation->getValueAsInt("value"));
+  os << "};\n\n";
   os << "inline constexpr VPIRelationDescriptor vpiRelations[] = {\n";
   for (const Record *relation : relations) {
     StringRef aliasOf = relation->getValueAsString("aliasOf");
@@ -1641,10 +1644,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "             : nullptr;\n"
         "}\n\n";
 
-  auto valueFormatRecords =
-      records.getAllDerivedDefinitions("VPIValueFormat");
+  auto valueFormatRecords = records.getAllDerivedDefinitions("VPIValueFormat");
   SmallVector<const Record *> valueFormats(valueFormatRecords.begin(),
-                                            valueFormatRecords.end());
+                                           valueFormatRecords.end());
   llvm::sort(valueFormats, [](const Record *left, const Record *right) {
     return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
@@ -1657,7 +1659,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   auto valueDefaultRecords =
       records.getAllDerivedDefinitions("VPIValueDefaultFormat");
   SmallVector<const Record *> valueDefaults(valueDefaultRecords.begin(),
-                                             valueDefaultRecords.end());
+                                            valueDefaultRecords.end());
   llvm::sort(valueDefaults, [](const Record *left, const Record *right) {
     return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
@@ -1670,7 +1672,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   auto valueReadRecords =
       records.getAllDerivedDefinitions("VPIValueReadSemantics");
   SmallVector<const Record *> valueReads(valueReadRecords.begin(),
-                                          valueReadRecords.end());
+                                         valueReadRecords.end());
   llvm::sort(valueReads, [](const Record *left, const Record *right) {
     return left->getValueAsInt("value") < right->getValueAsInt("value");
   });
@@ -1682,17 +1684,14 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
 
   auto valueRequirementRecords =
       records.getAllDerivedDefinitions("VPIValueRequirement");
-  SmallVector<const Record *> valueRequirements(
-      valueRequirementRecords.begin(), valueRequirementRecords.end());
-  llvm::sort(valueRequirements,
-             [](const Record *left, const Record *right) {
-               return left->getValueAsInt("value") <
-                      right->getValueAsInt("value");
-             });
+  SmallVector<const Record *> valueRequirements(valueRequirementRecords.begin(),
+                                                valueRequirementRecords.end());
+  llvm::sort(valueRequirements, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
   os << "enum class VPIValueRequirement : uint8_t {\n";
   for (const Record *requirement : valueRequirements)
-    os << formatv("  {0} = {1},\n",
-                  requirement->getValueAsString("cppName"),
+    os << formatv("  {0} = {1},\n", requirement->getValueAsString("cppName"),
                   requirement->getValueAsInt("value"));
   os << "};\n\n";
 
@@ -1713,8 +1712,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     uint8_t requirements = 0;
     for (const Record *requirement :
          policy->getValueAsListOfDefs("requirements"))
-      requirements |=
-          static_cast<uint8_t>(requirement->getValueAsInt("value"));
+      requirements |= static_cast<uint8_t>(requirement->getValueAsInt("value"));
     for (uint32_t source :
          expandedSets.lookup(policy->getValueAsDef("sources")))
       emittedValuePolicies.push_back(
@@ -1722,11 +1720,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
            policy->getValueAsDef("readSemantics"), requirements,
            policy->getValueAsString("clause")});
   }
-  llvm::sort(emittedValuePolicies,
-             [](const EmittedValuePolicy &left,
-                const EmittedValuePolicy &right) {
-               return left.source < right.source;
-             });
+  llvm::sort(emittedValuePolicies, [](const EmittedValuePolicy &left,
+                                      const EmittedValuePolicy &right) {
+    return left.source < right.source;
+  });
   os << "struct VPIValuePolicyDescriptor {\n"
         "  uint32_t sourceType;\n"
         "  uint16_t formatMask;\n"
@@ -1737,13 +1734,12 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "};\n\n";
   os << "inline constexpr VPIValuePolicyDescriptor vpiValuePolicies[] = {\n";
   for (const EmittedValuePolicy &policy : emittedValuePolicies) {
-    os << formatv(
-        "  {{{0}, {1}, VPIValueDefaultFormat::{2}, "
-        "VPIValueReadSemantics::{3}, {4}, \"{5}\"",
-        policy.source, policy.formatMask,
-        policy.defaultFormat->getValueAsString("cppName"),
-        policy.readSemantics->getValueAsString("cppName"),
-        policy.requirements, policy.clause);
+    os << formatv("  {{{0}, {1}, VPIValueDefaultFormat::{2}, "
+                  "VPIValueReadSemantics::{3}, {4}, \"{5}\"",
+                  policy.source, policy.formatMask,
+                  policy.defaultFormat->getValueAsString("cppName"),
+                  policy.readSemantics->getValueAsString("cppName"),
+                  policy.requirements, policy.clause);
     os << "},\n";
   }
   os << "};\n\n"
@@ -2069,10 +2065,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   for (const EmittedValuePolicy &policy : emittedValuePolicies) {
     append16(static_cast<uint16_t>(policy.source));
     append16(policy.formatMask);
-    image.push_back(static_cast<uint8_t>(
-        policy.defaultFormat->getValueAsInt("value")));
-    image.push_back(static_cast<uint8_t>(
-        policy.readSemantics->getValueAsInt("value")));
+    image.push_back(
+        static_cast<uint8_t>(policy.defaultFormat->getValueAsInt("value")));
+    image.push_back(
+        static_cast<uint8_t>(policy.readSemantics->getValueAsInt("value")));
     image.push_back(policy.requirements);
     image.push_back(0);
   }
@@ -2528,7 +2524,7 @@ inline constexpr bool vpiObjectModelImageTargetContains(
   }
   auto propertyRecords = records.getAllDerivedDefinitions("VPIProperty");
   SmallVector<const Record *> properties(propertyRecords.begin(),
-                                          propertyRecords.end());
+                                         propertyRecords.end());
   llvm::sort(properties, [](const Record *left, const Record *right) {
     return left->getValueAsInt("value") < right->getValueAsInt("value");
   });

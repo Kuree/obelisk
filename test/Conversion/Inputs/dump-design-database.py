@@ -49,6 +49,7 @@ def string_at(offset):
 
 
 scope_names = {}
+scope_index_names = []
 for index in range(scope_count):
     offset = scope_offset + index * 64
     packed_kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
@@ -56,11 +57,13 @@ for index in range(scope_count):
     vpi_kind = packed_kind >> 16
     name = string_at(struct.unpack_from("<Q", image, offset + 40)[0])
     scope_names[offset] = name
+    scope_index_names.append(name)
     print(
         f"scope name={name} kind={kind} vpi_kind={vpi_kind} "
         f"caps=0x{capabilities:x} id={stable_id}"
     )
 
+object_index_names = []
 for index in range(object_count):
     offset = object_offset + index * 96
     packed_kind, capabilities, stable_id = struct.unpack_from("<IIQ", image, offset)
@@ -68,6 +71,7 @@ for index in range(object_count):
     vpi_kind = packed_kind >> 16
     scope = struct.unpack_from("<Q", image, offset + 16)[0]
     name = string_at(struct.unpack_from("<Q", image, offset + 40)[0])
+    object_index_names.append(name)
     type_record = struct.unpack_from("<Q", image, offset + 48)[0]
     width, left, right, state = struct.unpack_from("<QqqQ", image, offset + 56)
     type_kind = 0
@@ -100,6 +104,7 @@ for index in range(object_count):
         f"element_width={element_width}"
     )
 
+statement_index_names = []
 for index in range(statement_count):
     offset = statement_offset + index * 40
     stable_id = struct.unpack_from("<Q", image, offset)[0]
@@ -109,6 +114,7 @@ for index in range(statement_count):
     line, column, vpi_kind, flags = struct.unpack_from("<IIHH", image, offset + 28)
     source = string_at(string_offset + source_file) if source_file else ""
     statement_name = string_at(string_offset + name) if name else ""
+    statement_index_names.append(statement_name or f"statement#{stable_id}")
     print(
         f"statement id={stable_id} owner={owner} scope={scope} parent={parent} "
         f"type={vpi_kind} flags=0x{flags:x} source={source}:{line}:{column} "
@@ -133,8 +139,12 @@ for index in range(relation_count):
     source_kind = packed_source & 0x1FFF
     target_table = packed_target >> 30
     target = packed_target & 0x3FFFFFFF
+    table_names = (scope_index_names, object_index_names, statement_index_names)
+    source_name = table_names[source_table][source]
+    target_name = table_names[target_table][target]
     print(
         f"relation source_table={source_table} source={source} "
         f"source_type={source_kind} mode={source_mode} selector={selector} ordinal={ordinal} "
-        f"target_table={target_table} target={target}"
+        f"target_table={target_table} target={target} "
+        f"source_name={source_name} target_name={target_name}"
     )

@@ -5048,16 +5048,21 @@ private:
         if (ArrayAttr layers = getVPITypedefLayers(*source))
           attrs.set("vpi_typedef_layers", layers);
       // A display name is not an enum identity: separate compilation units may
-      // each legally declare `$unit::state_t`.  Freeze Slang's exact matching
-      // type identity on only those semantic nodes that need to reconnect enum
-      // constants to their persistent typespec after the AST is erased.
-      if constexpr (std::same_as<BareNode, slang::ast::TypeAliasType> ||
-                    std::same_as<BareNode, slang::ast::EnumValueSymbol>)
-        if (const slang::ast::Type *source =
-                getUncanonicalizedSemanticType(node))
-          attrs.set("vpi_source_type_identity",
-                    builder.getI64IntegerAttr(
-                        matchingTypeIdentity(unwrapTypeAliases(*source))));
+      // each legally declare `$unit::state_t`. Freeze Slang's exact matching
+      // type identity on aliases, constants, and enum-bearing values that must
+      // reconnect to one persistent typespec after the AST is erased.
+      if (const slang::ast::Type *source =
+              getUncanonicalizedSemanticType(node)) {
+        const slang::ast::Type &identityType = unwrapTypeAliases(*source);
+        bool retainIdentity = identityType.isEnum();
+        if constexpr (std::same_as<BareNode, slang::ast::TypeAliasType> ||
+                      std::same_as<BareNode, slang::ast::EnumValueSymbol>)
+          retainIdentity = true;
+        if (retainIdentity)
+          attrs.set(
+              "vpi_source_type_identity",
+              builder.getI64IntegerAttr(matchingTypeIdentity(identityType)));
+      }
     }
     if constexpr (std::derived_from<Node, slang::ast::Expression>)
       attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));

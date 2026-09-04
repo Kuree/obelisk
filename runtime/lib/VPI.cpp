@@ -738,7 +738,13 @@ findMatchingDesignObject(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
       return status;
     uint32_t exact =
         static_cast<uint32_t>(exactTypeFor(state, cursor, info.kind));
-    if (obelisk::reflection::vpiObjectSetContains(targets, exact)) {
+    // Static reflection records and lexically anchored code units have a
+    // physical scope owner only so the pointer-free database can validate and
+    // reach every record. Their VPI ownership is carried exclusively by
+    // generated relation records.
+    if (info.kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        (info.capabilities & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) == 0 &&
+        obelisk::reflection::vpiObjectSetContains(targets, exact)) {
       *outCursor = cursor;
       return OBELISK_RT_OK;
     }
@@ -1129,6 +1135,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     requested.erase(0, 6);
   uint32_t sourceType = 0;
   bool sourceClassDefinitionOrigin = false;
+  std::string compatibilityName;
   if (scope && !absolute) {
     __vpiHandle *base = validate(scope);
     if (!base)
@@ -1138,11 +1145,29 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     std::string prefix;
     if (!nameFor(base, prefix))
       return nullptr;
-    if (prefix != "$root" && prefix != "\\$root ")
-      requested = prefix + "." + requested;
+    if (prefix != "$root" && prefix != "\\$root ") {
+      if (sourceType == vpiPackage) {
+        if (prefix.size() < 2 ||
+            prefix.compare(prefix.size() - 2, 2, "::") != 0)
+          prefix.append("::");
+        requested = prefix + requested;
+      } else if (sourceType == vpiClassDefn) {
+        compatibilityName = prefix + "." + requested;
+        requested = prefix + "::" + requested;
+      } else {
+        requested = prefix + "." + requested;
+      }
+    }
   }
   obelisk_rt_design_cursor_v1 cursor{};
-  if (!lookup(state, requested, cursor)) {
+  bool found = lookup(state, requested, cursor);
+  if (!found && !compatibilityName.empty())
+    found = lookup(state, compatibilityName, cursor);
+  if (!found && (!scope || absolute) &&
+      (requested.size() < 2 ||
+       requested.compare(requested.size() - 2, 2, "::") != 0))
+    found = lookup(state, requested + "::", cursor);
+  if (!found) {
     setError(state, "hierarchical VPI name was not found", vpiNotice);
     return nullptr;
   }
@@ -1344,33 +1369,35 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
              OBELISK_RT_OK) {
     return nullptr;
   }
-  if (reference) {
-    VPIRelationRange range{};
-    obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
-        state->context, parent, static_cast<uint32_t>(type), true, &range);
-    if (relationStatus == OBELISK_RT_OK) {
-      OBELISK_RT_TRY {
-        auto iterator = std::make_unique<__vpiHandle>();
-        iterator->owner = state;
-        iterator->kind = VPIHandleKind::Iterator;
-        iterator->relationIterator = true;
-        iterator->relationRange = range;
+  VPIRelationRange range{};
+  obelisk_rt_status relationStatus = obelisk_rt_cached_vpi_relation_range(
+      state->context, parent, static_cast<uint32_t>(type), true, &range);
+  if (relationStatus == OBELISK_RT_OK) {
+    OBELISK_RT_TRY {
+      auto iterator = std::make_unique<__vpiHandle>();
+      iterator->owner = state;
+      iterator->kind = VPIHandleKind::Iterator;
+      iterator->relationIterator = true;
+      iterator->relationRange = range;
+      if (reference) {
         iterator->hasUse = true;
         iterator->useCursor = parent;
         iterator->useType = sourceType;
         iterator->useStatement = sourceStatement;
         iterator->useClassDefinitionOrigin = sourceClassDefinitionOrigin;
         iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
-        return keepHandle(state, std::move(iterator));
       }
-      OBELISK_RT_CATCH_ALL {
-        setError(state, "could not allocate VPI relation iterator", vpiSystem);
-        return nullptr;
-      }
+      return keepHandle(state, std::move(iterator));
     }
-    if (sourceType == 0)
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not allocate VPI relation iterator", vpiSystem);
       return nullptr;
+    }
   }
+  if (relationStatus != OBELISK_RT_EOF)
+    return nullptr;
+  if (reference && sourceType == 0)
+    return nullptr;
   const auto *edge = obelisk::reflection::findVPITraversal(
       sourceType, static_cast<uint32_t>(type),
       obelisk::reflection::VPITraversalMode::Iterate);
@@ -1691,6 +1718,22 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     return nullptr;
   }
   if (property == vpiName || property == vpiFullName) {
+    if (property == vpiName && !handle->statement) {
+      obelisk_rt_design_info_v1 info{};
+      if (obelisk_rt_cached_design_info(handle->owner->context, handle->cursor,
+                                        &info) != OBELISK_RT_OK)
+        return nullptr;
+      const auto *kind =
+          obelisk::reflection::findVPIObjectKind(handle->exactVpiType);
+      bool typespec =
+          kind && (kind->families &
+                   obelisk::reflection::vpiFamilyMask(
+                       obelisk::reflection::VPIObjectFamily::Typespec));
+      if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT && typespec &&
+          handle->exactVpiType != vpiClassTypespec &&
+          (info.capabilities & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0)
+        return nullptr;
+    }
     if (!nameFor(handle, scratch))
       return nullptr;
     if (scratch.empty())
@@ -1701,8 +1744,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       return scratch.data();
     }
     if (property == vpiName) {
+      if (handle->exactVpiType == vpiPackage && scratch.size() >= 2 &&
+          scratch.compare(scratch.size() - 2, 2, "::") == 0)
+        scratch.resize(scratch.size() - 2);
       size_t separator = scratch.rfind('.');
-      if (separator != std::string::npos)
+      size_t namespaceSeparator = scratch.rfind("::");
+      if (namespaceSeparator != std::string::npos &&
+          (separator == std::string::npos || namespaceSeparator > separator))
+        scratch.erase(0, namespaceSeparator + 2);
+      else if (separator != std::string::npos)
         scratch.erase(0, separator + 1);
     }
     return scratch.data();

@@ -693,7 +693,8 @@ def VPIEarlyDerivedClasses : VPITraversalEdge<ClassDefnObjects,
 def VPIEarlyClassDefnInstances : VPITraversalEdge<ClassDefnObjects,
   InstanceRel, IterateMode, VPIEarlyInstances, NoOrder, "37.29">;
 def VPIEarlyClassDefnMethods : VPITraversalEdge<ClassDefnObjects, MethodsRel,
-  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.29">;
+  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.29", 0,
+  AutomaticDirectChild>;
 def VPIEarlyClassDefnConstraints : VPITraversalEdge<ClassDefnObjects,
   Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.29">;
 def VPIEarlyClassTypespecClassDefn : VPITraversalEdge<ClassTypespecObjects,

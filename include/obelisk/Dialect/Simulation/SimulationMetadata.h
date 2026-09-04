@@ -39,6 +39,10 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+/// Exact frontend enum identity retained solely to reconnect a value object
+/// to its anonymous enum typespec in the immutable VPI relation image.
+inline constexpr llvm::StringLiteral vpiSourceTypeIdentity =
+    "obelisk_sim.vpi_source_type_identity";
 /// Marks a storage descriptor that a subroutine owns. Its writers are the
 /// subroutine's callers rather than drivers of a design variable.
 inline constexpr llvm::StringLiteral subroutineStorage =

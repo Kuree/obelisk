@@ -379,6 +379,12 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiTaskFunc, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassDefn, vpiInternalScope, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassDefn, vpiMethods, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiNet, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);

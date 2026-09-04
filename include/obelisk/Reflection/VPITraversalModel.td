@@ -530,7 +530,8 @@ def ScopeParameters : VPITraversalEdge<NonInstanceScopeObjects, Parameter,
   IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.83">;
 def ScopeInternalScopes : VPITraversalEdge<ScopeWithoutModuleObjects,
   InternalScopeRel,
-  IterateMode, ScopeObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, ScopeObjects, NoOrder, "37.12; 37.83", 0,
+  AutomaticDirectChild>;
 def ScopeImports : VPITraversalEdge<ScopeSource, ImportRel, IterateMode,
   DeclarationObjects, NoOrder, "37.12">;
 def ScopeTypedefs : VPITraversalEdge<NonInstanceScopeObjects, TypedefRel,

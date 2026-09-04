@@ -1518,6 +1518,13 @@ enum {
   // Marks a VPI-profile port whose lower connection is an unselected whole
   // storage or net object. Its vpiLowConn relation is mandatory.
   OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE = UINT32_C(1) << 6,
+  // Distinguishes a user-defined typedef typespec, whose vpiName is defined,
+  // from unnamed built-in and anonymous static typespec records.
+  OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC = UINT32_C(1) << 7,
+  // The same record-kind-specific bit marks a process/function whose lexical
+  // VPI owner is supplied by generated relations instead of its physical
+  // executable scope. These kinds cannot be typespec records.
+  OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };
