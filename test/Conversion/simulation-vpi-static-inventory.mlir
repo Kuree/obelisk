@@ -130,6 +130,21 @@ module attributes {
                 childNames = []>
           ], childNames = []>
     }
+    obelisk_sim.storage.decl 2 in 1 :
+        !obelisk_sim.unpacked_array<0 : 1 x
+          !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>>
+        design hierarchy "top.indexed_value" {
+      vpi_type = #obelisk_sim.vpi_type<kind = unpacked_array,
+          isSigned = false, isFourState = true, range = [0, 1], children = [
+            #obelisk_sim.vpi_type<kind = packed_array,
+                isSigned = false, isFourState = true, range = [7, 4],
+                children = [
+                  #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+                      isFourState = true, range = [0, 0], children = [],
+                      childNames = []>
+                ], childNames = []>
+          ], childNames = []>
+    }
     obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.initial"
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context
         {obelisk_sim.capture_kind = 0 : i32})
@@ -152,11 +167,13 @@ module attributes {
 // CHECK: object name=top.alias_t kind=9 vpi_kind=640 caps=0x80 id=4
 // CHECK: object name=top.base_t kind=9 vpi_kind=640 caps=0x80 id=1
 // CHECK: object name=top.enum_array_t kind=9 vpi_kind=692 caps=0x80 id=10
+// The physical image keeps the unpacked source-order range and the nested
+// packed range used by vpi_handle_by_multi_index offset calculation.
+// CHECK: object name=top.indexed_value kind=2 vpi_kind=116 {{.*}} width=8 range=[0:1] {{.*}} type_kind=2 type_flags=0x1 {{.*}} element_kind=2 element_flags=0x5 element_width=4 element_range=[7:4] child_kind=1 child_flags=0x5 child_width=1
 // CHECK: object name=top.record_t kind=9 vpi_kind=638 caps=0x80
 // CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=7
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
 // CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=5
-
 // The generated relation image exposes lexical ownership, declaration-order
 // typedefs, the immediate typedef alias, interface instance links, enum
 // members in source order, reverse enum ownership, and value typespec lookup.
@@ -198,3 +215,5 @@ module attributes {
 // CHECK-DAG: semantic_edge {{.*}} role=4 flags=0x3 ordinal=1 name=state packed_offset=0
 // CHECK-DAG: semantic_edge {{.*}} role=1 {{.*}} ordinal=0 name= packed_offset=0
 // CHECK-DAG: semantic_root {{.*}} object_name=top.record_t semantic_type={{[0-9]+}}
+// CHECK-DAG: semantic_type {{.*}} kind=18 flags=0x600 public_vpi_kind=642 {{.*}} range=[0:1]
+// CHECK-DAG: semantic_type {{.*}} kind=17 flags=0x600 public_vpi_kind=641 {{.*}} range=[7:4]

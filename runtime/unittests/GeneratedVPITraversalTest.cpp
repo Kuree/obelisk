@@ -141,6 +141,18 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
     EXPECT_EQ(vpi_get(vpiVector, ports[index]), expectedWidths[index] > 1);
   }
   EXPECT_EQ(vpi_scan(iterator), nullptr);
+  vpiHandle inputBit = vpi_handle_by_index(ports[0], 7);
+  ASSERT_NE(inputBit, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, inputBit), vpiPortBit);
+  EXPECT_EQ(vpi_get(vpiSize, inputBit), 1);
+  EXPECT_EQ(vpi_get_str(vpiName, inputBit), nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, inputBit), "top.d.a[7]");
+  EXPECT_EQ(vpi_handle(vpiIndex, inputBit), nullptr);
+  vpiHandle inputBitParent = vpi_handle(vpiParent, inputBit);
+  ASSERT_NE(inputBitParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(inputBitParent, ports[0]), 1);
+  EXPECT_EQ(vpi_release_handle(inputBitParent), 1);
+  EXPECT_EQ(vpi_release_handle(inputBit), 1);
   EXPECT_EQ(vpi_compare_objects(input, ports[0]), 0);
   EXPECT_EQ(vpi_compare_objects(inout, ports[1]), 0);
   vpiHandle inputLowConnection = vpi_handle(vpiLowConn, ports[0]);

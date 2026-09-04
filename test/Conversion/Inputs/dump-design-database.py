@@ -97,6 +97,11 @@ for index in range(object_count):
     element_kind = 0
     element_flags = 0
     element_width = 0
+    element_left = 0
+    element_right = 0
+    child_kind = 0
+    child_flags = 0
+    child_width = 0
     if type_record:
         if type_record < type_offset or type_record + 80 > type_offset + type_count * 80:
             raise SystemExit("invalid design-database type offset")
@@ -111,6 +116,15 @@ for index in range(object_count):
             element_kind = packed_element & 0xFF
             element_flags = packed_element >> 8
             element_width = struct.unpack_from("<Q", image, element_record + 8)[0]
+            element_left, element_right = struct.unpack_from("<qq", image, element_record + 16)
+            child_record = struct.unpack_from("<Q", image, element_record + 32)[0]
+            if child_record:
+                if child_record < type_offset or child_record + 80 > type_offset + type_count * 80:
+                    raise SystemExit("invalid design-database child type offset")
+                packed_child = struct.unpack_from("<I", image, child_record + 4)[0]
+                child_kind = packed_child & 0xFF
+                child_flags = packed_child >> 8
+                child_width = struct.unpack_from("<Q", image, child_record + 8)[0]
     ordinal = (capabilities >> 8) & 0xFFFFFF
     print(
         f"object name={name} kind={kind} vpi_kind={vpi_kind} "
@@ -119,7 +133,9 @@ for index in range(object_count):
         f"range=[{left}:{right}] state={state} type_kind={type_kind} "
         f"type_flags=0x{type_flags:x} port_ordinal={ordinal} "
         f"element_kind={element_kind} element_flags=0x{element_flags:x} "
-        f"element_width={element_width}"
+        f"element_width={element_width} element_range=[{element_left}:{element_right}] "
+        f"child_kind={child_kind} child_flags=0x{child_flags:x} "
+        f"child_width={child_width}"
     )
 
 for index in range(semantic_type_count):

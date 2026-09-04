@@ -2751,6 +2751,15 @@ obelisk_rt_status obelisk_rt_cached_design_name(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept;
 
+// Read a narrow bit window from one reflected storage object. This is the
+// cold VPI/debugger path and deliberately preserves direct native state
+// access without allocating buffers proportional to the containing object.
+obelisk_rt_status
+obelisk_rt_read_design_slice(obelisk_rt_context *context,
+                             obelisk_rt_design_cursor_v1 cursor,
+                             uint64_t bitOffset, uint64_t bitWidth,
+                             uint64_t *value, uint64_t *unknown) noexcept;
+
 obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
                                              obelisk_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept;

@@ -79,6 +79,45 @@ class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
   VPIAutomaticRelation automaticRelation = automaticRelation_;
 }
 
+// Access-by-index is a handle construction operation, not a traversal edge.
+// In particular, vpiIndex is the reverse relation from an already-selected
+// object to the expression(s) that selected it.  Keep the access mechanism
+// and its exact result set explicit so the runtime only implements storage
+// geometry; TableGen remains authoritative for LRM applicability.
+class VPIIndexedAccessKind<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def PortElementAccess : VPIIndexedAccessKind<"PortElement", 0>;
+def NetElementAccess : VPIIndexedAccessKind<"NetElement", 1>;
+def VariableElementAccess : VPIIndexedAccessKind<"VariableElement", 2>;
+
+class VPIIndexedAccess<VPIObjectSet sources_,
+                       VPIIndexedAccessKind accessKind_,
+                       VPIObjectSet targets_, VPIObjectKind terminalResult_,
+                       VPIObjectKind unpackedFallback_,
+                       VPIObjectKind packedFallback_, bit mapSemanticType_,
+                       string clause_> {
+  VPIObjectSet sources = sources_;
+  VPIIndexedAccessKind accessKind = accessKind_;
+  VPIObjectSet targets = targets_;
+  VPIObjectKind terminalResult = terminalResult_;
+  VPIObjectKind unpackedFallback = unpackedFallback_;
+  VPIObjectKind packedFallback = packedFallback_;
+  bit mapSemanticType = mapSemanticType_;
+  string clause = clause_;
+}
+
+class VPIIndexedTypeResult<VPIIndexedAccessKind accessKind_,
+                           VPIObjectKind selectedTypespec_,
+                           VPIObjectKind result_, string clause_> {
+  VPIIndexedAccessKind accessKind = accessKind_;
+  VPIObjectKind selectedTypespec = selectedTypespec_;
+  VPIObjectKind result = result_;
+  string clause = clause_;
+}
+
 // Abstract target classes.  Expansion always discards aliases and
 // non-concrete selector spellings.
 def ScopeObjects : VPIObjectSet<"ScopeObjects", [ClassObj], [ScopeFamily]>;
@@ -249,6 +288,13 @@ def ArrayTypespecObjects : VPIObjectSet<"ArrayTypespecObjects",
 def TypespecMemberObjects : VPIObjectSet<"TypespecMemberObjects",
   [TypespecMember]>;
 def ConstantObjects : VPIObjectSet<"ConstantObjects", [Constant]>;
+def IndexedValueObjects : VPIObjectSet<"IndexedValueObjects",
+  [ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit, Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
+   ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, InterconnectArray, StructNet, PackedArrayNet]>;
 
 def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
   StructuralSizeObjects, "37.22; 37.57">;
@@ -262,6 +308,14 @@ def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
   IntegerProperty, TypespecMemberObjects, "37.23">;
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
   IntegerProperty, ConstantObjects, "37.22; 37.57">;
+def IndexedArrayMemberProperty : VPIProperty<"vpiArrayMember", 607,
+  BooleanProperty, IndexedValueObjects, "37.16; 37.17">;
+def IndexedPackedArrayMemberProperty : VPIProperty<"vpiPackedArrayMember", 655,
+  BooleanProperty, IndexedValueObjects, "37.16; 37.17; 37.18">;
+def IndexedConstantSelectProperty : VPIProperty<"vpiConstantSelect", 53,
+  BooleanProperty, IndexedValueObjects, "37.16; 37.17; 37.18">;
+def IndexedSignedProperty : VPIProperty<"vpiSigned", 65,
+  BooleanProperty, IndexedValueObjects, "37.16; 37.17">;
 // Exact source-only identities that may occupy an immutable static-object
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
@@ -588,4 +642,82 @@ def RootActiveTimeFormat : VPITraversalEdge<RootSource, ActiveTimeFormatRel,
 
 include "VPITraversalEarly.td"
 include "VPITraversalLate.td"
+
+// Access-by-index policies from the arrows labelled "access by index" in the
+// Chapter 37 diagrams.  Physical and semantic type records decide whether a
+// particular object is actually indexable and which member kind is produced;
+// these exact sets constrain that result without baking the VPI object graph
+// into runtime code.
+def IndexedPortSource : VPIObjectSet<"IndexedPortSource", [Port]>;
+def IndexedNetSources : VPIObjectSet<"IndexedNetSources",
+  [Net, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet, ShortRealNet,
+   RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, StructNet, PackedArrayNet]>;
+def IndexedInterconnectArraySource : VPIObjectSet<
+  "IndexedInterconnectArraySource", [InterconnectArray]>;
+def IndexedVariableSources : VPIObjectSet<"IndexedVariableSources",
+  [ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar,
+   VirtualInterfaceVar]>;
+def IndexedPort : VPIIndexedAccess<IndexedPortSource, PortElementAccess,
+  PortObjects, PortBit, Port, Port, 0,
+  "37.14; 38.19; 38.20">;
+def IndexedNet : VPIIndexedAccess<IndexedNetSources, NetElementAccess,
+  VPIEarlyNets, NetBit, NetArray, Net, 1, "37.16; 38.19; 38.20">;
+def IndexedInterconnectArray : VPIIndexedAccess<
+  IndexedInterconnectArraySource, NetElementAccess, VPIEarlyNets, NetBit,
+  InterconnectArray, InterconnectNet, 0, "37.16; 38.19; 38.20">;
+def IndexedVariable : VPIIndexedAccess<IndexedVariableSources,
+  VariableElementAccess, VPIEarlyVariables, RegBit, RegArray, Reg, 1,
+  "37.17; 37.20; 38.19; 38.20">;
+
+multiclass IndexedValueTypeResult<VPIObjectKind typespec,
+                                  VPIObjectKind variable,
+                                  VPIObjectKind net, string clause> {
+  def Var : VPIIndexedTypeResult<VariableElementAccess, typespec, variable,
+                                 clause>;
+  def Net : VPIIndexedTypeResult<NetElementAccess, typespec, net, clause>;
+}
+
+defm IndexedLongInt : IndexedValueTypeResult<LongIntTypespec, LongIntVar,
+  LongIntNet, "37.16; 37.17">;
+defm IndexedShortReal : IndexedValueTypeResult<ShortRealTypespec, ShortRealVar,
+  ShortRealNet, "37.16; 37.17">;
+defm IndexedByte : IndexedValueTypeResult<ByteTypespec, ByteVar, ByteNet,
+  "37.16; 37.17">;
+defm IndexedShortInt : IndexedValueTypeResult<ShortIntTypespec, ShortIntVar,
+  ShortIntNet, "37.16; 37.17">;
+defm IndexedInt : IndexedValueTypeResult<IntTypespec, IntVar, IntNet,
+  "37.16; 37.17">;
+defm IndexedEnum : IndexedValueTypeResult<EnumTypespec, EnumVar, EnumNet,
+  "37.16; 37.17">;
+defm IndexedInteger : IndexedValueTypeResult<IntegerTypespec, IntegerVar,
+  IntegerNet, "37.16; 37.17">;
+defm IndexedTime : IndexedValueTypeResult<TimeTypespec, TimeVar, TimeNet,
+  "37.16; 37.17">;
+defm IndexedReal : IndexedValueTypeResult<RealTypespec, RealVar, RealNet,
+  "37.16; 37.17">;
+defm IndexedStruct : IndexedValueTypeResult<StructTypespec, StructVar,
+  StructNet, "37.16; 37.17">;
+defm IndexedUnion : IndexedValueTypeResult<UnionTypespec, UnionVar, UnionNet,
+  "37.16; 37.17">;
+defm IndexedBit : IndexedValueTypeResult<BitTypespec, BitVar, BitNet,
+  "37.16; 37.17">;
+defm IndexedLogic : IndexedValueTypeResult<LogicTypespec, Reg, Net,
+  "37.16; 37.17">;
+defm IndexedArray : IndexedValueTypeResult<ArrayTypespec, RegArray, NetArray,
+  "37.16; 37.17">;
+defm IndexedPackedArray : IndexedValueTypeResult<PackedArrayTypespec,
+  PackedArrayVar, PackedArrayNet, "37.16; 37.18">;
+
+def IndexedClassVar : VPIIndexedTypeResult<VariableElementAccess,
+  ClassTypespec, ClassVar, "37.17">;
+def IndexedStringVar : VPIIndexedTypeResult<VariableElementAccess,
+  StringTypespec, StringVar, "37.17">;
+def IndexedChandleVar : VPIIndexedTypeResult<VariableElementAccess,
+  ChandleTypespec, ChandleVar, "37.17">;
+def IndexedInterfaceVar : VPIIndexedTypeResult<VariableElementAccess,
+  InterfaceTypespec, VirtualInterfaceVar, "37.17">;
+
 include "VPIValueModel.td"

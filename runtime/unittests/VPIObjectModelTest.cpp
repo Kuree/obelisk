@@ -26,6 +26,7 @@ using Order = VPITraversalOrder;
 using PropertyKind = VPIPropertyValueKind;
 using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
+using IndexedKind = VPIIndexedAccessKind;
 using KindSet = std::set<uint32_t>;
 
 TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
@@ -48,15 +49,22 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
-constexpr size_t kExpectedTraversalCount = 1872;
+constexpr size_t kExpectedTraversalCount = 1886;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-constexpr size_t kExpectedPropertyCount = 917;
+constexpr size_t kExpectedPropertyCount = 1069;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
 constexpr size_t kExpectedValuePolicyCount = 56;
 static_assert(sizeof(vpiValuePolicies) / sizeof(vpiValuePolicies[0]) ==
               kExpectedValuePolicyCount);
+constexpr size_t kExpectedIndexedAccessCount = 37;
+static_assert(sizeof(vpiIndexedAccesses) / sizeof(vpiIndexedAccesses[0]) ==
+              kExpectedIndexedAccessCount);
+constexpr size_t kExpectedIndexedTypeResultCount = 34;
+static_assert(sizeof(vpiIndexedTypeResults) /
+                  sizeof(vpiIndexedTypeResults[0]) ==
+              kExpectedIndexedTypeResultCount);
 
 struct OracleKey {
   uint32_t source;
@@ -792,6 +800,10 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
             kExpectedPropertyCount);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 76),
             kExpectedValuePolicyCount);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 84),
+            kExpectedIndexedAccessCount);
+  EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 92),
+            kExpectedIndexedTypeResultCount);
 
   size_t canonicalObjects = 0;
   for (const auto &object : vpiObjectKinds)
@@ -852,6 +864,222 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
           << object.apiName;
     }
   }
+
+  for (const auto &access : vpiIndexedAccesses) {
+    VPIObjectModelImageIndexedAccess imageAccess{};
+    ASSERT_TRUE(findVPIObjectModelImageIndexedAccess(
+        vpiObjectModelImage, access.sourceType, imageAccess));
+    EXPECT_EQ(imageAccess.accessKind, access.accessKind);
+    EXPECT_EQ(imageAccess.terminalResult, access.terminalResult);
+    EXPECT_EQ(imageAccess.unpackedFallback, access.unpackedFallback);
+    EXPECT_EQ(imageAccess.packedFallback, access.packedFallback);
+    EXPECT_EQ(imageAccess.mapSemanticType, access.mapSemanticType);
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      EXPECT_EQ(vpiObjectModelImageTargetContains(
+                    vpiObjectModelImage, imageAccess.targets, object.value),
+                indexedVPIResultAllowed(access, object.value))
+          << object.apiName;
+    }
+  }
+  for (const auto &mapping : vpiIndexedTypeResults) {
+    VPIObjectModelImageIndexedTypeResult imageMapping{};
+    ASSERT_TRUE(findVPIObjectModelImageIndexedTypeResult(
+        vpiObjectModelImage, mapping.accessKind, mapping.selectedTypespec,
+        imageMapping));
+    EXPECT_EQ(imageMapping.resultType, mapping.resultType);
+  }
+}
+
+TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
+  const KindSet variableSources{
+      vpiShortRealVar,       vpiRealVar,    vpiByteVar,
+      vpiShortIntVar,        vpiIntVar,     vpiLongIntVar,
+      vpiIntegerVar,         vpiTimeVar,    vpiRegArray,
+      vpiPackedArrayVar,     vpiBitVar,     vpiReg,
+      vpiStructVar,          vpiUnionVar,   vpiEnumVar,
+      vpiStringVar,          vpiChandleVar, vpiClassVar,
+      vpiVirtualInterfaceVar};
+  const KindSet netSources{
+      vpiNet,          vpiNetArray,        vpiEnumNet,
+      vpiIntegerNet,   vpiTimeNet,         vpiUnionNet,
+      vpiShortRealNet, vpiRealNet,         vpiByteNet,
+      vpiShortIntNet,  vpiIntNet,          vpiLongIntNet,
+      vpiBitNet,       vpiInterconnectNet, vpiInterconnectArray,
+      vpiStructNet,    vpiPackedArrayNet};
+  const std::map<uint32_t, IndexedKind> exactKinds{
+      {vpiPort, IndexedKind::PortElement}};
+  KindSet variableTargets = variableSources;
+  variableTargets.insert(vpiRegBit);
+  KindSet netTargets = netSources;
+  netTargets.insert(vpiNetBit);
+  const KindSet portTargets{vpiPort, vpiPortBit};
+
+  size_t seen = 0;
+  for (const auto &access : vpiIndexedAccesses) {
+    ++seen;
+    const auto exact = exactKinds.find(access.sourceType);
+    if (exact != exactKinds.end())
+      EXPECT_EQ(access.accessKind, exact->second);
+    else if (variableSources.count(access.sourceType))
+      EXPECT_EQ(access.accessKind, IndexedKind::VariableElement);
+    else if (netSources.count(access.sourceType))
+      EXPECT_EQ(access.accessKind, IndexedKind::NetElement);
+    else
+      ADD_FAILURE() << "unexpected indexed-access source "
+                    << objectName(access.sourceType);
+    EXPECT_EQ(findVPIIndexedAccess(access.sourceType), &access);
+    EXPECT_NE(access.clause, nullptr);
+    EXPECT_NE(*access.clause, '\0');
+    if (access.sourceType == vpiPort) {
+      EXPECT_EQ(access.terminalResult, vpiPortBit);
+      EXPECT_EQ(access.unpackedFallback, vpiPort);
+      EXPECT_EQ(access.packedFallback, vpiPort);
+      EXPECT_FALSE(access.mapSemanticType);
+    } else if (access.sourceType == vpiInterconnectArray) {
+      EXPECT_EQ(access.terminalResult, vpiNetBit);
+      EXPECT_EQ(access.unpackedFallback, vpiInterconnectArray);
+      EXPECT_EQ(access.packedFallback, vpiInterconnectNet);
+      EXPECT_FALSE(access.mapSemanticType);
+    } else if (netSources.count(access.sourceType)) {
+      EXPECT_EQ(access.terminalResult, vpiNetBit);
+      EXPECT_EQ(access.unpackedFallback, vpiNetArray);
+      EXPECT_EQ(access.packedFallback, vpiNet);
+      EXPECT_TRUE(access.mapSemanticType);
+    } else {
+      EXPECT_EQ(access.terminalResult, vpiRegBit);
+      EXPECT_EQ(access.unpackedFallback, vpiRegArray);
+      EXPECT_EQ(access.packedFallback, vpiReg);
+      EXPECT_TRUE(access.mapSemanticType);
+    }
+    const KindSet &expectedTargets =
+        access.accessKind == IndexedKind::PortElement  ? portTargets
+        : access.accessKind == IndexedKind::NetElement ? netTargets
+                                                       : variableTargets;
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      EXPECT_EQ(indexedVPIResultAllowed(access, object.value),
+                expectedTargets.count(object.value) != 0)
+          << object.apiName;
+    }
+  }
+  EXPECT_EQ(seen,
+            variableSources.size() + netSources.size() + exactKinds.size());
+  EXPECT_EQ(findVPIIndexedAccess(vpiModule), nullptr);
+  EXPECT_EQ(findVPIIndexedAccess(vpiNetBit), nullptr);
+  EXPECT_EQ(findVPIIndexedAccess(vpiRegBit), nullptr);
+  EXPECT_EQ(findVPIIndexedAccess(vpiModuleArray), nullptr);
+  EXPECT_EQ(findVPIIndexedAccess(vpiNamedEventArray), nullptr);
+  EXPECT_EQ(findVPIIndexedAccess(vpiGenScopeArray), nullptr);
+}
+
+TEST(VPIObjectModel, IndexedTypeResultsExactlyMatchLrmValueKinds) {
+  using Key = std::pair<IndexedKind, uint32_t>;
+  const std::map<Key, uint32_t> expected{
+      {{IndexedKind::VariableElement, vpiLongIntTypespec}, vpiLongIntVar},
+      {{IndexedKind::NetElement, vpiLongIntTypespec}, vpiLongIntNet},
+      {{IndexedKind::VariableElement, vpiShortRealTypespec}, vpiShortRealVar},
+      {{IndexedKind::NetElement, vpiShortRealTypespec}, vpiShortRealNet},
+      {{IndexedKind::VariableElement, vpiByteTypespec}, vpiByteVar},
+      {{IndexedKind::NetElement, vpiByteTypespec}, vpiByteNet},
+      {{IndexedKind::VariableElement, vpiShortIntTypespec}, vpiShortIntVar},
+      {{IndexedKind::NetElement, vpiShortIntTypespec}, vpiShortIntNet},
+      {{IndexedKind::VariableElement, vpiIntTypespec}, vpiIntVar},
+      {{IndexedKind::NetElement, vpiIntTypespec}, vpiIntNet},
+      {{IndexedKind::VariableElement, vpiEnumTypespec}, vpiEnumVar},
+      {{IndexedKind::NetElement, vpiEnumTypespec}, vpiEnumNet},
+      {{IndexedKind::VariableElement, vpiIntegerTypespec}, vpiIntegerVar},
+      {{IndexedKind::NetElement, vpiIntegerTypespec}, vpiIntegerNet},
+      {{IndexedKind::VariableElement, vpiTimeTypespec}, vpiTimeVar},
+      {{IndexedKind::NetElement, vpiTimeTypespec}, vpiTimeNet},
+      {{IndexedKind::VariableElement, vpiRealTypespec}, vpiRealVar},
+      {{IndexedKind::NetElement, vpiRealTypespec}, vpiRealNet},
+      {{IndexedKind::VariableElement, vpiStructTypespec}, vpiStructVar},
+      {{IndexedKind::NetElement, vpiStructTypespec}, vpiStructNet},
+      {{IndexedKind::VariableElement, vpiUnionTypespec}, vpiUnionVar},
+      {{IndexedKind::NetElement, vpiUnionTypespec}, vpiUnionNet},
+      {{IndexedKind::VariableElement, vpiBitTypespec}, vpiBitVar},
+      {{IndexedKind::NetElement, vpiBitTypespec}, vpiBitNet},
+      {{IndexedKind::VariableElement, vpiLogicTypespec}, vpiReg},
+      {{IndexedKind::NetElement, vpiLogicTypespec}, vpiNet},
+      {{IndexedKind::VariableElement, vpiArrayTypespec}, vpiRegArray},
+      {{IndexedKind::NetElement, vpiArrayTypespec}, vpiNetArray},
+      {{IndexedKind::VariableElement, vpiPackedArrayTypespec},
+       vpiPackedArrayVar},
+      {{IndexedKind::NetElement, vpiPackedArrayTypespec}, vpiPackedArrayNet},
+      {{IndexedKind::VariableElement, vpiClassTypespec}, vpiClassVar},
+      {{IndexedKind::VariableElement, vpiStringTypespec}, vpiStringVar},
+      {{IndexedKind::VariableElement, vpiChandleTypespec}, vpiChandleVar},
+      {{IndexedKind::VariableElement, vpiInterfaceTypespec},
+       vpiVirtualInterfaceVar},
+  };
+  ASSERT_EQ(expected.size(), kExpectedIndexedTypeResultCount);
+  for (const auto &mapping : vpiIndexedTypeResults) {
+    auto found = expected.find({mapping.accessKind, mapping.selectedTypespec});
+    ASSERT_NE(found, expected.end());
+    EXPECT_EQ(mapping.resultType, found->second);
+    EXPECT_EQ(
+        findVPIIndexedTypeResult(mapping.accessKind, mapping.selectedTypespec),
+        &mapping);
+    EXPECT_NE(mapping.clause, nullptr);
+    EXPECT_NE(*mapping.clause, '\0');
+  }
+  EXPECT_EQ(
+      findVPIIndexedTypeResult(IndexedKind::PortElement, vpiLogicTypespec),
+      nullptr);
+}
+
+TEST(VPIObjectModel, IndexedValuePropertiesHaveExactLrmApplicability) {
+  const KindSet expected{vpiShortRealVar,
+                         vpiRealVar,
+                         vpiByteVar,
+                         vpiShortIntVar,
+                         vpiIntVar,
+                         vpiLongIntVar,
+                         vpiIntegerVar,
+                         vpiTimeVar,
+                         vpiRegArray,
+                         vpiPackedArrayVar,
+                         vpiBitVar,
+                         vpiReg,
+                         vpiStructVar,
+                         vpiUnionVar,
+                         vpiEnumVar,
+                         vpiStringVar,
+                         vpiChandleVar,
+                         vpiClassVar,
+                         vpiVirtualInterfaceVar,
+                         vpiRegBit,
+                         vpiNet,
+                         vpiNetBit,
+                         vpiNetArray,
+                         vpiEnumNet,
+                         vpiIntegerNet,
+                         vpiTimeNet,
+                         vpiUnionNet,
+                         vpiShortRealNet,
+                         vpiRealNet,
+                         vpiByteNet,
+                         vpiShortIntNet,
+                         vpiIntNet,
+                         vpiLongIntNet,
+                         vpiBitNet,
+                         vpiInterconnectNet,
+                         vpiInterconnectArray,
+                         vpiStructNet,
+                         vpiPackedArrayNet};
+  constexpr uint32_t properties[]{vpiArrayMember, vpiPackedArrayMember,
+                                  vpiConstantSelect, vpiSigned};
+  for (uint32_t property : properties)
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      EXPECT_EQ(findVPIProperty(object.value, property) != nullptr,
+                expected.count(object.value) != 0)
+          << object.apiName << " property=" << property;
+    }
 }
 
 TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
@@ -1037,6 +1265,66 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   reset();
   write16(valuePolicyOffset + vpiObjectModelImageValuePolicySize,
           readVPIObjectModelImage16(damaged.data(), valuePolicyOffset));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  uint32_t indexedAccessOffset = readVPIObjectModelImage32(damaged.data(), 80);
+  reset();
+  damaged[indexedAccessOffset + 4] =
+      static_cast<uint8_t>(IndexedKind::VariableElement) + 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[indexedAccessOffset + 5] = 2;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(indexedAccessOffset + 6, 0);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  uint32_t indexedTypeResultOffset =
+      readVPIObjectModelImage32(damaged.data(), 88);
+  reset();
+  damaged[indexedTypeResultOffset] =
+      static_cast<uint8_t>(IndexedKind::VariableElement) + 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[indexedTypeResultOffset + 1] = 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(indexedTypeResultOffset + 4, 0);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(indexedTypeResultOffset + 2, vpiTypespec);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(indexedAccessOffset + 2, static_cast<uint16_t>(setCount));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(indexedAccessOffset + vpiObjectModelImageIndexedAccessSize,
+          readVPIObjectModelImage16(damaged.data(), indexedAccessOffset));
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

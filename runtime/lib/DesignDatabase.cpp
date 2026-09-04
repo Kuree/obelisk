@@ -3530,6 +3530,82 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status
+obelisk_rt_read_design_slice(obelisk_rt_context *context,
+                             obelisk_rt_design_cursor_v1 cursor,
+                             uint64_t bitOffset, uint64_t bitWidth,
+                             uint64_t *value, uint64_t *unknown) noexcept {
+  if (!context || !value || bitWidth == 0 || !context->execution)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  const Database *database = cachedDatabase(context);
+  const uint8_t *record = nullptr;
+  uint32_t kind = 0;
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
+      kind < OBELISK_RT_DESIGN_RECORD_STORAGE ||
+      (kind > OBELISK_RT_DESIGN_RECORD_DRIVER &&
+       kind != OBELISK_RT_DESIGN_RECORD_PORT) ||
+      (read32(record + 4) & OBELISK_RT_DESIGN_CAP_READ) == 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t stateOffset = read64(record + 80);
+  uint64_t rootWidth = read64(record + 56);
+  if (bitOffset > rootWidth || bitWidth > rootWidth - bitOffset ||
+      stateOffset > context->execution->state_bit_count ||
+      rootWidth > context->execution->state_bit_count - stateOffset)
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint8_t *typeRecord = database->data + read64(record + 48);
+  bool fourState =
+      ((read32(typeRecord + 4) >> 8) & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+  uint64_t selectedOffset = stateOffset + bitOffset;
+
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  const uint8_t *canonicalValuePlane = nullptr;
+  const uint8_t *canonicalUnknownPlane = nullptr;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  if (plan && (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+      !context->nativeScheduleDeoptimized &&
+      plan->state_bit_count == context->execution->state_bit_count &&
+      plan->state_value && plan->state_unknown) {
+    bool dirty = context->nativeScheduleDirtyRootsPresent;
+    if (dirty) {
+      dirty = false;
+      __int128 selectedEnd = static_cast<__int128>(selectedOffset) + bitWidth;
+      for (const auto &[id, state] : context->nativeStaticStates)
+        if (static_cast<__int128>(state.bitOffset) < selectedEnd &&
+            static_cast<__int128>(selectedOffset) <
+                static_cast<__int128>(state.bitOffset) + state.bitWidth &&
+            (context->nativeScheduleTransientDirtyRoots.find(id) !=
+                 context->nativeScheduleTransientDirtyRoots.end() ||
+             context->nativeSchedulePersistentDirtyRoots.find(id) !=
+                 context->nativeSchedulePersistentDirtyRoots.end())) {
+          dirty = true;
+          break;
+        }
+    }
+    if (!dirty) {
+      canonicalValuePlane = plan->state_value;
+      canonicalUnknownPlane = plan->state_unknown;
+    }
+  }
+
+  uint64_t limbs = (bitWidth - 1) / 64 + 1;
+  for (uint64_t limb = 0; limb != limbs; ++limb) {
+    uint64_t width = std::min<uint64_t>(64, bitWidth - limb * 64);
+    uint64_t offset = selectedOffset + limb * 64;
+    value[limb] = canonicalValuePlane
+                      ? loadPackedBytes(canonicalValuePlane, offset, width)
+                      : loadPackedState(context->stateValue, offset, width);
+    if (unknown)
+      unknown[limb] =
+          fourState
+              ? (canonicalUnknownPlane
+                     ? loadPackedBytes(canonicalUnknownPlane, offset, width)
+                     : loadPackedState(context->stateUnknown, offset, width))
+              : 0;
+  }
+  return OBELISK_RT_OK;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_design_read(obelisk_rt_context *context,
                           obelisk_rt_design_cursor_v1 cursor, uint64_t *value,

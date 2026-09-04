@@ -2796,11 +2796,12 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
   constexpr uint64_t nestedTypeOffset = rootTypeOffset + 80;
   constexpr uint64_t leafTypeOffset = nestedTypeOffset + 80;
   constexpr uint64_t stringOffset = leafTypeOffset + 80;
-  const uint32_t physicalKind = exactVpiType == vpiNet ||
-                                        exactVpiType == vpiNetBit ||
-                                        exactVpiType == vpiNetArray
-                                    ? OBELISK_RT_DESIGN_RECORD_NET
-                                    : OBELISK_RT_DESIGN_RECORD_STORAGE;
+  const uint32_t physicalKind =
+      exactVpiType == vpiNet || exactVpiType == vpiNetBit ||
+              exactVpiType == vpiNetArray || exactVpiType == vpiRealNet ||
+              exactVpiType == vpiShortRealNet
+          ? OBELISK_RT_DESIGN_RECORD_NET
+          : OBELISK_RT_DESIGN_RECORD_STORAGE;
   if (shape == VPIShapeType::BasicScalar ||
       shape == VPIShapeType::BasicVector || shape == VPIShapeType::ShortReal ||
       shape == VPIShapeType::Real) {
@@ -2904,6 +2905,84 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
     break;
   }
   }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t>
+makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
+                       int64_t packedLeft = 7, int64_t packedRight = 4,
+                       uint32_t exactType = vpiRegArray,
+                       uint32_t recordKind = OBELISK_RT_DESIGN_RECORD_STORAGE,
+                       bool innerPacked = true, bool elementSigned = false,
+                       bool outerPacked = false) {
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t outerTypeOffset = 336;
+  constexpr uint64_t packedTypeOffset = outerTypeOffset + 80;
+  constexpr uint64_t scalarTypeOffset = packedTypeOffset + 80;
+  constexpr uint64_t stringOffset = scalarTypeOffset + 80;
+  std::vector<uint8_t> bytes = makeAggregateDatabase();
+  const uint32_t fourState = OBELISK_RT_DESIGN_TYPE_FOUR_STATE;
+  const uint32_t packed = OBELISK_RT_DESIGN_TYPE_PACKED;
+  const uint32_t signedFlag = OBELISK_RT_DESIGN_TYPE_SIGNED;
+  const uint64_t outerExtent = static_cast<uint64_t>(
+      outerLeft >= outerRight ? outerLeft - outerRight + 1
+                              : outerRight - outerLeft + 1);
+  const uint64_t packedExtent = static_cast<uint64_t>(
+      packedLeft >= packedRight ? packedLeft - packedRight + 1
+                                : packedRight - packedLeft + 1);
+  const uint64_t width = outerExtent * packedExtent;
+  auto type = [&](uint64_t offset, uint32_t kind, uint32_t flags,
+                  uint64_t width, int64_t left, int64_t right, uint64_t element,
+                  uint64_t name) {
+    std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
+    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset + 4, kind | (flags << 8));
+    put64(bytes, offset + 8, width);
+    put64(bytes, offset + 16, static_cast<uint64_t>(left));
+    put64(bytes, offset + 24, static_cast<uint64_t>(right));
+    put64(bytes, offset + 32, element);
+    put64(bytes, offset + 72, name);
+  };
+
+  put32(bytes, objectOffset, designRecordKind(recordKind, exactType));
+  put64(bytes, objectOffset + 48, outerTypeOffset);
+  put64(bytes, objectOffset + 56, width);
+  put64(bytes, objectOffset + 64, static_cast<uint64_t>(outerLeft));
+  put64(bytes, objectOffset + 72, static_cast<uint64_t>(outerRight));
+  type(outerTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY,
+       fourState | (outerPacked ? packed : 0), width, outerLeft, outerRight,
+       packedTypeOffset, stringOffset + 14);
+  type(packedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY,
+       fourState | (innerPacked ? packed : 0) |
+           (elementSigned ? signedFlag : 0),
+       packedExtent, packedLeft, packedRight, scalarTypeOffset,
+       stringOffset + 21);
+  type(scalarTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR,
+       fourState | packed | (elementSigned ? signedFlag : 0), 1, 0, 0, 0,
+       stringOffset + 27);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeVPIPortDatabase() {
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t typeOffset = 336;
+  std::vector<uint8_t> bytes = makeDatabase();
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PORT, vpiPort));
+  put32(bytes, objectOffset + 4,
+        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_PORT_INPUT);
+  put64(bytes, objectOffset + 56, 8);
+  put64(bytes, objectOffset + 64, 7);
+  put64(bytes, objectOffset + 72, 0);
+  put32(bytes, typeOffset + 4,
+        OBELISK_RT_DESIGN_TYPE_SCALAR |
+            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+             << 8));
+  put64(bytes, typeOffset + 8, 8);
+  put64(bytes, typeOffset + 16, 7);
+  put64(bytes, typeOffset + 24, 0);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -5394,6 +5473,450 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
   }
 }
 
+TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
+  Fixture fixture;
+  fixture.database = makeVPIIndexedDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  auto integerValue = [](vpiHandle handle) {
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    vpi_get_value(handle, &value);
+    return value.value.integer;
+  };
+  auto release = [](vpiHandle handle) {
+    if (handle) {
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+    }
+  };
+
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  ASSERT_EQ(vpi_get(vpiType, root), vpiRegArray);
+  EXPECT_EQ(vpi_get(vpiSize, root), 2);
+  EXPECT_EQ(vpi_get(vpiArrayMember, root), 0);
+  EXPECT_EQ(vpi_get(vpiPackedArrayMember, root), 0);
+  EXPECT_EQ(vpi_get(vpiConstantSelect, root), 1);
+  EXPECT_EQ(vpi_get(vpiSigned, root), 0);
+  EXPECT_EQ(vpi_get(vpiScalar, root), 0);
+  EXPECT_EQ(vpi_get(vpiVector, root), 1);
+  vpiHandle rootLeft = vpi_handle(vpiLeftRange, root);
+  vpiHandle rootRight = vpi_handle(vpiRightRange, root);
+  ASSERT_NE(rootLeft, nullptr);
+  ASSERT_NE(rootRight, nullptr);
+  EXPECT_EQ(vpi_get(vpiSize, rootLeft), 64);
+  EXPECT_EQ(vpi_get(vpiConstType, rootLeft), vpiIntConst);
+  EXPECT_EQ(integerValue(rootLeft), 0);
+  EXPECT_EQ(integerValue(rootRight), 1);
+  release(rootLeft);
+  release(rootRight);
+  s_vpi_vecval vector[]{{0, 0}};
+  s_vpi_value write{};
+  write.format = vpiVectorVal;
+  write.value.vector = vector;
+  EXPECT_EQ(vpi_put_value(root, &write, nullptr, vpiNoDelay), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  // Read-only indexed inspection must stay on the generated tier-1 state
+  // planes and must not mark the schedule deoptimized.
+  SchedulePlanState scheduleState;
+  std::vector<uint8_t> planValue((fixture.execution.state_bit_count + 7) / 8,
+                                 0);
+  std::vector<uint8_t> planUnknown(planValue.size(), 0);
+  planValue[0] = 0xa5;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.size = sizeof(plan);
+  plan.graph_layout_checksum = fixture.execution.checksum;
+  plan.mutable_state = &scheduleState;
+  plan.mutable_state_size = sizeof(scheduleState);
+  plan.actor_capacity = scheduleState.actors.size();
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.state_value = planValue.data();
+  plan.state_unknown = planUnknown.data();
+  plan.state_bit_count = fixture.execution.state_bit_count;
+  plan.bind = planBind;
+  plan.run = planRun;
+  plan.fallback_snapshot = planSnapshot;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  vpiHandle outer0 = vpi_handle_by_index(root, 0);
+  ASSERT_NE(outer0, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, outer0), vpiReg);
+  EXPECT_EQ(vpi_get(vpiSize, outer0), 4);
+  EXPECT_EQ(vpi_get(vpiArrayMember, outer0), 1);
+  EXPECT_EQ(vpi_get(vpiPackedArrayMember, outer0), 0);
+  EXPECT_EQ(vpi_get(vpiConstantSelect, outer0), 1);
+  EXPECT_EQ(vpi_get(vpiSigned, outer0), 0);
+  EXPECT_EQ(vpi_get(vpiScalar, outer0), 0);
+  EXPECT_EQ(vpi_get(vpiVector, outer0), 1);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, outer0), "top.value[0]");
+  EXPECT_EQ(integerValue(outer0), 5);
+  vpiHandle packedLeft = vpi_handle(vpiLeftRange, outer0);
+  vpiHandle packedRight = vpi_handle(vpiRightRange, outer0);
+  ASSERT_NE(packedLeft, nullptr);
+  ASSERT_NE(packedRight, nullptr);
+  EXPECT_EQ(integerValue(packedLeft), 7);
+  EXPECT_EQ(integerValue(packedRight), 4);
+  release(packedLeft);
+  release(packedRight);
+
+  vpiHandle bit04 = vpi_handle_by_index(outer0, 4);
+  vpiHandle bit07 = vpi_handle_by_index(outer0, 7);
+  ASSERT_NE(bit04, nullptr);
+  ASSERT_NE(bit07, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, bit04), vpiRegBit);
+  EXPECT_EQ(vpi_get(vpiArrayMember, bit04), 0);
+  EXPECT_EQ(vpi_get(vpiPackedArrayMember, bit04), 0);
+  EXPECT_EQ(vpi_get(vpiConstantSelect, bit04), 1);
+  EXPECT_EQ(vpi_get(vpiSigned, bit04), 0);
+  EXPECT_EQ(integerValue(bit04), 1);
+  EXPECT_EQ(integerValue(bit07), 0);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, bit04), "top.value[0][4]");
+
+  PLI_INT32 multiIndices[]{1, 7};
+  vpiHandle multi = vpi_handle_by_multi_index(root, 2, multiIndices);
+  ASSERT_NE(multi, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, multi), vpiRegBit);
+  EXPECT_EQ(integerValue(multi), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, multi), "top.value[1][7]");
+
+  vpiHandle lastIndex = vpi_handle(vpiIndex, multi);
+  ASSERT_NE(lastIndex, nullptr);
+  EXPECT_EQ(vpi_get(vpiSize, lastIndex), 64);
+  EXPECT_EQ(vpi_get(vpiConstType, lastIndex), vpiIntConst);
+  EXPECT_EQ(integerValue(lastIndex), 7);
+
+  vpiHandle indices = vpi_iterate(vpiIndex, multi);
+  ASSERT_NE(indices, nullptr);
+  vpiHandle indexUse = vpi_handle(vpiUse, indices);
+  ASSERT_NE(indexUse, nullptr);
+  EXPECT_EQ(vpi_compare_objects(indexUse, multi), 1);
+  release(indexUse);
+  vpiHandle packedIndex = vpi_scan(indices);
+  vpiHandle unpackedIndex = vpi_scan(indices);
+  ASSERT_NE(packedIndex, nullptr);
+  ASSERT_NE(unpackedIndex, nullptr);
+  EXPECT_EQ(vpi_compare_objects(lastIndex, packedIndex), 1);
+  EXPECT_EQ(integerValue(packedIndex), 7);
+  EXPECT_EQ(integerValue(unpackedIndex), 1);
+  EXPECT_EQ(vpi_scan(indices), nullptr);
+  release(packedIndex);
+  release(unpackedIndex);
+  release(lastIndex);
+
+  vpiHandle packedParent = vpi_handle(vpiParent, multi);
+  ASSERT_NE(packedParent, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, packedParent), "top.value[1]");
+  EXPECT_EQ(integerValue(packedParent), 10);
+  vpiHandle arrayParent = vpi_handle(vpiParent, packedParent);
+  ASSERT_NE(arrayParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(arrayParent, root), 1);
+
+  EXPECT_EQ(vpi_handle_by_index(root, -1), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_handle_by_index(root, 2), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_handle_by_index(outer0, 3), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_handle_by_multi_index(root, 0, multiIndices), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_handle_by_multi_index(root, 1, nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  // Derived selections own their complete recipe and remain valid after the
+  // base handle is released.
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  root = nullptr;
+  EXPECT_EQ(integerValue(multi), 1);
+
+  for (vpiHandle handle :
+       {arrayParent, packedParent, multi, bit07, bit04, outer0})
+    release(handle);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
+  {
+    Fixture fixture;
+    fixture.database = makeVPIIndexedDatabase(0, 4, 12, 0);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    std::string bits = "1010101010101" + std::string(52, '0');
+    s_vpi_value write{};
+    write.format = vpiBinStrVal;
+    write.value.str = reinterpret_cast<PLI_BYTE8 *>(bits.data());
+    EXPECT_EQ(vpi_put_value(root, &write, nullptr, vpiNoDelay), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    vpiHandle window = vpi_handle_by_index(root, 4);
+    ASSERT_NE(window, nullptr);
+    EXPECT_EQ(vpi_get(vpiSize, window), 13);
+    s_vpi_value read{};
+    read.format = vpiIntVal;
+    vpi_get_value(window, &read);
+    EXPECT_EQ(read.value.integer, 0x1555);
+    std::string fourStateBits = "10xz101010101" + std::string(52, '0');
+    write.value.str = reinterpret_cast<PLI_BYTE8 *>(fourStateBits.data());
+    EXPECT_EQ(vpi_put_value(root, &write, nullptr, vpiNoDelay), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    read = {};
+    read.format = vpiBinStrVal;
+    vpi_get_value(window, &read);
+    ASSERT_NE(read.value.str, nullptr);
+    EXPECT_STREQ(reinterpret_cast<char *>(read.value.str), "10xz101010101");
+    PLI_INT32 indices[]{4, 12};
+    vpiHandle topBit = vpi_handle_by_multi_index(root, 2, indices);
+    ASSERT_NE(topBit, nullptr);
+    read = {};
+    read.format = vpiIntVal;
+    vpi_get_value(topBit, &read);
+    EXPECT_EQ(read.value.integer, 1);
+    EXPECT_EQ(vpi_release_handle(topBit), 1);
+    EXPECT_EQ(vpi_release_handle(window), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  {
+    Fixture fixture;
+    fixture.database = makeVPIPortDatabase();
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle port = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(port, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, port), vpiPort);
+    vpiHandle bit = vpi_handle_by_index(port, 7);
+    ASSERT_NE(bit, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, bit), vpiPortBit);
+    EXPECT_EQ(vpi_get_str(vpiName, bit), nullptr);
+    EXPECT_STREQ(vpi_get_str(vpiFullName, bit), "top.value[7]");
+    EXPECT_EQ(vpi_handle(vpiIndex, bit), nullptr);
+    vpiHandle parent = vpi_handle(vpiParent, bit);
+    ASSERT_NE(parent, nullptr);
+    EXPECT_EQ(vpi_compare_objects(parent, port), 1);
+    EXPECT_EQ(vpi_release_handle(parent), 1);
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+    EXPECT_EQ(vpi_release_handle(port), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  struct NetCase {
+    uint32_t rootType;
+    uint32_t elementType;
+  };
+  constexpr NetCase netCases[]{{vpiNetArray, vpiNet},
+                               {vpiInterconnectArray, vpiInterconnectNet}};
+  for (const NetCase &testCase : netCases) {
+    Fixture fixture;
+    fixture.database = makeVPIIndexedDatabase(0, 1, 7, 4, testCase.rootType,
+                                              OBELISK_RT_DESIGN_RECORD_NET);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, root), testCase.rootType);
+    vpiHandle element = vpi_handle_by_index(root, 0);
+    ASSERT_NE(element, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, element), testCase.elementType);
+    vpiHandle indices = vpi_iterate(vpiIndex, element);
+    ASSERT_NE(indices, nullptr);
+    vpiHandle indexUse = vpi_handle(vpiUse, indices);
+    ASSERT_NE(indexUse, nullptr);
+    EXPECT_EQ(vpi_compare_objects(indexUse, element), 1);
+    EXPECT_EQ(vpi_release_handle(indexUse), 1);
+    vpiHandle elementIndex = vpi_scan(indices);
+    ASSERT_NE(elementIndex, nullptr);
+    s_vpi_value indexValue{};
+    indexValue.format = vpiIntVal;
+    vpi_get_value(elementIndex, &indexValue);
+    EXPECT_EQ(indexValue.value.integer, 0);
+    EXPECT_EQ(vpi_release_handle(elementIndex), 1);
+    EXPECT_EQ(vpi_scan(indices), nullptr);
+    vpiHandle bit = vpi_handle_by_index(element, 7);
+    ASSERT_NE(bit, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, bit), vpiNetBit);
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+    EXPECT_EQ(vpi_release_handle(element), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, IndexedQueriesPreserveNegativeAscendingAndDescendingBounds) {
+  Fixture fixture;
+  fixture.database = makeVPIIndexedDatabase(-2, -1, -3, -6);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  s_vpi_vecval vector[]{{1, 0}};
+  s_vpi_value write{};
+  write.format = vpiVectorVal;
+  write.value.vector = vector;
+  EXPECT_EQ(vpi_put_value(root, &write, nullptr, vpiNoDelay), nullptr);
+  PLI_INT32 indices[]{-2, -6};
+  vpiHandle bit = vpi_handle_by_multi_index(root, 2, indices);
+  ASSERT_NE(bit, nullptr);
+  s_vpi_value read{};
+  read.format = vpiIntVal;
+  vpi_get_value(bit, &read);
+  EXPECT_EQ(read.value.integer, 1);
+  vpiHandle index = vpi_handle(vpiIndex, bit);
+  ASSERT_NE(index, nullptr);
+  read = {};
+  read.format = vpiIntVal;
+  vpi_get_value(index, &read);
+  EXPECT_EQ(read.value.integer, -6);
+  EXPECT_EQ(vpi_release_handle(index), 1);
+  EXPECT_EQ(vpi_release_handle(bit), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, IndexedQueriesCountRemainingMultidimensionalUnpackedElements) {
+  Fixture fixture;
+  fixture.database = makeVPIIndexedDatabase(
+      1, 0, 2, 0, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_get(vpiSize, root), 6);
+  vpiHandle row = vpi_handle_by_index(root, 1);
+  ASSERT_NE(row, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, row), vpiRegArray);
+  EXPECT_EQ(vpi_get(vpiSize, row), 3);
+  vpiHandle element = vpi_handle_by_index(row, 2);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, element), vpiReg);
+  EXPECT_EQ(vpi_get(vpiArrayMember, element), 1);
+  EXPECT_EQ(vpi_release_handle(element), 1);
+  EXPECT_EQ(vpi_release_handle(row), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, IndexedQueriesRejectNonIntegralFlattenedStorage) {
+  constexpr uint32_t nonIntegralKinds[]{
+      vpiClassVar,     vpiChandleVar, vpiVirtualInterfaceVar, vpiRealVar,
+      vpiShortRealVar, vpiRealNet,    vpiShortRealNet};
+  for (uint32_t exactType : nonIntegralKinds) {
+    SCOPED_TRACE(exactType);
+    Fixture fixture;
+    fixture.database =
+        makeVPIShapeDatabase(VPIShapeType::BasicVector, exactType);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle value = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(vpi_handle_by_index(value, 0), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(value), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, IndexedQueriesRejectIndicesOnPartialOrdinaryPackedValues) {
+  struct TestCase {
+    uint32_t exactType;
+    uint32_t recordKind;
+  };
+  constexpr TestCase testCases[]{
+      {vpiReg, OBELISK_RT_DESIGN_RECORD_STORAGE},
+      {vpiNet, OBELISK_RT_DESIGN_RECORD_NET},
+  };
+  for (const TestCase &testCase : testCases) {
+    SCOPED_TRACE(testCase.exactType);
+    Fixture fixture;
+    fixture.database = makeVPIIndexedDatabase(
+        0, 1, 7, 4, testCase.exactType, testCase.recordKind, true, false, true);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    vpiHandle partial = vpi_handle_by_index(root, 0);
+    ASSERT_NE(partial, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, partial), testCase.exactType);
+    EXPECT_EQ(vpi_get(vpiArrayMember, partial), 0);
+    EXPECT_EQ(vpi_get(vpiPackedArrayMember, partial), 0);
+    EXPECT_EQ(vpi_handle(vpiIndex, partial), nullptr);
+    EXPECT_EQ(vpi_iterate(vpiIndex, partial), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(partial), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
   Fixture fixture;
   fixture.database = makeSemanticTraversalDatabase();
@@ -5956,6 +6479,19 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
                "vpi_get_value is not defined for a variable or event handle "
                "obtained from a class definition");
 
+  vpiHandle derivedBit = vpi_handle_by_index(derived, 64);
+  ASSERT_NE(derivedBit, nullptr);
+  s_vpi_value derivedBitValue{};
+  derivedBitValue.format = vpiIntVal;
+  derivedBitValue.value.integer = 92;
+  vpi_get_value(derivedBit, &derivedBitValue);
+  EXPECT_EQ(derivedBitValue.value.integer, 92);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "vpi_get_value is not defined for a variable or event handle "
+               "obtained from a class definition");
+
+  EXPECT_EQ(vpi_release_handle(derivedBit), 1);
   EXPECT_EQ(vpi_release_handle(derived), 1);
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(direct), 1);

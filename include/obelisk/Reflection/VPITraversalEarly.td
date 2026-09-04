@@ -382,8 +382,7 @@ def VPIEarlyNetBits : VPITraversalEdge<VPIEarlyBitNetSources, BitRel,
 def VPIEarlyNetBitIndex : VPITraversalEdge<
   VPIObjectSet<"EarlyNetBitSources", [NetBit]>, IndexRel, HandleMode,
   VPIEarlyOrdinaryExpressions, NoOrder, "37.16">;
-def VPIEarlyNetBitIndices : VPITraversalEdge<
-  VPIObjectSet<"EarlyNetBitIterSources", [NetBit]>, IndexRel, IterateMode,
+def VPIEarlyNetIndices : VPITraversalEdge<VPIEarlyNets, IndexRel, IterateMode,
   VPIEarlyOrdinaryExpressions, IndexOrder, "37.16">;
 def VPIEarlyArrayNetModule : VPITraversalEdge<NetArrayObjects, Module,
   HandleMode, ModuleTarget, NoOrder, "37.16">;
@@ -432,10 +431,6 @@ def VPIEarlyPackedNetElementsEdge : VPITraversalEdge<
 def VPIEarlyPackedNetElementIndex : VPITraversalEdge<
   VPIEarlyPackedNetElements, IndexRel, HandleMode, VPIEarlyOrdinaryExpressions,
   NoOrder, "37.16">;
-def VPIEarlyPackedNetElementIndices : VPITraversalEdge<
-  VPIEarlyPackedNetElements, IndexRel, IterateMode, VPIEarlyOrdinaryExpressions,
-  IndexOrder, "37.16">;
-
 // 37.17-37.21 Variables, packed arrays, selects, compatibility memory, and
 // variable connectivity.
 def VPIEarlyVariableExpr : VPITraversalEdge<VPIEarlyNonVirtualVariables,

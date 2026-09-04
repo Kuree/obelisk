@@ -16,8 +16,22 @@ OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
 using namespace obelisk::reflection;
 
 static_assert(vpiObjectModelImageTraversalSize == 8);
-static_assert(vpiObjectModelImagePropertySize == 8);
+static_assert(vpiObjectModelImagePropertySize == 6);
 static_assert(vpiObjectModelImageValuePolicySize == 8);
+static_assert(vpiObjectModelImageIndexedAccessSize == 12);
+static_assert(vpiObjectModelImageIndexedTypeResultSize == 8);
+static_assert(findVPIIndexedAccess(vpiPort)->terminalResult == vpiPortBit);
+static_assert(!findVPIIndexedAccess(vpiPort)->mapSemanticType);
+static_assert(findVPIIndexedAccess(vpiRegArray)->unpackedFallback ==
+              vpiRegArray);
+static_assert(findVPIIndexedAccess(vpiInterconnectArray)->packedFallback ==
+              vpiInterconnectNet);
+static_assert(findVPIIndexedTypeResult(VPIIndexedAccessKind::VariableElement,
+                                       vpiIntTypespec)
+                  ->resultType == vpiIntVar);
+static_assert(findVPIIndexedTypeResult(VPIIndexedAccessKind::NetElement,
+                                       vpiLogicTypespec)
+                  ->resultType == vpiNet);
 static_assert(findVPIProperty(vpiPort, vpiDirection)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiPort, vpiScalar)->valueKind ==

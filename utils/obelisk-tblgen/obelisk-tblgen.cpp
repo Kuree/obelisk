@@ -599,6 +599,11 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto automaticRelations =
       records.getAllDerivedDefinitions("VPIAutomaticRelation");
   auto traversalEdges = records.getAllDerivedDefinitions("VPITraversalEdge");
+  auto indexedAccessKinds =
+      records.getAllDerivedDefinitions("VPIIndexedAccessKind");
+  auto indexedAccesses = records.getAllDerivedDefinitions("VPIIndexedAccess");
+  auto indexedTypeResults =
+      records.getAllDerivedDefinitions("VPIIndexedTypeResult");
   auto callbackPhases =
       records.getAllDerivedDefinitions("VPIStatementCallbackPhase");
   auto callbackPolicies =
@@ -611,12 +616,14 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       valueReadSemantics.empty() || valueRequirements.empty() ||
       valuePolicies.empty() || traversalModes.empty() ||
       traversalOrders.empty() || automaticRelations.empty() ||
-      traversalEdges.empty() || callbackPhases.empty() ||
-      callbackPolicies.empty() || callbackSpecs.empty()) {
+      traversalEdges.empty() || indexedAccessKinds.empty() ||
+      indexedAccesses.empty() || indexedTypeResults.empty() ||
+      callbackPhases.empty() || callbackPolicies.empty() ||
+      callbackSpecs.empty()) {
     PrintError("VPI object model needs families, roles, objects, relations, "
                "object sets, properties, value policies, traversal modes, "
-               "orders, automatic relations, edges, and statement callback "
-               "policies");
+               "orders, automatic relations, edges, indexed-access policies, "
+               "and statement callback policies");
     return false;
   }
   if (families.size() > 64) {
@@ -862,6 +869,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"DirectChild", 1},
       {"ParentScope", 2},
       {"DirectPortConnection", 3}};
+  const std::pair<StringRef, uint32_t> supportedIndexedAccessKinds[] = {
+      {"PortElement", 0}, {"NetElement", 1}, {"VariableElement", 2}};
   const std::pair<StringRef, uint32_t> supportedPropertyValueKinds[] = {
       {"Boolean", 0}, {"Integer", 1}, {"Int64", 2}, {"String", 3}};
   const std::pair<StringRef, uint32_t> supportedValueFormats[] = {
@@ -882,6 +891,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
                     "VPI automatic relation") ||
+      !validateEnum(indexedAccessKinds, supportedIndexedAccessKinds,
+                    "VPI indexed access kind") ||
       !validateEnum(propertyValueKinds, supportedPropertyValueKinds,
                     "VPI property value kind") ||
       !validateEnum(valueFormats, supportedValueFormats, "VPI value format") ||
@@ -1102,6 +1113,93 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                        existing->second->getName());
         return false;
       }
+    }
+  }
+
+  DenseMap<uint32_t, const Record *> indexedAccessSources;
+  DenseMap<const Record *, SmallVector<const Record *>> accessesByKind;
+  for (const Record *access : indexedAccesses) {
+    const Record *sources = access->getValueAsDef("sources");
+    const Record *targets = access->getValueAsDef("targets");
+    if (sources->getValueAsBit("nullRoot") ||
+        targets->getValueAsBit("nullRoot") ||
+        expandedSets.lookup(sources).empty() ||
+        expandedSets.lookup(targets).empty() ||
+        access->getValueAsString("clause").empty()) {
+      PrintError(access->getLoc(),
+                 "VPI indexed access needs non-root concrete source and "
+                 "target sets and an LRM clause");
+      return false;
+    }
+    accessesByKind[access->getValueAsDef("accessKind")].push_back(access);
+    for (StringRef field :
+         {"terminalResult", "unpackedFallback", "packedFallback"}) {
+      const Record *result = access->getValueAsDef(field);
+      if (!llvm::is_contained(expandedSets.lookup(targets), result)) {
+        PrintError(access->getLoc(), Twine("VPI indexed-access ") + field +
+                                         " must belong to its target set");
+        return false;
+      }
+    }
+    for (const Record *source : expandedSets.lookup(sources)) {
+      uint32_t value = static_cast<uint32_t>(source->getValueAsInt("value"));
+      auto [existing, inserted] =
+          indexedAccessSources.try_emplace(value, access);
+      if (!inserted) {
+        PrintError(access->getLoc(),
+                   Twine("duplicate VPI indexed-access policy for source ") +
+                       Twine(value) + "; first declared by " +
+                       existing->second->getName());
+        return false;
+      }
+    }
+  }
+
+  StringMap<const Record *> indexedTypeResultKeys;
+  const Record *typespecFamily = familyNames.lookup("Typespec");
+  for (const Record *mapping : indexedTypeResults) {
+    const Record *kind = mapping->getValueAsDef("accessKind");
+    const Record *typespec = mapping->getValueAsDef("selectedTypespec");
+    const Record *result = mapping->getValueAsDef("result");
+    if (mapping->getValueAsString("clause").empty() || !isConcrete(typespec) ||
+        !llvm::is_contained(typespec->getValueAsListOfDefs("families"),
+                            typespecFamily) ||
+        result->getValueAsDef("role")->getValueAsString("cppName") !=
+            "Concrete") {
+      PrintError(mapping->getLoc(),
+                 "VPI indexed type result needs a typespec, concrete result, "
+                 "and LRM clause");
+      return false;
+    }
+    auto accesses = accessesByKind.lookup(kind);
+    if (accesses.empty()) {
+      PrintError(mapping->getLoc(),
+                 "VPI indexed type result has no access policy");
+      return false;
+    }
+    bool hasMappedAccess = false;
+    for (const Record *access : accesses) {
+      if (!access->getValueAsBit("mapSemanticType"))
+        continue;
+      hasMappedAccess = true;
+      if (!llvm::is_contained(
+              expandedSets.lookup(access->getValueAsDef("targets")), result)) {
+        PrintError(mapping->getLoc(),
+                   "VPI indexed type result is outside its access targets");
+        return false;
+      }
+    }
+    if (!hasMappedAccess) {
+      PrintError(mapping->getLoc(),
+                 "VPI indexed type result has no semantic-mapping access");
+      return false;
+    }
+    std::string key = (Twine(kind->getValueAsInt("value")) + ":" +
+                       Twine(typespec->getValueAsInt("value")))
+                          .str();
+    if (!indexedTypeResultKeys.try_emplace(key, mapping).second) {
+      PrintError(mapping->getLoc(), "duplicate VPI indexed type result");
+      return false;
     }
   }
 
@@ -1562,6 +1660,160 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "         vpiObjectSetKinds[low] == kind;\n"
         "}\n\n";
 
+  auto indexedAccessKindRecords =
+      records.getAllDerivedDefinitions("VPIIndexedAccessKind");
+  SmallVector<const Record *> indexedAccessKinds(
+      indexedAccessKindRecords.begin(), indexedAccessKindRecords.end());
+  llvm::sort(indexedAccessKinds, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIIndexedAccessKind : uint8_t {\n";
+  for (const Record *kind : indexedAccessKinds)
+    os << formatv("  {0} = {1},\n", kind->getValueAsString("cppName"),
+                  kind->getValueAsInt("value"));
+  os << "};\n\n";
+
+  struct EmittedIndexedAccess {
+    uint32_t source;
+    const Record *accessKind;
+    const Record *targets;
+    const Record *terminalResult;
+    const Record *unpackedFallback;
+    const Record *packedFallback;
+    bool mapSemanticType;
+    StringRef clause;
+  };
+  SmallVector<EmittedIndexedAccess> emittedIndexedAccesses;
+  for (const Record *access :
+       records.getAllDerivedDefinitions("VPIIndexedAccess"))
+    for (uint32_t source :
+         expandedSets.lookup(access->getValueAsDef("sources")))
+      emittedIndexedAccesses.push_back(
+          {source, access->getValueAsDef("accessKind"),
+           access->getValueAsDef("targets"),
+           access->getValueAsDef("terminalResult"),
+           access->getValueAsDef("unpackedFallback"),
+           access->getValueAsDef("packedFallback"),
+           access->getValueAsBit("mapSemanticType"),
+           access->getValueAsString("clause")});
+  llvm::sort(emittedIndexedAccesses, [](const EmittedIndexedAccess &left,
+                                        const EmittedIndexedAccess &right) {
+    return left.source < right.source;
+  });
+  os << "struct VPIIndexedAccessDescriptor {\n"
+        "  uint32_t sourceType;\n"
+        "  VPIIndexedAccessKind accessKind;\n"
+        "  VPIObjectSetID targets;\n"
+        "  uint32_t terminalResult;\n"
+        "  uint32_t unpackedFallback;\n"
+        "  uint32_t packedFallback;\n"
+        "  bool mapSemanticType;\n"
+        "  const char *clause;\n"
+        "};\n\n";
+  os << "inline constexpr VPIIndexedAccessDescriptor "
+        "vpiIndexedAccesses[] = {\n";
+  for (const EmittedIndexedAccess &access : emittedIndexedAccesses) {
+    os << formatv("  {{{0}, VPIIndexedAccessKind::{1}, VPIObjectSetID::{2}, "
+                  "{3}, {4}, {5}, {6}, \"{7}\"",
+                  access.source, access.accessKind->getValueAsString("cppName"),
+                  access.targets->getValueAsString("cppName"),
+                  access.terminalResult->getValueAsInt("value"),
+                  access.unpackedFallback->getValueAsInt("value"),
+                  access.packedFallback->getValueAsInt("value"),
+                  access.mapSemanticType ? "true" : "false", access.clause);
+    os << "},\n";
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIIndexedAccessDescriptor *\n"
+        "findVPIIndexedAccess(uint32_t sourceType) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiIndexedAccesses) /\n"
+        "                sizeof(vpiIndexedAccesses[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiIndexedAccesses[middle].sourceType < sourceType)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != sizeof(vpiIndexedAccesses) /\n"
+        "                    sizeof(vpiIndexedAccesses[0]) &&\n"
+        "                 vpiIndexedAccesses[low].sourceType == sourceType\n"
+        "             ? &vpiIndexedAccesses[low]\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool indexedVPIResultAllowed(\n"
+        "    const VPIIndexedAccessDescriptor &access, uint32_t resultType) {\n"
+        "  return vpiObjectSetContains(access.targets, resultType);\n"
+        "}\n\n";
+
+  struct EmittedIndexedTypeResult {
+    const Record *accessKind;
+    uint32_t selectedTypespec;
+    uint32_t result;
+    StringRef clause;
+  };
+  SmallVector<EmittedIndexedTypeResult> emittedIndexedTypeResults;
+  for (const Record *mapping :
+       records.getAllDerivedDefinitions("VPIIndexedTypeResult"))
+    emittedIndexedTypeResults.push_back(
+        {mapping->getValueAsDef("accessKind"),
+         static_cast<uint32_t>(mapping->getValueAsDef("selectedTypespec")
+                                   ->getValueAsInt("value")),
+         static_cast<uint32_t>(
+             mapping->getValueAsDef("result")->getValueAsInt("value")),
+         mapping->getValueAsString("clause")});
+  llvm::sort(emittedIndexedTypeResults,
+             [](const EmittedIndexedTypeResult &left,
+                const EmittedIndexedTypeResult &right) {
+               return std::tuple(left.accessKind->getValueAsInt("value"),
+                                 left.selectedTypespec) <
+                      std::tuple(right.accessKind->getValueAsInt("value"),
+                                 right.selectedTypespec);
+             });
+  os << "struct VPIIndexedTypeResultDescriptor {\n"
+        "  VPIIndexedAccessKind accessKind;\n"
+        "  uint32_t selectedTypespec;\n"
+        "  uint32_t resultType;\n"
+        "  const char *clause;\n"
+        "};\n\n"
+        "inline constexpr VPIIndexedTypeResultDescriptor "
+        "vpiIndexedTypeResults[] = {\n";
+  for (const EmittedIndexedTypeResult &mapping : emittedIndexedTypeResults) {
+    os << formatv("  {{VPIIndexedAccessKind::{0}, {1}, {2}, \"{3}\"",
+                  mapping.accessKind->getValueAsString("cppName"),
+                  mapping.selectedTypespec, mapping.result, mapping.clause);
+    os << "},\n";
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIIndexedTypeResultDescriptor *\n"
+        "findVPIIndexedTypeResult(VPIIndexedAccessKind accessKind,\n"
+        "                         uint32_t selectedTypespec) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiIndexedTypeResults) /\n"
+        "                sizeof(vpiIndexedTypeResults[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    const auto &entry = vpiIndexedTypeResults[middle];\n"
+        "    bool less = static_cast<uint8_t>(entry.accessKind) <\n"
+        "                    static_cast<uint8_t>(accessKind) ||\n"
+        "                (entry.accessKind == accessKind &&\n"
+        "                 entry.selectedTypespec < selectedTypespec);\n"
+        "    if (less)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  if (low == sizeof(vpiIndexedTypeResults) /\n"
+        "                 sizeof(vpiIndexedTypeResults[0]))\n"
+        "    return nullptr;\n"
+        "  const auto &entry = vpiIndexedTypeResults[low];\n"
+        "  return entry.accessKind == accessKind &&\n"
+        "                 entry.selectedTypespec == selectedTypespec\n"
+        "             ? &entry\n"
+        "             : nullptr;\n"
+        "}\n\n";
+
   auto propertyValueKindRecords =
       records.getAllDerivedDefinitions("VPIPropertyValueKind");
   SmallVector<const Record *> propertyValueKinds(
@@ -1910,6 +2162,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   for (const EmittedTraversalEdge &edge : emittedEdges)
     if (selectedImageSets.insert(edge.targets).second)
       imageSets.push_back(edge.targets);
+  for (const EmittedIndexedAccess &access : emittedIndexedAccesses)
+    if (selectedImageSets.insert(access.targets).second)
+      imageSets.push_back(access.targets);
   llvm::sort(imageSets, [](const Record *left, const Record *right) {
     return left->getValueAsString("cppName") <
            right->getValueAsString("cppName");
@@ -1958,14 +2213,29 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       PrintError("expanded VPI value-policy key exceeds 16 bits");
       return true;
     }
+  for (const EmittedIndexedAccess &access : emittedIndexedAccesses)
+    if (access.source > std::numeric_limits<uint16_t>::max() ||
+        access.terminalResult->getValueAsInt("value") > UINT16_MAX ||
+        access.unpackedFallback->getValueAsInt("value") > UINT16_MAX ||
+        access.packedFallback->getValueAsInt("value") > UINT16_MAX) {
+      PrintError("expanded VPI indexed-access key exceeds 16 bits");
+      return true;
+    }
+  for (const EmittedIndexedTypeResult &mapping : emittedIndexedTypeResults)
+    if (mapping.selectedTypespec > UINT16_MAX || mapping.result > UINT16_MAX) {
+      PrintError("expanded VPI indexed type-result key exceeds 16 bits");
+      return true;
+    }
 
-  constexpr uint32_t imageHeaderSize = 80;
+  constexpr uint32_t imageHeaderSize = 96;
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
   constexpr uint32_t imageTraversalSize = 8;
-  constexpr uint32_t imagePropertySize = 8;
+  constexpr uint32_t imagePropertySize = 6;
   constexpr uint32_t imageValuePolicySize = 8;
+  constexpr uint32_t imageIndexedAccessSize = 12;
+  constexpr uint32_t imageIndexedTypeResultSize = 8;
   SmallVector<uint8_t> image(imageHeaderSize, 0);
   auto append16 = [&](uint16_t value) {
     image.push_back(static_cast<uint8_t>(value));
@@ -2058,7 +2328,6 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     image.push_back(
         static_cast<uint8_t>(property.valueKind->getValueAsInt("value")));
     image.push_back(0);
-    append16(0);
   }
 
   size_t valuePolicyOffset = image.size();
@@ -2071,6 +2340,31 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         static_cast<uint8_t>(policy.readSemantics->getValueAsInt("value")));
     image.push_back(policy.requirements);
     image.push_back(0);
+  }
+
+  size_t indexedAccessOffset = image.size();
+  for (const EmittedIndexedAccess &access : emittedIndexedAccesses) {
+    append16(static_cast<uint16_t>(access.source));
+    append16(imageSetIDs.lookup(access.targets));
+    image.push_back(
+        static_cast<uint8_t>(access.accessKind->getValueAsInt("value")));
+    image.push_back(access.mapSemanticType ? 1 : 0);
+    append16(
+        static_cast<uint16_t>(access.terminalResult->getValueAsInt("value")));
+    append16(
+        static_cast<uint16_t>(access.unpackedFallback->getValueAsInt("value")));
+    append16(
+        static_cast<uint16_t>(access.packedFallback->getValueAsInt("value")));
+  }
+
+  size_t indexedTypeResultOffset = image.size();
+  for (const EmittedIndexedTypeResult &mapping : emittedIndexedTypeResults) {
+    image.push_back(
+        static_cast<uint8_t>(mapping.accessKind->getValueAsInt("value")));
+    image.push_back(0);
+    append16(static_cast<uint16_t>(mapping.selectedTypespec));
+    append16(static_cast<uint16_t>(mapping.result));
+    append16(0);
   }
 
   if (image.size() > std::numeric_limits<uint32_t>::max()) {
@@ -2093,6 +2387,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   write32(68, static_cast<uint32_t>(emittedProperties.size()));
   write32(72, static_cast<uint32_t>(valuePolicyOffset));
   write32(76, static_cast<uint32_t>(emittedValuePolicies.size()));
+  write32(80, static_cast<uint32_t>(indexedAccessOffset));
+  write32(84, static_cast<uint32_t>(emittedIndexedAccesses.size()));
+  write32(88, static_cast<uint32_t>(indexedTypeResultOffset));
+  write32(92, static_cast<uint32_t>(emittedIndexedTypeResults.size()));
   uint64_t imageChecksum = UINT64_C(14695981039346656037);
   for (uint8_t byte : image) {
     imageChecksum ^= byte;
@@ -2114,6 +2412,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imagePropertySize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImageValuePolicySize = "
      << imageValuePolicySize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageIndexedAccessSize = "
+     << imageIndexedAccessSize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageIndexedTypeResultSize = "
+     << imageIndexedTypeResultSize << ";\n\n";
   os << "inline constexpr uint8_t "
         "vpiObjectModelImageOrderMask = 0x0f;\n"
         "inline constexpr uint8_t "
@@ -2194,6 +2496,10 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
   uint64_t propertyCount = readVPIObjectModelImage32(data, 68);
   uint64_t valuePolicyOffset = readVPIObjectModelImage32(data, 72);
   uint64_t valuePolicyCount = readVPIObjectModelImage32(data, 76);
+  uint64_t indexedAccessOffset = readVPIObjectModelImage32(data, 80);
+  uint64_t indexedAccessCount = readVPIObjectModelImage32(data, 84);
+  uint64_t indexedTypeResultOffset = readVPIObjectModelImage32(data, 88);
+  uint64_t indexedTypeResultCount = readVPIObjectModelImage32(data, 92);
   if (objectOffset != vpiObjectModelImageHeaderSize ||
       objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
       relationOffset !=
@@ -2218,8 +2524,21 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
               propertyCount * vpiObjectModelImagePropertySize ||
       valuePolicyCount >
           (size - valuePolicyOffset) / vpiObjectModelImageValuePolicySize ||
-      valuePolicyOffset +
-              valuePolicyCount * vpiObjectModelImageValuePolicySize !=
+      indexedAccessOffset !=
+          valuePolicyOffset +
+              valuePolicyCount * vpiObjectModelImageValuePolicySize ||
+      indexedAccessCount >
+          (size - indexedAccessOffset) /
+              vpiObjectModelImageIndexedAccessSize ||
+      indexedAccessOffset +
+              indexedAccessCount * vpiObjectModelImageIndexedAccessSize !=
+          indexedTypeResultOffset ||
+      indexedTypeResultCount >
+          (size - indexedTypeResultOffset) /
+              vpiObjectModelImageIndexedTypeResultSize ||
+      indexedTypeResultOffset +
+              indexedTypeResultCount *
+                  vpiObjectModelImageIndexedTypeResultSize !=
           size)
     return false;
 
@@ -2312,7 +2631,7 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
                    (previousSource == source && previousProperty < property);
     if (!ordered || record[4] > static_cast<uint8_t>(
                                     VPIPropertyValueKind::String) ||
-        record[5] != 0 || readVPIObjectModelImage16(record, 6) != 0)
+        record[5] != 0)
       return false;
     previousSource = source;
     previousProperty = property;
@@ -2344,6 +2663,100 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
         (record[6] & ~validValueRequirements) != 0 || record[7] != 0)
       return false;
     previousSource = source;
+  }
+  previousSource = 0;
+  auto concreteObject = [&](uint16_t value) constexpr {
+    for (uint32_t objectIndex = 0; objectIndex != objectCount;
+         ++objectIndex) {
+      const uint8_t *object =
+          data + objectOffset +
+          objectIndex * vpiObjectModelImageObjectSize;
+      if (readVPIObjectModelImage16(object, 0) == value)
+        return object[2] == static_cast<uint8_t>(VPIObjectRole::Concrete);
+    }
+    return false;
+  };
+  auto targetContains = [&](uint16_t setID, uint16_t value) constexpr {
+    if (setID >= setCount)
+      return false;
+    const uint8_t *set =
+        data + setOffset + setID * vpiObjectModelImageSetSize;
+    uint16_t first = readVPIObjectModelImage16(set, 0);
+    uint16_t count = readVPIObjectModelImage16(set, 2);
+    for (uint32_t targetIndex = 0; targetIndex != count; ++targetIndex)
+      if (readVPIObjectModelImage16(
+              data, kindOffset + (uint32_t{first} + targetIndex) * 2) == value)
+        return true;
+    return false;
+  };
+  for (uint32_t index = 0; index != indexedAccessCount; ++index) {
+    const uint8_t *record =
+        data + indexedAccessOffset +
+        index * vpiObjectModelImageIndexedAccessSize;
+    uint16_t source = readVPIObjectModelImage16(record, 0);
+    uint16_t targets = readVPIObjectModelImage16(record, 2);
+    uint16_t terminalResult = readVPIObjectModelImage16(record, 6);
+    uint16_t unpackedFallback = readVPIObjectModelImage16(record, 8);
+    uint16_t packedFallback = readVPIObjectModelImage16(record, 10);
+    if ((index != 0 && source <= previousSource) || !concreteObject(source) ||
+        targets >= setCount ||
+        record[4] >
+            static_cast<uint8_t>(VPIIndexedAccessKind::VariableElement) ||
+        record[5] > 1 || !concreteObject(terminalResult) ||
+        !concreteObject(unpackedFallback) || !concreteObject(packedFallback) ||
+        !targetContains(targets, terminalResult) ||
+        !targetContains(targets, unpackedFallback) ||
+        !targetContains(targets, packedFallback))
+      return false;
+    previousSource = source;
+  }
+  uint8_t previousAccessKind = 0;
+  uint16_t previousTypespec = 0;
+  for (uint32_t index = 0; index != indexedTypeResultCount; ++index) {
+    const uint8_t *record =
+        data + indexedTypeResultOffset +
+        index * vpiObjectModelImageIndexedTypeResultSize;
+    uint8_t accessKind = record[0];
+    uint16_t typespec = readVPIObjectModelImage16(record, 2);
+    uint16_t result = readVPIObjectModelImage16(record, 4);
+    bool ordered = index == 0 || previousAccessKind < accessKind ||
+                   (previousAccessKind == accessKind &&
+                    previousTypespec < typespec);
+    bool hasMappedAccess = false;
+    bool allowed = true;
+    for (uint32_t accessIndex = 0; accessIndex != indexedAccessCount;
+         ++accessIndex) {
+      const uint8_t *access =
+          data + indexedAccessOffset +
+          accessIndex * vpiObjectModelImageIndexedAccessSize;
+      if (access[4] != accessKind || access[5] == 0)
+        continue;
+      hasMappedAccess = true;
+      if (!targetContains(readVPIObjectModelImage16(access, 2), result))
+        allowed = false;
+    }
+    bool typespecObject = false;
+    for (uint32_t objectIndex = 0; objectIndex != objectCount;
+         ++objectIndex) {
+      const uint8_t *object =
+          data + objectOffset +
+          objectIndex * vpiObjectModelImageObjectSize;
+      if (readVPIObjectModelImage16(object, 0) == typespec) {
+        typespecObject =
+            object[2] == static_cast<uint8_t>(VPIObjectRole::Concrete) &&
+            (readVPIObjectModelImage64(object, 4) &
+             vpiFamilyMask(VPIObjectFamily::Typespec)) != 0;
+        break;
+      }
+    }
+    if (!ordered || accessKind > static_cast<uint8_t>(
+                                      VPIIndexedAccessKind::VariableElement) ||
+        record[1] != 0 || readVPIObjectModelImage16(record, 6) != 0 ||
+        !typespecObject || !concreteObject(result) || !hasMappedAccess ||
+        !allowed)
+      return false;
+    previousAccessKind = accessKind;
+    previousTypespec = typespec;
   }
   return true;
 }
@@ -2479,6 +2892,88 @@ inline constexpr bool findVPIObjectModelImageValuePolicy(
             static_cast<VPIValueDefaultFormat>(record[4]),
             static_cast<VPIValueReadSemantics>(record[5]), record[6]};
   return result.sourceType == sourceType;
+}
+
+struct VPIObjectModelImageIndexedAccess {
+  uint16_t sourceType;
+  uint16_t targets;
+  VPIIndexedAccessKind accessKind;
+  bool mapSemanticType;
+  uint16_t terminalResult;
+  uint16_t unpackedFallback;
+  uint16_t packedFallback;
+};
+
+inline constexpr bool findVPIObjectModelImageIndexedAccess(
+    const uint8_t *data, uint32_t sourceType,
+    VPIObjectModelImageIndexedAccess &result) {
+  if (sourceType > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 80);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 84);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageIndexedAccessSize;
+    if (readVPIObjectModelImage16(record, 0) < sourceType)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 84))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageIndexedAccessSize;
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage16(record, 2),
+            static_cast<VPIIndexedAccessKind>(record[4]),
+            record[5] != 0,
+            readVPIObjectModelImage16(record, 6),
+            readVPIObjectModelImage16(record, 8),
+            readVPIObjectModelImage16(record, 10)};
+  return result.sourceType == sourceType;
+}
+
+struct VPIObjectModelImageIndexedTypeResult {
+  VPIIndexedAccessKind accessKind;
+  uint16_t selectedTypespec;
+  uint16_t resultType;
+};
+
+inline constexpr bool findVPIObjectModelImageIndexedTypeResult(
+    const uint8_t *data, VPIIndexedAccessKind accessKind,
+    uint32_t selectedTypespec,
+    VPIObjectModelImageIndexedTypeResult &result) {
+  if (selectedTypespec > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 88);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 92);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageIndexedTypeResultSize;
+    auto recordKind = static_cast<VPIIndexedAccessKind>(record[0]);
+    uint16_t recordTypespec = readVPIObjectModelImage16(record, 2);
+    bool less = static_cast<uint8_t>(recordKind) <
+                    static_cast<uint8_t>(accessKind) ||
+                (recordKind == accessKind &&
+                 recordTypespec < selectedTypespec);
+    if (less)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 92))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageIndexedTypeResultSize;
+  result = {static_cast<VPIIndexedAccessKind>(record[0]),
+            readVPIObjectModelImage16(record, 2),
+            readVPIObjectModelImage16(record, 4)};
+  return result.accessKind == accessKind &&
+         result.selectedTypespec == selectedTypespec;
 }
 
 inline constexpr bool vpiObjectModelImageTargetContains(
