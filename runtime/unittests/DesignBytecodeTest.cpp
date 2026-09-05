@@ -2973,6 +2973,59 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
   return bytes;
 }
 
+std::vector<uint8_t> makeVPITypedArrayDatabase(
+    uint32_t publicElementTypespec, uint32_t semanticElementKind,
+    uint64_t elementWidth, uint32_t semanticElementFlags = 0,
+    uint32_t rootType = vpiRegArray,
+    uint32_t recordKind = OBELISK_RT_DESIGN_RECORD_STORAGE,
+    uint32_t elementCount = 3) {
+  std::vector<uint8_t> bytes =
+      makeVPIIndexedDatabase(0, static_cast<int64_t>(elementCount - 1),
+                             static_cast<int64_t>(elementWidth - 1), 0,
+                             rootType, recordKind, true, false);
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
+  const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t edgeOffset = typeOffset + 2 * 64;
+  const uint64_t rootOffset = edgeOffset + 24;
+  bytes.resize(rootOffset + 4, 0);
+
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset, typeOffset);
+  put64(bytes, directoryOffset + 8, 2);
+  put64(bytes, directoryOffset + 16, edgeOffset);
+  put64(bytes, directoryOffset + 24, 1);
+  put64(bytes, directoryOffset + 32, rootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+
+  put32(bytes, typeOffset,
+        OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
+            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+            (semanticElementFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) |
+            (vpiArrayTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put32(bytes, typeOffset + 4, 0);
+  put32(bytes, typeOffset + 8, 1);
+  put32(bytes, typeOffset + 12, UINT32_MAX);
+  put32(bytes, typeOffset + 16, UINT32_MAX);
+  put64(bytes, typeOffset + 32, 0);
+  put64(bytes, typeOffset + 40, elementCount - 1);
+
+  const uint64_t elementOffset = typeOffset + 64;
+  put32(bytes, elementOffset,
+        semanticElementKind | semanticElementFlags |
+            (publicElementTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put32(bytes, elementOffset + 12, UINT32_MAX);
+  put32(bytes, elementOffset + 16, UINT32_MAX);
+
+  put32(bytes, edgeOffset, 1);
+  put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
+  put32(bytes, rootOffset, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeVPIPortDatabase() {
   constexpr uint64_t objectOffset = 240;
   constexpr uint64_t typeOffset = 336;
@@ -5468,7 +5521,6 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
     ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
     ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-
     char valueName[] = "top.value";
     vpiHandle value = vpi_handle_by_name(valueName, nullptr);
     ASSERT_NE(value, nullptr);
@@ -5854,6 +5906,250 @@ TEST(VPI, IndexedQueriesCountRemainingMultidimensionalUnpackedElements) {
   EXPECT_EQ(vpi_get(vpiArrayMember, element), 1);
   EXPECT_EQ(vpi_release_handle(element), 1);
   EXPECT_EQ(vpi_release_handle(row), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ArrayValueQueryUsesLRMMultidimensionalOrderAndUserStorage) {
+  Fixture fixture;
+  fixture.database = makeVPIIndexedDatabase(
+      2, 0, 3, 5, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  // Internal planes encode IEEE A/B as value=A^B and unknown=B.
+  constexpr uint16_t aval = 0b101101011;
+  constexpr uint16_t bval = 0b010001100;
+  context->stateValue[0] = 0;
+  context->stateUnknown[0] = 0;
+  SchedulePlanState scheduleState;
+  std::vector<uint8_t> planValue((fixture.execution.state_bit_count + 7) / 8,
+                                 0);
+  std::vector<uint8_t> planUnknown(planValue.size(), 0);
+  planValue[0] = static_cast<uint8_t>(aval ^ bval);
+  planValue[1] = static_cast<uint8_t>((aval ^ bval) >> 8);
+  planUnknown[0] = static_cast<uint8_t>(bval);
+  planUnknown[1] = static_cast<uint8_t>(bval >> 8);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.size = sizeof(plan);
+  plan.graph_layout_checksum = fixture.execution.checksum;
+  plan.mutable_state = &scheduleState;
+  plan.mutable_state_size = sizeof(scheduleState);
+  plan.actor_capacity = scheduleState.actors.size();
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.state_value = planValue.data();
+  plan.state_unknown = planUnknown.data();
+  plan.state_bit_count = fixture.execution.state_bit_count;
+  plan.bind = planBind;
+  plan.run = planRun;
+  plan.fallback_snapshot = planSnapshot;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  PLI_INT32 start[]{1, 4};
+  std::array<PLI_BYTE8, 10> storage{};
+  s_vpi_arrayvalue values{};
+  values.format = vpiRawFourStateVal;
+  values.flags = vpiUserAllocFlag;
+  values.value.rawvals = storage.data();
+  vpi_get_value_array(root, &values, start, 5);
+  ASSERT_EQ(values.value.rawvals, storage.data());
+  for (size_t index = 0; index != 5; ++index) {
+    const size_t physical = 4 + index;
+    EXPECT_EQ(storage[index * 2], (aval >> physical) & 1) << index;
+    EXPECT_EQ(storage[index * 2 + 1], (bval >> physical) & 1) << index;
+  }
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
+
+  vpiHandle row = vpi_handle_by_index(root, 1);
+  ASSERT_NE(row, nullptr);
+  PLI_INT32 rowStart[]{4};
+  values = {};
+  values.format = vpiRawTwoStateVal;
+  vpi_get_value_array(row, &values, rowStart, 2);
+  ASSERT_NE(values.value.rawvals, nullptr);
+  EXPECT_EQ(values.value.rawvals[0], (aval >> 4) & 1);
+  EXPECT_EQ(values.value.rawvals[1], (aval >> 5) & 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(row), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
+  auto run = [](uint32_t publicTypespec, uint32_t semanticKind, uint64_t width,
+                uint32_t semanticFlags, bool isSigned, uint32_t format,
+                const std::array<uint64_t, 3> &bits, auto check) {
+    SCOPED_TRACE(format);
+    ASSERT_EQ(isSigned,
+              (semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0);
+    Fixture fixture;
+    const size_t count = std::min<size_t>(bits.size(), 65 / width);
+    fixture.database = makeVPITypedArrayDatabase(
+        publicTypespec, semanticKind, width, semanticFlags, vpiRegArray,
+        OBELISK_RT_DESIGN_RECORD_STORAGE, count);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    std::fill(context->stateUnknown.begin(), context->stateUnknown.end(), 0);
+    for (size_t element = 0; element != count; ++element)
+      for (uint64_t bit = 0; bit != width; ++bit)
+        if ((bits[element] & (uint64_t{1} << bit)) != 0)
+          context->stateValue[(element * width + bit) / 64] |=
+              uint64_t{1} << ((element * width + bit) % 64);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    EXPECT_EQ(context->stateValue[0] & bits[0], bits[0]);
+    PLI_INT32 start[]{0};
+    s_vpi_arrayvalue values{};
+    values.format = format;
+    vpi_get_value_array(root, &values, start, count);
+    ASSERT_NE(values.value.rawvals, nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    check(values);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  };
+
+  run(vpiIntTypespec, OBELISK_RT_DESIGN_SEMANTIC_INT, 32,
+      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiIntVal,
+      {1, UINT32_C(0xffffffff), UINT32_C(0x80000000)},
+      [](const s_vpi_arrayvalue &values) {
+        EXPECT_EQ(values.value.integers[0], 1);
+        EXPECT_EQ(values.value.integers[1], -1);
+      });
+  run(vpiByteTypespec, OBELISK_RT_DESIGN_SEMANTIC_BYTE, 8,
+      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiShortIntVal,
+      {UINT8_C(0x80), UINT8_C(0x7f), UINT8_C(0xff)},
+      [](const s_vpi_arrayvalue &values) {
+        EXPECT_EQ(values.value.shortints[0], -128);
+        EXPECT_EQ(values.value.shortints[1], 127);
+        EXPECT_EQ(values.value.shortints[2], -1);
+      });
+  run(vpiLongIntTypespec, OBELISK_RT_DESIGN_SEMANTIC_LONG_INT, 64,
+      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiLongIntVal,
+      {1, UINT64_MAX, UINT64_C(0x8000000000000000)},
+      [](const s_vpi_arrayvalue &values) {
+        EXPECT_EQ(values.value.longints[0], 1);
+      });
+  run(vpiTimeTypespec, OBELISK_RT_DESIGN_SEMANTIC_TIME, 64,
+      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, false, vpiTimeVal,
+      {1, UINT64_C(0x123456789abcdef0), UINT64_MAX},
+      [](const s_vpi_arrayvalue &values) {
+        EXPECT_EQ(values.value.times[0].type, vpiSimTime);
+      });
+
+  const std::array<double, 3> reals{{1.5, -0.25, 1234.0}};
+  std::array<uint64_t, 3> realBits{};
+  std::memcpy(realBits.data(), reals.data(), sizeof(reals));
+  run(vpiRealTypespec, OBELISK_RT_DESIGN_SEMANTIC_REAL, 64, 0, false,
+      vpiRealVal, realBits, [&](const s_vpi_arrayvalue &values) {
+        EXPECT_DOUBLE_EQ(values.value.reals[0], reals[0]);
+      });
+  const std::array<float, 3> shortReals{{1.5F, -0.25F, 1234.0F}};
+  std::array<uint32_t, 3> shortRealBits{};
+  std::memcpy(shortRealBits.data(), shortReals.data(), sizeof(shortReals));
+  run(vpiShortRealTypespec, OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL, 32, 0, false,
+      vpiShortRealVal, {shortRealBits[0], shortRealBits[1], shortRealBits[2]},
+      [&](const s_vpi_arrayvalue &values) {
+        for (size_t index = 0; index != 2; ++index)
+          EXPECT_FLOAT_EQ(values.value.shortreals[index], shortReals[index]);
+      });
+
+  // The three fixed bit-stream formats are also covered by a non-word width.
+  for (uint32_t format :
+       {vpiVectorVal, vpiRawTwoStateVal, vpiRawFourStateVal}) {
+    SCOPED_TRACE(format);
+    run(vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 37,
+        OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, false, format,
+        {UINT64_C(0x1fffffffff), UINT64_C(0x123456789), 0},
+        [format](const s_vpi_arrayvalue &values) {
+          if (format == vpiVectorVal) {
+            EXPECT_EQ(values.value.vectors[0].aval, UINT32_MAX);
+            EXPECT_EQ(values.value.vectors[1].aval, 0x1fU);
+          } else {
+            EXPECT_EQ(static_cast<uint8_t>(values.value.rawvals[0]), 0xffU);
+            EXPECT_EQ(static_cast<uint8_t>(values.value.rawvals[4]), 0x1fU);
+          }
+        });
+  }
+}
+
+TEST(VPI, ArrayValueQueryRejectsInvalidRequestsWithoutChangingSchedulerTier) {
+  Fixture fixture;
+  fixture.database = makeVPITypedArrayDatabase(
+      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 4,
+      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  PLI_INT32 start[]{0};
+  s_vpi_arrayvalue values{};
+  values.format = vpiStringVal;
+  values.value.rawvals = reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1});
+  vpi_get_value_array(root, &values, start, 1);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  values = {};
+  values.format = vpiVectorVal;
+  values.flags = vpiUserAllocFlag;
+  vpi_get_value_array(root, &values, start, 1);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  values = {};
+  values.format = vpiVectorVal;
+  vpi_get_value_array(root, &values, nullptr, 1);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  values = {};
+  values.format = vpiVectorVal;
+  vpi_get_value_array(root, &values, start, 0);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  values = {};
+  values.format = vpiVectorVal;
+  values.flags = 1;
+  vpi_get_value_array(root, &values, start, 1);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  start[0] = 2;
+  values = {};
+  values.format = vpiVectorVal;
+  vpi_get_value_array(root, &values, start, 2);
+  EXPECT_EQ(values.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
+
   EXPECT_EQ(vpi_release_handle(root), 1);
   obelisk_rt_v1_context_destroy(context);
 }
@@ -7914,7 +8210,8 @@ TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
   vpi_get_value_array(object, &array, nullptr, 0);
   EXPECT_EQ(array.value.rawvals, nullptr);
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.message, "VPI static array value query is unavailable");
+  EXPECT_STREQ(error.message,
+               "VPI array query requires an unpacked array object");
 
   EXPECT_EQ(vpi_handle_multi(vpiInterModPath, object, object), nullptr);
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);

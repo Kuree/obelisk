@@ -594,6 +594,10 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto valueRequirements =
       records.getAllDerivedDefinitions("VPIValueRequirement");
   auto valuePolicies = records.getAllDerivedDefinitions("VPIValuePolicy");
+  auto arrayValueFormats =
+      records.getAllDerivedDefinitions("VPIArrayValueFormat");
+  auto arrayValuePolicies =
+      records.getAllDerivedDefinitions("VPIArrayValuePolicy");
   auto traversalModes = records.getAllDerivedDefinitions("VPITraversalMode");
   auto traversalOrders = records.getAllDerivedDefinitions("VPITraversalOrder");
   auto automaticRelations =
@@ -614,7 +618,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       relations.empty() || objectSets.empty() || propertyValueKinds.empty() ||
       properties.empty() || valueFormats.empty() || valueDefaults.empty() ||
       valueReadSemantics.empty() || valueRequirements.empty() ||
-      valuePolicies.empty() || traversalModes.empty() ||
+      valuePolicies.empty() || arrayValueFormats.empty() ||
+      arrayValuePolicies.empty() || traversalModes.empty() ||
       traversalOrders.empty() || automaticRelations.empty() ||
       traversalEdges.empty() || indexedAccessKinds.empty() ||
       indexedAccesses.empty() || indexedTypeResults.empty() ||
@@ -891,6 +896,10 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"RejectClassDefinitionOrigin", 2},
       {"RejectNonStaticClassTypespecOrigin", 4},
       {"RestrictStringConstant", 8}};
+  const std::pair<StringRef, uint32_t> supportedArrayValueFormats[] = {
+      {"Int", 6},        {"Real", 7},         {"Vector", 9},
+      {"Time", 11},      {"ShortInt", 14},    {"LongInt", 15},
+      {"ShortReal", 16}, {"RawTwoState", 17}, {"RawFourState", 18}};
   if (!validateEnum(traversalModes, supportedModes, "VPI traversal mode") ||
       !validateEnum(traversalOrders, supportedOrders, "VPI traversal order") ||
       !validateEnum(automaticRelations, supportedAutomaticRelations,
@@ -906,6 +915,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                     "VPI value read semantics") ||
       !validateEnum(valueRequirements, supportedValueRequirements,
                     "VPI value requirement") ||
+      !validateEnum(arrayValueFormats, supportedArrayValueFormats,
+                    "VPI array value format") ||
       !validateEnum(callbackPhases, supportedCallbackPhases,
                     "VPI statement callback phase") ||
       !validateEnum(callbackPolicies, supportedCallbackPolicies,
@@ -1118,6 +1129,41 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         return false;
       }
     }
+  }
+
+  DenseSet<const Record *> arrayPolicyFormats;
+  size_t arrayPolicyElementCount = 0;
+  for (const Record *policy : arrayValuePolicies) {
+    const Record *format = policy->getValueAsDef("format");
+    auto elements = policy->getValueAsListOfDefs("elementTypes");
+    if (policy->getValueAsString("clause").empty() || elements.empty() ||
+        !arrayPolicyFormats.insert(format).second) {
+      PrintError(policy->getLoc(),
+                 "VPI array value policy needs a unique format, element "
+                 "types, and an LRM clause");
+      return false;
+    }
+    DenseSet<const Record *> seenElements;
+    if (elements.size() > UINT16_MAX ||
+        arrayPolicyElementCount > UINT16_MAX - elements.size()) {
+      PrintError(policy->getLoc(),
+                 "VPI array value policies support at most 65535 element "
+                 "entries");
+      return false;
+    }
+    arrayPolicyElementCount += elements.size();
+    for (const Record *element : elements) {
+      if (!isConcrete(element) || !seenElements.insert(element).second) {
+        PrintError(policy->getLoc(),
+                   "VPI array value policy needs unique canonical concrete "
+                   "element types");
+        return false;
+      }
+    }
+  }
+  if (arrayPolicyFormats.size() != arrayValueFormats.size()) {
+    PrintError("VPI array value model needs exactly one policy per format");
+    return false;
   }
 
   DenseMap<uint32_t, const Record *> indexedAccessSources;
@@ -2103,6 +2149,99 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "         (policy.formatMask & (uint16_t{1} << format)) != 0;\n"
         "}\n\n";
 
+  auto arrayValueFormatRecords =
+      records.getAllDerivedDefinitions("VPIArrayValueFormat");
+  SmallVector<const Record *> arrayValueFormats(arrayValueFormatRecords.begin(),
+                                                arrayValueFormatRecords.end());
+  llvm::sort(arrayValueFormats, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class VPIArrayValueFormat : uint8_t {\n";
+  for (const Record *format : arrayValueFormats)
+    os << formatv("  {0} = {1},\n", format->getValueAsString("cppName"),
+                  format->getValueAsInt("value"));
+  os << "};\n\n";
+
+  auto arrayValuePolicyRecords =
+      records.getAllDerivedDefinitions("VPIArrayValuePolicy");
+  SmallVector<const Record *> arrayValuePolicies(
+      arrayValuePolicyRecords.begin(), arrayValuePolicyRecords.end());
+  llvm::sort(arrayValuePolicies, [](const Record *left, const Record *right) {
+    return left->getValueAsDef("format")->getValueAsInt("value") <
+           right->getValueAsDef("format")->getValueAsInt("value");
+  });
+  SmallVector<std::pair<uint32_t, uint32_t>> emittedArrayValuePolicies;
+  os << "inline constexpr uint32_t vpiArrayValueElementTypes[] = {\n";
+  for (const Record *policy : arrayValuePolicies) {
+    auto elements = policy->getValueAsListOfDefs("elementTypes");
+    llvm::sort(elements, [](const Record *left, const Record *right) {
+      return left->getValueAsInt("value") < right->getValueAsInt("value");
+    });
+    for (const Record *element : elements) {
+      os << formatv("  {0},\n", element->getValueAsInt("value"));
+      emittedArrayValuePolicies.emplace_back(
+          policy->getValueAsDef("format")->getValueAsInt("value"),
+          element->getValueAsInt("value"));
+    }
+  }
+  llvm::sort(emittedArrayValuePolicies);
+  os << "};\n\n"
+        "struct VPIArrayValuePolicyDescriptor {\n"
+        "  uint32_t format;\n"
+        "  uint16_t firstElementType;\n"
+        "  uint16_t elementTypeCount;\n"
+        "  const char *clause;\n"
+        "};\n\n"
+        "inline constexpr VPIArrayValuePolicyDescriptor "
+        "vpiArrayValuePolicies[] = {\n";
+  uint32_t firstArrayElementType = 0;
+  for (const Record *policy : arrayValuePolicies) {
+    auto elements = policy->getValueAsListOfDefs("elementTypes");
+    os << formatv("  {{{0}, {1}, {2}, \"{3}\"",
+                  policy->getValueAsDef("format")->getValueAsInt("value"),
+                  firstArrayElementType, elements.size(),
+                  policy->getValueAsString("clause"));
+    os << "},\n";
+    firstArrayElementType += elements.size();
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIArrayValuePolicyDescriptor *\n"
+        "findVPIArrayValuePolicy(uint32_t format) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiArrayValuePolicies) /\n"
+        "                sizeof(vpiArrayValuePolicies[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiArrayValuePolicies[middle].format < format)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != sizeof(vpiArrayValuePolicies) /\n"
+        "                    sizeof(vpiArrayValuePolicies[0]) &&\n"
+        "                 vpiArrayValuePolicies[low].format == format\n"
+        "             ? &vpiArrayValuePolicies[low]\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool acceptsVPIArrayValueFormat(\n"
+        "    uint32_t format, uint32_t elementType) {\n"
+        "  const auto *policy = findVPIArrayValuePolicy(format);\n"
+        "  if (!policy)\n"
+        "    return false;\n"
+        "  size_t low = policy->firstElementType;\n"
+        "  size_t high = low + policy->elementTypeCount;\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiArrayValueElementTypes[middle] < elementType)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != policy->firstElementType + policy->elementTypeCount "
+        "&&\n"
+        "         vpiArrayValueElementTypes[low] == elementType;\n"
+        "}\n\n";
+
   auto modeRecords = records.getAllDerivedDefinitions("VPITraversalMode");
   SmallVector<const Record *> modes(modeRecords.begin(), modeRecords.end());
   llvm::sort(modes, [](const Record *left, const Record *right) {
@@ -2297,6 +2436,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       PrintError("expanded VPI value-policy key exceeds 16 bits");
       return true;
     }
+  for (auto [format, element] : emittedArrayValuePolicies)
+    if (format > UINT16_MAX || element > UINT16_MAX) {
+      PrintError("expanded VPI array-value policy exceeds 16 bits");
+      return true;
+    }
   for (const EmittedIndexedAccess &access : emittedIndexedAccesses)
     if (access.source > std::numeric_limits<uint16_t>::max() ||
         access.terminalResult->getValueAsInt("value") > UINT16_MAX ||
@@ -2312,13 +2456,14 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       return true;
     }
 
-  constexpr uint32_t imageHeaderSize = 96;
+  constexpr uint32_t imageHeaderSize = 104;
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
   constexpr uint32_t imageTraversalSize = 8;
   constexpr uint32_t imagePropertySize = 6;
   constexpr uint32_t imageValuePolicySize = 8;
+  constexpr uint32_t imageArrayValuePolicySize = 4;
   constexpr uint32_t imageIndexedAccessSize = 12;
   constexpr uint32_t imageIndexedTypeResultSize = 8;
   SmallVector<uint8_t> image(imageHeaderSize, 0);
@@ -2427,6 +2572,12 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     image.push_back(0);
   }
 
+  size_t arrayValuePolicyOffset = image.size();
+  for (auto [format, element] : emittedArrayValuePolicies) {
+    append16(static_cast<uint16_t>(format));
+    append16(static_cast<uint16_t>(element));
+  }
+
   size_t indexedAccessOffset = image.size();
   for (const EmittedIndexedAccess &access : emittedIndexedAccesses) {
     append16(static_cast<uint16_t>(access.source));
@@ -2479,6 +2630,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   write32(84, static_cast<uint32_t>(emittedIndexedAccesses.size()));
   write32(88, static_cast<uint32_t>(indexedTypeResultOffset));
   write32(92, static_cast<uint32_t>(emittedIndexedTypeResults.size()));
+  write32(96, static_cast<uint32_t>(arrayValuePolicyOffset));
+  write32(100, static_cast<uint32_t>(emittedArrayValuePolicies.size()));
   uint64_t imageChecksum = UINT64_C(14695981039346656037);
   for (uint8_t byte : image) {
     imageChecksum ^= byte;
@@ -2500,6 +2653,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imagePropertySize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImageValuePolicySize = "
      << imageValuePolicySize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageArrayValuePolicySize = "
+     << imageArrayValuePolicySize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImageIndexedAccessSize = "
      << imageIndexedAccessSize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImageIndexedTypeResultSize = "
@@ -2588,6 +2743,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
   uint64_t indexedAccessCount = readVPIObjectModelImage32(data, 84);
   uint64_t indexedTypeResultOffset = readVPIObjectModelImage32(data, 88);
   uint64_t indexedTypeResultCount = readVPIObjectModelImage32(data, 92);
+  uint64_t arrayValuePolicyOffset = readVPIObjectModelImage32(data, 96);
+  uint64_t arrayValuePolicyCount = readVPIObjectModelImage32(data, 100);
   if (objectOffset != vpiObjectModelImageHeaderSize ||
       objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
       relationOffset !=
@@ -2612,9 +2769,16 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
               propertyCount * vpiObjectModelImagePropertySize ||
       valuePolicyCount >
           (size - valuePolicyOffset) / vpiObjectModelImageValuePolicySize ||
-      indexedAccessOffset !=
+      arrayValuePolicyOffset !=
           valuePolicyOffset +
               valuePolicyCount * vpiObjectModelImageValuePolicySize ||
+      arrayValuePolicyCount >
+          (size - arrayValuePolicyOffset) /
+              vpiObjectModelImageArrayValuePolicySize ||
+      indexedAccessOffset !=
+          arrayValuePolicyOffset +
+              arrayValuePolicyCount *
+                  vpiObjectModelImageArrayValuePolicySize ||
       indexedAccessCount >
           (size - indexedAccessOffset) /
               vpiObjectModelImageIndexedAccessSize ||
@@ -2814,6 +2978,32 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     }
     return false;
   };
+  uint16_t previousArrayFormat = 0;
+  uint16_t previousArrayElement = 0;
+  for (uint32_t index = 0; index != arrayValuePolicyCount; ++index) {
+    const uint8_t *record =
+        data + arrayValuePolicyOffset +
+        index * vpiObjectModelImageArrayValuePolicySize;
+    uint16_t format = readVPIObjectModelImage16(record, 0);
+    uint16_t element = readVPIObjectModelImage16(record, 2);
+    bool validFormat = format == static_cast<uint8_t>(VPIArrayValueFormat::Int) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::Real) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::Vector) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::Time) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::ShortInt) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::LongInt) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::ShortReal) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::RawTwoState) ||
+                       format == static_cast<uint8_t>(VPIArrayValueFormat::RawFourState);
+    bool ordered = index == 0 || previousArrayFormat < format ||
+                   (previousArrayFormat == format &&
+                    previousArrayElement < element);
+    if (!validFormat || !ordered || !concreteObject(element) ||
+        !acceptsVPIArrayValueFormat(format, element))
+      return false;
+    previousArrayFormat = format;
+    previousArrayElement = element;
+  }
   auto targetContains = [&](uint16_t setID, uint16_t value) constexpr {
     if (setID >= setCount)
       return false;
@@ -3058,6 +3248,40 @@ inline constexpr bool findVPIObjectModelImageValuePolicy(
             static_cast<VPIValueDefaultFormat>(record[4]),
             static_cast<VPIValueReadSemantics>(record[5]), record[6]};
   return result.sourceType == sourceType;
+}
+
+struct VPIObjectModelImageArrayValuePolicy {
+  uint16_t format;
+  uint16_t elementType;
+};
+
+inline constexpr bool findVPIObjectModelImageArrayValuePolicy(
+    const uint8_t *data, uint32_t format, uint32_t elementType,
+    VPIObjectModelImageArrayValuePolicy &result) {
+  if (format > UINT16_MAX || elementType > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 96);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 100);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageArrayValuePolicySize;
+    uint16_t recordFormat = readVPIObjectModelImage16(record, 0);
+    uint16_t recordElement = readVPIObjectModelImage16(record, 2);
+    if (recordFormat < format ||
+        (recordFormat == format && recordElement < elementType))
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 100))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageArrayValuePolicySize;
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage16(record, 2)};
+  return result.format == format && result.elementType == elementType;
 }
 
 struct VPIObjectModelImageIndexedAccess {

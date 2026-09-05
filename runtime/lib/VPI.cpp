@@ -193,6 +193,14 @@ struct VPIState {
   s_vpi_time timeScratch{};
   std::vector<std::string> vlogArgumentScratch;
   std::vector<PLI_BYTE8 *> vlogArgumentPointers;
+  std::vector<PLI_INT32> arrayIntegerScratch;
+  std::vector<PLI_INT16> arrayShortIntScratch;
+  std::vector<PLI_INT64> arrayLongIntScratch;
+  std::vector<PLI_BYTE8> arrayRawScratch;
+  std::vector<s_vpi_vecval> arrayVectorScratch;
+  std::vector<s_vpi_time> arrayTimeScratch;
+  std::vector<double> arrayRealScratch;
+  std::vector<float> arrayShortRealScratch;
   // Private design-read planes are reusable across ordinary snapshot queries.
   // Unlike returned value buffers these never escape the active VPI call.
   std::vector<uint64_t> readValueScratch;
@@ -4568,22 +4576,529 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
   setError(state, "VPI delay metadata is unavailable", vpiNotice);
 }
 
+struct VPIArrayDimension {
+  int64_t left = 0;
+  int64_t right = 0;
+  uint64_t extent = 0;
+};
+
+bool checkedArrayProduct(size_t left, size_t right, size_t &result) {
+  if (right != 0 && left > std::numeric_limits<size_t>::max() / right)
+    return false;
+  result = left * right;
+  return true;
+}
+
+uint64_t signExtendArrayElement(uint64_t value, uint64_t width) {
+  if (width == 0 || width >= 64 || (value & (uint64_t{1} << (width - 1))) == 0)
+    return value;
+  return value | (~uint64_t{0} << width);
+}
+
+bool prepareArrayElement(__vpiHandle *source,
+                         obelisk::reflection::VPIIndexedAccessKind accessKind,
+                         uint32_t rootType,
+                         const std::vector<VPISelectionStep> &baseSteps,
+                         const std::vector<VPIArrayDimension> &dimensions,
+                         uint64_t flattened, __vpiHandle &element,
+                         obelisk_rt_design_info_v1 &info) {
+  std::vector<int64_t> coordinates(dimensions.size());
+  for (size_t dimension = dimensions.size(); dimension != 0;) {
+    --dimension;
+    const VPIArrayDimension &range = dimensions[dimension];
+    const uint64_t ordinal = flattened % range.extent;
+    flattened /= range.extent;
+    coordinates[dimension] = range.left >= range.right
+                                 ? range.left - static_cast<int64_t>(ordinal)
+                                 : range.left + static_cast<int64_t>(ordinal);
+  }
+  if (flattened != 0)
+    return false;
+  std::vector<VPISelectionStep> selected = baseSteps;
+  selected.reserve(baseSteps.size() + coordinates.size());
+  for (int64_t index : coordinates)
+    if (!appendIndexedSelection(source, accessKind, index, selected))
+      return false;
+  if (selected.empty() || !indexedInfoForSteps(source, selected, info))
+    return false;
+
+  element.owner = source->owner;
+  element.kind = VPIHandleKind::Object;
+  element.form = VPIObjectForm::Indexed;
+  element.cursor = source->cursor;
+  element.semanticCursor = selected.back().semanticType;
+  element.exactVpiType = selected.back().exactVpiType;
+  element.statement = source->statement;
+  element.classDefinitionOrigin = source->classDefinitionOrigin;
+  element.suppressSemanticDimension = selected.back().suppressSemanticDimension;
+  element.selectionRootType = rootType;
+  element.selectionAccessKind = accessKind;
+  element.selectionBitOffset = selected.back().bitOffset;
+  element.selectionSteps = std::move(selected);
+  element.hasInfo = true;
+  element.info = info;
+  return true;
+}
+
+void *arrayValueCallerBuffer(p_vpi_arrayvalue value) {
+  switch (value->format) {
+  case vpiIntVal:
+    return value->value.integers;
+  case vpiShortIntVal:
+    return value->value.shortints;
+  case vpiLongIntVal:
+    return value->value.longints;
+  case vpiRawTwoStateVal:
+  case vpiRawFourStateVal:
+    return value->value.rawvals;
+  case vpiVectorVal:
+    return value->value.vectors;
+  case vpiTimeVal:
+    return value->value.times;
+  case vpiRealVal:
+    return value->value.reals;
+  case vpiShortRealVal:
+    return value->value.shortreals;
+  default:
+    return nullptr;
+  }
+}
+
+void clearArrayValuePointer(p_vpi_arrayvalue value) {
+  switch (value->format) {
+  case vpiIntVal:
+    value->value.integers = nullptr;
+    return;
+  case vpiShortIntVal:
+    value->value.shortints = nullptr;
+    return;
+  case vpiLongIntVal:
+    value->value.longints = nullptr;
+    return;
+  case vpiVectorVal:
+    value->value.vectors = nullptr;
+    return;
+  case vpiTimeVal:
+    value->value.times = nullptr;
+    return;
+  case vpiRealVal:
+    value->value.reals = nullptr;
+    return;
+  case vpiShortRealVal:
+    value->value.shortreals = nullptr;
+    return;
+  case vpiRawTwoStateVal:
+  case vpiRawFourStateVal:
+  default:
+    value->value.rawvals = nullptr;
+    return;
+  }
+}
+
+void failArrayValueQuery(VPIState *state, p_vpi_arrayvalue destination,
+                         const char *message, int level = vpiError) {
+  if (destination)
+    clearArrayValuePointer(destination);
+  setError(state, message, level);
+}
+
 extern "C" OBELISK_VPI_EXPORT void
-vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination, PLI_INT32 *,
-                    PLI_UINT32) {
+vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
+                    PLI_INT32 *indices, PLI_UINT32 num) {
   beginVPICall();
   VPIState *state = requireState();
-  if (destination)
-    destination->value.rawvals = nullptr;
   if (!state)
     return;
   if (!destination) {
     setError(state, "VPI array-value destination is null");
     return;
   }
-  if (!findHandle(opaque))
+  void *const callerBuffer = arrayValueCallerBuffer(destination);
+  clearArrayValuePointer(destination);
+  __vpiHandle *source = findHandle(opaque);
+  if (!source)
     return;
-  setError(state, "VPI static array value query is unavailable", vpiNotice);
+  if (source->kind != VPIHandleKind::Object || source->classDefinitionOrigin ||
+      (source->form != VPIObjectForm::Design &&
+       source->form != VPIObjectForm::Indexed)) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query requires static design storage");
+    return;
+  }
+  const uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(source));
+  if (sourceType != vpiRegArray && sourceType != vpiNetArray &&
+      sourceType != vpiInterconnectArray) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query requires an unpacked array object",
+                        vpiNotice);
+    return;
+  }
+  if (num == 0 || !indices) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query requires a start index and values");
+    return;
+  }
+  if ((destination->flags & ~vpiUserAllocFlag) != 0) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query has invalid allocation flags");
+    return;
+  }
+  const bool userAllocated = (destination->flags & vpiUserAllocFlag) != 0;
+
+  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  const auto accessKind =
+      source->form == VPIObjectForm::Indexed ? source->selectionAccessKind
+      : access                               ? access->accessKind
+               : obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+  if (!access ||
+      accessKind ==
+          obelisk::reflection::VPIIndexedAccessKind::RelationElement) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query has no fixed storage geometry",
+                        vpiNotice);
+    return;
+  }
+  const uint32_t rootType = source->form == VPIObjectForm::Indexed
+                                ? source->selectionRootType
+                                : sourceType;
+  std::vector<VPISelectionStep> baseSteps;
+  std::vector<VPIArrayDimension> dimensions;
+  OBELISK_RT_TRY {
+    if (source->form == VPIObjectForm::Indexed)
+      baseSteps = source->selectionSteps;
+  }
+  OBELISK_RT_CATCH_ALL {
+    failArrayValueQuery(state, destination,
+                        "could not allocate VPI array selection", vpiSystem);
+    return;
+  }
+
+  obelisk_rt_design_info_v1 object{};
+  if (!infoFor(source, object) || object.type_offset == 0)
+    return;
+  obelisk_rt_design_cursor_v1 physical{
+      baseSteps.empty() ? object.type_offset
+                        : baseSteps.back().physicalType.offset};
+  obelisk_rt_design_type_info_v1 elementType{};
+  uint64_t elementCount = 1;
+  OBELISK_RT_TRY {
+    for (;;) {
+      if (obelisk_rt_cached_design_type_info(state->context, physical,
+                                             &elementType) != OBELISK_RT_OK) {
+        failArrayValueQuery(state, destination,
+                            "VPI array type metadata is invalid", vpiInternal);
+        return;
+      }
+      if (elementType.kind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+          (elementType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0)
+        break;
+      uint64_t ignored = 0, extent = 0;
+      if (!sourceIndexOrdinal(elementType.range_left, elementType.range_right,
+                              elementType.range_left, ignored, extent) ||
+          extent == 0 || elementCount > UINT64_MAX / extent) {
+        failArrayValueQuery(state, destination,
+                            "VPI array range metadata is invalid", vpiInternal);
+        return;
+      }
+      dimensions.push_back(
+          {elementType.range_left, elementType.range_right, extent});
+      elementCount *= extent;
+      physical = elementType.element_type;
+    }
+  }
+  OBELISK_RT_CATCH_ALL {
+    failArrayValueQuery(state, destination,
+                        "could not allocate VPI array geometry", vpiSystem);
+    return;
+  }
+  if (dimensions.empty() || elementType.bit_width == 0 ||
+      ((elementType.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
+        elementType.kind == OBELISK_RT_DESIGN_TYPE_UNION) &&
+       (elementType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0)) {
+    failArrayValueQuery(state, destination,
+                        "VPI array element is not a packed static value",
+                        vpiNotice);
+    return;
+  }
+
+  uint64_t first = 0;
+  for (size_t dimension = 0; dimension != dimensions.size(); ++dimension) {
+    uint64_t ordinal = 0, extent = 0;
+    const VPIArrayDimension &range = dimensions[dimension];
+    if (!sourceIndexOrdinal(range.left, range.right, indices[dimension],
+                            ordinal, extent) ||
+        first > (UINT64_MAX - ordinal) / extent) {
+      failArrayValueQuery(state, destination,
+                          "VPI array start index is out of range", vpiNotice);
+      return;
+    }
+    first = first * extent + ordinal;
+  }
+  if (first >= elementCount ||
+      static_cast<uint64_t>(num) > elementCount - first) {
+    failArrayValueQuery(state, destination,
+                        "VPI array section exceeds the declared range",
+                        vpiNotice);
+    return;
+  }
+
+  __vpiHandle firstElement;
+  obelisk_rt_design_info_v1 firstInfo{};
+  OBELISK_RT_TRY {
+    if (!prepareArrayElement(source, accessKind, rootType, baseSteps,
+                             dimensions, first, firstElement, firstInfo)) {
+      failArrayValueQuery(state, destination,
+                          "VPI array element metadata is unavailable",
+                          vpiInternal);
+      return;
+    }
+  }
+  OBELISK_RT_CATCH_ALL {
+    failArrayValueQuery(state, destination,
+                        "could not allocate VPI array element", vpiSystem);
+    return;
+  }
+  const uint32_t elementVPIType = firstElement.exactVpiType;
+  if (!obelisk::reflection::acceptsVPIArrayValueFormat(destination->format,
+                                                       elementVPIType)) {
+    failArrayValueQuery(
+        state, destination,
+        "VPI array value format does not match its element type", vpiNotice);
+    return;
+  }
+  if (userAllocated && !callerBuffer) {
+    failArrayValueQuery(state, destination,
+                        "VPI array query user buffer is null");
+    return;
+  }
+  const bool signedElement = valueSigned(&firstElement, firstInfo);
+
+  size_t groups = 1;
+  if (destination->format == vpiVectorVal) {
+    if (!checkedWordCount(firstInfo.bit_width, 32, groups)) {
+      failArrayValueQuery(state, destination,
+                          "VPI array vector width exceeds host capacity",
+                          vpiSystem);
+      return;
+    }
+  } else if (destination->format == vpiRawTwoStateVal ||
+             destination->format == vpiRawFourStateVal) {
+    if (!checkedWordCount(firstInfo.bit_width, 8, groups) ||
+        (destination->format == vpiRawFourStateVal &&
+         groups > std::numeric_limits<size_t>::max() / 2)) {
+      failArrayValueQuery(state, destination,
+                          "VPI array raw width exceeds host capacity",
+                          vpiSystem);
+      return;
+    }
+    if (destination->format == vpiRawFourStateVal)
+      groups *= 2;
+  }
+  size_t outputCount = 0;
+  if (!checkedArrayProduct(groups, static_cast<size_t>(num), outputCount)) {
+    failArrayValueQuery(state, destination,
+                        "VPI array result exceeds host capacity", vpiSystem);
+    return;
+  }
+
+  OBELISK_RT_TRY {
+    switch (destination->format) {
+    case vpiIntVal:
+      if (!userAllocated) {
+        state->arrayIntegerScratch.resize(outputCount);
+        destination->value.integers = state->arrayIntegerScratch.data();
+      } else
+        destination->value.integers = static_cast<PLI_INT32 *>(callerBuffer);
+      break;
+    case vpiShortIntVal:
+      if (!userAllocated) {
+        state->arrayShortIntScratch.resize(outputCount);
+        destination->value.shortints = state->arrayShortIntScratch.data();
+      } else
+        destination->value.shortints = static_cast<PLI_INT16 *>(callerBuffer);
+      break;
+    case vpiLongIntVal:
+      if (!userAllocated) {
+        state->arrayLongIntScratch.resize(outputCount);
+        destination->value.longints = state->arrayLongIntScratch.data();
+      } else
+        destination->value.longints = static_cast<PLI_INT64 *>(callerBuffer);
+      break;
+    case vpiRawTwoStateVal:
+    case vpiRawFourStateVal:
+      if (!userAllocated) {
+        state->arrayRawScratch.resize(outputCount);
+        destination->value.rawvals = state->arrayRawScratch.data();
+      } else
+        destination->value.rawvals = static_cast<PLI_BYTE8 *>(callerBuffer);
+      break;
+    case vpiVectorVal:
+      if (!userAllocated) {
+        state->arrayVectorScratch.resize(outputCount);
+        destination->value.vectors = state->arrayVectorScratch.data();
+      } else
+        destination->value.vectors = static_cast<s_vpi_vecval *>(callerBuffer);
+      break;
+    case vpiTimeVal:
+      if (!userAllocated) {
+        state->arrayTimeScratch.resize(outputCount);
+        destination->value.times = state->arrayTimeScratch.data();
+      } else
+        destination->value.times = static_cast<s_vpi_time *>(callerBuffer);
+      break;
+    case vpiRealVal:
+      if (!userAllocated) {
+        state->arrayRealScratch.resize(outputCount);
+        destination->value.reals = state->arrayRealScratch.data();
+      } else
+        destination->value.reals = static_cast<double *>(callerBuffer);
+      break;
+    case vpiShortRealVal:
+      if (!userAllocated) {
+        state->arrayShortRealScratch.resize(outputCount);
+        destination->value.shortreals = state->arrayShortRealScratch.data();
+      } else
+        destination->value.shortreals = static_cast<float *>(callerBuffer);
+      break;
+    default:
+      failArrayValueQuery(state, destination,
+                          "unsupported VPI array value format", vpiNotice);
+      return;
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    failArrayValueQuery(state, destination, "VPI array result is out of memory",
+                        vpiSystem);
+    return;
+  }
+  OBELISK_RT_CATCH_ALL {
+    failArrayValueQuery(state, destination,
+                        "could not allocate VPI array result", vpiInternal);
+    return;
+  }
+
+  if (firstInfo.bit_width > UINT64_MAX / static_cast<uint64_t>(num)) {
+    failArrayValueQuery(state, destination, "VPI array read width overflows",
+                        vpiSystem);
+    return;
+  }
+  const uint64_t readWidth = firstInfo.bit_width * static_cast<uint64_t>(num);
+  if (firstElement.selectionBitOffset >
+      UINT64_MAX - firstInfo.bit_width * static_cast<uint64_t>(num - 1)) {
+    failArrayValueQuery(state, destination, "VPI array read offset overflows",
+                        vpiSystem);
+    return;
+  }
+  size_t readWords = 0;
+  if (!checkedWordCount(readWidth, 64, readWords)) {
+    failArrayValueQuery(state, destination,
+                        "VPI array read exceeds host capacity", vpiSystem);
+    return;
+  }
+  std::vector<uint64_t> &value = state->readValueScratch;
+  std::vector<uint64_t> &unknown = state->readUnknownScratch;
+  OBELISK_RT_TRY {
+    value.assign(readWords, 0);
+    unknown.assign(readWords, 0);
+  }
+  OBELISK_RT_CATCH_ALL {
+    failArrayValueQuery(state, destination,
+                        "VPI array read buffer is out of memory", vpiSystem);
+    return;
+  }
+  if (obelisk_rt_read_design_slice(
+          state->context, source->cursor, firstElement.selectionBitOffset,
+          readWidth, value.data(), unknown.data()) != OBELISK_RT_OK) {
+    failArrayValueQuery(state, destination, "VPI array design read failed");
+    return;
+  }
+
+  const size_t bytesPerElement =
+      destination->format == vpiRawFourStateVal ? groups / 2 : groups;
+  for (size_t element = 0; element != static_cast<size_t>(num); ++element) {
+    const uint64_t firstBit =
+        static_cast<uint64_t>(element) * firstInfo.bit_width;
+    const size_t output = element * groups;
+    auto valueBit = [&](uint64_t bit) {
+      return logicBit(value, firstBit + bit);
+    };
+    auto unknownBit = [&](uint64_t bit) {
+      return logicBit(unknown, firstBit + bit);
+    };
+    uint64_t low = 0;
+    const unsigned lowBits = static_cast<unsigned>(
+        std::min<uint64_t>(firstInfo.bit_width, uint64_t{64}));
+    for (unsigned bit = 0; bit != lowBits; ++bit)
+      if (valueBit(bit) && !unknownBit(bit))
+        low |= uint64_t{1} << bit;
+    if (signedElement)
+      low = signExtendArrayElement(low, firstInfo.bit_width);
+    switch (destination->format) {
+    case vpiIntVal:
+      destination->value.integers[element] = static_cast<PLI_INT32>(low);
+      break;
+    case vpiShortIntVal:
+      destination->value.shortints[element] = static_cast<PLI_INT16>(low);
+      break;
+    case vpiLongIntVal:
+      destination->value.longints[element] = static_cast<PLI_INT64>(low);
+      break;
+    case vpiTimeVal:
+      destination->value.times[element] = {vpiSimTime,
+                                           static_cast<PLI_UINT32>(low >> 32),
+                                           static_cast<PLI_UINT32>(low), 0.0};
+      break;
+    case vpiRealVal:
+    case vpiShortRealVal: {
+      double real = 0;
+      if (!decodeRealBits(&firstElement, elementVPIType, firstInfo.bit_width,
+                          low, real)) {
+        destination->value.rawvals = nullptr;
+        return;
+      }
+      if (destination->format == vpiRealVal)
+        destination->value.reals[element] = real;
+      else
+        destination->value.shortreals[element] = static_cast<float>(real);
+      break;
+    }
+    case vpiVectorVal:
+      for (size_t word = 0; word != groups; ++word) {
+        uint32_t a = 0, b = 0;
+        for (unsigned bit = 0; bit != 32; ++bit) {
+          const uint64_t absolute = uint64_t{word} * 32 + bit;
+          if (absolute >= firstInfo.bit_width)
+            break;
+          const bool v = valueBit(absolute);
+          const bool u = unknownBit(absolute);
+          a |= static_cast<uint32_t>(v != u) << bit;
+          b |= static_cast<uint32_t>(u) << bit;
+        }
+        destination->value.vectors[output + word] = {a, b};
+      }
+      break;
+    case vpiRawTwoStateVal:
+    case vpiRawFourStateVal:
+      for (size_t byte = 0; byte != bytesPerElement; ++byte) {
+        uint8_t a = 0, b = 0;
+        for (unsigned bit = 0; bit != 8; ++bit) {
+          const uint64_t absolute = uint64_t{byte} * 8 + bit;
+          if (absolute >= firstInfo.bit_width)
+            break;
+          const bool v = valueBit(absolute);
+          const bool u = unknownBit(absolute);
+          a |= static_cast<uint8_t>(v != u) << bit;
+          b |= static_cast<uint8_t>(u) << bit;
+        }
+        destination->value.rawvals[output + byte] = a;
+        if (destination->format == vpiRawFourStateVal)
+          destination->value.rawvals[output + bytesPerElement + byte] = b;
+      }
+      break;
+    default:
+      break;
+    }
+  }
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,

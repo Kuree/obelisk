@@ -26,6 +26,7 @@ using Order = VPITraversalOrder;
 using PropertyKind = VPIPropertyValueKind;
 using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
+using ArrayValueFormat = VPIArrayValueFormat;
 using IndexedKind = VPIIndexedAccessKind;
 using KindSet = std::set<uint32_t>;
 
@@ -58,6 +59,14 @@ static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
 constexpr size_t kExpectedValuePolicyCount = 56;
 static_assert(sizeof(vpiValuePolicies) / sizeof(vpiValuePolicies[0]) ==
               kExpectedValuePolicyCount);
+constexpr size_t kExpectedArrayValuePolicyCount = 9;
+static_assert(sizeof(vpiArrayValuePolicies) /
+                  sizeof(vpiArrayValuePolicies[0]) ==
+              kExpectedArrayValuePolicyCount);
+constexpr size_t kExpectedArrayValueElementTypeCount = 89;
+static_assert(sizeof(vpiArrayValueElementTypes) /
+                  sizeof(vpiArrayValueElementTypes[0]) ==
+              kExpectedArrayValueElementTypeCount);
 constexpr size_t kExpectedIndexedAccessCount = 45;
 static_assert(sizeof(vpiIndexedAccesses) / sizeof(vpiIndexedAccesses[0]) ==
               kExpectedIndexedAccessCount);
@@ -755,6 +764,129 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
   }
 }
 
+TEST(VPIObjectModel, ArrayValuePoliciesExactlyMatchTheIndependentLrmOracle) {
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::Int) == vpiIntVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::Real) == vpiRealVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::Vector) == vpiVectorVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::Time) == vpiTimeVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::ShortInt) ==
+                vpiShortIntVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::LongInt) ==
+                vpiLongIntVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::ShortReal) ==
+                vpiShortRealVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::RawTwoState) ==
+                vpiRawTwoStateVal);
+  static_assert(static_cast<uint8_t>(ArrayValueFormat::RawFourState) ==
+                vpiRawFourStateVal);
+
+  const KindSet bitLayouts{
+      vpiNet,
+      vpiInterconnectNet,
+      vpiIntegerNet,
+      vpiTimeNet,
+      vpiByteNet,
+      vpiShortIntNet,
+      vpiIntNet,
+      vpiLongIntNet,
+      vpiBitNet,
+      vpiEnumNet,
+      vpiStructNet,
+      vpiUnionNet,
+      vpiPackedArrayNet,
+      vpiReg,
+      vpiIntegerVar,
+      vpiTimeVar,
+      vpiByteVar,
+      vpiShortIntVar,
+      vpiIntVar,
+      vpiLongIntVar,
+      vpiBitVar,
+      vpiEnumVar,
+      vpiStructVar,
+      vpiUnionVar,
+      vpiPackedArrayVar,
+  };
+  const std::map<uint32_t, KindSet> oracle{
+      {vpiIntVal, {vpiIntVar, vpiIntNet, vpiIntegerVar, vpiIntegerNet}},
+      {vpiRealVal, {vpiRealVar, vpiRealNet}},
+      {vpiVectorVal, bitLayouts},
+      {vpiTimeVal, {vpiTimeVar, vpiTimeNet}},
+      {vpiShortIntVal, {vpiByteVar, vpiShortIntVar}},
+      {vpiLongIntVal, {vpiByteVar, vpiShortIntVar, vpiLongIntVar}},
+      {vpiShortRealVal, {vpiShortRealVar}},
+      {vpiRawTwoStateVal, bitLayouts},
+      {vpiRawFourStateVal, bitLayouts},
+  };
+
+  ASSERT_EQ(oracle.size(), kExpectedArrayValuePolicyCount);
+  const VPIArrayValuePolicyDescriptor *previous = nullptr;
+  size_t expectedFirstElement = 0;
+  for (const auto &policy : vpiArrayValuePolicies) {
+    SCOPED_TRACE(policy.format);
+    auto expected = oracle.find(policy.format);
+    ASSERT_NE(expected, oracle.end());
+    EXPECT_STREQ(policy.clause, "38.16");
+    EXPECT_EQ(policy.firstElementType, expectedFirstElement);
+    EXPECT_EQ(policy.elementTypeCount, expected->second.size());
+    EXPECT_EQ(findVPIArrayValuePolicy(policy.format), &policy);
+    if (previous) {
+      EXPECT_LT(previous->format, policy.format);
+    }
+    previous = &policy;
+
+    size_t offset = policy.firstElementType;
+    uint32_t previousElement = 0;
+    for (uint32_t expectedElement : expected->second) {
+      ASSERT_LT(offset, kExpectedArrayValueElementTypeCount);
+      EXPECT_EQ(vpiArrayValueElementTypes[offset], expectedElement);
+      if (offset != policy.firstElementType) {
+        EXPECT_LT(previousElement, vpiArrayValueElementTypes[offset]);
+      }
+      previousElement = vpiArrayValueElementTypes[offset++];
+    }
+    expectedFirstElement += expected->second.size();
+
+    for (const auto &object : vpiObjectKinds) {
+      if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+        continue;
+      const bool allowed = expected->second.count(object.value) != 0;
+      EXPECT_EQ(acceptsVPIArrayValueFormat(policy.format, object.value),
+                allowed)
+          << object.apiName;
+      VPIObjectModelImageArrayValuePolicy imagePolicy{};
+      EXPECT_EQ(
+          findVPIObjectModelImageArrayValuePolicy(
+              vpiObjectModelImage, policy.format, object.value, imagePolicy),
+          allowed)
+          << object.apiName;
+      if (allowed) {
+        EXPECT_EQ(imagePolicy.format, policy.format);
+        EXPECT_EQ(imagePolicy.elementType, object.value);
+      }
+    }
+  }
+  EXPECT_EQ(expectedFirstElement, kExpectedArrayValueElementTypeCount);
+
+  for (uint32_t format = 0; format != 21; ++format) {
+    const bool supported = oracle.count(format) != 0;
+    EXPECT_EQ(findVPIArrayValuePolicy(format) != nullptr, supported) << format;
+    if (!supported) {
+      for (const auto &object : vpiObjectKinds)
+        EXPECT_FALSE(acceptsVPIArrayValueFormat(format, object.value))
+            << format << ": " << object.apiName;
+    }
+  }
+
+  // Public aliases have the same numeric object identity as their canonical
+  // Chapter 37 spellings and therefore inherit the same compatibility.
+  EXPECT_TRUE(acceptsVPIArrayValueFormat(vpiVectorVal, vpiLogicVar));
+  EXPECT_FALSE(acceptsVPIArrayValueFormat(vpiVectorVal, vpiArrayNet));
+  EXPECT_FALSE(acceptsVPIArrayValueFormat(vpiShortIntVal, vpiShortIntNet));
+  EXPECT_FALSE(acceptsVPIArrayValueFormat(vpiLongIntVal, vpiLongIntNet));
+  EXPECT_FALSE(acceptsVPIArrayValueFormat(vpiShortRealVal, vpiShortRealNet));
+}
+
 TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
   for (const auto &object : vpiObjectKinds) {
     if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
@@ -1424,6 +1556,30 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   reset();
   write16(valuePolicyOffset + vpiObjectModelImageValuePolicySize,
           readVPIObjectModelImage16(damaged.data(), valuePolicyOffset));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  uint32_t arrayValuePolicyOffset =
+      readVPIObjectModelImage32(damaged.data(), 96);
+  reset();
+  write16(arrayValuePolicyOffset, vpiStringVal);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(arrayValuePolicyOffset + 2, vpiRealVar);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(arrayValuePolicyOffset + vpiObjectModelImageArrayValuePolicySize,
+          readVPIObjectModelImage16(damaged.data(), arrayValuePolicyOffset));
+  write16(
+      arrayValuePolicyOffset + vpiObjectModelImageArrayValuePolicySize + 2,
+      readVPIObjectModelImage16(damaged.data(), arrayValuePolicyOffset + 2));
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

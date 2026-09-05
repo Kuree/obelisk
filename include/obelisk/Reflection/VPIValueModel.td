@@ -198,3 +198,70 @@ def FsmStateValues : OrdinaryVPIValuePolicy<FsmStateValueObjects,
 def TableEntryValues : VPIValuePolicy<TableEntryValueObjects,
   [StringValueFormat, VectorValueFormat], StringValueDefault,
   SnapshotValueRead, [], "37.34; 38.15">;
+
+// IEEE 1800-2017 38.16 static unpacked array value formats.  Unlike
+// vpi_get_value(), vpi_get_value_array() does not perform arbitrary scalar
+// format conversions: each requested layout has an exact set of compatible
+// fully-indexed element object kinds.
+class VPIArrayValueFormat<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def ArrayIntValueFormat : VPIArrayValueFormat<"Int", 6>;
+def ArrayRealValueFormat : VPIArrayValueFormat<"Real", 7>;
+def ArrayVectorValueFormat : VPIArrayValueFormat<"Vector", 9>;
+def ArrayTimeValueFormat : VPIArrayValueFormat<"Time", 11>;
+def ArrayShortIntValueFormat : VPIArrayValueFormat<"ShortInt", 14>;
+def ArrayLongIntValueFormat : VPIArrayValueFormat<"LongInt", 15>;
+def ArrayShortRealValueFormat : VPIArrayValueFormat<"ShortReal", 16>;
+def ArrayRawTwoStateValueFormat : VPIArrayValueFormat<"RawTwoState", 17>;
+def ArrayRawFourStateValueFormat : VPIArrayValueFormat<"RawFourState", 18>;
+
+class VPIArrayValuePolicy<VPIArrayValueFormat format_,
+                          list<VPIObjectKind> elementTypes_, string clause_> {
+  VPIArrayValueFormat format = format_;
+  list<VPIObjectKind> elementTypes = elementTypes_;
+  string clause = clause_;
+}
+
+// vpiIntVal is the native 32-bit integer layout.  It is compatible with the
+// SystemVerilog int type and the legacy Verilog integer type for both variable
+// and net arrays.
+def ArrayIntValues : VPIArrayValuePolicy<ArrayIntValueFormat,
+  [IntVar, IntNet, IntegerVar, IntegerNet], "38.16">;
+def ArrayRealValues : VPIArrayValuePolicy<ArrayRealValueFormat,
+  [RealVar, RealNet], "38.16">;
+def ArrayTimeValues : VPIArrayValuePolicy<ArrayTimeValueFormat,
+  [TimeVar, TimeNet], "38.16">;
+
+// The three specialized scalar layouts are explicitly restricted to variable
+// array elements by 38.16, even though corresponding net object spellings
+// exist in the Chapter 37 inventory.
+def ArrayShortIntValues : VPIArrayValuePolicy<ArrayShortIntValueFormat,
+  [ByteVar, ShortIntVar], "38.16">;
+def ArrayLongIntValues : VPIArrayValuePolicy<ArrayLongIntValueFormat,
+  [ByteVar, ShortIntVar, LongIntVar], "38.16">;
+def ArrayShortRealValues : VPIArrayValuePolicy<ArrayShortRealValueFormat,
+  [ShortRealVar], "38.16">;
+
+// Raw and vector layouts cover state-bearing integral net arrays and fixed
+// bit-stream variable elements.  Enum variables follow the state domain of
+// their fixed integral base type.  Two-state and four-state
+// layouts deliberately share the same set: the LRM permits either raw layout
+// for the opposite state domain, with bval bits supplied or discarded as
+// appropriate.  Real-valued and dynamic element kinds are not bit layouts.
+class ArrayBitLayoutPolicy<VPIArrayValueFormat format_>
+    : VPIArrayValuePolicy<format_,
+        [Net, InterconnectNet, IntegerNet, TimeNet, ByteNet, ShortIntNet,
+         IntNet, LongIntNet, BitNet, EnumNet, StructNet, UnionNet,
+         PackedArrayNet, Reg, IntegerVar, TimeVar, ByteVar, ShortIntVar,
+         IntVar, LongIntVar, BitVar, EnumVar, StructVar, UnionVar,
+         PackedArrayVar],
+        "38.16">;
+
+def ArrayVectorValues : ArrayBitLayoutPolicy<ArrayVectorValueFormat>;
+def ArrayRawTwoStateValues
+    : ArrayBitLayoutPolicy<ArrayRawTwoStateValueFormat>;
+def ArrayRawFourStateValues
+    : ArrayBitLayoutPolicy<ArrayRawFourStateValueFormat>;

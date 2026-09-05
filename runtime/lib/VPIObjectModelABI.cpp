@@ -18,6 +18,7 @@ using namespace obelisk::reflection;
 static_assert(vpiObjectModelImageTraversalSize == 8);
 static_assert(vpiObjectModelImagePropertySize == 6);
 static_assert(vpiObjectModelImageValuePolicySize == 8);
+static_assert(vpiObjectModelImageArrayValuePolicySize == 4);
 static_assert(vpiObjectModelImageIndexedAccessSize == 12);
 static_assert(vpiObjectModelImageIndexedTypeResultSize == 8);
 static_assert(findVPIIndexedAccess(vpiPort)->terminalResult == vpiPortBit);
@@ -61,14 +62,18 @@ static_assert(findVPIValuePolicy(vpiOperation)->readSemantics ==
 static_assert(findVPIValuePolicy(vpiNet)->readSemantics ==
               VPIValueReadSemantics::Snapshot);
 static_assert(acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
-                                   vpiStringVal));
+                                    vpiStringVal));
 static_assert(!acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
-                                    vpiIntVal));
+                                     vpiIntVal));
 static_assert(findVPIValuePolicy(vpiPort) == nullptr);
 static_assert(findVPIValuePolicy(vpiPortBit) == nullptr);
 static_assert(findVPIValuePolicy(vpiRegArray) == nullptr);
 static_assert(findVPIValuePolicy(vpiClassVar) == nullptr);
 static_assert(findVPIValuePolicy(vpiVirtualInterfaceVar) == nullptr);
+static_assert(acceptsVPIArrayValueFormat(vpiVectorVal, vpiLogicVar));
+static_assert(acceptsVPIArrayValueFormat(vpiRawFourStateVal, vpiEnumVar));
+static_assert(!acceptsVPIArrayValueFormat(vpiShortIntVal, vpiShortIntNet));
+static_assert(!acceptsVPIArrayValueFormat(vpiVectorVal, vpiRealVar));
 
 static_assert(findVPIObjectKind(vpiModule)->role == VPIObjectRole::Concrete);
 static_assert(findVPIObjectKind(vpiReturn) == nullptr);
