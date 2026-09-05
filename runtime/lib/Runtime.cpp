@@ -764,8 +764,8 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
       ticket = context->nextDeferredImmediateTicket++;
     uint64_t logicalProcess = context->activeLogicalProcessToken;
     context->deferredImmediateReports.emplace(
-        ticket, obelisk_rt_context::DeferredImmediateReport{
-                    logicalProcess, assertionID});
+        ticket, obelisk_rt_context::DeferredImmediateReport{logicalProcess,
+                                                            assertionID});
     context->deferredImmediateProcessReports[logicalProcess].insert(ticket);
     if (assertionID != 0)
       context->deferredImmediateAssertionReports[assertionID].insert(ticket);
@@ -888,6 +888,7 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
 
   return guarded(context, [&] {
     std::vector<std::string> plusargs;
+    std::vector<std::string> vpiArguments;
     std::vector<PlusargIndexNode> nodes;
     std::vector<PlusargIndexEdge> edges;
     size_t plusargCount = 0;
@@ -921,6 +922,15 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     }
     plusargs.reserve(plusargCount);
 
+    const bool retainVPIArguments =
+        context->execution &&
+        (context->execution->flags & OBELISK_RT_EXECUTION_VPI_READ) != 0;
+    if (retainVPIArguments) {
+      vpiArguments.reserve(static_cast<size_t>(argc));
+      for (int index = 0; index < argc; ++index)
+        vpiArguments.emplace_back(argv[index] ? argv[index] : "obelisk");
+    }
+
     for (int index = 1; index < argc; ++index) {
       std::string_view argument(argv[index]);
       if (argument.empty() || argument.front() != '+')
@@ -936,6 +946,7 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     }
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     context->plusargs.swap(plusargs);
+    context->vpiArguments.swap(vpiArguments);
     context->plusargIndexNodes.swap(nodes);
     context->plusargIndexEdges.swap(edges);
     context->plusargIndexBuilt = false;

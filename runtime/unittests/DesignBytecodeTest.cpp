@@ -7770,8 +7770,11 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
 
   s_vpi_vlog_info info{};
   EXPECT_EQ(vpi_get_vlog_info(&info), 1);
+  ASSERT_EQ(info.argc, 1);
+  ASSERT_NE(info.argv, nullptr);
+  EXPECT_STREQ(info.argv[0], "obelisk");
   EXPECT_STREQ(info.product, "Obelisk");
-  EXPECT_STREQ(info.version, "0.1");
+  EXPECT_STREQ(info.version, "prototype");
   EXPECT_EQ(vpi_get_vlog_info(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
   obelisk_rt_v1_context_destroy(context);
@@ -7813,6 +7816,40 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   EXPECT_EQ(vpi_get_str(vpiFile, object), nullptr);
   EXPECT_EQ(vpi_get(vpiLineNo, object), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReportsAnOwnedSnapshotOfInvocationArguments) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  std::array<std::string, 4> storage{"obelisk-sim", "+UVM_TESTNAME=smoke",
+                                     "--seed=41", "design.cfg"};
+  std::array<const char *, 4> arguments{};
+  for (size_t index = 0; index != storage.size(); ++index)
+    arguments[index] = storage[index].c_str();
+  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(arguments.size()), arguments.data()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  s_vpi_vlog_info info{};
+  ASSERT_EQ(vpi_get_vlog_info(&info), 1);
+  ASSERT_EQ(info.argc, static_cast<PLI_INT32>(arguments.size()));
+  ASSERT_NE(info.argv, nullptr);
+  for (size_t index = 0; index != storage.size(); ++index)
+    EXPECT_STREQ(info.argv[index], storage[index].c_str());
+  EXPECT_STREQ(info.product, "Obelisk");
+  EXPECT_STREQ(info.version, "prototype");
+
+  for (std::string &argument : storage)
+    argument.assign("changed");
+  EXPECT_STREQ(info.argv[0], "obelisk-sim");
+  EXPECT_STREQ(info.argv[1], "+UVM_TESTNAME=smoke");
   obelisk_rt_v1_context_destroy(context);
 }
 

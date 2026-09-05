@@ -1520,6 +1520,10 @@ struct obelisk_rt_context {
   // the order they were given. $test$plusargs and $value$plusargs match
   // against these.
   std::vector<std::string> plusargs;
+  // Full invocation arguments are retained only for a VPI-readable design.
+  // They are never consulted by execution or the scheduler; vpi_get_vlog_info
+  // snapshots them on explicit request.
+  std::vector<std::string> vpiArguments;
   std::vector<PlusargIndexNode> plusargIndexNodes;
   std::vector<PlusargIndexEdge> plusargIndexEdges;
   bool plusargIndexBuilt = false;

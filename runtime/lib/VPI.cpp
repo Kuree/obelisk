@@ -191,6 +191,8 @@ struct VPIState {
   std::vector<s_vpi_vecval> vectorScratch;
   std::vector<s_vpi_strengthval> strengthScratch;
   s_vpi_time timeScratch{};
+  std::vector<std::string> vlogArgumentScratch;
+  std::vector<PLI_BYTE8 *> vlogArgumentPointers;
   // Private design-read planes are reusable across ordinary snapshot queries.
   // Unlike returned value buffers these never escape the active VPI call.
   std::vector<uint64_t> readValueScratch;
@@ -4485,10 +4487,38 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32
 vpi_get_vlog_info(p_vpi_vlog_info info) {
   beginVPICall();
   static char product[] = "Obelisk";
-  static char version[] = "0.1";
-  if (!requireState() || !info)
+  static char version[] = "prototype";
+  VPIState *state = requireState();
+  if (!state || !info)
     return 0;
   *info = {};
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(state->context->mutex);
+    state->vlogArgumentScratch = state->context->vpiArguments;
+    if (state->vlogArgumentScratch.empty())
+      state->vlogArgumentScratch.emplace_back("obelisk");
+    state->vlogArgumentPointers.clear();
+    state->vlogArgumentPointers.reserve(state->vlogArgumentScratch.size());
+    for (std::string &argument : state->vlogArgumentScratch)
+      state->vlogArgumentPointers.push_back(argument.data());
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI invocation argument result is out of memory",
+             vpiSystem);
+    return 0;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not snapshot VPI invocation arguments", vpiInternal);
+    return 0;
+  }
+  if (state->vlogArgumentPointers.size() > static_cast<size_t>(INT32_MAX)) {
+    setError(state, "VPI invocation argument count exceeds ABI", vpiSystem);
+    return 0;
+  }
+  info->argc = static_cast<PLI_INT32>(state->vlogArgumentPointers.size());
+  info->argv = state->vlogArgumentPointers.empty()
+                   ? nullptr
+                   : state->vlogArgumentPointers.data();
   info->product = product;
   info->version = version;
   return 1;
