@@ -24,6 +24,8 @@ using namespace obelisk::reflection;
 using Mode = VPITraversalMode;
 using Order = VPITraversalOrder;
 using PropertyKind = VPIPropertyValueKind;
+using PropertyStability = VPIPropertyStability;
+using ProtectedAccess = VPIPropertyProtectedAccess;
 using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
 using ArrayValueFormat = VPIArrayValueFormat;
@@ -53,7 +55,7 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
 constexpr size_t kExpectedTraversalCount = 1884;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-constexpr size_t kExpectedPropertyCount = 1144;
+constexpr size_t kExpectedPropertyCount = 2337;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
 constexpr size_t kExpectedValuePolicyCount = 56;
@@ -178,6 +180,441 @@ void expectContains(uint32_t source, uint32_t selector, Mode mode,
 void expectAbsent(uint32_t source, uint32_t selector, Mode mode) {
   EXPECT_EQ(findVPITraversal(source, selector, mode), nullptr)
       << keyName(source, selector, mode);
+}
+
+KindSet
+makePropertyObjectSet(std::initializer_list<uint32_t> objects = {},
+                      std::initializer_list<VPIObjectFamily> families = {},
+                      std::initializer_list<uint32_t> exclusions = {},
+                      bool includeRoot = false) {
+  KindSet result(objects.begin(), objects.end());
+  uint64_t familyMask = 0;
+  for (VPIObjectFamily family : families)
+    familyMask |= vpiFamilyMask(family);
+  for (const auto &object : vpiObjectKinds)
+    if (object.aliasOf == nullptr && object.role == VPIObjectRole::Concrete &&
+        (object.families & familyMask) != 0)
+      result.insert(object.value);
+  for (uint32_t exclusion : exclusions)
+    result.erase(exclusion);
+  if (includeRoot)
+    result.insert(0);
+  return result;
+}
+
+std::map<uint32_t, KindSet> buildReadPropertyApplicabilityOracle() {
+  std::map<uint32_t, KindSet> oracle;
+  auto add = [&](const KindSet &objects,
+                 std::initializer_list<uint32_t> properties) {
+    for (uint32_t property : properties)
+      EXPECT_TRUE(oracle.emplace(property, objects).second)
+          << "duplicate property applicability oracle for " << property;
+  };
+  auto merge = [](KindSet left, const KindSet &right) {
+    left.insert(right.begin(), right.end());
+    return left;
+  };
+
+  const auto allConcrete = makePropertyObjectSet(
+      {},
+      {VPIObjectFamily::Scope, VPIObjectFamily::Declaration,
+       VPIObjectFamily::Process, VPIObjectFamily::Statement,
+       VPIObjectFamily::Expression, VPIObjectFamily::Variable,
+       VPIObjectFamily::Net, VPIObjectFamily::Array, VPIObjectFamily::Typespec,
+       VPIObjectFamily::Primitive, VPIObjectFamily::Timing,
+       VPIObjectFamily::Assertion, VPIObjectFamily::Transient,
+       VPIObjectFamily::Runtime, VPIObjectFamily::Other});
+  add(allConcrete, {vpiType, vpiIsProtected, vpiAllocScheme});
+  auto sourceLocated = makePropertyObjectSet(
+      {},
+      {VPIObjectFamily::Scope, VPIObjectFamily::Declaration,
+       VPIObjectFamily::Process, VPIObjectFamily::Statement,
+       VPIObjectFamily::Expression, VPIObjectFamily::Variable,
+       VPIObjectFamily::Net, VPIObjectFamily::Array, VPIObjectFamily::Typespec,
+       VPIObjectFamily::Primitive, VPIObjectFamily::Timing,
+       VPIObjectFamily::Assertion},
+      {vpiDelayTerm, vpiDelayDevice, vpiInterModPath, vpiGenScopeArray,
+       vpiGenScope, vpiThread});
+  add(sourceLocated, {vpiFile, vpiLineNo});
+
+  const KindSet instances{vpiPackage, vpiModule, vpiInterface, vpiProgram};
+  auto instancesAndRoot = instances;
+  instancesAndRoot.insert(0);
+  add(instancesAndRoot, {vpiTimeUnit, vpiTimePrecision});
+  add({vpiClassVar, vpiClassObj}, {vpiObjId});
+  add({vpiIODecl, vpiPort, vpiPortBit, vpiPrimTerm, vpiPathTerm,
+       vpiClockingIODecl, vpiPropFormalDecl, vpiSeqFormalDecl},
+      {vpiDirection});
+
+  const KindSet scalarVector{vpiIODecl,
+                             vpiPort,
+                             vpiPortBit,
+                             vpiNet,
+                             vpiNetBit,
+                             vpiNetArray,
+                             vpiEnumNet,
+                             vpiIntegerNet,
+                             vpiTimeNet,
+                             vpiUnionNet,
+                             vpiShortRealNet,
+                             vpiRealNet,
+                             vpiByteNet,
+                             vpiShortIntNet,
+                             vpiIntNet,
+                             vpiLongIntNet,
+                             vpiBitNet,
+                             vpiInterconnectNet,
+                             vpiInterconnectArray,
+                             vpiStructNet,
+                             vpiPackedArrayNet,
+                             vpiShortRealVar,
+                             vpiRealVar,
+                             vpiByteVar,
+                             vpiShortIntVar,
+                             vpiIntVar,
+                             vpiLongIntVar,
+                             vpiIntegerVar,
+                             vpiTimeVar,
+                             vpiRegArray,
+                             vpiPackedArrayVar,
+                             vpiBitVar,
+                             vpiReg,
+                             vpiStructVar,
+                             vpiUnionVar,
+                             vpiEnumVar,
+                             vpiStringVar,
+                             vpiChandleVar,
+                             vpiClassVar,
+                             vpiVirtualInterfaceVar,
+                             vpiRegBit};
+  add(scalarVector, {vpiScalar});
+  auto vectorObjects = scalarVector;
+  vectorObjects.insert(
+      {vpiBitTypespec, vpiLogicTypespec, vpiPackedArrayTypespec});
+  add(vectorObjects, {vpiVector});
+  const KindSet ports{vpiPort, vpiPortBit};
+  add(ports, {vpiExplicitName, vpiPortIndex, vpiPortType});
+
+  const KindSet structuralSize{vpiIODecl,
+                               vpiPort,
+                               vpiPortBit,
+                               vpiModuleArray,
+                               vpiInterfaceArray,
+                               vpiProgramArray,
+                               vpiGateArray,
+                               vpiSwitchArray,
+                               vpiUdpArray,
+                               vpiNet,
+                               vpiNetBit,
+                               vpiNetArray,
+                               vpiEnumNet,
+                               vpiIntegerNet,
+                               vpiTimeNet,
+                               vpiUnionNet,
+                               vpiShortRealNet,
+                               vpiRealNet,
+                               vpiByteNet,
+                               vpiShortIntNet,
+                               vpiIntNet,
+                               vpiLongIntNet,
+                               vpiBitNet,
+                               vpiInterconnectNet,
+                               vpiInterconnectArray,
+                               vpiStructNet,
+                               vpiPackedArrayNet,
+                               vpiIntegerVar,
+                               vpiRealVar,
+                               vpiReg,
+                               vpiRegBit,
+                               vpiTimeVar,
+                               vpiLongIntVar,
+                               vpiShortIntVar,
+                               vpiIntVar,
+                               vpiShortRealVar,
+                               vpiByteVar,
+                               vpiClassVar,
+                               vpiStringVar,
+                               vpiEnumVar,
+                               vpiStructVar,
+                               vpiUnionVar,
+                               vpiBitVar,
+                               vpiChandleVar,
+                               vpiPackedArrayVar,
+                               vpiVirtualInterfaceVar,
+                               vpiRegArray,
+                               vpiParameter,
+                               vpiSpecParam,
+                               vpiRefObj,
+                               vpiVarSelect,
+                               vpiBitSelect,
+                               vpiIndexedPartSelect,
+                               vpiPartSelect,
+                               vpiOperation,
+                               vpiConstant,
+                               vpiFuncCall,
+                               vpiMethodFuncCall,
+                               vpiSysFuncCall,
+                               vpiLetExpr,
+                               vpiRange,
+                               vpiGate,
+                               vpiSwitch,
+                               vpiUdp,
+                               vpiUdpDefn,
+                               vpiTableEntry,
+                               vpiFunction,
+                               vpiGenScopeArray};
+  add(structuralSize, {vpiSize});
+  const KindSet ordinaryVariables{
+      vpiShortRealVar,        vpiRealVar,    vpiByteVar,
+      vpiShortIntVar,         vpiIntVar,     vpiLongIntVar,
+      vpiIntegerVar,          vpiTimeVar,    vpiRegArray,
+      vpiPackedArrayVar,      vpiBitVar,     vpiReg,
+      vpiStructVar,           vpiUnionVar,   vpiEnumVar,
+      vpiStringVar,           vpiChandleVar, vpiClassVar,
+      vpiVirtualInterfaceVar, vpiRegBit};
+  KindSet ordinaryExpressions = ordinaryVariables;
+  ordinaryExpressions.insert(
+      {vpiParameter, vpiSpecParam, vpiRefObj, vpiVarSelect, vpiBitSelect,
+       vpiPartSelect, vpiIndexedPartSelect, vpiOperation, vpiConstant,
+       vpiFuncCall, vpiMethodFuncCall, vpiSysFuncCall, vpiLetExpr});
+  ordinaryExpressions =
+      merge(std::move(ordinaryExpressions),
+            makePropertyObjectSet({}, {VPIObjectFamily::Net}));
+  add({vpiPackedArrayVar, vpiStructVar, vpiUnionVar, vpiEnumVar,
+       vpiStructTypespec, vpiUnionTypespec},
+      {vpiPacked});
+  add({vpiUnionTypespec}, {vpiTagged});
+  add({vpiRegArray, vpiArrayTypespec}, {vpiArrayType});
+  add(merge(ordinaryVariables, KindSet{vpiTypespecMember}), {vpiRandType});
+  add({vpiConstant, vpiParameter}, {vpiConstType});
+
+  KindSet indexedValues = ordinaryVariables;
+  indexedValues.insert({vpiNet, vpiNetBit, vpiNetArray, vpiEnumNet,
+                        vpiIntegerNet, vpiTimeNet, vpiUnionNet, vpiShortRealNet,
+                        vpiRealNet, vpiByteNet, vpiShortIntNet, vpiIntNet,
+                        vpiLongIntNet, vpiBitNet, vpiInterconnectNet,
+                        vpiInterconnectArray, vpiStructNet, vpiPackedArrayNet});
+  auto arrayMembers = indexedValues;
+  arrayMembers.insert({vpiPackage, vpiModule, vpiInterface, vpiProgram, vpiGate,
+                       vpiSwitch, vpiUdp, vpiNamedEvent, vpiGenScope});
+  add(arrayMembers, {vpiArrayMember, vpiArray});
+  add({vpiEnumNet, vpiStructNet, vpiPackedArrayNet, vpiStructVar, vpiUnionVar,
+       vpiEnumVar, vpiPackedArrayVar},
+      {vpiPackedArrayMember});
+  KindSet constantSelect = ordinaryVariables;
+  constantSelect.insert({vpiRefObj, vpiParameter, vpiSpecParam, vpiVarSelect,
+                         vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect});
+  constantSelect = merge(std::move(constantSelect),
+                         makePropertyObjectSet({}, {VPIObjectFamily::Net}));
+  add(constantSelect, {vpiConstantSelect});
+  KindSet signedObjects = ordinaryExpressions;
+  signedObjects.insert({vpiIODecl, vpiFunction});
+  add(signedObjects, {vpiSigned});
+
+  add(makePropertyObjectSet({vpiPackage,
+                             vpiModule,
+                             vpiInterface,
+                             vpiProgram,
+                             vpiModuleArray,
+                             vpiInterfaceArray,
+                             vpiProgramArray,
+                             vpiGateArray,
+                             vpiSwitchArray,
+                             vpiUdpArray,
+                             vpiFunction,
+                             vpiTask,
+                             vpiGenScope,
+                             vpiClockingBlock,
+                             vpiClassDefn,
+                             vpiModport,
+                             vpiIODecl,
+                             vpiPort,
+                             vpiRefObj,
+                             vpiVarSelect,
+                             vpiBitSelect,
+                             vpiGate,
+                             vpiSwitch,
+                             vpiUdp,
+                             vpiConstraint,
+                             vpiClockingIODecl,
+                             vpiPropFormalDecl,
+                             vpiSeqFormalDecl,
+                             vpiLetDecl,
+                             vpiAnyPattern,
+                             vpiTaggedPattern,
+                             vpiStructPattern,
+                             vpiAttribute,
+                             vpiGenScopeArray,
+                             vpiGenVar,
+                             vpiSysFuncCall,
+                             vpiAssert,
+                             vpiAssume,
+                             vpiCover,
+                             vpiRestrict,
+                             vpiPropertyDecl,
+                             vpiPropertyInst,
+                             vpiSequenceDecl,
+                             vpiSequenceInst,
+                             vpiImmediateAssert,
+                             vpiImmediateAssume,
+                             vpiImmediateCover,
+                             vpiAssignStmt,
+                             vpiAssignment,
+                             vpiBegin,
+                             vpiCase,
+                             vpiDeassign,
+                             vpiDelayControl,
+                             vpiDisable,
+                             vpiEventControl,
+                             vpiEventStmt,
+                             vpiFor,
+                             vpiForce,
+                             vpiForever,
+                             vpiFork,
+                             vpiIf,
+                             vpiIfElse,
+                             vpiNamedBegin,
+                             vpiNamedFork,
+                             vpiNullStmt,
+                             vpiRelease,
+                             vpiRepeat,
+                             vpiRepeatControl,
+                             vpiSysTaskCall,
+                             vpiTaskCall,
+                             vpiWait,
+                             vpiWhile,
+                             vpiMethodTaskCall,
+                             vpiDoWhile,
+                             vpiOrderedWait,
+                             vpiWaitFork,
+                             vpiDisableFork,
+                             vpiExpectStmt,
+                             vpiForeachStmt,
+                             vpiReturnStmt,
+                             vpiBreak,
+                             vpiContinue,
+                             vpiEnumConst},
+                            {VPIObjectFamily::Variable, VPIObjectFamily::Net,
+                             VPIObjectFamily::Typespec}),
+      {vpiName});
+  add(makePropertyObjectSet({vpiModuleArray,   vpiInterfaceArray,
+                             vpiProgramArray,  vpiGateArray,
+                             vpiSwitchArray,   vpiUdpArray,
+                             vpiRefObj,        vpiVarSelect,
+                             vpiBitSelect,     vpiConstraint,
+                             vpiGenScopeArray, vpiGate,
+                             vpiSwitch,        vpiUdp,
+                             vpiGenVar,        vpiTypeParameter,
+                             vpiAssert,        vpiAssume,
+                             vpiCover,         vpiRestrict,
+                             vpiPropertyDecl,  vpiSequenceDecl},
+                            {VPIObjectFamily::Scope, VPIObjectFamily::Variable,
+                             VPIObjectFamily::Net},
+                            {vpiClassTypespec}),
+      {vpiFullName});
+
+  add({vpiModule}, {vpiTopModule, vpiCellInstance, vpiDefDecayTime});
+  add({vpiPackage, vpiModule, vpiInterface, vpiProgram, vpiRefObj,
+       vpiInterfaceTypespec, vpiGate, vpiSwitch, vpiUdp, vpiUdpDefn},
+      {vpiDefName});
+  add({vpiPackage, vpiModule, vpiInterface, vpiProgram, vpiUdpDefn,
+       vpiGenScope},
+      {vpiProtected});
+  add(instances, {vpiDefNetType, vpiUnconnDrive, vpiDefDelayMode, vpiCell,
+                  vpiConfig, vpiLibrary, vpiTop, vpiUnit});
+  add({vpiPackage, vpiModule, vpiInterface, vpiProgram, vpiAttribute},
+      {vpiDefFile, vpiDefLineNo});
+  add({vpiPort, vpiPortBit, vpiParamAssign}, {vpiConnByName});
+  const auto nets = makePropertyObjectSet({}, {VPIObjectFamily::Net});
+  add(nets, {vpiNetType, vpiExplicitScalared, vpiExplicitVectored, vpiExpanded,
+             vpiChargeStrength, vpiResolvedNetType});
+  add(merge(nets, KindSet{vpiGenScope}), {vpiImplicitDecl});
+  add({vpiPrimTerm}, {vpiTermIndex});
+  add(merge(nets, KindSet{vpiGate, vpiSwitch, vpiUdp, vpiContAssign,
+                          vpiContAssignBit}),
+      {vpiStrength0, vpiStrength1});
+  add({vpiGate, vpiSwitch, vpiUdp, vpiUdpDefn}, {vpiPrimType});
+  add({vpiModPath},
+      {vpiPolarity, vpiDataPolarity, vpiPathType, vpiModPathHasIfNone});
+  add({vpiPathTerm, vpiTchkTerm}, {vpiEdge});
+  add({vpiTchk}, {vpiTchkType});
+  add({vpiOperation, vpiAssignment}, {vpiOpType});
+  add({vpiEventStmt, vpiAssignment}, {vpiBlocking});
+  add({vpiCase}, {vpiCaseType});
+  add(merge(nets, KindSet{vpiContAssign, vpiContAssignBit}),
+      {vpiNetDeclAssign});
+  add({vpiFunction, vpiFuncCall, vpiSysFuncCall}, {vpiFuncType});
+  add({vpiSysFuncCall, vpiSysTaskCall, vpiMethodFuncCall, vpiMethodTaskCall},
+      {vpiUserDefn});
+  add({vpiSchedEvent}, {vpiScheduled});
+  add({vpiFrame, vpiThread}, {vpiActive});
+  add(makePropertyObjectSet(
+          {vpiPackage, vpiModule, vpiInterface, vpiProgram, vpiClassDefn,
+           vpiClassTypespec, vpiConstraint, vpiTask, vpiFunction},
+          {VPIObjectFamily::Variable}, {vpiParameter, vpiSpecParam}),
+      {vpiAutomatic});
+  add(merge(ordinaryExpressions,
+            KindSet{vpiTaskCall, vpiSysTaskCall, vpiMethodTaskCall}),
+      {vpiDecompile});
+  add({vpiAttribute}, {vpiDefAttribute});
+  add({vpiDelayTerm, vpiDelayDevice}, {vpiDelayType});
+  add({vpiIterator}, {vpiIteratorType});
+  add({vpiContAssign, vpiContAssignBit}, {vpiOffset});
+  add({0}, {vpiSaveRestartID, vpiSaveRestartLocation, vpiCompatibilityMode});
+  add(makePropertyObjectSet({vpiFrame}, {VPIObjectFamily::Variable}),
+      {vpiValid});
+  add({vpiParameter, vpiTypeParameter}, {vpiLocalParam});
+  add({vpiIndexedPartSelect}, {vpiIndexedPartSelectType});
+  add({vpiRegArray}, {vpiIsMemory});
+  add({vpiFork, vpiNamedFork}, {vpiJoinType});
+  add({vpiInterfaceTfDecl, vpiTask, vpiFunction, vpiConstraint},
+      {vpiAccessType});
+  add(ordinaryVariables, {vpiIsRandomized, vpiConstantVariable});
+  add({vpiFor}, {vpiLocalVarDecls});
+  add(merge(ordinaryVariables,
+            makePropertyObjectSet({}, {VPIObjectFamily::Net})),
+      {vpiStructUnionMember});
+  add(merge(ordinaryVariables, KindSet{vpiTask, vpiFunction}), {vpiVisibility});
+  add({vpiAlways}, {vpiAlwaysType});
+  add({vpiDistItem}, {vpiDistType});
+  add({vpiClassDefn, vpiConstraint, vpiTask, vpiFunction}, {vpiVirtual});
+  KindSet dynamicPrefixes = ordinaryVariables;
+  dynamicPrefixes.insert({vpiRefObj, vpiParameter, vpiSpecParam, vpiVarSelect,
+                          vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect,
+                          vpiFuncCall, vpiTaskCall, vpiSysFuncCall,
+                          vpiSysTaskCall, vpiMethodFuncCall, vpiMethodTaskCall,
+                          vpiNamedEvent, vpiNamedEventArray});
+  dynamicPrefixes = merge(std::move(dynamicPrefixes),
+                          makePropertyObjectSet({}, {VPIObjectFamily::Net}));
+  add(dynamicPrefixes, {vpiHasActual});
+  add({vpiConstraint}, {vpiIsConstraintEnabled});
+  add(makePropertyObjectSet({vpiImplication, vpiConstrIf, vpiConstrIfElse,
+                             vpiConstrForEach, vpiDistribution, vpiSoftDisable,
+                             vpiRefObj, vpiVarSelect, vpiBitSelect,
+                             vpiIndexedPartSelect, vpiPartSelect, vpiOperation,
+                             vpiConstant, vpiFuncCall, vpiMethodFuncCall,
+                             vpiSysFuncCall, vpiLetExpr},
+                            {VPIObjectFamily::Net, VPIObjectFamily::Variable},
+                            {vpiParameter, vpiSpecParam, vpiNamedEvent,
+                             vpiNamedEventArray, vpiVirtualInterfaceVar}),
+      {vpiSoft});
+  add({vpiClassTypespec}, {vpiClassType});
+  add({vpiTask, vpiFunction},
+      {vpiMethod, vpiDPIPure, vpiDPIContext, vpiDPICStr, vpiDPICIdentifier});
+  add({vpiAssert, vpiAssume, vpiCover, vpiRestrict}, {vpiIsClockInferred});
+  add({vpiIf, vpiIfElse, vpiCase}, {vpiQualifier});
+  add({vpiClockingBlock, vpiClockingIODecl}, {vpiInputEdge, vpiOutputEdge});
+  add({vpiRefObj}, {vpiGeneric});
+  add({vpiOperation}, {vpiOpStrong});
+  add({vpiImmediateAssert, vpiImmediateAssume, vpiImmediateCover},
+      {vpiIsDeferred, vpiIsFinal});
+  add({vpiCover}, {vpiIsCoverSequence});
+  add({vpiSequenceInst, vpiAssert, vpiAssume, vpiCover, vpiRestrict,
+       vpiPropertyInst, vpiImmediateAssert, vpiImmediateAssume,
+       vpiImmediateCover},
+      {vpiStartLine, vpiColumn, vpiEndLine, vpiEndColumn});
+  add({vpiVirtualInterfaceVar, vpiInterfaceTypespec}, {vpiIsModPort});
+  return oracle;
 }
 
 void expectOrdinaryExpressionTargets(uint32_t source, uint32_t selector,
@@ -447,6 +884,7 @@ TEST(VPIObjectModel, IteratorUseIsExactlyTheDerivedIterationSourceClosure) {
 
 TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
   const KindSet expected{
+      vpiIODecl,
       vpiPort,
       vpiPortBit,
       vpiNet,
@@ -600,13 +1038,43 @@ TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
        "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; "
        "37.26; 37.33; 37.34; 37.39; 37.57; 37.83"},
       {vpiPacked,
-       {vpiStructTypespec, vpiUnionTypespec},
+       {vpiPackedArrayVar, vpiStructVar, vpiUnionVar, vpiEnumVar,
+        vpiStructTypespec, vpiUnionTypespec},
        PropertyKind::Boolean,
-       "37.23"},
+       "37.18; 37.23; 37.24"},
       {vpiTagged, {vpiUnionTypespec}, PropertyKind::Boolean, "37.23"},
-      {vpiArrayType, {vpiArrayTypespec}, PropertyKind::Integer, "37.23"},
-      {vpiRandType, {vpiTypespecMember}, PropertyKind::Integer, "37.23"},
-      {vpiConstType, {vpiConstant}, PropertyKind::Integer, "37.22; 37.57"},
+      {vpiArrayType,
+       {vpiRegArray, vpiArrayTypespec},
+       PropertyKind::Integer,
+       "37.17; 37.23"},
+      {vpiRandType,
+       {vpiIntegerVar,
+        vpiRealVar,
+        vpiReg,
+        vpiRegBit,
+        vpiTimeVar,
+        vpiLongIntVar,
+        vpiShortIntVar,
+        vpiIntVar,
+        vpiShortRealVar,
+        vpiByteVar,
+        vpiClassVar,
+        vpiStringVar,
+        vpiEnumVar,
+        vpiStructVar,
+        vpiUnionVar,
+        vpiBitVar,
+        vpiChandleVar,
+        vpiPackedArrayVar,
+        vpiVirtualInterfaceVar,
+        vpiRegArray,
+        vpiTypespecMember},
+       PropertyKind::Integer,
+       "37.17; 37.23"},
+      {vpiConstType,
+       {vpiConstant, vpiParameter},
+       PropertyKind::Integer,
+       "37.26; 37.57"},
   }};
   for (const Expected &item : expected) {
     for (const auto &object : vpiObjectKinds) {
@@ -630,6 +1098,315 @@ TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
       }
     }
   }
+}
+
+TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
+  struct Expected {
+    uint32_t value;
+    const char *name;
+    PropertyKind kind;
+    PropertyStability stability;
+    ProtectedAccess protectedAccess;
+    bool symbolicString;
+    const char *clause;
+  };
+#define STATIC_PROPERTY(NAME, KIND, CLAUSE)                                    \
+  {                                                                            \
+    NAME, #NAME, PropertyKind::KIND, PropertyStability::Static,                \
+        ProtectedAccess::Denied, false, CLAUSE                                 \
+  }
+#define DYNAMIC_PROPERTY(NAME, KIND, CLAUSE)                                   \
+  {                                                                            \
+    NAME, #NAME, PropertyKind::KIND, PropertyStability::Dynamic,               \
+        ProtectedAccess::Denied, false, CLAUSE                                 \
+  }
+#define PROTECTED_PROPERTY(NAME, KIND, CLAUSE)                                 \
+  {                                                                            \
+    NAME, #NAME, PropertyKind::KIND, PropertyStability::Static,                \
+        ProtectedAccess::Allowed, false, CLAUSE                                \
+  }
+#define SYMBOLIC_PROPERTY(NAME, CLAUSE)                                        \
+  {                                                                            \
+    NAME, #NAME, PropertyKind::Integer, PropertyStability::Static,             \
+        ProtectedAccess::Denied, true, CLAUSE                                  \
+  }
+#define PROTECTED_SYMBOLIC_PROPERTY(NAME, CLAUSE)                              \
+  {                                                                            \
+    NAME, #NAME, PropertyKind::Integer, PropertyStability::Static,             \
+        ProtectedAccess::Allowed, true, CLAUSE                                 \
+  }
+  const std::array<Expected, 114> expected{{
+      PROTECTED_SYMBOLIC_PROPERTY(vpiType, "37.3.2"),
+      STATIC_PROPERTY(vpiName, String, "37.4-37.83"),
+      STATIC_PROPERTY(vpiFullName, String, "37.10-37.83"),
+      STATIC_PROPERTY(vpiSize, Integer,
+                      "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; "
+                      "37.22; 37.26; 37.33; 37.34; 37.39; 37.57; 37.83"),
+      STATIC_PROPERTY(vpiFile, String, "37.3.3"),
+      STATIC_PROPERTY(vpiLineNo, Integer, "37.3.3"),
+      STATIC_PROPERTY(vpiTopModule, Boolean, "37.5"),
+      STATIC_PROPERTY(vpiCellInstance, Boolean, "37.10"),
+      STATIC_PROPERTY(vpiDefName, String, "37.10; 37.15; 37.28; 37.33; 37.34"),
+      STATIC_PROPERTY(vpiProtected, Boolean, "37.10; 37.34; 37.83"),
+      STATIC_PROPERTY(vpiTimeUnit, Integer, "37.10; 38.6"),
+      STATIC_PROPERTY(vpiTimePrecision, Integer, "37.10; 38.6"),
+      STATIC_PROPERTY(vpiDefNetType, Integer, "37.10"),
+      STATIC_PROPERTY(vpiUnconnDrive, Integer, "37.10"),
+      STATIC_PROPERTY(vpiDefFile, String, "37.10; 37.81"),
+      STATIC_PROPERTY(vpiDefLineNo, Integer, "37.10; 37.81"),
+      STATIC_PROPERTY(vpiScalar, Boolean, "37.14; 37.16; 37.17"),
+      STATIC_PROPERTY(vpiVector, Boolean, "37.14; 37.16; 37.17; 37.23"),
+      STATIC_PROPERTY(vpiExplicitName, Boolean, "37.14"),
+      STATIC_PROPERTY(vpiDirection, Integer,
+                      "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51"),
+      STATIC_PROPERTY(vpiConnByName, Boolean, "37.14; 37.26"),
+      SYMBOLIC_PROPERTY(vpiNetType, "37.16"),
+      STATIC_PROPERTY(vpiExplicitScalared, Boolean, "37.16"),
+      STATIC_PROPERTY(vpiExplicitVectored, Boolean, "37.16"),
+      STATIC_PROPERTY(vpiExpanded, Boolean, "37.16"),
+      STATIC_PROPERTY(vpiImplicitDecl, Boolean, "37.16; 37.83"),
+      STATIC_PROPERTY(vpiChargeStrength, Integer, "37.16"),
+      STATIC_PROPERTY(vpiArray, Boolean,
+                      "37.10; 37.16; 37.17; 37.25; 37.33; 37.83"),
+      STATIC_PROPERTY(vpiPortIndex, Integer, "37.14"),
+      STATIC_PROPERTY(vpiTermIndex, Integer, "37.33"),
+      STATIC_PROPERTY(vpiStrength0, Integer, "37.16; 37.33; 37.45"),
+      STATIC_PROPERTY(vpiStrength1, Integer, "37.16; 37.33; 37.45"),
+      SYMBOLIC_PROPERTY(vpiPrimType, "37.33; 37.34"),
+      STATIC_PROPERTY(vpiPolarity, Integer, "37.37"),
+      STATIC_PROPERTY(vpiDataPolarity, Integer, "37.37"),
+      STATIC_PROPERTY(vpiEdge, Integer, "37.37; 37.38"),
+      STATIC_PROPERTY(vpiPathType, Integer, "37.37"),
+      SYMBOLIC_PROPERTY(vpiTchkType, "37.38"),
+      SYMBOLIC_PROPERTY(vpiOpType, "37.50; 37.52; 37.57; 37.62"),
+      STATIC_PROPERTY(vpiConstType, Integer, "37.26; 37.57"),
+      STATIC_PROPERTY(vpiBlocking, Boolean, "37.60; 37.62"),
+      STATIC_PROPERTY(vpiCaseType, Integer, "37.70"),
+      STATIC_PROPERTY(vpiNetDeclAssign, Boolean, "37.16; 37.45"),
+      STATIC_PROPERTY(vpiFuncType, Integer, "37.39; 37.40"),
+      STATIC_PROPERTY(vpiUserDefn, Boolean, "37.40"),
+      DYNAMIC_PROPERTY(vpiScheduled, Boolean, "38.34"),
+      STATIC_PROPERTY(vpiDefDelayMode, Integer, "37.10"),
+      STATIC_PROPERTY(vpiDefDecayTime, Integer, "37.5"),
+      DYNAMIC_PROPERTY(vpiActive, Boolean, "37.41; 37.42"),
+      STATIC_PROPERTY(vpiAutomatic, Boolean,
+                      "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; 37.32; "
+                      "37.39"),
+      STATIC_PROPERTY(vpiCell, String, "37.10"),
+      STATIC_PROPERTY(vpiConfig, String, "37.10"),
+      STATIC_PROPERTY(vpiConstantSelect, Boolean,
+                      "37.16; 37.17; 37.18; 37.19; 37.57"),
+      STATIC_PROPERTY(vpiDecompile, String, "37.40; 37.57"),
+      STATIC_PROPERTY(vpiDefAttribute, Boolean, "37.81"),
+      SYMBOLIC_PROPERTY(vpiDelayType, "37.43"),
+      STATIC_PROPERTY(vpiIteratorType, Integer, "37.82"),
+      STATIC_PROPERTY(vpiLibrary, String, "37.10"),
+      STATIC_PROPERTY(vpiOffset, Integer, "37.45"),
+      SYMBOLIC_PROPERTY(vpiResolvedNetType, "37.16"),
+      DYNAMIC_PROPERTY(vpiSaveRestartID, Integer, "38.9; 38.36.1"),
+      DYNAMIC_PROPERTY(vpiSaveRestartLocation, String, "38.9; 38.11; 38.36.1"),
+      DYNAMIC_PROPERTY(vpiValid, Integer, "37.3.7; Annex I"),
+      STATIC_PROPERTY(vpiSigned, Boolean,
+                      "37.13; 37.16; 37.17; 37.26; 37.39; 37.57"),
+      STATIC_PROPERTY(vpiLocalParam, Boolean, "37.26; 37.29; 37.83"),
+      STATIC_PROPERTY(vpiModPathHasIfNone, Boolean, "37.37"),
+      STATIC_PROPERTY(vpiIndexedPartSelectType, Integer, "37.57"),
+      STATIC_PROPERTY(vpiIsMemory, Boolean, "37.20"),
+      PROTECTED_PROPERTY(vpiIsProtected, Boolean, "37.3.6"),
+      STATIC_PROPERTY(vpiTop, Boolean, "37.10"),
+      STATIC_PROPERTY(vpiUnit, Boolean, "37.10"),
+      STATIC_PROPERTY(vpiJoinType, Integer, "37.12"),
+      STATIC_PROPERTY(vpiAccessType, Integer, "37.8; 37.32; 37.39"),
+      STATIC_PROPERTY(vpiArrayType, Integer, "37.17; 37.23"),
+      STATIC_PROPERTY(vpiArrayMember, Boolean,
+                      "37.5; 37.6; 37.9; 37.16; 37.17; 37.25; 37.33; "
+                      "37.83"),
+      DYNAMIC_PROPERTY(vpiIsRandomized, Boolean, "37.17"),
+      STATIC_PROPERTY(vpiLocalVarDecls, Integer, "37.72"),
+      STATIC_PROPERTY(vpiRandType, Integer, "37.17; 37.23"),
+      STATIC_PROPERTY(vpiPortType, Integer, "37.14"),
+      STATIC_PROPERTY(vpiConstantVariable, Boolean, "37.17"),
+      STATIC_PROPERTY(vpiStructUnionMember, Boolean, "37.16; 37.17; 37.18"),
+      STATIC_PROPERTY(vpiVisibility, Integer, "37.17; 37.39"),
+      STATIC_PROPERTY(vpiAlwaysType, Integer, "37.61"),
+      STATIC_PROPERTY(vpiDistType, Integer, "37.32"),
+      STATIC_PROPERTY(vpiPacked, Boolean, "37.18; 37.23; 37.24"),
+      STATIC_PROPERTY(vpiTagged, Boolean, "37.23"),
+      STATIC_PROPERTY(vpiVirtual, Boolean, "37.29; 37.32; 37.39"),
+      DYNAMIC_PROPERTY(vpiHasActual, Boolean, "37.59"),
+      DYNAMIC_PROPERTY(vpiIsConstraintEnabled, Boolean, "37.32"),
+      STATIC_PROPERTY(vpiSoft, Boolean, "37.36"),
+      STATIC_PROPERTY(vpiClassType, Integer, "37.30"),
+      STATIC_PROPERTY(vpiMethod, Boolean, "37.39"),
+      STATIC_PROPERTY(vpiIsClockInferred, Boolean, "37.48"),
+      STATIC_PROPERTY(vpiQualifier, Integer, "37.69; 37.70"),
+      STATIC_PROPERTY(vpiInputEdge, Integer, "37.46"),
+      STATIC_PROPERTY(vpiOutputEdge, Integer, "37.46"),
+      STATIC_PROPERTY(vpiGeneric, Boolean, "37.15"),
+      STATIC_PROPERTY(vpiCompatibilityMode, Integer, "Annex M"),
+      STATIC_PROPERTY(vpiPackedArrayMember, Boolean, "37.16; 37.17; 37.18"),
+      STATIC_PROPERTY(vpiOpStrong, Boolean, "37.50"),
+      STATIC_PROPERTY(vpiIsDeferred, Integer, "37.53"),
+      STATIC_PROPERTY(vpiAllocScheme, Integer, "37.3.7"),
+      STATIC_PROPERTY(vpiIsCoverSequence, Boolean, "37.48"),
+      DYNAMIC_PROPERTY(vpiObjId, Int64, "37.31"),
+      STATIC_PROPERTY(vpiStartLine, Integer, "37.47"),
+      STATIC_PROPERTY(vpiColumn, Integer, "37.47"),
+      STATIC_PROPERTY(vpiEndLine, Integer, "37.47"),
+      STATIC_PROPERTY(vpiEndColumn, Integer, "37.47"),
+      STATIC_PROPERTY(vpiDPIPure, Boolean, "37.39"),
+      STATIC_PROPERTY(vpiDPIContext, Boolean, "37.39"),
+      STATIC_PROPERTY(vpiDPICStr, Integer, "37.39"),
+      STATIC_PROPERTY(vpiDPICIdentifier, String, "37.39"),
+      STATIC_PROPERTY(vpiIsModPort, Boolean, "37.27; 37.28"),
+      STATIC_PROPERTY(vpiIsFinal, Integer, "37.53"),
+  }};
+#undef STATIC_PROPERTY
+#undef DYNAMIC_PROPERTY
+#undef PROTECTED_PROPERTY
+#undef SYMBOLIC_PROPERTY
+#undef PROTECTED_SYMBOLIC_PROPERTY
+
+  std::map<uint32_t, Expected> oracle;
+  for (const Expected &item : expected)
+    ASSERT_TRUE(oracle.try_emplace(item.value, item).second) << item.name;
+  EXPECT_EQ(oracle.size(), expected.size());
+
+  std::map<uint32_t, size_t> generatedCounts;
+  const KindSet dynamicSizeObjects{
+      vpiRegArray,       vpiStringVar,   vpiRefObj,
+      vpiVarSelect,      vpiOperation,   vpiFuncCall,
+      vpiMethodFuncCall, vpiSysFuncCall, vpiLetExpr};
+  KindSet protectedSizeObjects{vpiParameter,
+                               vpiSpecParam,
+                               vpiShortRealVar,
+                               vpiRealVar,
+                               vpiByteVar,
+                               vpiShortIntVar,
+                               vpiIntVar,
+                               vpiLongIntVar,
+                               vpiIntegerVar,
+                               vpiTimeVar,
+                               vpiRegArray,
+                               vpiPackedArrayVar,
+                               vpiBitVar,
+                               vpiReg,
+                               vpiStructVar,
+                               vpiUnionVar,
+                               vpiEnumVar,
+                               vpiStringVar,
+                               vpiChandleVar,
+                               vpiClassVar,
+                               vpiVirtualInterfaceVar,
+                               vpiRegBit,
+                               vpiRefObj,
+                               vpiVarSelect,
+                               vpiBitSelect,
+                               vpiIndexedPartSelect,
+                               vpiPartSelect,
+                               vpiOperation,
+                               vpiConstant,
+                               vpiFuncCall,
+                               vpiMethodFuncCall,
+                               vpiSysFuncCall,
+                               vpiLetExpr};
+  for (const VPIObjectKindDescriptor &object : vpiObjectKinds)
+    if (object.aliasOf == nullptr && object.role == VPIObjectRole::Concrete &&
+        (object.families & vpiFamilyMask(VPIObjectFamily::Net)) != 0)
+      protectedSizeObjects.insert(object.value);
+  for (const VPIPropertyDescriptor &descriptor : vpiProperties) {
+    auto found = oracle.find(descriptor.property);
+    ASSERT_NE(found, oracle.end()) << descriptor.apiName;
+    const Expected &item = found->second;
+    EXPECT_STREQ(descriptor.apiName, item.name);
+    EXPECT_EQ(descriptor.valueKind, item.kind) << item.name;
+    PropertyStability expectedStability = item.stability;
+    if (descriptor.property == vpiSize &&
+        dynamicSizeObjects.count(descriptor.sourceType) != 0)
+      expectedStability = PropertyStability::Dynamic;
+    if (descriptor.property == vpiAllocScheme) {
+      const auto *object = findVPIObjectKind(descriptor.sourceType);
+      if (object &&
+          (object->families & (vpiFamilyMask(VPIObjectFamily::Variable) |
+                               vpiFamilyMask(VPIObjectFamily::Net) |
+                               vpiFamilyMask(VPIObjectFamily::Transient))) != 0)
+        expectedStability = PropertyStability::Dynamic;
+      switch (descriptor.sourceType) {
+      case vpiRefObj:
+      case vpiVarSelect:
+      case vpiBitSelect:
+      case vpiPartSelect:
+      case vpiIndexedPartSelect:
+      case vpiFuncCall:
+      case vpiTaskCall:
+      case vpiSysFuncCall:
+      case vpiSysTaskCall:
+      case vpiMethodFuncCall:
+      case vpiMethodTaskCall:
+        expectedStability = PropertyStability::Dynamic;
+        break;
+      default:
+        break;
+      }
+    }
+    ProtectedAccess expectedProtectedAccess = item.protectedAccess;
+    if (descriptor.property == vpiSize &&
+        protectedSizeObjects.count(descriptor.sourceType) != 0)
+      expectedProtectedAccess = ProtectedAccess::Allowed;
+    EXPECT_EQ(descriptor.stability, expectedStability) << item.name;
+    EXPECT_EQ(descriptor.protectedAccess, expectedProtectedAccess) << item.name;
+    EXPECT_EQ(descriptor.symbolicString, item.symbolicString) << item.name;
+    EXPECT_STREQ(descriptor.clause, item.clause) << item.name;
+    ++generatedCounts[descriptor.property];
+
+    VPIObjectModelImageProperty imageProperty{};
+    ASSERT_TRUE(findVPIObjectModelImageProperty(
+        vpiObjectModelImage, descriptor.sourceType, descriptor.property,
+        imageProperty));
+    EXPECT_EQ(imageProperty.valueKind, item.kind);
+    EXPECT_EQ(imageProperty.stability, expectedStability);
+    EXPECT_EQ(imageProperty.protectedAccess, expectedProtectedAccess);
+    EXPECT_EQ(imageProperty.symbolicString, item.symbolicString);
+  }
+  for (const Expected &item : expected)
+    EXPECT_NE(generatedCounts[item.value], 0u) << item.name;
+}
+
+TEST(VPIObjectModel, ReadPropertyApplicabilityExactlyMatchesLrmOracle) {
+  const std::map<uint32_t, KindSet> expected =
+      buildReadPropertyApplicabilityOracle();
+  std::map<uint32_t, KindSet> actual;
+  for (const VPIPropertyDescriptor &descriptor : vpiProperties)
+    actual[descriptor.property].insert(descriptor.sourceType);
+
+  ASSERT_EQ(actual.size(), expected.size());
+  for (const auto &[property, expectedObjects] : expected) {
+    auto found = actual.find(property);
+    ASSERT_NE(found, actual.end()) << property;
+    EXPECT_EQ(found->second, expectedObjects)
+        << "property " << property << " expected: " << setNames(expectedObjects)
+        << " actual: " << setNames(found->second);
+  }
+}
+
+TEST(VPIObjectModel, SymbolicStringPropertiesExactlyMatchLrm) {
+  const std::set<uint32_t> expected{
+      vpiType,     vpiDelayType, vpiNetType,        vpiOpType,
+      vpiPrimType, vpiTchkType,  vpiResolvedNetType};
+  std::set<uint32_t> actual;
+  for (const VPIPropertyDescriptor &descriptor : vpiProperties) {
+    if (!descriptor.symbolicString)
+      continue;
+    actual.insert(descriptor.property);
+    VPIObjectModelImageProperty imageProperty{};
+    ASSERT_TRUE(findVPIObjectModelImageProperty(
+        vpiObjectModelImage, descriptor.sourceType, descriptor.property,
+        imageProperty));
+    EXPECT_TRUE(imageProperty.symbolicString) << descriptor.apiName;
+    EXPECT_EQ(descriptor.valueKind, PropertyKind::Integer)
+        << descriptor.apiName;
+  }
+  EXPECT_EQ(actual, expected);
 }
 
 TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
@@ -909,13 +1686,26 @@ TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
 }
 
 TEST(VPIObjectModel, SourceLocationPropertiesHaveExactGlobalExclusions) {
-  const KindSet excluded{vpiCallback,      vpiDelayTerm, vpiDelayDevice,
-                         vpiInterModPath,  vpiIterator,  vpiTimeQueue,
-                         vpiGenScopeArray, vpiGenScope};
+  const KindSet excluded{vpiDelayTerm,     vpiDelayDevice, vpiInterModPath,
+                         vpiGenScopeArray, vpiGenScope,    vpiThread};
+  constexpr uint32_t sourceFamilies =
+      vpiFamilyMask(VPIObjectFamily::Scope) |
+      vpiFamilyMask(VPIObjectFamily::Declaration) |
+      vpiFamilyMask(VPIObjectFamily::Process) |
+      vpiFamilyMask(VPIObjectFamily::Statement) |
+      vpiFamilyMask(VPIObjectFamily::Expression) |
+      vpiFamilyMask(VPIObjectFamily::Variable) |
+      vpiFamilyMask(VPIObjectFamily::Net) |
+      vpiFamilyMask(VPIObjectFamily::Array) |
+      vpiFamilyMask(VPIObjectFamily::Typespec) |
+      vpiFamilyMask(VPIObjectFamily::Primitive) |
+      vpiFamilyMask(VPIObjectFamily::Timing) |
+      vpiFamilyMask(VPIObjectFamily::Assertion);
   for (const auto &object : vpiObjectKinds) {
     if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
       continue;
-    const bool expected = !excluded.count(object.value);
+    const bool expected = (object.families & sourceFamilies) != 0 &&
+                          !excluded.count(object.value);
     for (const auto &[property, kind] :
          std::array<std::pair<uint32_t, PropertyKind>, 2>{{
              {vpiFile, PropertyKind::String},
@@ -958,13 +1748,12 @@ TEST(VPIObjectModel, NullRootAndClassIdentityPropertiesAreExact) {
   EXPECT_EQ(findVPIProperty(vpiModule, vpiObjId), nullptr);
 }
 
-TEST(VPIObjectModel, PortOnlyPropertiesHaveExactLrmApplicability) {
+TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
   struct ExpectedProperty {
     uint32_t value;
     PropertyKind kind;
   };
-  constexpr std::array<ExpectedProperty, 3> expected{{
-      {vpiDirection, PropertyKind::Integer},
+  constexpr std::array<ExpectedProperty, 2> expected{{
       {vpiPortIndex, PropertyKind::Integer},
       {vpiPortType, PropertyKind::Integer},
   }};
@@ -991,12 +1780,28 @@ TEST(VPIObjectModel, PortOnlyPropertiesHaveExactLrmApplicability) {
     EXPECT_FALSE(findVPIObjectModelImageProperty(
         vpiObjectModelImage, vpiReg, property.value, imageProperty));
   }
+
+  const KindSet directionObjects{
+      vpiIODecl,   vpiPort,           vpiPortBit,        vpiPrimTerm,
+      vpiPathTerm, vpiClockingIODecl, vpiPropFormalDecl, vpiSeqFormalDecl};
+  for (const auto &object : vpiObjectKinds) {
+    if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
+      continue;
+    const auto *descriptor = findVPIProperty(object.value, vpiDirection);
+    const bool expectedDirection = directionObjects.count(object.value) != 0;
+    EXPECT_EQ(descriptor != nullptr, expectedDirection) << object.apiName;
+    if (descriptor) {
+      EXPECT_EQ(descriptor->valueKind, PropertyKind::Integer);
+      EXPECT_STREQ(descriptor->clause,
+                   "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51");
+    }
+  }
 }
 
 TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
   ASSERT_TRUE(validateVPIObjectModelImage(vpiObjectModelImage,
                                           sizeof(vpiObjectModelImage)));
-  EXPECT_LT(sizeof(vpiObjectModelImage), 32u * 1024u);
+  EXPECT_LT(sizeof(vpiObjectModelImage), 48u * 1024u);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 60),
             kExpectedTraversalCount);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 68),
@@ -1315,14 +2120,32 @@ TEST(VPIObjectModel, IndexedValuePropertiesHaveExactLrmApplicability) {
   arrayMemberExpected.insert({vpiPackage, vpiModule, vpiInterface, vpiProgram,
                               vpiGate, vpiSwitch, vpiUdp, vpiNamedEvent,
                               vpiGenScope});
+  const KindSet packedArrayMemberExpected{
+      vpiEnumNet,  vpiStructNet, vpiPackedArrayNet, vpiStructVar,
+      vpiUnionVar, vpiEnumVar,   vpiPackedArrayVar};
+  KindSet constantSelectExpected = valueExpected;
+  constantSelectExpected.insert({vpiRefObj, vpiParameter, vpiSpecParam,
+                                 vpiVarSelect, vpiBitSelect, vpiPartSelect,
+                                 vpiIndexedPartSelect});
+  KindSet signedExpected = valueExpected;
+  signedExpected.insert({vpiIODecl, vpiFunction, vpiParameter, vpiSpecParam,
+                         vpiRefObj, vpiVarSelect, vpiBitSelect, vpiPartSelect,
+                         vpiIndexedPartSelect, vpiOperation, vpiConstant,
+                         vpiFuncCall, vpiMethodFuncCall, vpiSysFuncCall,
+                         vpiLetExpr});
+  const std::map<uint32_t, KindSet> expectedByProperty{
+      {vpiArrayMember, arrayMemberExpected},
+      {vpiPackedArrayMember, packedArrayMemberExpected},
+      {vpiConstantSelect, constantSelectExpected},
+      {vpiSigned, signedExpected},
+  };
   constexpr uint32_t properties[]{vpiArrayMember, vpiPackedArrayMember,
                                   vpiConstantSelect, vpiSigned};
   for (uint32_t property : properties)
     for (const auto &object : vpiObjectKinds) {
       if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
         continue;
-      const KindSet &expected =
-          property == vpiArrayMember ? arrayMemberExpected : valueExpected;
+      const KindSet &expected = expectedByProperty.at(property);
       EXPECT_EQ(findVPIProperty(object.value, property) != nullptr,
                 expected.count(object.value) != 0)
           << object.apiName << " property=" << property;
@@ -1508,7 +2331,7 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
 
   reset();
-  damaged[propertyOffset + 5] = 1;
+  damaged[propertyOffset + 5] = 8;
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

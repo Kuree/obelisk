@@ -14,13 +14,15 @@ class VPIObjectSet<string cppName_,
                    list<VPIObjectFamily> families_ = [],
                    list<VPIObjectKind> exclude_ = [],
                    bit nullRoot_ = 0,
-                   bit iterateSources_ = 0> {
+                   bit iterateSources_ = 0,
+                   bit allowEmpty_ = 0> {
   string cppName = cppName_;
   list<VPIObjectKind> objects = objects_;
   list<VPIObjectFamily> families = families_;
   list<VPIObjectKind> exclude = exclude_;
   bit nullRoot = nullRoot_;
   bit iterateSources = iterateSources_;
+  bit allowEmpty = allowEmpty_;
 }
 
 class VPITraversalMode<string cppName_, int value_> {
@@ -195,7 +197,7 @@ def PortTargetObjects : VPIObjectSet<"PortTargetObjects", [Port]>;
 // properties are not defined (for example named events and parameters).
 // Aliased API spellings are represented by their canonical object kinds.
 def ScalarVectorObjects : VPIObjectSet<"ScalarVectorObjects",
-  [Port, PortBit,
+  [IODecl, Port, PortBit,
    Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
    ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
    InterconnectNet, InterconnectArray, StructNet, PackedArrayNet,
@@ -204,7 +206,7 @@ def ScalarVectorObjects : VPIObjectSet<"ScalarVectorObjects",
    UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
    RegBit]>;
 def VectorPropertyObjects : VPIObjectSet<"VectorPropertyObjects",
-  [Port, PortBit,
+  [IODecl, Port, PortBit,
    Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
    ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
    InterconnectNet, InterconnectArray, StructNet, PackedArrayNet,
@@ -225,15 +227,48 @@ def BooleanProperty : VPIPropertyValueKind<"Boolean", 0>;
 def IntegerProperty : VPIPropertyValueKind<"Integer", 1>;
 def Int64Property : VPIPropertyValueKind<"Int64", 2>;
 def StringProperty : VPIPropertyValueKind<"String", 3>;
+def NoPropertyObjects : VPIObjectSet<"NoPropertyObjects", [], [], [], 0, 0,
+  1>;
+
+// Whether the answer can be derived exclusively from immutable elaboration
+// metadata, or must be sampled from current simulation/handle state.  This is
+// query metadata only and never creates scheduler work.
+class VPIPropertyStability<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+def StaticProperty : VPIPropertyStability<"Static", 0>;
+def DynamicProperty : VPIPropertyStability<"Dynamic", 1>;
+
+// IEEE 1800-2017 37.3.6 generally permits only vpiType and vpiIsProtected on
+// a protected object. Section 37.57 additionally permits vpiSize for protected
+// expression objects; that source-specific exception is modeled below.
+class VPIPropertyProtectedAccess<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+def DeniedWhenProtected : VPIPropertyProtectedAccess<"Denied", 0>;
+def AllowedWhenProtected : VPIPropertyProtectedAccess<"Allowed", 1>;
 
 class VPIProperty<string apiName_, int value_,
                   VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
-                  string clause_> {
+                  string clause_,
+                  VPIPropertyStability stability_ = StaticProperty,
+                  VPIPropertyProtectedAccess protectedAccess_ =
+                      DeniedWhenProtected,
+                  bit symbolicString_ = 0,
+                  VPIObjectSet dynamicSources_ = NoPropertyObjects,
+                  VPIObjectSet protectedSources_ = NoPropertyObjects> {
   string apiName = apiName_;
   int value = value_;
   VPIPropertyValueKind valueKind = valueKind_;
   VPIObjectSet sources = sources_;
   string clause = clause_;
+  VPIPropertyStability stability = stability_;
+  VPIPropertyProtectedAccess protectedAccess = protectedAccess_;
+  bit symbolicString = symbolicString_;
+  VPIObjectSet dynamicSources = dynamicSources_;
+  VPIObjectSet protectedSources = protectedSources_;
 }
 
 // Properties that apply independently of the per-object data-model diagrams.
@@ -247,17 +282,18 @@ def AllConcreteObjects : VPIObjectSet<"AllConcreteObjects", [],
 def SourceLocatedObjects : VPIObjectSet<"SourceLocatedObjects", [],
   [ScopeFamily, DeclarationFamily, ProcessFamily, StatementFamily,
    ExpressionFamily, VariableFamily, NetFamily, ArrayFamily, TypespecFamily,
-   PrimitiveFamily, TimingFamily, AssertionFamily, TransientFamily,
-   RuntimeFamily, OtherFamily],
-  [Callback, DelayTerm, DelayDevice, InterModPath, Iterator, TimeQueue,
-   GenScopeArray, GenScope]>;
+   PrimitiveFamily, TimingFamily, AssertionFamily],
+  [DelayTerm, DelayDevice, InterModPath, GenScopeArray, GenScope, Thread]>;
 def InstanceAndRootObjects : VPIObjectSet<"InstanceAndRootObjects",
   [Package, Module, Interface, Program], [], [], 1>;
 def ClassIdentityObjects : VPIObjectSet<"ClassIdentityObjects",
   [ClassVar, ClassObj]>;
+def DirectionPropertyObjects : VPIObjectSet<"DirectionPropertyObjects",
+  [IODecl, Port, PortBit, PrimTerm, PathTerm, ClockingIODecl,
+   PropFormalDecl, SeqFormalDecl]>;
 
 def TypeProperty : VPIProperty<"vpiType", 1, IntegerProperty,
-  AllConcreteObjects, "37.3.2">;
+  AllConcreteObjects, "37.3.2", StaticProperty, AllowedWhenProtected, 1>;
 def FileProperty : VPIProperty<"vpiFile", 5, StringProperty,
   SourceLocatedObjects, "37.3.3">;
 def LineNoProperty : VPIProperty<"vpiLineNo", 6, IntegerProperty,
@@ -267,16 +303,17 @@ def TimeUnitProperty : VPIProperty<"vpiTimeUnit", 11, IntegerProperty,
 def TimePrecisionProperty : VPIProperty<"vpiTimePrecision", 12,
   IntegerProperty, InstanceAndRootObjects, "37.10; 38.6">;
 def IsProtectedProperty : VPIProperty<"vpiIsProtected", 74, BooleanProperty,
-  AllConcreteObjects, "37.3.6">;
+  AllConcreteObjects, "37.3.6", StaticProperty, AllowedWhenProtected>;
 def ObjIdProperty : VPIProperty<"vpiObjId", 660, Int64Property,
-  ClassIdentityObjects, "37.31">;
+  ClassIdentityObjects, "37.31", DynamicProperty>;
 
 def ScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
   ScalarVectorObjects, "37.14; 37.16; 37.17">;
 def VectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
   VectorPropertyObjects, "37.14; 37.16; 37.17; 37.23">;
 def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
-  PortObjects, "37.14">;
+  DirectionPropertyObjects,
+  "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51">;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
   PortObjects, "37.14">;
 def PortTypeProperty : VPIProperty<"vpiPortType", 611, IntegerProperty,
@@ -314,15 +351,44 @@ def StructuralSizeObjects : VPIObjectSet<"StructuralSizeObjects",
    RefObj, VarSelect, BitSelect, IndexedPartSelect, PartSelect, Operation,
    Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr,
    Range, Gate, Switch, Udp, UdpDefn, TableEntry, Function, GenScopeArray]>;
-def PackedTypespecObjects : VPIObjectSet<"PackedTypespecObjects",
-  [StructTypespec, UnionTypespec]>;
+def DynamicSizePropertyObjects : VPIObjectSet<"DynamicSizePropertyObjects",
+  [RegArray, StringVar, RefObj, VarSelect, Operation, FuncCall,
+   MethodFuncCall, SysFuncCall, LetExpr]>;
+def ProtectedExpressionSizeObjects : VPIObjectSet<
+  "ProtectedExpressionSizeObjects",
+  [Parameter, SpecParam,
+   ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit,
+   RefObj, VarSelect, BitSelect, IndexedPartSelect, PartSelect, Operation,
+   Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr], [NetFamily]>;
+def DynamicAllocSchemeObjects : VPIObjectSet<"DynamicAllocSchemeObjects",
+  [RefObj, VarSelect, BitSelect, PartSelect, IndexedPartSelect,
+   FuncCall, TaskCall, SysFuncCall, SysTaskCall, MethodFuncCall,
+   MethodTaskCall], [VariableFamily, NetFamily, TransientFamily]>;
+def PackedPropertyObjects : VPIObjectSet<"PackedPropertyObjects",
+  [PackedArrayVar, StructVar, UnionVar, EnumVar, StructTypespec,
+   UnionTypespec]>;
 def TaggedTypespecObjects : VPIObjectSet<"TaggedTypespecObjects",
   [UnionTypespec]>;
 def ArrayTypespecObjects : VPIObjectSet<"ArrayTypespecObjects",
   [ArrayTypespec]>;
-def TypespecMemberObjects : VPIObjectSet<"TypespecMemberObjects",
-  [TypespecMember]>;
-def ConstantObjects : VPIObjectSet<"ConstantObjects", [Constant]>;
+def ArrayTypePropertyObjects : VPIObjectSet<"ArrayTypePropertyObjects",
+  [RegArray, ArrayTypespec]>;
+def OrdinaryVariablePropertyObjects : VPIObjectSet<
+  "OrdinaryVariablePropertyObjects",
+  [ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit]>;
+def RandomizationTypeObjects : VPIObjectSet<"RandomizationTypeObjects",
+  [TypespecMember, ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar,
+   LongIntVar, IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg,
+   StructVar, UnionVar, EnumVar, StringVar, ChandleVar, ClassVar,
+   VirtualInterfaceVar, RegBit]>;
+def ConstantTypePropertyObjects : VPIObjectSet<"ConstantTypePropertyObjects",
+  [Constant, Parameter]>;
 def IndexedValueObjects : VPIObjectSet<"IndexedValueObjects",
   [ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
    IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
@@ -330,6 +396,30 @@ def IndexedValueObjects : VPIObjectSet<"IndexedValueObjects",
    RegBit, Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
    ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
    InterconnectNet, InterconnectArray, StructNet, PackedArrayNet]>;
+def ConstantSelectPropertyObjects : VPIObjectSet<
+  "ConstantSelectPropertyObjects",
+  [RefObj, Parameter, SpecParam, VarSelect, BitSelect, PartSelect,
+   IndexedPartSelect, ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar,
+   LongIntVar, IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg,
+   StructVar, UnionVar, EnumVar, StringVar, ChandleVar, ClassVar,
+   VirtualInterfaceVar, RegBit], [NetFamily]>;
+def SignedPropertyObjects : VPIObjectSet<"SignedPropertyObjects",
+  [IODecl, Function, Parameter, SpecParam, ShortRealVar, RealVar, ByteVar,
+   ShortIntVar, IntVar, LongIntVar, IntegerVar, TimeVar, RegArray,
+   PackedArrayVar, BitVar, Reg, StructVar, UnionVar, EnumVar, StringVar,
+   ChandleVar, ClassVar, VirtualInterfaceVar, RegBit,
+   RefObj, VarSelect, BitSelect, PartSelect, IndexedPartSelect, Operation,
+   Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr], [NetFamily]>;
+def PackedArrayMemberPropertyObjects : VPIObjectSet<
+  "PackedArrayMemberPropertyObjects",
+  [EnumNet, StructNet, PackedArrayNet, StructVar, UnionVar, EnumVar,
+   PackedArrayVar]>;
+def StructUnionMemberPropertyObjects : VPIObjectSet<
+  "StructUnionMemberPropertyObjects",
+  [ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit], [NetFamily]>;
 def ArrayMemberObjects : VPIObjectSet<"ArrayMemberObjects",
   [Package, Module, Interface, Program, Gate, Switch, Udp, NamedEvent, GenScope,
    ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
@@ -342,26 +432,375 @@ def ArrayMemberObjects : VPIObjectSet<"ArrayMemberObjects",
 def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
   StructuralSizeObjects,
   "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; 37.26; "
-  "37.33; 37.34; 37.39; 37.57; 37.83">;
+  "37.33; 37.34; 37.39; 37.57; 37.83", StaticProperty,
+  DeniedWhenProtected, 0, DynamicSizePropertyObjects,
+  ProtectedExpressionSizeObjects>;
 def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
-  BooleanProperty, PackedTypespecObjects, "37.23">;
+  BooleanProperty, PackedPropertyObjects, "37.18; 37.23; 37.24">;
 def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
   BooleanProperty, TaggedTypespecObjects, "37.23">;
 def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
-  IntegerProperty, ArrayTypespecObjects, "37.23">;
+  IntegerProperty, ArrayTypePropertyObjects, "37.17; 37.23">;
 def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
-  IntegerProperty, TypespecMemberObjects, "37.23">;
+  IntegerProperty, RandomizationTypeObjects, "37.17; 37.23">;
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
-  IntegerProperty, ConstantObjects, "37.22; 37.57">;
+  IntegerProperty, ConstantTypePropertyObjects, "37.26; 37.57">;
 def IndexedArrayMemberProperty : VPIProperty<"vpiArrayMember", 607,
   BooleanProperty, ArrayMemberObjects,
   "37.5; 37.6; 37.9; 37.16; 37.17; 37.25; 37.33; 37.83">;
 def IndexedPackedArrayMemberProperty : VPIProperty<"vpiPackedArrayMember", 655,
-  BooleanProperty, IndexedValueObjects, "37.16; 37.17; 37.18">;
+  BooleanProperty, PackedArrayMemberPropertyObjects, "37.16; 37.17; 37.18">;
 def IndexedConstantSelectProperty : VPIProperty<"vpiConstantSelect", 53,
-  BooleanProperty, IndexedValueObjects, "37.16; 37.17; 37.18">;
+  BooleanProperty, ConstantSelectPropertyObjects,
+  "37.16; 37.17; 37.18; 37.19; 37.57">;
 def IndexedSignedProperty : VPIProperty<"vpiSigned", 65,
-  BooleanProperty, IndexedValueObjects, "37.16; 37.17">;
+  BooleanProperty, SignedPropertyObjects,
+  "37.13; 37.16; 37.17; 37.26; 37.39; 37.57">;
+
+// Complete IEEE 1800-2017 read-property inventory.  These sets follow the
+// object boxes in Chapter 37.  A property may legally return a null string or
+// a false/default value; applicability is independent of that value.
+def InstanceArrayPropertyObjects : VPIObjectSet<
+  "InstanceArrayPropertyObjects",
+  [ModuleArray, InterfaceArray, ProgramArray, GateArray, SwitchArray,
+   UdpArray]>;
+def NamedPropertyObjects : VPIObjectSet<"NamedPropertyObjects",
+  [Package, Module, Interface, Program,
+   ModuleArray, InterfaceArray, ProgramArray, GateArray, SwitchArray, UdpArray,
+   Function, Task, GenScope,
+   ClockingBlock, ClassDefn, Modport, IODecl, Port, RefObj, VarSelect,
+   BitSelect, Gate, Switch, Udp, Constraint, ClockingIODecl, PropFormalDecl,
+   SeqFormalDecl, LetDecl, AnyPattern, TaggedPattern, StructPattern,
+   Attribute, GenScopeArray, GenVar, SysFuncCall, Assert, Assume,
+   Cover, Restrict, PropertyDecl, PropertyInst, SequenceDecl, SequenceInst,
+   ImmediateAssert, ImmediateAssume, ImmediateCover, AssignStmt, Assignment,
+   Begin, Case, Deassign, DelayControl, Disable, EventControl, EventStmt, For,
+   Force, Forever, Fork, If, IfElse, NamedBegin, NamedFork, NullStmt, Release,
+   Repeat, RepeatControl, SysTaskCall, TaskCall, Wait, While, MethodTaskCall,
+   DoWhile, OrderedWait, WaitFork, DisableFork, ExpectStmt, ForeachStmt,
+   ReturnStmt, Break, Continue, EnumConst],
+  [VariableFamily, NetFamily, TypespecFamily]>;
+def FullNamePropertyObjects : VPIObjectSet<"FullNamePropertyObjects",
+  [ModuleArray, InterfaceArray, ProgramArray, GateArray, SwitchArray, UdpArray,
+   RefObj, VarSelect, BitSelect, Constraint, GenScopeArray, Gate, Switch, Udp,
+   GenVar, TypeParameter,
+   Assert, Assume, Cover, Restrict, PropertyDecl, SequenceDecl],
+  [ScopeFamily, VariableFamily, NetFamily],
+  [ClassTypespec]>;
+def DefinitionLocationObjects : VPIObjectSet<"DefinitionLocationObjects",
+  [Package, Module, Interface, Program, Attribute]>;
+def DefinitionNameObjects : VPIObjectSet<"DefinitionNameObjects",
+  [Package, Module, Interface, Program, RefObj, InterfaceTypespec,
+   Gate, Switch, Udp, UdpDefn]>;
+def ProtectedLegacyObjects : VPIObjectSet<"ProtectedLegacyObjects",
+  [Package, Module, Interface, Program, UdpDefn, GenScope]>;
+def AutomaticPropertyObjects : VPIObjectSet<"AutomaticPropertyObjects",
+  [Package, Module, Interface, Program, ClassDefn, ClassTypespec, Constraint,
+   Task, Function], [VariableFamily], [Parameter, SpecParam]>;
+def NetPropertyObjects : VPIObjectSet<"NetPropertyObjects", [], [NetFamily]>;
+def PrimitivePropertyObjects : VPIObjectSet<"PrimitivePropertyObjects",
+  [Gate, Switch, Udp]>;
+def PrimitiveAndContinuousObjects : VPIObjectSet<
+  "PrimitiveAndContinuousObjects",
+  [Gate, Switch, Udp, ContAssign, ContAssignBit]>;
+def OperationPropertyObjects : VPIObjectSet<"OperationPropertyObjects",
+  [Operation, Assignment]>;
+def DecompilePropertyObjects : VPIObjectSet<"DecompilePropertyObjects",
+  [Parameter, SpecParam,
+   ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit,
+   RefObj, VarSelect, BitSelect, PartSelect, IndexedPartSelect, Operation,
+   Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr,
+   TaskCall, SysTaskCall, MethodTaskCall], [NetFamily]>;
+def ValidPropertyObjects : VPIObjectSet<"ValidPropertyObjects", [Frame],
+  [VariableFamily]>;
+def DynamicPrefixPropertyObjects : VPIObjectSet<
+  "DynamicPrefixPropertyObjects",
+  [RefObj, Parameter, SpecParam, VarSelect, BitSelect, PartSelect,
+   IndexedPartSelect, FuncCall, TaskCall, SysFuncCall, SysTaskCall,
+   MethodFuncCall, MethodTaskCall, NamedEvent, NamedEventArray, ShortRealVar,
+   RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar, IntegerVar, TimeVar,
+   RegArray, PackedArrayVar, BitVar, Reg, StructVar, UnionVar, EnumVar,
+   StringVar, ChandleVar, ClassVar, VirtualInterfaceVar, RegBit],
+  [NetFamily]>;
+def ConcurrentAssertionPropertyObjects : VPIObjectSet<
+  "ConcurrentAssertionPropertyObjects", [Assert, Assume, Cover, Restrict]>;
+def ImmediateAssertionPropertyObjects : VPIObjectSet<
+  "ImmediateAssertionPropertyObjects",
+  [ImmediateAssert, ImmediateAssume, ImmediateCover]>;
+def AssertionLocationPropertyObjects : VPIObjectSet<
+  "AssertionLocationPropertyObjects",
+  [SequenceInst, Assert, Assume, Cover, Restrict, PropertyInst,
+   ImmediateAssert, ImmediateAssume, ImmediateCover]>;
+def ConstraintExpressionPropertyObjects : VPIObjectSet<
+  "ConstraintExpressionPropertyObjects",
+  [Implication, ConstrIf, ConstrIfElse, ConstrForEach, Distribution,
+   SoftDisable, RefObj, VarSelect, BitSelect, IndexedPartSelect, PartSelect,
+   Operation, Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr],
+  [NetFamily, VariableFamily],
+  [Parameter, SpecParam, NamedEvent, NamedEventArray, VirtualInterfaceVar]>;
+def NullOnlyPropertyObjects : VPIObjectSet<"NullOnlyPropertyObjects", [], [],
+  [], 1>;
+def PortAndParamAssignObjects : VPIObjectSet<"PortAndParamAssignObjects",
+  [Port, PortBit, ParamAssign]>;
+def NetAndGenScopeObjects : VPIObjectSet<"NetAndGenScopeObjects", [GenScope],
+  [NetFamily]>;
+def ReadPrimTermObjects : VPIObjectSet<"ReadPrimTermObjects", [PrimTerm]>;
+def StrengthPropertyObjects : VPIObjectSet<"StrengthPropertyObjects",
+  [Gate, Switch, Udp, ContAssign, ContAssignBit], [NetFamily]>;
+def PrimitiveDefinitionObjects : VPIObjectSet<"PrimitiveDefinitionObjects",
+  [Gate, Switch, Udp, UdpDefn]>;
+def ReadModPathObjects : VPIObjectSet<"ReadModPathObjects", [ModPath]>;
+def EdgePropertyObjects : VPIObjectSet<"EdgePropertyObjects",
+  [PathTerm, TchkTerm]>;
+def TimingCheckObjects : VPIObjectSet<"TimingCheckObjects", [Tchk]>;
+def BlockingPropertyObjects : VPIObjectSet<"BlockingPropertyObjects",
+  [EventStmt, Assignment]>;
+def ReadCaseObjects : VPIObjectSet<"ReadCaseObjects", [Case]>;
+def NetAndContinuousObjects : VPIObjectSet<"NetAndContinuousObjects",
+  [ContAssign, ContAssignBit], [NetFamily]>;
+def FunctionPropertyObjects : VPIObjectSet<"FunctionPropertyObjects",
+  [Function, FuncCall, SysFuncCall]>;
+def SystemCallObjects : VPIObjectSet<"SystemCallObjects",
+  [SysFuncCall, SysTaskCall, MethodFuncCall, MethodTaskCall]>;
+def ScheduledEventObjects : VPIObjectSet<"ScheduledEventObjects",
+  [SchedEvent]>;
+def ActivePropertyObjects : VPIObjectSet<"ActivePropertyObjects",
+  [Frame, Thread]>;
+def ReadAttributeObjects : VPIObjectSet<"ReadAttributeObjects", [Attribute]>;
+def DelayTypePropertyObjects : VPIObjectSet<"DelayTypePropertyObjects",
+  [DelayTerm, DelayDevice]>;
+def ReadIteratorObjects : VPIObjectSet<"ReadIteratorObjects", [Iterator]>;
+def ContinuousAssignmentObjects : VPIObjectSet<
+  "ContinuousAssignmentObjects", [ContAssign, ContAssignBit]>;
+def ReadParameterObjects : VPIObjectSet<"ReadParameterObjects",
+  [Parameter, TypeParameter]>;
+def IndexedPartSelectObjects : VPIObjectSet<"IndexedPartSelectObjects",
+  [IndexedPartSelect]>;
+def ReadRegArrayObjects : VPIObjectSet<"ReadRegArrayObjects", [RegArray]>;
+def ForkObjects : VPIObjectSet<"ForkObjects", [Fork, NamedFork]>;
+def AccessTypePropertyObjects : VPIObjectSet<"AccessTypePropertyObjects",
+  [InterfaceTfDecl, Task, Function, Constraint]>;
+def ReadForObjects : VPIObjectSet<"ReadForObjects", [For]>;
+def VisibilityPropertyObjects : VPIObjectSet<"VisibilityPropertyObjects",
+  [Task, Function, ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar,
+   LongIntVar, IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg,
+   StructVar, UnionVar, EnumVar, StringVar, ChandleVar, ClassVar,
+   VirtualInterfaceVar, RegBit]>;
+def AlwaysObjects : VPIObjectSet<"AlwaysObjects", [Always]>;
+def DistributionItemObjects : VPIObjectSet<"DistributionItemObjects",
+  [DistItem]>;
+def VirtualPropertyObjects : VPIObjectSet<"VirtualPropertyObjects",
+  [ClassDefn, Constraint, Task, Function]>;
+def ReadConstraintObjects : VPIObjectSet<"ReadConstraintObjects", [Constraint]>;
+def QualifierPropertyObjects : VPIObjectSet<"QualifierPropertyObjects",
+  [If, IfElse, Case]>;
+def ClockingPropertyObjects : VPIObjectSet<"ClockingPropertyObjects",
+  [ClockingBlock, ClockingIODecl]>;
+def ReferenceObjects : VPIObjectSet<"ReferenceObjects", [RefObj]>;
+def PropertySpecificationObjects : VPIObjectSet<
+  "PropertySpecificationObjects", [Operation]>;
+def CoverObjects : VPIObjectSet<"CoverObjects", [Cover]>;
+def ReadClassTypespecObjects : VPIObjectSet<"ReadClassTypespecObjects",
+  [ClassTypespec]>;
+def InterfaceTypePropertyObjects : VPIObjectSet<
+  "InterfaceTypePropertyObjects", [VirtualInterfaceVar, InterfaceTypespec]>;
+
+def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
+  NamedPropertyObjects, "37.4-37.83">;
+def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
+  FullNamePropertyObjects, "37.10-37.83">;
+def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
+  ModuleSource, "37.5">;
+def CellInstanceProperty : VPIProperty<"vpiCellInstance", 8,
+  BooleanProperty, ModuleSource, "37.10">;
+def DefNameProperty : VPIProperty<"vpiDefName", 9, StringProperty,
+  DefinitionNameObjects, "37.10; 37.15; 37.28; 37.33; 37.34">;
+def ProtectedProperty : VPIProperty<"vpiProtected", 10, BooleanProperty,
+  ProtectedLegacyObjects, "37.10; 37.34; 37.83">;
+def DefNetTypeProperty : VPIProperty<"vpiDefNetType", 13, IntegerProperty,
+  InstanceObjects, "37.10">;
+def UnconnDriveProperty : VPIProperty<"vpiUnconnDrive", 14, IntegerProperty,
+  InstanceObjects, "37.10">;
+def DefFileProperty : VPIProperty<"vpiDefFile", 15, StringProperty,
+  DefinitionLocationObjects, "37.10; 37.81">;
+def DefLineNoProperty : VPIProperty<"vpiDefLineNo", 16, IntegerProperty,
+  DefinitionLocationObjects, "37.10; 37.81">;
+def ExplicitNameProperty : VPIProperty<"vpiExplicitName", 19,
+  BooleanProperty, PortObjects, "37.14">;
+def ConnByNameProperty : VPIProperty<"vpiConnByName", 21, BooleanProperty,
+  PortAndParamAssignObjects, "37.14; 37.26">;
+def NetTypeProperty : VPIProperty<"vpiNetType", 22, IntegerProperty,
+  NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 1>;
+def ExplicitScalaredProperty : VPIProperty<"vpiExplicitScalared", 23,
+  BooleanProperty, NetPropertyObjects, "37.16">;
+def ExplicitVectoredProperty : VPIProperty<"vpiExplicitVectored", 24,
+  BooleanProperty, NetPropertyObjects, "37.16">;
+def ExpandedProperty : VPIProperty<"vpiExpanded", 25, BooleanProperty,
+  NetPropertyObjects, "37.16">;
+def ImplicitDeclProperty : VPIProperty<"vpiImplicitDecl", 26,
+  BooleanProperty, NetAndGenScopeObjects, "37.16; 37.83">;
+def ChargeStrengthProperty : VPIProperty<"vpiChargeStrength", 27,
+  IntegerProperty, NetPropertyObjects, "37.16">;
+def ArrayProperty : VPIProperty<"vpiArray", 28, BooleanProperty,
+  ArrayMemberObjects, "37.10; 37.16; 37.17; 37.25; 37.33; 37.83">;
+def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
+  ReadPrimTermObjects, "37.33">;
+def Strength0Property : VPIProperty<"vpiStrength0", 31, IntegerProperty,
+  StrengthPropertyObjects, "37.16; 37.33; 37.45">;
+def Strength1Property : VPIProperty<"vpiStrength1", 32, IntegerProperty,
+  StrengthPropertyObjects, "37.16; 37.33; 37.45">;
+def PrimTypeProperty : VPIProperty<"vpiPrimType", 33, IntegerProperty,
+  PrimitiveDefinitionObjects, "37.33; 37.34", StaticProperty,
+  DeniedWhenProtected, 1>;
+def PolarityProperty : VPIProperty<"vpiPolarity", 34, IntegerProperty,
+  ReadModPathObjects, "37.37">;
+def DataPolarityProperty : VPIProperty<"vpiDataPolarity", 35,
+  IntegerProperty, ReadModPathObjects, "37.37">;
+def EdgeProperty : VPIProperty<"vpiEdge", 36, IntegerProperty,
+  EdgePropertyObjects, "37.37; 37.38">;
+def PathTypeProperty : VPIProperty<"vpiPathType", 37, IntegerProperty,
+  ReadModPathObjects, "37.37">;
+def TchkTypeProperty : VPIProperty<"vpiTchkType", 38, IntegerProperty,
+  TimingCheckObjects, "37.38", StaticProperty, DeniedWhenProtected, 1>;
+def OpTypeProperty : VPIProperty<"vpiOpType", 39, IntegerProperty,
+  OperationPropertyObjects, "37.50; 37.52; 37.57; 37.62", StaticProperty,
+  DeniedWhenProtected, 1>;
+def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
+  BlockingPropertyObjects, "37.60; 37.62">;
+def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
+  ReadCaseObjects, "37.70">;
+def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
+  BooleanProperty, NetAndContinuousObjects, "37.16; 37.45">;
+def FuncTypeProperty : VPIProperty<"vpiFuncType", 44, IntegerProperty,
+  FunctionPropertyObjects, "37.39; 37.40">;
+def UserDefnProperty : VPIProperty<"vpiUserDefn", 45, BooleanProperty,
+  SystemCallObjects, "37.40">;
+def ScheduledProperty : VPIProperty<"vpiScheduled", 46, BooleanProperty,
+  ScheduledEventObjects, "38.34", DynamicProperty>;
+def DefDelayModeProperty : VPIProperty<"vpiDefDelayMode", 47,
+  IntegerProperty, InstanceObjects, "37.10">;
+def DefDecayTimeProperty : VPIProperty<"vpiDefDecayTime", 48,
+  IntegerProperty, ModuleSource, "37.5">;
+def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
+  ActivePropertyObjects, "37.41; 37.42", DynamicProperty>;
+def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
+  AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; "
+  "37.32; 37.39">;
+def CellProperty : VPIProperty<"vpiCell", 51, StringProperty,
+  InstanceObjects, "37.10">;
+def ConfigProperty : VPIProperty<"vpiConfig", 52, StringProperty,
+  InstanceObjects, "37.10">;
+def DecompileProperty : VPIProperty<"vpiDecompile", 54, StringProperty,
+  DecompilePropertyObjects, "37.40; 37.57">;
+def DefAttributeProperty : VPIProperty<"vpiDefAttribute", 55,
+  BooleanProperty, ReadAttributeObjects, "37.81">;
+def DelayTypeProperty : VPIProperty<"vpiDelayType", 56, IntegerProperty,
+  DelayTypePropertyObjects, "37.43", StaticProperty, DeniedWhenProtected, 1>;
+def IteratorTypeProperty : VPIProperty<"vpiIteratorType", 57,
+  IntegerProperty, ReadIteratorObjects, "37.82">;
+def LibraryProperty : VPIProperty<"vpiLibrary", 58, StringProperty,
+  InstanceObjects, "37.10">;
+def OffsetProperty : VPIProperty<"vpiOffset", 60, IntegerProperty,
+  ContinuousAssignmentObjects, "37.45">;
+def ResolvedNetTypeProperty : VPIProperty<"vpiResolvedNetType", 61,
+  IntegerProperty, NetPropertyObjects, "37.16", StaticProperty,
+  DeniedWhenProtected, 1>;
+def SaveRestartIDProperty : VPIProperty<"vpiSaveRestartID", 62,
+  IntegerProperty, NullOnlyPropertyObjects, "38.9; 38.36.1",
+  DynamicProperty>;
+def SaveRestartLocationProperty : VPIProperty<"vpiSaveRestartLocation", 63,
+  StringProperty, NullOnlyPropertyObjects, "38.9; 38.11; 38.36.1",
+  DynamicProperty>;
+def ValidProperty : VPIProperty<"vpiValid", 64, IntegerProperty,
+  ValidPropertyObjects, "37.3.7; Annex I", DynamicProperty>;
+def LocalParamProperty : VPIProperty<"vpiLocalParam", 70, BooleanProperty,
+  ReadParameterObjects, "37.26; 37.29; 37.83">;
+def ModPathHasIfNoneProperty : VPIProperty<"vpiModPathHasIfNone", 71,
+  BooleanProperty, ReadModPathObjects, "37.37">;
+def IndexedPartSelectTypeProperty : VPIProperty<"vpiIndexedPartSelectType",
+  72, IntegerProperty, IndexedPartSelectObjects, "37.57">;
+def IsMemoryProperty : VPIProperty<"vpiIsMemory", 73, BooleanProperty,
+  ReadRegArrayObjects, "37.20">;
+
+def TopProperty : VPIProperty<"vpiTop", 600, BooleanProperty,
+  InstanceObjects, "37.10">;
+def UnitProperty : VPIProperty<"vpiUnit", 602, BooleanProperty,
+  InstanceObjects, "37.10">;
+def JoinTypeProperty : VPIProperty<"vpiJoinType", 603, IntegerProperty,
+  ForkObjects, "37.12">;
+def AccessTypeProperty : VPIProperty<"vpiAccessType", 604, IntegerProperty,
+  AccessTypePropertyObjects, "37.8; 37.32; 37.39">;
+def IsRandomizedProperty : VPIProperty<"vpiIsRandomized", 608,
+  BooleanProperty, OrdinaryVariablePropertyObjects, "37.17", DynamicProperty>;
+def LocalVarDeclsProperty : VPIProperty<"vpiLocalVarDecls", 609,
+  IntegerProperty, ReadForObjects, "37.72">;
+def ConstantVariableProperty : VPIProperty<"vpiConstantVariable", 612,
+  BooleanProperty, OrdinaryVariablePropertyObjects, "37.17">;
+def StructUnionMemberProperty : VPIProperty<"vpiStructUnionMember", 615,
+  BooleanProperty, StructUnionMemberPropertyObjects,
+  "37.16; 37.17; 37.18">;
+def VisibilityProperty : VPIProperty<"vpiVisibility", 620, IntegerProperty,
+  VisibilityPropertyObjects, "37.17; 37.39">;
+def AlwaysTypeProperty : VPIProperty<"vpiAlwaysType", 624,
+  IntegerProperty, AlwaysObjects, "37.61">;
+def DistTypeProperty : VPIProperty<"vpiDistType", 625, IntegerProperty,
+  DistributionItemObjects, "37.32">;
+def VirtualProperty : VPIProperty<"vpiVirtual", 635, BooleanProperty,
+  VirtualPropertyObjects, "37.29; 37.32; 37.39">;
+def HasActualProperty : VPIProperty<"vpiHasActual", 636, BooleanProperty,
+  DynamicPrefixPropertyObjects, "37.59", DynamicProperty>;
+def IsConstraintEnabledProperty : VPIProperty<"vpiIsConstraintEnabled", 638,
+  BooleanProperty, ReadConstraintObjects, "37.32", DynamicProperty>;
+def SoftProperty : VPIProperty<"vpiSoft", 639, BooleanProperty,
+  ConstraintExpressionPropertyObjects, "37.36">;
+def ClassTypeProperty : VPIProperty<"vpiClassType", 640, IntegerProperty,
+  ReadClassTypespecObjects, "37.30">;
+def MethodProperty : VPIProperty<"vpiMethod", 645, BooleanProperty,
+  TaskFunctionDeclObjects, "37.39">;
+def IsClockInferredProperty : VPIProperty<"vpiIsClockInferred", 649,
+  BooleanProperty, ConcurrentAssertionPropertyObjects, "37.48">;
+def QualifierProperty : VPIProperty<"vpiQualifier", 650, IntegerProperty,
+  QualifierPropertyObjects, "37.69; 37.70">;
+def InputEdgeProperty : VPIProperty<"vpiInputEdge", 651, IntegerProperty,
+  ClockingPropertyObjects, "37.46">;
+def OutputEdgeProperty : VPIProperty<"vpiOutputEdge", 652, IntegerProperty,
+  ClockingPropertyObjects, "37.46">;
+def GenericProperty : VPIProperty<"vpiGeneric", 653, BooleanProperty,
+  ReferenceObjects, "37.15">;
+def CompatibilityModeProperty : VPIProperty<"vpiCompatibilityMode", 654,
+  IntegerProperty, NullOnlyPropertyObjects, "Annex M">;
+def OpStrongProperty : VPIProperty<"vpiOpStrong", 656, BooleanProperty,
+  PropertySpecificationObjects, "37.50">;
+def IsDeferredProperty : VPIProperty<"vpiIsDeferred", 657, IntegerProperty,
+  ImmediateAssertionPropertyObjects, "37.53">;
+def AllocSchemeProperty : VPIProperty<"vpiAllocScheme", 658,
+  IntegerProperty, AllConcreteObjects, "37.3.7", StaticProperty,
+  DeniedWhenProtected, 0, DynamicAllocSchemeObjects>;
+def IsCoverSequenceProperty : VPIProperty<"vpiIsCoverSequence", 659,
+  BooleanProperty, CoverObjects, "37.48">;
+def StartLineProperty : VPIProperty<"vpiStartLine", 661, IntegerProperty,
+  AssertionLocationPropertyObjects, "37.47">;
+def ColumnProperty : VPIProperty<"vpiColumn", 662, IntegerProperty,
+  AssertionLocationPropertyObjects, "37.47">;
+def EndLineProperty : VPIProperty<"vpiEndLine", 663, IntegerProperty,
+  AssertionLocationPropertyObjects, "37.47">;
+def EndColumnProperty : VPIProperty<"vpiEndColumn", 664, IntegerProperty,
+  AssertionLocationPropertyObjects, "37.47">;
+def DPIPureProperty : VPIProperty<"vpiDPIPure", 665, BooleanProperty,
+  TaskFunctionDeclObjects, "37.39">;
+def DPIContextProperty : VPIProperty<"vpiDPIContext", 666, BooleanProperty,
+  TaskFunctionDeclObjects, "37.39">;
+def DPICStrProperty : VPIProperty<"vpiDPICStr", 667, IntegerProperty,
+  TaskFunctionDeclObjects, "37.39">;
+def DPICIdentifierProperty : VPIProperty<"vpiDPICIdentifier", 668,
+  StringProperty, TaskFunctionDeclObjects, "37.39">;
+def IsModPortProperty : VPIProperty<"vpiIsModPort", 669, BooleanProperty,
+  InterfaceTypePropertyObjects, "37.27; 37.28">;
+def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
+  ImmediateAssertionPropertyObjects, "37.53">;
 // Exact source-only identities that may occupy an immutable static-object
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.

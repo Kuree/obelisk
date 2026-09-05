@@ -5565,7 +5565,6 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   ASSERT_EQ(vpi_get(vpiType, root), vpiRegArray);
   EXPECT_EQ(vpi_get(vpiSize, root), 2);
   EXPECT_EQ(vpi_get(vpiArrayMember, root), 0);
-  EXPECT_EQ(vpi_get(vpiPackedArrayMember, root), 0);
   EXPECT_EQ(vpi_get(vpiConstantSelect, root), 1);
   EXPECT_EQ(vpi_get(vpiSigned, root), 0);
   EXPECT_EQ(vpi_get(vpiScalar, root), 0);
@@ -5615,7 +5614,6 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   EXPECT_EQ(vpi_get(vpiType, outer0), vpiReg);
   EXPECT_EQ(vpi_get(vpiSize, outer0), 4);
   EXPECT_EQ(vpi_get(vpiArrayMember, outer0), 1);
-  EXPECT_EQ(vpi_get(vpiPackedArrayMember, outer0), 0);
   EXPECT_EQ(vpi_get(vpiConstantSelect, outer0), 1);
   EXPECT_EQ(vpi_get(vpiSigned, outer0), 0);
   EXPECT_EQ(vpi_get(vpiScalar, outer0), 0);
@@ -5637,7 +5635,6 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   ASSERT_NE(bit07, nullptr);
   EXPECT_EQ(vpi_get(vpiType, bit04), vpiRegBit);
   EXPECT_EQ(vpi_get(vpiArrayMember, bit04), 0);
-  EXPECT_EQ(vpi_get(vpiPackedArrayMember, bit04), 0);
   EXPECT_EQ(vpi_get(vpiConstantSelect, bit04), 1);
   EXPECT_EQ(vpi_get(vpiSigned, bit04), 0);
   EXPECT_EQ(integerValue(bit04), 1);
@@ -6212,7 +6209,6 @@ TEST(VPI, IndexedQueriesRejectIndicesOnPartialOrdinaryPackedValues) {
     ASSERT_NE(partial, nullptr);
     EXPECT_EQ(vpi_get(vpiType, partial), testCase.exactType);
     EXPECT_EQ(vpi_get(vpiArrayMember, partial), 0);
-    EXPECT_EQ(vpi_get(vpiPackedArrayMember, partial), 0);
     EXPECT_EQ(vpi_handle(vpiIndex, partial), nullptr);
     EXPECT_EQ(vpi_iterate(vpiIndex, partial), nullptr);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
