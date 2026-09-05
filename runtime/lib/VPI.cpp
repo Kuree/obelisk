@@ -4476,6 +4476,25 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
   destination->user_data = callback->userData;
 }
 
+extern "C" OBELISK_VPI_EXPORT void
+vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (destination)
+    *destination = {};
+  if (!state)
+    return;
+  if (!destination) {
+    setError(state, "VPI system task/function info destination is null");
+    return;
+  }
+  __vpiHandle *handle = findHandle(opaque);
+  if (!handle)
+    return;
+  setError(state, "VPI system task/function metadata is unavailable",
+           vpiNotice);
+}
+
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_register_systf(p_vpi_systf_data) {
   beginVPICall();
   unsupportedStartup(
@@ -4522,6 +4541,73 @@ vpi_get_vlog_info(p_vpi_vlog_info info) {
   info->product = product;
   info->version = version;
   return 1;
+}
+
+extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
+                                                     PLI_INT32) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (!state)
+    return 0;
+  setError(state, "VPI save/restart data is unavailable", vpiNotice);
+  return 0;
+}
+
+extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
+                                                  p_vpi_delay destination) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (!state)
+    return;
+  if (!destination) {
+    setError(state, "VPI delay destination is null");
+    return;
+  }
+  if (!findHandle(opaque))
+    return;
+  setError(state, "VPI delay metadata is unavailable", vpiNotice);
+}
+
+extern "C" OBELISK_VPI_EXPORT void
+vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination, PLI_INT32 *,
+                    PLI_UINT32) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (destination)
+    destination->value.rawvals = nullptr;
+  if (!state)
+    return;
+  if (!destination) {
+    setError(state, "VPI array-value destination is null");
+    return;
+  }
+  if (!findHandle(opaque))
+    return;
+  setError(state, "VPI static array value query is unavailable", vpiNotice);
+}
+
+extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
+                                                         vpiHandle first,
+                                                         vpiHandle second,
+                                                         ...) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (!state)
+    return nullptr;
+  if (type != vpiInterModPath || !findHandle(first) || !findHandle(second))
+    return nullptr;
+  setError(state, "VPI intermodule path metadata is unavailable", vpiNotice);
+  return nullptr;
+}
+
+extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32) {
+  beginVPICall();
+  VPIState *state = requireState();
+  if (!state)
+    return nullptr;
+  setError(state, "VPI multichannel descriptor names are unavailable",
+           vpiNotice);
+  return nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle object,

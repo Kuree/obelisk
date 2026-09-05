@@ -7853,6 +7853,81 @@ TEST(VPI, ReportsAnOwnedSnapshotOfInvocationArguments) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ExportsEveryReadQueryRoutineDeclaredByThePublicHeader) {
+  EXPECT_NE(&vpi_chk_error, nullptr);
+  EXPECT_NE(&vpi_compare_objects, nullptr);
+  EXPECT_NE(&vpi_get, nullptr);
+  EXPECT_NE(&vpi_get64, nullptr);
+  EXPECT_NE(&vpi_get_cb_info, nullptr);
+  EXPECT_NE(&vpi_get_data, nullptr);
+  EXPECT_NE(&vpi_get_delays, nullptr);
+  EXPECT_NE(&vpi_get_str, nullptr);
+  EXPECT_NE(&vpi_get_systf_info, nullptr);
+  EXPECT_NE(&vpi_get_time, nullptr);
+  EXPECT_NE(&vpi_get_userdata, nullptr);
+  EXPECT_NE(&vpi_get_value, nullptr);
+  EXPECT_NE(&vpi_get_value_array, nullptr);
+  EXPECT_NE(&vpi_get_vlog_info, nullptr);
+  EXPECT_NE(&vpi_handle, nullptr);
+  EXPECT_NE(&vpi_handle_by_index, nullptr);
+  EXPECT_NE(&vpi_handle_by_multi_index, nullptr);
+  EXPECT_NE(&vpi_handle_by_name, nullptr);
+  EXPECT_NE(&vpi_handle_multi, nullptr);
+  EXPECT_NE(&vpi_iterate, nullptr);
+  EXPECT_NE(&vpi_mcd_name, nullptr);
+  EXPECT_NE(&vpi_release_handle, nullptr);
+  EXPECT_NE(&vpi_scan, nullptr);
+  EXPECT_NE(&vpi_free_object, nullptr);
+}
+
+TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(object, nullptr);
+  s_vpi_error_info error{};
+
+  s_vpi_systf_data systf{};
+  vpi_get_systf_info(object, &systf);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "VPI system task/function metadata is unavailable");
+
+  EXPECT_EQ(vpi_get_data(1, nullptr, 0), 0);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message, "VPI save/restart data is unavailable");
+
+  s_vpi_delay delay{};
+  vpi_get_delays(object, &delay);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message, "VPI delay metadata is unavailable");
+
+  s_vpi_arrayvalue array{};
+  array.value.rawvals = reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1});
+  vpi_get_value_array(object, &array, nullptr, 0);
+  EXPECT_EQ(array.value.rawvals, nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message, "VPI static array value query is unavailable");
+
+  EXPECT_EQ(vpi_handle_multi(vpiInterModPath, object, object), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message, "VPI intermodule path metadata is unavailable");
+
+  EXPECT_EQ(vpi_mcd_name(1), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  EXPECT_STREQ(error.message,
+               "VPI multichannel descriptor names are unavailable");
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, ValueResultStorageOutlivesHandlesAndIsSharedAcrossQueries) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
