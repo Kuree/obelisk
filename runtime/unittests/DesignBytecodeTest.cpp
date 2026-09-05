@@ -3,6 +3,7 @@
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "sv_vpi_user.h"
@@ -27,6 +28,9 @@
 #endif
 
 namespace {
+
+constexpr uint64_t kSemanticDirectorySize =
+    obelisk::reflection::SemanticDirectoryLayout.size;
 
 void put16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
   for (unsigned index = 0; index != 2; ++index)
@@ -1943,7 +1947,7 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
   constexpr uint32_t typeCount = 11;
   constexpr uint32_t edgeCount = 10;
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
-  const uint64_t typeOffset = directoryOffset + 48;
+  const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t edgeOffset = typeOffset + uint64_t{typeCount} * 64;
   const uint64_t rootOffset = edgeOffset + uint64_t{edgeCount} * 24;
   bytes.resize(rootOffset + 4, 0);
@@ -2068,7 +2072,8 @@ std::vector<uint8_t> makeNamedSemanticTypespecDatabase() {
   std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
   constexpr uint64_t objectOffset = 240;
   constexpr uint64_t directoryOffset = 496;
-  constexpr uint64_t semanticTypeOffset = directoryOffset + 48;
+  constexpr uint64_t semanticTypeOffset =
+      directoryOffset + kSemanticDirectorySize;
   constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
   constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 10 * 24;
   put32(bytes, objectOffset,
@@ -2087,7 +2092,8 @@ std::vector<uint8_t> makeNamedSemanticTypespecDatabase() {
 std::vector<uint8_t> makeBuiltinAliasTypespecDatabase() {
   std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
   constexpr uint64_t objectOffset = 240;
-  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  constexpr uint64_t semanticRootOffset =
+      496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
   put32(bytes, objectOffset,
         designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
                          vpiLogicTypespec));
@@ -2100,8 +2106,9 @@ std::vector<uint8_t> makeBuiltinAliasTypespecDatabase() {
 
 std::vector<uint8_t> makeDirectIntegralVectorDatabase() {
   std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
-  constexpr uint64_t semanticTypeOffset = 496 + 48;
-  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  constexpr uint64_t semanticTypeOffset = 496 + kSemanticDirectorySize;
+  constexpr uint64_t semanticRootOffset =
+      496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
   constexpr uint64_t logic = semanticTypeOffset + 7 * 64;
   put32(bytes, logic,
         OBELISK_RT_DESIGN_SEMANTIC_LOGIC |
@@ -2118,7 +2125,8 @@ std::vector<uint8_t> makeDirectIntegralVectorDatabase() {
 
 std::vector<uint8_t> makeMailboxSemanticDatabase() {
   std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
-  constexpr uint64_t semanticRootOffset = 496 + 48 + 11 * 64 + 10 * 24;
+  constexpr uint64_t semanticRootOffset =
+      496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
   put32(bytes, semanticRootOffset, 10);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
@@ -5322,7 +5330,8 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_get(vpiType, root), vpiModule);
   EXPECT_STREQ(vpi_get_str(vpiType, root), "vpiModule");
   EXPECT_EQ(vpi_get(vpiIsProtected, root), 0);
-  EXPECT_EQ(vpi_get(vpiSize, root), 0);
+  EXPECT_EQ(vpi_get(vpiSize, root), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_STREQ(vpi_get_str(vpiName, root), "top");
   EXPECT_EQ(vpi_get64(vpiType, value), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
@@ -6541,7 +6550,8 @@ TEST(VPI, TraversesProcessAndStatementRelationsWithExactTypes) {
   vpiHandle body = vpi_handle(vpiStmt, process);
   ASSERT_NE(body, nullptr);
   EXPECT_EQ(vpi_get(vpiType, body), vpiNamedBegin);
-  EXPECT_EQ(vpi_get(vpiSize, body), 0);
+  EXPECT_EQ(vpi_get(vpiSize, body), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_STREQ(vpi_get_str(vpiName, body), "body");
   EXPECT_STREQ(vpi_get_str(vpiFullName, body), "top.child.body");
   EXPECT_STREQ(vpi_get_str(vpiFile, body), "test.sv");
@@ -10143,7 +10153,8 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
   ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
 
   constexpr uint64_t directoryOffset = 496;
-  constexpr uint64_t semanticTypeOffset = directoryOffset + 48;
+  constexpr uint64_t semanticTypeOffset =
+      directoryOffset + kSemanticDirectorySize;
   constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
   auto reject = [&](std::vector<uint8_t> malformed) {
     put64(malformed, 32, imageChecksum(malformed));

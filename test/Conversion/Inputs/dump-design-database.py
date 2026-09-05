@@ -27,8 +27,12 @@ semantic_directory = struct.unpack_from("<I", image, 12)[0]
 semantic_type_offset = semantic_type_count = 0
 semantic_edge_offset = semantic_edge_count = 0
 semantic_root_offset = semantic_root_count = 0
+relation_index_offset = relation_index_count = 0
+relation_index_dimension_offset = relation_index_dimension_count = 0
+relation_index_key_offset = relation_index_key_count = 0
+relation_index_member_offset = relation_index_member_count = 0
 if semantic_directory:
-    if semantic_directory > len(image) - 48:
+    if semantic_directory > len(image) - 112:
         raise SystemExit("invalid design-database semantic directory")
     (
         semantic_type_offset,
@@ -37,7 +41,15 @@ if semantic_directory:
         semantic_edge_count,
         semantic_root_offset,
         semantic_root_count,
-    ) = struct.unpack_from("<QQQQQQ", image, semantic_directory)
+        relation_index_offset,
+        relation_index_count,
+        relation_index_dimension_offset,
+        relation_index_dimension_count,
+        relation_index_key_offset,
+        relation_index_key_count,
+        relation_index_member_offset,
+        relation_index_member_count,
+    ) = struct.unpack_from("<QQQQQQQQQQQQQQ", image, semantic_directory)
 
 
 def checked_range(offset, count, size, description):
@@ -55,6 +67,20 @@ checked_range(relation_offset, relation_count, 16, "relation")
 checked_range(semantic_type_offset, semantic_type_count, 64, "semantic type")
 checked_range(semantic_edge_offset, semantic_edge_count, 24, "semantic type edge")
 checked_range(semantic_root_offset, semantic_root_count, 4, "semantic root")
+checked_range(relation_index_offset, relation_index_count, 20, "relation index")
+checked_range(
+    relation_index_dimension_offset,
+    relation_index_dimension_count,
+    16,
+    "relation index dimension",
+)
+checked_range(relation_index_key_offset, relation_index_key_count, 12, "relation index key")
+checked_range(
+    relation_index_member_offset,
+    relation_index_member_count,
+    12,
+    "relation index member",
+)
 
 
 def string_at(offset):
@@ -185,6 +211,41 @@ for index in range(semantic_root_count):
     print(
         f"semantic_root object={index} object_name={object_index_names[index]} "
         f"semantic_type={semantic_type}"
+    )
+
+for index in range(relation_index_count):
+    offset = relation_index_offset + index * 20
+    object_index, first_dimension, dimension_count, flags, first_key, first_ordinal_key = struct.unpack_from(
+        "<IIHHII", image, offset
+    )
+    print(
+        f"relation_index index={index} object={object_index} "
+        f"object_name={object_index_names[object_index]} "
+        f"first_dimension={first_dimension} dimension_count={dimension_count} "
+        f"flags=0x{flags:x} first_key={first_key} "
+        f"first_ordinal_key={first_ordinal_key}"
+    )
+
+for index in range(relation_index_dimension_count):
+    left, right = struct.unpack_from(
+        "<qq", image, relation_index_dimension_offset + index * 16
+    )
+    print(f"relation_index_dimension index={index} range=[{left}:{right}]")
+
+for index in range(relation_index_key_count):
+    value, ordinal = struct.unpack_from(
+        "<qI", image, relation_index_key_offset + index * 12
+    )
+    print(f"relation_index_key index={index} value={value} ordinal={ordinal}")
+
+for index in range(relation_index_member_count):
+    packed_target, relation_index, ordinal = struct.unpack_from(
+        "<III", image, relation_index_member_offset + index * 12
+    )
+    print(
+        f"relation_index_member index={index} target_table={packed_target >> 30} "
+        f"target={packed_target & 0x3fffffff} relation_index={relation_index} "
+        f"ordinal={ordinal}"
     )
 
 statement_index_names = []

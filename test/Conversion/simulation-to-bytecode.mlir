@@ -123,13 +123,13 @@ module attributes {
 // zero remains the legacy/default-strong encoding.
 // STATE: state {{[0-9]+}}: kind=driver flags=181 {{.*}}strength0=5 strength1=0
 
-// Unified runtime artifact version 1 follows the database magic; the next word
-// is reserved.
-// DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
+// Unified runtime artifact version 1 follows the database magic. The extension
+// directory offset that follows is intentionally image-layout dependent.
+// DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
 
 // The last executable copy of @add is erased, but version-1 reflection still
 // originates from its immutable record, including parent, name, and source.
-// INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
+// INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
 // INLINED-DATABASE: obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
 // INLINED-DATABASE-SAME: loc(#loc[[ADD:[0-9]+]])
 // INLINED-DATABASE-NOT: obelisk_sim.func private @add

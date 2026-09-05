@@ -3236,6 +3236,31 @@ private:
       }
     }
 
+    if constexpr (std::same_as<T, slang::ast::InstanceArraySymbol>) {
+      SET_OP_ATTR(ArrayRange, builder.getDenseI64ArrayAttr(
+                                  {node.range.left, node.range.right}));
+    }
+
+    if constexpr (std::same_as<T, slang::ast::GenerateBlockArraySymbol>) {
+      SmallVector<int64_t> indices;
+      indices.reserve(node.entries.size());
+      bool valid = true;
+      for (const slang::ast::GenerateBlockSymbol *entry : node.entries) {
+        const slang::SVInt *index = entry->getArrayIndex();
+        std::optional<int64_t> value =
+            index ? index->as<int64_t>() : std::nullopt;
+        if (!value) {
+          emitError(sourceLocation(entry->location))
+              << "generate block index is not representable as signed i64";
+          valid = false;
+          continue;
+        }
+        indices.push_back(*value);
+      }
+      if (valid)
+        SET_OP_ATTR(ArrayIndices, builder.getDenseI64ArrayAttr(indices));
+    }
+
     if constexpr (std::same_as<T, slang::ast::PrimitiveSymbol> ||
                   std::same_as<T, slang::ast::PrimitiveInstanceSymbol>) {
       const slang::ast::PrimitiveSymbol &primitive = [&]() -> const auto & {

@@ -39,6 +39,14 @@ constexpr uint64_t kSemanticTypeEdgeSize =
     obelisk::reflection::SemanticTypeEdgeLayout.size;
 constexpr uint64_t kObjectSemanticRootSize =
     obelisk::reflection::ObjectSemanticRootLayout.size;
+constexpr uint64_t kRelationIndexSize =
+    obelisk::reflection::RelationIndexLayout.size;
+constexpr uint64_t kRelationIndexDimensionSize =
+    obelisk::reflection::RelationIndexDimensionLayout.size;
+constexpr uint64_t kRelationIndexKeySize =
+    obelisk::reflection::RelationIndexKeyLayout.size;
+constexpr uint64_t kRelationIndexMemberSize =
+    obelisk::reflection::RelationIndexMemberLayout.size;
 
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
@@ -164,6 +172,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t semanticTypeOffset = 0, semanticTypeCount = 0;
   uint64_t semanticTypeEdgeOffset = 0, semanticTypeEdgeCount = 0;
   uint64_t objectSemanticRootOffset = 0, objectSemanticRootCount = 0;
+  uint64_t relationIndexOffset = 0, relationIndexCount = 0;
+  uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
+  uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
+  uint64_t relationIndexMemberOffset = 0, relationIndexMemberCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -176,6 +188,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     semanticTypeEdgeCount = read64(directory + 24);
     objectSemanticRootOffset = read64(directory + 32);
     objectSemanticRootCount = read64(directory + 40);
+    relationIndexOffset = read64(directory + 48);
+    relationIndexCount = read64(directory + 56);
+    relationIndexDimensionOffset = read64(directory + 64);
+    relationIndexDimensionCount = read64(directory + 72);
+    relationIndexKeyOffset = read64(directory + 80);
+    relationIndexKeyCount = read64(directory + 88);
+    relationIndexMemberOffset = read64(directory + 96);
+    relationIndexMemberCount = read64(directory + 104);
   }
   database = {data,
               execution->design_database_size,
@@ -203,6 +223,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               semanticTypeEdgeCount,
               objectSemanticRootOffset,
               objectSemanticRootCount,
+              relationIndexOffset,
+              relationIndexCount,
+              relationIndexDimensionOffset,
+              relationIndexDimensionCount,
+              relationIndexKeyOffset,
+              relationIndexKeyCount,
+              relationIndexMemberOffset,
+              relationIndexMemberCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -225,6 +253,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kSemanticTypeEdgeSize},
         {database.objectSemanticRoots, database.objectSemanticRootCount,
          kObjectSemanticRootSize},
+        {database.relationIndices, database.relationIndexCount,
+         kRelationIndexSize},
+        {database.relationIndexDimensions, database.relationIndexDimensionCount,
+         kRelationIndexDimensionSize},
+        {database.relationIndexKeys, database.relationIndexKeyCount,
+         kRelationIndexKeySize},
+        {database.relationIndexMembers, database.relationIndexMemberCount,
+         kRelationIndexMemberSize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -249,7 +285,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.statementSiteCount != 0 || database.relationCount != 0 ||
         database.semanticTypeCount != 0 ||
         database.semanticTypeEdgeCount != 0 ||
-        database.objectSemanticRootCount != 0)) ||
+        database.objectSemanticRootCount != 0 ||
+        database.relationIndexCount != 0 ||
+        database.relationIndexDimensionCount != 0 ||
+        database.relationIndexKeyCount != 0 ||
+        database.relationIndexMemberCount != 0)) ||
       (semanticDirectory != 0 &&
        database.objectSemanticRootCount != database.objectCount) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
@@ -274,6 +314,16 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.objectSemanticRoots,
                   database.objectSemanticRootCount, kObjectSemanticRootSize,
                   database.size) ||
+      !validRange(database.relationIndices, database.relationIndexCount,
+                  kRelationIndexSize, database.size) ||
+      !validRange(database.relationIndexDimensions,
+                  database.relationIndexDimensionCount,
+                  kRelationIndexDimensionSize, database.size) ||
+      !validRange(database.relationIndexKeys, database.relationIndexKeyCount,
+                  kRelationIndexKeySize, database.size) ||
+      !validRange(database.relationIndexMembers,
+                  database.relationIndexMemberCount, kRelationIndexMemberSize,
+                  database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -285,6 +335,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.semanticTypeEdges < kHeaderSize) ||
       (database.objectSemanticRootCount != 0 &&
        database.objectSemanticRoots < kHeaderSize) ||
+      (database.relationIndexCount != 0 &&
+       database.relationIndices < kHeaderSize) ||
+      (database.relationIndexDimensionCount != 0 &&
+       database.relationIndexDimensions < kHeaderSize) ||
+      (database.relationIndexKeyCount != 0 &&
+       database.relationIndexKeys < kHeaderSize) ||
+      (database.relationIndexMemberCount != 0 &&
+       database.relationIndexMembers < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.stringSize == 0 || database.scopeCount > UINT32_MAX ||
       database.objectCount > UINT32_MAX ||
@@ -293,6 +351,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.relationCount > UINT32_MAX ||
       database.semanticTypeCount > UINT32_MAX ||
       database.semanticTypeEdgeCount > UINT32_MAX ||
+      database.relationIndexCount > UINT32_MAX ||
+      database.relationIndexDimensionCount > UINT32_MAX ||
+      database.relationIndexKeyCount > UINT32_MAX ||
+      database.relationIndexMemberCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
@@ -454,6 +516,41 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                       database.objectSemanticRootCount, kObjectSemanticRootSize,
                       database.index, database.indexCount, kIndexSize))
     return false;
+  struct Section {
+    uint64_t offset;
+    uint64_t count;
+    uint64_t stride;
+  };
+  const Section sections[] = {
+      {database.scopes, database.scopeCount, kScopeSize},
+      {database.objects, database.objectCount, kObjectSize},
+      {database.types, database.typeCount, kTypeSize},
+      {database.strings, database.stringSize, 1},
+      {database.index, database.indexCount, kIndexSize},
+      {database.statements, database.statementCount, kStatementSize},
+      {database.statementSites, database.statementSiteCount,
+       kStatementSiteSize},
+      {database.relations, database.relationCount, kRelationSize},
+      {database.semanticTypes, database.semanticTypeCount, kSemanticTypeSize},
+      {database.semanticTypeEdges, database.semanticTypeEdgeCount,
+       kSemanticTypeEdgeSize},
+      {database.objectSemanticRoots, database.objectSemanticRootCount,
+       kObjectSemanticRootSize},
+      {database.relationIndices, database.relationIndexCount,
+       kRelationIndexSize},
+      {database.relationIndexDimensions, database.relationIndexDimensionCount,
+       kRelationIndexDimensionSize},
+      {database.relationIndexKeys, database.relationIndexKeyCount,
+       kRelationIndexKeySize},
+      {database.relationIndexMembers, database.relationIndexMemberCount,
+       kRelationIndexMemberSize},
+  };
+  for (size_t left = 0; left != std::size(sections); ++left)
+    for (size_t right = left + 1; right != std::size(sections); ++right)
+      if (!rangesDisjoint(sections[left].offset, sections[left].count,
+                          sections[left].stride, sections[right].offset,
+                          sections[right].count, sections[right].stride))
+        return false;
   return true;
 }
 
@@ -814,11 +911,36 @@ bool validateDatabaseImpl(const Database &database) {
           !validSource(database, read64(record + 32), read64(record + 88)))
         return false;
       if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+        const auto *indexed =
+            obelisk::reflection::findVPIIndexedAccess(intrinsicKind);
+        bool relationIndexed =
+            indexed &&
+            indexed->accessKind ==
+                obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+        using VPIKind = obelisk::reflection::VPIObjectKind;
+        bool scalarPrimitive =
+            intrinsicKind == static_cast<uint32_t>(VPIKind::Gate) ||
+            intrinsicKind == static_cast<uint32_t>(VPIKind::Switch) ||
+            intrinsicKind == static_cast<uint32_t>(VPIKind::Udp);
         if ((caps & ~OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 ||
             read64(record + 80) != 0 ||
             (typeOffset == 0
-                 ? read64(record + 56) != 0 || read64(record + 64) != 0 ||
-                       read64(record + 72) != 0
+                 ? relationIndexed
+                       ? intrinsicKind !=
+                                 static_cast<uint32_t>(
+                                     obelisk::reflection::VPIObjectKind::
+                                         GenScopeArray) &&
+                             read64(record + 56) == 0
+                   : scalarPrimitive
+                       ? read64(record + 56) > INT64_MAX ||
+                             readI64(record + 64) !=
+                                 (read64(record + 56) == 0
+                                      ? 0
+                                      : static_cast<int64_t>(
+                                            read64(record + 56) - 1)) ||
+                             readI64(record + 72) != 0
+                       : read64(record + 56) != 0 || read64(record + 64) != 0 ||
+                             read64(record + 72) != 0
                  : !isTypeOffset(database, typeOffset) ||
                        read64(record + 56) == 0 ||
                        read64(database.data + typeOffset + 8) !=
@@ -1897,15 +2019,19 @@ bool validateDatabaseImpl(const Database &database) {
     // direction. Semantic cross-references such as vpiDerivedClasses are not
     // declaration edges even though they also target a class definition.
     if (iterate && !rootSource && relationBackedTarget && lexicalForward) {
-      const auto *parentEdge = obelisk::reflection::findVPITraversal(
-          targetKind,
-          static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
-          obelisk::reflection::VPITraversalMode::Handle);
-      if (parentEdge &&
-          parentEdge->automaticRelation ==
-              obelisk::reflection::VPIAutomaticRelation::ParentScope &&
-          obelisk::reflection::vpiObjectSetContains(parentEdge->targets,
-                                                    sourceKind))
+      bool hasMatchingParent = std::any_of(
+          std::begin(obelisk::reflection::vpiTraversals),
+          std::end(obelisk::reflection::vpiTraversals),
+          [&](const obelisk::reflection::VPITraversalDescriptor &parentEdge) {
+            return parentEdge.sourceType == targetKind &&
+                   parentEdge.mode ==
+                       obelisk::reflection::VPITraversalMode::Handle &&
+                   parentEdge.automaticRelation ==
+                       obelisk::reflection::VPIAutomaticRelation::ParentScope &&
+                   obelisk::reflection::vpiObjectSetContains(parentEdge.targets,
+                                                             sourceKind);
+          });
+      if (hasMatchingParent)
         staticLexicalChildren.insert(lexicalPair(
             relationEndpoint(sourceTable, sourceIndex), packedTarget));
     }
@@ -1965,6 +2091,13 @@ bool validateDatabaseImpl(const Database &database) {
           !hasUniqueConnectionTarget(sourceRecord, targetIndex))
         return false;
       break;
+    case obelisk::reflection::VPIAutomaticRelation::IndexedContainer:
+      // The relation-index member table below is the canonical bidirectional
+      // proof that this selected object belongs to the target array.
+      if (targetTable != obelisk::reflection::TableKind::Object ||
+          !relationBacked(target))
+        return false;
+      break;
     }
 
     if (!edge->statementContainment)
@@ -2017,7 +2150,16 @@ bool validateDatabaseImpl(const Database &database) {
   }
   if (!automaticGroupComplete())
     return false;
-  if (staticLexicalChildren != staticLexicalParents)
+  // ParentScope also represents an effective enclosing scope. An indexed
+  // member can therefore have an additional vpiModule/vpiInstance relation
+  // that skips its immediate array container. Require the reverse relation
+  // for every actual lexical child without rejecting those generated
+  // enclosing-scope relations. Relation-index validation below separately
+  // proves the member-to-array edge.
+  if (!std::all_of(staticLexicalChildren.begin(), staticLexicalChildren.end(),
+                   [&](uint64_t child) {
+                     return staticLexicalParents.count(child) != 0;
+                   }))
     return false;
   if (haveStatementContainment &&
       std::any_of(incomingRelations.begin(), incomingRelations.end(),
@@ -2025,6 +2167,243 @@ bool validateDatabaseImpl(const Database &database) {
                     return incoming.modeMask == 0;
                   }))
     return false;
+
+  std::vector<bool> relationIndexedObjects(database.objectCount, false);
+  std::vector<bool> usedDimensions(database.relationIndexDimensionCount, false);
+  std::vector<bool> usedKeys(database.relationIndexKeyCount, false);
+  uint32_t previousRelationIndexObject = 0;
+  for (uint32_t index = 0; index != database.relationIndexCount; ++index) {
+    const uint8_t *entry = database.data + database.relationIndices +
+                           uint64_t{index} * kRelationIndexSize;
+    uint32_t objectIndex = read32(entry);
+    uint32_t firstDimension = read32(entry + 4);
+    uint16_t dimensionCount = read16(entry + 8);
+    uint16_t flags = read16(entry + 10);
+    uint32_t firstKey = read32(entry + 12);
+    uint32_t firstOrdinalKey = read32(entry + 16);
+    if (objectIndex >= database.objectCount || dimensionCount == 0 ||
+        (index != 0 && objectIndex <= previousRelationIndexObject) ||
+        relationIndexedObjects[objectIndex])
+      return false;
+    previousRelationIndexObject = objectIndex;
+    relationIndexedObjects[objectIndex] = true;
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
+    uint32_t vpiKind = recordVPIKind(object);
+    const auto *access = obelisk::reflection::findVPIIndexedAccess(vpiKind);
+    using VPIKind = obelisk::reflection::VPIObjectKind;
+    bool primitiveArray =
+        vpiKind == static_cast<uint32_t>(VPIKind::GateArray) ||
+        vpiKind == static_cast<uint32_t>(VPIKind::SwitchArray) ||
+        vpiKind == static_cast<uint32_t>(VPIKind::UdpArray);
+    uint64_t elementCount = read64(object + 56);
+    bool sparse = flags == 1;
+    bool generateArray =
+        vpiKind == static_cast<uint32_t>(VPIKind::GenScopeArray);
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        read64(object + 48) != 0 || (!sparse && elementCount == 0) ||
+        elementCount > UINT32_MAX || !access ||
+        access->accessKind !=
+            obelisk::reflection::VPIIndexedAccessKind::RelationElement ||
+        (flags != 0 && !sparse))
+      return false;
+    if (sparse != generateArray)
+      return false;
+    if (primitiveArray && (sparse || dimensionCount != 1))
+      return false;
+
+    uint64_t firstRelation = lowerBoundRelation(
+        database, obelisk::reflection::TableKind::Object, objectIndex,
+        static_cast<uint16_t>(access->relationSelector), true);
+    bool hasRelation =
+        firstRelation != database.relationCount &&
+        relationMatches(relationAt(database, firstRelation),
+                        obelisk::reflection::TableKind::Object, objectIndex,
+                        static_cast<uint16_t>(access->relationSelector), true);
+    if ((elementCount == 0 && hasRelation) ||
+        (elementCount != 0 &&
+         (!hasRelation ||
+          upperBoundRelation(
+              database, firstRelation, obelisk::reflection::TableKind::Object,
+              objectIndex, static_cast<uint16_t>(access->relationSelector),
+              true) -
+                  firstRelation !=
+              elementCount)))
+      return false;
+
+    if (sparse) {
+      if (dimensionCount != 1 || firstDimension != UINT32_MAX ||
+          firstKey > database.relationIndexKeyCount ||
+          elementCount > database.relationIndexKeyCount - firstKey ||
+          firstOrdinalKey > database.relationIndexKeyCount ||
+          elementCount > database.relationIndexKeyCount - firstOrdinalKey ||
+          readI64(object + 64) != 0 || readI64(object + 72) != 0)
+        return false;
+      std::vector<bool> ordinals(static_cast<size_t>(elementCount), false);
+      std::vector<int64_t> valuesByOrdinal(static_cast<size_t>(elementCount));
+      int64_t previousKey = 0;
+      for (uint32_t key = 0; key != elementCount; ++key) {
+        uint32_t keyIndex = firstKey + key;
+        if (usedKeys[keyIndex])
+          return false;
+        usedKeys[keyIndex] = true;
+        const uint8_t *keyRecord = database.data + database.relationIndexKeys +
+                                   uint64_t{keyIndex} * kRelationIndexKeySize;
+        int64_t value = readI64(keyRecord);
+        uint32_t ordinal = read32(keyRecord + 8);
+        if ((key != 0 && value <= previousKey) || ordinal >= elementCount ||
+            ordinals[ordinal])
+          return false;
+        previousKey = value;
+        ordinals[ordinal] = true;
+        valuesByOrdinal[ordinal] = value;
+      }
+      for (uint32_t ordinal = 0; ordinal != elementCount; ++ordinal) {
+        uint32_t keyIndex = firstOrdinalKey + ordinal;
+        if (usedKeys[keyIndex])
+          return false;
+        usedKeys[keyIndex] = true;
+        const uint8_t *keyRecord = database.data + database.relationIndexKeys +
+                                   uint64_t{keyIndex} * kRelationIndexKeySize;
+        if (read32(keyRecord + 8) != ordinal ||
+            readI64(keyRecord) != valuesByOrdinal[ordinal])
+          return false;
+      }
+      continue;
+    }
+
+    if (firstDimension > database.relationIndexDimensionCount ||
+        dimensionCount >
+            database.relationIndexDimensionCount - firstDimension ||
+        firstKey != UINT32_MAX || firstOrdinalKey != UINT32_MAX)
+      return false;
+    uint64_t product = 1;
+    for (uint32_t dimension = 0; dimension != dimensionCount; ++dimension) {
+      uint32_t dimensionIndex = firstDimension + dimension;
+      if (usedDimensions[dimensionIndex])
+        return false;
+      usedDimensions[dimensionIndex] = true;
+      const uint8_t *range =
+          database.data + database.relationIndexDimensions +
+          uint64_t{dimensionIndex} * kRelationIndexDimensionSize;
+      int64_t left = readI64(range);
+      int64_t right = readI64(range + 8);
+      uint64_t distance =
+          left >= right
+              ? static_cast<uint64_t>(left) - static_cast<uint64_t>(right)
+              : static_cast<uint64_t>(right) - static_cast<uint64_t>(left);
+      if (distance == UINT64_MAX || distance + 1 > UINT32_MAX ||
+          product > UINT32_MAX / (distance + 1))
+        return false;
+      product *= distance + 1;
+      if (dimension == 0 &&
+          (readI64(object + 64) != left || readI64(object + 72) != right))
+        return false;
+    }
+    if (product != elementCount)
+      return false;
+  }
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{index} * kObjectSize;
+    const auto *access =
+        obelisk::reflection::findVPIIndexedAccess(recordVPIKind(object));
+    bool requiresIndex =
+        recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        access &&
+        access->accessKind ==
+            obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+    if (requiresIndex != relationIndexedObjects[index])
+      return false;
+  }
+  if (std::any_of(usedDimensions.begin(), usedDimensions.end(),
+                  [](bool used) { return !used; }) ||
+      std::any_of(usedKeys.begin(), usedKeys.end(),
+                  [](bool used) { return !used; }))
+    return false;
+  uint64_t indexedElementCount = 0;
+  for (uint32_t index = 0; index != database.relationIndexCount; ++index) {
+    const uint8_t *entry = database.data + database.relationIndices +
+                           uint64_t{index} * kRelationIndexSize;
+    uint32_t objectIndex = read32(entry);
+    indexedElementCount += read64(database.data + database.objects +
+                                  uint64_t{objectIndex} * kObjectSize + 56);
+  }
+  if (indexedElementCount != database.relationIndexMemberCount)
+    return false;
+  uint32_t previousMemberTarget = 0;
+  for (uint32_t index = 0; index != database.relationIndexMemberCount;
+       ++index) {
+    const uint8_t *member = database.data + database.relationIndexMembers +
+                            uint64_t{index} * kRelationIndexMemberSize;
+    uint32_t packedTarget = read32(member);
+    uint32_t relationIndex = read32(member + 4);
+    uint32_t ordinal = read32(member + 8);
+    if ((index != 0 && packedTarget <= previousMemberTarget) ||
+        relationIndex >= database.relationIndexCount)
+      return false;
+    previousMemberTarget = packedTarget;
+    auto targetTable = obelisk::reflection::unpackTableIndexKind(packedTarget);
+    uint32_t targetIndex = obelisk::reflection::unpackTableIndex(packedTarget);
+    if ((targetTable == obelisk::reflection::TableKind::Scope
+             ? targetIndex >= database.scopeCount
+         : targetTable == obelisk::reflection::TableKind::Object
+             ? targetIndex >= database.objectCount
+             : true))
+      return false;
+    const uint8_t *relationIndexRecord =
+        database.data + database.relationIndices +
+        uint64_t{relationIndex} * kRelationIndexSize;
+    uint32_t sourceIndex = read32(relationIndexRecord);
+    const uint8_t *source =
+        database.data + database.objects + uint64_t{sourceIndex} * kObjectSize;
+    uint64_t elementCount = read64(source + 56);
+    uint32_t sourceKind = recordVPIKind(source);
+    uint32_t targetKind = recordVPIKind(
+        database.data +
+        (targetTable == obelisk::reflection::TableKind::Scope
+             ? database.scopes + uint64_t{targetIndex} * kScopeSize
+             : database.objects + uint64_t{targetIndex} * kObjectSize));
+    const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceKind);
+    if (ordinal >= elementCount || !access)
+      return false;
+    uint64_t firstRelation = lowerBoundRelation(
+        database, obelisk::reflection::TableKind::Object, sourceIndex,
+        static_cast<uint16_t>(access->relationSelector), true);
+    if (firstRelation >= database.relationCount ||
+        relationAt(database, firstRelation + ordinal)
+                .getTargetIndexAndTable() != packedTarget)
+      return false;
+    uint32_t packedArray = 0;
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::Object, sourceIndex, packedArray))
+      return false;
+    auto firstEdge = std::lower_bound(
+        std::begin(obelisk::reflection::vpiTraversals),
+        std::end(obelisk::reflection::vpiTraversals), targetKind,
+        [](const obelisk::reflection::VPITraversalDescriptor &edge,
+           uint32_t kind) { return edge.sourceType < kind; });
+    for (auto edgeIterator = firstEdge;
+         edgeIterator != std::end(obelisk::reflection::vpiTraversals) &&
+         edgeIterator->sourceType == targetKind;
+         ++edgeIterator) {
+      const auto &edge = *edgeIterator;
+      if (edge.mode != obelisk::reflection::VPITraversalMode::Handle ||
+          edge.automaticRelation !=
+              obelisk::reflection::VPIAutomaticRelation::IndexedContainer ||
+          !obelisk::reflection::vpiObjectSetContains(edge.targets, sourceKind))
+        continue;
+      uint64_t reverse =
+          lowerBoundRelation(database, targetTable, targetIndex,
+                             static_cast<uint16_t>(edge.selector), false);
+      if (reverse == database.relationCount ||
+          !relationMatches(relationAt(database, reverse), targetTable,
+                           targetIndex, static_cast<uint16_t>(edge.selector),
+                           false) ||
+          relationAt(database, reverse).getTargetIndexAndTable() != packedArray)
+        return false;
+    }
+  }
 
   uint64_t previousHash = 0;
   std::string_view previousName;
@@ -2601,6 +2980,144 @@ obelisk_rt_status designVPIType(const Database &database,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status designVPIRelationIndex(const Database &database,
+                                         obelisk_rt_design_cursor_v1 source,
+                                         VPIRelationIndexInfo *outInfo) {
+  *outInfo = {};
+  if (!isObjectOffset(database, source.offset))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t objectIndex =
+      static_cast<uint32_t>((source.offset - database.objects) / kObjectSize);
+  uint32_t low = 0;
+  uint32_t high = static_cast<uint32_t>(database.relationIndexCount);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record = database.data + database.relationIndices +
+                            uint64_t{middle} * kRelationIndexSize;
+    if (read32(record) < objectIndex)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.relationIndexCount)
+    return OBELISK_RT_EOF;
+  const uint8_t *record = database.data + database.relationIndices +
+                          uint64_t{low} * kRelationIndexSize;
+  if (read32(record) != objectIndex)
+    return OBELISK_RT_EOF;
+  uint64_t elementCount = read64(database.data + database.objects +
+                                 uint64_t{objectIndex} * kObjectSize + 56);
+  outInfo->firstDimension = read32(record + 4);
+  outInfo->dimensionCount = read16(record + 8);
+  outInfo->sparse = read16(record + 10) != 0;
+  outInfo->firstKey = read32(record + 12);
+  outInfo->firstOrdinalKey = read32(record + 16);
+  outInfo->elementCount = static_cast<uint32_t>(elementCount);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designVPIRelationIndexDimension(
+    const Database &database, const VPIRelationIndexInfo &info,
+    uint32_t dimension, int64_t *outLeft, int64_t *outRight) {
+  if (info.sparse || dimension >= info.dimensionCount ||
+      info.firstDimension > database.relationIndexDimensionCount ||
+      dimension >= database.relationIndexDimensionCount - info.firstDimension)
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint8_t *record =
+      database.data + database.relationIndexDimensions +
+      uint64_t{info.firstDimension + dimension} * kRelationIndexDimensionSize;
+  *outLeft = readI64(record);
+  *outRight = readI64(record + 8);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designVPIRelationIndexKey(const Database &database,
+                                            const VPIRelationIndexInfo &info,
+                                            int64_t index,
+                                            uint32_t *outOrdinal) {
+  if (!info.sparse || info.firstKey > database.relationIndexKeyCount ||
+      info.elementCount > database.relationIndexKeyCount - info.firstKey)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t low = 0;
+  uint32_t high = info.elementCount;
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        database.data + database.relationIndexKeys +
+        uint64_t{info.firstKey + middle} * kRelationIndexKeySize;
+    if (readI64(record) < index)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == info.elementCount)
+    return OBELISK_RT_EOF;
+  const uint8_t *record = database.data + database.relationIndexKeys +
+                          uint64_t{info.firstKey + low} * kRelationIndexKeySize;
+  if (readI64(record) != index)
+    return OBELISK_RT_EOF;
+  *outOrdinal = read32(record + 8);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+designVPIRelationIndexOrdinalKey(const Database &database,
+                                 const VPIRelationIndexInfo &info,
+                                 uint32_t ordinal, int64_t *outIndex) {
+  if (!info.sparse || ordinal >= info.elementCount ||
+      info.firstOrdinalKey > database.relationIndexKeyCount ||
+      info.elementCount > database.relationIndexKeyCount - info.firstOrdinalKey)
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint8_t *record =
+      database.data + database.relationIndexKeys +
+      uint64_t{info.firstOrdinalKey + ordinal} * kRelationIndexKeySize;
+  if (read32(record + 8) != ordinal)
+    return OBELISK_RT_INVALID_DESIGN;
+  *outIndex = readI64(record);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designVPIArrayMember(const Database &database,
+                                       obelisk_rt_design_cursor_v1 member,
+                                       VPIArrayMemberInfo *outInfo) {
+  *outInfo = {};
+  obelisk::reflection::TableKind targetTable;
+  uint32_t targetIndex = 0;
+  if (!relationSourceForCursor(database, member.offset, targetTable,
+                               targetIndex) ||
+      targetTable == obelisk::reflection::TableKind::Statement)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t packedTarget = 0;
+  if (!obelisk::reflection::tryPackTableIndex(targetTable, targetIndex,
+                                              packedTarget))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t low = 0;
+  uint32_t high = static_cast<uint32_t>(database.relationIndexMemberCount);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record = database.data + database.relationIndexMembers +
+                            uint64_t{middle} * kRelationIndexMemberSize;
+    if (read32(record) < packedTarget)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.relationIndexMemberCount)
+    return OBELISK_RT_EOF;
+  const uint8_t *record = database.data + database.relationIndexMembers +
+                          uint64_t{low} * kRelationIndexMemberSize;
+  if (read32(record) != packedTarget)
+    return OBELISK_RT_EOF;
+  uint32_t relationIndex = read32(record + 4);
+  const uint8_t *indexRecord = database.data + database.relationIndices +
+                               uint64_t{relationIndex} * kRelationIndexSize;
+  uint32_t arrayIndex = read32(indexRecord);
+  outInfo->array.offset = database.objects + uint64_t{arrayIndex} * kObjectSize;
+  outInfo->arrayType = recordVPIKind(database.data + outInfo->array.offset);
+  outInfo->ordinal = read32(record + 8);
+  return designVPIRelationIndex(database, outInfo->array, &outInfo->index);
+}
+
 obelisk_rt_status designVPIRelationRange(const Database &database,
                                          obelisk_rt_design_cursor_v1 source,
                                          uint32_t selector, bool iterate,
@@ -3018,6 +3535,61 @@ obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationTarget(*database, relationIndex, outCursor,
                                             outType, outStatement)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_relation_index(const obelisk_rt_context *context,
+                                     obelisk_rt_design_cursor_v1 source,
+                                     VPIRelationIndexInfo *outInfo) noexcept {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIRelationIndex(*database, source, outInfo)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_dimension(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t dimension, int64_t *outLeft, int64_t *outRight) noexcept {
+  if (!outLeft || !outRight)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIRelationIndexDimension(*database, info, dimension,
+                                                    outLeft, outRight)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    int64_t index, uint32_t *outOrdinal) noexcept {
+  if (!outOrdinal)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database
+             ? designVPIRelationIndexKey(*database, info, index, outOrdinal)
+             : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_ordinal_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t ordinal, int64_t *outIndex) noexcept {
+  if (!outIndex)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIRelationIndexOrdinalKey(*database, info, ordinal,
+                                                     outIndex)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_array_member(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 member,
+                                   VPIArrayMemberInfo *outInfo) noexcept {
+  if (!outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIArrayMember(*database, member, outInfo)
                   : OBELISK_RT_INVALID_HANDLE;
 }
 

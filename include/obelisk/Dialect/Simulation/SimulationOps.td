@@ -186,7 +186,10 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     is ambiguous, as it is for multiple compilation units.  A backing maps the
     anchor onto an existing scope, class, or code-unit record; otherwise the
     serializer materializes a static-only reflection object.  Anchors never
-    participate in scheduling or executable lowering.
+    participate in scheduling or executable lowering. Relation-backed arrays
+    carry either declared `index_ranges` or exact `sparse_indices`; each child
+    carries its complete `member_indices`. `primitive_input_count` preserves
+    the IEEE 37.33 vpiSize value for scalar primitive anchors.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$inventory_id,
                        I32Attr:$vpi_kind, I64Attr:$enclosing_scope_id,
@@ -194,7 +197,11 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        I64Attr:$owner_ordinal,
                        StrAttr:$hierarchical_name, StrAttr:$debug_name,
                        OptionalAttr<UnitAttr>:$is_compilation_unit,
-                       OptionalAttr<SimVPIObjectBackingAttr>:$backing);
+                       OptionalAttr<SimVPIObjectBackingAttr>:$backing,
+                       OptionalAttr<DenseI64ArrayAttr>:$index_ranges,
+                       OptionalAttr<DenseI64ArrayAttr>:$sparse_indices,
+                       OptionalAttr<DenseI64ArrayAttr>:$member_indices,
+                       OptionalAttr<I64Attr>:$primitive_input_count);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?

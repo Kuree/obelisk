@@ -37,7 +37,11 @@ module attributes {
   }
 }
 
-// CHECK-NOT: hierarchy "top.dut.wake"
+// The formal retains a distinct read-only VPI identity while sharing the
+// actual event's scheduler descriptor; no duplicate executable storage is
+// introduced.
+// CHECK-COUNT-1: obelisk_sim.vpi_object.anchor {{.*}} hierarchy "top.dut.wake"
+// CHECK-NOT: obelisk_sim.storage.decl {{.*}} hierarchy "top.dut.wake"
 // CHECK-NOT: hierarchy "top.dut.$port_connection_0"
 // CHECK: !obelisk_sim.event {obelisk_sim.capture_kind = 6 : i32, obelisk_sim.descriptor_id = 0 : i64}
 // CHECK: obelisk_sim.suspend.event

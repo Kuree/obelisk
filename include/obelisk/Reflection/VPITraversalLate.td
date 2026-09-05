@@ -525,7 +525,7 @@ def LateIteratorUse : VPITraversalEdge<LateIteratorSource, UseRel, HandleMode,
 
 // 37.83 Generate scopes.
 def LateGeneratedInstance : VPITraversalEdge<LateGeneratedSource, InstanceRel,
-  HandleMode, ModuleTarget, NoOrder, "37.83">;
+  HandleMode, ModuleTarget, NoOrder, "37.83", 0, AutomaticParentScope>;
 def LateGenScopeArrayElements : VPITraversalEdge<LateGenScopeArraySource,
   GenScope, IterateMode, GenScopeObjects, IndexOrder, "37.83">;
 def LateGenScopeIndex : VPITraversalEdge<LateGenScopeSource, IndexRel,
@@ -543,9 +543,11 @@ def LateGenScopeModules : VPITraversalEdge<LateGenScopeSource, Module,
 def LateGenScopeModuleArrays : VPITraversalEdge<LateGenScopeSource,
   ModuleArray, IterateMode, ModuleArrayObjects, NoOrder, "37.83">;
 def LateGenScopePrimitives : VPITraversalEdge<LateGenScopeSource,
-  PrimitiveRel, IterateMode, PrimitiveConcreteObjects, NoOrder, "37.83">;
+  PrimitiveRel, IterateMode, PrimitiveConcreteObjects, NoOrder, "37.83", 0,
+  AutomaticDirectChild>;
 def LateGenScopePrimitiveArrays : VPITraversalEdge<LateGenScopeSource,
-  PrimitiveArray, IterateMode, PrimitiveArrayObjects, NoOrder, "37.83">;
+  PrimitiveArray, IterateMode, PrimitiveArrayObjects, NoOrder, "37.83", 0,
+  AutomaticDirectChild>;
 def LateGenScopeDefParams : VPITraversalEdge<LateGenScopeSource, DefParam,
   IterateMode, DefParamObjects, NoOrder, "37.83">;
 def LateGenScopeArrays : VPITraversalEdge<LateGenScopeSource, GenScopeArray,

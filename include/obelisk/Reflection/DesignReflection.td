@@ -221,6 +221,45 @@ def ObjectSemanticRootType : ReflectionField<"SemanticType", 0, U32LE>;
 def ObjectSemanticRoot : ReflectionLayout<"ObjectSemanticRoot", 4,
   [ObjectSemanticRootType]>;
 
+// Immutable indexing geometry for relation-backed static arrays.  Records are
+// sorted by object-table index; dense arrays reference declared ranges in
+// left-to-right order, while sparse generate arrays reference exact source
+// index keys.  Relation ordinals select the canonical object already stored in
+// the ordinary VPI relation table, so no second object graph is materialized.
+def RelationIndexObjectIndex
+    : ReflectionField<"ObjectIndex", 0, U32LE>;
+def RelationIndexFirstDimension
+    : ReflectionField<"FirstDimension", 4, U32LE>;
+def RelationIndexDimensionCount
+    : ReflectionField<"DimensionCount", 8, U16LE>;
+def RelationIndexFlags : ReflectionField<"Flags", 10, U16LE>;
+def RelationIndexFirstKey : ReflectionField<"FirstKey", 12, U32LE>;
+def RelationIndexFirstOrdinalKey
+    : ReflectionField<"FirstOrdinalKey", 16, U32LE>;
+def RelationIndex : ReflectionLayout<"RelationIndex", 20,
+  [RelationIndexObjectIndex, RelationIndexFirstDimension,
+   RelationIndexDimensionCount, RelationIndexFlags, RelationIndexFirstKey,
+   RelationIndexFirstOrdinalKey]>;
+
+def RelationIndexDimensionLeft : ReflectionField<"Left", 0, I64LE>;
+def RelationIndexDimensionRight : ReflectionField<"Right", 8, I64LE>;
+def RelationIndexDimension : ReflectionLayout<"RelationIndexDimension", 16,
+  [RelationIndexDimensionLeft, RelationIndexDimensionRight]>;
+
+def RelationIndexKeyIndex : ReflectionField<"Index", 0, I64LE>;
+def RelationIndexKeyOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def RelationIndexKey : ReflectionLayout<"RelationIndexKey", 12,
+  [RelationIndexKeyIndex, RelationIndexKeyOrdinal]>;
+
+def RelationIndexMemberTarget
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def RelationIndexMemberRelationIndex
+    : ReflectionField<"RelationIndex", 4, U32LE>;
+def RelationIndexMemberOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def RelationIndexMember : ReflectionLayout<"RelationIndexMember", 12,
+  [RelationIndexMemberTarget, RelationIndexMemberRelationIndex,
+   RelationIndexMemberOrdinal]>;
+
 // HeaderReserved is zero when no extension is present, otherwise it is the
 // absolute 32-bit image offset of this directory. Keeping the fixed header
 // stable lets future reflection producers add orthogonal generated sections
@@ -237,10 +276,34 @@ def SemanticDirectoryRootOffset
     : ReflectionField<"ObjectSemanticRootOffset", 32, U64LE>;
 def SemanticDirectoryRootCount
     : ReflectionField<"ObjectSemanticRootCount", 40, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 48,
+def SemanticDirectoryRelationIndexOffset
+    : ReflectionField<"RelationIndexOffset", 48, U64LE>;
+def SemanticDirectoryRelationIndexCount
+    : ReflectionField<"RelationIndexCount", 56, U64LE>;
+def SemanticDirectoryRelationIndexDimensionOffset
+    : ReflectionField<"RelationIndexDimensionOffset", 64, U64LE>;
+def SemanticDirectoryRelationIndexDimensionCount
+    : ReflectionField<"RelationIndexDimensionCount", 72, U64LE>;
+def SemanticDirectoryRelationIndexKeyOffset
+    : ReflectionField<"RelationIndexKeyOffset", 80, U64LE>;
+def SemanticDirectoryRelationIndexKeyCount
+    : ReflectionField<"RelationIndexKeyCount", 88, U64LE>;
+def SemanticDirectoryRelationIndexMemberOffset
+    : ReflectionField<"RelationIndexMemberOffset", 96, U64LE>;
+def SemanticDirectoryRelationIndexMemberCount
+    : ReflectionField<"RelationIndexMemberCount", 104, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 112,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
-   SemanticDirectoryRootOffset, SemanticDirectoryRootCount]>;
+   SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
+   SemanticDirectoryRelationIndexOffset,
+   SemanticDirectoryRelationIndexCount,
+   SemanticDirectoryRelationIndexDimensionOffset,
+   SemanticDirectoryRelationIndexDimensionCount,
+   SemanticDirectoryRelationIndexKeyOffset,
+   SemanticDirectoryRelationIndexKeyCount,
+   SemanticDirectoryRelationIndexMemberOffset,
+   SemanticDirectoryRelationIndexMemberCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

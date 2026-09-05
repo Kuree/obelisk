@@ -266,7 +266,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       kind->role != reflection::VPIObjectRole::Concrete)
     return emitOpError("VPI kind is not a concrete object");
   using Kind = reflection::VPIObjectKind;
-  switch (static_cast<Kind>(getVpiKind())) {
+  Kind anchorKind = static_cast<Kind>(getVpiKind());
+  switch (anchorKind) {
   case Kind::Module:
   case Kind::Interface:
   case Kind::Program:
@@ -278,10 +279,30 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::GenScope:
   case Kind::PropertyDecl:
   case Kind::SequenceDecl:
+  case Kind::ModuleArray:
+  case Kind::InterfaceArray:
+  case Kind::ProgramArray:
+  case Kind::GateArray:
+  case Kind::SwitchArray:
+  case Kind::UdpArray:
+  case Kind::NamedEventArray:
+  case Kind::GenScopeArray:
+  case Kind::Gate:
+  case Kind::Switch:
+  case Kind::Udp:
+  case Kind::NamedEvent:
     break;
   default:
     return emitOpError("kind cannot be a persistent lexical source anchor");
   }
+  bool primitive = anchorKind == Kind::Gate || anchorKind == Kind::Switch ||
+                   anchorKind == Kind::Udp;
+  if (primitive != static_cast<bool>(getPrimitiveInputCountAttr()))
+    return emitOpError(
+        primitive ? "scalar primitive anchor requires an input count"
+                  : "primitive_input_count requires a scalar primitive");
+  if (getPrimitiveInputCount() && *getPrimitiveInputCount() > UINT32_MAX)
+    return emitOpError("primitive input count exceeds the reflection encoding");
   if (getIsCompilationUnitAttr() &&
       getVpiKind() != static_cast<uint32_t>(reflection::VPIObjectKind::Package))
     return emitOpError("compilation-unit anchor must have vpiPackage kind");
@@ -291,7 +312,6 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       getParentAttr() == FlatSymbolRefAttr::get(getSymNameAttr()))
     return emitOpError("cannot be its own lexical parent");
   if (VPIObjectBackingAttr backing = getBackingAttr()) {
-    Kind anchorKind = static_cast<Kind>(getVpiKind());
     switch (backing.getKind()) {
     case VPIObjectBackingKind::Scope:
       if (anchorKind != Kind::Module && anchorKind != Kind::Interface &&
@@ -310,12 +330,59 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       break;
     }
   } else {
-    Kind anchorKind = static_cast<Kind>(getVpiKind());
     if (anchorKind == Kind::Module || anchorKind == Kind::Interface ||
         anchorKind == Kind::Program)
       return emitOpError(
           "module, interface, and program anchors require scope backing");
   }
+  DenseI64ArrayAttr rangesAttr = getIndexRangesAttr();
+  DenseI64ArrayAttr sparseAttr = getSparseIndicesAttr();
+  ArrayRef<int64_t> ranges =
+      rangesAttr ? rangesAttr.asArrayRef() : ArrayRef<int64_t>{};
+  ArrayRef<int64_t> sparse =
+      sparseAttr ? sparseAttr.asArrayRef() : ArrayRef<int64_t>{};
+  bool fixedArray =
+      anchorKind == Kind::ModuleArray || anchorKind == Kind::InterfaceArray ||
+      anchorKind == Kind::ProgramArray || anchorKind == Kind::GateArray ||
+      anchorKind == Kind::SwitchArray || anchorKind == Kind::UdpArray ||
+      anchorKind == Kind::NamedEventArray;
+  if (rangesAttr && sparseAttr)
+    return emitOpError("VPI array cannot be both fixed and sparse");
+  if (rangesAttr && !fixedArray)
+    return emitOpError("index_ranges is only valid on a fixed array anchor");
+  if (rangesAttr && ranges.size() % 2 != 0)
+    return emitOpError(
+        "index_ranges requires left/right pairs on a fixed array anchor");
+  if (fixedArray && (!rangesAttr || ranges.empty()))
+    return emitOpError("fixed VPI array requires nonempty index_ranges");
+  if (sparseAttr && anchorKind != Kind::GenScopeArray)
+    return emitOpError(
+        "sparse_indices is only valid on a generate-scope array anchor");
+  if (anchorKind == Kind::GenScopeArray && !sparseAttr)
+    return emitOpError("generate-scope array requires sparse_indices");
+  if ((anchorKind == Kind::GateArray || anchorKind == Kind::SwitchArray ||
+       anchorKind == Kind::UdpArray) &&
+      ranges.size() != 2)
+    return emitOpError("primitive VPI array must be one-dimensional");
+  uint64_t elements = 1;
+  for (size_t offset = 0; offset != ranges.size(); offset += 2) {
+    uint64_t distance = ranges[offset] >= ranges[offset + 1]
+                            ? static_cast<uint64_t>(ranges[offset]) -
+                                  static_cast<uint64_t>(ranges[offset + 1])
+                            : static_cast<uint64_t>(ranges[offset + 1]) -
+                                  static_cast<uint64_t>(ranges[offset]);
+    if (distance == UINT64_MAX || distance + 1 > UINT32_MAX ||
+        elements > UINT32_MAX / (distance + 1))
+      return emitOpError("fixed VPI array shape exceeds relation encoding");
+    elements *= distance + 1;
+  }
+  llvm::DenseSet<int64_t> sparseSet;
+  for (int64_t index : sparse)
+    if (!sparseSet.insert(index).second)
+      return emitOpError("sparse_indices contains a duplicate index");
+  if (getMemberIndicesAttr() &&
+      (fixedArray || anchorKind == Kind::GenScopeArray))
+    return emitOpError("array aggregates cannot carry member_indices");
   return success();
 }
 
@@ -330,6 +397,40 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
     Kind parentKind = static_cast<Kind>(target.getVpiKind());
+    bool parentFixedArray =
+        parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
+        parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
+        parentKind == Kind::SwitchArray || parentKind == Kind::UdpArray ||
+        parentKind == Kind::NamedEventArray;
+    DenseI64ArrayAttr memberAttr = getMemberIndicesAttr();
+    ArrayRef<int64_t> member =
+        memberAttr ? memberAttr.asArrayRef() : ArrayRef<int64_t>{};
+    if (parentFixedArray) {
+      DenseI64ArrayAttr rangesAttr = target.getIndexRangesAttr();
+      if (!rangesAttr)
+        return emitOpError("fixed-array parent has no index_ranges");
+      ArrayRef<int64_t> ranges = rangesAttr.asArrayRef();
+      if (member.size() * 2 != ranges.size())
+        return emitOpError(
+            "fixed-array child member_indices rank does not match parent");
+      for (size_t dimension = 0; dimension != member.size(); ++dimension) {
+        int64_t left = ranges[dimension * 2];
+        int64_t right = ranges[dimension * 2 + 1];
+        if (member[dimension] < std::min(left, right) ||
+            member[dimension] > std::max(left, right))
+          return emitOpError(
+              "fixed-array child member index is outside parent range");
+      }
+    } else if (parentKind == Kind::GenScopeArray) {
+      DenseI64ArrayAttr sparseAttr = target.getSparseIndicesAttr();
+      if (!sparseAttr || member.size() != 1 ||
+          !llvm::is_contained(sparseAttr.asArrayRef(), member.front()))
+        return emitOpError(
+            "generate-array child member index is absent from parent");
+    } else if (memberAttr) {
+      return emitOpError(
+          "member_indices requires a fixed or generate array parent");
+    }
     auto isDesignScope = [](Kind kind) {
       return kind == Kind::Module || kind == Kind::Interface ||
              kind == Kind::Program;
@@ -344,7 +445,11 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     case Kind::Module:
     case Kind::Interface:
     case Kind::Program:
-      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope;
+      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
+              (childKind == Kind::Module && parentKind == Kind::ModuleArray) ||
+              (childKind == Kind::Interface &&
+               parentKind == Kind::InterfaceArray) ||
+              (childKind == Kind::Program && parentKind == Kind::ProgramArray);
       break;
     case Kind::ClassDefn:
     case Kind::Task:
@@ -360,7 +465,31 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       legal = isDesignScope(parentKind);
       break;
     case Kind::GenScope:
-      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope;
+      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
+              parentKind == Kind::GenScopeArray;
+      break;
+    case Kind::Gate:
+      legal = parentKind == Kind::GateArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::Switch:
+      legal = parentKind == Kind::SwitchArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::Udp:
+      legal = parentKind == Kind::UdpArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::NamedEvent:
+      legal =
+          parentKind == Kind::NamedEventArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::ModuleArray:
+    case Kind::InterfaceArray:
+    case Kind::ProgramArray:
+    case Kind::GateArray:
+    case Kind::SwitchArray:
+    case Kind::UdpArray:
+    case Kind::NamedEventArray:
+    case Kind::GenScopeArray:
+      legal = isDeclarationScope(parentKind);
       break;
     case Kind::Package:
       // Compilation units use the vpiPackage kind internally so that they
@@ -373,13 +502,17 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       llvm_unreachable("anchor kind was checked by verify()");
     }
     if (!legal)
-      return emitOpError("has an illegal lexical parent kind");
+      return emitOpError("has an illegal lexical parent kind: child ")
+             << getVpiKind() << ", parent " << target.getVpiKind();
   } else {
     using Kind = reflection::VPIObjectKind;
     Kind kind = static_cast<Kind>(getVpiKind());
     if (kind != Kind::Package && kind != Kind::Module &&
         kind != Kind::Interface && kind != Kind::Program)
       return emitOpError("kind requires a lexical parent anchor");
+    if (getMemberIndicesAttr())
+      return emitOpError(
+          "member_indices requires a fixed or generate array parent");
   }
   VPIObjectBackingAttr backing = getBackingAttr();
   if (backing && backing.getKind() == VPIObjectBackingKind::Class) {
@@ -464,8 +597,26 @@ LogicalResult SimStorageDeclOp::verify() {
   auto emit = [&] { return emitOpError(); };
   if (failed(verifyElementType(emit, getType())))
     return failure();
-  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
-                      : success();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  Attribute delegated = (*this)->getAttr(metadata::vpiIdentityDelegated);
+  if (!delegated)
+    return success();
+  if (!isa<FlatSymbolRefAttr>(delegated))
+    return emitOpError(
+        "delegated VPI identity must name its owning object anchor");
+  VPITypeSemanticsAttr semantic = getVpiTypeAttr();
+  bool sawArray = false;
+  while (semantic && semantic.getKind() == VPITypeKind::UnpackedArray) {
+    sawArray = true;
+    semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+  }
+  if (!sawArray || !semantic || semantic.getKind() != VPITypeKind::Event ||
+      !getHierarchicalName())
+    return emitOpError(
+        "delegated VPI identity requires named unpacked event-array storage");
+  return success();
 }
 
 LogicalResult SimNetDeclOp::verify() {
@@ -1676,6 +1827,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPITypespecDeclOp> typespecs;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
+  SmallVector<SimStorageDeclOp> storages;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
@@ -1734,6 +1886,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(storage.getIdAttr(), storageIds, "storage")))
         return failure();
       storageTypes[storage.getId()] = storage.getType();
+      storages.push_back(storage);
     } else if (auto net = dyn_cast<SimNetDeclOp>(op)) {
       if (failed(addId(net.getIdAttr(), netIds, "net")))
         return failure();
@@ -1762,6 +1915,133 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto function = dyn_cast<SimFuncOp>(op)) {
       functions.push_back(function);
     }
+  }
+
+  llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors)
+    anchorsBySymbol[FlatSymbolRefAttr::get(anchor.getSymNameAttr())] = anchor;
+
+  llvm::DenseMap<Operation *, llvm::DenseSet<uint32_t>> arrayMemberOrdinals;
+  llvm::DenseMap<Operation *, uint32_t> arrayElementCounts;
+  llvm::DenseMap<Operation *, llvm::DenseMap<int64_t, uint32_t>> sparseOrdinals;
+  for (SimVPIObjectAnchorOp array : vpiAnchors) {
+    uint64_t count = 0;
+    if (DenseI64ArrayAttr ranges = array.getIndexRangesAttr()) {
+      count = 1;
+      ArrayRef<int64_t> bounds = ranges.asArrayRef();
+      for (size_t dimension = 0; dimension != bounds.size(); dimension += 2) {
+        uint64_t distance =
+            bounds[dimension] >= bounds[dimension + 1]
+                ? static_cast<uint64_t>(bounds[dimension]) -
+                      static_cast<uint64_t>(bounds[dimension + 1])
+                : static_cast<uint64_t>(bounds[dimension + 1]) -
+                      static_cast<uint64_t>(bounds[dimension]);
+        count *= distance + 1;
+      }
+    } else if (DenseI64ArrayAttr sparse = array.getSparseIndicesAttr()) {
+      count = sparse.size();
+      auto &ordinals = sparseOrdinals[array.getOperation()];
+      for (auto [ordinal, value] : llvm::enumerate(sparse.asArrayRef()))
+        ordinals.try_emplace(value, static_cast<uint32_t>(ordinal));
+    } else {
+      continue;
+    }
+    arrayElementCounts[array.getOperation()] = static_cast<uint32_t>(count);
+  }
+  for (SimVPIObjectAnchorOp member : vpiAnchors) {
+    FlatSymbolRefAttr parent = member.getParentAttr();
+    if (!parent)
+      continue;
+    auto parentIt = anchorsBySymbol.find(parent);
+    if (parentIt == anchorsBySymbol.end())
+      continue;
+    SimVPIObjectAnchorOp array = parentIt->second;
+    auto countIt = arrayElementCounts.find(array.getOperation());
+    if (countIt == arrayElementCounts.end())
+      continue;
+    DenseI64ArrayAttr memberAttr = member.getMemberIndicesAttr();
+    if (!memberAttr)
+      return member.emitOpError(
+          "array member must carry its exact source indices");
+    ArrayRef<int64_t> indices = memberAttr.asArrayRef();
+    uint64_t ordinal = 0;
+    if (DenseI64ArrayAttr ranges = array.getIndexRangesAttr()) {
+      ArrayRef<int64_t> bounds = ranges.asArrayRef();
+      if (indices.size() * 2 != bounds.size())
+        return member.emitOpError(
+            "array member index rank does not match its parent");
+      for (size_t dimension = 0; dimension != indices.size(); ++dimension) {
+        int64_t left = bounds[dimension * 2];
+        int64_t right = bounds[dimension * 2 + 1];
+        if (indices[dimension] < std::min(left, right) ||
+            indices[dimension] > std::max(left, right))
+          return member.emitOpError(
+              "array member index is outside its parent range");
+        uint64_t extent = left >= right ? static_cast<uint64_t>(left) -
+                                              static_cast<uint64_t>(right) + 1
+                                        : static_cast<uint64_t>(right) -
+                                              static_cast<uint64_t>(left) + 1;
+        uint64_t coordinate =
+            left >= right ? static_cast<uint64_t>(left) -
+                                static_cast<uint64_t>(indices[dimension])
+                          : static_cast<uint64_t>(indices[dimension]) -
+                                static_cast<uint64_t>(left);
+        ordinal = ordinal * extent + coordinate;
+      }
+    } else {
+      auto &ordinals = sparseOrdinals[array.getOperation()];
+      auto found =
+          indices.size() == 1 ? ordinals.find(indices.front()) : ordinals.end();
+      if (found == ordinals.end())
+        return member.emitOpError(
+            "generate-array member index is absent from its parent");
+      ordinal = found->second;
+    }
+    if (ordinal >= countIt->second ||
+        !arrayMemberOrdinals[array.getOperation()]
+             .insert(static_cast<uint32_t>(ordinal))
+             .second)
+      return member.emitOpError(
+          "duplicates a source coordinate in its VPI array parent");
+  }
+  for (const auto &[array, count] : arrayElementCounts)
+    if (arrayMemberOrdinals[array].size() != count)
+      return cast<SimVPIObjectAnchorOp>(array).emitOpError(
+          "does not have exactly one child for every source coordinate");
+
+  llvm::DenseSet<Attribute> delegatedAnchors;
+  for (SimStorageDeclOp storage : storages) {
+    auto delegated = storage->getAttrOfType<FlatSymbolRefAttr>(
+        metadata::vpiIdentityDelegated);
+    if (!delegated)
+      continue;
+    SimVPIObjectAnchorOp anchor =
+        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(storage,
+                                                                  delegated);
+    if (!anchor ||
+        anchor.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::NamedEventArray))
+      return storage.emitOpError(
+          "delegated VPI identity must reference a named-event-array anchor");
+    if (storage.getScopeId() != anchor.getEnclosingScopeId() ||
+        !storage.getHierarchicalName() ||
+        *storage.getHierarchicalName() != anchor.getHierarchicalName())
+      return storage.emitOpError(
+          "delegated VPI identity disagrees with its anchor scope or name");
+    SmallVector<int64_t> ranges;
+    VPITypeSemanticsAttr semantic = storage.getVpiTypeAttr();
+    while (semantic && semantic.getKind() == VPITypeKind::UnpackedArray) {
+      llvm::append_range(ranges, semantic.getRange().asArrayRef());
+      semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+    }
+    if (!semantic || semantic.getKind() != VPITypeKind::Event ||
+        !anchor.getIndexRangesAttr() ||
+        !llvm::equal(ranges, anchor.getIndexRangesAttr().asArrayRef()))
+      return storage.emitOpError(
+          "delegated VPI identity disagrees with its anchor array shape");
+    if (!delegatedAnchors.insert(delegated).second)
+      return storage.emitOpError(
+          "multiple storages delegate the same public VPI identity");
   }
 
   llvm::DenseMap<Attribute, SmallVector<SimVPITypespecDeclOp>>

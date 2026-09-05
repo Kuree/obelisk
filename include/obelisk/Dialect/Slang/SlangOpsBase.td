@@ -76,6 +76,20 @@ class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
         !listconcat([SymbolTable, IsolatedFromAbove], traits),
         symbolArgs>;
 
+class SlangInstanceArrayASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_range)> {
+  let description = [{
+    The body contains one element per source index in ascending numeric index
+    order, independent of the declared direction in `array_range`. Nested
+    instance-array nodes repeat this contract for the next dimension.
+  }];
+}
+
+class SlangGenerateBlockArrayASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_indices)>;
+
 class SlangRootASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic,
         [SymbolTable, IsolatedFromAbove, SlangVerifySemanticReferenceGraph]>;

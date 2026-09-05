@@ -43,6 +43,12 @@ inline constexpr llvm::StringLiteral hierarchicalName =
 /// to its anonymous enum typespec in the immutable VPI relation image.
 inline constexpr llvm::StringLiteral vpiSourceTypeIdentity =
     "obelisk_sim.vpi_source_type_identity";
+/// FlatSymbolRefAttr naming the immutable relation-backed anchor that owns the
+/// public VPI identity of executable named-event-array storage. The storage
+/// remains in the execution layout but is omitted from the VPI object
+/// inventory.
+inline constexpr llvm::StringLiteral vpiIdentityDelegated =
+    "obelisk_sim.vpi_identity_delegated";
 /// Marks a storage descriptor that a subroutine owns. Its writers are the
 /// subroutine's callers rather than drivers of a design variable.
 inline constexpr llvm::StringLiteral subroutineStorage =

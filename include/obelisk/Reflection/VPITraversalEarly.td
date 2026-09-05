@@ -200,7 +200,8 @@ def VPIEarlyModuleDefaultClocking : VPITraversalEdge<ModuleSource,
 def VPIEarlyModuleDefaultDisable : VPITraversalEdge<ModuleSource,
   DefaultDisableIffRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.5">;
 def VPIEarlyModuleContainingArray : VPITraversalEdge<ModuleSource,
-  ModuleArray, HandleMode, ModuleArrayObjects, NoOrder, "37.5; 37.11">;
+  ModuleArray, HandleMode, ModuleArrayObjects, NoOrder, "37.5; 37.11", 0,
+  AutomaticIndexedContainer>;
 def VPIEarlyModuleArrayElements : VPITraversalEdge<ModuleArrayObjects, Module,
   IterateMode, ModuleTarget, IndexOrder, "37.5; 37.11">;
 def VPIEarlyModuleOfChild : VPITraversalEdge<VPIEarlyModuleChildren, Module,
@@ -217,8 +218,6 @@ def VPIEarlyInterfaceDefaultDisable : VPITraversalEdge<InterfaceObjects,
   DefaultDisableIffRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.6">;
 def VPIEarlyArrayInterfaces : VPITraversalEdge<InterfaceArrayObjects,
   Interface, IterateMode, InterfaceObjects, IndexOrder, "37.6">;
-def VPIEarlyInterfaceContainingArray : VPITraversalEdge<InterfaceObjects,
-  InterfaceArray, HandleMode, InterfaceArrayObjects, NoOrder, "37.6">;
 def VPIEarlyInstanceOfInterfaceChild : VPITraversalEdge<
   VPIEarlyInterfaceChildren, InstanceRel, HandleMode, VPIEarlyInstances,
   NoOrder, "37.6; 37.9; 37.37; 37.46", 0, AutomaticParentScope>;
@@ -249,8 +248,6 @@ def VPIEarlyProgramDefaultDisable : VPITraversalEdge<ProgramObjects,
   DefaultDisableIffRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.9">;
 def VPIEarlyArrayPrograms : VPITraversalEdge<ProgramArrayObjects, Program,
   IterateMode, ProgramObjects, IndexOrder, "37.9">;
-def VPIEarlyProgramContainingArray : VPITraversalEdge<ProgramObjects,
-  ProgramArray, HandleMode, ProgramArrayObjects, NoOrder, "37.9">;
 def VPIEarlyRootInstances : VPITraversalEdge<RootSource, InstanceRel,
   IterateMode, VPIEarlyInstances, NoOrder, "37.10">;
 def VPIEarlyInstancePrograms : VPITraversalEdge<InstanceObjects, Program,
@@ -279,13 +276,13 @@ def VPIEarlyInstanceArrayParamAssigns : VPITraversalEdge<
   NoOrder, "37.11">;
 def VPIEarlyGateContainingArray : VPITraversalEdge<VPIEarlyGateObjects,
   PrimitiveArray, HandleMode, VPIEarlyGateArrayObjects, NoOrder,
-  "37.11; 37.33">;
+  "37.11; 37.33", 0, AutomaticIndexedContainer>;
 def VPIEarlySwitchContainingArray : VPITraversalEdge<VPIEarlySwitchObjects,
   PrimitiveArray, HandleMode, VPIEarlySwitchArrayObjects, NoOrder,
-  "37.11; 37.33">;
+  "37.11; 37.33", 0, AutomaticIndexedContainer>;
 def VPIEarlyUdpContainingArray : VPITraversalEdge<VPIEarlyUdpObjects,
   PrimitiveArray, HandleMode, VPIEarlyUdpArrayObjects, NoOrder,
-  "37.11; 37.33">;
+  "37.11; 37.33", 0, AutomaticIndexedContainer>;
 def VPIEarlyGateArrayElements : VPITraversalEdge<VPIEarlyGateArrayObjects,
   PrimitiveRel, IterateMode, VPIEarlyGateObjects, IndexOrder,
   "37.11; 37.33">;
@@ -581,9 +578,10 @@ def VPIEarlyNamedEventTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyEventTypespecTarget", [EventTypespec]>, NoOrder,
   "37.25">;
 def VPIEarlyNamedEventModule : VPITraversalEdge<NamedEventTargetObjects, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.25">;
+  HandleMode, ModuleTarget, NoOrder, "37.25", 0, AutomaticParentScope>;
 def VPIEarlyNamedEventInstance : VPITraversalEdge<NamedEventTargetObjects,
-  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.25">;
+  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.25", 0,
+  AutomaticParentScope>;
 def VPIEarlyNamedEventWaiters : VPITraversalEdge<NamedEventTargetObjects,
   WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.25">;
 def VPIEarlyNamedEventArrayRange : VPITraversalEdge<NamedEventArrayObjects,
@@ -593,14 +591,16 @@ def VPIEarlyNamedEventArrayTypespec : VPITraversalEdge<NamedEventArrayObjects,
   VPIObjectSet<"EarlyNamedEventArrayTypespecTarget", [ArrayTypespec]>,
   NoOrder, "37.25">;
 def VPIEarlyNamedEventArrayModule : VPITraversalEdge<NamedEventArrayObjects,
-  Module, HandleMode, ModuleTarget, NoOrder, "37.25">;
+  Module, HandleMode, ModuleTarget, NoOrder, "37.25", 0,
+  AutomaticParentScope>;
 def VPIEarlyNamedEventArrayInstance : VPITraversalEdge<
   NamedEventArrayObjects, InstanceRel, HandleMode, VPIEarlyInstances, NoOrder,
-  "37.25">;
+  "37.25", 0, AutomaticParentScope>;
 def VPIEarlyNamedEventArrayElements : VPITraversalEdge<NamedEventArrayObjects,
   NamedEvent, IterateMode, NamedEventTargetObjects, IndexOrder, "37.25">;
 def VPIEarlyNamedEventParent : VPITraversalEdge<NamedEventTargetObjects,
-  ParentRel, HandleMode, NamedEventArrayObjects, NoOrder, "37.25">;
+  ParentRel, HandleMode, NamedEventArrayObjects, NoOrder, "37.25", 0,
+  AutomaticIndexedContainer>;
 def VPIEarlyNamedEventIndices : VPITraversalEdge<NamedEventTargetObjects,
   IndexRel, IterateMode, VPIEarlyOrdinaryExpressions, IndexOrder, "37.25">;
 
@@ -724,7 +724,7 @@ def VPIEarlyClassObjVirtualInterfaces : VPITraversalEdge<ClassObjectObjects,
 def VPIEarlyClassObjNamedEvents : VPITraversalEdge<ClassObjectObjects,
   NamedEvent, IterateMode, NamedEventTargetObjects, NoOrder, "37.31">;
 def VPIEarlyClassObjNamedEventArrays : VPITraversalEdge<ClassObjectObjects,
-  NamedEventArray, IterateMode, NamedEventObjects, NoOrder, "37.31">;
+  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.31">;
 def VPIEarlyClassObjScopes : VPITraversalEdge<ClassObjectObjects,
   InternalScopeRel, IterateMode, VPIEarlyScopes, NoOrder, "37.31">;
 

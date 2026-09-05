@@ -8,6 +8,7 @@
 #include "PrepareTopology.h"
 
 #include "Detail.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/APInt.h"
@@ -726,11 +727,264 @@ materializeDesignDescriptors(ModuleOp module,
     definitionKinds.try_emplace(definition.getSymName(),
                                 definition.getDefinitionKind());
   });
+  auto primitiveKind = [&](semantic::SVPrimitiveInstanceSymbolOp primitive) {
+    if (primitive->hasAttr("udp_metadata"))
+      return VPIKind::Udp;
+    StringAttr primitiveName =
+        primitive->getAttrOfType<StringAttr>("primitive_name");
+    StringRef name = primitiveName ? primitiveName.getValue() : StringRef{};
+    bool isSwitch = name == "nmos" || name == "pmos" || name == "cmos" ||
+                    name == "rnmos" || name == "rpmos" || name == "rcmos" ||
+                    name == "tran" || name == "rtran" || name == "tranif0" ||
+                    name == "tranif1" || name == "rtranif0" ||
+                    name == "rtranif1";
+    return isSwitch ? VPIKind::Switch : VPIKind::Gate;
+  };
+  auto instanceLeafKind = [&](Operation *leaf) -> std::optional<VPIKind> {
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(leaf)) {
+      switch (primitiveKind(primitive)) {
+      case VPIKind::Gate:
+        return VPIKind::GateArray;
+      case VPIKind::Switch:
+        return VPIKind::SwitchArray;
+      case VPIKind::Udp:
+        return VPIKind::UdpArray;
+      default:
+        llvm_unreachable("unexpected primitive VPI kind");
+      }
+    }
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(leaf);
+    if (!instance)
+      return std::nullopt;
+    if (auto reference = instance.getReferencedSymbolAttr()) {
+      auto found = definitionKinds.find(reference.getLeafReference());
+      if (found != definitionKinds.end()) {
+        switch (found->second) {
+        case semantic::SVDefinitionKind::Interface:
+          return VPIKind::InterfaceArray;
+        case semantic::SVDefinitionKind::Program:
+          return VPIKind::ProgramArray;
+        case semantic::SVDefinitionKind::Module:
+          return VPIKind::ModuleArray;
+        }
+      }
+    }
+    for (Operation &child : instance.getBody().front()) {
+      auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(&child);
+      if (!body)
+        continue;
+      if (auto kind = body->getAttrOfType<IntegerAttr>("vpi_scope_kind")) {
+        switch (static_cast<VPIKind>(kind.getValue().getZExtValue())) {
+        case VPIKind::Interface:
+          return VPIKind::InterfaceArray;
+        case VPIKind::Program:
+          return VPIKind::ProgramArray;
+        default:
+          return VPIKind::ModuleArray;
+        }
+      }
+    }
+    return VPIKind::ModuleArray;
+  };
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> fixedArrayRanges;
+  llvm::DenseMap<Operation *, VPIKind> fixedArrayKinds;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> sparseArrayIndices;
+  llvm::DenseMap<Operation *, Operation *> relationArrayMemberRoots;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> relationArrayMemberIndices;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> namedEventArrayRanges;
+  llvm::DenseSet<Operation *> scalarNamedEvents;
+  module.walk([&](semantic::SVInstanceArraySymbolOp array) {
+    if (isa_and_nonnull<semantic::SVInstanceArraySymbolOp>(
+            array->getParentOp()))
+      return;
+    // Legacy hand-authored semantic IR predates exact source ranges. It can
+    // still lower executable array values, but it cannot safely contribute a
+    // relation-indexed VPI identity.
+    if (!array.getArrayRangeAttr())
+      return;
+    SmallVector<int64_t> ranges;
+    std::optional<VPIKind> leafKind;
+    std::optional<unsigned> leafDepth;
+    SmallVector<int64_t> path;
+    SmallVector<std::pair<Operation *, SmallVector<int64_t>>> memberPlans;
+    std::function<bool(semantic::SVInstanceArraySymbolOp, unsigned)> visit =
+        [&](semantic::SVInstanceArraySymbolOp current,
+            unsigned dimension) -> bool {
+      DenseI64ArrayAttr rangeAttr = current.getArrayRangeAttr();
+      if (!rangeAttr || rangeAttr.size() != 2) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension requires an exact source range";
+        return false;
+      }
+      ArrayRef<int64_t> range = rangeAttr.asArrayRef();
+      if (ranges.size() == dimension * 2)
+        llvm::append_range(ranges, range);
+      else if (ranges[dimension * 2] != range[0] ||
+               ranges[dimension * 2 + 1] != range[1]) {
+        emitError(getSemanticLocation(current))
+            << "instance-array branches have mismatched dimension ranges";
+        return false;
+      }
+      uint64_t distance = range[0] >= range[1]
+                              ? static_cast<uint64_t>(range[0]) -
+                                    static_cast<uint64_t>(range[1])
+                              : static_cast<uint64_t>(range[1]) -
+                                    static_cast<uint64_t>(range[0]);
+      if (distance == UINT64_MAX || distance + 1 > UINT32_MAX) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension exceeds VPI relation encoding";
+        return false;
+      }
+      uint64_t extent = distance + 1;
+      SmallVector<Operation *> elements;
+      for (Operation &child : current.getBody().front())
+        if (isa<semantic::SVInstanceArraySymbolOp, semantic::SVInstanceSymbolOp,
+                semantic::SVPrimitiveInstanceSymbolOp>(&child))
+          elements.push_back(&child);
+      if (elements.size() != extent) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension has " << elements.size()
+            << " elements but its source range requires " << extent;
+        return false;
+      }
+      bool nested = isa<semantic::SVInstanceArraySymbolOp>(elements.front());
+      for (Operation *element : elements)
+        if (isa<semantic::SVInstanceArraySymbolOp>(element) != nested) {
+          emitError(getSemanticLocation(current))
+              << "instance-array dimension mixes nested arrays and leaves";
+          return false;
+        }
+      int64_t lower = std::min(range[0], range[1]);
+      for (auto [ordinal, element] : llvm::enumerate(elements)) {
+        __int128 index = static_cast<__int128>(lower) + ordinal;
+        if (index < INT64_MIN || index > INT64_MAX)
+          return false;
+        path.push_back(static_cast<int64_t>(index));
+        if (nested) {
+          if (!visit(cast<semantic::SVInstanceArraySymbolOp>(element),
+                     dimension + 1))
+            return false;
+        } else {
+          unsigned depth = dimension + 1;
+          if (leafDepth && *leafDepth != depth) {
+            emitError(getSemanticLocation(element))
+                << "instance-array branches have mismatched terminal ranks";
+            return false;
+          }
+          leafDepth = depth;
+          std::optional<VPIKind> kind = instanceLeafKind(element);
+          if (!kind) {
+            emitError(getSemanticLocation(element))
+                << "instance-array leaf has no supported VPI identity";
+            return false;
+          }
+          if (leafKind && *leafKind != *kind) {
+            emitError(getSemanticLocation(element))
+                << "instance-array leaves have mixed VPI object kinds";
+            return false;
+          }
+          leafKind = *kind;
+          memberPlans.emplace_back(element, path);
+        }
+        path.pop_back();
+      }
+      return true;
+    };
+    if (!visit(array, 0) || !leafKind) {
+      invalid = true;
+      return;
+    }
+    if ((*leafKind == VPIKind::GateArray || *leafKind == VPIKind::SwitchArray ||
+         *leafKind == VPIKind::UdpArray) &&
+        ranges.size() != 2) {
+      emitError(getSemanticLocation(array))
+          << "primitive instance arrays must be one-dimensional";
+      invalid = true;
+      return;
+    }
+    fixedArrayKinds.try_emplace(array, *leafKind);
+    fixedArrayRanges.try_emplace(array, std::move(ranges));
+    for (auto &[element, indices] : memberPlans) {
+      relationArrayMemberRoots[element] = array;
+      relationArrayMemberIndices[element] = std::move(indices);
+    }
+  });
+  module.walk([&](semantic::SVGenerateBlockArraySymbolOp array) {
+    if (DenseI64ArrayAttr indices = array.getArrayIndicesAttr()) {
+      SmallVector<Operation *> elements;
+      for (Operation &child : array.getBody().front()) {
+        if (isa<semantic::SVGenerateBlockSymbolOp>(&child)) {
+          if (auto uninstantiated =
+                  child.getAttrOfType<BoolAttr>("is_uninstantiated");
+              uninstantiated && uninstantiated.getValue()) {
+            emitError(getSemanticLocation(&child))
+                << "generate-array contains an uninstantiated indexed "
+                   "element";
+            invalid = true;
+            return;
+          }
+          elements.push_back(&child);
+        }
+      }
+      if (elements.size() != static_cast<size_t>(indices.size())) {
+        emitError(getSemanticLocation(array))
+            << "generate-array source indices do not match its elements";
+        invalid = true;
+        return;
+      }
+      llvm::DenseSet<int64_t> uniqueIndices;
+      for (int64_t index : indices.asArrayRef())
+        if (!uniqueIndices.insert(index).second) {
+          emitError(getSemanticLocation(array))
+              << "generate-array source indices must be unique";
+          invalid = true;
+          return;
+        }
+      sparseArrayIndices.try_emplace(
+          array, SmallVector<int64_t>(indices.asArrayRef()));
+      for (auto [ordinal, element] : llvm::enumerate(elements)) {
+        relationArrayMemberRoots[element] = array;
+        relationArrayMemberIndices[element] = {indices.asArrayRef()[ordinal]};
+      }
+    }
+  });
+  module.walk([&](semantic::SVVariableSymbolOp variable) {
+    TypeAttr semanticType = variable->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType)
+      return;
+    Type current = semanticType.getValue();
+    SmallVector<int64_t> ranges;
+    for (;;) {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(current)) {
+        ranges.push_back(array.getLeft());
+        ranges.push_back(array.getRight());
+        current = array.getElementType();
+        continue;
+      }
+      if (auto array = dyn_cast<semantic::UnpackedArrayType>(current)) {
+        ranges.push_back(static_cast<int64_t>(array.getSize()) - 1);
+        ranges.push_back(0);
+        current = array.getElementType();
+        continue;
+      }
+      break;
+    }
+    if (!isa<semantic::EventType>(current))
+      return;
+    if (ranges.empty())
+      scalarNamedEvents.insert(variable);
+    else
+      namedEventArrayRanges.try_emplace(variable, std::move(ranges));
+  });
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
              semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
              semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
-             semantic::SVClockingBlockSymbolOp,
+             semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
+             semantic::SVInstanceArraySymbolOp,
+             semantic::SVGenerateBlockArraySymbolOp,
+             semantic::SVPrimitiveInstanceSymbolOp,
              semantic::SVGenerateBlockSymbolOp,
              semantic::SVInstanceBodySymbolOp>(operation))
       return std::nullopt;
@@ -755,6 +1009,26 @@ materializeDesignDescriptors(ModuleOp module,
       return VPIKind::SequenceDecl;
     if (isa<semantic::SVClockingBlockSymbolOp>(operation))
       return VPIKind::ClockingBlock;
+    if (isa<semantic::SVVariableSymbolOp>(operation)) {
+      if (namedEventArrayRanges.count(operation))
+        return VPIKind::NamedEventArray;
+      return scalarNamedEvents.contains(operation)
+                 ? std::optional(VPIKind::NamedEvent)
+                 : std::nullopt;
+    }
+    if (auto array = dyn_cast<semantic::SVInstanceArraySymbolOp>(operation)) {
+      if (!fixedArrayRanges.count(array))
+        return std::nullopt;
+      return fixedArrayKinds.lookup(array);
+    }
+    if (auto array =
+            dyn_cast<semantic::SVGenerateBlockArraySymbolOp>(operation))
+      return sparseArrayIndices.count(array)
+                 ? std::optional(VPIKind::GenScopeArray)
+                 : std::nullopt;
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(operation))
+      return primitiveKind(primitive);
     if (auto generate =
             dyn_cast<semantic::SVGenerateBlockSymbolOp>(operation)) {
       if (auto uninstantiated =
@@ -839,6 +1113,36 @@ materializeDesignDescriptors(ModuleOp module,
     }
 
     StringRef hierarchy = getHierarchyName(source);
+    VPIKind sourceKind = anchorKinds.lookup(source);
+    bool aggregateArray = sourceKind == VPIKind::ModuleArray ||
+                          sourceKind == VPIKind::InterfaceArray ||
+                          sourceKind == VPIKind::ProgramArray ||
+                          sourceKind == VPIKind::GateArray ||
+                          sourceKind == VPIKind::SwitchArray ||
+                          sourceKind == VPIKind::UdpArray ||
+                          sourceKind == VPIKind::NamedEventArray ||
+                          sourceKind == VPIKind::GenScopeArray;
+    Operation *arrayRoot = nullptr;
+    SmallVector<int64_t> memberIndices;
+    if (!aggregateArray) {
+      for (Operation *cursor = source; cursor; cursor = cursor->getParentOp()) {
+        if (cursor != source && anchorSymbols.count(cursor))
+          break;
+        auto root = relationArrayMemberRoots.find(cursor);
+        if (root == relationArrayMemberRoots.end())
+          continue;
+        arrayRoot = root->second;
+        memberIndices = relationArrayMemberIndices.lookup(cursor);
+        break;
+      }
+    }
+    if (!memberIndices.empty())
+      if (arrayRoot) {
+        std::string indexedHierarchy = getHierarchyName(arrayRoot).str();
+        for (int64_t index : memberIndices)
+          indexedHierarchy += "[" + std::to_string(index) + "]";
+        hierarchy = builder.getStringAttr(indexedHierarchy).getValue();
+      }
     if (hierarchy.empty() && parent)
       hierarchy = getHierarchyName(parent);
     if (hierarchy.empty()) {
@@ -846,6 +1150,25 @@ materializeDesignDescriptors(ModuleOp module,
           << "VPI source object is missing a hierarchy name";
       invalid = true;
       continue;
+    }
+    DenseI64ArrayAttr indexRanges;
+    DenseI64ArrayAttr sparseIndices;
+    if (auto found = fixedArrayRanges.find(source);
+        found != fixedArrayRanges.end())
+      indexRanges = builder.getDenseI64ArrayAttr(found->second);
+    if (auto found = namedEventArrayRanges.find(source);
+        found != namedEventArrayRanges.end())
+      indexRanges = builder.getDenseI64ArrayAttr(found->second);
+    if (auto found = sparseArrayIndices.find(source);
+        found != sparseArrayIndices.end())
+      sparseIndices = builder.getDenseI64ArrayAttr(found->second);
+    IntegerAttr primitiveInputCount;
+    if (isa<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
+      SmallVector<Operation *> terminals = getChildren(source);
+      uint64_t count = llvm::count_if(terminals, [](Operation *terminal) {
+        return !isa<semantic::SVAssignmentExpressionOp>(terminal);
+      });
+      primitiveInputCount = builder.getI64IntegerAttr(count);
     }
     sim::SimVPIObjectAnchorOp::create(
         builder, getSemanticLocation(source),
@@ -855,8 +1178,64 @@ materializeDesignDescriptors(ModuleOp module,
         builder.getStringAttr(getDebugName(source)),
         isa<semantic::SVCompilationUnitSymbolOp>(source) ? builder.getUnitAttr()
                                                          : UnitAttr{},
-        backing);
+        backing, indexRanges, sparseIndices,
+        memberIndices.empty() ? DenseI64ArrayAttr{}
+                              : builder.getDenseI64ArrayAttr(memberIndices),
+        primitiveInputCount);
     source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
+  }
+  uint64_t nextSyntheticInventoryId = anchorSources.size();
+  for (Operation *source : anchorSources) {
+    auto eventArray = namedEventArrayRanges.find(source);
+    if (eventArray == namedEventArrayRanges.end())
+      continue;
+    ArrayRef<int64_t> ranges = eventArray->second;
+    SmallVector<uint64_t> extents;
+    uint64_t elementCount = 1;
+    for (size_t dimension = 0; dimension != ranges.size(); dimension += 2) {
+      uint64_t distance = ranges[dimension] >= ranges[dimension + 1]
+                              ? static_cast<uint64_t>(ranges[dimension]) -
+                                    static_cast<uint64_t>(ranges[dimension + 1])
+                              : static_cast<uint64_t>(ranges[dimension + 1]) -
+                                    static_cast<uint64_t>(ranges[dimension]);
+      if (distance == UINT64_MAX || distance + 1 > UINT32_MAX ||
+          elementCount > UINT32_MAX / (distance + 1)) {
+        emitError(getSemanticLocation(source))
+            << "named-event array shape exceeds VPI relation encoding";
+        invalid = true;
+        elementCount = 0;
+        break;
+      }
+      extents.push_back(distance + 1);
+      elementCount *= distance + 1;
+    }
+    for (uint64_t ordinal = 0; ordinal != elementCount; ++ordinal) {
+      uint64_t remainder = ordinal;
+      SmallVector<int64_t> indices(extents.size());
+      for (size_t dimension = extents.size(); dimension != 0;) {
+        --dimension;
+        uint64_t coordinate = remainder % extents[dimension];
+        remainder /= extents[dimension];
+        int64_t left = ranges[dimension * 2];
+        indices[dimension] = left >= ranges[dimension * 2 + 1]
+                                 ? left - static_cast<int64_t>(coordinate)
+                                 : left + static_cast<int64_t>(coordinate);
+      }
+      std::string hierarchy = getHierarchyName(source).str();
+      for (int64_t index : indices)
+        hierarchy += "[" + std::to_string(index) + "]";
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(source), symbolName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::NamedEvent), scopes.lookup(source),
+          anchorSymbols.lookup(source), ordinal,
+          builder.getStringAttr(hierarchy),
+          builder.getStringAttr(getDebugName(source)), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          builder.getDenseI64ArrayAttr(indices), IntegerAttr{});
+    }
   }
   auto ownerAnchorFor = [&](Operation *member) -> FlatSymbolRefAttr {
     for (Operation *cursor = member; cursor; cursor = cursor->getParentOp()) {
@@ -1272,6 +1651,13 @@ materializeDesignDescriptors(ModuleOp module,
       return;
     }
     Attribute identity = getEnumIdentity(enumValue, *target);
+    // A value can join an existing typedef typespec through its lexical
+    // identity. Creating a new anonymous typespec, however, requires the
+    // frontend's exact source-type identity; otherwise identically named
+    // anonymous enums in the same owner cannot be distinguished.
+    if (!enumTypespecsByIdentity.count(identity) &&
+        !enumValue->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+      return;
     enumValues.push_back({enumValue, *target, identity, owner, constant});
   });
 
@@ -1342,7 +1728,17 @@ materializeDesignDescriptors(ModuleOp module,
     // Runtime storage must still exist now, but it must not retain a
     // typedef or interface-typespec symbol whose local declaration was
     // deliberately deferred with that owner.
-    return ownerAnchorFor(owner) ? type : sim::VPITypeSemanticsAttr{};
+    if (!ownerAnchorFor(owner))
+      return sim::VPITypeSemanticsAttr{};
+    // Anonymous enum reflection is only sound when the frontend supplied the
+    // exact declaration identity used to join the value to its typespec.
+    // Legacy and hand-authored semantic IR may carry an enum-shaped value
+    // without that identity; keep lowering its executable storage, but do not
+    // retain an unresolvable VPI type on the persistent declaration.
+    if (type.getKind() == sim::VPITypeKind::Enum && !type.getTypedefAliases() &&
+        !owner->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+      return sim::VPITypeSemanticsAttr{};
+    return type;
   };
   auto retainVPISourceTypeIdentity =
       [&](Operation *source, Operation *declaration,
@@ -1507,6 +1903,9 @@ materializeDesignDescriptors(ModuleOp module,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{},
           retainedVPIType);
       retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+      if (namedEventArrayRanges.count(op))
+        declaration->setAttr(sim::metadata::vpiIdentityDelegated,
+                             anchorSymbols.lookup(op));
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&

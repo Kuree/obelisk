@@ -59,6 +59,12 @@ def AutomaticDirectChild : VPIAutomaticRelation<"DirectChild", 1>;
 def AutomaticParentScope : VPIAutomaticRelation<"ParentScope", 2>;
 def AutomaticDirectPortConnection :
     VPIAutomaticRelation<"DirectPortConnection", 3>;
+// Reverse edge from a selected static hierarchy member to the relation-backed
+// array that owns its source index. This is distinct from lexical scope: a
+// module-array member's vpiModule skips the array and names the enclosing
+// module, while vpiModuleArray/vpiInstanceArray name the array itself.
+def AutomaticIndexedContainer :
+    VPIAutomaticRelation<"IndexedContainer", 4>;
 
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other
@@ -92,13 +98,15 @@ class VPIIndexedAccessKind<string cppName_, int value_> {
 def PortElementAccess : VPIIndexedAccessKind<"PortElement", 0>;
 def NetElementAccess : VPIIndexedAccessKind<"NetElement", 1>;
 def VariableElementAccess : VPIIndexedAccessKind<"VariableElement", 2>;
+def RelationElementAccess : VPIIndexedAccessKind<"RelationElement", 3>;
 
 class VPIIndexedAccess<VPIObjectSet sources_,
                        VPIIndexedAccessKind accessKind_,
                        VPIObjectSet targets_, VPIObjectKind terminalResult_,
                        VPIObjectKind unpackedFallback_,
                        VPIObjectKind packedFallback_, bit mapSemanticType_,
-                       string clause_> {
+                       string clause_,
+                       VPISelector relationSelector_ = IndexRel> {
   VPIObjectSet sources = sources_;
   VPIIndexedAccessKind accessKind = accessKind_;
   VPIObjectSet targets = targets_;
@@ -107,7 +115,20 @@ class VPIIndexedAccess<VPIObjectSet sources_,
   VPIObjectKind packedFallback = packedFallback_;
   bit mapSemanticType = mapSemanticType_;
   string clause = clause_;
+  VPISelector relationSelector = relationSelector_;
 }
+
+// Static hierarchy arrays select canonical immutable design records rather
+// than slicing executable storage. Reference the existing IndexOrder edge so
+// the legal source, selector, target set, and indexed policy cannot drift.
+class VPIRelationIndexedAccess<VPITraversalEdge elementEdge_,
+                               VPIObjectSet resultTargets_,
+                               VPIObjectKind partialResult_,
+                               VPIObjectKind terminalResult_,
+                               string clause_>
+    : VPIIndexedAccess<elementEdge_.sources, RelationElementAccess,
+                       resultTargets_, terminalResult_, partialResult_,
+                       terminalResult_, 0, clause_, elementEdge_.selector>;
 
 class VPIIndexedTypeResult<VPIIndexedAccessKind accessKind_,
                            VPIObjectKind selectedTypespec_,
@@ -277,8 +298,22 @@ def ConcreteTypespecObjects : VPIObjectSet<"ConcreteTypespecObjects",
    BitTypespec, LogicTypespec, ArrayTypespec, VoidTypespec,
    PackedArrayTypespec, SequenceTypespec, PropertyTypespec, EventTypespec,
    InterfaceTypespec]>;
+// Exact union of the concrete objects for which Chapter 37 defines vpiSize.
+// Keep this explicit: neither ExpressionFamily nor VariableFamily is a legal
+// approximation (for example statements and named events have no vpiSize).
 def StructuralSizeObjects : VPIObjectSet<"StructuralSizeObjects",
-  [Range, Constant]>;
+  [IODecl, Port, PortBit,
+   ModuleArray, InterfaceArray, ProgramArray, GateArray, SwitchArray, UdpArray,
+   Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
+   ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, InterconnectArray, StructNet, PackedArrayNet,
+   IntegerVar, RealVar, Reg, RegBit, TimeVar, LongIntVar, ShortIntVar, IntVar,
+   ShortRealVar, ByteVar, ClassVar, StringVar, EnumVar, StructVar, UnionVar,
+   BitVar, ChandleVar, PackedArrayVar, VirtualInterfaceVar, RegArray,
+   Parameter, SpecParam,
+   RefObj, VarSelect, BitSelect, IndexedPartSelect, PartSelect, Operation,
+   Constant, FuncCall, MethodFuncCall, SysFuncCall, LetExpr,
+   Range, Gate, Switch, Udp, UdpDefn, TableEntry, Function, GenScopeArray]>;
 def PackedTypespecObjects : VPIObjectSet<"PackedTypespecObjects",
   [StructTypespec, UnionTypespec]>;
 def TaggedTypespecObjects : VPIObjectSet<"TaggedTypespecObjects",
@@ -295,9 +330,19 @@ def IndexedValueObjects : VPIObjectSet<"IndexedValueObjects",
    RegBit, Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
    ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
    InterconnectNet, InterconnectArray, StructNet, PackedArrayNet]>;
+def ArrayMemberObjects : VPIObjectSet<"ArrayMemberObjects",
+  [Package, Module, Interface, Program, Gate, Switch, Udp, NamedEvent, GenScope,
+   ShortRealVar, RealVar, ByteVar, ShortIntVar, IntVar, LongIntVar,
+   IntegerVar, TimeVar, RegArray, PackedArrayVar, BitVar, Reg, StructVar,
+   UnionVar, EnumVar, StringVar, ChandleVar, ClassVar, VirtualInterfaceVar,
+   RegBit, Net, NetBit, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet,
+   ShortRealNet, RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
+   InterconnectNet, InterconnectArray, StructNet, PackedArrayNet]>;
 
 def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
-  StructuralSizeObjects, "37.22; 37.57">;
+  StructuralSizeObjects,
+  "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; 37.26; "
+  "37.33; 37.34; 37.39; 37.57; 37.83">;
 def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
   BooleanProperty, PackedTypespecObjects, "37.23">;
 def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
@@ -309,7 +354,8 @@ def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
   IntegerProperty, ConstantObjects, "37.22; 37.57">;
 def IndexedArrayMemberProperty : VPIProperty<"vpiArrayMember", 607,
-  BooleanProperty, IndexedValueObjects, "37.16; 37.17">;
+  BooleanProperty, ArrayMemberObjects,
+  "37.5; 37.6; 37.9; 37.16; 37.17; 37.25; 37.33; 37.83">;
 def IndexedPackedArrayMemberProperty : VPIProperty<"vpiPackedArrayMember", 655,
   BooleanProperty, IndexedValueObjects, "37.16; 37.17; 37.18">;
 def IndexedConstantSelectProperty : VPIProperty<"vpiConstantSelect", 53,
@@ -321,7 +367,9 @@ def IndexedSignedProperty : VPIProperty<"vpiSigned", 65,
 // nets, and ordinary design storage use their dedicated representations.
 def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
   [Package, ClassDefn, Task, Function, ClockingBlock, GenScope, PropertyDecl,
-   SequenceDecl, LongIntTypespec, ShortRealTypespec, ByteTypespec,
+   SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
+   ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
+   GenScopeArray, LongIntTypespec, ShortRealTypespec, ByteTypespec,
    ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
    ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
    RealTypespec, StructTypespec, UnionTypespec, BitTypespec, LogicTypespec,
@@ -510,9 +558,11 @@ def ModuleChildren : VPITraversalEdge<ModuleSource, Module, IterateMode,
 def ModuleArrays : VPITraversalEdge<ModuleSource, ModuleArray, IterateMode,
   ModuleArrayObjects, NoOrder, "37.5">;
 def ModulePrimitives : VPITraversalEdge<ModuleSource, PrimitiveRel,
-  IterateMode, PrimitiveConcreteObjects, NoOrder, "37.5">;
+  IterateMode, PrimitiveConcreteObjects, NoOrder, "37.5", 0,
+  AutomaticDirectChild>;
 def ModulePrimitiveArrays : VPITraversalEdge<ModuleSource, PrimitiveArray,
-  IterateMode, PrimitiveArrayObjects, NoOrder, "37.5">;
+  IterateMode, PrimitiveArrayObjects, NoOrder, "37.5", 0,
+  AutomaticDirectChild>;
 def ModuleModPaths : VPITraversalEdge<ModuleSource, ModPath, IterateMode,
   ModPathObjects, NoOrder, "37.5">;
 def ModuleTchks : VPITraversalEdge<ModuleSource, Tchk, IterateMode,
@@ -528,7 +578,8 @@ def ModuleClockingBlocks : VPITraversalEdge<ModuleSource, ClockingBlock,
 def ModuleInternalScopes : VPITraversalEdge<ModuleSource, InternalScopeRel,
   IterateMode, ScopeObjects, NoOrder, "37.5", 0, AutomaticDirectChild>;
 def ModuleInstanceArrays : VPITraversalEdge<ModuleSource, InstanceArrayRel,
-  HandleMode, InstanceArrayObjects, NoOrder, "37.5">;
+  HandleMode, ModuleArrayObjects, NoOrder, "37.5", 0,
+  AutomaticIndexedContainer>;
 
 def InterfaceTfDecls : VPITraversalEdge<InterfaceObjects, InterfaceTfDecl,
   IterateMode, InterfaceTfDeclObjects, NoOrder, "37.6">;
@@ -549,7 +600,8 @@ def InterfaceProcesses : VPITraversalEdge<InterfaceObjects, ProcessRel,
   IterateMode, StaticProcessObjects, NoOrder, "37.6", 0,
   AutomaticDirectChild>;
 def InterfaceInstanceArrays : VPITraversalEdge<InterfaceObjects,
-  InstanceArrayRel, HandleMode, InstanceArrayObjects, NoOrder, "37.6">;
+  InstanceArrayRel, HandleMode, InterfaceArrayObjects, NoOrder,
+  "37.6", 0, AutomaticIndexedContainer>;
 
 def ProgramContAssigns : VPITraversalEdge<ProgramObjects, ContAssign,
   IterateMode, ContAssignObjects, NoOrder, "37.9", 1>;
@@ -563,7 +615,8 @@ def ProgramProcesses : VPITraversalEdge<ProgramObjects, ProcessRel,
   IterateMode, StaticProcessObjects, NoOrder, "37.9", 0,
   AutomaticDirectChild>;
 def ProgramInstanceArrays : VPITraversalEdge<ProgramObjects, InstanceArrayRel,
-  HandleMode, InstanceArrayObjects, NoOrder, "37.9">;
+  HandleMode, ProgramArrayObjects, NoOrder, "37.9", 0,
+  AutomaticIndexedContainer>;
 
 def InstanceTaskFunctions : VPITraversalEdge<InstanceObjects, TaskFuncRel,
   IterateMode, TaskFunctionDeclObjects, NoOrder, "37.10", 0,
@@ -582,7 +635,7 @@ def InstanceRegArrays : VPITraversalEdge<InstanceObjects, RegArray,
 def InstanceNamedEvents : VPITraversalEdge<InstanceObjects, NamedEvent,
   IterateMode, NamedEventTargetObjects, NoOrder, "37.10">;
 def InstanceNamedEventArrays : VPITraversalEdge<InstanceObjects,
-  NamedEventArray, IterateMode, NamedEventObjects, NoOrder, "37.10">;
+  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.10">;
 def InstanceParameters : VPITraversalEdge<InstanceObjects, Parameter,
   IterateMode, ParameterIterationObjects, NoOrder, "37.10">;
 def InstanceTypeParameters : VPITraversalEdge<InstanceObjects, TypeParameter,
@@ -606,7 +659,7 @@ def ScopeConcurrentAssertions : VPITraversalEdge<ScopeSource,
 def ScopeNamedEvents : VPITraversalEdge<NonInstanceScopeObjects, NamedEvent,
   IterateMode, NamedEventTargetObjects, NoOrder, "37.12; 37.83">;
 def ScopeNamedEventArrays : VPITraversalEdge<NonInstanceScopeObjects,
-  NamedEventArray, IterateMode, NamedEventObjects, NoOrder,
+  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder,
   "37.12; 37.83">;
 def ScopeVariables : VPITraversalEdge<NonInstanceScopeObjects, VariablesRel,
   IterateMode, DataVariableObjects, NoOrder, "37.12; 37.83">;
@@ -671,6 +724,48 @@ def IndexedInterconnectArray : VPIIndexedAccess<
 def IndexedVariable : VPIIndexedAccess<IndexedVariableSources,
   VariableElementAccess, VPIEarlyVariables, RegBit, RegArray, Reg, 1,
   "37.17; 37.20; 38.19; 38.20">;
+
+def IndexedModuleArrayResults : VPIObjectSet<"IndexedModuleArrayResults",
+  [ModuleArray, Module]>;
+def IndexedInterfaceArrayResults : VPIObjectSet<
+  "IndexedInterfaceArrayResults", [InterfaceArray, Interface]>;
+def IndexedProgramArrayResults : VPIObjectSet<"IndexedProgramArrayResults",
+  [ProgramArray, Program]>;
+def IndexedGateArrayResults : VPIObjectSet<"IndexedGateArrayResults",
+  [GateArray, Gate]>;
+def IndexedSwitchArrayResults : VPIObjectSet<"IndexedSwitchArrayResults",
+  [SwitchArray, Switch]>;
+def IndexedUdpArrayResults : VPIObjectSet<"IndexedUdpArrayResults",
+  [UdpArray, Udp]>;
+def IndexedNamedEventArrayResults : VPIObjectSet<
+  "IndexedNamedEventArrayResults", [NamedEventArray, NamedEvent]>;
+def IndexedGenScopeArrayResults : VPIObjectSet<
+  "IndexedGenScopeArrayResults", [GenScopeArray, GenScope]>;
+
+def IndexedModuleArray : VPIRelationIndexedAccess<
+  VPIEarlyModuleArrayElements, IndexedModuleArrayResults, ModuleArray, Module,
+  "37.5; 37.11; 38.19; 38.20">;
+def IndexedInterfaceArray : VPIRelationIndexedAccess<
+  VPIEarlyArrayInterfaces, IndexedInterfaceArrayResults, InterfaceArray,
+  Interface, "37.6; 37.11; 38.19; 38.20">;
+def IndexedProgramArray : VPIRelationIndexedAccess<
+  VPIEarlyArrayPrograms, IndexedProgramArrayResults, ProgramArray, Program,
+  "37.9; 37.11; 38.19; 38.20">;
+def IndexedGateArray : VPIRelationIndexedAccess<
+  VPIEarlyGateArrayElements, IndexedGateArrayResults, GateArray, Gate,
+  "37.11; 37.33; 38.19; 38.20">;
+def IndexedSwitchArray : VPIRelationIndexedAccess<
+  VPIEarlySwitchArrayElements, IndexedSwitchArrayResults, SwitchArray, Switch,
+  "37.11; 37.33; 38.19; 38.20">;
+def IndexedUdpArray : VPIRelationIndexedAccess<
+  VPIEarlyUdpArrayElements, IndexedUdpArrayResults, UdpArray, Udp,
+  "37.11; 37.33; 38.19; 38.20">;
+def IndexedNamedEventArray : VPIRelationIndexedAccess<
+  VPIEarlyNamedEventArrayElements, IndexedNamedEventArrayResults,
+  NamedEventArray, NamedEvent, "37.25; 38.19; 38.20">;
+def IndexedGenScopeArray : VPIRelationIndexedAccess<
+  LateGenScopeArrayElements, IndexedGenScopeArrayResults, GenScopeArray,
+  GenScope, "37.83; 38.19; 38.20">;
 
 multiclass IndexedValueTypeResult<VPIObjectKind typespec,
                                   VPIObjectKind variable,

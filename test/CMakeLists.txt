@@ -138,6 +138,12 @@ obelisk_add_generated_process_object(
   Conversion/simulation-dumpports.mlir
   VPI read
 )
+obelisk_add_generated_process_object(
+  _generated_vpi_static_arrays_object
+  GeneratedVPIStaticArrays
+  Inputs/generated-vpi-static-arrays.mlir
+  VPI read
+)
 add_executable(ObeliskGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
   "${_generated_process_object}"
@@ -157,6 +163,23 @@ add_executable(ObeliskGeneratedArithmeticRuntimeTests
 add_executable(ObeliskGeneratedVPITraversalRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPITraversalTest.cpp"
   "${_generated_vpi_traversal_object}"
+)
+add_executable(ObeliskGeneratedVPIStaticArraysRuntimeTests
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStaticArraysTest.cpp"
+  "${_generated_vpi_static_arrays_object}"
+)
+target_link_libraries(ObeliskGeneratedVPIStaticArraysRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_include_directories(ObeliskGeneratedVPIStaticArraysRuntimeTests SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
+target_compile_features(ObeliskGeneratedVPIStaticArraysRuntimeTests PRIVATE
+  cxx_std_17
+)
+set_target_properties(ObeliskGeneratedVPIStaticArraysRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 target_link_libraries(ObeliskGeneratedVPITraversalRuntimeTests PRIVATE
   obelisk_rt
@@ -204,6 +227,7 @@ set(OBELISK_RUNTIME_UNIT_TARGETS
   ObeliskGeneratedClassBitstreamBytecode
   ObeliskGeneratedClassBitstreamNative
   ObeliskGeneratedProcessRuntimeTests
+  ObeliskGeneratedVPIStaticArraysRuntimeTests
   ObeliskGeneratedVPITraversalRuntimeTests
   ObeliskProcessRuntimeTests
   ObeliskRuntimeTests

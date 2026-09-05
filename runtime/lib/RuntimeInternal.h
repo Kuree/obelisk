@@ -1406,6 +1406,14 @@ struct DesignDatabaseCache {
   uint64_t semanticTypeEdgeCount = 0;
   uint64_t objectSemanticRoots = 0;
   uint64_t objectSemanticRootCount = 0;
+  uint64_t relationIndices = 0;
+  uint64_t relationIndexCount = 0;
+  uint64_t relationIndexDimensions = 0;
+  uint64_t relationIndexDimensionCount = 0;
+  uint64_t relationIndexKeys = 0;
+  uint64_t relationIndexKeyCount = 0;
+  uint64_t relationIndexMembers = 0;
+  uint64_t relationIndexMemberCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -1416,6 +1424,22 @@ struct DesignDatabaseCache {
 struct VPIRelationRange {
   uint64_t first = 0;
   uint64_t count = 0;
+};
+
+struct VPIRelationIndexInfo {
+  uint32_t firstDimension = UINT32_MAX;
+  uint32_t firstKey = UINT32_MAX;
+  uint32_t firstOrdinalKey = UINT32_MAX;
+  uint32_t elementCount = 0;
+  uint16_t dimensionCount = 0;
+  bool sparse = false;
+};
+
+struct VPIArrayMemberInfo {
+  obelisk_rt_design_cursor_v1 array{};
+  VPIRelationIndexInfo index{};
+  uint32_t arrayType = 0;
+  uint32_t ordinal = 0;
 };
 
 struct CoverageTypeState {
@@ -2740,8 +2764,7 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
     obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index,
-    obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
+    uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_source(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
@@ -2770,6 +2793,23 @@ obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
     const obelisk_rt_context *context, uint64_t relationIndex,
     obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType,
     bool *outStatement) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_relation_index(const obelisk_rt_context *context,
+                                     obelisk_rt_design_cursor_v1 source,
+                                     VPIRelationIndexInfo *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_dimension(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t dimension, int64_t *outLeft, int64_t *outRight) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    int64_t index, uint32_t *outOrdinal) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_ordinal_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t ordinal, int64_t *outIndex) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_array_member(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 member,
+                                   VPIArrayMemberInfo *outInfo) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     obelisk_rt_design_cursor_v1 *outScope) noexcept;

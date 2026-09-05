@@ -1059,10 +1059,15 @@ bool supportsPackedBitSelect(__vpiHandle *handle,
 }
 
 bool isIndexedArrayMember(const __vpiHandle *handle) {
-  return handle->form == VPIObjectForm::Indexed &&
-         !handle->selectionSteps.empty() &&
-         handle->selectionSteps.back().arrayDimension &&
-         !handle->selectionSteps.back().packed;
+  if (handle->form == VPIObjectForm::Indexed)
+    return !handle->selectionSteps.empty() &&
+           handle->selectionSteps.back().arrayDimension &&
+           !handle->selectionSteps.back().packed;
+  if (handle->form != VPIObjectForm::Design)
+    return false;
+  VPIArrayMemberInfo member{};
+  return obelisk_rt_cached_vpi_array_member(
+             handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK;
 }
 
 bool isIndexedPackedArrayMember(const __vpiHandle *handle,
@@ -1090,6 +1095,52 @@ bool supportsIndexQuery(const __vpiHandle *handle, uint32_t objectType) {
   return objectType == vpiNetBit || objectType == vpiRegBit ||
          isIndexedArrayMember(handle) ||
          isIndexedPackedArrayMember(handle, objectType);
+}
+
+bool staticArrayMemberIndexSteps(__vpiHandle *handle,
+                                 std::vector<VPISelectionStep> &steps) {
+  if (!handle || handle->form != VPIObjectForm::Design)
+    return false;
+  VPIArrayMemberInfo member{};
+  if (obelisk_rt_cached_vpi_array_member(handle->owner->context, handle->cursor,
+                                         &member) != OBELISK_RT_OK)
+    return false;
+  OBELISK_RT_TRY { steps.assign(member.index.dimensionCount, {}); }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "could not allocate VPI member indices", vpiSystem);
+    return false;
+  }
+  if (member.index.sparse) {
+    int64_t index = 0;
+    if (steps.size() != 1 || obelisk_rt_cached_vpi_relation_index_ordinal_key(
+                                 handle->owner->context, member.index,
+                                 member.ordinal, &index) != OBELISK_RT_OK)
+      return false;
+    steps[0].index = index;
+    steps[0].selectionOrdinal = 0;
+    steps[0].arrayDimension = true;
+    return true;
+  }
+  uint64_t flattened = member.ordinal;
+  for (size_t dimension = member.index.dimensionCount; dimension != 0;) {
+    --dimension;
+    int64_t left = 0, right = 0;
+    if (obelisk_rt_cached_vpi_relation_index_dimension(
+            handle->owner->context, member.index,
+            static_cast<uint32_t>(dimension), &left, &right) != OBELISK_RT_OK)
+      return false;
+    uint64_t ordinal = 0, extent = 0;
+    if (!sourceIndexOrdinal(left, right, left, ordinal, extent) || extent == 0)
+      return false;
+    uint64_t coordinate = flattened % extent;
+    flattened /= extent;
+    steps[dimension].index = left >= right
+                                 ? left - static_cast<int64_t>(coordinate)
+                                 : left + static_cast<int64_t>(coordinate);
+    steps[dimension].selectionOrdinal = static_cast<uint32_t>(dimension);
+    steps[dimension].arrayDimension = true;
+  }
+  return flattened == 0;
 }
 
 uint32_t
@@ -1171,6 +1222,11 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
   }
 }
 
+vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
+                                    std::vector<VPISelectionStep> steps,
+                                    uint64_t remainingElements,
+                                    int64_t nextLeft, int64_t nextRight);
+
 vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
   if (!source || source->form != VPIObjectForm::Indexed ||
       count > source->selectionSteps.size())
@@ -1181,6 +1237,37 @@ vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
   OBELISK_RT_TRY {
     std::vector<VPISelectionStep> prefix(
         source->selectionSteps.begin(), source->selectionSteps.begin() + count);
+    if (source->selectionAccessKind ==
+        obelisk::reflection::VPIIndexedAccessKind::RelationElement) {
+      VPIRelationIndexInfo index{};
+      if (obelisk_rt_cached_vpi_relation_index(source->owner->context,
+                                               source->cursor,
+                                               &index) != OBELISK_RT_OK ||
+          index.sparse || count >= index.dimensionCount)
+        return nullptr;
+      uint64_t remaining = 1;
+      int64_t nextLeft = 0, nextRight = 0;
+      for (uint32_t dimension = static_cast<uint32_t>(count);
+           dimension != index.dimensionCount; ++dimension) {
+        int64_t left = 0, right = 0;
+        if (obelisk_rt_cached_vpi_relation_index_dimension(
+                source->owner->context, index, dimension, &left, &right) !=
+            OBELISK_RT_OK)
+          return nullptr;
+        uint64_t ordinal = 0, extent = 0;
+        if (!sourceIndexOrdinal(left, right, left, ordinal, extent) ||
+            remaining > UINT32_MAX / extent)
+          return nullptr;
+        if (dimension == count) {
+          nextLeft = left;
+          nextRight = right;
+        }
+        remaining *= extent;
+      }
+      return makeRelationIndexedHandle(source, source->selectionRootType,
+                                       std::move(prefix), remaining, nextLeft,
+                                       nextRight);
+    }
     return makeIndexedHandle(source, source->selectionRootType,
                              source->selectionAccessKind, std::move(prefix));
   }
@@ -1308,6 +1395,175 @@ bool appendIndexedSelection(
   return true;
 }
 
+vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
+                                    std::vector<VPISelectionStep> steps,
+                                    uint64_t remainingElements,
+                                    int64_t nextLeft, int64_t nextRight) {
+  if (!source || steps.empty())
+    return nullptr;
+  obelisk_rt_design_info_v1 info{};
+  if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
+                                    &info) != OBELISK_RT_OK) {
+    setError(source->owner, "relation-indexed VPI metadata lookup failed",
+             vpiInternal);
+    return nullptr;
+  }
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = source->owner;
+    handle->kind = VPIHandleKind::Object;
+    handle->form = VPIObjectForm::Indexed;
+    handle->cursor = source->cursor;
+    handle->semanticCursor = steps.back().semanticType;
+    handle->exactVpiType = rootType;
+    handle->statement = false;
+    handle->classDefinitionOrigin = source->classDefinitionOrigin;
+    handle->selectionRootType = rootType;
+    handle->selectionAccessKind =
+        obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+    handle->selectionBitOffset = steps.back().bitOffset;
+    handle->selectionSteps = std::move(steps);
+    handle->hasInfo = true;
+    handle->info = info;
+    handle->info.type_offset = 0;
+    handle->info.bit_width = remainingElements;
+    handle->info.range_left = nextLeft;
+    handle->info.range_right = nextRight;
+    return keepHandle(source->owner, std::move(handle));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not allocate relation-indexed VPI handle",
+             vpiSystem);
+    return nullptr;
+  }
+}
+
+vpiHandle handleRelationByIndices(
+    __vpiHandle *source,
+    const obelisk::reflection::VPIIndexedAccessDescriptor &access,
+    PLI_INT32 count, const PLI_INT32 *indices) {
+  VPIRelationIndexInfo indexInfo{};
+  if (obelisk_rt_cached_vpi_relation_index(
+          source->owner->context, source->cursor, &indexInfo) != OBELISK_RT_OK)
+    return nullptr;
+  size_t priorCount = source->form == VPIObjectForm::Indexed
+                          ? source->selectionSteps.size()
+                          : 0;
+  if (priorCount > indexInfo.dimensionCount ||
+      static_cast<uint64_t>(count) > indexInfo.dimensionCount - priorCount)
+    return nullptr;
+
+  OBELISK_RT_TRY {
+    std::vector<int64_t> requested;
+    requested.reserve(priorCount + static_cast<size_t>(count));
+    if (source->form == VPIObjectForm::Indexed)
+      for (const VPISelectionStep &step : source->selectionSteps)
+        requested.push_back(step.index);
+    for (PLI_INT32 position = 0; position != count; ++position)
+      requested.push_back(indices[position]);
+
+    std::vector<VPISelectionStep> steps;
+    steps.reserve(requested.size());
+    uint64_t flattened = 0;
+    obelisk_rt_design_cursor_v1 semantic{};
+    (void)obelisk_rt_cached_design_semantic_root(source->owner->context,
+                                                 source->cursor, &semantic);
+    for (size_t dimension = 0; dimension != requested.size(); ++dimension) {
+      uint64_t ordinal = 0;
+      uint64_t extent = 0;
+      if (indexInfo.sparse) {
+        uint32_t sparseOrdinal = 0;
+        if (dimension != 0 ||
+            obelisk_rt_cached_vpi_relation_index_key(
+                source->owner->context, indexInfo, requested[dimension],
+                &sparseOrdinal) != OBELISK_RT_OK)
+          return nullptr;
+        ordinal = sparseOrdinal;
+        extent = indexInfo.elementCount;
+      } else {
+        int64_t left = 0, right = 0;
+        if (obelisk_rt_cached_vpi_relation_index_dimension(
+                source->owner->context, indexInfo,
+                static_cast<uint32_t>(dimension), &left,
+                &right) != OBELISK_RT_OK ||
+            !sourceIndexOrdinal(left, right, requested[dimension], ordinal,
+                                extent))
+          return nullptr;
+      }
+      if (extent == 0 || ordinal > UINT32_MAX ||
+          flattened > (UINT32_MAX - ordinal) / extent)
+        return nullptr;
+      flattened = flattened * extent + ordinal;
+      if (semantic.offset != 0) {
+        obelisk_rt_design_cursor_v1 element{};
+        if (!semanticElement(source, semantic, element))
+          return nullptr;
+        semantic = element;
+      }
+      steps.push_back({{},
+                       semantic,
+                       flattened,
+                       0,
+                       requested[dimension],
+                       static_cast<uint32_t>(dimension),
+                       access.unpackedFallback,
+                       false,
+                       true,
+                       false,
+                       false});
+    }
+
+    if (requested.size() == indexInfo.dimensionCount) {
+      VPIRelationRange range{};
+      if (obelisk_rt_cached_vpi_relation_range(
+              source->owner->context, source->cursor, access.relationSelector,
+              true, &range) != OBELISK_RT_OK ||
+          range.count != indexInfo.elementCount || flattened >= range.count)
+        return nullptr;
+      obelisk_rt_design_cursor_v1 target{};
+      uint32_t targetType = 0;
+      bool targetIsStatement = false;
+      if (obelisk_rt_cached_vpi_relation_target(
+              source->owner->context, range.first + flattened, &target,
+              &targetType, &targetIsStatement) != OBELISK_RT_OK ||
+          targetIsStatement || targetType != access.terminalResult)
+        return nullptr;
+      return makeHandle(source->owner, target, targetType, false,
+                        obelisk::runtime::hasClassDefinitionValueOrigin(
+                            static_cast<uint32_t>(vpiTypeForHandle(source)),
+                            source->classDefinitionOrigin, targetType));
+    }
+
+    uint64_t remaining = 1;
+    int64_t nextLeft = 0, nextRight = 0;
+    for (uint32_t dimension = static_cast<uint32_t>(requested.size());
+         dimension != indexInfo.dimensionCount; ++dimension) {
+      int64_t left = 0, right = 0;
+      if (indexInfo.sparse || obelisk_rt_cached_vpi_relation_index_dimension(
+                                  source->owner->context, indexInfo, dimension,
+                                  &left, &right) != OBELISK_RT_OK)
+        return nullptr;
+      uint64_t ordinal = 0, extent = 0;
+      if (!sourceIndexOrdinal(left, right, left, ordinal, extent) ||
+          remaining > UINT32_MAX / extent)
+        return nullptr;
+      if (dimension == requested.size()) {
+        nextLeft = left;
+        nextRight = right;
+      }
+      remaining *= extent;
+    }
+    return makeRelationIndexedHandle(source, access.sourceType,
+                                     std::move(steps), remaining, nextLeft,
+                                     nextRight);
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not perform relation-indexed VPI access",
+             vpiSystem);
+    return nullptr;
+  }
+}
+
 vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
                           const PLI_INT32 *indices) {
   __vpiHandle *source = validate(opaque, VPIHandleKind::Object);
@@ -1325,6 +1581,10 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
   const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
   if (!access)
     return nullptr;
+
+  if (access->accessKind ==
+      obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+    return handleRelationByIndices(source, *access, count, indices);
 
   uint32_t rootType = sourceType;
   auto accessKind = access->accessKind;
@@ -1351,6 +1611,87 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
   }
   OBELISK_RT_CATCH_ALL {
     setError(source->owner, "could not allocate indexed VPI selection",
+             vpiSystem);
+    return nullptr;
+  }
+}
+
+bool parseHierarchicalIndex(const std::string &name, size_t begin, size_t end,
+                            PLI_INT32 &result) {
+  if (begin == end)
+    return false;
+  bool negative = name[begin] == '-';
+  if (negative && ++begin == end)
+    return false;
+  uint64_t magnitude = 0;
+  const uint64_t limit = negative ? uint64_t{INT32_MAX} + 1 : INT32_MAX;
+  for (size_t position = begin; position != end; ++position) {
+    char digit = name[position];
+    if (digit < '0' || digit > '9')
+      return false;
+    unsigned value = static_cast<unsigned>(digit - '0');
+    if (magnitude > (limit - value) / 10)
+      return false;
+    magnitude = magnitude * 10 + value;
+  }
+  result = negative ? magnitude == uint64_t{INT32_MAX} + 1
+                          ? INT32_MIN
+                          : -static_cast<PLI_INT32>(magnitude)
+                    : static_cast<PLI_INT32>(magnitude);
+  return true;
+}
+
+vpiHandle handleRelationSelectionByName(VPIState *state,
+                                        const std::string &name,
+                                        bool classDefinitionOrigin) {
+  if (!state || name.empty())
+    return nullptr;
+  OBELISK_RT_TRY {
+    std::vector<PLI_INT32> indices;
+    size_t baseEnd = name.size();
+    while (baseEnd != 0 && name[baseEnd - 1] == ']') {
+      size_t open = name.rfind('[', baseEnd - 1);
+      if (open == std::string::npos)
+        break;
+      PLI_INT32 index = 0;
+      if (!parseHierarchicalIndex(name, open + 1, baseEnd - 1, index))
+        break;
+      indices.push_back(index);
+      baseEnd = open;
+    }
+    if (indices.empty() || baseEnd == 0 || indices.size() > INT32_MAX)
+      return nullptr;
+    std::reverse(indices.begin(), indices.end());
+
+    obelisk_rt_design_cursor_v1 cursor{};
+    if (!lookup(state, name.substr(0, baseEnd), cursor))
+      return nullptr;
+    obelisk_rt_design_info_v1 info{};
+    uint32_t exactType = 0;
+    if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
+            OBELISK_RT_OK ||
+        obelisk_rt_cached_vpi_type(state->context, cursor, &exactType) !=
+            OBELISK_RT_OK ||
+        exactType == 0 ||
+        (info.capabilities & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0)
+      return nullptr;
+    const auto *access = obelisk::reflection::findVPIIndexedAccess(exactType);
+    if (!access ||
+        access->accessKind !=
+            obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+      return nullptr;
+
+    __vpiHandle source;
+    source.owner = state;
+    source.cursor = cursor;
+    source.exactVpiType = exactType;
+    source.classDefinitionOrigin = classDefinitionOrigin;
+    return handleRelationByIndices(&source, *access,
+                                   static_cast<PLI_INT32>(indices.size()),
+                                   indices.data());
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not resolve indexed hierarchical VPI name",
              vpiSystem);
     return nullptr;
   }
@@ -1404,6 +1745,43 @@ bool isDimensionForTypespec(uint32_t publicType, uint32_t semanticKind,
   return false;
 }
 
+bool isDimensionForVPIObject(uint32_t publicType, uint32_t semanticKind,
+                             uint32_t semanticFlags,
+                             bool suppressDimension = false) {
+  if (isDimensionForTypespec(publicType, semanticKind, semanticFlags,
+                             suppressDimension))
+    return true;
+  if (suppressDimension ||
+      semanticKind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+    return false;
+  const auto *access = obelisk::reflection::findVPIIndexedAccess(publicType);
+  return access &&
+         access->accessKind ==
+             obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+}
+
+bool relationElementSelectorForIteration(uint32_t sourceType,
+                                         uint32_t requestedSelector,
+                                         uint32_t &storageSelector) {
+  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  if (!access || access->accessKind !=
+                     obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+    return false;
+  if (requestedSelector != access->relationSelector) {
+    const auto *edge = obelisk::reflection::findVPITraversal(
+        sourceType, requestedSelector,
+        obelisk::reflection::VPITraversalMode::Iterate);
+    if (!edge || edge->order != obelisk::reflection::VPITraversalOrder::Index ||
+        obelisk::reflection::vpiObjectSets[static_cast<uint16_t>(edge->targets)]
+                .kindCount != 1 ||
+        !obelisk::reflection::vpiObjectSetContains(edge->targets,
+                                                   access->terminalResult))
+      return false;
+  }
+  storageSelector = access->relationSelector;
+  return true;
+}
+
 vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
   obelisk_rt_design_cursor_v1 semantic{};
   if (!semanticCursorFor(handle, semantic))
@@ -1415,9 +1793,28 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
 
   if ((handle->form == VPIObjectForm::Design ||
        handle->form == VPIObjectForm::Indexed) &&
-      selector == vpiTypespec && !isTypespecVPIKind(sourceType))
+      selector == vpiTypespec && !isTypespecVPIKind(sourceType)) {
+    const auto *relation = obelisk::reflection::findVPITraversal(
+        sourceType, vpiTypespec, obelisk::reflection::VPITraversalMode::Handle);
+    if (!relation)
+      return nullptr;
+    uint32_t targetType = info.public_vpi_kind;
+    if (info.alias_object.offset != 0 ||
+        (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+         info.identity_target.offset != 0)) {
+      obelisk_rt_design_cursor_v1 target = info.alias_object.offset != 0
+                                               ? info.alias_object
+                                               : info.identity_target;
+      if (obelisk_rt_cached_vpi_type(handle->owner->context, target,
+                                     &targetType) != OBELISK_RT_OK)
+        return nullptr;
+    }
+    if (!obelisk::reflection::vpiObjectSetContains(relation->targets,
+                                                   targetType))
+      return nullptr;
     return makeTypespecHandle(handle->owner, handle->cursor, semantic, true,
                               handle->suppressSemanticDimension);
+  }
 
   if (handle->form == VPIObjectForm::Typespec ||
       (handle->form == VPIObjectForm::Design &&
@@ -1581,6 +1978,12 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       source.selectionRootType = iterator->useSelectionRootType;
       source.selectionAccessKind = iterator->useSelectionAccessKind;
       source.selectionBitOffset = iterator->useSelectionBitOffset;
+      source.form = VPIObjectForm::Indexed;
+      source.exactVpiType = iterator->useType;
+      source.selectionSteps = iterator->useSelectionSteps;
+      if (source.selectionAccessKind ==
+          obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+        return makeIndexedPrefix(&source, source.selectionSteps.size());
       return makeIndexedHandle(&source, iterator->useSelectionRootType,
                                iterator->useSelectionAccessKind,
                                iterator->useSelectionSteps);
@@ -1620,8 +2023,8 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
           obelisk::reflection::VPITraversalMode::Iterate))
     return nullptr;
   if (selector == vpiRange &&
-      isDimensionForTypespec(sourceType, info.kind, info.flags,
-                             source->suppressSemanticDimension))
+      isDimensionForVPIObject(sourceType, info.kind, info.flags,
+                              source->suppressSemanticDimension))
     kind = VPISemanticIteratorKind::Ranges;
   else if (selector == vpiTypespecMember &&
            (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
@@ -2069,6 +2472,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
        requested.compare(requested.size() - 2, 2, "::") != 0))
     found = lookup(state, requested + "::", cursor);
   if (!found) {
+    if (vpiHandle indexed = handleRelationSelectionByName(
+            state, requested, sourceClassDefinitionOrigin))
+      return indexed;
+    if (!compatibilityName.empty())
+      if (vpiHandle indexed = handleRelationSelectionByName(
+              state, compatibilityName, sourceClassDefinitionOrigin))
+        return indexed;
     setError(state, "hierarchical VPI name was not found", vpiNotice);
     return nullptr;
   }
@@ -2120,6 +2530,18 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     return makeSemanticObjectHandle(
         handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
         step.semanticType, step.selectionOrdinal, vpiConstant, step.index);
+  }
+  if (handle->form == VPIObjectForm::Design && type == vpiIndex) {
+    const auto *edge = obelisk::reflection::findVPITraversal(
+        sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Handle);
+    std::vector<VPISelectionStep> indices;
+    if (!edge || !staticArrayMemberIndexSteps(handle, indices) ||
+        indices.empty())
+      return nullptr;
+    const VPISelectionStep &step = indices.back();
+    return makeSemanticObjectHandle(
+        handle->owner, VPIObjectForm::IntegralConstant, handle->cursor, {},
+        step.selectionOrdinal, vpiConstant, step.index);
   }
   if (handle->form == VPIObjectForm::Indexed && type == vpiParent) {
     const auto *edge = obelisk::reflection::findVPITraversal(
@@ -2291,10 +2713,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   bool sourceStatement = false;
   bool sourceClassDefinitionOrigin = false;
   bool sourceDesign = true;
+  __vpiHandle *referenceHandle = nullptr;
   if (reference) {
     __vpiHandle *handle = validate(reference);
     if (!handle)
       return nullptr;
+    referenceHandle = handle;
     parent = handle->cursor;
     sourceStatement = handle->statement;
     sourceClassDefinitionOrigin = handle->classDefinitionOrigin;
@@ -2304,12 +2728,26 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
             OBELISK_RT_OK)
       return nullptr;
-    if (type == vpiIndex && handle->form == VPIObjectForm::Indexed) {
+    if (type == vpiIndex && (handle->form == VPIObjectForm::Indexed ||
+                             handle->form == VPIObjectForm::Design)) {
       const auto *edge = obelisk::reflection::findVPITraversal(
           sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Iterate);
       if (!edge || !supportsIndexQuery(handle, sourceType))
         return nullptr;
       OBELISK_RT_TRY {
+        std::vector<VPISelectionStep> memberSteps;
+        const std::vector<VPISelectionStep> *sourceSteps =
+            &handle->selectionSteps;
+        size_t first = 0;
+        if (handle->form == VPIObjectForm::Design) {
+          if (!staticArrayMemberIndexSteps(handle, memberSteps))
+            return nullptr;
+          sourceSteps = &memberSteps;
+        } else {
+          first = sourceType == vpiNetBit || sourceType == vpiRegBit
+                      ? 0
+                      : indexedParentPrefixCount(handle);
+        }
         auto iterator = std::make_unique<__vpiHandle>();
         iterator->owner = state;
         iterator->kind = VPIHandleKind::Iterator;
@@ -2317,12 +2755,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->cursor = handle->cursor;
         iterator->semanticCursor = handle->semanticCursor;
         iterator->exactVpiType = sourceType;
-        size_t first = sourceType == vpiNetBit || sourceType == vpiRegBit
-                           ? 0
-                           : indexedParentPrefixCount(handle);
-        iterator->indexItems.reserve(handle->selectionSteps.size() - first);
-        for (size_t index = handle->selectionSteps.size(); index != first;)
-          iterator->indexItems.push_back(handle->selectionSteps[--index]);
+        iterator->indexItems.reserve(sourceSteps->size() - first);
+        for (size_t index = sourceSteps->size(); index != first;)
+          iterator->indexItems.push_back((*sourceSteps)[--index]);
         copyUseRecipe(*iterator, *handle);
         return keepHandle(state, std::move(iterator));
       }
@@ -2336,12 +2771,41 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     return nullptr;
   }
   VPIRelationRange range{};
-  obelisk_rt_status relationStatus =
-      !reference || sourceDesign
-          ? obelisk_rt_cached_vpi_relation_range(state->context, parent,
-                                                 static_cast<uint32_t>(type),
-                                                 true, &range)
-          : OBELISK_RT_EOF;
+  obelisk_rt_status relationStatus = OBELISK_RT_EOF;
+  uint32_t storageSelector = static_cast<uint32_t>(type);
+  bool relationElementSelector =
+      reference &&
+      relationElementSelectorForIteration(
+          sourceType, static_cast<uint32_t>(type), storageSelector);
+  if (!reference || sourceDesign) {
+    relationStatus = obelisk_rt_cached_vpi_relation_range(
+        state->context, parent,
+        relationElementSelector ? storageSelector : static_cast<uint32_t>(type),
+        true, &range);
+  } else {
+    __vpiHandle *source = referenceHandle;
+    const auto *access = source ? obelisk::reflection::findVPIIndexedAccess(
+                                      source->selectionRootType)
+                                : nullptr;
+    if (source && source->form == VPIObjectForm::Indexed && access &&
+        access->accessKind ==
+            obelisk::reflection::VPIIndexedAccessKind::RelationElement &&
+        relationElementSelector) {
+      relationStatus = obelisk_rt_cached_vpi_relation_range(
+          state->context, parent, storageSelector, true, &range);
+      uint64_t remaining = source->info.bit_width;
+      uint64_t prefix = source->selectionBitOffset;
+      if (relationStatus == OBELISK_RT_OK &&
+          (remaining == 0 || prefix > range.count / remaining ||
+           prefix * remaining > range.count ||
+           remaining > range.count - prefix * remaining))
+        relationStatus = OBELISK_RT_INVALID_DESIGN;
+      if (relationStatus == OBELISK_RT_OK) {
+        range.first += prefix * remaining;
+        range.count = remaining;
+      }
+    }
+  }
   if (relationStatus == OBELISK_RT_OK) {
     OBELISK_RT_TRY {
       auto iterator = std::make_unique<__vpiHandle>();
@@ -2350,11 +2814,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       iterator->relationIterator = true;
       iterator->relationRange = range;
       if (reference) {
-        iterator->hasUse = true;
-        iterator->useCursor = parent;
-        iterator->useType = sourceType;
-        iterator->useStatement = sourceStatement;
-        iterator->useClassDefinitionOrigin = sourceClassDefinitionOrigin;
+        copyUseRecipe(*iterator, *referenceHandle);
         iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
       }
       return keepHandle(state, std::move(iterator));
@@ -2367,7 +2827,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   if (relationStatus != OBELISK_RT_EOF)
     return nullptr;
   if (reference) {
-    __vpiHandle *source = validate(reference);
+    __vpiHandle *source = referenceHandle;
     if (!source)
       return nullptr;
     if (vpiHandle semantic = makeSemanticIterator(source, type))
@@ -2468,8 +2928,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       }
       obelisk_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(iterator, iterator->semanticCursor, info) ||
-          !isDimensionForTypespec(iterator->exactVpiType, info.kind, info.flags,
-                                  iterator->suppressSemanticDimension)) {
+          !isDimensionForVPIObject(iterator->exactVpiType, info.kind,
+                                   info.flags,
+                                   iterator->suppressSemanticDimension)) {
         state->handles.erase(iteratorToken);
         return nullptr;
       }
@@ -2479,8 +2940,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         obelisk_rt_design_semantic_type_info_v1 elementInfo{};
         if (obelisk_rt_cached_design_semantic_type_info(
                 state->context, element, &elementInfo) == OBELISK_RT_OK &&
-            isDimensionForTypespec(iterator->exactVpiType, elementInfo.kind,
-                                   elementInfo.flags))
+            isDimensionForVPIObject(iterator->exactVpiType, elementInfo.kind,
+                                    elementInfo.flags))
           iterator->semanticCursor = element;
         else
           iterator->semanticCursor = {};
@@ -2733,6 +3194,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return vpiUndefined;
   }
   if (property == vpiSize) {
+    if (!propertyFor(handle, property))
+      return vpiUndefined;
     if (handle->statement)
       return 0;
     obelisk_rt_design_info_v1 info{};

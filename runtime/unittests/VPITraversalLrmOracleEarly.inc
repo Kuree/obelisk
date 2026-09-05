@@ -4008,17 +4008,11 @@ add("37.12",
 add("37.43", S({vpiDelayDevice}), vpiInTerm, Mode::Handle, S({vpiDelayTerm}),
     Order::None);
 add("37.5", S({vpiModule}), vpiInstanceArray, Mode::Handle,
-    S({vpiGateArray, vpiModuleArray, vpiSwitchArray, vpiUdpArray,
-       vpiInterfaceArray, vpiProgramArray}),
-    Order::None);
+    S({vpiModuleArray}), Order::None);
 add("37.6", S({vpiInterface}), vpiInstanceArray, Mode::Handle,
-    S({vpiGateArray, vpiModuleArray, vpiSwitchArray, vpiUdpArray,
-       vpiInterfaceArray, vpiProgramArray}),
-    Order::None);
+    S({vpiInterfaceArray}), Order::None);
 add("37.9", S({vpiProgram}), vpiInstanceArray, Mode::Handle,
-    S({vpiGateArray, vpiModuleArray, vpiSwitchArray, vpiUdpArray,
-       vpiInterfaceArray, vpiProgramArray}),
-    Order::None);
+    S({vpiProgramArray}), Order::None);
 add("37.16",
     S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
        vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet,
@@ -4059,15 +4053,15 @@ add("37.15", S({vpiRefObj}), vpiTaskFunc, Mode::Handle,
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTaskFunc,
     Mode::Iterate, S({vpiFunction, vpiTask}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
-    vpiNamedEventArray, Mode::Iterate, S({vpiNamedEvent, vpiNamedEventArray}),
+    vpiNamedEventArray, Mode::Iterate, S({vpiNamedEventArray}),
     Order::None);
 add("37.12; 37.83",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
-    vpiNamedEventArray, Mode::Iterate, S({vpiNamedEvent, vpiNamedEventArray}),
+    vpiNamedEventArray, Mode::Iterate, S({vpiNamedEventArray}),
     Order::None);
 add("37.31", S({vpiClassObj}), vpiNamedEventArray, Mode::Iterate,
-    S({vpiNamedEvent, vpiNamedEventArray}), Order::None);
+    S({vpiNamedEventArray}), Order::None);
 add("37.41", S({vpiFrame}), vpiAutomatics, Mode::Iterate,
     S({vpiIntegerVar,     vpiNamedEvent,
        vpiRealVar,        vpiReg,
@@ -4095,16 +4089,12 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiProgram,
     Mode::Iterate, S({vpiProgram}), Order::None);
 add("37.9", S({vpiProgramArray}), vpiProgram, Mode::Iterate, S({vpiProgram}),
     Order::Index);
-add("37.6", S({vpiInterface}), vpiInterfaceArray, Mode::Handle,
-    S({vpiInterfaceArray}), Order::None);
 add("37.5", S({vpiModule}), vpiInterfaceArray, Mode::Iterate,
     S({vpiInterfaceArray}), Order::None);
 add("37.6", S({vpiInterface}), vpiInterfaceArray, Mode::Iterate,
     S({vpiInterfaceArray}), Order::None);
 add("37.9", S({vpiProgram}), vpiInterfaceArray, Mode::Iterate,
     S({vpiInterfaceArray}), Order::None);
-add("37.9", S({vpiProgram}), vpiProgramArray, Mode::Handle,
-    S({vpiProgramArray}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiProgramArray, Mode::Iterate, S({vpiProgramArray}), Order::None);
 add("37.25", S({vpiNamedEvent}), vpiTypespec, Mode::Handle,

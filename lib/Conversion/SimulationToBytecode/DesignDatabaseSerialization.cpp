@@ -77,6 +77,22 @@ constexpr bool tableIndexPackingIsStable() {
 }
 static_assert(tableIndexPackingIsStable());
 
+bool declaredIndexOrdinal(int64_t left, int64_t right, int64_t index,
+                          uint64_t &ordinal, uint64_t &extent) {
+  if (left >= right) {
+    if (index > left || index < right)
+      return false;
+    ordinal = static_cast<uint64_t>(left) - static_cast<uint64_t>(index);
+    extent = static_cast<uint64_t>(left) - static_cast<uint64_t>(right) + 1;
+  } else {
+    if (index < left || index > right)
+      return false;
+    ordinal = static_cast<uint64_t>(index) - static_cast<uint64_t>(left);
+    extent = static_cast<uint64_t>(right) - static_cast<uint64_t>(left) + 1;
+  }
+  return extent != 0 && ordinal < extent;
+}
+
 static_assert(relationSourceKindMask == 0x1fff);
 constexpr bool relationSourcePackingIsStable() {
   for (TableKind table :
@@ -670,6 +686,26 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (!isReflectableType(storage.getType()))
         continue;
+      if (Attribute delegated =
+              storage->getAttr(sim::metadata::vpiIdentityDelegated)) {
+        auto reference = dyn_cast<FlatSymbolRefAttr>(delegated);
+        auto owner = reference ? anchorsBySymbol.find(reference.getValue())
+                               : anchorsBySymbol.end();
+        if (includeStatements &&
+            (!reference || owner == anchorsBySymbol.end() ||
+             owner->second.getVpiKind() !=
+                 static_cast<uint32_t>(VPIObjectKind::NamedEventArray) ||
+             owner->second.getEnclosingScopeId() != storage.getScopeId() ||
+             !storage.getHierarchicalName() ||
+             owner->second.getHierarchicalName() !=
+                 *storage.getHierarchicalName())) {
+          storage.emitOpError(
+              "delegated VPI identity does not match a named-event-array "
+              "anchor");
+          return {};
+        }
+        continue;
+      }
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
         caps = addPortMetadata(port, caps);
@@ -895,7 +931,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     return success();
   };
-
   auto addRelation =
       [&](Operation *sourceOperation, TableKind sourceTable,
           uint32_t sourceIndex, uint32_t sourceKind, uint32_t selector,
@@ -1070,6 +1105,55 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
 
   if (includeStatements) {
+    DenseMap<Operation *, DenseMap<int64_t, uint32_t>> sparseArrayOrdinals;
+    auto arrayElementOrdinal = [&](sim::SimVPIObjectAnchorOp array,
+                                   sim::SimVPIObjectAnchorOp member)
+        -> FailureOr<std::optional<uint32_t>> {
+      DenseI64ArrayAttr memberIndices = member.getMemberIndicesAttr();
+      if (!memberIndices)
+        return std::optional<uint32_t>{};
+      ArrayRef<int64_t> indices = memberIndices.asArrayRef();
+      if (DenseI64ArrayAttr ranges = array.getIndexRangesAttr()) {
+        ArrayRef<int64_t> bounds = ranges.asArrayRef();
+        if (bounds.size() != indices.size() * 2)
+          return member.emitOpError(
+              "VPI array member index rank does not match its parent");
+        uint64_t flattened = 0;
+        for (size_t dimension = 0; dimension != indices.size(); ++dimension) {
+          uint64_t ordinal = 0, extent = 0;
+          if (!declaredIndexOrdinal(bounds[dimension * 2],
+                                    bounds[dimension * 2 + 1],
+                                    indices[dimension], ordinal, extent) ||
+              ordinal > UINT32_MAX ||
+              flattened > (UINT32_MAX - ordinal) / extent)
+            return member.emitOpError(
+                "VPI array member index cannot be flattened");
+          flattened = flattened * extent + ordinal;
+        }
+        return std::optional<uint32_t>(static_cast<uint32_t>(flattened));
+      }
+      if (DenseI64ArrayAttr sparse = array.getSparseIndicesAttr()) {
+        if (indices.size() != 1)
+          return member.emitOpError(
+              "generate-scope array member must have one index");
+        ArrayRef<int64_t> values = sparse.asArrayRef();
+        auto [ordinals, inserted] = sparseArrayOrdinals.try_emplace(array);
+        if (inserted)
+          for (auto [ordinal, value] : llvm::enumerate(values))
+            if (!ordinals->second
+                     .try_emplace(value, static_cast<uint32_t>(ordinal))
+                     .second)
+              return array.emitOpError(
+                  "generate-scope array contains duplicate source indices");
+        auto found = ordinals->second.find(indices.front());
+        if (found == ordinals->second.end())
+          return member.emitOpError(
+              "generate-scope member index is absent from its parent");
+        return std::optional<uint32_t>(found->second);
+      }
+      return member.emitOpError(
+          "indexed VPI member parent has no immutable index metadata");
+    };
     llvm::sort(anchors, [](sim::SimVPIObjectAnchorOp left,
                            sim::SimVPIObjectAnchorOp right) {
       StringRef leftParent =
@@ -1112,24 +1196,67 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       ImageObjectRef source = anchorRefs.lookup(parent->second);
       ImageObjectRef target = anchorRefs.lookup(anchor);
+      uint32_t lexicalSelector = target.vpiKind;
+      const VPIIndexedAccessDescriptor *indexed =
+          findVPIIndexedAccess(source.vpiKind);
+      if (indexed &&
+          indexed->accessKind == VPIIndexedAccessKind::RelationElement &&
+          indexedVPIResultAllowed(*indexed, target.vpiKind))
+        lexicalSelector = indexed->relationSelector;
       const VPITraversalDescriptor *lexicalEdge = findVPITraversal(
-          source.vpiKind, target.vpiKind, VPITraversalMode::Iterate);
+          source.vpiKind, lexicalSelector, VPITraversalMode::Iterate);
+      uint32_t lexicalOrdinal =
+          lexicalOrdinals[{parent->second, lexicalSelector}]++;
+      FailureOr<std::optional<uint32_t>> indexedOrdinal =
+          arrayElementOrdinal(parent->second, anchor);
+      if (failed(indexedOrdinal))
+        return {};
+      if (*indexedOrdinal)
+        lexicalOrdinal = **indexedOrdinal;
       if (lexicalEdge &&
           vpiObjectSetContains(lexicalEdge->targets, target.vpiKind) &&
-          failed(addRelation(
-              parent->second, source.table, source.index, source.vpiKind,
-              target.vpiKind, VPITraversalMode::Iterate, target.table,
-              target.index, target.vpiKind,
-              lexicalOrdinals[{parent->second, target.vpiKind}]++)))
+          failed(addRelation(parent->second, source.table, source.index,
+                             source.vpiKind, lexicalSelector,
+                             VPITraversalMode::Iterate, target.table,
+                             target.index, target.vpiKind, lexicalOrdinal)))
         return {};
-      if (failed(addAutomaticRelation(source.table, source.index,
-                                      source.vpiKind, target.table,
-                                      target.index, target.vpiKind,
-                                      VPIAutomaticRelation::DirectChild)) ||
-          failed(addAutomaticRelation(
-              target.table, target.index, target.vpiKind, source.table,
-              source.index, source.vpiKind, VPIAutomaticRelation::ParentScope)))
+      if (failed(addAutomaticRelation(
+              source.table, source.index, source.vpiKind, target.table,
+              target.index, target.vpiKind, VPIAutomaticRelation::DirectChild)))
         return {};
+      // A reverse lexical relation may name an effective enclosing object,
+      // not the immediate structural parent. For example, an instance-array
+      // member and a primitive nested in a generate scope both return their
+      // enclosing vpiModule. Derive each such relation from the generated
+      // target set and select its nearest matching ancestor.
+      auto [parentFirst, parentLast] = automaticEdges(target.vpiKind);
+      for (auto edge = parentFirst; edge != parentLast; ++edge) {
+        if (edge->mode != VPITraversalMode::Handle ||
+            (edge->automaticRelation != VPIAutomaticRelation::ParentScope &&
+             edge->automaticRelation != VPIAutomaticRelation::IndexedContainer))
+          continue;
+        sim::SimVPIObjectAnchorOp ancestor = parent->second;
+        while (ancestor) {
+          ImageObjectRef ancestorRef = anchorRefs.lookup(ancestor);
+          if (vpiObjectSetContains(edge->targets, ancestorRef.vpiKind)) {
+            if (failed(addRelation(anchor, target.table, target.index,
+                                   target.vpiKind, edge->selector,
+                                   VPITraversalMode::Handle, ancestorRef.table,
+                                   ancestorRef.index, ancestorRef.vpiKind)))
+              return {};
+            break;
+          }
+          if (!ancestor.getParentAttr())
+            break;
+          auto next = anchorsBySymbol.find(ancestor.getParentAttr().getValue());
+          if (next == anchorsBySymbol.end()) {
+            ancestor.emitOpError(
+                "lexical ancestor was not preserved for serialization");
+            return {};
+          }
+          ancestor = next->second;
+        }
+      }
     }
 
     llvm::sort(typespecs, [](sim::SimVPITypespecDeclOp left,
@@ -1362,6 +1489,178 @@ SmallVector<uint8_t> serializeDesignDatabase(
                     right.iterate, right.ordinal, right.targetIndexAndTable);
   });
 
+  struct RelationIndexRecord {
+    uint32_t objectIndex = 0;
+    uint32_t firstDimension = UINT32_MAX;
+    uint16_t dimensionCount = 0;
+    uint16_t flags = 0;
+    uint32_t firstKey = UINT32_MAX;
+    uint32_t firstOrdinalKey = UINT32_MAX;
+  };
+  struct RelationIndexDimensionRecord {
+    int64_t left = 0;
+    int64_t right = 0;
+  };
+  struct RelationIndexKeyRecord {
+    int64_t index = 0;
+    uint32_t ordinal = 0;
+  };
+  struct RelationIndexMemberRecord {
+    uint32_t targetIndexAndTable = 0;
+    uint32_t relationIndex = 0;
+    uint32_t ordinal = 0;
+  };
+  SmallVector<RelationIndexRecord> relationIndices;
+  SmallVector<RelationIndexDimensionRecord> relationIndexDimensions;
+  SmallVector<RelationIndexKeyRecord> relationIndexKeys;
+  SmallVector<RelationIndexMemberRecord> relationIndexMembers;
+  for (sim::SimVPIObjectAnchorOp anchor : anchors) {
+    DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
+    DenseI64ArrayAttr sparse = anchor.getSparseIndicesAttr();
+    if (!ranges && !sparse)
+      continue;
+    auto object = objectIndices.find(anchor);
+    if (object == objectIndices.end()) {
+      anchor.emitOpError("relation-indexed VPI array was not serialized");
+      return {};
+    }
+    const auto *access = findVPIIndexedAccess(anchor.getVpiKind());
+    if (!access ||
+        access->accessKind != VPIIndexedAccessKind::RelationElement) {
+      anchor.emitOpError(
+          "relation-indexed VPI array has no generated access policy");
+      return {};
+    }
+    RelationIndexRecord record;
+    record.objectIndex = object->second;
+    uint64_t expectedElements = 0;
+    if (ranges) {
+      ArrayRef<int64_t> values = ranges.asArrayRef();
+      if (values.empty() || values.size() % 2 != 0 ||
+          values.size() / 2 > UINT16_MAX ||
+          relationIndexDimensions.size() > UINT32_MAX) {
+        anchor.emitOpError("fixed VPI array dimensions cannot be encoded");
+        return {};
+      }
+      record.firstDimension =
+          static_cast<uint32_t>(relationIndexDimensions.size());
+      record.dimensionCount = static_cast<uint16_t>(values.size() / 2);
+      expectedElements = 1;
+      for (size_t offset = 0; offset != values.size(); offset += 2) {
+        uint64_t ordinal = 0, extent = 0;
+        if (!declaredIndexOrdinal(values[offset], values[offset + 1],
+                                  values[offset], ordinal, extent) ||
+            extent > UINT32_MAX || expectedElements > UINT32_MAX / extent) {
+          anchor.emitOpError("fixed VPI array extent exceeds relation image");
+          return {};
+        }
+        relationIndexDimensions.push_back({values[offset], values[offset + 1]});
+        expectedElements *= extent;
+      }
+    } else {
+      ArrayRef<int64_t> values = sparse.asArrayRef();
+      if (values.size() > UINT32_MAX ||
+          relationIndexKeys.size() > UINT32_MAX - values.size() ||
+          relationIndexKeys.size() + values.size() >
+              UINT32_MAX - values.size()) {
+        anchor.emitOpError("sparse VPI array indices cannot be encoded");
+        return {};
+      }
+      expectedElements = values.size();
+      record.dimensionCount = 1;
+      record.flags = 1;
+      record.firstOrdinalKey = static_cast<uint32_t>(relationIndexKeys.size());
+      for (auto [ordinal, index] : llvm::enumerate(values))
+        relationIndexKeys.push_back({index, static_cast<uint32_t>(ordinal)});
+      record.firstKey = static_cast<uint32_t>(relationIndexKeys.size());
+      for (auto [ordinal, index] : llvm::enumerate(values))
+        relationIndexKeys.push_back({index, static_cast<uint32_t>(ordinal)});
+      llvm::MutableArrayRef<RelationIndexKeyRecord> keys =
+          llvm::MutableArrayRef(relationIndexKeys)
+              .slice(record.firstKey, values.size());
+      llvm::sort(keys, [](const RelationIndexKeyRecord &left,
+                          const RelationIndexKeyRecord &right) {
+        return left.index < right.index;
+      });
+      for (size_t index = 1; index < keys.size(); ++index)
+        if (keys[index - 1].index == keys[index].index) {
+          anchor.emitOpError("sparse VPI array contains a duplicate index");
+          return {};
+        }
+    }
+
+    auto firstRelation = std::lower_bound(
+        relations.begin(), relations.end(), record.objectIndex,
+        [&](const RelationRecord &relation, uint32_t objectIndex) {
+          return std::tie(relation.sourceTable, relation.sourceIndex,
+                          relation.selector, relation.iterate) <
+                 std::tuple(TableKind::Object, objectIndex,
+                            static_cast<uint16_t>(access->relationSelector),
+                            true);
+        });
+    uint32_t relationCount = 0;
+    for (auto relation = firstRelation;
+         relation != relations.end() &&
+         relation->sourceTable == TableKind::Object &&
+         relation->sourceIndex == record.objectIndex && relation->iterate &&
+         relation->selector == access->relationSelector;
+         ++relation) {
+      if (relation->ordinal != relationCount) {
+        anchor.emitOpError(
+            "VPI array relations are not dense in declared index order");
+        return {};
+      }
+      ++relationCount;
+    }
+    if (relationCount != expectedElements) {
+      anchor.emitOpError("VPI array relation count does not match its shape");
+      return {};
+    }
+    relationIndices.push_back(record);
+  }
+  llvm::sort(relationIndices, [](const RelationIndexRecord &left,
+                                 const RelationIndexRecord &right) {
+    return left.objectIndex < right.objectIndex;
+  });
+  for (size_t index = 1; index < relationIndices.size(); ++index)
+    if (relationIndices[index - 1].objectIndex ==
+        relationIndices[index].objectIndex) {
+      design.emitOpError("duplicate relation index for a VPI array object");
+      return {};
+    }
+  for (auto [relationIndex, entry] : llvm::enumerate(relationIndices)) {
+    uint32_t sourceKind = objects[entry.objectIndex].vpiKind;
+    const auto *access = findVPIIndexedAccess(sourceKind);
+    auto firstRelation = std::lower_bound(
+        relations.begin(), relations.end(), entry.objectIndex,
+        [&](const RelationRecord &relation, uint32_t objectIndex) {
+          return std::tie(relation.sourceTable, relation.sourceIndex,
+                          relation.selector, relation.iterate) <
+                 std::tuple(TableKind::Object, objectIndex,
+                            static_cast<uint16_t>(access->relationSelector),
+                            true);
+        });
+    for (auto relation = firstRelation;
+         relation != relations.end() &&
+         relation->sourceTable == TableKind::Object &&
+         relation->sourceIndex == entry.objectIndex && relation->iterate &&
+         relation->selector == access->relationSelector;
+         ++relation)
+      relationIndexMembers.push_back({relation->targetIndexAndTable,
+                                      static_cast<uint32_t>(relationIndex),
+                                      relation->ordinal});
+  }
+  llvm::sort(relationIndexMembers, [](const RelationIndexMemberRecord &left,
+                                      const RelationIndexMemberRecord &right) {
+    return left.targetIndexAndTable < right.targetIndexAndTable;
+  });
+  for (size_t index = 1; index < relationIndexMembers.size(); ++index)
+    if (relationIndexMembers[index - 1].targetIndexAndTable ==
+        relationIndexMembers[index].targetIndexAndTable) {
+      design.emitOpError("VPI object belongs to multiple static arrays");
+      return {};
+    }
+
   struct TypeRecord {
     uint32_t kind = 0;
     uint32_t flags = 0;
@@ -1549,6 +1848,40 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<uint32_t> objectSemanticRoots;
   DenseMap<Attribute, uint32_t> semanticTypeIndices;
   bool semanticTypeError = false;
+  auto semanticArrayShape = [&](sim::SimVPIObjectAnchorOp anchor) {
+    DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
+    const bool namedEvent =
+        anchor.getVpiKind() == static_cast<uint32_t>(VPIObjectKind::NamedEvent);
+    const bool namedEventArray =
+        anchor.getVpiKind() ==
+        static_cast<uint32_t>(VPIObjectKind::NamedEventArray);
+    if ((!ranges || ranges.empty()) && !namedEvent)
+      return sim::VPITypeSemanticsAttr{};
+    MLIRContext *context = anchor.getContext();
+    auto make = [&](sim::VPITypeKind kind, ArrayRef<int64_t> range,
+                    ArrayRef<Attribute> children) {
+      return sim::VPITypeSemanticsAttr::get(
+          context, kind, false, false, StringAttr{}, SymbolRefAttr{},
+          StringAttr{}, DenseI64ArrayAttr::get(context, range),
+          ArrayAttr::get(context, children), ArrayAttr::get(context, {}),
+          BoolAttr{}, BoolAttr{}, IntegerAttr{}, IntegerAttr{}, IntegerAttr{},
+          IntegerAttr{}, IntegerAttr{}, BoolAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, ArrayAttr{});
+    };
+    sim::VPITypeSemanticsAttr current =
+        make(namedEvent || namedEventArray ? sim::VPITypeKind::Event
+                                           : sim::VPITypeKind::Untyped,
+             {}, {});
+    if (!ranges || ranges.empty())
+      return current;
+    ArrayRef<int64_t> values = ranges.asArrayRef();
+    for (size_t offset = values.size(); offset != 0; offset -= 2) {
+      Attribute child = current;
+      current = make(sim::VPITypeKind::UnpackedArray,
+                     values.slice(offset - 2, 2), {child});
+    }
+    return current;
+  };
   auto semanticForObject =
       [&](const Record &object) -> sim::VPITypeSemanticsAttr {
     if (!object.identity)
@@ -1559,6 +1892,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return net.getVpiTypeAttr();
     if (auto port = dyn_cast<sim::SimPortDeclOp>(object.identity))
       return port.getVpiTypeAttr();
+    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(object.identity))
+      return semanticArrayShape(anchor);
     if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(object.identity)) {
       sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
       ArrayAttr aliases = semantic.getTypedefAliases();
@@ -1795,9 +2130,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t objectSemanticRootOffset =
       semanticTypeEdgeOffset +
       semanticTypeEdges.size() * SemanticTypeEdgeLayout.size;
-  uint64_t stringOffset =
+  uint64_t relationIndexOffset =
       objectSemanticRootOffset +
       objectSemanticRoots.size() * ObjectSemanticRootLayout.size;
+  uint64_t relationIndexDimensionOffset =
+      relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
+  uint64_t relationIndexKeyOffset =
+      relationIndexDimensionOffset +
+      relationIndexDimensions.size() * RelationIndexDimensionLayout.size;
+  uint64_t relationIndexMemberOffset =
+      relationIndexKeyOffset +
+      relationIndexKeys.size() * RelationIndexKeyLayout.size;
+  uint64_t stringOffset =
+      relationIndexMemberOffset +
+      relationIndexMembers.size() * RelationIndexMemberLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -1865,6 +2211,28 @@ SmallVector<uint8_t> serializeDesignDatabase(
       writer.setType(typeOffset + uint64_t{typeIndex} * TypeLayout.size);
     } else {
       writer.setType(0);
+      if (auto anchor =
+              dyn_cast_or_null<sim::SimVPIObjectAnchorOp>(object.identity)) {
+        if (DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr()) {
+          width = 1;
+          ArrayRef<int64_t> values = ranges.asArrayRef();
+          for (size_t dimension = 0; dimension != values.size();
+               dimension += 2) {
+            uint64_t ordinal = 0, extent = 0;
+            if (!declaredIndexOrdinal(values[dimension], values[dimension + 1],
+                                      values[dimension], ordinal, extent) ||
+                extent > UINT64_MAX / width) {
+              anchor.emitOpError("VPI array extent cannot be encoded");
+              return {};
+            }
+            width *= extent;
+          }
+        } else if (DenseI64ArrayAttr indices = anchor.getSparseIndicesAttr()) {
+          width = indices.size();
+        } else if (auto inputs = anchor.getPrimitiveInputCount()) {
+          width = *inputs;
+        }
+      }
     }
     writer.setWidth(width);
     int64_t left = width == 0 ? 0 : static_cast<int64_t>(width - 1);
@@ -1876,6 +2244,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
                    dyn_cast_if_present<sim::UnpackedArrayType>(object.type)) {
       left = array.getLeft();
       right = array.getRight();
+    } else if (auto anchor = dyn_cast_or_null<sim::SimVPIObjectAnchorOp>(
+                   object.identity)) {
+      if (DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
+          ranges && !ranges.empty()) {
+        left = ranges.asArrayRef()[0];
+        right = ranges.asArrayRef()[1];
+      } else if (anchor.getSparseIndicesAttr()) {
+        left = 0;
+        right = 0;
+      }
     }
     writer.setLeft(left);
     writer.setRight(right);
@@ -1991,6 +2369,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSemanticTypeEdgeCount(semanticTypeEdges.size());
     writer.setObjectSemanticRootOffset(objectSemanticRootOffset);
     writer.setObjectSemanticRootCount(objectSemanticRoots.size());
+    writer.setRelationIndexOffset(relationIndexOffset);
+    writer.setRelationIndexCount(relationIndices.size());
+    writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
+    writer.setRelationIndexDimensionCount(relationIndexDimensions.size());
+    writer.setRelationIndexKeyOffset(relationIndexKeyOffset);
+    writer.setRelationIndexKeyCount(relationIndexKeys.size());
+    writer.setRelationIndexMemberOffset(relationIndexMemberOffset);
+    writer.setRelationIndexMemberCount(relationIndexMembers.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -2072,6 +2458,36 @@ SmallVector<uint8_t> serializeDesignDatabase(
     ObjectSemanticRootWriter writer(output.data() + objectSemanticRootOffset +
                                     index * ObjectSemanticRootLayout.size);
     writer.setSemanticType(semanticRoot);
+  }
+  for (auto [index, entry] : llvm::enumerate(relationIndices)) {
+    RelationIndexWriter writer(output.data() + relationIndexOffset +
+                               index * RelationIndexLayout.size);
+    writer.setObjectIndex(entry.objectIndex);
+    writer.setFirstDimension(entry.firstDimension);
+    writer.setDimensionCount(entry.dimensionCount);
+    writer.setFlags(entry.flags);
+    writer.setFirstKey(entry.firstKey);
+    writer.setFirstOrdinalKey(entry.firstOrdinalKey);
+  }
+  for (auto [index, entry] : llvm::enumerate(relationIndexDimensions)) {
+    RelationIndexDimensionWriter writer(
+        output.data() + relationIndexDimensionOffset +
+        index * RelationIndexDimensionLayout.size);
+    writer.setLeft(entry.left);
+    writer.setRight(entry.right);
+  }
+  for (auto [index, entry] : llvm::enumerate(relationIndexKeys)) {
+    RelationIndexKeyWriter writer(output.data() + relationIndexKeyOffset +
+                                  index * RelationIndexKeyLayout.size);
+    writer.setIndex(entry.index);
+    writer.setOrdinal(entry.ordinal);
+  }
+  for (auto [index, entry] : llvm::enumerate(relationIndexMembers)) {
+    RelationIndexMemberWriter writer(output.data() + relationIndexMemberOffset +
+                                     index * RelationIndexMemberLayout.size);
+    writer.setTargetIndexAndTable(entry.targetIndexAndTable);
+    writer.setRelationIndex(entry.relationIndex);
+    writer.setOrdinal(entry.ordinal);
   }
   llvm::append_range(output, strings);
   alignTo(output, 8);

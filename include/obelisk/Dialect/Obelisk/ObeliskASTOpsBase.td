@@ -69,10 +69,24 @@ class ObeliskSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
 // symbolic (SymbolRefAttr), so they legitimately cross the isolation boundary
 // through the symbol mechanism rather than through captured SSA values.
 class ObeliskSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
-                                 list<Trait> traits = []>
+                                  list<Trait> traits = []>
     : ObeliskSymbolASTNodeOp<mnemonic,
         !listconcat([SymbolTable, IsolatedFromAbove], traits),
         symbolArgs>;
+
+class ObeliskInstanceArrayASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_range)> {
+  let description = [{
+    The body contains one element per source index in ascending numeric index
+    order, independent of the declared direction in `array_range`. Nested
+    instance-array nodes repeat this contract for the next dimension.
+  }];
+}
+
+class ObeliskGenerateBlockArrayASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_indices)>;
 
 class ObeliskRootASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic,
