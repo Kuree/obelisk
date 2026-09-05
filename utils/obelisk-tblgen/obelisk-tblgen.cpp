@@ -589,6 +589,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       records.getAllDerivedDefinitions("VPIPropertyStability");
   auto propertyProtectedAccesses =
       records.getAllDerivedDefinitions("VPIPropertyProtectedAccess");
+  auto propertyRealizations =
+      records.getAllDerivedDefinitions("VPIPropertyRealization");
   auto properties = records.getAllDerivedDefinitions("VPIProperty");
   auto valueFormats = records.getAllDerivedDefinitions("VPIValueFormat");
   auto valueDefaults =
@@ -621,7 +623,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   if (families.empty() || roles.empty() || objects.empty() ||
       relations.empty() || objectSets.empty() || propertyValueKinds.empty() ||
       propertyStabilities.empty() || propertyProtectedAccesses.empty() ||
-      properties.empty() || valueFormats.empty() || valueDefaults.empty() ||
+      propertyRealizations.empty() || properties.empty() ||
+      valueFormats.empty() || valueDefaults.empty() ||
       valueReadSemantics.empty() || valueRequirements.empty() ||
       valuePolicies.empty() || arrayValueFormats.empty() ||
       arrayValuePolicies.empty() || traversalModes.empty() ||
@@ -891,6 +894,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"Static", 0}, {"Dynamic", 1}};
   const std::pair<StringRef, uint32_t> supportedPropertyProtectedAccesses[] = {
       {"Denied", 0}, {"Allowed", 1}};
+  const std::pair<StringRef, uint32_t> supportedPropertyRealizations[] = {
+      {"Derived", 0}, {"FixedImage", 1}, {"Runtime", 2}};
   const std::pair<StringRef, uint32_t> supportedValueFormats[] = {
       {"BinStr", 1}, {"OctStr", 2},    {"DecStr", 3}, {"HexStr", 4},
       {"Scalar", 5}, {"Int", 6},       {"Real", 7},   {"String", 8},
@@ -922,6 +927,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       !validateEnum(propertyProtectedAccesses,
                     supportedPropertyProtectedAccesses,
                     "VPI protected property access") ||
+      !validateEnum(propertyRealizations, supportedPropertyRealizations,
+                    "VPI property realization") ||
       !validateEnum(valueFormats, supportedValueFormats, "VPI value format") ||
       !validateEnum(valueDefaults, supportedValueDefaults,
                     "VPI value default format") ||
@@ -1108,7 +1115,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       return false;
     }
     const auto &propertySources = expandedSets.lookup(sources);
-    for (StringRef field : {"dynamicSources", "protectedSources"}) {
+    for (StringRef field : {"dynamicSources", "protectedSources",
+                            "fixedImageSources", "runtimeSources"}) {
       const Record *overrides = property->getValueAsDef(field);
       if (overrides->getValueAsBit("nullRoot")) {
         PrintError(property->getLoc(), Twine("VPI property ") + field +
@@ -1122,6 +1130,44 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                          " must be a subset of its sources");
           return false;
         }
+    }
+    const auto &fixedSources =
+        expandedSets.lookup(property->getValueAsDef("fixedImageSources"));
+    const auto &runtimeSources =
+        expandedSets.lookup(property->getValueAsDef("runtimeSources"));
+    for (const Record *source : fixedSources)
+      if (llvm::is_contained(runtimeSources, source)) {
+        PrintError(property->getLoc(),
+                   "VPI property realization override sets overlap");
+        return false;
+      }
+    const auto &dynamicSources =
+        expandedSets.lookup(property->getValueAsDef("dynamicSources"));
+    bool baseDynamic =
+        property->getValueAsDef("stability")->getValueAsString("cppName") ==
+        "Dynamic";
+    bool baseRuntime =
+        property->getValueAsDef("realization")->getValueAsString("cppName") ==
+        "Runtime";
+    bool baseFixed =
+        property->getValueAsDef("realization")->getValueAsString("cppName") ==
+        "FixedImage";
+    for (const Record *source : propertySources) {
+      bool dynamic = baseDynamic || llvm::is_contained(dynamicSources, source);
+      bool runtime = baseRuntime || llvm::is_contained(runtimeSources, source);
+      bool fixed = baseFixed || llvm::is_contained(fixedSources, source);
+      if (dynamic != runtime || (fixed && runtime)) {
+        PrintError(property->getLoc(),
+                   "dynamic VPI property sources must use Runtime "
+                   "realization, and only those sources may use Runtime");
+        return false;
+      }
+    }
+    if (sources->getValueAsBit("nullRoot") && baseDynamic != baseRuntime) {
+      PrintError(property->getLoc(),
+                 "dynamic null-root VPI property must use Runtime "
+                 "realization");
+      return false;
     }
   }
 
@@ -2016,6 +2062,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   };
   emitPropertyEnum("VPIPropertyStability", "VPIPropertyStability");
   emitPropertyEnum("VPIPropertyProtectedAccess", "VPIPropertyProtectedAccess");
+  emitPropertyEnum("VPIPropertyRealization", "VPIPropertyRealization");
 
   const Record *dynamicProperty = nullptr;
   for (const Record *value :
@@ -2027,8 +2074,17 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
        records.getAllDerivedDefinitions("VPIPropertyProtectedAccess"))
     if (value->getValueAsString("cppName") == "Allowed")
       allowedWhenProtected = value;
-  assert(dynamicProperty && allowedWhenProtected &&
-         "validated property policy enums must exist");
+  const Record *fixedImageProperty = nullptr;
+  const Record *runtimeProperty = nullptr;
+  for (const Record *value :
+       records.getAllDerivedDefinitions("VPIPropertyRealization")) {
+    if (value->getValueAsString("cppName") == "FixedImage")
+      fixedImageProperty = value;
+    if (value->getValueAsString("cppName") == "Runtime")
+      runtimeProperty = value;
+  }
+  assert(dynamicProperty && allowedWhenProtected && fixedImageProperty &&
+         runtimeProperty && "validated property policy enums must exist");
 
   struct EmittedProperty {
     uint32_t source;
@@ -2036,6 +2092,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     const Record *valueKind;
     const Record *stability;
     const Record *protectedAccess;
+    const Record *realization;
     bool symbolicString;
     StringRef apiName;
     StringRef clause;
@@ -2047,6 +2104,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         expandedSets.lookup(property->getValueAsDef("dynamicSources"));
     const auto &protectedSources =
         expandedSets.lookup(property->getValueAsDef("protectedSources"));
+    const auto &fixedImageSources =
+        expandedSets.lookup(property->getValueAsDef("fixedImageSources"));
+    const auto &runtimeSources =
+        expandedSets.lookup(property->getValueAsDef("runtimeSources"));
     for (uint32_t source :
          expandedSets.lookup(property->getValueAsDef("sources"))) {
       auto sourceSelected = [&](const auto &sources) {
@@ -2061,6 +2122,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
            sourceSelected(protectedSources)
                ? allowedWhenProtected
                : property->getValueAsDef("protectedAccess"),
+           sourceSelected(fixedImageSources) ? fixedImageProperty
+           : sourceSelected(runtimeSources)
+               ? runtimeProperty
+               : property->getValueAsDef("realization"),
            property->getValueAsBit("symbolicString"),
            property->getValueAsString("apiName"),
            property->getValueAsString("clause")});
@@ -2071,6 +2136,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
            property->getValueAsDef("valueKind"),
            property->getValueAsDef("stability"),
            property->getValueAsDef("protectedAccess"),
+           property->getValueAsDef("realization"),
            property->getValueAsBit("symbolicString"),
            property->getValueAsString("apiName"),
            property->getValueAsString("clause")});
@@ -2086,6 +2152,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  VPIPropertyValueKind valueKind;\n"
         "  VPIPropertyStability stability;\n"
         "  VPIPropertyProtectedAccess protectedAccess;\n"
+        "  VPIPropertyRealization realization;\n"
         "  bool symbolicString;\n"
         "  const char *apiName;\n"
         "  const char *clause;\n"
@@ -2094,11 +2161,12 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   for (const EmittedProperty &property : emittedProperties) {
     os << formatv("  {{{0}, {1}, VPIPropertyValueKind::{2}, "
                   "VPIPropertyStability::{3}, VPIPropertyProtectedAccess::{4}, "
-                  "{5}, \"{6}\", \"{7}\"",
+                  "VPIPropertyRealization::{5}, {6}, \"{7}\", \"{8}\"",
                   property.source, property.property,
                   property.valueKind->getValueAsString("cppName"),
                   property.stability->getValueAsString("cppName"),
                   property.protectedAccess->getValueAsString("cppName"),
+                  property.realization->getValueAsString("cppName"),
                   property.symbolicString, property.apiName, property.clause);
     os << "},\n";
   }
@@ -2660,7 +2728,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     image.push_back(static_cast<uint8_t>(
         property.stability->getValueAsInt("value") |
         (property.protectedAccess->getValueAsInt("value") << 1) |
-        (property.symbolicString ? 4 : 0)));
+        (property.symbolicString ? 4 : 0) |
+        (property.realization->getValueAsInt("value") << 3)));
   }
 
   size_t valuePolicyOffset = image.size();
@@ -3032,13 +3101,23 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
         data + propertyOffset + index * vpiObjectModelImagePropertySize;
     uint16_t source = readVPIObjectModelImage16(record, 0);
     uint16_t property = readVPIObjectModelImage16(record, 2);
+    const auto *descriptor = findVPIProperty(source, property);
     bool ordered = index == 0 || previousSource < source ||
                    (previousSource == source && previousProperty < property);
-    if (!ordered || property == 0 ||
-        findVPIProperty(source, property) == nullptr ||
+    if (!ordered || property == 0 || !descriptor ||
         record[4] > static_cast<uint8_t>(
                                     VPIPropertyValueKind::String) ||
-        (record[5] & ~UINT8_C(7)) != 0)
+        ((record[5] >> 3) & 3) >
+            static_cast<uint8_t>(VPIPropertyRealization::Runtime) ||
+        (record[5] & ~UINT8_C(31)) != 0)
+      return false;
+    if (record[4] != static_cast<uint8_t>(descriptor->valueKind) ||
+        (record[5] & 1) != static_cast<uint8_t>(descriptor->stability) ||
+        ((record[5] >> 1) & 1) !=
+            static_cast<uint8_t>(descriptor->protectedAccess) ||
+        ((record[5] >> 3) & 3) !=
+            static_cast<uint8_t>(descriptor->realization) ||
+        ((record[5] & 4) != 0) != descriptor->symbolicString)
       return false;
     previousSource = source;
     previousProperty = property;
@@ -3289,6 +3368,7 @@ struct VPIObjectModelImageProperty {
   VPIPropertyValueKind valueKind;
   VPIPropertyStability stability;
   VPIPropertyProtectedAccess protectedAccess;
+  VPIPropertyRealization realization;
   bool symbolicString;
 };
 
@@ -3321,6 +3401,7 @@ inline constexpr bool findVPIObjectModelImageProperty(
             static_cast<VPIPropertyValueKind>(record[4]),
             static_cast<VPIPropertyStability>(record[5] & 1),
             static_cast<VPIPropertyProtectedAccess>((record[5] >> 1) & 1),
+            static_cast<VPIPropertyRealization>((record[5] >> 3) & 3),
             (record[5] & 4) != 0};
   return result.sourceType == sourceType && result.property == property;
 }

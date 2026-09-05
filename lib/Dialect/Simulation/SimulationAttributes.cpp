@@ -8,6 +8,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -37,6 +38,69 @@
 using namespace mlir;
 
 namespace obelisk::sim {
+
+LogicalResult
+VPIPropertyAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                        IntegerAttr selector, Attribute value) {
+  if (!selector || !selector.getType().isSignlessInteger(32) ||
+      selector.getValue().isNegative() || !value)
+    return emitError()
+           << "VPI property requires a nonnegative i32 selector and value";
+  uint64_t number = selector.getValue().getZExtValue();
+  if (number > UINT32_MAX)
+    return emitError() << "VPI property selector exceeds 32 bits";
+  const reflection::VPIPropertyDescriptor *descriptor = nullptr;
+  for (const auto &candidate : reflection::vpiProperties)
+    if (candidate.property == number) {
+      descriptor = &candidate;
+      break;
+    }
+  if (!descriptor)
+    return emitError() << "unknown VPI property selector " << number;
+  using Kind = reflection::VPIPropertyValueKind;
+  bool matches = false;
+  switch (descriptor->valueKind) {
+  case Kind::Boolean:
+    matches = isa<BoolAttr>(value);
+    break;
+  case Kind::Integer:
+    matches = isa<IntegerAttr>(value) &&
+              cast<IntegerAttr>(value).getType().isSignlessInteger(32);
+    break;
+  case Kind::Int64:
+    matches = isa<IntegerAttr>(value) &&
+              cast<IntegerAttr>(value).getType().isSignlessInteger(64);
+    break;
+  case Kind::String:
+    matches = isa<StringAttr>(value);
+    break;
+  }
+  if (!matches)
+    return emitError() << "VPI property value does not match its generated "
+                          "value kind";
+  return success();
+}
+
+LogicalResult
+VPIPropertySetAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                           ArrayAttr properties) {
+  if (!properties)
+    return emitError() << "VPI property set requires an array";
+  uint32_t previous = 0;
+  bool first = true;
+  for (Attribute attribute : properties) {
+    auto property = dyn_cast<VPIPropertyAttr>(attribute);
+    if (!property)
+      return emitError() << "VPI property set elements must be VPI properties";
+    uint32_t selector =
+        static_cast<uint32_t>(property.getSelector().getValue().getZExtValue());
+    if (!first && selector <= previous)
+      return emitError() << "VPI property set must be sorted and unique";
+    first = false;
+    previous = selector;
+  }
+  return success();
+}
 
 LogicalResult
 VPIObjectBackingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,

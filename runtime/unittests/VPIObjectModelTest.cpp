@@ -26,6 +26,7 @@ using Order = VPITraversalOrder;
 using PropertyKind = VPIPropertyValueKind;
 using PropertyStability = VPIPropertyStability;
 using ProtectedAccess = VPIPropertyProtectedAccess;
+using PropertyRealization = VPIPropertyRealization;
 using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
 using ArrayValueFormat = VPIArrayValueFormat;
@@ -1683,6 +1684,43 @@ TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
       EXPECT_EQ(imageProperty.valueKind, kind) << object.apiName;
     }
   }
+}
+
+TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
+  for (const VPIPropertyDescriptor &descriptor : vpiProperties) {
+    PropertyRealization expected = PropertyRealization::Derived;
+    if (descriptor.property == vpiIsProtected ||
+        descriptor.property == vpiDefFile ||
+        descriptor.property == vpiDefLineNo)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.stability == PropertyStability::Dynamic)
+      expected = PropertyRealization::Runtime;
+    EXPECT_EQ(descriptor.realization, expected)
+        << descriptor.apiName << " on " << descriptor.sourceType;
+
+    VPIObjectModelImageProperty image{};
+    ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage,
+                                                descriptor.sourceType,
+                                                descriptor.property, image));
+    EXPECT_EQ(image.realization, expected)
+        << descriptor.apiName << " on " << descriptor.sourceType;
+  }
+
+  const auto *fixedSize = findVPIProperty(vpiReg, vpiSize);
+  const auto *dynamicSize = findVPIProperty(vpiStringVar, vpiSize);
+  const auto *fixedAllocation = findVPIProperty(vpiModule, vpiAllocScheme);
+  const auto *dynamicAllocation = findVPIProperty(vpiNet, vpiAllocScheme);
+  const auto *protection = findVPIProperty(vpiModule, vpiIsProtected);
+  ASSERT_NE(fixedSize, nullptr);
+  ASSERT_NE(dynamicSize, nullptr);
+  ASSERT_NE(fixedAllocation, nullptr);
+  ASSERT_NE(dynamicAllocation, nullptr);
+  ASSERT_NE(protection, nullptr);
+  EXPECT_EQ(fixedSize->realization, PropertyRealization::Derived);
+  EXPECT_EQ(dynamicSize->realization, PropertyRealization::Runtime);
+  EXPECT_EQ(fixedAllocation->realization, PropertyRealization::Derived);
+  EXPECT_EQ(dynamicAllocation->realization, PropertyRealization::Runtime);
+  EXPECT_EQ(protection->realization, PropertyRealization::FixedImage);
 }
 
 TEST(VPIObjectModel, SourceLocationPropertiesHaveExactGlobalExclusions) {

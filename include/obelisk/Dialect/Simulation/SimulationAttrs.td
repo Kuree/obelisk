@@ -14,6 +14,21 @@ class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
   let mnemonic = attrMnemonic;
 }
 
+def SimVPIPropertyAttr : SimAttr<"VPIProperty", "vpi_property"> {
+  let summary = "one typed immutable VPI property value";
+  let parameters = (ins "::mlir::IntegerAttr":$selector,
+      "::mlir::Attribute":$value);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimVPIPropertySetAttr : SimAttr<"VPIPropertySet", "vpi_properties"> {
+  let summary = "sorted unique immutable VPI property values";
+  let parameters = (ins "::mlir::ArrayAttr":$properties);
+  let assemblyFormat = "`<` $properties `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimVPIObjectBackingAttr
     : SimAttr<"VPIObjectBacking", "vpi_backing"> {
   let summary = "physical executable descriptor backing a source VPI object";

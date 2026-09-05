@@ -52,6 +52,111 @@ static uint32_t effectiveScopeVPIKind(SimScopeDeclOp scope) {
   return scope.getId() == 0 ? 0 : static_cast<uint16_t>(VPIKind::Module);
 }
 
+static uint32_t effectiveCodeUnitVPIKind(SimCodeUnitDeclOp codeUnit) {
+  using Kind = reflection::VPIObjectKind;
+  // Inspect the marker directly so hidden-object classification remains
+  // independent of the optional reflection metadata on this operation.
+  if (codeUnit->hasAttr("internal"))
+    return 0;
+  switch (codeUnit.getCodeUnitKind()) {
+  case EntryKind::Initial:
+    return static_cast<uint16_t>(Kind::Initial);
+  case EntryKind::Final:
+    return static_cast<uint16_t>(Kind::Final);
+  case EntryKind::Always:
+  case EntryKind::AlwaysComb:
+  case EntryKind::AlwaysFF:
+  case EntryKind::AlwaysLatch:
+    return static_cast<uint16_t>(Kind::Always);
+  case EntryKind::Function:
+    return static_cast<uint16_t>(Kind::Function);
+  case EntryKind::Task:
+    return static_cast<uint16_t>(Kind::Task);
+  default:
+    return 0;
+  }
+}
+
+static LogicalResult verifyVPIProperties(Operation *operation,
+                                         uint32_t exactKind,
+                                         VPIPropertySetAttr properties) {
+  if (!properties)
+    return success();
+  for (Attribute attribute : properties.getProperties()) {
+    auto property = cast<VPIPropertyAttr>(attribute);
+    uint32_t selector =
+        static_cast<uint32_t>(property.getSelector().getValue().getZExtValue());
+    if (selector == 15 || selector == 16)
+      return operation->emitOpError()
+             << "VPI definition file and line properties must use "
+                "definition_loc as their canonical IR representation";
+    const auto *descriptor = reflection::findVPIProperty(exactKind, selector);
+    if (!descriptor)
+      return operation->emitOpError()
+             << "VPI property " << selector
+             << " is not applicable to exact object kind " << exactKind;
+    if (descriptor->realization !=
+        reflection::VPIPropertyRealization::FixedImage)
+      return operation->emitOpError()
+             << "VPI property " << selector << " is not a FixedImage property";
+    if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
+                              operation->hasAttr("is_protected"))
+      return operation->emitOpError(
+          "explicit vpiIsProtected value conflicts with is_protected");
+  }
+  return success();
+}
+
+static LogicalResult verifyDefinitionLocation(Operation *operation,
+                                              uint32_t exactKind,
+                                              LocationAttr definitionLoc) {
+  if (!definitionLoc)
+    return success();
+  if (!reflection::findVPIProperty(exactKind, 15) ||
+      !reflection::findVPIProperty(exactKind, 16))
+    return operation->emitOpError(
+        "definition_loc is not applicable to this exact VPI object kind");
+  auto file = dyn_cast<FileLineColLoc>(definitionLoc);
+  if (!file || file.getFilename().empty() || file.getLine() == 0)
+    return operation->emitOpError(
+        "definition_loc requires a concrete source file and line");
+  return success();
+}
+
+static LogicalResult verifyFixedReflection(Operation *operation,
+                                           uint32_t exactKind,
+                                           VPIPropertySetAttr properties,
+                                           LocationAttr definitionLoc) {
+  if (Attribute attribute = operation->getAttr("vpi_properties");
+      attribute && !isa<VPIPropertySetAttr>(attribute))
+    return operation->emitOpError(
+        "vpi_properties must be a #obelisk_sim.vpi_properties attribute");
+  if (Attribute attribute = operation->getAttr("definition_loc");
+      attribute && !isa<LocationAttr>(attribute))
+    return operation->emitOpError(
+        "definition_loc must be a location attribute");
+  if (Attribute attribute = operation->getAttr("is_protected")) {
+    if (!isa<UnitAttr>(attribute))
+      return operation->emitOpError("is_protected must be a unit attribute");
+    const auto *descriptor = reflection::findVPIProperty(exactKind, 74);
+    if (!descriptor || descriptor->realization !=
+                           reflection::VPIPropertyRealization::FixedImage)
+      return operation->emitOpError(
+          "is_protected is not applicable to this exact VPI object kind");
+  }
+  if (failed(verifyVPIProperties(operation, exactKind, properties)))
+    return failure();
+  return verifyDefinitionLocation(operation, exactKind, definitionLoc);
+}
+
+static VPIPropertySetAttr reflectionProperties(Operation *operation) {
+  return operation->getAttrOfType<VPIPropertySetAttr>("vpi_properties");
+}
+
+static LocationAttr reflectionDefinitionLoc(Operation *operation) {
+  return operation->getAttrOfType<LocationAttr>("definition_loc");
+}
+
 static bool isEntirelyFourState(Type type) {
   if (isa<LogicType>(type))
     return true;
@@ -145,7 +250,9 @@ LogicalResult SimScopeDeclOp::verify() {
       return emitOpError(
           "interface scope metadata and intrinsic VPI kind disagree");
   }
-  return success();
+  return verifyFixedReflection(*this, effectiveScopeVPIKind(*this),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimCodeUnitDeclOp::verify() {
@@ -156,7 +263,9 @@ LogicalResult SimCodeUnitDeclOp::verify() {
     return emitOpError("code-unit ID must be nonzero");
   if (getHierarchicalName().empty())
     return emitOpError("requires a nonempty hierarchical name");
-  return success();
+  return verifyFixedReflection(*this, effectiveCodeUnitVPIKind(*this),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimStatementDeclOp::verify() {
@@ -207,7 +316,8 @@ LogicalResult SimStatementDeclOp::verify() {
   auto source = getLoc()->findInstanceOf<FileLineColLoc>();
   if (!source || source.getLine() == 0 || source.getColumn() == 0)
     return emitOpError("requires a concrete source file, line, and column");
-  return success();
+  return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimStatementSiteDeclOp::verify() {
@@ -521,7 +631,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!target)
       return emitOpError("references an unknown backing class declaration");
   }
-  return success();
+  return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimVPITypespecDeclOp::verify() {
@@ -552,7 +663,9 @@ LogicalResult SimVPITypespecDeclOp::verify() {
     return emitOpError(
         "anonymous-enum origin requires an enum typespec and exact source "
         "type identity");
-  return success();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::LogicTypespec),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimVPIEnumConstDeclOp::verify() {
@@ -561,7 +674,9 @@ LogicalResult SimVPIEnumConstDeclOp::verify() {
     return failure();
   if (getName().empty() || getValue().empty())
     return emitOpError("requires a nonempty name and constant value");
-  return success();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::EnumConst),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
 LogicalResult
@@ -599,6 +714,10 @@ LogicalResult SimStorageDeclOp::verify() {
     return failure();
   if (getVpiType() &&
       failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  if (failed(verifyFixedReflection(
+          *this, static_cast<uint16_t>(reflection::VPIObjectKind::Reg),
+          reflectionProperties(*this), reflectionDefinitionLoc(*this))))
     return failure();
   Attribute delegated = (*this)->getAttr(metadata::vpiIdentityDelegated);
   if (!delegated)
@@ -663,8 +782,12 @@ LogicalResult SimNetDeclOp::verify() {
   auto emit = [&] { return emitOpError(); };
   if (failed(verifyElementType(emit, getType())))
     return failure();
-  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
-                      : success();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::Net),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimNetConnectDeclOp::verify() {
@@ -771,8 +894,12 @@ LogicalResult SimPortDeclOp::verify() {
   auto emit = [&] { return emitOpError(); };
   if (failed(verifyElementType(emit, getType())))
     return failure();
-  return getVpiType() ? verifyVPITypeSemantics(emit, getType(), *getVpiType())
-                      : success();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::Port),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
 static SimCovergroupDeclOp lookupCovergroup(Operation *operation,
