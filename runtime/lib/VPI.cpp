@@ -6,6 +6,7 @@
 
 #include "RuntimeInternal.h"
 
+#include "DesignBytecodeNets.h"
 #include "ProcessContext.h"
 #include "VPIHandleToken.h"
 #include "VPIInternal.h"
@@ -32,6 +33,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -187,6 +189,8 @@ struct VPIState {
   std::string propertyStringScratch;
   std::string valueStringScratch;
   std::vector<s_vpi_vecval> vectorScratch;
+  std::vector<s_vpi_strengthval> strengthScratch;
+  s_vpi_time timeScratch{};
   // Private design-read planes are reusable across ordinary snapshot queries.
   // Unlike returned value buffers these never escape the active VPI call.
   std::vector<uint64_t> readValueScratch;
@@ -530,6 +534,10 @@ bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
 enum class VPIValueShape { Neither, Scalar, Vector };
 
 PLI_INT32 vpiTypeForHandle(__vpiHandle *handle);
+bool semanticCursorFor(__vpiHandle *handle,
+                       obelisk_rt_design_cursor_v1 &cursor);
+bool semanticTypeInfo(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
+                      obelisk_rt_design_semantic_type_info_v1 &info);
 
 bool valueShapeFor(__vpiHandle *handle,
                    const obelisk_rt_design_info_v1 &objectInfo,
@@ -634,12 +642,100 @@ bool valueRequirementsSatisfied(
   return true;
 }
 
-void resolveObjectTypeValueFormat(
+bool resolveObjectTypeValueFormat(
+    __vpiHandle *handle, const obelisk_rt_design_info_v1 &objectInfo,
     const obelisk::reflection::VPIValuePolicyDescriptor &policy,
     PLI_INT32 &format) {
   using Default = obelisk::reflection::VPIValueDefaultFormat;
-  if (policy.defaultFormat == Default::Real)
+  switch (policy.defaultFormat) {
+  case Default::Integer:
+    format = vpiIntVal;
+    return true;
+  case Default::Real:
     format = vpiRealVal;
+    return true;
+  case Default::String:
+    format = vpiStringVal;
+    return true;
+  case Default::Time:
+    format = vpiTimeVal;
+    return true;
+  case Default::ScalarOrVector: {
+    const PLI_INT32 type = vpiTypeForHandle(handle);
+    if (type == vpiNetBit || type == vpiRegBit) {
+      format = vpiScalarVal;
+      return true;
+    }
+    VPIValueShape shape = VPIValueShape::Neither;
+    if (!valueShapeFor(handle, objectInfo, shape))
+      return false;
+    if (shape == VPIValueShape::Scalar)
+      format = vpiScalarVal;
+    else if (shape == VPIValueShape::Vector)
+      format = vpiVectorVal;
+    else {
+      setError(handle->owner, "VPI object has no scalar or vector value shape",
+               vpiInternal);
+      return false;
+    }
+    return true;
+  }
+  case Default::Semantic: {
+    obelisk_rt_design_cursor_v1 cursor{};
+    if (!semanticCursorFor(handle, cursor)) {
+      // Integral constants synthesized by traversal do not carry a semantic
+      // type record; their closest representation is an integer.
+      if (handle->form == VPIObjectForm::IntegralConstant) {
+        format = vpiIntVal;
+        return true;
+      }
+      setError(handle->owner, "VPI semantic value format is unavailable",
+               vpiInternal);
+      return false;
+    }
+    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    if (!semanticTypeInfo(handle, cursor, semantic))
+      return false;
+    switch (semantic.kind) {
+    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+    case OBELISK_RT_DESIGN_SEMANTIC_REAL:
+    case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+      format = vpiRealVal;
+      return true;
+    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+      format = vpiStringVal;
+      return true;
+    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+      format = vpiTimeVal;
+      return true;
+    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case OBELISK_RT_DESIGN_SEMANTIC_INT:
+    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+      format = vpiIntVal;
+      return true;
+    default:
+      break;
+    }
+    VPIValueShape shape = VPIValueShape::Neither;
+    if (!valueShapeFor(handle, objectInfo, shape))
+      return false;
+    if (shape == VPIValueShape::Scalar) {
+      format = vpiScalarVal;
+      return true;
+    }
+    if (shape == VPIValueShape::Vector) {
+      format = vpiVectorVal;
+      return true;
+    }
+    setError(handle->owner, "VPI semantic object has no value representation",
+             vpiInternal);
+    return false;
+  }
+  }
+  setError(handle->owner, "unknown generated VPI value default", vpiInternal);
+  return false;
 }
 
 int vpiTypeFor(uint32_t kind) {
@@ -2069,7 +2165,20 @@ bool isShortRealVPIType(PLI_INT32 type) {
 
 bool decodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
                     uint64_t bits, double &result) {
-  if (isShortRealVPIType(type)) {
+  bool shortReal = isShortRealVPIType(type);
+  bool real = type == vpiRealVar || type == vpiRealNet;
+  if (!shortReal && !real) {
+    obelisk_rt_design_cursor_v1 cursor{};
+    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    if (semanticCursorFor(handle, cursor) &&
+        obelisk_rt_cached_design_semantic_type_info(
+            handle->owner->context, cursor, &semantic) == OBELISK_RT_OK) {
+      shortReal = semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL;
+      real = semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
+             semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME;
+    }
+  }
+  if (shortReal) {
     if (width != 32) {
       setError(handle->owner, "shortreal VPI object does not have 32 bits",
                vpiInternal);
@@ -2081,7 +2190,7 @@ bool decodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
     result = value;
     return true;
   }
-  if (type == vpiRealVar || type == vpiRealNet) {
+  if (real) {
     if (width != 64) {
       setError(handle->owner, "real VPI object does not have 64 bits",
                vpiInternal);
@@ -2166,6 +2275,252 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
     return false;
   }
   return true;
+}
+
+bool logicBit(const std::vector<uint64_t> &plane, uint64_t bit) {
+  return (plane[static_cast<size_t>(bit / 64)] & (uint64_t{1} << (bit % 64))) !=
+         0;
+}
+
+void setLogicBit(std::vector<uint64_t> &plane, uint64_t bit) {
+  plane[static_cast<size_t>(bit / 64)] |= uint64_t{1} << (bit % 64);
+}
+
+bool valueSigned(__vpiHandle *handle,
+                 const obelisk_rt_design_info_v1 &objectInfo) {
+  const PLI_INT32 type = vpiTypeForHandle(handle);
+  if (type == vpiNetBit || type == vpiRegBit || type == vpiBitSelect ||
+      type == vpiPartSelect || type == vpiIndexedPartSelect)
+    return false;
+  obelisk_rt_design_cursor_v1 semantic{};
+  if (semanticCursorFor(handle, semantic)) {
+    obelisk_rt_design_semantic_type_info_v1 info{};
+    if (obelisk_rt_cached_design_semantic_type_info(
+            handle->owner->context, semantic, &info) == OBELISK_RT_OK)
+      return (info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+  }
+  if (objectInfo.type_offset != 0) {
+    obelisk_rt_design_type_info_v1 typeInfo{};
+    if (obelisk_rt_cached_design_type_info(handle->owner->context,
+                                           {objectInfo.type_offset},
+                                           &typeInfo) == OBELISK_RT_OK)
+      return (typeInfo.flags & OBELISK_RT_DESIGN_TYPE_SIGNED) != 0;
+  }
+  // Legacy immutable records may lack both semantic and physical type
+  // metadata. The predefined integer kinds are signed unless explicitly
+  // declared otherwise, which current records preserve in one of those two
+  // metadata graphs.
+  switch (type) {
+  case vpiIntegerNet:
+  case vpiByteNet:
+  case vpiShortIntNet:
+  case vpiIntNet:
+  case vpiLongIntNet:
+  case vpiIntegerVar:
+  case vpiByteVar:
+  case vpiShortIntVar:
+  case vpiIntVar:
+  case vpiLongIntVar:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool hasUnknownBits(const std::vector<uint64_t> &unknown, uint64_t width) {
+  const size_t fullWords = static_cast<size_t>(width / 64);
+  for (size_t word = 0; word != fullWords; ++word)
+    if (unknown[word] != 0)
+      return true;
+  const unsigned tail = static_cast<unsigned>(width % 64);
+  return tail != 0 && (unknown[fullWords] & ((uint64_t{1} << tail) - 1)) != 0;
+}
+
+bool formatRadixValue(std::string &result, const std::vector<uint64_t> &value,
+                      const std::vector<uint64_t> &unknown, uint64_t width,
+                      unsigned digitBits) {
+  static constexpr char digits[] = "0123456789abcdef";
+  size_t count = 0;
+  if (width != 0 && !checkedWordCount(width, digitBits, count))
+    return false;
+  result.assign(count, '0');
+  for (size_t digitIndex = 0; digitIndex != count; ++digitIndex) {
+    const uint64_t firstBit = uint64_t{digitIndex} * digitBits;
+    const unsigned bits =
+        static_cast<unsigned>(std::min<uint64_t>(digitBits, width - firstBit));
+    unsigned digit = 0;
+    bool anyUnknown = false;
+    bool allUnknown = true;
+    bool anyX = false;
+    bool anyZ = false;
+    for (unsigned bit = 0; bit != bits; ++bit) {
+      const uint64_t absolute = firstBit + bit;
+      const bool v = logicBit(value, absolute);
+      const bool u = logicBit(unknown, absolute);
+      if (!u) {
+        allUnknown = false;
+        digit |= static_cast<unsigned>(v) << bit;
+      } else {
+        anyUnknown = true;
+        anyX |= !v;
+        anyZ |= v;
+      }
+    }
+    char rendered = digits[digit];
+    if (anyUnknown) {
+      if (allUnknown && anyX && !anyZ)
+        rendered = 'x';
+      else if (allUnknown && anyZ && !anyX)
+        rendered = 'z';
+      else if (anyX)
+        rendered = 'X';
+      else
+        rendered = 'Z';
+    }
+    result[count - 1 - digitIndex] = rendered;
+  }
+  return true;
+}
+
+void maskValueWidth(std::vector<uint64_t> &value, uint64_t width) {
+  const unsigned tail = static_cast<unsigned>(width % 64);
+  if (tail != 0)
+    value.back() &= (uint64_t{1} << tail) - 1;
+}
+
+void negateWidth(std::vector<uint64_t> &value, uint64_t width) {
+  for (uint64_t &word : value)
+    word = ~word;
+  uint64_t carry = 1;
+  for (uint64_t &word : value) {
+    const uint64_t previous = word;
+    word += carry;
+    carry = carry && word < previous;
+  }
+  maskValueWidth(value, width);
+}
+
+void formatDecimalValue(std::string &result,
+                        const std::vector<uint64_t> &source,
+                        const std::vector<uint64_t> &unknown, uint64_t width,
+                        bool isSigned) {
+  if (hasUnknownBits(unknown, width)) {
+    result = "x";
+    return;
+  }
+  std::vector<uint64_t> magnitude = source;
+  maskValueWidth(magnitude, width);
+  const bool negative = isSigned && logicBit(magnitude, width - 1);
+  if (negative)
+    negateWidth(magnitude, width);
+  size_t last = magnitude.size();
+  while (last != 0 && magnitude[last - 1] == 0)
+    --last;
+  if (last == 0) {
+    result = "0";
+    return;
+  }
+  result.clear();
+  while (last != 0) {
+    uint64_t remainder = 0;
+    for (size_t word = last; word-- != 0;) {
+      const unsigned __int128 dividend =
+          (static_cast<unsigned __int128>(remainder) << 64) | magnitude[word];
+      magnitude[word] = static_cast<uint64_t>(dividend / 10);
+      remainder = static_cast<uint64_t>(dividend % 10);
+    }
+    result.push_back(static_cast<char>('0' + remainder));
+    while (last != 0 && magnitude[last - 1] == 0)
+      --last;
+  }
+  if (negative)
+    result.push_back('-');
+  std::reverse(result.begin(), result.end());
+}
+
+long double logicToReal(const std::vector<uint64_t> &value,
+                        const std::vector<uint64_t> &unknown, uint64_t width,
+                        bool isSigned) {
+  std::vector<uint64_t> magnitude = value;
+  for (size_t word = 0; word != magnitude.size(); ++word)
+    magnitude[word] &= ~unknown[word];
+  const bool negative =
+      isSigned && logicBit(value, width - 1) && !logicBit(unknown, width - 1);
+  if (negative)
+    negateWidth(magnitude, width);
+  long double result = 0;
+  for (uint64_t bit = width; bit-- != 0;)
+    result = std::ldexp(result, 1) + (logicBit(magnitude, bit) ? 1 : 0);
+  return negative ? -result : result;
+}
+
+bool packStringValue(std::string_view bytes, std::vector<uint64_t> &value,
+                     std::vector<uint64_t> &unknown, uint64_t &width) {
+  if (bytes.size() > UINT64_MAX / 8)
+    return false;
+  width = static_cast<uint64_t>(bytes.size()) * 8;
+  size_t words = 0;
+  if (width != 0 && !checkedWordCount(width, 64, words))
+    return false;
+  value.assign(words, 0);
+  unknown.assign(words, 0);
+  for (size_t byte = 0; byte != bytes.size(); ++byte) {
+    const uint8_t character =
+        static_cast<uint8_t>(bytes[bytes.size() - 1 - byte]);
+    for (unsigned bit = 0; bit != 8; ++bit)
+      if ((character & (uint8_t{1} << bit)) != 0)
+        setLogicBit(value, static_cast<uint64_t>(byte) * 8 + bit);
+  }
+  return true;
+}
+
+PLI_INT32 strengthCode(unsigned distance) {
+  static constexpr PLI_INT32 codes[] = {
+      vpiHiZ,         vpiSmallCharge, vpiMediumCharge, vpiWeakDrive,
+      vpiLargeCharge, vpiPullDrive,   vpiStrongDrive,  vpiSupplyDrive,
+  };
+  return codes[std::min<unsigned>(distance, 7)];
+}
+
+void decodeStrengthRange(uint16_t range, PLI_INT32 &strength0,
+                         PLI_INT32 &strength1) {
+  if (range == 0) {
+    strength0 = vpiStrongDrive;
+    strength1 = vpiStrongDrive;
+    return;
+  }
+  unsigned low = 0;
+  while (low != 15 && (range & (uint16_t{1} << low)) == 0)
+    ++low;
+  unsigned high = 15;
+  while (high != low && (range & (uint16_t{1} << (high - 1))) == 0)
+    --high;
+  --high;
+  strength0 = strengthCode(low <= 7 ? 7 - low : low - 7);
+  strength1 = strengthCode(high <= 7 ? 7 - high : high - 7);
+}
+
+bool readNetStrength(__vpiHandle *handle, uint64_t bitOffset, uint16_t &range) {
+  uint64_t stateOffset = 0;
+  if (obelisk_rt_design_state_offset(handle->owner->context, handle->cursor,
+                                     bitOffset,
+                                     &stateOffset) != OBELISK_RT_OK) {
+    setError(handle->owner, "VPI net strength offset is unavailable",
+             vpiInternal);
+    return false;
+  }
+  const obelisk_rt_context *context = handle->owner->context;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const bool useDirectState =
+      plan && (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+      !context->nativeScheduleDeoptimized && context->execution &&
+      plan->state_bit_count == context->execution->state_bit_count &&
+      plan->state_value && plan->state_unknown;
+  if (obelisk_rt_design_net_strength(handle->owner->context, stateOffset,
+                                     &range, useDirectState) == OBELISK_RT_OK)
+    return true;
+  setError(handle->owner, "could not retrieve VPI net strength", vpiInternal);
+  return false;
 }
 
 bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
@@ -3517,7 +3872,9 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       handle->form == VPIObjectForm::IntegralConstant)
     destination->format = vpiIntVal;
   else if (destination->format == vpiObjTypeVal)
-    resolveObjectTypeValueFormat(*policy, destination->format);
+    if (!resolveObjectTypeValueFormat(handle, info, *policy,
+                                      destination->format))
+      return;
   if (!obelisk::reflection::acceptsVPIValueFormat(
           *policy, static_cast<uint32_t>(destination->format))) {
     setError(handle->owner, "value format is not valid for this VPI object",
@@ -3530,68 +3887,284 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
   if (!readValue(handle, info, value, unknown))
     return;
-  switch (destination->format) {
-  case vpiVectorVal: {
+  uint64_t width = info.bit_width;
+  const PLI_INT32 exactType = vpiTypeForHandle(handle);
+  uint32_t semanticKind = OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN;
+  obelisk_rt_design_cursor_v1 semanticCursor{};
+  if (semanticCursorFor(handle, semanticCursor)) {
+    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    if (obelisk_rt_cached_design_semantic_type_info(
+            handle->owner->context, semanticCursor, &semantic) == OBELISK_RT_OK)
+      semanticKind = semantic.kind;
+  }
+  const bool realSource =
+      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL ||
+      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
+      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME ||
+      exactType == vpiShortRealVar || exactType == vpiShortRealNet ||
+      exactType == vpiRealVar || exactType == vpiRealNet;
+  const bool stringSource = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_STRING ||
+                            exactType == vpiStringVar;
+  double sourceReal = 0;
+  if (realSource) {
+    if (!decodeRealBits(handle, exactType, width, value[0], sourceReal))
+      return;
+    if (destination->format == vpiRealVal) {
+      destination->value.real = sourceReal;
+      return;
+    }
+    if (destination->format == vpiStringVal) {
+      char rendered[32]{};
+      const int length =
+          std::snprintf(rendered, sizeof(rendered), "%.16g", sourceReal);
+      if (length < 0) {
+        setError(handle->owner, "could not format real VPI value", vpiSystem);
+        return;
+      }
+      OBELISK_RT_TRY {
+        handle->owner->valueStringScratch.assign(rendered,
+                                                 static_cast<size_t>(length));
+        destination->value.str = handle->owner->valueStringScratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "could not format real VPI value", vpiSystem);
+      }
+      return;
+    }
+    const long double rounded =
+        std::round(static_cast<long double>(sourceReal));
+    if (!std::isfinite(sourceReal) ||
+        rounded <
+            static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
+        rounded >
+            static_cast<long double>(std::numeric_limits<int64_t>::max())) {
+      setError(handle->owner, "real VPI value cannot be converted to integer",
+               vpiNotice);
+      return;
+    }
     OBELISK_RT_TRY {
-      handle->owner->vectorScratch.resize(
-          static_cast<size_t>((info.bit_width + 31) / 32));
-      destination->value.vector = handle->owner->vectorScratch.data();
+      value.assign(1, static_cast<uint64_t>(static_cast<int64_t>(rounded)));
+      unknown.assign(1, 0);
     }
     OBELISK_RT_CATCH_ALL {
-      setError(handle->owner, "VPI vector buffer is out of memory", vpiSystem);
+      setError(handle->owner, "could not convert real VPI value", vpiSystem);
       return;
     }
-    size_t words = static_cast<size_t>((info.bit_width + 31) / 32);
-    for (size_t word = 0; word != words; ++word) {
-      uint32_t a = 0, b = 0;
-      for (unsigned bit = 0; bit != 32; ++bit) {
-        size_t absolute = word * 32 + bit;
-        if (absolute >= info.bit_width)
-          break;
-        uint64_t mask = uint64_t{1} << (absolute % 64);
-        bool v = (value[absolute / 64] & mask) != 0;
-        bool u = (unknown[absolute / 64] & mask) != 0;
-        a |= static_cast<uint32_t>(v != u) << bit;
-        b |= static_cast<uint32_t>(u) << bit;
+    width = 64;
+  } else if (stringSource) {
+    char scratch[8]{};
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    if (obelisk_rt_v1_string_view(static_cast<obelisk_rt_string_v1>(value[0]),
+                                  scratch, &bytes, &size) != OBELISK_RT_OK) {
+      setError(handle->owner, "could not read SystemVerilog string value",
+               vpiInternal);
+      return;
+    }
+    if (destination->format == vpiStringVal) {
+      if (size > std::numeric_limits<size_t>::max()) {
+        setError(handle->owner,
+                 "SystemVerilog string exceeds VPI host capacity", vpiSystem);
+        return;
       }
-      destination->value.vector[word] = {a, b};
-    }
-    break;
-  }
-  case vpiIntVal:
-    destination->value.integer = static_cast<PLI_INT32>(value[0] & ~unknown[0]);
-    break;
-  case vpiScalarVal: {
-    bool v = (value[0] & 1) != 0;
-    bool u = (unknown[0] & 1) != 0;
-    destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
-    break;
-  }
-  case vpiRealVal:
-    if (!decodeRealBits(handle, vpiTypeForHandle(handle), info.bit_width,
-                        value[0], destination->value.real))
+      OBELISK_RT_TRY {
+        handle->owner->valueStringScratch.assign(bytes ? bytes : "",
+                                                 static_cast<size_t>(size));
+        destination->value.str = handle->owner->valueStringScratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "could not materialize VPI string value",
+                 vpiSystem);
+      }
       return;
-    break;
-  case vpiBinStrVal:
+    }
     OBELISK_RT_TRY {
-      handle->owner->valueStringScratch.assign(
-          static_cast<size_t>(info.bit_width), '0');
-      for (uint64_t bit = 0; bit != info.bit_width; ++bit) {
-        uint64_t mask = uint64_t{1} << (bit % 64);
-        bool v = (value[bit / 64] & mask) != 0;
-        bool u = (unknown[bit / 64] & mask) != 0;
-        handle->owner->valueStringScratch[info.bit_width - 1 - bit] =
-            !u ? (v ? '1' : '0') : (v ? 'z' : 'x');
+      if (size > std::numeric_limits<size_t>::max() ||
+          !packStringValue(
+              std::string_view(bytes ? bytes : "", static_cast<size_t>(size)),
+              value, unknown, width)) {
+        setError(handle->owner,
+                 "SystemVerilog string exceeds VPI host capacity", vpiSystem);
+        return;
+      }
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "could not convert VPI string value", vpiSystem);
+      return;
+    }
+  }
+  const bool isSigned = valueSigned(handle, info) || realSource;
+  OBELISK_RT_TRY {
+    switch (destination->format) {
+    case vpiVectorVal: {
+      size_t words = 0;
+      if (width != 0 && !checkedWordCount(width, 32, words)) {
+        setError(handle->owner, "VPI vector result exceeds host capacity",
+                 vpiSystem);
+        return;
+      }
+      handle->owner->vectorScratch.resize(words);
+      destination->value.vector = handle->owner->vectorScratch.data();
+      for (size_t word = 0; word != words; ++word) {
+        uint32_t a = 0, b = 0;
+        for (unsigned bit = 0; bit != 32; ++bit) {
+          size_t absolute = word * 32 + bit;
+          if (absolute >= width)
+            break;
+          bool v = logicBit(value, absolute);
+          bool u = logicBit(unknown, absolute);
+          a |= static_cast<uint32_t>(v != u) << bit;
+          b |= static_cast<uint32_t>(u) << bit;
+        }
+        destination->value.vector[word] = {a, b};
+      }
+      break;
+    }
+    case vpiIntVal:
+      destination->value.integer =
+          width == 0 ? 0 : static_cast<PLI_INT32>(value[0] & ~unknown[0]);
+      break;
+    case vpiScalarVal: {
+      bool v = width != 0 && logicBit(value, 0);
+      bool u = width != 0 && logicBit(unknown, 0);
+      destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
+      if (width != 0 && info.kind == OBELISK_RT_DESIGN_RECORD_NET && u && !v) {
+        const uint64_t offset = handle->form == VPIObjectForm::Indexed
+                                    ? handle->selectionBitOffset
+                                    : 0;
+        uint16_t range = 0;
+        if (!readNetStrength(handle, offset, range))
+          return;
+        constexpr uint16_t lowMask = (uint16_t{1} << 7) - 1;
+        constexpr uint16_t highZ = uint16_t{1} << 7;
+        constexpr uint16_t highMask = static_cast<uint16_t>(
+            ((uint16_t{1} << 15) - 1) & ~(lowMask | highZ));
+        if ((range & highZ) != 0 && (range & lowMask) != 0 &&
+            (range & highMask) == 0)
+          destination->value.scalar = vpiL;
+        else if ((range & highZ) != 0 && (range & highMask) != 0 &&
+                 (range & lowMask) == 0)
+          destination->value.scalar = vpiH;
+      }
+      break;
+    }
+    case vpiRealVal:
+      destination->value.real = static_cast<double>(
+          width == 0 ? 0 : logicToReal(value, unknown, width, isSigned));
+      break;
+    case vpiBinStrVal:
+      if (!formatRadixValue(handle->owner->valueStringScratch, value, unknown,
+                            width, 1)) {
+        setError(handle->owner, "VPI binary result exceeds host capacity",
+                 vpiSystem);
+        return;
       }
       destination->value.str = handle->owner->valueStringScratch.data();
+      break;
+    case vpiOctStrVal:
+      if (!formatRadixValue(handle->owner->valueStringScratch, value, unknown,
+                            width, 3)) {
+        setError(handle->owner, "VPI octal result exceeds host capacity",
+                 vpiSystem);
+        return;
+      }
+      destination->value.str = handle->owner->valueStringScratch.data();
+      break;
+    case vpiHexStrVal:
+      if (!formatRadixValue(handle->owner->valueStringScratch, value, unknown,
+                            width, 4)) {
+        setError(handle->owner, "VPI hexadecimal result exceeds host capacity",
+                 vpiSystem);
+        return;
+      }
+      destination->value.str = handle->owner->valueStringScratch.data();
+      break;
+    case vpiDecStrVal:
+      if (width == 0)
+        handle->owner->valueStringScratch = "0";
+      else
+        formatDecimalValue(handle->owner->valueStringScratch, value, unknown,
+                           width, isSigned);
+      destination->value.str = handle->owner->valueStringScratch.data();
+      break;
+    case vpiStringVal: {
+      size_t byteCount = 0;
+      if (width != 0 && !checkedWordCount(width, 8, byteCount)) {
+        setError(handle->owner, "VPI string result exceeds host capacity",
+                 vpiSystem);
+        return;
+      }
+      handle->owner->valueStringScratch.assign(byteCount, '\0');
+      for (size_t byte = 0; byte != byteCount; ++byte) {
+        uint8_t character = 0;
+        for (unsigned bit = 0; bit != 8; ++bit) {
+          const uint64_t absolute = static_cast<uint64_t>(byte) * 8 + bit;
+          if (absolute < width && logicBit(value, absolute) &&
+              !logicBit(unknown, absolute))
+            character |= uint8_t{1} << bit;
+        }
+        handle->owner->valueStringScratch[byteCount - 1 - byte] =
+            character == 0 ? ' ' : static_cast<char>(character);
+      }
+      destination->value.str = handle->owner->valueStringScratch.data();
+      break;
     }
-    OBELISK_RT_CATCH_ALL {
-      setError(handle->owner, "could not format binary VPI value", vpiSystem);
+    case vpiTimeVal:
+      handle->owner->timeScratch = {};
+      handle->owner->timeScratch.type = vpiSimTime;
+      if (width != 0) {
+        const uint64_t integral = value[0] & ~unknown[0];
+        handle->owner->timeScratch.high =
+            static_cast<PLI_UINT32>(integral >> 32);
+        handle->owner->timeScratch.low = static_cast<PLI_UINT32>(integral);
+      }
+      destination->value.time = &handle->owner->timeScratch;
+      break;
+    case vpiStrengthVal: {
+      if (width > std::numeric_limits<size_t>::max()) {
+        setError(handle->owner, "VPI strength result exceeds host capacity",
+                 vpiSystem);
+        return;
+      }
+      handle->owner->strengthScratch.resize(static_cast<size_t>(width));
+      const bool net = info.kind == OBELISK_RT_DESIGN_RECORD_NET;
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        const bool v = logicBit(value, bit);
+        const bool u = logicBit(unknown, bit);
+        s_vpi_strengthval &strength =
+            handle->owner->strengthScratch[static_cast<size_t>(bit)];
+        strength.logic = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
+        strength.s0 = vpiStrongDrive;
+        strength.s1 = vpiStrongDrive;
+        if (net) {
+          uint16_t range = 0;
+          const uint64_t base = handle->form == VPIObjectForm::Indexed
+                                    ? handle->selectionBitOffset
+                                    : 0;
+          if (bit > UINT64_MAX - base) {
+            setError(handle->owner, "VPI net strength offset is out of range",
+                     vpiInternal);
+            return;
+          }
+          const uint64_t offset = base + bit;
+          if (!readNetStrength(handle, offset, range))
+            return;
+          decodeStrengthRange(range, strength.s0, strength.s1);
+        }
+      }
+      destination->value.strength = handle->owner->strengthScratch.data();
+      break;
     }
-    break;
-  default:
-    setError(handle->owner, "unsupported VPI read format");
-    break;
+    default:
+      setError(handle->owner, "unsupported VPI read format", vpiInternal);
+      break;
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(handle->owner, "VPI value result is out of memory", vpiSystem);
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "could not convert VPI value", vpiInternal);
   }
 }
 

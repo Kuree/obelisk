@@ -4102,6 +4102,28 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status obelisk_rt_design_state_offset(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t *outStateOffset) noexcept {
+  if (!context || !context->execution || !outStateOffset)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  const uint8_t *record = nullptr;
+  uint32_t kind = 0;
+  if (!database || !getRecord(*database, cursor.offset, record, kind) ||
+      (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+       kind != OBELISK_RT_DESIGN_RECORD_NET &&
+       kind != OBELISK_RT_DESIGN_RECORD_PORT))
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint64_t width = read64(record + 56);
+  const uint64_t stateOffset = read64(record + 80);
+  if (bitOffset >= width || stateOffset > context->execution->state_bit_count ||
+      width > context->execution->state_bit_count - stateOffset)
+    return OBELISK_RT_INVALID_HANDLE;
+  *outStateOffset = stateOffset + bitOffset;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 obelisk_rt_read_design_slice(obelisk_rt_context *context,
                              obelisk_rt_design_cursor_v1 cursor,

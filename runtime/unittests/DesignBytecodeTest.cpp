@@ -6320,11 +6320,17 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
     obelisk_rt_v1_context_destroy(context);
   }
 
-  // Cross-kind real conversion needs signedness and arbitrary-width support.
-  // Until that metadata and conversion path exist, reject it explicitly
-  // instead of interpreting a non-real object's first limb as IEEE bits.
+  // Cross-kind reads use the signed semantic/physical type and the complete
+  // arbitrary-width conversion path rather than interpreting integer bits as
+  // IEEE floating-point storage.
   Fixture fixture;
   fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
+  put32(fixture.database, 336 + 4,
+        OBELISK_RT_DESIGN_TYPE_SCALAR |
+            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
+              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+             << 8));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
   obelisk_rt_context *context = nullptr;
@@ -6342,10 +6348,10 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
   real.value.real = -1.0;
   vpi_get_value(value, &real);
   s_vpi_error_info error{};
-  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.message,
-               "vpiRealVal conversion is not implemented for non-real "
-               "objects");
+  EXPECT_EQ(vpi_chk_error(&error), 0);
+  EXPECT_DOUBLE_EQ(real.value.real, 0.0);
+  // Cross-kind writes remain a separate mutation-path contract.
+  real.value.real = -1.0;
   EXPECT_EQ(vpi_put_value(value, &real, nullptr, vpiNoDelay), nullptr);
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
   EXPECT_STREQ(error.message,
@@ -6353,6 +6359,508 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
                "objects");
   EXPECT_EQ(vpi_release_handle(value), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
+  Fixture fixture;
+  fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
+  put32(fixture.database, 336 + 4,
+        OBELISK_RT_DESIGN_TYPE_SCALAR |
+            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
+              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+             << 8));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char valueName[] = "top.value";
+  vpiHandle handle = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  s_vpi_value written{};
+  written.format = vpiBinStrVal;
+  char fourState[] = "10xz";
+  written.value.str = fourState;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  ASSERT_EQ(vpi_chk_error(nullptr), 0);
+
+  s_vpi_value read{};
+  read.format = vpiObjTypeVal;
+  vpi_get_value(handle, &read);
+  EXPECT_EQ(read.format, vpiIntVal);
+  EXPECT_EQ(read.value.integer, 8);
+
+  read = {};
+  read.format = vpiBinStrVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_STREQ(read.value.str, "000010xz");
+
+  read = {};
+  read.format = vpiOctStrVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_STREQ(read.value.str, "01X");
+
+  read = {};
+  read.format = vpiHexStrVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_STREQ(read.value.str, "0X");
+
+  read = {};
+  read.format = vpiDecStrVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_STREQ(read.value.str, "x");
+
+  read = {};
+  read.format = vpiScalarVal;
+  vpi_get_value(handle, &read);
+  EXPECT_EQ(read.value.scalar, vpiZ);
+
+  read = {};
+  read.format = vpiIntVal;
+  vpi_get_value(handle, &read);
+  EXPECT_EQ(read.value.integer, 8);
+
+  read = {};
+  read.format = vpiRealVal;
+  vpi_get_value(handle, &read);
+  EXPECT_DOUBLE_EQ(read.value.real, 8.0);
+
+  read = {};
+  read.format = vpiStringVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_EQ(static_cast<unsigned char>(read.value.str[0]), 8);
+
+  read = {};
+  read.format = vpiVectorVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.vector, nullptr);
+  EXPECT_EQ(read.value.vector[0].aval, 10u);
+  EXPECT_EQ(read.value.vector[0].bval, 3u);
+
+  read = {};
+  read.format = vpiStrengthVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.strength, nullptr);
+  EXPECT_EQ(read.value.strength[0].logic, vpiZ);
+  EXPECT_EQ(read.value.strength[0].s0, vpiStrongDrive);
+  EXPECT_EQ(read.value.strength[0].s1, vpiStrongDrive);
+  EXPECT_EQ(read.value.strength[3].logic, vpi1);
+
+  read = {};
+  read.format = vpiTimeVal;
+  vpi_get_value(handle, &read);
+  ASSERT_NE(read.value.time, nullptr);
+  EXPECT_EQ(read.value.time->type, vpiSimTime);
+  EXPECT_EQ(read.value.time->high, 0u);
+  EXPECT_EQ(read.value.time->low, 8u);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  char minusOne[] = "11111111";
+  written.value.str = minusOne;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiDecStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "-1");
+  read = {};
+  read.format = vpiRealVal;
+  vpi_get_value(handle, &read);
+  EXPECT_DOUBLE_EQ(read.value.real, -1.0);
+  read = {};
+  read.format = vpiHexStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "ff");
+
+  char allX[] = "xxxxxxxx";
+  written.value.str = allX;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiHexStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "xx");
+  read.format = vpiOctStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "xxx");
+
+  char allZ[] = "zzzzzzzz";
+  written.value.str = allZ;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiHexStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "zz");
+  read.format = vpiOctStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "zzz");
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture packedString;
+  packedString.database =
+      makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiReg);
+  put64(packedString.database, 240 + 56, 32);
+  put64(packedString.database, 240 + 64, 31);
+  put64(packedString.database, 336 + 8, 32);
+  put64(packedString.database, 336 + 16, 31);
+  put64(packedString.database, 32, imageChecksum(packedString.database));
+  packedString.execution.design_database = packedString.database.data();
+  packedString.execution.design_database_size = packedString.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&packedString.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  handle = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  char packedCharacters[] = "00000000010000010000000001000011";
+  written.value.str = packedCharacters;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiStringVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, " A C");
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  struct DefaultCase {
+    VPIShapeType shape;
+    uint32_t type;
+    PLI_INT32 format;
+  };
+  for (const DefaultCase &testCase : {
+           DefaultCase{VPIShapeType::BasicScalar, vpiReg, vpiScalarVal},
+           DefaultCase{VPIShapeType::BasicVector, vpiReg, vpiVectorVal},
+           DefaultCase{VPIShapeType::BasicVector, vpiRegBit, vpiScalarVal},
+           DefaultCase{VPIShapeType::PackedStructOneBit, vpiStructVar,
+                       vpiVectorVal},
+           DefaultCase{VPIShapeType::BasicVector, vpiTimeVar, vpiTimeVal},
+           DefaultCase{VPIShapeType::BasicVector, vpiStringVar, vpiStringVal},
+       }) {
+    SCOPED_TRACE(testCase.type);
+    Fixture local;
+    local.database = makeVPIShapeDatabase(testCase.shape, testCase.type);
+    local.execution.design_database = local.database.data();
+    local.execution.design_database_size = local.database.size();
+    context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&local.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    handle = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(handle, nullptr);
+    read = {};
+    read.format = vpiObjTypeVal;
+    vpi_get_value(handle, &read);
+    EXPECT_EQ(read.format, testCase.format);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  Fixture unsignedInteger;
+  unsignedInteger.database =
+      makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
+  unsignedInteger.execution.design_database = unsignedInteger.database.data();
+  unsignedInteger.execution.design_database_size =
+      unsignedInteger.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&unsignedInteger.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  handle = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  written.value.str = minusOne;
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiDecStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "255");
+  read = {};
+  read.format = vpiRealVal;
+  vpi_get_value(handle, &read);
+  EXPECT_DOUBLE_EQ(read.value.real, 255.0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  // Decimal conversion is limb-based, so values wider than the host integer
+  // types preserve their exact magnitude and two's-complement sign.
+  Fixture wide;
+  wide.database = makeDatabase();
+  wide.execution.design_database = wide.database.data();
+  wide.execution.design_database_size = wide.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&wide.execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  handle = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  std::string twoTo64 = "1" + std::string(64, '0');
+  written.value.str = twoTo64.data();
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiDecStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "18446744073709551616");
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  wide.database = makeDatabase();
+  constexpr uint64_t wideTypeOffset = 336;
+  put32(wide.database, wideTypeOffset + 4,
+        OBELISK_RT_DESIGN_TYPE_SCALAR |
+            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
+              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+             << 8));
+  put64(wide.database, 32, imageChecksum(wide.database));
+  wide.execution.design_database = wide.database.data();
+  wide.execution.design_database_size = wide.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&wide.execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  handle = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(handle, nullptr);
+  std::string minusOneWide(65, '1');
+  written.value.str = minusOneWide.data();
+  EXPECT_EQ(vpi_put_value(handle, &written, nullptr, vpiNoDelay), nullptr);
+  read = {};
+  read.format = vpiDecStrVal;
+  vpi_get_value(handle, &read);
+  EXPECT_STREQ(read.value.str, "-1");
+  read = {};
+  read.format = vpiRealVal;
+  vpi_get_value(handle, &read);
+  EXPECT_DOUBLE_EQ(read.value.real, -1.0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, NetStrengthReadsCanonicalStateOffsetWithoutChangingTiers) {
+  constexpr uint64_t objectOffset = 240;
+  Fixture fixture;
+  fixture.bytecode = makeConnectedDriverBytecode();
+  fixture.database = makeDatabase();
+  put32(fixture.database, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+  // Source IDs and state coordinates are independent. A query that mistakes
+  // this source identity for a stable state handle would inspect the wrong
+  // connectivity component (or fail) instead of state bit 65.
+  put64(fixture.database, objectOffset + 8, 999);
+  put64(fixture.database, objectOffset + 80, 65);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.state_bit_count = 195;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  for (uint64_t bit = 130; bit != 195; ++bit) {
+    const uint64_t mask = UINT64_C(1) << (bit % 64);
+    context->stateValue[bit / 64] &= ~mask;
+    context->stateUnknown[bit / 64] &= ~mask;
+  }
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 195),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char valueName[] = "top.value";
+  vpiHandle net = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(net, nullptr);
+  s_vpi_value read{};
+  read.format = vpiStrengthVal;
+  vpi_get_value(net, &read);
+  ASSERT_NE(read.value.strength, nullptr);
+  EXPECT_EQ(read.value.strength[0].logic, vpi0);
+  EXPECT_EQ(read.value.strength[0].s0, vpiStrongDrive);
+  EXPECT_EQ(read.value.strength[0].s1, vpiStrongDrive);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  vpiHandle selected = vpi_handle_by_index(net, 63);
+  ASSERT_NE(selected, nullptr);
+  read = {};
+  read.format = vpiStrengthVal;
+  vpi_get_value(selected, &read);
+  ASSERT_NE(read.value.strength, nullptr);
+  EXPECT_EQ(read.value.strength[0].logic, vpi0);
+  EXPECT_EQ(read.value.strength[0].s0, vpiStrongDrive);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(selected), 1);
+  EXPECT_EQ(vpi_release_handle(net), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
+  constexpr uint64_t objectOffset = 240;
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.database = makeDatabase();
+  put32(fixture.database, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+  put64(fixture.database, objectOffset + 8, 999);
+  put64(fixture.database, objectOffset + 80, 0);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    const uint64_t mask = UINT64_C(1) << (offset % 64);
+    if (value)
+      context->stateValue[offset / 64] |= mask;
+    else
+      context->stateValue[offset / 64] &= ~mask;
+    if (unknown)
+      context->stateUnknown[offset / 64] |= mask;
+    else
+      context->stateUnknown[offset / 64] &= ~mask;
+  };
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char valueName[] = "top.value";
+  vpiHandle net = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(net, nullptr);
+  s_vpi_value read{};
+  read.format = vpiScalarVal;
+
+  setState(65, false, true);
+  setState(130, true, true);
+  setState(195, true, true);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  vpi_get_value(net, &read);
+  EXPECT_EQ(read.value.scalar, vpiL);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  setState(65, true, true);
+  setState(130, false, true);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  vpi_get_value(net, &read);
+  EXPECT_EQ(read.value.scalar, vpiH);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(net), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t physicalTypeOffset = 336;
+  constexpr uint64_t semanticTypesOffset = 496 + kSemanticDirectorySize;
+  constexpr uint64_t semanticTypeOffset = semanticTypesOffset + 10 * 64;
+  constexpr uint64_t semanticRootOffset =
+      semanticTypesOffset + 11 * 64 + 10 * 24;
+  struct Case {
+    uint32_t objectType;
+    uint32_t semanticKind;
+    uint32_t publicTypespec;
+    uint64_t width;
+    PLI_INT32 defaultFormat;
+  };
+  for (const Case &testCase : {
+           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL,
+                vpiShortRealTypespec, 32, vpiRealVal},
+           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_REAL, vpiRealTypespec, 64,
+                vpiRealVal},
+           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_STRING, vpiStringTypespec,
+                64, vpiStringVal},
+       }) {
+    SCOPED_TRACE(testCase.objectType);
+    Fixture fixture;
+    fixture.database = makeSemanticTraversalDatabase();
+    put32(fixture.database, objectOffset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE,
+                           testCase.objectType));
+    put64(fixture.database, objectOffset + 56, testCase.width);
+    put64(fixture.database, objectOffset + 64, testCase.width - 1);
+    put64(fixture.database, objectOffset + 72, 0);
+    put64(fixture.database, objectOffset + 80, 0);
+    put32(fixture.database, physicalTypeOffset + 4,
+          OBELISK_RT_DESIGN_TYPE_SCALAR);
+    put64(fixture.database, physicalTypeOffset + 8, testCase.width);
+    put64(fixture.database, physicalTypeOffset + 16, testCase.width - 1);
+    put64(fixture.database, physicalTypeOffset + 24, 0);
+    put32(fixture.database, semanticTypeOffset,
+          testCase.semanticKind |
+              (testCase.publicTypespec
+               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+    put32(fixture.database, semanticTypeOffset + 4, 0);
+    put32(fixture.database, semanticTypeOffset + 8, 0);
+    put64(fixture.database, semanticTypeOffset + 48, 0);
+    put32(fixture.database, semanticRootOffset, 10);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.state_bit_count = testCase.width;
+    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              OBELISK_RT_EXECUTION_VPI_READ;
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char valueName[] = "top.value";
+    vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, value), testCase.objectType);
+    s_vpi_value read{};
+    read.format = testCase.defaultFormat;
+    vpi_get_value(value, &read);
+    if (testCase.defaultFormat == vpiRealVal)
+      EXPECT_DOUBLE_EQ(read.value.real, 0.0);
+    else {
+      ASSERT_NE(read.value.str, nullptr);
+      EXPECT_STREQ(read.value.str, "");
+    }
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(value), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {

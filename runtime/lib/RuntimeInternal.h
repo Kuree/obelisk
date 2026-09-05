@@ -2783,6 +2783,13 @@ obelisk_rt_read_design_slice(obelisk_rt_context *context,
                              uint64_t bitOffset, uint64_t bitWidth,
                              uint64_t *value, uint64_t *unknown) noexcept;
 
+// Resolve one reflected storage/net bit to its canonical global-state
+// coordinate. Query-only consumers use this instead of confusing a source
+// object ID with its independently allocated state offset.
+obelisk_rt_status obelisk_rt_design_state_offset(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t *outStateOffset) noexcept;
+
 obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
                                              obelisk_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept;
