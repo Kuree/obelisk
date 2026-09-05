@@ -47,6 +47,8 @@ constexpr uint64_t kRelationIndexKeySize =
     obelisk::reflection::RelationIndexKeyLayout.size;
 constexpr uint64_t kRelationIndexMemberSize =
     obelisk::reflection::RelationIndexMemberLayout.size;
+constexpr uint64_t kFixedPropertySize =
+    obelisk::reflection::FixedPropertyLayout.size;
 
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
@@ -176,6 +178,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
   uint64_t relationIndexMemberOffset = 0, relationIndexMemberCount = 0;
+  uint64_t fixedPropertyOffset = 0, fixedPropertyCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -196,6 +199,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     relationIndexKeyCount = read64(directory + 88);
     relationIndexMemberOffset = read64(directory + 96);
     relationIndexMemberCount = read64(directory + 104);
+    fixedPropertyOffset = read64(directory + 112);
+    fixedPropertyCount = read64(directory + 120);
   }
   database = {data,
               execution->design_database_size,
@@ -231,6 +236,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               relationIndexKeyCount,
               relationIndexMemberOffset,
               relationIndexMemberCount,
+              fixedPropertyOffset,
+              fixedPropertyCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -261,6 +268,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kRelationIndexKeySize},
         {database.relationIndexMembers, database.relationIndexMemberCount,
          kRelationIndexMemberSize},
+        {database.fixedProperties, database.fixedPropertyCount,
+         kFixedPropertySize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -289,7 +298,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
-        database.relationIndexMemberCount != 0)) ||
+        database.relationIndexMemberCount != 0 ||
+        database.fixedPropertyCount != 0)) ||
       (semanticDirectory != 0 &&
        database.objectSemanticRootCount != database.objectCount) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
@@ -324,6 +334,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.relationIndexMembers,
                   database.relationIndexMemberCount, kRelationIndexMemberSize,
                   database.size) ||
+      !validRange(database.fixedProperties, database.fixedPropertyCount,
+                  kFixedPropertySize, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -343,6 +355,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.relationIndexKeys < kHeaderSize) ||
       (database.relationIndexMemberCount != 0 &&
        database.relationIndexMembers < kHeaderSize) ||
+      ((database.fixedPropertyCount != 0 || database.fixedProperties != 0) &&
+       database.fixedProperties < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.stringSize == 0 || database.scopeCount > UINT32_MAX ||
       database.objectCount > UINT32_MAX ||
@@ -355,6 +369,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
       database.relationIndexMemberCount > UINT32_MAX ||
+      database.fixedPropertyCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
@@ -544,6 +559,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kRelationIndexKeySize},
       {database.relationIndexMembers, database.relationIndexMemberCount,
        kRelationIndexMemberSize},
+      {database.fixedProperties, database.fixedPropertyCount,
+       kFixedPropertySize},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -990,6 +1007,104 @@ bool validateDatabaseImpl(const Database &database) {
   }
   if (reached.size() != database.scopeCount + database.objectCount)
     return false;
+
+  // Fixed properties are a sparse, globally sorted map.  Validate against the
+  // generated exact-kind catalog once when publishing the immutable image so
+  // every VPI query can use a zero-allocation binary search.
+  bool havePreviousFixedProperty = false;
+  uint32_t previousFixedSource = 0;
+  uint16_t previousFixedSelector = 0;
+  std::vector<bool> protectedStatements(database.statementCount, false);
+  for (uint64_t index = 0; index != database.fixedPropertyCount; ++index) {
+    const uint8_t *record =
+        database.data + database.fixedProperties + index * kFixedPropertySize;
+    uint32_t packedSource = read32(record);
+    auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
+    uint32_t sourceIndex = obelisk::reflection::unpackTableIndex(packedSource);
+    uint16_t selector = read16(record + 4);
+    uint16_t kindAndFlags = read16(record + 6);
+    uint64_t payload = read64(record + 8);
+    if (!obelisk::reflection::isValidTableKind(table) ||
+        (havePreviousFixedProperty &&
+         std::tie(packedSource, selector) <=
+             std::tie(previousFixedSource, previousFixedSelector)))
+      return false;
+    havePreviousFixedProperty = true;
+    previousFixedSource = packedSource;
+    previousFixedSelector = selector;
+
+    uint32_t exactKind = 0;
+    switch (table) {
+    case obelisk::reflection::TableKind::Scope:
+      if (sourceIndex >= database.scopeCount)
+        return false;
+      exactKind = recordVPIKind(database.data + database.scopes +
+                                uint64_t{sourceIndex} * kScopeSize);
+      break;
+    case obelisk::reflection::TableKind::Object:
+      if (sourceIndex >= database.objectCount)
+        return false;
+      exactKind = recordVPIKind(database.data + database.objects +
+                                uint64_t{sourceIndex} * kObjectSize);
+      break;
+    case obelisk::reflection::TableKind::Statement:
+      if (sourceIndex >= database.statementCount)
+        return false;
+      exactKind = read16(database.data + database.statements +
+                         uint64_t{sourceIndex} * kStatementSize + 36);
+      break;
+    }
+    const auto *descriptor =
+        obelisk::reflection::findVPIProperty(exactKind, selector);
+    if (!descriptor ||
+        descriptor->realization !=
+            obelisk::reflection::VPIPropertyRealization::FixedImage ||
+        kindAndFlags != static_cast<uint16_t>(descriptor->valueKind))
+      return false;
+    using ValueKind = obelisk::reflection::VPIPropertyValueKind;
+    switch (descriptor->valueKind) {
+    case ValueKind::Boolean:
+      if (payload > 1)
+        return false;
+      break;
+    case ValueKind::Integer:
+      if (payload != static_cast<uint64_t>(
+                         static_cast<int64_t>(static_cast<int32_t>(payload))))
+        return false;
+      break;
+    case ValueKind::Int64:
+      break;
+    case ValueKind::String: {
+      std::string_view value;
+      if (!getString(database, payload, value) ||
+          (payload != database.strings && database.data[payload - 1] != 0))
+        return false;
+      break;
+    }
+    }
+    if (selector == 74) {
+      // False is represented by absence to keep ordinary designs sparse.
+      if (payload != 1)
+        return false;
+      if (table == obelisk::reflection::TableKind::Statement)
+        protectedStatements[sourceIndex] = true;
+    } else if (selector == 15) {
+      std::string_view file;
+      if (!getString(database, payload, file) || file.empty())
+        return false;
+    } else if (selector == 16) {
+      if (payload == 0 || payload > INT32_MAX)
+        return false;
+    }
+  }
+  for (uint32_t index = 0; index != database.statementCount; ++index) {
+    bool protectedFlag = (read16(database.data + database.statements +
+                                 uint64_t{index} * kStatementSize + 38) &
+                          OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0;
+    if (database.fixedProperties != 0 &&
+        protectedFlag != protectedStatements[index])
+      return false;
+  }
 
   for (uint64_t index = 0; index != database.typeCount; ++index) {
     const uint8_t *record = database.data + database.types + index * kTypeSize;
@@ -2615,6 +2730,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.statementSiteCount == right.statementSiteCount &&
          left.relations == right.relations &&
          left.relationCount == right.relationCount &&
+         left.fixedProperties == right.fixedProperties &&
+         left.fixedPropertyCount == right.fixedPropertyCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -2980,6 +3097,54 @@ obelisk_rt_status designVPIType(const Database &database,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status designVPIFixedProperty(const Database &database,
+                                         obelisk_rt_design_cursor_v1 cursor,
+                                         uint32_t selector,
+                                         VPIFixedPropertyValue *outValue) {
+  *outValue = {};
+  if (selector > UINT16_MAX)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::TableKind table;
+  uint32_t sourceIndex = 0;
+  if (!relationSourceForCursor(database, cursor.offset, table, sourceIndex))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t packedSource = 0;
+  if (!obelisk::reflection::tryPackTableIndex(table, sourceIndex, packedSource))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t low = 0;
+  uint32_t high = static_cast<uint32_t>(database.fixedPropertyCount);
+  uint16_t compactSelector = static_cast<uint16_t>(selector);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record = database.data + database.fixedProperties +
+                            uint64_t{middle} * kFixedPropertySize;
+    uint32_t recordSource = read32(record);
+    uint16_t recordSelector = read16(record + 4);
+    if (recordSource < packedSource ||
+        (recordSource == packedSource && recordSelector < compactSelector))
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.fixedPropertyCount)
+    return OBELISK_RT_EOF;
+  const uint8_t *record = database.data + database.fixedProperties +
+                          uint64_t{low} * kFixedPropertySize;
+  if (read32(record) != packedSource || read16(record + 4) != compactSelector)
+    return OBELISK_RT_EOF;
+  outValue->kind = static_cast<uint8_t>(read16(record + 6));
+  outValue->payload = read64(record + 8);
+  if (outValue->kind ==
+      static_cast<uint8_t>(obelisk::reflection::VPIPropertyValueKind::String)) {
+    std::string_view value;
+    if (!getString(database, outValue->payload, value))
+      return OBELISK_RT_INVALID_DESIGN;
+    outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
+    outValue->stringSize = value.size();
+  }
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status designVPIRelationIndex(const Database &database,
                                          obelisk_rt_design_cursor_v1 source,
                                          VPIRelationIndexInfo *outInfo) {
@@ -3262,6 +3427,17 @@ designVPIStatementIsScope(const Database &database,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status
+designVPIStatementIsProtected(const Database &database,
+                              obelisk_rt_design_cursor_v1 statement,
+                              bool *outIsProtected) {
+  if (!isStatementOffset(database, statement.offset))
+    return OBELISK_RT_INVALID_HANDLE;
+  *outIsProtected = (read16(database.data + statement.offset + 38) &
+                     OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0;
+  return OBELISK_RT_OK;
+}
+
 } // namespace
 
 obelisk_rt_status obelisk_rt_initialize_design_database(
@@ -3515,6 +3691,17 @@ obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
                   : OBELISK_RT_INVALID_HANDLE;
 }
 
+obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint32_t selector, VPIFixedPropertyValue *outValue) noexcept {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database
+             ? designVPIFixedProperty(*database, cursor, selector, outValue)
+             : OBELISK_RT_INVALID_HANDLE;
+}
+
 obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept {
@@ -3642,6 +3829,17 @@ obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementIsScope(*database, statement, outIsScope)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    bool *outIsProtected) noexcept {
+  if (!outIsProtected)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPIStatementIsProtected(*database, statement,
+                                                  outIsProtected)
                   : OBELISK_RT_INVALID_HANDLE;
 }
 

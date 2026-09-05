@@ -1414,6 +1414,8 @@ struct DesignDatabaseCache {
   uint64_t relationIndexKeyCount = 0;
   uint64_t relationIndexMembers = 0;
   uint64_t relationIndexMemberCount = 0;
+  uint64_t fixedProperties = 0;
+  uint64_t fixedPropertyCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -1424,6 +1426,13 @@ struct DesignDatabaseCache {
 struct VPIRelationRange {
   uint64_t first = 0;
   uint64_t count = 0;
+};
+
+struct VPIFixedPropertyValue {
+  uint8_t kind = 0;
+  uint64_t payload = 0;
+  const uint8_t *stringData = nullptr;
+  uint64_t stringSize = 0;
 };
 
 struct VPIRelationIndexInfo {
@@ -2797,6 +2806,9 @@ obelisk_rt_status obelisk_rt_design_state_offset(
 obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
                                              obelisk_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;
@@ -2837,5 +2849,8 @@ obelisk_rt_status
 obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
                                          obelisk_rt_design_cursor_v1 statement,
                                          bool *outIsScope) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    bool *outIsProtected) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

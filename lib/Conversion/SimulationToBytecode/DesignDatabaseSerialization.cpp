@@ -439,6 +439,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     return source;
   };
+  auto hasFixedReflectionMetadata = [](Operation *operation) {
+    return operation->hasAttr("is_protected") ||
+           operation->hasAttr("definition_loc") ||
+           operation->hasAttr("vpi_properties");
+  };
+  auto sameFixedReflectionMetadata = [](Operation *left, Operation *right) {
+    return left->getAttr("is_protected") == right->getAttr("is_protected") &&
+           left->getAttr("definition_loc") ==
+               right->getAttr("definition_loc") &&
+           left->getAttr("vpi_properties") == right->getAttr("vpi_properties");
+  };
+  DenseSet<Operation *> explicitlyHandledFixedMetadata;
   struct Record {
     uint32_t kind;
     uint32_t vpiKind;
@@ -468,6 +480,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint16_t selector;
     uint16_t sourceKindAndTable;
   };
+  struct FixedPropertyRecord {
+    uint32_t sourceIndexAndTable = 0;
+    uint16_t selector = 0;
+    uint16_t kindAndFlags = 0;
+    uint64_t payload = 0;
+    std::string stringPayload;
+  };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
   SmallVector<StatementRecord> statements;
@@ -480,6 +499,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   llvm::StringMap<sim::SimVPITypespecDeclOp> typespecsBySymbol;
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
+  SmallVector<FixedPropertyRecord> fixedProperties;
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
@@ -684,8 +704,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          Type{}, 0, sourceFor(enumConstant), true,
                          enumConstant});
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (!isReflectableType(storage.getType()))
+      if (!isReflectableType(storage.getType())) {
+        if (includeStatements && hasFixedReflectionMetadata(storage)) {
+          storage.emitOpError(
+              "fixed VPI metadata would be dropped with an unsupported "
+              "physical type");
+          return {};
+        }
         continue;
+      }
       if (Attribute delegated =
               storage->getAttr(sim::metadata::vpiIdentityDelegated)) {
         auto reference = dyn_cast<FlatSymbolRefAttr>(delegated);
@@ -704,6 +731,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
               "anchor");
           return {};
         }
+        if (includeStatements && hasFixedReflectionMetadata(storage) &&
+            (!reference || owner == anchorsBySymbol.end() ||
+             !sameFixedReflectionMetadata(storage, owner->second))) {
+          storage.emitOpError(
+              "delegated VPI metadata must exactly match its object anchor");
+          return {};
+        }
+        if (includeStatements && hasFixedReflectionMetadata(storage))
+          explicitlyHandledFixedMetadata.insert(storage);
         continue;
       }
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
@@ -719,8 +755,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          storageOffsets.lookup(storage.getId()),
                          sourceFor(storage), true, storage});
     } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      if (!isReflectableType(net.getType()))
+      if (!isReflectableType(net.getType())) {
+        if (includeStatements && hasFixedReflectionMetadata(net)) {
+          net.emitOpError(
+              "fixed VPI metadata would be dropped with an unsupported "
+              "physical type");
+          return {};
+        }
         continue;
+      }
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
         caps = addPortMetadata(port, caps);
@@ -745,8 +788,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          driver.getType(), driverOffsets.lookup(driver.getId()),
                          sourceFor(driver), true, driver});
     } else if (auto port = dyn_cast<sim::SimPortDeclOp>(operation)) {
-      if (!isReflectableType(port.getType()))
+      if (!isReflectableType(port.getType())) {
+        if (includeStatements && hasFixedReflectionMetadata(port)) {
+          port.emitOpError(
+              "fixed VPI metadata would be dropped with an unsupported "
+              "physical type");
+          return {};
+        }
         continue;
+      }
       sim::SimPortDeclOp direct =
           (port.getSourceIsNet() ? directNetPorts : directStoragePorts)
               .lookup(port.getSourceId());
@@ -2055,6 +2105,204 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
   }
 
+  // Resolve immutable property ownership only after the physical tables have
+  // reached their deterministic order. A backed source anchor aliases a scope
+  // or code-unit record. Both operations may contribute disjoint metadata;
+  // duplicate selectors must agree and the anchor is processed last so any
+  // contradiction is diagnosed on the authoritative source identity.
+  struct PropertySource {
+    SmallVector<Operation *, 2> operations;
+    uint32_t vpiKind = 0;
+  };
+  DenseMap<uint32_t, PropertySource> propertySources;
+  auto rememberPropertySource = [&](TableKind table, uint32_t index,
+                                    uint32_t vpiKind,
+                                    Operation *operation) -> LogicalResult {
+    uint32_t packed = 0;
+    if (!tryPackTableIndex(table, index, packed))
+      return operation->emitError(
+          "fixed VPI property source index cannot be packed");
+    PropertySource &source = propertySources[packed];
+    source.operations.clear();
+    source.operations.push_back(operation);
+    source.vpiKind = vpiKind;
+    return success();
+  };
+  if (includeStatements) {
+    for (auto [index, scope] : llvm::enumerate(scopes))
+      if (failed(rememberPropertySource(TableKind::Scope,
+                                        static_cast<uint32_t>(index),
+                                        vpiKindForScope(scope), scope)))
+        return {};
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (object.identity &&
+          failed(rememberPropertySource(TableKind::Object,
+                                        static_cast<uint32_t>(index),
+                                        object.vpiKind, object.identity)))
+        return {};
+    for (auto [index, statement] : llvm::enumerate(statements))
+      if (failed(rememberPropertySource(
+              TableKind::Statement, static_cast<uint32_t>(index),
+              statement.declaration.getVpiKind(), statement.declaration)))
+        return {};
+
+    for (const auto &[anchorOperation, reference] : anchorRefs) {
+      auto anchor = cast<sim::SimVPIObjectAnchorOp>(anchorOperation);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(reference.table, reference.index, packed)) {
+        anchor.emitOpError("backed VPI property source index cannot be packed");
+        return {};
+      }
+      auto found = propertySources.find(packed);
+      if (found == propertySources.end()) {
+        anchor.emitOpError("backed VPI property source was not serialized");
+        return {};
+      }
+      found->second.vpiKind = reference.vpiKind;
+      if (found->second.operations.front() != anchorOperation)
+        found->second.operations.push_back(anchorOperation);
+    }
+
+    DenseSet<Operation *> acceptedMetadataSources;
+    for (Operation *operation : explicitlyHandledFixedMetadata)
+      acceptedMetadataSources.insert(operation);
+    for (const auto &[packedSource, source] : propertySources)
+      if (source.vpiKind != 0)
+        for (Operation *operation : source.operations)
+          acceptedMetadataSources.insert(operation);
+    WalkResult metadataWalk = design.walk([&](Operation *operation) {
+      if (hasFixedReflectionMetadata(operation) &&
+          !acceptedMetadataSources.contains(operation)) {
+        operation->emitError(
+            "fixed VPI metadata has no concrete serialized property source");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (metadataWalk.wasInterrupted())
+      return {};
+  }
+
+  DenseMap<uint64_t, unsigned> fixedPropertyIndices;
+  auto addFixedProperty = [&](Operation *operation, uint32_t packedSource,
+                              uint32_t exactKind, uint32_t selector,
+                              Attribute value) -> LogicalResult {
+    const VPIPropertyDescriptor *descriptor =
+        findVPIProperty(exactKind, selector);
+    if (!descriptor ||
+        descriptor->realization != VPIPropertyRealization::FixedImage ||
+        selector > UINT16_MAX)
+      return operation->emitError(
+          "immutable property is not an encodable FixedImage property for "
+          "its exact VPI kind");
+    FixedPropertyRecord record;
+    record.sourceIndexAndTable = packedSource;
+    record.selector = static_cast<uint16_t>(selector);
+    record.kindAndFlags = static_cast<uint16_t>(descriptor->valueKind);
+    switch (descriptor->valueKind) {
+    case VPIPropertyValueKind::Boolean:
+      if (!isa<BoolAttr>(value))
+        return operation->emitError("fixed Boolean VPI property is not bool");
+      record.payload = cast<BoolAttr>(value).getValue();
+      break;
+    case VPIPropertyValueKind::Integer:
+      if (!isa<IntegerAttr>(value) ||
+          !cast<IntegerAttr>(value).getType().isSignlessInteger(32))
+        return operation->emitError("fixed integer VPI property is not i32");
+      record.payload = static_cast<uint64_t>(
+          cast<IntegerAttr>(value).getValue().getSExtValue());
+      break;
+    case VPIPropertyValueKind::Int64:
+      if (!isa<IntegerAttr>(value) ||
+          !cast<IntegerAttr>(value).getType().isSignlessInteger(64))
+        return operation->emitError("fixed int64 VPI property is not i64");
+      record.payload = static_cast<uint64_t>(
+          cast<IntegerAttr>(value).getValue().getSExtValue());
+      break;
+    case VPIPropertyValueKind::String:
+      if (!isa<StringAttr>(value))
+        return operation->emitError("fixed string VPI property is not string");
+      record.stringPayload = cast<StringAttr>(value).getValue().str();
+      if (StringRef(record.stringPayload).contains('\0'))
+        return operation->emitError(
+            "fixed string VPI property contains an embedded NUL");
+      break;
+    }
+    uint64_t key = (uint64_t{packedSource} << 16) | record.selector;
+    auto [entry, inserted] = fixedPropertyIndices.try_emplace(
+        key, static_cast<unsigned>(fixedProperties.size()));
+    if (!inserted) {
+      const FixedPropertyRecord &existing = fixedProperties[entry->second];
+      if (existing.kindAndFlags != record.kindAndFlags ||
+          existing.payload != record.payload ||
+          existing.stringPayload != record.stringPayload)
+        return operation->emitError(
+            "conflicting immutable VPI property values for one physical "
+            "object");
+      return success();
+    }
+    fixedProperties.push_back(std::move(record));
+    return success();
+  };
+  if (includeStatements) {
+    Builder builder(design.getContext());
+    auto addOperationProperties = [&](Operation *operation,
+                                      uint32_t packedSource,
+                                      uint32_t exactKind) -> LogicalResult {
+      if (operation->hasAttr("is_protected") &&
+          failed(addFixedProperty(operation, packedSource, exactKind, 74,
+                                  builder.getBoolAttr(true))))
+        return failure();
+      if (auto location = dyn_cast_or_null<FileLineColLoc>(
+              operation->getAttr("definition_loc"))) {
+        if (location.getLine() > INT32_MAX)
+          return operation->emitError(
+              "definition_loc line exceeds the VPI 32-bit integer range");
+        if (failed(addFixedProperty(
+                operation, packedSource, exactKind, 15,
+                builder.getStringAttr(location.getFilename().getValue()))) ||
+            failed(addFixedProperty(
+                operation, packedSource, exactKind, 16,
+                builder.getI32IntegerAttr(location.getLine()))))
+          return failure();
+      }
+      if (auto properties = operation->getAttrOfType<sim::VPIPropertySetAttr>(
+              "vpi_properties")) {
+        for (Attribute attribute : properties.getProperties()) {
+          auto property = cast<sim::VPIPropertyAttr>(attribute);
+          uint32_t selector = static_cast<uint32_t>(
+              property.getSelector().getValue().getZExtValue());
+          if (failed(addFixedProperty(operation, packedSource, exactKind,
+                                      selector, property.getValue())))
+            return failure();
+        }
+      }
+      return success();
+    };
+    for (const auto &[packedSource, source] : propertySources) {
+      if (source.vpiKind == 0)
+        continue;
+      for (Operation *operation : source.operations)
+        if (failed(addOperationProperties(operation, packedSource,
+                                          source.vpiKind)))
+          return {};
+    }
+    // False is the canonical sparse representation of vpiIsProtected, but it
+    // participates in duplicate/conflict detection before being erased.
+    fixedProperties.erase(
+        std::remove_if(fixedProperties.begin(), fixedProperties.end(),
+                       [](const FixedPropertyRecord &property) {
+                         return property.selector == 74 &&
+                                property.payload == 0;
+                       }),
+        fixedProperties.end());
+    llvm::sort(fixedProperties, [](const FixedPropertyRecord &left,
+                                   const FixedPropertyRecord &right) {
+      return std::tie(left.sourceIndexAndTable, left.selector) <
+             std::tie(right.sourceIndexAndTable, right.selector);
+    });
+  }
+
   SmallVector<uint8_t> strings(1, 0);
   llvm::StringMap<uint64_t> stringOffsets;
   auto intern = [&](StringRef value) {
@@ -2096,6 +2344,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (const SemanticTypeEdgeRecord &edge : semanticTypeEdges)
     if (!edge.name.empty())
       intern(edge.name);
+  for (const FixedPropertyRecord &property : fixedProperties)
+    if (property.kindAndFlags ==
+        static_cast<uint16_t>(VPIPropertyValueKind::String))
+      intern(property.stringPayload);
   if (!semanticTypes.empty() && strings.size() > UINT32_MAX) {
     design.emitOpError(
         "semantic reflection string table exceeds 32-bit offsets");
@@ -2141,9 +2393,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t relationIndexMemberOffset =
       relationIndexKeyOffset +
       relationIndexKeys.size() * RelationIndexKeyLayout.size;
-  uint64_t stringOffset =
+  uint64_t fixedPropertyOffset =
       relationIndexMemberOffset +
       relationIndexMembers.size() * RelationIndexMemberLayout.size;
+  uint64_t stringOffset =
+      fixedPropertyOffset + fixedProperties.size() * FixedPropertyLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -2377,6 +2631,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setRelationIndexKeyCount(relationIndexKeys.size());
     writer.setRelationIndexMemberOffset(relationIndexMemberOffset);
     writer.setRelationIndexMemberCount(relationIndexMembers.size());
+    writer.setFixedPropertyOffset(fixedPropertyOffset);
+    writer.setFixedPropertyCount(fixedProperties.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -2488,6 +2744,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setTargetIndexAndTable(entry.targetIndexAndTable);
     writer.setRelationIndex(entry.relationIndex);
     writer.setOrdinal(entry.ordinal);
+  }
+  for (auto [index, entry] : llvm::enumerate(fixedProperties)) {
+    FixedPropertyWriter writer(output.data() + fixedPropertyOffset +
+                               index * FixedPropertyLayout.size);
+    writer.setSourceIndexAndTable(entry.sourceIndexAndTable);
+    writer.setSelector(entry.selector);
+    writer.setKindAndFlags(entry.kindAndFlags);
+    writer.setPayload(entry.kindAndFlags == static_cast<uint16_t>(
+                                                VPIPropertyValueKind::String)
+                          ? stringOffset + intern(entry.stringPayload)
+                          : entry.payload);
   }
   llvm::append_range(output, strings);
   alignTo(output, 8);

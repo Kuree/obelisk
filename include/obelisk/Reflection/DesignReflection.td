@@ -260,6 +260,20 @@ def RelationIndexMember : ReflectionLayout<"RelationIndexMember", 12,
   [RelationIndexMemberTarget, RelationIndexMemberRelationIndex,
    RelationIndexMemberOrdinal]>;
 
+// Sparse immutable VPI properties are keyed by the same compact physical
+// table/index identity used by relations.  KindAndFlags stores the generated
+// VPIPropertyValueKind in its low two bits; all remaining bits are reserved.
+// String payloads are absolute image offsets into the canonical string pool.
+def FixedPropertySource
+    : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
+def FixedPropertySelector : ReflectionField<"Selector", 4, U16LE>;
+def FixedPropertyKindAndFlags
+    : ReflectionField<"KindAndFlags", 6, U16LE>;
+def FixedPropertyPayload : ReflectionField<"Payload", 8, U64LE>;
+def FixedProperty : ReflectionLayout<"FixedProperty", 16,
+  [FixedPropertySource, FixedPropertySelector, FixedPropertyKindAndFlags,
+   FixedPropertyPayload]>;
+
 // HeaderReserved is zero when no extension is present, otherwise it is the
 // absolute 32-bit image offset of this directory. Keeping the fixed header
 // stable lets future reflection producers add orthogonal generated sections
@@ -292,7 +306,11 @@ def SemanticDirectoryRelationIndexMemberOffset
     : ReflectionField<"RelationIndexMemberOffset", 96, U64LE>;
 def SemanticDirectoryRelationIndexMemberCount
     : ReflectionField<"RelationIndexMemberCount", 104, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 112,
+def SemanticDirectoryFixedPropertyOffset
+    : ReflectionField<"FixedPropertyOffset", 112, U64LE>;
+def SemanticDirectoryFixedPropertyCount
+    : ReflectionField<"FixedPropertyCount", 120, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 128,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -303,7 +321,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 112,
    SemanticDirectoryRelationIndexKeyOffset,
    SemanticDirectoryRelationIndexKeyCount,
    SemanticDirectoryRelationIndexMemberOffset,
-   SemanticDirectoryRelationIndexMemberCount]>;
+   SemanticDirectoryRelationIndexMemberCount,
+   SemanticDirectoryFixedPropertyOffset,
+   SemanticDirectoryFixedPropertyCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

@@ -31,8 +31,9 @@ relation_index_offset = relation_index_count = 0
 relation_index_dimension_offset = relation_index_dimension_count = 0
 relation_index_key_offset = relation_index_key_count = 0
 relation_index_member_offset = relation_index_member_count = 0
+fixed_property_offset = fixed_property_count = 0
 if semantic_directory:
-    if semantic_directory > len(image) - 112:
+    if semantic_directory > len(image) - 128:
         raise SystemExit("invalid design-database semantic directory")
     (
         semantic_type_offset,
@@ -49,7 +50,9 @@ if semantic_directory:
         relation_index_key_count,
         relation_index_member_offset,
         relation_index_member_count,
-    ) = struct.unpack_from("<QQQQQQQQQQQQQQ", image, semantic_directory)
+        fixed_property_offset,
+        fixed_property_count,
+    ) = struct.unpack_from("<QQQQQQQQQQQQQQQQ", image, semantic_directory)
 
 
 def checked_range(offset, count, size, description):
@@ -74,6 +77,7 @@ checked_range(
     16,
     "relation index dimension",
 )
+checked_range(fixed_property_offset, fixed_property_count, 16, "fixed property")
 checked_range(relation_index_key_offset, relation_index_key_count, 12, "relation index key")
 checked_range(
     relation_index_member_offset,
@@ -263,6 +267,26 @@ for index in range(statement_count):
         f"statement id={stable_id} owner={owner} scope={scope} parent={parent} "
         f"type={vpi_kind} flags=0x{flags:x} source={source}:{line}:{column} "
         f"name={statement_name}"
+    )
+
+for index in range(fixed_property_count):
+    offset = fixed_property_offset + index * 16
+    packed_source, selector, kind_and_flags, payload = struct.unpack_from(
+        "<IHHQ", image, offset
+    )
+    source_table = packed_source >> 30
+    source = packed_source & 0x3FFFFFFF
+    if kind_and_flags == 0:
+        value = "true" if payload else "false"
+    elif kind_and_flags in (1, 2):
+        value = str(struct.unpack_from("<q", image, offset + 8)[0])
+    elif kind_and_flags == 3:
+        value = string_at(payload)
+    else:
+        value = f"invalid({payload})"
+    print(
+        f"fixed_property source_table={source_table} source={source} "
+        f"selector={selector} kind={kind_and_flags} value={value}"
     )
 
 for index in range(statement_site_count):

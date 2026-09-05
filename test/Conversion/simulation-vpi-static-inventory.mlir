@@ -8,12 +8,16 @@ module attributes {
 } {
   obelisk_sim.design @static_inventory {
     obelisk_sim.scope.decl 0 hierarchy "$root"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" {vpi_kind = 32 : i32}
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" {
+      vpi_kind = 32 : i32,
+      definition_loc = loc("top_definition.sv":11:2)
+    }
 
     obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0
         hierarchy "top" debug "top" {
-      backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>
-    }
+      backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>,
+      is_protected
+    } loc("top_use.sv":4:7)
     obelisk_sim.vpi_object.anchor @pkg id 1 type 600 in 0 ordinal 1
         hierarchy "pkg" debug "pkg"
     obelisk_sim.vpi_object.anchor @class id 2 type 652 in 0 parent @pkg
@@ -174,6 +178,10 @@ module attributes {
 // CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=7
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
 // CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=5
+// Backed-anchor metadata is serialized on the aliased physical scope record.
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=15 kind=3 value=top_definition.sv
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=16 kind=1 value=11
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=74 kind=0 value=true
 // The generated relation image exposes lexical ownership, declaration-order
 // typedefs, the immediate typedef alias, interface instance links, enum
 // members in source order, reverse enum ownership, and value typespec lookup.

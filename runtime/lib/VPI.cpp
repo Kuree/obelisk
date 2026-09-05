@@ -101,6 +101,7 @@ struct __vpiHandle {
   int64_t integralValue = 0;
   uint32_t exactVpiType = 0;
   bool statement = false;
+  bool protectedObject = false;
   bool suppressSemanticAlias = false;
   bool suppressSemanticDimension = false;
   // IEEE 1800-2017 37.29 detail 2 restricts value access based on the
@@ -315,9 +316,78 @@ vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
   return reinterpret_cast<vpiHandle>(token);
 }
 
+bool lookup(VPIState *state, const std::string &name,
+            obelisk_rt_design_cursor_v1 &cursor);
+
+bool fixedProtectionFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+                        bool &isProtected) {
+  isProtected = false;
+  VPIFixedPropertyValue property{};
+  if (!state)
+    return false;
+  obelisk_rt_status status = obelisk_rt_cached_vpi_fixed_property(
+      state->context, cursor, vpiIsProtected, &property);
+  if (status == OBELISK_RT_EOF) {
+    bool protectedStatement = false;
+    obelisk_rt_status statementStatus =
+        obelisk_rt_cached_vpi_statement_is_protected(state->context, cursor,
+                                                     &protectedStatement);
+    if (statementStatus == OBELISK_RT_OK) {
+      isProtected = protectedStatement;
+      return true;
+    }
+    if (statementStatus != OBELISK_RT_INVALID_HANDLE) {
+      setError(state, "VPI statement protection lookup failed", vpiInternal);
+      return false;
+    }
+    return true;
+  }
+  if (status != OBELISK_RT_OK) {
+    setError(state, "VPI protection image lookup failed", vpiInternal);
+    return false;
+  }
+  isProtected = property.payload != 0;
+  return true;
+}
+
+bool protectedNameIntermediate(VPIState *state, const std::string &name) {
+  auto protectedPrefix = [&](size_t prefixSize) {
+    if (prefixSize == 0 || prefixSize == name.size())
+      return false;
+    obelisk_rt_design_cursor_v1 intermediate{};
+    if (!lookup(state, name.substr(0, prefixSize), intermediate))
+      return false;
+    bool isProtected = false;
+    if (!fixedProtectionFor(state, intermediate, isProtected))
+      return true;
+    if (!isProtected)
+      return false;
+    setError(state, "hierarchical lookup crosses a protected VPI scope",
+             vpiError);
+    return true;
+  };
+  for (size_t separator = 0; separator < name.size(); ++separator) {
+    if (name[separator] == '.' && protectedPrefix(separator))
+      return true;
+    if (name[separator] == ':' && separator + 1 < name.size() &&
+        name[separator + 1] == ':') {
+      // Packages conventionally retain the trailing separator in their
+      // indexed name, while class scopes do not.  Probe both canonical forms.
+      if (protectedPrefix(separator) || protectedPrefix(separator + 2))
+        return true;
+      ++separator;
+    }
+  }
+  return false;
+}
+
 vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
                      uint32_t exactVpiType = 0, bool statement = false,
-                     bool classDefinitionOrigin = false) {
+                     bool classDefinitionOrigin = false,
+                     bool inheritedProtection = false) {
+  bool isProtected = false;
+  if (!fixedProtectionFor(state, cursor, isProtected))
+    return nullptr;
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
@@ -325,6 +395,7 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
     handle->cursor = cursor;
     handle->exactVpiType = exactVpiType;
     handle->statement = statement;
+    handle->protectedObject = isProtected || inheritedProtection;
     handle->classDefinitionOrigin = classDefinitionOrigin;
     return keepHandle(state, std::move(handle));
   }
@@ -374,6 +445,9 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
   uint32_t exactType = semanticTypespecKind(state, semanticCursor);
   if (exactType == 0)
     return nullptr;
+  bool isProtected = false;
+  if (!fixedProtectionFor(state, base, isProtected))
+    return nullptr;
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
@@ -382,6 +456,7 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
     handle->cursor = base;
     handle->semanticCursor = semanticCursor;
     handle->exactVpiType = exactType;
+    handle->protectedObject = isProtected;
     handle->suppressSemanticAlias = !honorAlias;
     handle->suppressSemanticDimension = suppressDimension;
     return keepHandle(state, std::move(handle));
@@ -397,6 +472,9 @@ vpiHandle makeSemanticObjectHandle(VPIState *state, VPIObjectForm form,
                                    obelisk_rt_design_cursor_v1 semanticCursor,
                                    uint32_t semanticEdge, uint32_t exactType,
                                    int64_t integralValue = 0) {
+  bool isProtected = false;
+  if (!fixedProtectionFor(state, base, isProtected))
+    return nullptr;
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
@@ -407,6 +485,7 @@ vpiHandle makeSemanticObjectHandle(VPIState *state, VPIObjectForm form,
     handle->semanticEdge = semanticEdge;
     handle->exactVpiType = exactType;
     handle->integralValue = integralValue;
+    handle->protectedObject = isProtected;
     return keepHandle(state, std::move(handle));
   }
   OBELISK_RT_CATCH_ALL {
@@ -808,10 +887,53 @@ propertyFor(__vpiHandle *handle, PLI_INT32 property) {
     return nullptr;
   const auto *descriptor = obelisk::reflection::findVPIProperty(
       static_cast<uint32_t>(type), static_cast<uint32_t>(property));
-  if (!descriptor)
-    setError(handle->owner, "property is not defined for this VPI object",
-             vpiNotice);
+  if (!descriptor) {
+    setError(handle->owner,
+             handle->protectedObject
+                 ? "property access is denied for a protected VPI object"
+                 : "property is not defined for this VPI object",
+             handle->protectedObject ? vpiError : vpiNotice);
+  } else if (handle->protectedObject &&
+             descriptor->protectedAccess ==
+                 obelisk::reflection::VPIPropertyProtectedAccess::Denied) {
+    setError(handle->owner,
+             "property access is denied for a protected VPI object", vpiError);
+    return nullptr;
+  }
   return descriptor;
+}
+
+bool fixedPropertyFor(
+    __vpiHandle *handle,
+    const obelisk::reflection::VPIPropertyDescriptor &descriptor,
+    VPIFixedPropertyValue &value) {
+  obelisk_rt_status status = obelisk_rt_cached_vpi_fixed_property(
+      handle->owner->context, handle->cursor, descriptor.property, &value);
+  if (status == OBELISK_RT_OK)
+    return true;
+  if (status == OBELISK_RT_EOF && (descriptor.property == vpiIsProtected ||
+                                   descriptor.property == vpiDefFile ||
+                                   descriptor.property == vpiDefLineNo)) {
+    value = {};
+    value.kind = static_cast<uint8_t>(descriptor.valueKind);
+    if (descriptor.property == vpiIsProtected)
+      value.payload = handle->protectedObject;
+    return true;
+  }
+  setError(handle->owner,
+           status == OBELISK_RT_EOF ? "fixed VPI property value is unavailable"
+                                    : "fixed VPI property image lookup failed",
+           status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+  return false;
+}
+
+bool allowProtectedSource(__vpiHandle *handle, const char *operation) {
+  if (!handle || !handle->protectedObject)
+    return true;
+  (void)operation;
+  setError(handle->owner, "operation is denied for a protected VPI object",
+           vpiError);
+  return false;
 }
 
 int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
@@ -1312,6 +1434,7 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->semanticCursor = steps.back().semanticType;
     handle->exactVpiType = steps.back().exactVpiType;
     handle->statement = source->statement;
+    handle->protectedObject = source->protectedObject;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
     handle->suppressSemanticDimension = steps.back().suppressSemanticDimension;
     handle->selectionRootType = rootType;
@@ -1523,6 +1646,7 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->semanticCursor = steps.back().semanticType;
     handle->exactVpiType = rootType;
     handle->statement = false;
+    handle->protectedObject = source->protectedObject;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
     handle->selectionRootType = rootType;
     handle->selectionAccessKind =
@@ -1637,7 +1761,8 @@ vpiHandle handleRelationByIndices(
       return makeHandle(source->owner, target, targetType, false,
                         obelisk::runtime::hasClassDefinitionValueOrigin(
                             static_cast<uint32_t>(vpiTypeForHandle(source)),
-                            source->classDefinitionOrigin, targetType));
+                            source->classDefinitionOrigin, targetType),
+                        source->protectedObject);
     }
 
     uint64_t remaining = 1;
@@ -1674,6 +1799,8 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
                           const PLI_INT32 *indices) {
   __vpiHandle *source = validate(opaque, VPIHandleKind::Object);
   if (!source)
+    return nullptr;
+  if (!allowProtectedSource(source, "indexed access"))
     return nullptr;
   if (count <= 0 || !indices) {
     setError(source->owner, "VPI indexed access requires at least one index");
@@ -1792,6 +1919,8 @@ vpiHandle handleRelationSelectionByName(VPIState *state,
     source.cursor = cursor;
     source.exactVpiType = exactType;
     source.classDefinitionOrigin = classDefinitionOrigin;
+    if (!fixedProtectionFor(state, cursor, source.protectedObject))
+      return nullptr;
     return handleRelationByIndices(&source, *access,
                                    static_cast<PLI_INT32>(indices.size()),
                                    indices.data());
@@ -2792,6 +2921,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   VPIState *state = requireState();
   if (!state || !name)
     return nullptr;
+  __vpiHandle *base = nullptr;
+  if (scope) {
+    base = validate(scope);
+    if (!base)
+      return nullptr;
+    if (!allowProtectedSource(base, "vpi_handle_by_name"))
+      return nullptr;
+  }
   std::string requested(name);
   if (requested == "$root" || requested == "\\$root ") {
     obelisk_rt_design_cursor_v1 root{};
@@ -2806,9 +2943,6 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   bool sourceClassDefinitionOrigin = false;
   std::string compatibilityName;
   if (scope && !absolute) {
-    __vpiHandle *base = validate(scope);
-    if (!base)
-      return nullptr;
     sourceType = static_cast<uint32_t>(vpiTypeForHandle(base));
     sourceClassDefinitionOrigin = base->classDefinitionOrigin;
     std::string prefix;
@@ -2829,14 +2963,25 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     }
   }
   obelisk_rt_design_cursor_v1 cursor{};
+  std::string resolvedName = requested;
   bool found = lookup(state, requested, cursor);
-  if (!found && !compatibilityName.empty())
+  if (!found && !compatibilityName.empty()) {
     found = lookup(state, compatibilityName, cursor);
+    if (found)
+      resolvedName = compatibilityName;
+  }
   if (!found && (!scope || absolute) &&
       (requested.size() < 2 ||
-       requested.compare(requested.size() - 2, 2, "::") != 0))
+       requested.compare(requested.size() - 2, 2, "::") != 0)) {
     found = lookup(state, requested + "::", cursor);
+    if (found)
+      resolvedName = requested + "::";
+  }
   if (!found) {
+    if (protectedNameIntermediate(state, requested) ||
+        (!compatibilityName.empty() &&
+         protectedNameIntermediate(state, compatibilityName)))
+      return nullptr;
     if (vpiHandle indexed = handleRelationSelectionByName(
             state, requested, sourceClassDefinitionOrigin))
       return indexed;
@@ -2847,6 +2992,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     setError(state, "hierarchical VPI name was not found", vpiNotice);
     return nullptr;
   }
+  if (protectedNameIntermediate(state, resolvedName))
+    return nullptr;
   obelisk_rt_design_info_v1 info{};
   uint32_t exactType = 0;
   if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
@@ -2881,6 +3028,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     setError(handle->owner, "wrong-kind VPI handle");
     return nullptr;
   }
+  if (!allowProtectedSource(handle, "vpi_handle"))
+    return nullptr;
   uint32_t sourceType = handle->exactVpiType;
   if (sourceType == 0 &&
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
@@ -3082,6 +3231,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   if (reference) {
     __vpiHandle *handle = validate(reference);
     if (!handle)
+      return nullptr;
+    if (!allowProtectedSource(handle, "vpi_iterate"))
       return nullptr;
     referenceHandle = handle;
     parent = handle->cursor;
@@ -3432,6 +3583,32 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return vpiUndefined;
   if (property == vpiType)
     return vpiTypeForHandle(handle);
+  const auto *propertyDescriptor = propertyFor(handle, property);
+  if (!propertyDescriptor)
+    return vpiUndefined;
+  using PropertyValueKind = obelisk::reflection::VPIPropertyValueKind;
+  if (propertyDescriptor->valueKind != PropertyValueKind::Boolean &&
+      propertyDescriptor->valueKind != PropertyValueKind::Integer) {
+    setError(handle->owner, "property is not a 32-bit integer VPI property",
+             vpiNotice);
+    return vpiUndefined;
+  }
+  if (propertyDescriptor->realization ==
+      obelisk::reflection::VPIPropertyRealization::FixedImage) {
+    // Runtime-created handles have no immutable physical source and are never
+    // protected.  All source-code objects use the validated sparse image.
+    if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
+      return 0;
+    VPIFixedPropertyValue value{};
+    if (!fixedPropertyFor(handle, *propertyDescriptor, value) ||
+        value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind)) {
+      if (value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind))
+        setError(handle->owner, "fixed VPI property value kind mismatch",
+                 vpiInternal);
+      return vpiUndefined;
+    }
+    return static_cast<PLI_INT32>(value.payload);
+  }
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
   if (handle->kind == VPIHandleKind::Object &&
       handle->form == VPIObjectForm::IntegralConstant) {
@@ -3551,8 +3728,6 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return vpiUndefined;
     }
   }
-  if (property == vpiIsProtected)
-    return propertyFor(handle, property) ? 0 : vpiUndefined;
   if (handle->kind != VPIHandleKind::Object) {
     setError(handle->owner, "unsupported property for VPI handle kind",
              vpiNotice);
@@ -3664,9 +3839,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                ? static_cast<PLI_INT32>(shape == VPIValueShape::Scalar)
                : static_cast<PLI_INT32>(shape == VPIValueShape::Vector);
   }
-  if (property == vpiLineNo || property == vpiDefLineNo) {
-    if (property == vpiLineNo && !propertyFor(handle, property))
-      return vpiUndefined;
+  if (property == vpiLineNo) {
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
     uint32_t line = 0, column = 0;
@@ -3686,13 +3859,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
-  if (property != vpiObjId) {
+  const auto *descriptor = propertyFor(handle, property);
+  if (!descriptor)
+    return vpiUndefined;
+  if (descriptor->valueKind !=
+      obelisk::reflection::VPIPropertyValueKind::Int64) {
     setError(handle->owner, "property is not a 64-bit integer VPI property",
              vpiNotice);
     return vpiUndefined;
   }
-  if (!propertyFor(handle, property))
-    return vpiUndefined;
+  if (descriptor->realization ==
+      obelisk::reflection::VPIPropertyRealization::FixedImage) {
+    VPIFixedPropertyValue value{};
+    if (!fixedPropertyFor(handle, *descriptor, value) ||
+        value.kind != static_cast<uint8_t>(descriptor->valueKind))
+      return vpiUndefined;
+    return static_cast<PLI_INT64>(value.payload);
+  }
   setError(handle->owner, "unsupported 64-bit integer VPI property", vpiNotice);
   return vpiUndefined;
 }
@@ -3729,6 +3912,55 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     setError(handle->owner, "unsupported string property for VPI handle kind",
              vpiError);
     return nullptr;
+  }
+  // Preserve the long-standing extension that gives synthetic port bits and
+  // process records useful names even though those names are not properties
+  // in the IEEE object diagrams.  Protected objects still reject the access.
+  const bool extendedName = property == vpiName || property == vpiFullName;
+  const auto *propertyDescriptor =
+      extendedName ? nullptr : propertyFor(handle, property);
+  if (extendedName) {
+    if (handle->protectedObject) {
+      setError(handle->owner,
+               "property access is denied for a protected VPI object",
+               vpiError);
+      return nullptr;
+    }
+  } else if (!propertyDescriptor) {
+    return nullptr;
+  }
+  if (propertyDescriptor &&
+      propertyDescriptor->valueKind !=
+          obelisk::reflection::VPIPropertyValueKind::String &&
+      !propertyDescriptor->symbolicString) {
+    setError(handle->owner, "property is not a string VPI property", vpiNotice);
+    return nullptr;
+  }
+  if (propertyDescriptor &&
+      propertyDescriptor->realization ==
+          obelisk::reflection::VPIPropertyRealization::FixedImage) {
+    if (propertyDescriptor->valueKind !=
+        obelisk::reflection::VPIPropertyValueKind::String) {
+      setError(handle->owner, "property is not a string VPI property",
+               vpiNotice);
+      return nullptr;
+    }
+    VPIFixedPropertyValue value{};
+    if (!fixedPropertyFor(handle, *propertyDescriptor, value) ||
+        value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind))
+      return nullptr;
+    if (property == vpiDefFile && value.stringSize == 0)
+      return nullptr;
+    OBELISK_RT_TRY {
+      scratch.assign(reinterpret_cast<const char *>(value.stringData),
+                     static_cast<size_t>(value.stringSize));
+      return scratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI property string buffer is out of memory",
+               vpiSystem);
+      return nullptr;
+    }
   }
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
   if (handle->form == VPIObjectForm::Indexed && objectType == vpiPortBit &&
@@ -3836,9 +4068,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
     return scratch.data();
   }
-  if (property == vpiFile || property == vpiDefFile) {
-    if (property == vpiFile && !propertyFor(handle, property))
-      return nullptr;
+  if (property == vpiFile) {
     const uint8_t *file = nullptr;
     uint64_t size = 0;
     uint32_t line = 0, column = 0;
@@ -3868,6 +4098,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     setError(handle->owner, "VPI value destination is null");
     return;
   }
+  if (!allowProtectedSource(handle, "vpi_get_value"))
+    return;
   const auto *policy = valuePolicyFor(handle);
   if (!policy)
     return;
@@ -4202,6 +4434,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
     if (handle->kind == VPIHandleKind::TimeQueue) {
       ticks = handle->cursor.offset;
     } else if (handle->kind == VPIHandleKind::Object) {
+      if (!allowProtectedSource(handle, "vpi_get_time"))
+        return;
       DpiScopeHandle *scope = timeScopeFor(handle);
       if (!scope) {
         setError(state, "VPI object timescale metadata is unavailable",
@@ -4571,7 +4805,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
     setError(state, "VPI delay destination is null");
     return;
   }
-  if (!findHandle(opaque))
+  __vpiHandle *handle = findHandle(opaque);
+  if (!handle || !allowProtectedSource(handle, "vpi_get_delays"))
     return;
   setError(state, "VPI delay metadata is unavailable", vpiNotice);
 }
@@ -4717,6 +4952,8 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   clearArrayValuePointer(destination);
   __vpiHandle *source = findHandle(opaque);
   if (!source)
+    return;
+  if (!allowProtectedSource(source, "vpi_get_value_array"))
     return;
   if (source->kind != VPIHandleKind::Object || source->classDefinitionOrigin ||
       (source->form != VPIObjectForm::Design &&
@@ -5109,7 +5346,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
   VPIState *state = requireState();
   if (!state)
     return nullptr;
-  if (type != vpiInterModPath || !findHandle(first) || !findHandle(second))
+  __vpiHandle *firstHandle = findHandle(first);
+  __vpiHandle *secondHandle = findHandle(second);
+  if (type != vpiInterModPath || !firstHandle || !secondHandle)
+    return nullptr;
+  if (!allowProtectedSource(firstHandle, "vpi_handle_multi") ||
+      !allowProtectedSource(secondHandle, "vpi_handle_multi"))
     return nullptr;
   setError(state, "VPI intermodule path metadata is unavailable", vpiNotice);
   return nullptr;

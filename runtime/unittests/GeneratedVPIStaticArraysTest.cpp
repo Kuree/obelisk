@@ -36,6 +36,11 @@ uint64_t get64(const std::vector<uint8_t> &bytes, size_t offset) {
   return value;
 }
 
+void put16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
+  bytes[offset] = static_cast<uint8_t>(value);
+  bytes[offset + 1] = static_cast<uint8_t>(value >> 8);
+}
+
 void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
   for (unsigned byte = 0; byte != 4; ++byte)
     bytes[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
@@ -597,6 +602,66 @@ TEST(GeneratedVPIStaticArrays, TraversesNamedEventArraysAndEventTypespecs) {
   EXPECT_EQ(vpi_release_handle(array), 1);
   EXPECT_EQ(vpi_release_handle(scalar), 1);
   EXPECT_EQ(vpi_release_handle(top), 1);
+}
+
+TEST(GeneratedVPIStaticArrays, DirectIndexedNameInheritsProtectedArraySource) {
+  MutableStaticArraysImage image;
+  const size_t directory = get32(image.bytes, 12);
+  const size_t objects = get64(image.bytes, 64);
+  const size_t objectCount = get64(image.bytes, 72);
+  uint32_t eventArray = UINT32_MAX;
+  for (uint32_t index = 0; index != objectCount; ++index)
+    if (get32(image.bytes, objects + size_t{index} * 96) >> 16 ==
+        vpiNamedEventArray) {
+      eventArray = index;
+      break;
+    }
+  ASSERT_NE(eventArray, UINT32_MAX);
+  const size_t property = image.bytes.size();
+  image.bytes.resize(property + 16, 0);
+  image.execution.design_database = image.bytes.data();
+  image.execution.design_database_size = image.bytes.size();
+  put64(image.bytes, 24, image.bytes.size());
+  put64(image.bytes, directory + 112, property);
+  put64(image.bytes, directory + 120, 1);
+  put32(image.bytes, property, (uint32_t{1} << 30) | eventArray);
+  put16(image.bytes, property + 4, vpiIsProtected);
+  put16(image.bytes, property + 6, 0);
+  put64(image.bytes, property + 8, 1);
+  image.seal();
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE | OBELISK_RT_EXECUTION_VPI_READ,
+      0,
+      nullptr,
+      0,
+      image.bytes.data(),
+      image.bytes.size(),
+      image.execution.state_bit_count,
+      0};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char arrayName[] = "top.events";
+  char partialName[] = "top.events[0]";
+  vpiHandle array = vpi_handle_by_name(arrayName, nullptr);
+  ASSERT_NE(array, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, array), 1);
+  EXPECT_EQ(vpi_handle_by_index(array, 0), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  vpiHandle partial = vpi_handle_by_name(partialName, nullptr);
+  ASSERT_NE(partial, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, partial), 1);
+  EXPECT_EQ(vpi_get_str(vpiName, partial), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(partial), 1);
+  EXPECT_EQ(vpi_release_handle(array), 1);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPIStaticArrays, TraversesSparseAndEmptyGenerateArrays) {

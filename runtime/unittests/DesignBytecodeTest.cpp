@@ -1942,6 +1942,39 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   return bytes;
 }
 
+std::vector<uint8_t> makeFixedPropertyDatabase(bool protectObject = true) {
+  std::vector<uint8_t> bytes = makeDatabase();
+  constexpr uint64_t stringOffset = 416;
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
+  const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t propertyOffset = semanticRootOffset + 4;
+  const uint64_t propertyCount = protectObject ? 3 : 2;
+  bytes.resize(propertyOffset + propertyCount * 16, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 32, semanticRootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 112, propertyOffset);
+  put64(bytes, directoryOffset + 120, propertyCount);
+  put32(bytes, semanticRootOffset, UINT32_MAX);
+  auto property = [&](uint64_t index, uint32_t source, uint16_t selector,
+                      uint16_t kind, uint64_t payload) {
+    uint64_t offset = propertyOffset + index * 16;
+    put32(bytes, offset, source);
+    put16(bytes, offset + 4, selector);
+    put16(bytes, offset + 6, kind);
+    put64(bytes, offset + 8, payload);
+  };
+  // The definition site is deliberately distinct from the use site encoded
+  // in the scope record.  "logic" is reused from the canonical string pool.
+  property(0, 0, vpiDefFile, 3, stringOffset + 14);
+  property(1, 0, vpiDefLineNo, 1, 29);
+  if (protectObject)
+    property(2, uint32_t{1} << 30, vpiIsProtected, 0, 1);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
   std::vector<uint8_t> bytes = makeDatabase(false, true);
   constexpr uint32_t typeCount = 11;
@@ -2545,9 +2578,7 @@ std::vector<uint8_t> makeStatementDatabase() {
     put16(bytes, offset + 38, flags);
   };
   statement(0, 100, UINT32_MAX, vpiNamedBegin,
-            OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
-                OBELISK_RT_DESIGN_STATEMENT_SCOPE,
-            8, 1, 37);
+            OBELISK_RT_DESIGN_STATEMENT_SCOPE, 8, 1, 37);
   statement(1, 200, 0, vpiFor, 0, 9, 3, 0);
   statement(2, 300, 1, vpiNullStmt, 0, 10, 5, 0);
   auto site = [&](size_t index, uint64_t id, uint32_t statement,
@@ -5360,6 +5391,9 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
 
 TEST(VPI, TraversesReflectionAndTracksHandleState) {
   Fixture fixture;
+  fixture.database = makeFixedPropertyDatabase(false);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
@@ -5405,8 +5439,11 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_STREQ(vpi_get_str(vpiFullName, value), "top.value");
   EXPECT_STREQ(vpi_get_str(vpiFile, value), "test.sv");
   EXPECT_EQ(vpi_get(vpiLineNo, value), 7);
-  EXPECT_STREQ(vpi_get_str(vpiDefFile, root), "test.sv");
-  EXPECT_EQ(vpi_get(vpiDefLineNo, root), 3);
+  const char *definitionFile = vpi_get_str(vpiDefFile, root);
+  EXPECT_STREQ(definitionFile, "logic");
+  EXPECT_NE(definitionFile,
+            reinterpret_cast<const char *>(fixture.database.data() + 430));
+  EXPECT_EQ(vpi_get(vpiDefLineNo, root), 29);
   EXPECT_EQ(vpi_compare_objects(value, absolute), 1);
   EXPECT_EQ(vpi_compare_objects(root, scope), 1);
 
@@ -5445,6 +5482,272 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_release_handle(scope), 1);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
+  Fixture fixture;
+  fixture.database = makeFixedPropertyDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char rootName[] = "$root";
+  char valueName[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(root, nullptr);
+  ASSERT_NE(value, nullptr); // Direct lookup may return a protected target.
+  EXPECT_EQ(vpi_get(vpiType, value), vpiReg);
+  EXPECT_STREQ(vpi_get_str(vpiType, value), "vpiReg");
+  EXPECT_EQ(vpi_get(vpiIsProtected, value), 1);
+  EXPECT_EQ(vpi_get(vpiSize, value), 65); // LRM protected-expression exception.
+  EXPECT_EQ(vpi_get_str(vpiName, value), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get64(vpiObjId, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_handle(vpiScope, value), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_iterate(vpiReg, value), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_handle_by_index(value, 0), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  PLI_INT32 indices[] = {0, 0};
+  EXPECT_EQ(vpi_handle_by_multi_index(value, 2, indices), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  s_vpi_value read{};
+  read.format = vpiIntVal;
+  read.value.integer = 123;
+  vpi_get_value(value, &read);
+  EXPECT_EQ(read.value.integer, 123);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  s_vpi_arrayvalue arrayRead{};
+  vpi_get_value_array(value, &arrayRead, 0, 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  s_vpi_delay delays{};
+  vpi_get_delays(value, &delays);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  s_vpi_time objectTime{};
+  objectTime.type = vpiSimTime;
+  objectTime.low = 123;
+  vpi_get_time(value, &objectTime);
+  EXPECT_EQ(objectTime.low, 123u);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_handle_multi(vpiInterModPath, value, root), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  char relative[] = "child";
+  EXPECT_EQ(vpi_handle_by_name(relative, value), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  char absolute[] = "$root";
+  EXPECT_EQ(vpi_handle_by_name(absolute, value), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  vpiHandle iterator = vpi_iterate(vpiReg, root);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle traversed = vpi_scan(iterator);
+  ASSERT_NE(traversed, nullptr); // Unprotected traversal may yield it.
+  EXPECT_EQ(vpi_get(vpiIsProtected, traversed), 1);
+  EXPECT_EQ(vpi_handle(vpiScope, traversed), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  EXPECT_EQ(vpi_release_handle(traversed), 1);
+  EXPECT_EQ(vpi_release_handle(value), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, RejectsMalformedFixedPropertySections) {
+  auto rejected = [](auto mutate) {
+    Fixture fixture;
+    fixture.database = makeFixedPropertyDatabase();
+    // HeaderReserved is the low 32-bit word at offset 12.
+    const uint32_t directoryOffset =
+        static_cast<uint32_t>(fixture.database[12]) |
+        (static_cast<uint32_t>(fixture.database[13]) << 8) |
+        (static_cast<uint32_t>(fixture.database[14]) << 16) |
+        (static_cast<uint32_t>(fixture.database[15]) << 24);
+    const uint64_t properties = get64(fixture.database, directoryOffset + 112);
+    mutate(fixture.database, directoryOffset, properties);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+  rejected([](auto &bytes, uint32_t directory, uint64_t) {
+    put64(bytes, directory + 112, bytes.size() + 1);
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put16(bytes, properties + 16 + 4, vpiDefFile); // duplicate key
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put16(bytes, properties + 6, 0); // string descriptor encoded as Boolean
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put16(bytes, properties + 2 * 16 + 4, vpiDefFile); // invalid for vpiReg
+    put16(bytes, properties + 2 * 16 + 6, 3);
+    put64(bytes, properties + 2 * 16 + 8, 430);
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put64(bytes, properties + 8, bytes.size()); // outside string pool
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put64(bytes, properties + 8, 431); // interior of "logic"
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put64(bytes, properties + 2 * 16 + 8, 0); // false must be absent
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put64(bytes, properties + 2 * 16 + 8, 2); // invalid Boolean payload
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put32(bytes, properties + 2 * 16, (uint32_t{1} << 30) | 1);
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put32(bytes, properties + 2 * 16, uint32_t{3} << 30); // invalid table
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put16(bytes, properties + 2 * 16 + 6, 4); // reserved flags
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t properties) {
+    put16(bytes, properties + 2 * 16 + 4, vpiSize); // Derived, not FixedImage
+    put16(bytes, properties + 2 * 16 + 6, 1);
+  });
+}
+
+TEST(DesignDatabase, RejectsProtectedStatementWithoutFixedProperty) {
+  Fixture fixture;
+  fixture.database = makeStatementDatabase();
+  put16(fixture.database, 400 + 38,
+        OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
+            OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+  const uint32_t directoryOffset =
+      static_cast<uint32_t>(fixture.database.size());
+  const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t propertyOffset = semanticRootOffset + 4;
+  fixture.database.resize(propertyOffset, 0);
+  put32(fixture.database, 12, directoryOffset);
+  put64(fixture.database, 24, fixture.database.size());
+  put64(fixture.database, directoryOffset + 32, semanticRootOffset);
+  put64(fixture.database, directoryOffset + 40, 1);
+  put64(fixture.database, directoryOffset + 112, propertyOffset);
+  put32(fixture.database, semanticRootOffset, UINT32_MAX);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+}
+
+TEST(VPI, LegacyStatementProtectionFlagIsFailClosed) {
+  Fixture fixture;
+  fixture.database = makeStatementDatabase();
+  put16(fixture.database, 400 + 38,
+        OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
+            OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char processName[] = "top.child.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  vpiHandle statement = vpi_handle(vpiStmt, process);
+  ASSERT_NE(statement, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, statement), vpiNamedBegin);
+  EXPECT_EQ(vpi_get(vpiIsProtected, statement), 1);
+  EXPECT_EQ(vpi_get_str(vpiName, statement), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(statement), 1);
+  EXPECT_EQ(vpi_release_handle(process), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ProtectedPackageStyleNameCannotBeHierarchicalLookupIntermediate) {
+  Fixture fixture;
+  fixture.database = makeFixedPropertyDatabase(false);
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t stringOffset = 416;
+  constexpr uint64_t indexOffset = 448;
+  const uint32_t directoryOffset =
+      static_cast<uint32_t>(fixture.database[12]) |
+      (static_cast<uint32_t>(fixture.database[13]) << 8) |
+      (static_cast<uint32_t>(fixture.database[14]) << 16) |
+      (static_cast<uint32_t>(fixture.database[15]) << 24);
+  const uint64_t propertyOffset =
+      get64(fixture.database, directoryOffset + 112);
+  fixture.database.resize(propertyOffset + 3 * 16, 0);
+  put64(fixture.database, 24, fixture.database.size());
+  put64(fixture.database, directoryOffset + 120, 3);
+  put32(fixture.database, propertyOffset + 2 * 16, 0);
+  put16(fixture.database, propertyOffset + 2 * 16 + 4, vpiIsProtected);
+  put16(fixture.database, propertyOffset + 2 * 16 + 6, 0);
+  put64(fixture.database, propertyOffset + 2 * 16 + 8, 1);
+
+  // Exercise the package spelling convention directly: the intermediate
+  // name retained in the immutable index includes the trailing `::`.
+  std::memcpy(fixture.database.data() + stringOffset + 20, "pkg::\0", 6);
+  put64(fixture.database, scopeOffset + 40, stringOffset + 20);
+  struct Entry {
+    uint64_t hash, name, record;
+  };
+  std::array<Entry, 2> entries;
+  for (size_t index = 0; index != entries.size(); ++index) {
+    entries[index] = {get64(fixture.database, indexOffset + index * 24),
+                      get64(fixture.database, indexOffset + index * 24 + 8),
+                      get64(fixture.database, indexOffset + index * 24 + 16)};
+    if (entries[index].record == scopeOffset) {
+      entries[index].hash = nameHash("pkg::");
+      entries[index].name = stringOffset + 20;
+    }
+  }
+  std::sort(entries.begin(), entries.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t index = 0; index != entries.size(); ++index) {
+    put64(fixture.database, indexOffset + index * 24, entries[index].hash);
+    put64(fixture.database, indexOffset + index * 24 + 8, entries[index].name);
+    put64(fixture.database, indexOffset + index * 24 + 16,
+          entries[index].record);
+  }
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char packageName[] = "pkg::";
+  char methodName[] = "pkg::C";
+  vpiHandle package = vpi_handle_by_name(packageName, nullptr);
+  ASSERT_NE(package, nullptr); // A protected target itself may be returned.
+  EXPECT_EQ(vpi_get(vpiIsProtected, package), 1);
+  EXPECT_EQ(vpi_handle_by_name(methodName, nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(package), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 
