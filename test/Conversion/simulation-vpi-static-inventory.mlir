@@ -1,6 +1,9 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' \
 // RUN:   | %python %S/Inputs/dump-design-database.py \
 // RUN:   | FileCheck %s
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' \
+// RUN:   | %python %S/Inputs/dump-design-database.py \
+// RUN:   | FileCheck %s --check-prefix=SPARSE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -16,7 +19,15 @@ module attributes {
     obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0
         hierarchy "top" debug "top" {
       backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>,
-      is_protected
+      is_protected,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 7 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 8 : i32, value = false>,
+        #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">,
+        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 600 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 602 : i32, value = false>
+      ]>
     } loc("top_use.sv":4:7)
     obelisk_sim.vpi_object.anchor @pkg id 1 type 600 in 0 ordinal 1
         hierarchy "pkg" debug "pkg"
@@ -179,9 +190,19 @@ module attributes {
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
 // CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=5
 // Backed-anchor metadata is serialized on the aliased physical scope record.
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=15 kind=3 value=top_definition.sv
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=16 kind=1 value=11
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=50 kind=0 value=true
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=74 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// Sorted fixed properties make adjacency an exact check that authored false
+// vpiCellInstance and vpiUnit values were erased from the image.
+// SPARSE: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
+// SPARSE-NEXT: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
+// SPARSE: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// SPARSE-NEXT: relation
 // The generated relation image exposes lexical ownership, declaration-order
 // typedefs, the immediate typedef alias, interface instance links, enum
 // members in source order, reverse enum ownership, and value typespec lookup.

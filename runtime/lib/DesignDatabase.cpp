@@ -1064,7 +1064,10 @@ bool validateDatabaseImpl(const Database &database) {
     using ValueKind = obelisk::reflection::VPIPropertyValueKind;
     switch (descriptor->valueKind) {
     case ValueKind::Boolean:
-      if (payload > 1)
+      // Immutable false values have one canonical encoding: absence from the
+      // sparse table. Reject redundant false records for every generated
+      // FixedImage Boolean, not only vpiIsProtected.
+      if (payload != 1)
         return false;
       break;
     case ValueKind::Integer:
@@ -1083,9 +1086,6 @@ bool validateDatabaseImpl(const Database &database) {
     }
     }
     if (selector == 74) {
-      // False is represented by absence to keep ordinary designs sparse.
-      if (payload != 1)
-        return false;
       if (table == obelisk::reflection::TableKind::Statement)
         protectedStatements[sourceIndex] = true;
     } else if (selector == 15) {

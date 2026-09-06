@@ -14,7 +14,13 @@ module attributes {
     obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {
       is_protected,
       vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 74 : i32, value = true>
+        #obelisk_sim.vpi_property<selector = 7 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 8 : i32, value = false>,
+        #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">,
+        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 74 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 600 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 602 : i32, value = false>
       ]>,
       definition_loc = loc("definition.sv":3:1)
     } loc("use.sv":19:7)
@@ -29,4 +35,10 @@ module attributes {
 // CHECK: obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {
 // CHECK-SAME: definition_loc = #loc
 // CHECK-SAME: vpi_properties = #obelisk_sim.vpi_properties<[
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 7 : i32, value = true>
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 8 : i32, value = false>
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 50 : i32, value = true>
 // CHECK-SAME: #obelisk_sim.vpi_property<selector = 74 : i32, value = true>
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 600 : i32, value = true>
+// CHECK-SAME: #obelisk_sim.vpi_property<selector = 602 : i32, value = false>

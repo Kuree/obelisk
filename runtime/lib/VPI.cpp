@@ -962,9 +962,11 @@ bool fixedPropertyFor(
       handle->owner->context, handle->cursor, descriptor.property, &value);
   if (status == OBELISK_RT_OK)
     return true;
-  if (status == OBELISK_RT_EOF && (descriptor.property == vpiIsProtected ||
-                                   descriptor.property == vpiDefFile ||
-                                   descriptor.property == vpiDefLineNo)) {
+  if (status == OBELISK_RT_EOF &&
+      (descriptor.valueKind ==
+           obelisk::reflection::VPIPropertyValueKind::Boolean ||
+       descriptor.property == vpiDefFile ||
+       descriptor.property == vpiDefLineNo)) {
     value = {};
     value.kind = static_cast<uint8_t>(descriptor.valueKind);
     if (descriptor.property == vpiIsProtected)

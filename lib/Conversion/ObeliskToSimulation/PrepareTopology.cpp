@@ -723,9 +723,12 @@ materializeDesignDescriptors(ModuleOp module,
   // node ID or a display path, is the canonical identity of the object.
   using VPIKind = reflection::VPIObjectKind;
   llvm::StringMap<semantic::SVDefinitionKind> definitionKinds;
+  llvm::StringMap<StringAttr> definitionNames;
   module.walk([&](semantic::SVDefinitionSymbolOp definition) {
     definitionKinds.try_emplace(definition.getSymName(),
                                 definition.getDefinitionKind());
+    if (StringAttr name = definition->getAttrOfType<StringAttr>("name"))
+      definitionNames.try_emplace(definition.getSymName(), name);
   });
   auto primitiveKind = [&](semantic::SVPrimitiveInstanceSymbolOp primitive) {
     if (primitive->hasAttr("udp_metadata"))
@@ -1079,6 +1082,76 @@ materializeDesignDescriptors(ModuleOp module,
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
   }
   llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
+  auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
+    SmallVector<Attribute> properties;
+    auto addBoolean = [&](uint32_t selector, bool value) {
+      if (!value)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getBoolAttr(true)));
+    };
+    auto addString = [&](uint32_t selector, StringAttr value) {
+      if (!value)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector), value));
+    };
+
+    bool top = false;
+    if (BoolAttr frozen =
+            source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_top")) {
+      top = frozen.getValue();
+    } else if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source)) {
+      Operation *instance = body->getParentOp();
+      top = isa_and_nonnull<semantic::SVInstanceSymbolOp>(instance) &&
+            isa_and_nonnull<semantic::SVRootSymbolOp>(instance->getParentOp());
+    }
+    if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
+            source))
+      top = true;
+    BoolAttr cell =
+        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_cell_instance");
+    BoolAttr automatic =
+        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_automatic");
+    if (sourceKind == VPIKind::Module) {
+      addBoolean(7, top);                     // vpiTopModule
+      addBoolean(8, cell && cell.getValue()); // vpiCellInstance
+    }
+    StringAttr definitionName =
+        source->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+    if (!definitionName)
+      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source))
+        if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(
+                body->getParentOp()))
+          if (auto reference = instance.getReferencedSymbolAttr()) {
+            auto found = definitionNames.find(reference.getLeafReference());
+            if (found != definitionNames.end())
+              definitionName = found->second;
+          }
+    if (!definitionName && isa<semantic::SVPackageSymbolOp>(source))
+      definitionName = builder.getStringAttr(getDebugName(source));
+    // Compilation units have no declared definition name. Use the same
+    // implementation-defined `$unit` spelling as their special-access name.
+    if (!definitionName && isa<semantic::SVCompilationUnitSymbolOp>(source))
+      definitionName = builder.getStringAttr("$unit");
+    if (!definitionName &&
+        (sourceKind == VPIKind::Module || sourceKind == VPIKind::Interface ||
+         sourceKind == VPIKind::Program)) {
+      emitError(getSemanticLocation(source))
+          << "VPI instance source is missing its definition name";
+      invalid = true;
+    }
+    addString(9, definitionName);                      // vpiDefName
+    addBoolean(50, automatic && automatic.getValue()); // vpiAutomatic
+    addBoolean(600, top);                              // vpiTop
+    addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
+
+    if (properties.empty())
+      return sim::VPIPropertySetAttr{};
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
   for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
     Operation *parent = source->getParentOp();
     while (parent && !anchorSymbols.count(parent))
@@ -1170,7 +1243,7 @@ materializeDesignDescriptors(ModuleOp module,
       });
       primitiveInputCount = builder.getI64IntegerAttr(count);
     }
-    sim::SimVPIObjectAnchorOp::create(
+    sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
         builder, getSemanticLocation(source),
         anchorSymbols.lookup(source).getValue(), inventoryId,
         static_cast<uint32_t>(anchorKinds.lookup(source)), scopeId,
@@ -1182,6 +1255,9 @@ materializeDesignDescriptors(ModuleOp module,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount);
+    if (sim::VPIPropertySetAttr properties =
+            identityProperties(source, sourceKind))
+      anchor->setAttr("vpi_properties", properties);
     source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
   }
   uint64_t nextSyntheticInventoryId = anchorSources.size();

@@ -1976,6 +1976,38 @@ std::vector<uint8_t> makeFixedPropertyDatabase(bool protectObject = true) {
   return bytes;
 }
 
+std::vector<uint8_t> makeScopeIdentityPropertyDatabase() {
+  std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
+  constexpr uint64_t stringOffset = 416;
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes[12]) |
+                                   (static_cast<uint32_t>(bytes[13]) << 8) |
+                                   (static_cast<uint32_t>(bytes[14]) << 16) |
+                                   (static_cast<uint32_t>(bytes[15]) << 24);
+  const uint64_t propertyOffset = get64(bytes, directoryOffset + 112);
+  constexpr uint64_t propertyCount = 7;
+  bytes.resize(propertyOffset + propertyCount * 16, 0);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 120, propertyCount);
+  auto property = [&](uint64_t index, uint16_t selector, uint16_t kind,
+                      uint64_t payload) {
+    uint64_t offset = propertyOffset + index * 16;
+    put32(bytes, offset, 0); // The only scope record.
+    put16(bytes, offset + 4, selector);
+    put16(bytes, offset + 6, kind);
+    put64(bytes, offset + 8, payload);
+  };
+  property(0, vpiTopModule, 0, 1);
+  property(1, vpiCellInstance, 0, 1);
+  property(2, vpiDefName, 3, stringOffset);
+  property(3, vpiDefFile, 3, stringOffset + 14);
+  property(4, vpiDefLineNo, 1, 29);
+  property(5, vpiAutomatic, 0, 1);
+  property(6, vpiTop, 0, 1);
+  // vpiUnit is deliberately absent: false Boolean values are sparse.
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeProtectedScopeDatabase() {
   std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes[12]) |
@@ -5606,6 +5638,33 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
+  Fixture fixture;
+  fixture.database = makeScopeIdentityPropertyDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char name[] = "top";
+  vpiHandle module = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(vpi_get(vpiTopModule, module), 1);
+  EXPECT_EQ(vpi_get(vpiCellInstance, module), 1);
+  EXPECT_STREQ(vpi_get_str(vpiDefName, module), "top");
+  EXPECT_EQ(vpi_get(vpiAutomatic, module), 1);
+  EXPECT_EQ(vpi_get(vpiTop, module), 1);
+  EXPECT_EQ(vpi_get(vpiUnit, module), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {
   Fixture fixture;
   fixture.database = makeFixedPropertyDatabase(false);
@@ -6254,6 +6313,29 @@ TEST(DesignDatabase, RejectsMalformedFixedPropertySections) {
     put16(bytes, properties + 2 * 16 + 4, vpiSize); // Derived, not FixedImage
     put16(bytes, properties + 2 * 16 + 6, 1);
   });
+}
+
+TEST(DesignDatabase, RejectsStoredFalseScopeIdentityBooleans) {
+  for (uint16_t selector : {uint16_t{vpiTop}, uint16_t{vpiUnit}}) {
+    Fixture fixture;
+    fixture.database = makeScopeIdentityPropertyDatabase();
+    const uint32_t directoryOffset =
+        static_cast<uint32_t>(fixture.database[12]) |
+        (static_cast<uint32_t>(fixture.database[13]) << 8) |
+        (static_cast<uint32_t>(fixture.database[14]) << 16) |
+        (static_cast<uint32_t>(fixture.database[15]) << 24);
+    const uint64_t properties = get64(fixture.database, directoryOffset + 112);
+    // Replace the final vpiTop=true record with the requested applicable
+    // Boolean selector and its forbidden explicit false payload.
+    put16(fixture.database, properties + 6 * 16 + 4, selector);
+    put64(fixture.database, properties + 6 * 16 + 8, 0);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN)
+        << selector;
+  }
 }
 
 TEST(DesignDatabase, RejectsProtectedStatementWithoutFixedProperty) {

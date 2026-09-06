@@ -2287,12 +2287,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                           source.vpiKind)))
           return {};
     }
-    // False is the canonical sparse representation of vpiIsProtected, but it
-    // participates in duplicate/conflict detection before being erased.
+    // False is the canonical sparse representation of every immutable Boolean
+    // property, but it participates in duplicate/conflict detection before
+    // being erased.
     fixedProperties.erase(
         std::remove_if(fixedProperties.begin(), fixedProperties.end(),
                        [](const FixedPropertyRecord &property) {
-                         return property.selector == 74 &&
+                         return property.kindAndFlags ==
+                                    static_cast<uint16_t>(
+                                        VPIPropertyValueKind::Boolean) &&
                                 property.payload == 0;
                        }),
         fixedProperties.end());

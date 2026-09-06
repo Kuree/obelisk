@@ -35,7 +35,11 @@ module attributes {
         referenced_path = "top", referenced_symbol = @top_def,
         sym_name = "top_i"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
-          name = "top", node_id = 5 : i64, sym_name = "top_b"} {
+          name = "top", node_id = 5 : i64, sym_name = "top_b",
+          obelisk_sim.vpi_automatic = true,
+          obelisk_sim.vpi_cell_instance = true,
+          obelisk_sim.vpi_definition_name = "top_def",
+          obelisk_sim.vpi_top = true} {
         obelisk.sv.symbol.instance_array attributes {
             array_range = array<i64: 2, 1>, hierarchical_name = "top.cube",
             name = "cube", node_id = 6 : i64, sym_name = "cube"} {
@@ -158,7 +162,7 @@ module attributes {
   }
 }
 
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}} hierarchy "top" debug "top"
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}} hierarchy "top" debug "top" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[ARRAY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 112{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.cube" debug "cube" {index_ranges = array<i64: 2, 1, -1, 0, 7, 7>}
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[FIRST:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][-1][7]"{{.*}}member_indices = array<i64: 1, -1, 7>
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[SECOND:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][0][7]"{{.*}}member_indices = array<i64: 1, 0, 7>
@@ -189,6 +193,13 @@ module attributes {
 // IMAGE-NEXT: relation_index_dimension index={{[0-9]+}} range=[7:7]
 // IMAGE: relation_index_dimension index={{[0-9]+}} range=[1:0]
 // IMAGE-NEXT: relation_index_dimension index={{[0-9]+}} range=[-1:0]
+// IMAGE-DAG: fixed_property {{.*}} selector=7 kind=0 value=true
+// IMAGE-DAG: fixed_property {{.*}} selector=8 kind=0 value=true
+// IMAGE-DAG: fixed_property {{.*}} selector=9 kind=3 value=top_def
+// IMAGE-DAG: fixed_property {{.*}} selector=50 kind=0 value=true
+// IMAGE-DAG: fixed_property {{.*}} selector=600 kind=0 value=true
+// IMAGE-DAG: fixed_property {{.*}} selector=602 kind=0 value=true
+// IMAGE-DAG: fixed_property {{.*}} selector=9 kind=3 value=$unit
 // IMAGE: relation {{.*}} source_name=top.cube target_name=top.cube[2][-1][7]
 // IMAGE-NEXT: relation {{.*}} source_name=top.cube target_name=top.cube[2][0][7]
 // IMAGE-NEXT: relation {{.*}} source_name=top.cube target_name=top.cube[1][-1][7]

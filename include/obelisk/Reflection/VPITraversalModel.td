@@ -630,11 +630,16 @@ def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
 def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
   FullNamePropertyObjects, "37.10-37.83">;
 def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
-  ModuleSource, "37.5">;
+  ModuleSource, "37.5", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def CellInstanceProperty : VPIProperty<"vpiCellInstance", 8,
-  BooleanProperty, ModuleSource, "37.10">;
+  BooleanProperty, ModuleSource, "37.10", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty>;
 def DefNameProperty : VPIProperty<"vpiDefName", 9, StringProperty,
-  DefinitionNameObjects, "37.10; 37.15; 37.28; 37.33; 37.34">;
+  DefinitionNameObjects, "37.10; 37.15; 37.28; 37.33; 37.34",
+  StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects,
+  NoPropertyObjects, DerivedProperty, InstanceObjects>;
 def ProtectedProperty : VPIProperty<"vpiProtected", 10, BooleanProperty,
   ProtectedLegacyObjects, "37.10; 37.34; 37.83">;
 def DefNetTypeProperty : VPIProperty<"vpiDefNetType", 13, IntegerProperty,
@@ -712,7 +717,8 @@ def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
   RuntimeProperty>;
 def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
   AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; "
-  "37.32; 37.39">;
+  "37.32; 37.39", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, DerivedProperty, InstanceObjects>;
 def CellProperty : VPIProperty<"vpiCell", 51, StringProperty,
   InstanceObjects, "37.10">;
 def ConfigProperty : VPIProperty<"vpiConfig", 52, StringProperty,
@@ -754,9 +760,11 @@ def IsMemoryProperty : VPIProperty<"vpiIsMemory", 73, BooleanProperty,
   ReadRegArrayObjects, "37.20">;
 
 def TopProperty : VPIProperty<"vpiTop", 600, BooleanProperty,
-  InstanceObjects, "37.10">;
+  InstanceObjects, "37.10", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def UnitProperty : VPIProperty<"vpiUnit", 602, BooleanProperty,
-  InstanceObjects, "37.10">;
+  InstanceObjects, "37.10", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def JoinTypeProperty : VPIProperty<"vpiJoinType", 603, IntegerProperty,
   ForkObjects, "37.12">;
 def AccessTypeProperty : VPIProperty<"vpiAccessType", 604, IntegerProperty,
