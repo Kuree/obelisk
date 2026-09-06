@@ -1609,6 +1609,10 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleForcedProcessToken = 0;
   bool nativeScheduleStopAtCleanBoundary = false;
   bool nativeScheduleCleanBoundaryReached = false;
+  // Set only while a live VPI registration can observe running design state.
+  // Static startup inspection leaves this false, so loading an otherwise
+  // inert read-only VPI library does not perturb the Tier-1 hot path.
+  bool vpiObservationDemand = false;
   // A static eval island may use exact fanout only after periodic preparation
   // has proved that no runtime Clause 31 primary is generated-writable.
   bool nativeStaticEvalIslandCertified = false;
@@ -2406,6 +2410,8 @@ void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept;
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
+void obelisk_rt_aot_observation_demand_changed_unlocked(
+    obelisk_rt_context *context, bool active);
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   uint64_t bitOffset,
                                                   uint64_t bitWidth,

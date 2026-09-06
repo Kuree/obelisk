@@ -5110,9 +5110,13 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
   EXPECT_EQ(query(0), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
   ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  EXPECT_FALSE(context->vpiObservationDemand);
   ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_EQ(query(1), 0);
   obelisk_rt_v1_context_destroy(context);
 
@@ -5126,10 +5130,14 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   EXPECT_EQ(query(2), 1);
   EXPECT_EQ(query(3), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
   ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
   EXPECT_EQ(query(1), 1);
+  EXPECT_FALSE(context->vpiObservationDemand);
   ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_vpi_end_simulation(context);
+  EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_context_destroy(context);
 
   Fixture failingFixture;
@@ -5277,6 +5285,7 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
       OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
 
   VPIRegistrationProbe probe;
   s_cb_data callback{};
@@ -5286,11 +5295,13 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   vpiHandle endCompile = vpi_register_cb(&callback);
   ASSERT_NE(endCompile, nullptr);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
 
   ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
   ASSERT_EQ(probe.reasons, std::vector<int>({cbEndOfCompile}));
   ASSERT_NE(probe.start.self, nullptr);
   ASSERT_NE(probe.end.self, nullptr);
+  EXPECT_TRUE(context->vpiObservationDemand);
   ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
   EXPECT_EQ(probe.start.calls, 1);
   EXPECT_EQ(probe.start.lastReason, cbStartOfSimulation);
@@ -5301,6 +5312,7 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   EXPECT_TRUE(probe.end.actionFieldsWereNull);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   obelisk_rt_v1_vpi_shutdown(context);
+  EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -5386,6 +5398,37 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   EXPECT_EQ(vpi_remove_cb(peerRemover.self), 1);
   EXPECT_EQ(vpi_remove_cb(nested.self), 1);
   EXPECT_EQ(vpi_remove_cb(nested.registered), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ObservationDemandTracksFirstAndLastRunningCallback) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  VPILifecycleProbe firstProbe;
+  VPILifecycleProbe secondProbe;
+  s_cb_data callback{};
+  callback.reason = cbEndOfSimulation;
+  callback.cb_rtn = lifecycleProbeCallback;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&firstProbe);
+  vpiHandle first = vpi_register_cb(&callback);
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&secondProbe);
+  vpiHandle second = vpi_register_cb(&callback);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  EXPECT_EQ(vpi_remove_cb(first), 1);
+  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_EQ(vpi_remove_cb(second), 1);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
   obelisk_rt_v1_context_destroy(context);
 }
 

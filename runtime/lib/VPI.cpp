@@ -183,6 +183,7 @@ struct VPIState {
   VPIPhase phase = VPIPhase::StartupRestricted;
   uint64_t nextCallbackId = 1;
   uint32_t callbackDepth = 0;
+  uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
   std::vector<uint64_t> callbackOrder;
   // IEEE temporary results are invalidated by the next routine call of the
@@ -546,6 +547,47 @@ bool isLifecycleReason(PLI_INT32 reason) {
          reason == cbEndOfSimulation;
 }
 
+bool observesRunningState(PLI_INT32 reason) {
+  // End-of-simulation is currently the only accepted reason in this set. Keep
+  // the complete running-state classification here so enabling statement,
+  // value, or synchronization registration cannot accidentally bypass the
+  // Tier-1 lease. Startup/end-compile inspection remains metadata-only.
+  switch (reason) {
+  case cbValueChange:
+  case cbStmt:
+  case cbReadWriteSynch:
+  case cbReadOnlySynch:
+  case cbNextSimTime:
+  case cbAfterDelay:
+  case cbAtStartOfSimTime:
+  case cbNBASynch:
+  case cbAtEndOfSimTime:
+  case cbEndOfSimulation:
+    return true;
+  default:
+    return false;
+  }
+}
+
+void acquireObservationDemand(VPIState *state, PLI_INT32 reason) {
+  if (!state || !observesRunningState(reason))
+    return;
+  if (++state->runtimeObserverCallbacks != 1)
+    return;
+  ContextMutexLock lock(state->context);
+  obelisk_rt_aot_observation_demand_changed_unlocked(state->context, true);
+}
+
+void releaseObservationDemand(VPIState *state, PLI_INT32 reason) {
+  if (!state || !observesRunningState(reason) ||
+      state->runtimeObserverCallbacks == 0)
+    return;
+  if (--state->runtimeObserverCallbacks != 0)
+    return;
+  ContextMutexLock lock(state->context);
+  obelisk_rt_aot_observation_demand_changed_unlocked(state->context, false);
+}
+
 obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
   // A fixed frontier makes registration from a callback eligible only for a
   // later event. Each record is looked up again immediately before invocation
@@ -590,6 +632,7 @@ PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
     return 0;
   }
   const uint64_t id = handle->cursor.offset;
+  const PLI_INT32 reason = found->second.reason;
   state->callbacks.erase(found);
   state->callbackOrder.erase(
       std::remove(state->callbackOrder.begin(), state->callbackOrder.end(), id),
@@ -603,6 +646,7 @@ PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
     else
       ++entry;
   }
+  releaseObservationDemand(state, reason);
   return 1;
 }
 
@@ -2910,6 +2954,11 @@ obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
     setError(state, "VPI shutdown is not allowed from a VPI callback");
     return;
   }
+  if (state->runtimeObserverCallbacks != 0) {
+    state->runtimeObserverCallbacks = 0;
+    ContextMutexLock lock(context);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+  }
   context->vpiState = nullptr;
   clearActiveState(state);
   delete state;
@@ -4676,7 +4725,8 @@ vpi_register_cb(p_cb_data callbackData) {
     if (!result) {
       state->callbacks.erase(id);
       state->callbackOrder.pop_back();
-    }
+    } else
+      acquireObservationDemand(state, callbackData->reason);
     return result;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) {

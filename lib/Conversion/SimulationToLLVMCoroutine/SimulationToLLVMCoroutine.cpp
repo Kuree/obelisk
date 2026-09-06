@@ -52,6 +52,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -200,10 +201,47 @@ static void annotateCompactNBAMetadata(ModuleOp module) {
   });
 }
 
+static void eraseEvalDiscardableStores(sim::SimFuncOp function) {
+  SmallVector<sim::SimRefStoreOp> stores;
+  function.walk([&](sim::SimRefStoreOp store) {
+    if (store->hasAttr(sim::metadata::evalDiscardableStore))
+      stores.push_back(store);
+  });
+  for (sim::SimRefStoreOp store : stores)
+    store.erase();
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<Operation *> deadViews;
+    function.walk([&](Operation *operation) {
+      if (isa<sim::SimContextStorageOp, sim::SimRefExtractOp,
+              sim::SimRefDynExtractOp, sim::SimRefSubelementOp,
+              sim::SimRefArrayElementOp>(operation) &&
+          operation->getNumResults() == 1 && operation->use_empty())
+        deadViews.push_back(operation);
+    });
+    for (Operation *operation : deadViews) {
+      operation->erase();
+      changed = true;
+    }
+  }
+}
+
 LogicalResult
 materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                                 const detail::NativeStateLayout &stateLayout,
                                 bool enabled) {
+  // MaterializeComputeFusion may have prepared dormant-Tier1 helper proofs
+  // before late AOT eligibility is known. No success or failure path may leak
+  // those pass-only markers into bytecode or LLVM lowering.
+  llvm::scope_exit discardPromotionProofs([&] {
+    if (!design)
+      return;
+    design.walk([&](sim::SimRefStoreOp store) {
+      store->removeAttr(sim::metadata::evalDiscardableStore);
+    });
+  });
   if (!enabled || !design)
     return success();
   // Selecting the Eval architecture does not change the language's state
@@ -1444,6 +1482,15 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
   for (sim::SimFuncOp helper : privateHelpers)
     redirectPrivateHelpers(helper);
 
+  // Promotion tagged private helper stores before activation cloning. Consume
+  // that proof only in the eval-specialized helper graphs; canonical helpers
+  // keep publishing for Tier 2/3 and merely lose the transient marker before
+  // dialect conversion. Two-state helper variants are a separate generated
+  // closure and need the same treatment as four-state private helpers.
+  for (sim::SimFuncOp variant : variants)
+    eraseEvalDiscardableStores(variant);
+  for (sim::SimFuncOp helper : privateHelpers)
+    eraseEvalDiscardableStores(helper);
   if (!pathProbeRoutes.empty())
     module->setAttr("obelisk.eval.path_probe_routes",
                     builder.getArrayAttr(pathProbeRoutes));

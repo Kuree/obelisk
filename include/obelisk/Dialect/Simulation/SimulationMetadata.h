@@ -211,6 +211,13 @@ inline constexpr llvm::StringLiteral evalCompactNBAMetadata =
 /// coordinator that happens to contain the operation.
 inline constexpr llvm::StringLiteral evalSourceOwner =
     "obelisk.eval.source_owner";
+/// Inter-pass proof marker for a read-observable canonical store that a
+/// dormant Tier-1 eval specialization may omit.  MaterializeComputeFusion
+/// attaches it only after proving private dominating-store promotion;
+/// SimulationToLLVMCoroutine consumes it while cloning the eval-private call
+/// closure and removes it before dialect lowering.
+inline constexpr llvm::StringLiteral evalDiscardableStore =
+    "obelisk.eval.discardable_store";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
@@ -228,11 +235,11 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == randomCycleKeyField || name == randomCyclePositionField ||
          name == randomModeField || name == classBitstreamMember ||
          name == classBitstreamVisibility || name == staticBodyFusion ||
-         name == staticFusion || name == computeKernels ||
-         name == threeTierSchedule || name == staticSpecialization ||
-         name == staticSuperstep || name == topLevelWildcardWait ||
-         name == proceduralEventWait || name == repeatingAlwaysWait ||
-         name == dpiElidedInputs;
+         name == evalDiscardableStore || name == staticFusion ||
+         name == computeKernels || name == threeTierSchedule ||
+         name == staticSpecialization || name == staticSuperstep ||
+         name == topLevelWildcardWait || name == proceduralEventWait ||
+         name == repeatingAlwaysWait || name == dpiElidedInputs;
 }
 
 } // namespace obelisk::sim::metadata

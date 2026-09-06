@@ -4145,6 +4145,89 @@ TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, VPIObservationDemandIsAColdReversibleAOTHandoff) {
+  AOTTestState state;
+  uint32_t specializationFast = 1;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+               OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION;
+  plan.specialization_fast = &specializationFast;
+  plan.promotion_invalidate = schedulerInvalidatePromotion;
+  schedulerPromotionInvalidationCount = 0;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  schedulerPromotionInvalidationCount = 0;
+  specializationFast = 1;
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+  }
+  EXPECT_TRUE(context->vpiObservationDemand);
+  // The generic static-inventory predicate remains identical to VPI-off and
+  // therefore carries no observer-demand load in generated/node hot paths.
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+  EXPECT_FALSE(nativeAOTTransientBoundaryClean(context));
+  EXPECT_EQ(specializationFast, 0u);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
+  EXPECT_FALSE(context->nativeScheduleExternalWritePending);
+  EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  context->nativeScheduleRunning = true;
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(specializationFast, 0u);
+
+  // Duplicate notification is idempotent; the VPI registry owns the actual
+  // registration count and calls this only for first/last transitions.
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+    refreshNativeStaticSpecializationFastUnlocked(context);
+  }
+  EXPECT_FALSE(context->vpiObservationDemand);
+  EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
+  EXPECT_TRUE(nativeAOTTransientBoundaryClean(context));
+  EXPECT_EQ(specializationFast, 1u);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  context->nativeScheduleRunning = false;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, VPIObservationDemandRoutesAroundTier1UntilReleased) {
+  AOTTestState state;
+  state.runHook = [](AOTTestState *state, obelisk_rt_context *context) {
+    ++state->runCalls;
+    return obelisk_rt_v1_scheduler_run(context);
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(state.runCalls, 1u);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(state.runCalls, 1u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(state.runCalls, 2u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTObserverInventoryTracksLiveComputedWaitsOnly) {
   constexpr uint64_t observerID = 101;
   obelisk_rt_observer_descriptor_v1 observer{observerID,
