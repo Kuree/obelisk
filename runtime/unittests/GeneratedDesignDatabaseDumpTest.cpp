@@ -13,6 +13,8 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
 
+#include "vpi_user.h"
+
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -499,4 +501,169 @@ TEST(GeneratedDesignDatabase, Dump) {
   }
   output.close();
   ASSERT_TRUE(output) << "failed to write " << outputPath;
+}
+
+TEST(GeneratedDesignDatabase, InterModPathQueries) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module) << "failed to parse " << inputPath;
+  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  module->walk(
+      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+  ASSERT_EQ(designs.size(), 1u);
+
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
+      obelisk::encodeSimulationDesign(designs.front(), options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  ASSERT_GE(encoded->bytecode.size(), 40u);
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+
+  PLI_BYTE8 outputName[] = "top.output";
+  PLI_BYTE8 inputName[] = "top.child.input";
+  PLI_BYTE8 otherName[] = "top.other";
+  PLI_BYTE8 inoutName[] = "top.inout";
+  vpiHandle output = vpi_handle_by_name(outputName, nullptr);
+  vpiHandle input = vpi_handle_by_name(inputName, nullptr);
+  vpiHandle other = vpi_handle_by_name(otherName, nullptr);
+  vpiHandle inout = vpi_handle_by_name(inoutName, nullptr);
+  vpiHandle sameInout = vpi_handle_by_name(inoutName, nullptr);
+  ASSERT_NE(output, nullptr);
+  ASSERT_NE(input, nullptr);
+  ASSERT_NE(other, nullptr);
+  ASSERT_NE(inout, nullptr);
+  ASSERT_NE(sameInout, nullptr);
+
+  vpiHandle path = vpi_handle_multi(vpiInterModPath, output, input);
+  ASSERT_NE(path, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, path), vpiInterModPath);
+  EXPECT_STREQ(vpi_get_str(vpiType, path), "vpiInterModPath");
+  EXPECT_EQ(vpi_get(vpiIsProtected, path), 0);
+  EXPECT_EQ(vpi_handle_multi(vpiInterModPath, input, output), nullptr);
+  vpiHandle otherPath = vpi_handle_multi(vpiInterModPath, output, other);
+  ASSERT_NE(otherPath, nullptr);
+  EXPECT_EQ(vpi_handle_multi(vpiInterModPath, inout, sameInout), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  vpiHandle outputBit = vpi_handle_by_index(output, 0);
+  vpiHandle inputBit = vpi_handle_by_index(input, 0);
+  ASSERT_NE(outputBit, nullptr);
+  ASSERT_NE(inputBit, nullptr);
+  ASSERT_EQ(vpi_get(vpiType, outputBit), vpiPortBit);
+  ASSERT_EQ(vpi_get(vpiType, inputBit), vpiPortBit);
+  vpiHandle bitPath = vpi_handle_multi(vpiInterModPath, outputBit, inputBit);
+  ASSERT_NE(bitPath, nullptr);
+  vpiHandle bitPorts = vpi_iterate(vpiPorts, bitPath);
+  ASSERT_NE(bitPorts, nullptr);
+  vpiHandle bitUse = vpi_handle(vpiUse, bitPorts);
+  ASSERT_NE(bitUse, nullptr);
+  EXPECT_EQ(vpi_compare_objects(bitPath, bitUse), 1);
+  vpiHandle scannedOutputBit = vpi_scan(bitPorts);
+  vpiHandle scannedInputBit = vpi_scan(bitPorts);
+  ASSERT_NE(scannedOutputBit, nullptr);
+  ASSERT_NE(scannedInputBit, nullptr);
+  EXPECT_EQ(vpi_compare_objects(outputBit, scannedOutputBit), 1);
+  EXPECT_EQ(vpi_compare_objects(inputBit, scannedInputBit), 1);
+  EXPECT_EQ(vpi_scan(bitPorts), nullptr);
+
+  vpiHandle equivalent = vpi_handle_multi(vpiInterModPath, output, input);
+  ASSERT_NE(equivalent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(path, equivalent), 1);
+
+  vpiHandle ports = vpi_iterate(vpiPorts, path);
+  ASSERT_NE(ports, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, ports), vpiPorts);
+  vpiHandle use = vpi_handle(vpiUse, ports);
+  ASSERT_NE(use, nullptr);
+  EXPECT_EQ(vpi_compare_objects(path, use), 1);
+  vpiHandle scannedOutput = vpi_scan(ports);
+  vpiHandle scannedInput = vpi_scan(ports);
+  ASSERT_NE(scannedOutput, nullptr);
+  ASSERT_NE(scannedInput, nullptr);
+  EXPECT_EQ(vpi_scan(ports), nullptr);
+  EXPECT_EQ(vpi_compare_objects(output, scannedOutput), 1);
+  EXPECT_EQ(vpi_compare_objects(input, scannedInput), 1);
+
+  std::array<s_vpi_time, 2> delayValues{};
+  s_vpi_delay delays{};
+  delays.da = delayValues.data();
+  delays.no_of_delays = 2;
+  delays.time_type = vpiSimTime;
+  vpi_get_delays(path, &delays);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (const s_vpi_time &delay : delayValues) {
+    EXPECT_EQ(delay.type, vpiSimTime);
+    EXPECT_EQ(delay.high, 0u);
+    EXPECT_EQ(delay.low, 0u);
+  }
+  delays.no_of_delays = 1;
+  vpi_get_delays(path, &delays);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  std::array<s_vpi_time, 27> expandedDelays{};
+  for (s_vpi_time &delay : expandedDelays) {
+    delay.type = -1;
+    delay.high = 1;
+    delay.low = 1;
+    delay.real = 1.0;
+  }
+  delays.da = expandedDelays.data();
+  delays.no_of_delays = 3;
+  delays.time_type = vpiSuppressTime;
+  delays.mtm_flag = 1;
+  delays.pulsere_flag = 1;
+  vpi_get_delays(path, &delays);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (const s_vpi_time &delay : expandedDelays) {
+    EXPECT_EQ(delay.type, vpiSuppressTime);
+    EXPECT_EQ(delay.high, 0u);
+    EXPECT_EQ(delay.low, 0u);
+    EXPECT_DOUBLE_EQ(delay.real, 0.0);
+  }
+
+  EXPECT_EQ(vpi_release_handle(scannedInput), 1);
+  EXPECT_EQ(vpi_release_handle(scannedOutput), 1);
+  EXPECT_EQ(vpi_release_handle(use), 1);
+  EXPECT_EQ(vpi_release_handle(equivalent), 1);
+  EXPECT_EQ(vpi_release_handle(path), 1);
+  EXPECT_EQ(vpi_release_handle(scannedInputBit), 1);
+  EXPECT_EQ(vpi_release_handle(scannedOutputBit), 1);
+  EXPECT_EQ(vpi_release_handle(bitUse), 1);
+  EXPECT_EQ(vpi_release_handle(bitPath), 1);
+  EXPECT_EQ(vpi_release_handle(inputBit), 1);
+  EXPECT_EQ(vpi_release_handle(outputBit), 1);
+  EXPECT_EQ(vpi_release_handle(otherPath), 1);
+  EXPECT_EQ(vpi_release_handle(sameInout), 1);
+  EXPECT_EQ(vpi_release_handle(inout), 1);
+  EXPECT_EQ(vpi_release_handle(other), 1);
+  EXPECT_EQ(vpi_release_handle(input), 1);
+  EXPECT_EQ(vpi_release_handle(output), 1);
+  obelisk_rt_v1_context_destroy(runtime);
 }

@@ -201,6 +201,9 @@ target_link_libraries(obelisk-design-database-dump-test PRIVATE
   GTest::gtest_main
   MLIRParser
 )
+target_include_directories(obelisk-design-database-dump-test SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
 target_compile_features(obelisk-design-database-dump-test PRIVATE cxx_std_17)
 set_target_properties(obelisk-design-database-dump-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

@@ -10524,8 +10524,9 @@ TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
                "VPI array query requires an unpacked array object");
 
   EXPECT_EQ(vpi_handle_multi(vpiInterModPath, object, object), nullptr);
-  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.message, "VPI intermodule path metadata is unavailable");
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message,
+               "VPI intermodule path requires port or port-bit handles");
 
   EXPECT_STREQ(vpi_mcd_name(1), "stdout");
   EXPECT_EQ(vpi_chk_error(&error), 0);

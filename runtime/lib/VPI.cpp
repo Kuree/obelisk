@@ -60,6 +60,7 @@ enum class VPIHandleKind : uint8_t {
   Callback,
   ScheduledEvent,
   SystemTf,
+  InterModPath,
   TimeQueue
 };
 
@@ -86,6 +87,18 @@ struct VPISelectionStep {
   bool arrayDimension = false;
   bool aggregateBoundary = false;
   bool suppressSemanticDimension = false;
+};
+
+struct VPIInterModPathEndpoint {
+  VPIObjectForm form = VPIObjectForm::Design;
+  obelisk_rt_design_cursor_v1 cursor{};
+  uint32_t exactVpiType = 0;
+  uint32_t selectionRootType = 0;
+  obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
+      obelisk::reflection::VPIIndexedAccessKind::VariableElement;
+  uint64_t selectionBitOffset = 0;
+  PLI_INT32 allocationScheme = vpiOtherScheme;
+  std::vector<VPISelectionStep> selectionSteps;
 };
 
 } // namespace
@@ -120,6 +133,7 @@ struct __vpiHandle {
   // peers during dispatch. Immutable design iterators use cursors or relation
   // indices directly and never populate this vector.
   std::vector<obelisk_rt_design_cursor_v1> items;
+  std::vector<VPIInterModPathEndpoint> interModPathEndpoints;
   std::vector<uint64_t> timeQueueItems;
   std::vector<VPISelectionStep> indexItems;
   // Preserve the selector passed to vpi_iterate(). Iterator storage may use
@@ -130,6 +144,7 @@ struct __vpiHandle {
   PLI_INT32 allocationScheme = vpiOtherScheme;
   bool callbackIterator = false;
   bool systemTfIterator = false;
+  bool interModPathIterator = false;
   bool timeQueueIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
@@ -556,6 +571,28 @@ vpiHandle makeSystemTfHandle(VPIState *state, uint64_t systemTfId) {
   }
 }
 
+vpiHandle
+makeInterModPathHandle(VPIState *state,
+                       const std::vector<VPIInterModPathEndpoint> &endpoints) {
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = state;
+    handle->kind = VPIHandleKind::InterModPath;
+    handle->interModPathEndpoints = endpoints;
+    return keepHandle(state, std::move(handle));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI intermodule-path handle arena is out of memory",
+             vpiSystem);
+    return nullptr;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI intermodule-path handle",
+             vpiInternal);
+    return nullptr;
+  }
+}
+
 vpiHandle makeTimeQueueHandle(VPIState *state, uint64_t scheduledTime) {
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
@@ -948,6 +985,8 @@ PLI_INT32 vpiTypeForHandle(VPIHandleKind kind) {
     return vpiSchedEvent;
   case VPIHandleKind::SystemTf:
     return vpiUserSystf;
+  case VPIHandleKind::InterModPath:
+    return vpiInterModPath;
   case VPIHandleKind::TimeQueue:
     return vpiTimeQueue;
   case VPIHandleKind::Object:
@@ -1615,6 +1654,73 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
   }
   OBELISK_RT_CATCH_ALL {
     setError(source->owner, "could not allocate indexed VPI handle", vpiSystem);
+    return nullptr;
+  }
+}
+
+VPIInterModPathEndpoint interModPathEndpointFor(const __vpiHandle &port) {
+  VPIInterModPathEndpoint endpoint;
+  endpoint.form = port.form;
+  endpoint.cursor = port.cursor;
+  endpoint.exactVpiType =
+      static_cast<uint32_t>(vpiTypeForHandle(const_cast<__vpiHandle *>(&port)));
+  endpoint.selectionRootType = port.selectionRootType;
+  endpoint.selectionAccessKind = port.selectionAccessKind;
+  endpoint.selectionBitOffset = port.selectionBitOffset;
+  endpoint.allocationScheme = port.allocationScheme;
+  endpoint.selectionSteps = port.selectionSteps;
+  return endpoint;
+}
+
+bool sameInterModPathEndpoint(const VPIInterModPathEndpoint &first,
+                              const VPIInterModPathEndpoint &second) {
+  if (first.form != second.form ||
+      first.cursor.offset != second.cursor.offset ||
+      first.exactVpiType != second.exactVpiType ||
+      first.selectionRootType != second.selectionRootType ||
+      first.selectionAccessKind != second.selectionAccessKind ||
+      first.selectionBitOffset != second.selectionBitOffset ||
+      first.selectionSteps.size() != second.selectionSteps.size())
+    return false;
+  return std::equal(
+      first.selectionSteps.begin(), first.selectionSteps.end(),
+      second.selectionSteps.begin(),
+      [](const VPISelectionStep &a, const VPISelectionStep &b) {
+        return a.physicalType.offset == b.physicalType.offset &&
+               a.semanticType.offset == b.semanticType.offset &&
+               a.bitOffset == b.bitOffset && a.bitWidth == b.bitWidth &&
+               a.index == b.index && a.selectionOrdinal == b.selectionOrdinal &&
+               a.exactVpiType == b.exactVpiType && a.packed == b.packed &&
+               a.arrayDimension == b.arrayDimension &&
+               a.aggregateBoundary == b.aggregateBoundary &&
+               a.suppressSemanticDimension == b.suppressSemanticDimension;
+      });
+}
+
+vpiHandle
+makeInterModPathEndpointHandle(VPIState *state,
+                               const VPIInterModPathEndpoint &endpoint) {
+  if (endpoint.form == VPIObjectForm::Design)
+    return makeHandle(state, endpoint.cursor, endpoint.exactVpiType);
+  if (endpoint.form != VPIObjectForm::Indexed ||
+      endpoint.selectionSteps.empty())
+    return nullptr;
+  OBELISK_RT_TRY {
+    __vpiHandle source;
+    source.owner = state;
+    source.cursor = endpoint.cursor;
+    source.form = endpoint.form;
+    source.exactVpiType = endpoint.exactVpiType;
+    source.selectionRootType = endpoint.selectionRootType;
+    source.selectionAccessKind = endpoint.selectionAccessKind;
+    source.selectionBitOffset = endpoint.selectionBitOffset;
+    source.allocationScheme = endpoint.allocationScheme;
+    return makeIndexedHandle(&source, endpoint.selectionRootType,
+                             endpoint.selectionAccessKind,
+                             endpoint.selectionSteps);
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not copy VPI intermodule-path endpoint", vpiSystem);
     return nullptr;
   }
 }
@@ -2367,6 +2473,9 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
 }
 
 vpiHandle makeUseHandle(__vpiHandle *iterator) {
+  if (iterator->interModPathIterator)
+    return makeInterModPathHandle(iterator->owner,
+                                  iterator->interModPathEndpoints);
   if (!iterator->hasUse)
     return nullptr;
   if (iterator->useForm == VPIObjectForm::Design) {
@@ -3272,6 +3381,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (handle->kind == VPIHandleKind::TimeQueue)
     return nullptr;
+  if (handle->kind == VPIHandleKind::InterModPath)
+    return nullptr;
   if (handle->kind != VPIHandleKind::Object) {
     setError(handle->owner, "wrong-kind VPI handle");
     return nullptr;
@@ -3409,6 +3520,29 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   VPIState *state = requireState();
   if (!state)
     return nullptr;
+  if (reference) {
+    __vpiHandle *path = findHandle(reference);
+    if (!path)
+      return nullptr;
+    if (path->kind == VPIHandleKind::InterModPath) {
+      if (type != vpiPorts)
+        return nullptr;
+      OBELISK_RT_TRY {
+        auto iterator = std::make_unique<__vpiHandle>();
+        iterator->owner = state;
+        iterator->kind = VPIHandleKind::Iterator;
+        iterator->iteratorType = type;
+        iterator->interModPathEndpoints = path->interModPathEndpoints;
+        iterator->interModPathIterator = true;
+        return keepHandle(state, std::move(iterator));
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(state, "could not allocate VPI intermodule-path iterator",
+                 vpiSystem);
+        return nullptr;
+      }
+    }
+  }
   if (type == vpiCallback && !reference) {
     std::vector<obelisk_rt_design_cursor_v1> callbacks;
     OBELISK_RT_TRY {
@@ -3698,6 +3832,19 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     }
     iterator->owner->handles.erase(iterator->token);
     return nullptr;
+  }
+  if (iterator->interModPathIterator) {
+    if (iterator->next == iterator->interModPathEndpoints.size()) {
+      iterator->owner->handles.erase(iterator->token);
+      return nullptr;
+    }
+    VPIState *state = iterator->owner;
+    const uintptr_t iteratorToken = iterator->token;
+    vpiHandle result = makeInterModPathEndpointHandle(
+        state, iterator->interModPathEndpoints[iterator->next++]);
+    if (!result)
+      state->handles.erase(iteratorToken);
+    return result;
   }
   if (iterator->timeQueueIterator) {
     if (iterator->next == iterator->timeQueueItems.size()) {
@@ -5047,6 +5194,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
       left->kind == VPIHandleKind::SystemTf ||
       left->kind == VPIHandleKind::TimeQueue)
     return left->cursor.offset == right->cursor.offset;
+  if (left->kind == VPIHandleKind::InterModPath)
+    return left->interModPathEndpoints.size() ==
+               right->interModPathEndpoints.size() &&
+           std::equal(left->interModPathEndpoints.begin(),
+                      left->interModPathEndpoints.end(),
+                      right->interModPathEndpoints.begin(),
+                      sameInterModPathEndpoint);
   if (left->kind != VPIHandleKind::Object) {
     setError(left->owner, "VPI handle kind does not denote an object");
     return 0;
@@ -5415,21 +5569,31 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
     return;
   }
   __vpiHandle *handle = findHandle(opaque);
-  if (!handle || !allowProtectedSource(handle, "vpi_get_delays"))
+  if (!handle)
     return;
-  if (handle->kind != VPIHandleKind::Object) {
+  const bool interModPath = handle->kind == VPIHandleKind::InterModPath;
+  if (!interModPath && !allowProtectedSource(handle, "vpi_get_delays"))
+    return;
+  if (!interModPath && handle->kind != VPIHandleKind::Object) {
     setError(state, "VPI handle does not have delay metadata", vpiNotice);
     return;
   }
   obelisk_rt_design_info_v1 info{};
-  if (!infoFor(handle, info))
-    return;
-  if (info.kind != OBELISK_RT_DESIGN_RECORD_NET) {
-    setError(state, "VPI delay metadata is unavailable", vpiNotice);
-    return;
+  if (!interModPath) {
+    if (!infoFor(handle, info))
+      return;
+    if (info.kind != OBELISK_RT_DESIGN_RECORD_NET) {
+      setError(state, "VPI delay metadata is unavailable", vpiNotice);
+      return;
+    }
   }
-  if (destination->no_of_delays < 1 || destination->no_of_delays > 3) {
-    setError(state, "VPI net delay count must be between one and three");
+  const PLI_INT32 minimumDelayCount = interModPath ? 2 : 1;
+  if (destination->no_of_delays < minimumDelayCount ||
+      destination->no_of_delays > 3) {
+    setError(state,
+             interModPath
+                 ? "VPI intermodule-path delay count must be two or three"
+                 : "VPI net delay count must be between one and three");
     return;
   }
   switch (destination->time_type) {
@@ -5446,18 +5610,20 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
     return;
   }
 
-  uint64_t bitOffset =
-      handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
   VPINetDelayValue delay{};
-  obelisk_rt_status status =
-      obelisk_rt_cached_vpi_net_delay(handle->owner->context, handle->cursor,
-                                      bitOffset, info.bit_width, &delay);
-  if (status != OBELISK_RT_OK) {
-    setError(state,
-             status == OBELISK_RT_EOF ? "VPI delay metadata is unavailable"
-                                      : "VPI net delay image lookup failed",
-             status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
-    return;
+  if (!interModPath) {
+    uint64_t bitOffset =
+        handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
+    obelisk_rt_status status =
+        obelisk_rt_cached_vpi_net_delay(handle->owner->context, handle->cursor,
+                                        bitOffset, info.bit_width, &delay);
+    if (status != OBELISK_RT_OK) {
+      setError(state,
+               status == OBELISK_RT_EOF ? "VPI delay metadata is unavailable"
+                                        : "VPI net delay image lookup failed",
+               status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+      return;
+    }
   }
 
   int32_t precision = 0;
@@ -5466,7 +5632,20 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
   if (destination->time_type == vpiScaledRealTime) {
     if (!globalTimeExponent(state, precision))
       return;
-    DpiScopeHandle *scope = timeScopeFor(handle);
+    __vpiHandle pathPort;
+    __vpiHandle *timeObject = handle;
+    if (interModPath) {
+      if (handle->interModPathEndpoints.size() < 2) {
+        setError(state, "VPI intermodule-path endpoints are invalid",
+                 vpiInternal);
+        return;
+      }
+      pathPort.owner = state;
+      pathPort.cursor = handle->interModPathEndpoints.back().cursor;
+      pathPort.exactVpiType = handle->interModPathEndpoints.back().exactVpiType;
+      timeObject = &pathPort;
+    }
+    DpiScopeHandle *scope = timeScopeFor(timeObject);
     if (!scope) {
       setError(state, "VPI object timescale metadata is unavailable",
                vpiNotice);
@@ -6052,8 +6231,49 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
   if (!allowProtectedSource(firstHandle, "vpi_handle_multi") ||
       !allowProtectedSource(secondHandle, "vpi_handle_multi"))
     return nullptr;
-  setError(state, "VPI intermodule path metadata is unavailable", vpiNotice);
-  return nullptr;
+  if (firstHandle->kind != VPIHandleKind::Object ||
+      secondHandle->kind != VPIHandleKind::Object ||
+      (firstHandle->form != VPIObjectForm::Design &&
+       firstHandle->form != VPIObjectForm::Indexed) ||
+      (secondHandle->form != VPIObjectForm::Design &&
+       secondHandle->form != VPIObjectForm::Indexed) ||
+      (vpiTypeForHandle(firstHandle) != vpiPort &&
+       vpiTypeForHandle(firstHandle) != vpiPortBit) ||
+      (vpiTypeForHandle(secondHandle) != vpiPort &&
+       vpiTypeForHandle(secondHandle) != vpiPortBit)) {
+    setError(state, "VPI intermodule path requires port or port-bit handles");
+    return nullptr;
+  }
+  OBELISK_RT_TRY {
+    std::vector<VPIInterModPathEndpoint> ports{
+        interModPathEndpointFor(*firstHandle),
+        interModPathEndpointFor(*secondHandle)};
+    if (sameInterModPathEndpoint(ports[0], ports[1])) {
+      setError(state, "VPI intermodule path requires distinct endpoints");
+      return nullptr;
+    }
+    obelisk_rt_design_info_v1 firstInfo{};
+    obelisk_rt_design_info_v1 secondInfo{};
+    if (!infoFor(firstHandle, firstInfo) || !infoFor(secondHandle, secondInfo))
+      return nullptr;
+    if (firstInfo.kind != OBELISK_RT_DESIGN_RECORD_PORT ||
+        secondInfo.kind != OBELISK_RT_DESIGN_RECORD_PORT ||
+        firstInfo.bit_width == 0 ||
+        firstInfo.bit_width != secondInfo.bit_width ||
+        (firstInfo.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) == 0 ||
+        (secondInfo.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) == 0) {
+      setError(
+          state,
+          "VPI intermodule path requires same-width output and input ports");
+      return nullptr;
+    }
+    return makeInterModPathHandle(state, ports);
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI intermodule-path endpoints",
+             vpiSystem);
+    return nullptr;
+  }
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
