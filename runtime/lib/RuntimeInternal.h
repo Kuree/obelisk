@@ -154,7 +154,14 @@ struct FileEntry {
   // stream cannot hold it: glibc accepts ungetc() on a write-only stream and
   // then corrupts it on the next write.
   int pushback = -1;
+  // Original SystemVerilog/VPI pathname. This is populated only when a file
+  // is opened, so dormant VPI support adds no scheduler-side work.
+  std::string name;
 };
+
+bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
+                                   uint32_t descriptor,
+                                   std::string_view &name) noexcept;
 
 // Parsed dynamic $sscanf/$fscanf formats are feature-local and immutable.
 // Prefix strings are owned by the plan, so scanners may use their bytes after

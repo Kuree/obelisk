@@ -206,10 +206,14 @@ obelisk_rt_context::obelisk_rt_context() {
   managedHeap = obelisk_rt_managed_heap_create(this);
   mcd[0].stream = stdout;
   mcd[0].writable = true;
+  mcd[0].name = "stdout";
   files.resize(3);
   files[0] = {stdin, 0, false};
   files[1] = {stdout, 0, true};
   files[2] = {stderr, 0, true};
+  files[0].name = "stdin";
+  files[1].name = "stdout";
+  files[2].name = "stderr";
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
   obelisk_rt_random_seed_context_unlocked(this, 1);

@@ -197,6 +197,7 @@ struct VPIState {
   // same family, irrespective of which object handle was used.
   std::string propertyStringScratch;
   std::string valueStringScratch;
+  std::string fileNameScratch;
   std::vector<s_vpi_vecval> vectorScratch;
   std::vector<s_vpi_strengthval> strengthScratch;
   s_vpi_time timeScratch{};
@@ -5797,14 +5798,29 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
   return nullptr;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32) {
+extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
   beginVPICall();
   VPIState *state = requireState();
   if (!state)
     return nullptr;
-  setError(state, "VPI multichannel descriptor names are unavailable",
-           vpiNotice);
-  return nullptr;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(state->context);
+    std::string_view name;
+    if (!obelisk_rt_file_name_unlocked(state->context, descriptor, name)) {
+      setError(state, "invalid or non-single-channel VPI file descriptor");
+      return nullptr;
+    }
+    state->fileNameScratch.assign(name);
+    return state->fileNameScratch.data();
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI file name result is out of memory", vpiSystem);
+    return nullptr;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not retrieve VPI file name", vpiInternal);
+    return nullptr;
+  }
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle object,

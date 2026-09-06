@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -10047,11 +10048,58 @@ TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
   EXPECT_STREQ(error.message, "VPI intermodule path metadata is unavailable");
 
-  EXPECT_EQ(vpi_mcd_name(1), nullptr);
-  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.message,
-               "VPI multichannel descriptor names are unavailable");
+  EXPECT_STREQ(vpi_mcd_name(1), "stdout");
+  EXPECT_EQ(vpi_chk_error(&error), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, FileNameQueriesCoverMCDAndFDDescriptors) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  const std::filesystem::path base =
+      std::filesystem::temp_directory_path() /
+      ("obelisk-vpi-file-name-" +
+       std::to_string(reinterpret_cast<uintptr_t>(context)));
+  const std::string mcdPath = base.string() + ".mcd";
+  const std::string fdPath = base.string() + ".fd";
+  uint32_t mcd = 0;
+  uint32_t fd = 0;
+  ASSERT_EQ(obelisk_rt_v1_file_open_mcd(context, mcdPath.data(),
+                                        mcdPath.size(), &mcd),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_file_open(context, fdPath.data(), fdPath.size(),
+                                    "w+", 2, &fd),
+            OBELISK_RT_OK);
+
+  EXPECT_STREQ(vpi_mcd_name(mcd), mcdPath.c_str());
+  EXPECT_STREQ(vpi_mcd_name(fd), fdPath.c_str());
+  EXPECT_STREQ(vpi_mcd_name(UINT32_C(0x80000000)), "stdin");
+  EXPECT_STREQ(vpi_mcd_name(UINT32_C(0x80000001)), "stdout");
+  EXPECT_STREQ(vpi_mcd_name(UINT32_C(0x80000002)), "stderr");
+
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_mcd_name(mcd | 1), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message,
+               "invalid or non-single-channel VPI file descriptor");
+
+  ASSERT_EQ(obelisk_rt_v1_file_close(context, mcd), OBELISK_RT_OK);
+  EXPECT_EQ(vpi_mcd_name(mcd), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  ASSERT_EQ(obelisk_rt_v1_file_close(context, fd), OBELISK_RT_OK);
+  EXPECT_EQ(vpi_mcd_name(fd), nullptr);
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+
+  EXPECT_EQ(std::filesystem::remove(mcdPath), true);
+  EXPECT_EQ(std::filesystem::remove(fdPath), true);
   obelisk_rt_v1_context_destroy(context);
 }
 
