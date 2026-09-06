@@ -2937,6 +2937,15 @@ void unsupportedStartup(const char *feature) {
 
 } // namespace
 
+extern "C" OBELISK_VPI_EXPORT const obelisk_rt_vpi_object_model_v1 *
+obelisk_rt_v1_vpi_object_model(void) {
+  static const obelisk_rt_vpi_object_model_v1 model{
+      obelisk::reflection::vpiObjectModelImage,
+      sizeof(obelisk::reflection::vpiObjectModelImage),
+      obelisk::reflection::vpiObjectModelImageFingerprint};
+  return &model;
+}
+
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
                           const char *const *modules, uint64_t moduleCount) {
@@ -3788,11 +3797,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
       return 0;
     VPIFixedPropertyValue value{};
-    if (!fixedPropertyFor(handle, *propertyDescriptor, value) ||
-        value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind)) {
-      if (value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind))
-        setError(handle->owner, "fixed VPI property value kind mismatch",
-                 vpiInternal);
+    if (!fixedPropertyFor(handle, *propertyDescriptor, value))
+      return vpiUndefined;
+    if (value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind)) {
+      setError(handle->owner, "fixed VPI property value kind mismatch",
+               vpiInternal);
       return vpiUndefined;
     }
     return static_cast<PLI_INT32>(value.payload);
@@ -4248,6 +4257,31 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   if (propertyDescriptor &&
       propertyDescriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::FixedImage) {
+    if (propertyDescriptor->symbolicString &&
+        propertyDescriptor->valueKind ==
+            obelisk::reflection::VPIPropertyValueKind::Integer) {
+      VPIFixedPropertyValue value{};
+      if (!fixedPropertyFor(handle, *propertyDescriptor, value) ||
+          value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind))
+        return nullptr;
+      const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+          propertyDescriptor->property, static_cast<uint32_t>(value.payload));
+      if (!symbolic || symbolic->symbolicName[0] == '\0') {
+        setError(handle->owner,
+                 "VPI integer property value has no symbolic spelling",
+                 vpiNotice);
+        return nullptr;
+      }
+      OBELISK_RT_TRY {
+        scratch = symbolic->symbolicName;
+        return scratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "VPI symbolic-property buffer is out of memory",
+                 vpiSystem);
+        return nullptr;
+      }
+    }
     if (propertyDescriptor->valueKind !=
         obelisk::reflection::VPIPropertyValueKind::String) {
       setError(handle->owner, "property is not a string VPI property",

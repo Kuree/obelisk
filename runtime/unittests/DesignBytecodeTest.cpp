@@ -3082,6 +3082,62 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
   return bytes;
 }
 
+std::vector<uint8_t> makeVPINetPropertyDatabase(
+    std::optional<uint32_t> netType, bool scalared = false,
+    bool vectored = false, bool implicit = false,
+    bool declarationAssign = false, uint32_t chargeStrength = 0,
+    bool protectedObject = false, uint32_t exactType = vpiNetArray) {
+  std::vector<uint8_t> bytes = makeVPIIndexedDatabase(
+      0, 1, 7, 4, exactType, OBELISK_RT_DESIGN_RECORD_NET);
+  struct Property {
+    uint16_t selector;
+    uint16_t kind;
+    uint64_t payload;
+  };
+  std::vector<Property> properties;
+  if (netType)
+    properties.push_back({vpiNetType, 1, *netType});
+  if (scalared) {
+    properties.push_back({vpiExplicitScalared, 0, 1});
+    properties.push_back({vpiExpanded, 0, 1});
+  }
+  if (vectored)
+    properties.push_back({vpiExplicitVectored, 0, 1});
+  if (implicit)
+    properties.push_back({vpiImplicitDecl, 0, 1});
+  properties.push_back({vpiChargeStrength, 1, chargeStrength});
+  if (declarationAssign)
+    properties.push_back({vpiNetDeclAssign, 0, 1});
+  if (protectedObject)
+    properties.push_back({vpiIsProtected, 0, 1});
+  std::sort(properties.begin(), properties.end(),
+            [](const Property &left, const Property &right) {
+              return left.selector < right.selector;
+            });
+
+  const uint64_t directoryOffset = bytes.size();
+  const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t propertyOffset = semanticRootOffset + 4;
+  bytes.resize(propertyOffset + properties.size() * 16, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 32, semanticRootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 112, propertyOffset);
+  put64(bytes, directoryOffset + 120, properties.size());
+  put32(bytes, semanticRootOffset, UINT32_MAX);
+  for (size_t index = 0; index != properties.size(); ++index) {
+    const Property &property = properties[index];
+    const uint64_t offset = propertyOffset + index * 16;
+    put32(bytes, offset, uint32_t{1} << 30); // The only object record.
+    put16(bytes, offset + 4, property.selector);
+    put16(bytes, offset + 6, property.kind);
+    put64(bytes, offset + 8, property.payload);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeVPITypedArrayDatabase(
     uint32_t publicElementTypespec, uint32_t semanticElementKind,
     uint64_t elementWidth, uint32_t semanticElementFlags = 0,
@@ -5663,6 +5719,188 @@ TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
 
   EXPECT_EQ(vpi_release_handle(module), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
+  struct NetTypeCase {
+    uint32_t value;
+    const char *name;
+  };
+  for (const NetTypeCase &testCase : {
+           NetTypeCase{vpiWire, "vpiWire"},
+           NetTypeCase{vpiWand, "vpiWand"},
+           NetTypeCase{vpiWor, "vpiWor"},
+           NetTypeCase{vpiTri, "vpiTri"},
+           NetTypeCase{vpiTri0, "vpiTri0"},
+           NetTypeCase{vpiTri1, "vpiTri1"},
+           NetTypeCase{vpiTriReg, "vpiTriReg"},
+           NetTypeCase{vpiTriAnd, "vpiTriAnd"},
+           NetTypeCase{vpiTriOr, "vpiTriOr"},
+           NetTypeCase{vpiSupply1, "vpiSupply1"},
+           NetTypeCase{vpiSupply0, "vpiSupply0"},
+           NetTypeCase{vpiUwire, "vpiUwire"},
+       }) {
+    SCOPED_TRACE(testCase.name);
+    Fixture fixture;
+    fixture.database = makeVPINetPropertyDatabase(testCase.value);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    vpiHandle element = vpi_handle_by_index(root, 0);
+    ASSERT_NE(element, nullptr);
+    vpiHandle bit = vpi_handle_by_index(element, 7);
+    ASSERT_NE(bit, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, root), vpiNetArray);
+    EXPECT_EQ(vpi_get(vpiType, element), vpiNet);
+    EXPECT_EQ(vpi_get(vpiType, bit), vpiNetBit);
+    for (vpiHandle handle : {root, element, bit}) {
+      EXPECT_EQ(vpi_get(vpiNetType, handle), testCase.value);
+      EXPECT_STREQ(vpi_get_str(vpiNetType, handle), testCase.name);
+      EXPECT_EQ(vpi_get(vpiChargeStrength, handle), 0);
+      EXPECT_EQ(vpi_get(vpiExplicitScalared, handle), 0);
+      EXPECT_EQ(vpi_get(vpiExplicitVectored, handle), 0);
+      EXPECT_EQ(vpi_get(vpiExpanded, handle), 0);
+      EXPECT_EQ(vpi_get(vpiImplicitDecl, handle), 0);
+      EXPECT_EQ(vpi_get(vpiNetDeclAssign, handle), 0);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    }
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+    EXPECT_EQ(vpi_release_handle(element), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+
+  for (uint32_t charge : {uint32_t{vpiSmallCharge}, uint32_t{vpiMediumCharge},
+                          uint32_t{vpiLargeCharge}}) {
+    SCOPED_TRACE(charge);
+    Fixture fixture;
+    const bool exerciseFlags = charge == vpiSmallCharge;
+    fixture.database = makeVPINetPropertyDatabase(
+        vpiTriReg, exerciseFlags, false, exerciseFlags, exerciseFlags, charge);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle net = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(net, nullptr);
+    EXPECT_EQ(vpi_get(vpiExplicitScalared, net), exerciseFlags);
+    EXPECT_EQ(vpi_get(vpiExplicitVectored, net), 0);
+    EXPECT_EQ(vpi_get(vpiExpanded, net), exerciseFlags);
+    EXPECT_EQ(vpi_get(vpiImplicitDecl, net), exerciseFlags);
+    EXPECT_EQ(vpi_get(vpiNetDeclAssign, net), exerciseFlags);
+    EXPECT_EQ(vpi_get(vpiChargeStrength, net), charge);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(net), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, NetTypeIsUnavailableForUnmappedInterconnectWithoutInventingWire) {
+  Fixture fixture;
+  fixture.database = makeVPINetPropertyDatabase(
+      std::nullopt, false, true, false, false, 0, false, vpiInterconnectArray);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle net = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(net, nullptr);
+  EXPECT_EQ(vpi_get(vpiNetType, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_get_str(vpiNetType, net), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_get(vpiExplicitVectored, net), 1);
+  EXPECT_EQ(vpi_get(vpiChargeStrength, net), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(net), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ProtectedNetPropertiesAreDenied) {
+  Fixture fixture;
+  fixture.database =
+      makeVPINetPropertyDatabase(vpiWire, false, false, false, false, 0, true);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle net = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(net, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, net), 1);
+  EXPECT_EQ(vpi_get(vpiNetType, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get_str(vpiNetType, net), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiChargeStrength, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  // Protection is checked before the sparse false/default path.
+  EXPECT_EQ(vpi_get(vpiExplicitScalared, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(net), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
+  for (const auto &[selector, invalidValue] :
+       {std::pair<uint16_t, uint64_t>{vpiNetType, vpiNone},
+        std::pair<uint16_t, uint64_t>{vpiChargeStrength, 3}}) {
+    SCOPED_TRACE(selector);
+    Fixture fixture;
+    fixture.database = makeVPINetPropertyDatabase(vpiWire);
+    const uint32_t directoryOffset =
+        static_cast<uint32_t>(fixture.database[12]) |
+        (static_cast<uint32_t>(fixture.database[13]) << 8) |
+        (static_cast<uint32_t>(fixture.database[14]) << 16) |
+        (static_cast<uint32_t>(fixture.database[15]) << 24);
+    const uint64_t propertyOffset =
+        get64(fixture.database, directoryOffset + 112);
+    const uint64_t propertyCount =
+        get64(fixture.database, directoryOffset + 120);
+    bool found = false;
+    for (uint64_t index = 0; index != propertyCount; ++index) {
+      uint64_t offset = propertyOffset + index * 16;
+      uint16_t candidate = static_cast<uint16_t>(fixture.database[offset + 4]) |
+                           static_cast<uint16_t>(fixture.database[offset + 5])
+                               << 8;
+      if (candidate != selector)
+        continue;
+      put64(fixture.database, offset + 8, invalidValue);
+      found = true;
+      break;
+    }
+    ASSERT_TRUE(found);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(context, nullptr);
+  }
 }
 
 TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {

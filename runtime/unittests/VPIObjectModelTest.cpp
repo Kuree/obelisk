@@ -2,12 +2,14 @@
 
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "../lib/VPIInternal.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <iterator>
 #include <map>
@@ -16,6 +18,10 @@
 #include <string>
 #include <tuple>
 #include <vector>
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include <dlfcn.h>
+#endif
 
 namespace {
 
@@ -1410,6 +1416,105 @@ TEST(VPIObjectModel, SymbolicStringPropertiesExactlyMatchLrm) {
   EXPECT_EQ(actual, expected);
 }
 
+TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+  };
+  for (const Entry &expected : {
+           Entry{vpiWire, "vpiWire"},
+           Entry{vpiWand, "vpiWand"},
+           Entry{vpiWor, "vpiWor"},
+           Entry{vpiTri, "vpiTri"},
+           Entry{vpiTri0, "vpiTri0"},
+           Entry{vpiTri1, "vpiTri1"},
+           Entry{vpiTriReg, "vpiTriReg"},
+           Entry{vpiTriAnd, "vpiTriAnd"},
+           Entry{vpiTriOr, "vpiTriOr"},
+           Entry{vpiSupply1, "vpiSupply1"},
+           Entry{vpiSupply0, "vpiSupply0"},
+           Entry{vpiUwire, "vpiUwire"},
+       }) {
+    const auto *actual =
+        findVPIIntegerPropertyValue(vpiNetType, expected.value);
+    ASSERT_NE(actual, nullptr) << expected.value;
+    EXPECT_STREQ(actual->symbolicName, expected.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiNetType, expected.value, image));
+    ASSERT_NE(image.symbolicName, nullptr);
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 expected.name);
+  }
+  EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiNetType));
+  EXPECT_EQ(findVPIIntegerPropertyValue(vpiNetType, vpiNone), nullptr);
+  EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiChargeStrength));
+  for (uint32_t value : {0u, uint32_t{vpiSmallCharge},
+                         uint32_t{vpiMediumCharge}, uint32_t{vpiLargeCharge}}) {
+    const auto *charge = findVPIIntegerPropertyValue(vpiChargeStrength, value);
+    ASSERT_NE(charge, nullptr);
+    EXPECT_STREQ(charge->symbolicName, "");
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiChargeStrength, value, image));
+    EXPECT_EQ(image.symbolicName, nullptr);
+  }
+}
+
+TEST(VPIObjectModel, IntegerPropertyDomainImageExactlyMatchesGeneratedModel) {
+  const uint32_t offset = readVPIObjectModelImage32(vpiObjectModelImage, 104);
+  const uint32_t count = readVPIObjectModelImage32(vpiObjectModelImage, 108);
+  const uint32_t stringOffset =
+      readVPIObjectModelImage32(vpiObjectModelImage, 112);
+  const uint32_t stringSize =
+      readVPIObjectModelImage32(vpiObjectModelImage, 116);
+  EXPECT_EQ(count, std::size(vpiIntegerPropertyValues));
+  EXPECT_EQ(stringOffset,
+            offset + count * vpiObjectModelImageIntegerPropertyValueSize);
+  EXPECT_EQ(stringOffset + stringSize, sizeof(vpiObjectModelImage));
+
+  for (const auto &expected : vpiIntegerPropertyValues) {
+    VPIObjectModelImageIntegerPropertyValue actual{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, expected.property, expected.value, actual));
+    if (expected.symbolicName[0] == '\0') {
+      EXPECT_EQ(actual.symbolicName, nullptr);
+    } else {
+      ASSERT_NE(actual.symbolicName, nullptr);
+      EXPECT_STREQ(reinterpret_cast<const char *>(actual.symbolicName),
+                   expected.symbolicName);
+    }
+  }
+  for (uint32_t index = 0; index != count; ++index) {
+    const uint8_t *record = vpiObjectModelImage + offset +
+                            index * vpiObjectModelImageIntegerPropertyValueSize;
+    EXPECT_NE(findVPIIntegerPropertyValue(readVPIObjectModelImage16(record, 0),
+                                          readVPIObjectModelImage32(record, 4)),
+              nullptr);
+  }
+  VPIObjectModelImageIntegerPropertyValue missing{};
+  EXPECT_FALSE(findVPIObjectModelImageIntegerPropertyValue(
+      vpiObjectModelImage, vpiNetType, UINT32_MAX, missing));
+}
+
+TEST(VPIObjectModel, RuntimeExportsCanonicalImmutableModelImage) {
+  const obelisk_rt_vpi_object_model_v1 *model =
+      obelisk_rt_v1_vpi_object_model();
+  ASSERT_NE(model, nullptr);
+  ASSERT_NE(model->data, nullptr);
+  EXPECT_EQ(model->size, sizeof(vpiObjectModelImage));
+  EXPECT_EQ(model->fingerprint, vpiObjectModelImageFingerprint);
+  EXPECT_EQ(std::memcmp(model->data, vpiObjectModelImage, model->size), 0);
+  EXPECT_TRUE(validateVPIObjectModelImage(model->data, model->size));
+  EXPECT_EQ(obelisk_rt_v1_vpi_object_model(), model);
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+  using Accessor = const obelisk_rt_vpi_object_model_v1 *(*)(void);
+  void *symbol = dlsym(RTLD_DEFAULT, "obelisk_rt_v1_vpi_object_model");
+  ASSERT_NE(symbol, nullptr);
+  EXPECT_EQ(reinterpret_cast<Accessor>(symbol)(), model);
+#endif
+}
+
 TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
   struct ExpectedPolicy {
     uint16_t formats;
@@ -1705,6 +1810,18 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         (descriptor.property == vpiDefName ||
          descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||
          descriptor.property == vpiUnit))
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.property == vpiNetType ||
+        descriptor.property == vpiExplicitScalared ||
+        descriptor.property == vpiExplicitVectored ||
+        descriptor.property == vpiExpanded ||
+        descriptor.property == vpiChargeStrength)
+      expected = PropertyRealization::FixedImage;
+    const auto *source = findVPIObjectKind(descriptor.sourceType);
+    const bool netSource =
+        source && (source->families & vpiFamilyMask(VPIObjectFamily::Net)) != 0;
+    if (netSource && (descriptor.property == vpiImplicitDecl ||
+                      descriptor.property == vpiNetDeclAssign))
       expected = PropertyRealization::FixedImage;
     if (descriptor.stability == PropertyStability::Dynamic)
       expected = PropertyRealization::Runtime;
@@ -2214,6 +2331,10 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
     damaged[offset] = static_cast<uint8_t>(value);
     damaged[offset + 1] = static_cast<uint8_t>(value >> 8);
   };
+  auto write32 = [&](uint32_t offset, uint32_t value) {
+    for (unsigned byte = 0; byte != 4; ++byte)
+      damaged[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+  };
   auto write64 = [&](uint32_t offset, uint64_t value) {
     for (unsigned byte = 0; byte != 8; ++byte)
       damaged[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
@@ -2535,6 +2656,94 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   reset();
   write16(indexedAccessOffset + vpiObjectModelImageIndexedAccessSize,
           readVPIObjectModelImage16(damaged.data(), indexedAccessOffset));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  uint32_t integerValueOffset = readVPIObjectModelImage32(damaged.data(), 104);
+  uint32_t integerValueCount = readVPIObjectModelImage32(damaged.data(), 108);
+  uint32_t integerStringOffset = readVPIObjectModelImage32(damaged.data(), 112);
+  uint32_t integerStringSize = readVPIObjectModelImage32(damaged.data(), 116);
+  ASSERT_GT(integerValueCount, 1u);
+  ASSERT_GT(integerStringSize, 0u);
+
+  reset();
+  write16(integerValueOffset + 2, 1);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write32(integerValueOffset + 4, UINT32_MAX);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(integerValueOffset, UINT16_MAX);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write16(integerValueOffset + vpiObjectModelImageIntegerPropertyValueSize,
+          readVPIObjectModelImage16(damaged.data(), integerValueOffset));
+  write32(integerValueOffset + vpiObjectModelImageIntegerPropertyValueSize + 4,
+          readVPIObjectModelImage32(damaged.data(), integerValueOffset + 4));
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  // Locate a symbolic net-type row before corrupting its pool reference and
+  // spelling; numeric-only charge-strength rows deliberately use the sentinel.
+  uint32_t symbolicRecord = UINT32_MAX;
+  for (uint32_t index = 0; index != integerValueCount; ++index) {
+    uint32_t offset = integerValueOffset +
+                      index * vpiObjectModelImageIntegerPropertyValueSize;
+    if (readVPIObjectModelImage32(damaged.data(), offset + 8) != UINT32_MAX) {
+      symbolicRecord = offset;
+      break;
+    }
+  }
+  ASSERT_NE(symbolicRecord, UINT32_MAX);
+  reset();
+  write32(symbolicRecord + 8, UINT32_MAX);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write32(symbolicRecord + 8, integerStringSize);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write32(symbolicRecord + 8, 1);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[integerStringOffset] ^= 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  damaged[integerStringOffset + integerStringSize - 1] = 'X';
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write32(108, integerValueCount + 1);
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  reset();
+  write32(112, integerStringOffset - 1);
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

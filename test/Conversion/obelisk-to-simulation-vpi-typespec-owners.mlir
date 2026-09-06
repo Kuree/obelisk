@@ -189,13 +189,13 @@ module {
 }
 
 // CHECK-NOT: obelisk_sim.vpi_object.anchor {{.*}}hierarchy "\\$root "
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_A:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 ordinal 0 hierarchy "$unit" debug "" {is_compilation_unit}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_B:__obelisk_vpi_anchor_1]] id 1 type 600 in 0 ordinal 1 hierarchy "$unit" debug "" {is_compilation_unit}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_A:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 ordinal 0 hierarchy "$unit" debug "" {is_compilation_unit, {{.*}}}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_B:__obelisk_vpi_anchor_1]] id 1 type 600 in 0 ordinal 1 hierarchy "$unit" debug "" {is_compilation_unit, {{.*}}}
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[SEQ:__obelisk_vpi_anchor_2]] id 2 type 661 in 0 parent @[[CU_B]] ordinal 0 hierarchy "$unit::seq" debug "seq"
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[PROP:__obelisk_vpi_anchor_3]] id 3 type 655 in 0 parent @[[CU_B]] ordinal 1 hierarchy "$unit::prop" debug "prop"
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[RAW_TOP:__obelisk_vpi_anchor_4]] id 4 type 32 in 1 ordinal 2 hierarchy "raw_top" debug "wrapper_t"
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[COLLAPSED_TOP:__obelisk_vpi_anchor_5]] id 5 type 32 in 2 ordinal 3 hierarchy "collapsed_top" debug "wrapper_t"
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[PKG:__obelisk_vpi_anchor_6]] id 6 type 600 in 0 ordinal 4 hierarchy "pkg" debug "pkg"
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[RAW_TOP:__obelisk_vpi_anchor_4]] id 4 type 32 in 1 ordinal 2 hierarchy "raw_top" debug "wrapper_t" {{.*}}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[COLLAPSED_TOP:__obelisk_vpi_anchor_5]] id 5 type 32 in 2 ordinal 3 hierarchy "collapsed_top" debug "wrapper_t" {{.*}}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[PKG:__obelisk_vpi_anchor_6]] id 6 type 600 in 0 ordinal 4 hierarchy "pkg" debug "pkg" {{.*}}
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CLASS:__obelisk_vpi_anchor_7]] id 7 type 652 in 0 parent @[[PKG]] ordinal 0 hierarchy "pkg::C" debug "C"
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[GENERIC_CLASS:__obelisk_vpi_anchor_8]] id 8 type 652 in 0 parent @[[PKG]] ordinal 1 hierarchy "pkg::G#(bit)" debug "G"
 // CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[CU_A_TS:__obelisk_vpi_typespec_0]] id 0 in 0 owner @[[CU_A]] hierarchy "$unit::same_t"{{.*}}typedefAliases = [@[[CU_A_TS]]]>

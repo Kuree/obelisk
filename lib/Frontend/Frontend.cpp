@@ -735,6 +735,14 @@ slangir::NetKind convertEnum(slang::ast::NetType::NetKind kind) {
   return static_cast<slangir::NetKind>(static_cast<int>(kind));
 }
 
+slangir::NetExpansionHint
+convertEnum(slang::ast::NetSymbol::ExpansionHint hint) {
+  static_assert(static_cast<int>(slang::ast::NetSymbol::None) == 0 &&
+                static_cast<int>(slang::ast::NetSymbol::Vectored) == 1 &&
+                static_cast<int>(slang::ast::NetSymbol::Scalared) == 2);
+  return static_cast<slangir::NetExpansionHint>(static_cast<int>(hint));
+}
+
 slangir::AssertionUnaryOperator
 convertEnum(slang::ast::UnaryAssertionOperator op) {
   static_assert(
@@ -4035,6 +4043,10 @@ private:
                   slangir::NetKindAttr::get(builder.getContext(),
                                             convertEnum(node.netType.netKind)));
       SET_OP_ATTR(IsImplicit, builder.getBoolAttr(node.isImplicit));
+      if (node.expansionHint != slang::ast::NetSymbol::None)
+        SET_OP_ATTR(ExpansionHint,
+                    slangir::NetExpansionHintAttr::get(
+                        builder.getContext(), convertEnum(node.expansionHint)));
       if (const auto *resolutionFunction =
               getEffectiveResolutionFunction(node.netType))
         setSymbolReference(

@@ -395,6 +395,8 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         SlangNetKind:$net_kind,
         BoolAttr:$is_implicit,
+        DefaultValuedAttr<SlangNetExpansionHint,
+          "::obelisk::slangir::NetExpansionHint::None">:$expansion_hint,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<SlangDriveStrength>:$drive_strength0,

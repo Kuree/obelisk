@@ -160,6 +160,26 @@ module attributes {
                 ], childNames = []>
           ], childNames = []>
     }
+    obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<4> design
+        hierarchy "top.net" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 7 : i32>,
+        #obelisk_sim.vpi_property<selector = 23 : i32, value = false>,
+        #obelisk_sim.vpi_property<selector = 24 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 25 : i32, value = false>,
+        #obelisk_sim.vpi_property<selector = 26 : i32, value = true>,
+        #obelisk_sim.vpi_property<selector = 27 : i32, value = 16 : i32>,
+        #obelisk_sim.vpi_property<selector = 43 : i32, value = true>
+      ]>
+    }
+    obelisk_sim.net.decl 1 in 1 : !obelisk_sim.logic<1> design
+        hierarchy "top.net_zero" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>,
+        #obelisk_sim.vpi_property<selector = 23 : i32, value = false>,
+        #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>
+      ]>
+    }
     obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.initial"
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context
         {obelisk_sim.capture_kind = 0 : i32})
@@ -197,11 +217,26 @@ module attributes {
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=50 kind=0 value=true
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=74 kind=0 value=true
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=1 source=[[NET:[0-9]+]] selector=22 kind=1 value=7
+// CHECK-DAG: fixed_property source_table=1 source=[[NET]] selector=24 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=1 source=[[NET]] selector=26 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=1 source=[[NET]] selector=27 kind=1 value=16
+// CHECK-DAG: fixed_property source_table=1 source=[[NET]] selector=43 kind=0 value=true
+// CHECK-DAG: fixed_property source_table=1 source=[[ZERO_NET:[0-9]+]] selector=22 kind=1 value=1
+// CHECK-DAG: fixed_property source_table=1 source=[[ZERO_NET]] selector=27 kind=1 value=0
 // Sorted fixed properties make adjacency an exact check that authored false
 // vpiCellInstance and vpiUnit values were erased from the image.
 // SPARSE: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
 // SPARSE-NEXT: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
 // SPARSE: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// Sparse false values are absent while neighboring true/integer values remain.
+// SPARSE: fixed_property source_table=1 source=[[SPARSE_NET:[0-9]+]] selector=22 kind=1 value=7
+// SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=24 kind=0 value=true
+// SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=26 kind=0 value=true
+// SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=27 kind=1 value=16
+// SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=43 kind=0 value=true
+// SPARSE: fixed_property source_table=1 source=[[SPARSE_ZERO_NET:[0-9]+]] selector=22 kind=1 value=1
+// SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_ZERO_NET]] selector=27 kind=1 value=0
 // SPARSE-NEXT: relation
 // The generated relation image exposes lexical ownership, declaration-order
 // typedefs, the immediate typedef alias, interface instance links, enum

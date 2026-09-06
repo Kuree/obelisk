@@ -15,12 +15,18 @@ OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
 
 using namespace obelisk::reflection;
 
+static_assert(vpiObjectModelImageHeaderSize == 120);
 static_assert(vpiObjectModelImageTraversalSize == 8);
 static_assert(vpiObjectModelImagePropertySize == 6);
 static_assert(vpiObjectModelImageValuePolicySize == 8);
 static_assert(vpiObjectModelImageArrayValuePolicySize == 4);
 static_assert(vpiObjectModelImageIndexedAccessSize == 12);
 static_assert(vpiObjectModelImageIndexedTypeResultSize == 8);
+static_assert(vpiObjectModelImageIntegerPropertyValueSize == 12);
+static_assert(findVPIIntegerPropertyValue(vpiNetType, vpiTriReg)->value ==
+              vpiTriReg);
+static_assert(findVPIIntegerPropertyValue(vpiChargeStrength, vpiMediumCharge)
+                  ->symbolicName[0] == '\0');
 static_assert(findVPIIndexedAccess(vpiPort)->terminalResult == vpiPortBit);
 static_assert(!findVPIIndexedAccess(vpiPort)->mapSemanticType);
 static_assert(findVPIIndexedAccess(vpiRegArray)->unpackedFallback ==

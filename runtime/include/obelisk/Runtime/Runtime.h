@@ -3040,6 +3040,17 @@ obelisk_rt_status
 obelisk_rt_v1_design_release(obelisk_rt_context *context,
                              obelisk_rt_design_cursor_v1 cursor);
 
+// Immutable generated VPI object-model schema embedded in the runtime image.
+// This descriptor is passive: obtaining it does not initialize VPI or alter
+// scheduler observability. The fingerprint is the checksum of the complete
+// canonical image with its checksum field (bytes 16..23) treated as zero.
+typedef struct obelisk_rt_vpi_object_model_v1 {
+  const uint8_t *data;
+  uint64_t size;
+  uint64_t fingerprint;
+} obelisk_rt_vpi_object_model_v1;
+const obelisk_rt_vpi_object_model_v1 *obelisk_rt_v1_vpi_object_model(void);
+
 // Activate the single-context VPI shim and invoke startup tables belonging to
 // already loaded DT_NEEDED modules. Module names are runtime loader identities
 // (DT_SONAME, or the no-SONAME basename) and remain caller-owned for the call.

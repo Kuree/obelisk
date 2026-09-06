@@ -1074,6 +1074,10 @@ bool validateDatabaseImpl(const Database &database) {
       if (payload != static_cast<uint64_t>(
                          static_cast<int64_t>(static_cast<int32_t>(payload))))
         return false;
+      if (obelisk::reflection::hasVPIIntegerPropertyDomain(selector) &&
+          !obelisk::reflection::findVPIIntegerPropertyValue(
+              selector, static_cast<uint32_t>(payload)))
+        return false;
       break;
     case ValueKind::Int64:
       break;

@@ -372,6 +372,8 @@ class ObeliskNetSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
         ObeliskSVNetKind:$net_kind,
         BoolAttr:$is_implicit,
+        DefaultValuedAttr<ObeliskSVNetExpansionHint,
+          "::obelisk::ir::SVNetExpansionHint::None">:$expansion_hint,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,

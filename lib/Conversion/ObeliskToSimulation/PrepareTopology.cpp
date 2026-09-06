@@ -1135,13 +1135,11 @@ materializeDesignDescriptors(ModuleOp module,
     // implementation-defined `$unit` spelling as their special-access name.
     if (!definitionName && isa<semantic::SVCompilationUnitSymbolOp>(source))
       definitionName = builder.getStringAttr("$unit");
-    if (!definitionName &&
-        (sourceKind == VPIKind::Module || sourceKind == VPIKind::Interface ||
-         sourceKind == VPIKind::Program)) {
-      emitError(getSemanticLocation(source))
-          << "VPI instance source is missing its definition name";
-      invalid = true;
-    }
+    // Production frontend IR freezes the definition identity on every
+    // instance. Keep hand-authored and partially lowered MLIR valid when that
+    // optional provenance is absent: sparse fixed properties represent the
+    // lack of a value by omitting the record, and the runtime reports the
+    // property as unavailable instead of inventing a definition name.
     addString(9, definitionName);                      // vpiDefName
     addBoolean(50, automatic && automatic.getValue()); // vpiAutomatic
     addBoolean(600, top);                              // vpiTop
@@ -1149,6 +1147,98 @@ materializeDesignDescriptors(ModuleOp module,
 
     if (properties.empty())
       return sim::VPIPropertySetAttr{};
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
+  auto netProperties = [&](semantic::SVNetSymbolOp net) {
+    SmallVector<Attribute> properties;
+    auto addBoolean = [&](uint32_t selector, bool value) {
+      if (value)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector),
+            builder.getBoolAttr(true)));
+    };
+    auto addInteger = [&](uint32_t selector, int32_t value) {
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getI32IntegerAttr(value)));
+    };
+
+    // IEEE 1800-2017 defines no vpiNetType subtype constants for typed
+    // interconnect or user-defined nets. Leave selector 22 unavailable for
+    // those declarations instead of reporting an invented wire subtype.
+    std::optional<int32_t> netType;
+    switch (net.getNetKind()) {
+    case semantic::SVNetKind::Wire:
+      netType = 1; // vpiWire
+      break;
+    case semantic::SVNetKind::WAnd:
+      netType = 2; // vpiWand
+      break;
+    case semantic::SVNetKind::WOr:
+      netType = 3; // vpiWor
+      break;
+    case semantic::SVNetKind::Tri:
+      netType = 4; // vpiTri
+      break;
+    case semantic::SVNetKind::Tri0:
+      netType = 5; // vpiTri0
+      break;
+    case semantic::SVNetKind::Tri1:
+      netType = 6; // vpiTri1
+      break;
+    case semantic::SVNetKind::TriReg:
+      netType = 7; // vpiTriReg
+      break;
+    case semantic::SVNetKind::TriAnd:
+      netType = 8; // vpiTriAnd
+      break;
+    case semantic::SVNetKind::TriOr:
+      netType = 9; // vpiTriOr
+      break;
+    case semantic::SVNetKind::Supply1:
+      netType = 10; // vpiSupply1
+      break;
+    case semantic::SVNetKind::Supply0:
+      netType = 11; // vpiSupply0
+      break;
+    case semantic::SVNetKind::UWire:
+      netType = 13; // vpiUwire
+      break;
+    case semantic::SVNetKind::Unknown:
+    case semantic::SVNetKind::Interconnect:
+    case semantic::SVNetKind::UserDefined:
+      break;
+    }
+    if (netType)
+      addInteger(22, *netType); // vpiNetType
+    bool scalared =
+        net.getExpansionHint() == semantic::SVNetExpansionHint::Scalared;
+    bool vectored =
+        net.getExpansionHint() == semantic::SVNetExpansionHint::Vectored;
+    addBoolean(23, scalared);            // vpiExplicitScalared
+    addBoolean(24, vectored);            // vpiExplicitVectored
+    addBoolean(25, scalared);            // vpiExpanded
+    addBoolean(26, net.getIsImplicit()); // vpiImplicitDecl
+
+    int32_t chargeStrength = 0;
+    if (net.getNetKind() == semantic::SVNetKind::TriReg) {
+      switch (net.getChargeStrength().value_or(
+          semantic::SVChargeStrength::Medium)) {
+      case semantic::SVChargeStrength::Small:
+        chargeStrength = 0x02;
+        break;
+      case semantic::SVChargeStrength::Medium:
+        chargeStrength = 0x04;
+        break;
+      case semantic::SVChargeStrength::Large:
+        chargeStrength = 0x10;
+        break;
+      }
+    }
+    addInteger(27, chargeStrength); // vpiChargeStrength
+    addBoolean(43, !getNetInitializerExpressions(net).empty());
+
     return sim::VPIPropertySetAttr::get(builder.getContext(),
                                         builder.getArrayAttr(properties));
   };
@@ -1931,6 +2021,9 @@ materializeDesignDescriptors(ModuleOp module,
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
               DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
               retainedVPIType);
+          declaration->setAttr(
+              "vpi_properties",
+              netProperties(cast<semantic::SVNetSymbolOp>(op)));
           retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
         }
         return;
@@ -2119,6 +2212,7 @@ materializeDesignDescriptors(ModuleOp module,
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
         UnitAttr{}, retainedVPIType);
+    declaration->setAttr("vpi_properties", netProperties(net));
     retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {

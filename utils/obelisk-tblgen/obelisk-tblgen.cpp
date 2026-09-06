@@ -592,6 +592,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto propertyRealizations =
       records.getAllDerivedDefinitions("VPIPropertyRealization");
   auto properties = records.getAllDerivedDefinitions("VPIProperty");
+  auto integerPropertyValues =
+      records.getAllDerivedDefinitions("VPIIntegerPropertyValue");
   auto valueFormats = records.getAllDerivedDefinitions("VPIValueFormat");
   auto valueDefaults =
       records.getAllDerivedDefinitions("VPIValueDefaultFormat");
@@ -1168,6 +1170,41 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                  "dynamic null-root VPI property must use Runtime "
                  "realization");
       return false;
+    }
+  }
+
+  DenseSet<uint64_t> integerPropertyKeys;
+  StringSet<> integerPropertySymbolicNames;
+  for (const Record *valueRecord : integerPropertyValues) {
+    const Record *property = valueRecord->getValueAsDef("property");
+    uint32_t propertyValue = 0;
+    uint32_t value = 0;
+    StringRef symbolicName = valueRecord->getValueAsString("symbolicName");
+    if (!getU32(*property, "value", 1, propertyValue) ||
+        !getU32(*valueRecord, "value", 0, value) ||
+        property->getValueAsDef("valueKind")->getValueAsString("cppName") !=
+            "Integer" ||
+        property->getValueAsBit("symbolicString") != !symbolicName.empty() ||
+        (!symbolicName.empty() && (!isCppIdentifier(symbolicName) ||
+                                   !symbolicName.starts_with("vpi")))) {
+      PrintError(valueRecord->getLoc(),
+                 "VPI integer property value needs an integer property, "
+                 "encodable value, and matching vpi symbolic-name policy");
+      return false;
+    }
+    uint64_t key = (uint64_t{propertyValue} << 32) | value;
+    if (!integerPropertyKeys.insert(key).second) {
+      PrintError(valueRecord->getLoc(),
+                 "duplicate VPI integer property domain value");
+      return false;
+    }
+    if (!symbolicName.empty()) {
+      std::string keyName = (Twine(propertyValue) + ":" + symbolicName).str();
+      if (!integerPropertySymbolicNames.insert(keyName).second) {
+        PrintError(valueRecord->getLoc(),
+                   "duplicate symbolic name in VPI integer property domain");
+        return false;
+      }
     }
   }
 
@@ -2194,6 +2231,70 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "             : nullptr;\n"
         "}\n\n";
 
+  auto integerValueRecords =
+      records.getAllDerivedDefinitions("VPIIntegerPropertyValue");
+  SmallVector<const Record *> integerPropertyValues(integerValueRecords.begin(),
+                                                    integerValueRecords.end());
+  llvm::sort(
+      integerPropertyValues, [](const Record *left, const Record *right) {
+        return std::make_tuple(
+                   left->getValueAsDef("property")->getValueAsInt("value"),
+                   left->getValueAsInt("value")) <
+               std::make_tuple(
+                   right->getValueAsDef("property")->getValueAsInt("value"),
+                   right->getValueAsInt("value"));
+      });
+  os << "struct VPIIntegerPropertyValueDescriptor {\n"
+        "  uint32_t property;\n"
+        "  uint32_t value;\n"
+        "  const char *symbolicName;\n"
+        "};\n\n"
+        "inline constexpr VPIIntegerPropertyValueDescriptor "
+        "vpiIntegerPropertyValues[] = {\n";
+  for (const Record *value : integerPropertyValues)
+    os << "  {" << value->getValueAsDef("property")->getValueAsInt("value")
+       << ", " << value->getValueAsInt("value") << ", \""
+       << value->getValueAsString("symbolicName") << "\"},\n";
+  os << "};\n\n"
+        "inline constexpr const VPIIntegerPropertyValueDescriptor *\n"
+        "findVPIIntegerPropertyValue(uint32_t property, uint32_t value) {\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiIntegerPropertyValues) /\n"
+        "                sizeof(vpiIntegerPropertyValues[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    const auto &candidate = vpiIntegerPropertyValues[middle];\n"
+        "    if (candidate.property < property ||\n"
+        "        (candidate.property == property && candidate.value < value))\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  if (low == sizeof(vpiIntegerPropertyValues) /\n"
+        "                 sizeof(vpiIntegerPropertyValues[0]))\n"
+        "    return nullptr;\n"
+        "  const auto &candidate = vpiIntegerPropertyValues[low];\n"
+        "  return candidate.property == property && candidate.value == value\n"
+        "             ? &candidate\n"
+        "             : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool hasVPIIntegerPropertyDomain(uint32_t property) "
+        "{\n"
+        "  size_t low = 0;\n"
+        "  size_t high = sizeof(vpiIntegerPropertyValues) /\n"
+        "                sizeof(vpiIntegerPropertyValues[0]);\n"
+        "  while (low != high) {\n"
+        "    size_t middle = low + (high - low) / 2;\n"
+        "    if (vpiIntegerPropertyValues[middle].property < property)\n"
+        "      low = middle + 1;\n"
+        "    else\n"
+        "      high = middle;\n"
+        "  }\n"
+        "  return low != sizeof(vpiIntegerPropertyValues) /\n"
+        "                    sizeof(vpiIntegerPropertyValues[0]) &&\n"
+        "         vpiIntegerPropertyValues[low].property == property;\n"
+        "}\n\n";
+
   auto valueFormatRecords = records.getAllDerivedDefinitions("VPIValueFormat");
   SmallVector<const Record *> valueFormats(valueFormatRecords.begin(),
                                            valueFormatRecords.end());
@@ -2599,6 +2700,12 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       PrintError("expanded VPI property key exceeds 16 bits");
       return true;
     }
+  for (const Record *value : integerPropertyValues)
+    if (value->getValueAsDef("property")->getValueAsInt("value") > UINT16_MAX) {
+      PrintError(value->getLoc(),
+                 "VPI integer property domain selector exceeds 16 bits");
+      return true;
+    }
   for (const EmittedValuePolicy &policy : emittedValuePolicies)
     if (policy.source > std::numeric_limits<uint16_t>::max()) {
       PrintError("expanded VPI value-policy key exceeds 16 bits");
@@ -2624,7 +2731,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       return true;
     }
 
-  constexpr uint32_t imageHeaderSize = 104;
+  constexpr uint32_t imageHeaderSize = 120;
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
@@ -2634,10 +2741,15 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   constexpr uint32_t imageArrayValuePolicySize = 4;
   constexpr uint32_t imageIndexedAccessSize = 12;
   constexpr uint32_t imageIndexedTypeResultSize = 8;
+  constexpr uint32_t imageIntegerPropertyValueSize = 12;
   SmallVector<uint8_t> image(imageHeaderSize, 0);
   auto append16 = [&](uint16_t value) {
     image.push_back(static_cast<uint8_t>(value));
     image.push_back(static_cast<uint8_t>(value >> 8));
+  };
+  auto append32 = [&](uint32_t value) {
+    for (unsigned byte = 0; byte != 4; ++byte)
+      image.push_back(static_cast<uint8_t>(value >> (byte * 8)));
   };
   auto append64 = [&](uint64_t value) {
     for (unsigned byte = 0; byte != 8; ++byte)
@@ -2778,6 +2890,35 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     append16(0);
   }
 
+  SmallVector<uint8_t> integerPropertyStrings;
+  StringMap<uint32_t> integerPropertyStringOffsets;
+  SmallVector<uint32_t> integerPropertyNames;
+  integerPropertyNames.reserve(integerPropertyValues.size());
+  for (const Record *value : integerPropertyValues) {
+    StringRef name = value->getValueAsString("symbolicName");
+    if (name.empty()) {
+      integerPropertyNames.push_back(UINT32_MAX);
+      continue;
+    }
+    auto [entry, inserted] = integerPropertyStringOffsets.try_emplace(
+        name, static_cast<uint32_t>(integerPropertyStrings.size()));
+    if (inserted) {
+      llvm::append_range(integerPropertyStrings, name.bytes());
+      integerPropertyStrings.push_back(0);
+    }
+    integerPropertyNames.push_back(entry->second);
+  }
+  size_t integerPropertyValueOffset = image.size();
+  for (auto [index, value] : llvm::enumerate(integerPropertyValues)) {
+    append16(static_cast<uint16_t>(
+        value->getValueAsDef("property")->getValueAsInt("value")));
+    append16(0);
+    append32(static_cast<uint32_t>(value->getValueAsInt("value")));
+    append32(integerPropertyNames[index]);
+  }
+  size_t integerPropertyStringOffset = image.size();
+  llvm::append_range(image, integerPropertyStrings);
+
   if (image.size() > std::numeric_limits<uint32_t>::max()) {
     PrintError("VPI object model image exceeds 32 bits");
     return true;
@@ -2804,6 +2945,10 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   write32(92, static_cast<uint32_t>(emittedIndexedTypeResults.size()));
   write32(96, static_cast<uint32_t>(arrayValuePolicyOffset));
   write32(100, static_cast<uint32_t>(emittedArrayValuePolicies.size()));
+  write32(104, static_cast<uint32_t>(integerPropertyValueOffset));
+  write32(108, static_cast<uint32_t>(integerPropertyValues.size()));
+  write32(112, static_cast<uint32_t>(integerPropertyStringOffset));
+  write32(116, static_cast<uint32_t>(integerPropertyStrings.size()));
   uint64_t imageChecksum = UINT64_C(14695981039346656037);
   for (uint8_t byte : image) {
     imageChecksum ^= byte;
@@ -2831,6 +2976,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
      << imageIndexedAccessSize << ";\n\n";
   os << "inline constexpr uint32_t vpiObjectModelImageIndexedTypeResultSize = "
      << imageIndexedTypeResultSize << ";\n\n";
+  os << "inline constexpr uint32_t vpiObjectModelImageIntegerPropertyValueSize "
+        "= "
+     << imageIntegerPropertyValueSize << ";\n\n";
   os << "inline constexpr uint8_t "
         "vpiObjectModelImageOrderMask = 0x0f;\n"
         "inline constexpr uint8_t "
@@ -2917,6 +3065,10 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
   uint64_t indexedTypeResultCount = readVPIObjectModelImage32(data, 92);
   uint64_t arrayValuePolicyOffset = readVPIObjectModelImage32(data, 96);
   uint64_t arrayValuePolicyCount = readVPIObjectModelImage32(data, 100);
+  uint64_t integerPropertyValueOffset = readVPIObjectModelImage32(data, 104);
+  uint64_t integerPropertyValueCount = readVPIObjectModelImage32(data, 108);
+  uint64_t integerPropertyStringOffset = readVPIObjectModelImage32(data, 112);
+  uint64_t integerPropertyStringSize = readVPIObjectModelImage32(data, 116);
   if (objectOffset != vpiObjectModelImageHeaderSize ||
       objectCount > (size - objectOffset) / vpiObjectModelImageObjectSize ||
       relationOffset !=
@@ -2963,7 +3115,16 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
       indexedTypeResultOffset +
               indexedTypeResultCount *
                   vpiObjectModelImageIndexedTypeResultSize !=
-          size)
+          integerPropertyValueOffset ||
+      integerPropertyValueCount >
+          (size - integerPropertyValueOffset) /
+              vpiObjectModelImageIntegerPropertyValueSize ||
+      integerPropertyValueOffset +
+              integerPropertyValueCount *
+                  vpiObjectModelImageIntegerPropertyValueSize !=
+          integerPropertyStringOffset ||
+      integerPropertyStringSize > size - integerPropertyStringOffset ||
+      integerPropertyStringOffset + integerPropertyStringSize != size)
     return false;
 
   uint16_t previousValue = 0;
@@ -3298,6 +3459,63 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     previousAccessKind = accessKind;
     previousTypespec = typespec;
   }
+  uint16_t previousIntegerProperty = 0;
+  uint32_t previousIntegerValue = 0;
+  for (uint32_t index = 0; index != integerPropertyValueCount; ++index) {
+    const uint8_t *record =
+        data + integerPropertyValueOffset +
+        index * vpiObjectModelImageIntegerPropertyValueSize;
+    uint16_t property = readVPIObjectModelImage16(record, 0);
+    uint32_t value = readVPIObjectModelImage32(record, 4);
+    uint32_t nameOffset = readVPIObjectModelImage32(record, 8);
+    bool ordered = index == 0 || previousIntegerProperty < property ||
+                   (previousIntegerProperty == property &&
+                    previousIntegerValue < value);
+    const auto *expected = findVPIIntegerPropertyValue(property, value);
+    if (!ordered || readVPIObjectModelImage16(record, 2) != 0 || !expected)
+      return false;
+    if (expected->symbolicName[0] == '\0') {
+      if (nameOffset != UINT32_MAX)
+        return false;
+    } else {
+      if (nameOffset >= integerPropertyStringSize ||
+          (nameOffset != 0 &&
+           data[integerPropertyStringOffset + nameOffset - 1] != 0))
+        return false;
+      size_t character = 0;
+      for (;; ++character) {
+        if (nameOffset + character >= integerPropertyStringSize)
+          return false;
+        char actual = static_cast<char>(
+            data[integerPropertyStringOffset + nameOffset + character]);
+        char wanted = expected->symbolicName[character];
+        if (actual != wanted)
+          return false;
+        if (wanted == '\0')
+          break;
+      }
+    }
+    previousIntegerProperty = property;
+    previousIntegerValue = value;
+  }
+  for (uint32_t string = 0; string != integerPropertyStringSize;) {
+    bool referenced = false;
+    for (uint32_t index = 0; index != integerPropertyValueCount; ++index) {
+      const uint8_t *record =
+          data + integerPropertyValueOffset +
+          index * vpiObjectModelImageIntegerPropertyValueSize;
+      if (readVPIObjectModelImage32(record, 8) == string) {
+        referenced = true;
+        break;
+      }
+    }
+    if (!referenced)
+      return false;
+    do {
+      if (string >= integerPropertyStringSize)
+        return false;
+    } while (data[integerPropertyStringOffset + string++] != 0);
+  }
   return true;
 }
 
@@ -3404,6 +3622,45 @@ inline constexpr bool findVPIObjectModelImageProperty(
             static_cast<VPIPropertyRealization>((record[5] >> 3) & 3),
             (record[5] & 4) != 0};
   return result.sourceType == sourceType && result.property == property;
+}
+
+struct VPIObjectModelImageIntegerPropertyValue {
+  uint16_t property;
+  uint32_t value;
+  const uint8_t *symbolicName;
+};
+
+inline constexpr bool findVPIObjectModelImageIntegerPropertyValue(
+    const uint8_t *data, uint32_t property, uint32_t value,
+    VPIObjectModelImageIntegerPropertyValue &result) {
+  if (property > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 104);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 108);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageIntegerPropertyValueSize;
+    uint16_t recordProperty = readVPIObjectModelImage16(record, 0);
+    uint32_t recordValue = readVPIObjectModelImage32(record, 4);
+    if (recordProperty < property ||
+        (recordProperty == property && recordValue < value))
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 108))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageIntegerPropertyValueSize;
+  uint32_t nameOffset = readVPIObjectModelImage32(record, 8);
+  result = {readVPIObjectModelImage16(record, 0),
+            readVPIObjectModelImage32(record, 4),
+            nameOffset == UINT32_MAX
+                ? nullptr
+                : data + readVPIObjectModelImage32(data, 112) + nameOffset};
+  return result.property == property && result.value == value;
 }
 
 struct VPIObjectModelImageValuePolicy {

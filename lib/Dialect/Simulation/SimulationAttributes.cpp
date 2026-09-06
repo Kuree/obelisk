@@ -78,6 +78,15 @@ VPIPropertyAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   if (!matches)
     return emitError() << "VPI property value does not match its generated "
                           "value kind";
+  if (descriptor->valueKind == Kind::Integer &&
+      reflection::hasVPIIntegerPropertyDomain(static_cast<uint32_t>(number))) {
+    uint32_t integerValue = static_cast<uint32_t>(
+        cast<IntegerAttr>(value).getValue().getSExtValue());
+    if (!reflection::findVPIIntegerPropertyValue(static_cast<uint32_t>(number),
+                                                 integerValue))
+      return emitError()
+             << "VPI integer property value is outside its generated domain";
+  }
   return success();
 }
 

@@ -285,6 +285,19 @@ class VPIProperty<string apiName_, int value_,
   VPIObjectSet runtimeSources = runtimeSources_;
 }
 
+// Allowed domains for immutable integer properties. Symbolic rows additionally
+// carry the spelling returned by vpi_get_str; a numeric domain is not required
+// to be symbolic (for example, vpiChargeStrength).
+class VPIIntegerPropertyValue<VPIProperty property_, int value_,
+                              string symbolicName_ = ""> {
+  VPIProperty property = property_;
+  int value = value_;
+  string symbolicName = symbolicName_;
+}
+class VPISymbolicPropertyValue<VPIProperty property_, int value_,
+                               string apiName_>
+    : VPIIntegerPropertyValue<property_, value_, apiName_>;
+
 // Properties that apply independently of the per-object data-model diagrams.
 // AllConcreteObjects deliberately names every family instead of duplicating
 // the object inventory. Expansion retains only canonical concrete kinds.
@@ -659,17 +672,53 @@ def ExplicitNameProperty : VPIProperty<"vpiExplicitName", 19,
 def ConnByNameProperty : VPIProperty<"vpiConnByName", 21, BooleanProperty,
   PortAndParamAssignObjects, "37.14; 37.26">;
 def NetTypeProperty : VPIProperty<"vpiNetType", 22, IntegerProperty,
-  NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 1>;
+  NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 1,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
+def NetTypeWire : VPISymbolicPropertyValue<NetTypeProperty, 1, "vpiWire">;
+def NetTypeWand : VPISymbolicPropertyValue<NetTypeProperty, 2, "vpiWand">;
+def NetTypeWor : VPISymbolicPropertyValue<NetTypeProperty, 3, "vpiWor">;
+def NetTypeTri : VPISymbolicPropertyValue<NetTypeProperty, 4, "vpiTri">;
+def NetTypeTri0 : VPISymbolicPropertyValue<NetTypeProperty, 5, "vpiTri0">;
+def NetTypeTri1 : VPISymbolicPropertyValue<NetTypeProperty, 6, "vpiTri1">;
+def NetTypeTriReg
+    : VPISymbolicPropertyValue<NetTypeProperty, 7, "vpiTriReg">;
+def NetTypeTriAnd
+    : VPISymbolicPropertyValue<NetTypeProperty, 8, "vpiTriAnd">;
+def NetTypeTriOr
+    : VPISymbolicPropertyValue<NetTypeProperty, 9, "vpiTriOr">;
+def NetTypeSupply1
+    : VPISymbolicPropertyValue<NetTypeProperty, 10, "vpiSupply1">;
+def NetTypeSupply0
+    : VPISymbolicPropertyValue<NetTypeProperty, 11, "vpiSupply0">;
+def NetTypeUwire
+    : VPISymbolicPropertyValue<NetTypeProperty, 13, "vpiUwire">;
 def ExplicitScalaredProperty : VPIProperty<"vpiExplicitScalared", 23,
-  BooleanProperty, NetPropertyObjects, "37.16">;
+  BooleanProperty, NetPropertyObjects, "37.16", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty>;
 def ExplicitVectoredProperty : VPIProperty<"vpiExplicitVectored", 24,
-  BooleanProperty, NetPropertyObjects, "37.16">;
+  BooleanProperty, NetPropertyObjects, "37.16", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty>;
 def ExpandedProperty : VPIProperty<"vpiExpanded", 25, BooleanProperty,
-  NetPropertyObjects, "37.16">;
+  NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def ImplicitDeclProperty : VPIProperty<"vpiImplicitDecl", 26,
-  BooleanProperty, NetAndGenScopeObjects, "37.16; 37.83">;
+  BooleanProperty, NetAndGenScopeObjects, "37.16; 37.83", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, NetPropertyObjects>;
 def ChargeStrengthProperty : VPIProperty<"vpiChargeStrength", 27,
-  IntegerProperty, NetPropertyObjects, "37.16">;
+  IntegerProperty, NetPropertyObjects, "37.16", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty>;
+def ChargeStrengthNone
+    : VPIIntegerPropertyValue<ChargeStrengthProperty, 0>;
+def ChargeStrengthSmall
+    : VPIIntegerPropertyValue<ChargeStrengthProperty, 2>;
+def ChargeStrengthMedium
+    : VPIIntegerPropertyValue<ChargeStrengthProperty, 4>;
+def ChargeStrengthLarge
+    : VPIIntegerPropertyValue<ChargeStrengthProperty, 16>;
 def ArrayProperty : VPIProperty<"vpiArray", 28, BooleanProperty,
   ArrayMemberObjects, "37.10; 37.16; 37.17; 37.25; 37.33; 37.83">;
 def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
@@ -699,7 +748,9 @@ def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
 def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
   ReadCaseObjects, "37.70">;
 def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
-  BooleanProperty, NetAndContinuousObjects, "37.16; 37.45">;
+  BooleanProperty, NetAndContinuousObjects, "37.16; 37.45", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, NetPropertyObjects>;
 def FuncTypeProperty : VPIProperty<"vpiFuncType", 44, IntegerProperty,
   FunctionPropertyObjects, "37.39; 37.40">;
 def UserDefnProperty : VPIProperty<"vpiUserDefn", 45, BooleanProperty,

@@ -17,6 +17,28 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @invalid_net_type_domain {
+    obelisk_sim.scope.decl 0 hierarchy "top"
+    // expected-error @+1 {{VPI integer property value is outside its generated domain}}
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 12 : i32>]>}
+    // expected-error @-1 {{failed to parse SimVPIPropertySetAttr parameter}}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @invalid_charge_strength_domain {
+    obelisk_sim.scope.decl 0 hierarchy "top"
+    // expected-error @+1 {{VPI integer property value is outside its generated domain}}
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 27 : i32, value = 3 : i32>]>}
+    // expected-error @-1 {{failed to parse SimVPIPropertySetAttr parameter}}
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @derived_property {
     // expected-error @+1 {{VPI property 1 is not a FixedImage property}}
     obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {

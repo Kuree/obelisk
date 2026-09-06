@@ -2211,6 +2211,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return operation->emitError("fixed integer VPI property is not i32");
       record.payload = static_cast<uint64_t>(
           cast<IntegerAttr>(value).getValue().getSExtValue());
+      if (hasVPIIntegerPropertyDomain(selector) &&
+          !findVPIIntegerPropertyValue(selector,
+                                       static_cast<uint32_t>(record.payload)))
+        return operation->emitError(
+            "fixed integer VPI property value is outside its generated "
+            "domain");
       break;
     case VPIPropertyValueKind::Int64:
       if (!isa<IntegerAttr>(value) ||
