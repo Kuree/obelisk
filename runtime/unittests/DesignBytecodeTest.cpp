@@ -1996,6 +1996,31 @@ std::vector<uint8_t> makeProtectedScopeDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
+                                               bool protectedObject = false,
+                                               bool fourState = false) {
+  std::vector<uint8_t> bytes =
+      protectedObject ? makeFixedPropertyDatabase(true) : makeDatabase(true);
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t typeOffset = 336;
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, exactType));
+  put32(bytes, objectOffset + 4,
+        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE);
+  put64(bytes, objectOffset + 56, 64);
+  put64(bytes, objectOffset + 64, 63);
+  put64(bytes, objectOffset + 72, 0);
+  put64(bytes, objectOffset + 80, 0);
+  put32(bytes, typeOffset + 4,
+        OBELISK_RT_DESIGN_TYPE_SCALAR |
+            ((fourState ? OBELISK_RT_DESIGN_TYPE_FOUR_STATE : 0) << 8));
+  put64(bytes, typeOffset + 8, 64);
+  put64(bytes, typeOffset + 16, 63);
+  put64(bytes, typeOffset + 24, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
   std::vector<uint8_t> bytes = makeDatabase(false, true);
   constexpr uint32_t typeCount = 11;
@@ -3074,6 +3099,35 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
   put32(bytes, edgeOffset, 1);
   put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
   put32(bytes, rootOffset, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeVPIManagedStringArrayDatabase() {
+  std::vector<uint8_t> bytes = makeVPITypedArrayDatabase(
+      vpiStringTypespec, OBELISK_RT_DESIGN_SEMANTIC_STRING, 64, 0, vpiRegArray,
+      OBELISK_RT_DESIGN_RECORD_STORAGE, 1);
+  constexpr uint64_t outerTypeOffset = 336;
+  constexpr uint64_t scalarTypeOffset = outerTypeOffset + 80;
+  constexpr uint64_t unusedTypeOffset = scalarTypeOffset + 80;
+  constexpr uint64_t stringOffset = unusedTypeOffset + 80;
+  auto scalar = [&](uint64_t offset) {
+    std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
+    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset + 4, OBELISK_RT_DESIGN_TYPE_SCALAR);
+    put64(bytes, offset + 8, 64);
+    put64(bytes, offset + 16, 63);
+    put64(bytes, offset + 72, stringOffset + 27);
+  };
+  put32(bytes, outerTypeOffset + 4, OBELISK_RT_DESIGN_TYPE_ARRAY);
+  put64(bytes, outerTypeOffset + 8, 64);
+  put64(bytes, outerTypeOffset + 16, 0);
+  put64(bytes, outerTypeOffset + 24, 0);
+  put64(bytes, outerTypeOffset + 32, scalarTypeOffset);
+  scalar(scalarTypeOffset);
+  std::fill(bytes.begin() + unusedTypeOffset,
+            bytes.begin() + unusedTypeOffset + 80, 0);
+  put64(bytes, 88, 2);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -5642,6 +5696,423 @@ TEST(VPI, LegacyProtectedPropertyDefaultsFalseAndFailsClosed) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(root), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
+  Fixture fixture;
+  fixture.database = makeManagedScalarDatabase(vpiStringVar);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  const auto *sizeProperty =
+      obelisk::reflection::findVPIProperty(vpiStringVar, vpiSize);
+  ASSERT_NE(sizeProperty, nullptr);
+  EXPECT_EQ(sizeProperty->realization,
+            obelisk::reflection::VPIPropertyRealization::Runtime);
+  char name[] = "top.value";
+  vpiHandle stringVariable = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(stringVariable, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, stringVariable), vpiStringVar);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+  auto storeString = [&](const char *bytes, uint64_t size) {
+    obelisk_rt_string_v1 string = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, bytes, size, &string),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &string, nullptr, 64),
+              OBELISK_RT_OK);
+  };
+  storeString("hello", 5);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), 5);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  const char embeddedNull[] = {'A', '\0', 'B'};
+  storeString(embeddedNull, sizeof(embeddedNull));
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), 3);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_string_v1 heapString = 0;
+  constexpr char heapText[] = "heap-backed-text";
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, heapText, sizeof(heapText) - 1,
+                                        &heapString),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 heapStringRoot{};
+  ASSERT_EQ(
+      obelisk_rt_v1_gc_managed_root_push(lane, &heapStringRoot, &heapString),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), sizeof(heapText) - 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  // Replacing the state word before removing its last root makes reclamation
+  // deterministic and exercises the lifetime boundary guarded by the query.
+  obelisk_rt_string_v1 emptyString = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &heapStringRoot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_validate_string(context, heapString),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+
+  obelisk_rt_context *foreignContext = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&foreignContext), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *foreignLane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(foreignContext, &foreignLane),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(foreignLane), OBELISK_RT_OK);
+  obelisk_rt_string_v1 foreignString = 0;
+  constexpr char foreignText[] = "foreign-heap-string";
+  ASSERT_EQ(obelisk_rt_v1_string_create(foreignLane, foreignText,
+                                        sizeof(foreignText) - 1,
+                                        &foreignString),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 foreignStringRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(foreignLane, &foreignStringRoot,
+                                               &foreignString),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *foreignStringObject =
+      obelisk_rt_object_from_managed_word(foreignString);
+  ASSERT_NE(foreignStringObject, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_gc_pin(foreignContext, foreignStringObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(foreignLane, &foreignStringRoot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(foreignLane), OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &foreignString, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_unpin(foreignContext, foreignStringObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(foreignLane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(foreignContext);
+
+  EXPECT_EQ(vpi_release_handle(stringVariable), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture protectedFixture;
+  protectedFixture.database = makeManagedScalarDatabase(vpiStringVar, true);
+  protectedFixture.execution.design_database = protectedFixture.database.data();
+  protectedFixture.execution.design_database_size =
+      protectedFixture.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&protectedFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  stringVariable = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(stringVariable, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, stringVariable), 1);
+  EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(stringVariable), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
+  Fixture fixture;
+  fixture.database = makeVPIManagedStringArrayDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle array = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(array, nullptr);
+  vpiHandle element = vpi_handle_by_index(array, 0);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, element), vpiStringVar);
+
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+  obelisk_rt_string_v1 selectedString = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "indexed", 7, &selectedString),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &selectedString, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get(vpiSize, element), 7);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(element), 1);
+  EXPECT_EQ(vpi_release_handle(array), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
+  Fixture fixture;
+  fixture.database = makeManagedScalarDatabase(vpiClassVar);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  const auto *idProperty =
+      obelisk::reflection::findVPIProperty(vpiClassVar, vpiObjId);
+  ASSERT_NE(idProperty, nullptr);
+  EXPECT_EQ(idProperty->valueKind,
+            obelisk::reflection::VPIPropertyValueKind::Int64);
+  EXPECT_EQ(idProperty->realization,
+            obelisk::reflection::VPIPropertyRealization::Runtime);
+
+  char name[] = "top.value";
+  vpiHandle firstHandle = vpi_handle_by_name(name, nullptr);
+  vpiHandle aliasHandle = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(firstHandle, nullptr);
+  ASSERT_NE(aliasHandle, nullptr);
+  EXPECT_EQ(vpi_compare_objects(firstHandle, aliasHandle), 1);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_get(vpiObjId, firstHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  const char className[] = "vpi_test_class";
+  const obelisk_rt_class_descriptor_v1 classDescriptor{OBELISK_RT_VERSION,
+                                                       0,
+                                                       UINT64_C(0x565049),
+                                                       sizeof(void *),
+                                                       alignof(void *),
+                                                       nullptr,
+                                                       nullptr,
+                                                       0,
+                                                       nullptr,
+                                                       nullptr,
+                                                       0,
+                                                       className,
+                                                       sizeof(className) - 1,
+                                                       nullptr};
+  obelisk_rt_object_v1 *firstObject = nullptr;
+  obelisk_rt_object_v1 *secondObject = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &classDescriptor, &firstObject),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 firstRoot{};
+  obelisk_rt_gc_root_v1 secondRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &firstRoot, &firstObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_object_allocate(lane, &classDescriptor, &secondObject),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &secondRoot, &secondObject),
+            OBELISK_RT_OK);
+
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+  uint64_t firstWord = obelisk_rt_managed_word_from_object(firstObject);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
+      OBELISK_RT_OK);
+  const PLI_INT64 firstIdentity =
+      static_cast<PLI_INT64>(obelisk_rt_v1_object_id(firstObject));
+  ASSERT_NE(firstIdentity, 0);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
+  EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), firstIdentity);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
+
+  uint64_t secondWord = obelisk_rt_managed_word_from_object(secondObject);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &secondWord, nullptr, 64),
+      OBELISK_RT_OK);
+  const PLI_INT64 secondIdentity =
+      static_cast<PLI_INT64>(obelisk_rt_v1_object_id(secondObject));
+  ASSERT_NE(secondIdentity, 0);
+  EXPECT_NE(secondIdentity, firstIdentity);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), secondIdentity);
+  EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), secondIdentity);
+
+  obelisk_rt_string_v1 wrongKind = 0;
+  constexpr char wrongKindText[] = "not-a-class-object";
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, wrongKindText,
+                                        sizeof(wrongKindText) - 1, &wrongKind),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 wrongKindRoot{};
+  ASSERT_EQ(
+      obelisk_rt_v1_gc_managed_root_push(lane, &wrongKindRoot, &wrongKind),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &wrongKind, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &wrongKindRoot),
+            OBELISK_RT_OK);
+
+  EXPECT_EQ(vpi_release_handle(aliasHandle), 1);
+  EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  uint64_t nullWord = 0;
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), 0);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &secondRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_object_id(firstObject), 0u);
+  EXPECT_EQ(obelisk_rt_v1_object_id(secondObject), 0u);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+
+  obelisk_rt_context *foreignContext = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&foreignContext), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *foreignLane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(foreignContext, &foreignLane),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(foreignLane), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *foreignObject = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(foreignLane, &classDescriptor,
+                                          &foreignObject),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 foreignRoot{};
+  ASSERT_EQ(
+      obelisk_rt_v1_gc_root_push(foreignLane, &foreignRoot, &foreignObject),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_pin(foreignContext, foreignObject), OBELISK_RT_OK);
+  const uint64_t foreignWord =
+      obelisk_rt_managed_word_from_object(foreignObject);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(foreignLane, &foreignRoot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(foreignLane), OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &foreignWord, nullptr, 64),
+      OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_unpin(foreignContext, foreignObject),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(foreignLane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(foreignContext);
+
+  EXPECT_EQ(vpi_release_handle(firstHandle), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  Fixture protectedFixture;
+  protectedFixture.database = makeManagedScalarDatabase(vpiClassVar, true);
+  protectedFixture.execution.design_database = protectedFixture.database.data();
+  protectedFixture.execution.design_database_size =
+      protectedFixture.database.size();
+  context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&protectedFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  firstHandle = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(firstHandle, nullptr);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(firstHandle), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
+  for (PLI_INT32 exactType : {vpiStringVar, vpiClassVar}) {
+    Fixture fixture;
+    fixture.database = makeManagedScalarDatabase(exactType, false, true);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+    char name[] = "top.value";
+    vpiHandle handle = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(handle, nullptr);
+    obelisk_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                  &fixture.execution, reinterpret_cast<const uint8_t *>(name),
+                  std::strlen(name), &cursor),
+              OBELISK_RT_OK);
+    uint64_t value = 0;
+    uint64_t unknown = 1;
+    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &value, &unknown, 64),
+              OBELISK_RT_OK);
+    if (exactType == vpiStringVar)
+      EXPECT_EQ(vpi_get(vpiSize, handle), vpiUndefined);
+    else
+      EXPECT_EQ(vpi_get64(vpiObjId, handle), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+
+    unknown = 0;
+    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &value, &unknown, 64),
+              OBELISK_RT_OK);
+    if (exactType == vpiStringVar)
+      EXPECT_EQ(vpi_get(vpiSize, handle), vpiUndefined);
+    else
+      EXPECT_EQ(vpi_get64(vpiObjId, handle), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {

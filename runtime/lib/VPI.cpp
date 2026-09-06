@@ -2523,6 +2523,47 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
   return true;
 }
 
+bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return false;
+  obelisk_rt_design_type_info_v1 type{};
+  if (info.type_offset == 0 ||
+      obelisk_rt_cached_design_type_info(
+          handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK ||
+      type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
+      info.bit_width != 64 ||
+      (handle->form != VPIObjectForm::Design &&
+       handle->form != VPIObjectForm::Indexed)) {
+    setError(handle->owner, "invalid managed VPI storage representation",
+             vpiInternal);
+    return false;
+  }
+  uint64_t unknown = 0;
+  obelisk_rt_status status =
+      handle->form == VPIObjectForm::Indexed
+          ? obelisk_rt_read_design_slice(handle->owner->context, handle->cursor,
+                                         handle->selectionBitOffset, 64, &word,
+                                         &unknown)
+          : obelisk_rt_v1_design_read(handle->owner->context, handle->cursor,
+                                      &word, &unknown, 64);
+  if (status != OBELISK_RT_OK) {
+    setError(handle->owner, "managed VPI state read failed", vpiInternal);
+    return false;
+  }
+  if (unknown != 0) {
+    setError(handle->owner, "managed VPI state contains unknown bits",
+             vpiInternal);
+    return false;
+  }
+  if (type.flags != 0) {
+    setError(handle->owner, "invalid managed VPI storage representation",
+             vpiInternal);
+    return false;
+  }
+  return true;
+}
+
 bool logicBit(const std::vector<uint64_t> &plane, uint64_t bit) {
   return (plane[static_cast<size_t>(bit / 64)] & (uint64_t{1} << (bit % 64))) !=
          0;
@@ -3749,6 +3790,30 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiProtected)
     return 0;
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
+  if (property == vpiSize && objectType == vpiStringVar) {
+    ContextTransaction transaction(handle->owner->context);
+    ManagedExecutionScope managed(handle->owner->context);
+    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+      setError(handle->owner, "managed string VPI query cannot enter GC scope",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    uint64_t string = 0;
+    if (!readManagedStateWord(handle, string))
+      return vpiUndefined;
+    if (obelisk_rt_v1_gc_candidate_root(
+            handle->owner->context,
+            static_cast<obelisk_rt_managed_word_v1>(string),
+            OBELISK_RT_MANAGED_ROOT_KIND_STRING) != string) {
+      setError(handle->owner, "invalid managed string in VPI design state",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    // Match the other vpiSize handlers at the signed 32-bit VPI ABI boundary.
+    return static_cast<PLI_INT32>(std::min<uint64_t>(
+        obelisk_rt_v1_string_length(static_cast<obelisk_rt_string_v1>(string)),
+        INT32_MAX));
+  }
   if (handle->kind == VPIHandleKind::Object &&
       handle->form == VPIObjectForm::IntegralConstant) {
     if (!propertyFor(handle, property))
@@ -4057,6 +4122,39 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
         value.kind != static_cast<uint8_t>(descriptor->valueKind))
       return vpiUndefined;
     return static_cast<PLI_INT64>(value.payload);
+  }
+  if (property == vpiObjId && vpiTypeForHandle(handle) == vpiClassVar) {
+    ContextTransaction transaction(handle->owner->context);
+    ManagedExecutionScope managed(handle->owner->context);
+    obelisk_rt_gc_lane_v1 *lane = managed.getLane();
+    if (managed.getStatus() != OBELISK_RT_OK || !lane ||
+        obelisk_rt_managed_lane_context(lane) != handle->owner->context) {
+      setError(handle->owner, "class VPI query cannot enter GC scope",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    uint64_t word = 0;
+    if (!readManagedStateWord(handle, word))
+      return vpiUndefined;
+    if (word == 0)
+      return 0;
+    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+    ManagedObjectLease lease;
+    if (!object ||
+        obelisk_rt_managed_object_acquire(
+            lane, object, OBELISK_RT_MANAGED_CLASS, &lease) != OBELISK_RT_OK ||
+        obelisk_rt_managed_object_context(object) != handle->owner->context) {
+      setError(handle->owner, "invalid class reference in VPI design state",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    uint64_t identity = obelisk_rt_v1_object_id(object);
+    if (identity == 0 || identity > INT64_MAX) {
+      setError(handle->owner, "invalid class identity in VPI design state",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    return static_cast<PLI_INT64>(identity);
   }
   setError(handle->owner, "unsupported 64-bit integer VPI property", vpiNotice);
   return vpiUndefined;
