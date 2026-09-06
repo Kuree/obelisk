@@ -1276,6 +1276,49 @@ bool unpackedArrayElementCount(__vpiHandle *handle,
   }
 }
 
+bool physicalTypeInfo(__vpiHandle *handle,
+                      obelisk_rt_design_type_info_v1 &type) {
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return false;
+  if (info.type_offset == 0 ||
+      obelisk_rt_cached_design_type_info(
+          handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK) {
+    setError(handle->owner, "design type metadata lookup failed", vpiInternal);
+    return false;
+  }
+  return true;
+}
+
+bool physicalUnpackedArrayDimensions(__vpiHandle *handle,
+                                     uint32_t &dimensions) {
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return false;
+  dimensions = 0;
+  obelisk_rt_design_cursor_v1 cursor{info.type_offset};
+  for (;;) {
+    obelisk_rt_design_type_info_v1 type{};
+    if (cursor.offset == 0 ||
+        obelisk_rt_cached_design_type_info(handle->owner->context, cursor,
+                                           &type) != OBELISK_RT_OK) {
+      setError(handle->owner, "design type metadata lookup failed",
+               vpiInternal);
+      return false;
+    }
+    if (type.kind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+        (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0)
+      return true;
+    if (dimensions == UINT32_MAX) {
+      setError(handle->owner, "physical array dimension count exceeds ABI",
+               vpiInternal);
+      return false;
+    }
+    ++dimensions;
+    cursor = type.element_type;
+  }
+}
+
 bool supportsPackedBitSelect(__vpiHandle *handle,
                              obelisk_rt_design_cursor_v1 semantic,
                              uint32_t exactType) {
@@ -3828,6 +3871,49 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     setError(handle->owner, "unsupported property for VPI handle kind",
              vpiNotice);
     return vpiUndefined;
+  }
+  if (property == vpiArray || property == vpiIsMemory ||
+      property == vpiPacked || property == vpiArrayType ||
+      property == vpiRandType || property == vpiIsRandomized) {
+    // The current physical image has no class-instance variable records and
+    // therefore no source rand/randc declaration or active-randomization bit.
+    // Every physical variable represented here is exactly non-random until
+    // those immutable/dynamic fields are added; semantic aggregate members
+    // are handled above from their edge metadata.
+    if (property == vpiRandType)
+      return vpiNotRand;
+    if (property == vpiIsRandomized)
+      return 0;
+
+    if (property == vpiArray)
+      return isIndexedArrayMember(handle);
+
+    if (property == vpiIsMemory) {
+      // IEEE 1800-2017 37.20 generalizes the legacy memory object to a
+      // one-dimensional vpiRegArray/vpiArrayVar; no leaf-type restriction
+      // remains after that generalization.
+      uint32_t dimensions = 0;
+      if (!physicalUnpackedArrayDimensions(handle, dimensions))
+        return vpiUndefined;
+      return dimensions == 1;
+    }
+
+    if (property == vpiArrayType) {
+      uint32_t dimensions = 0;
+      if (!physicalUnpackedArrayDimensions(handle, dimensions))
+        return vpiUndefined;
+      if (dimensions != 0)
+        return vpiStaticArray;
+      setError(handle->owner,
+               "vpiRegArray object has no physical unpacked-array type",
+               vpiInternal);
+      return vpiUndefined;
+    }
+
+    obelisk_rt_design_type_info_v1 type{};
+    if (!physicalTypeInfo(handle, type))
+      return vpiUndefined;
+    return (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
   }
   if (property == vpiSize) {
     if (!propertyFor(handle, property))

@@ -6000,6 +6000,159 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
   }
 }
 
+TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
+  auto start = [](Fixture &fixture) {
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    return context;
+  };
+  char name[] = "top.value";
+
+  // One unpacked dimension is an IEEE 1364 memory.  Its selected variable is
+  // also reported through the deprecated vpiArray compatibility property.
+  Fixture oneDimension;
+  oneDimension.database = makeVPITypedArrayDatabase(
+      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 1,
+      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
+  obelisk_rt_context *context = start(oneDimension);
+  ASSERT_NE(context, nullptr);
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_get(vpiArray, root), 0);
+  EXPECT_EQ(vpi_get(vpiIsMemory, root), 1);
+  EXPECT_EQ(vpi_get(vpiArrayType, root), vpiStaticArray);
+  vpiHandle member = vpi_handle_by_index(root, 0);
+  ASSERT_NE(member, nullptr);
+  EXPECT_EQ(vpi_get(vpiArray, member), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(member), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  // A multidimensional array is not a legacy memory; selecting its leftmost
+  // dimension leaves a one-dimensional vpiRegArray that is one.
+  Fixture multidimensional;
+  multidimensional.database = makeVPIIndexedDatabase(
+      1, 0, 2, 0, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+  context = start(multidimensional);
+  ASSERT_NE(context, nullptr);
+  root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_get(vpiArray, root), 0);
+  EXPECT_EQ(vpi_get(vpiIsMemory, root), 0);
+  EXPECT_EQ(vpi_get(vpiArrayType, root), vpiStaticArray);
+  vpiHandle row = vpi_handle_by_index(root, 1);
+  ASSERT_NE(row, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, row), vpiRegArray);
+  EXPECT_EQ(vpi_get(vpiArray, row), 1);
+  EXPECT_EQ(vpi_get(vpiIsMemory, row), 1);
+  EXPECT_EQ(vpi_get(vpiArrayType, row), vpiStaticArray);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(row), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  // In current IEEE 1800 mode vpiArray is membership provenance, not a
+  // synonym for having an unpacked physical type.  Ordinary non-members with
+  // no physical type therefore return false without an image lookup error.
+  Fixture ordinaryModule;
+  ordinaryModule.database = makeDatabase();
+  context = start(ordinaryModule);
+  ASSERT_NE(context, nullptr);
+  char rootName[] = "$root";
+  vpiHandle module = vpi_handle_by_name(rootName, nullptr);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, module), vpiModule);
+  EXPECT_EQ(vpi_get(vpiArray, module), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+
+  struct PackedCase {
+    VPIShapeType shape;
+    uint32_t exactType;
+    bool packed;
+  };
+  constexpr PackedCase packedCases[]{
+      {VPIShapeType::PackedArrayOneBit, vpiPackedArrayVar, true},
+      {VPIShapeType::PackedStructOneBit, vpiStructVar, true},
+      {VPIShapeType::PackedUnionOneBit, vpiUnionVar, true},
+      {VPIShapeType::BasicVector, vpiEnumVar, true},
+      {VPIShapeType::UnpackedStruct, vpiStructVar, false},
+      {VPIShapeType::UnpackedUnion, vpiUnionVar, false},
+  };
+  for (const PackedCase &testCase : packedCases) {
+    SCOPED_TRACE(testCase.exactType);
+    Fixture packedFixture;
+    packedFixture.database =
+        makeVPIShapeDatabase(testCase.shape, testCase.exactType);
+    context = start(packedFixture);
+    ASSERT_NE(context, nullptr);
+    root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(
+        obelisk::reflection::findVPIProperty(testCase.exactType, vpiPacked),
+        nullptr);
+    EXPECT_EQ(vpi_get(vpiPacked, root), testCase.packed);
+    if (testCase.exactType == vpiPackedArrayVar) {
+      EXPECT_EQ(vpi_get(vpiArray, root), 0);
+    }
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(root), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, PhysicalVariableRandomizationPropertiesHaveExactDefault) {
+  // These are exactly the physical variable kinds in the generated
+  // RandomizationTypeObjects/OrdinaryVariablePropertyObjects intersection.
+  // TypespecMember rand/randc values are covered separately by semantic-edge
+  // tests; the physical image currently represents none of those fields.
+  constexpr uint32_t variableTypes[]{
+      vpiShortRealVar,        vpiRealVar,    vpiByteVar,
+      vpiShortIntVar,         vpiIntVar,     vpiLongIntVar,
+      vpiIntegerVar,          vpiTimeVar,    vpiRegArray,
+      vpiPackedArrayVar,      vpiBitVar,     vpiReg,
+      vpiStructVar,           vpiUnionVar,   vpiEnumVar,
+      vpiStringVar,           vpiChandleVar, vpiClassVar,
+      vpiVirtualInterfaceVar, vpiRegBit,
+  };
+  char name[] = "top.value";
+  for (uint32_t exactType : variableTypes) {
+    SCOPED_TRACE(exactType);
+    ASSERT_NE(obelisk::reflection::findVPIProperty(exactType, vpiRandType),
+              nullptr);
+    ASSERT_NE(obelisk::reflection::findVPIProperty(exactType, vpiIsRandomized),
+              nullptr);
+    Fixture fixture;
+    fixture.database =
+        makeVPIShapeDatabase(VPIShapeType::BasicScalar, exactType);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    vpiHandle variable = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(variable, nullptr);
+    EXPECT_EQ(vpi_get(vpiRandType, variable), vpiNotRand);
+    EXPECT_EQ(vpi_get(vpiIsRandomized, variable), 0);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(variable), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   Fixture fixture;
   fixture.database = makeVPIIndexedDatabase();
