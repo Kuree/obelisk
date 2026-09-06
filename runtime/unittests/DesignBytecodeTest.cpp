@@ -3140,6 +3140,14 @@ struct ResolvedNetRunSpec {
   uint64_t bitCount;
 };
 
+struct NetDelayRunSpec {
+  uint64_t firstBit;
+  uint64_t bitCount;
+  int64_t rise;
+  int64_t fall;
+  int64_t third;
+};
+
 std::vector<uint8_t> makeVPINetPropertyDatabase(
     std::optional<uint32_t> netType, bool scalared = false,
     bool vectored = false, bool implicit = false,
@@ -3147,8 +3155,8 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
     bool protectedObject = false, uint32_t exactType = vpiNetArray,
     std::optional<uint32_t> strength0 = std::nullopt,
     std::optional<uint32_t> strength1 = std::nullopt,
-    std::optional<std::vector<ResolvedNetRunSpec>> resolvedRuns =
-        std::nullopt) {
+    std::optional<std::vector<ResolvedNetRunSpec>> resolvedRuns = std::nullopt,
+    std::optional<std::vector<NetDelayRunSpec>> delayRuns = std::nullopt) {
   std::vector<uint8_t> bytes = makeVPIIndexedDatabase(
       0, 1, 7, 4, exactType, OBELISK_RT_DESIGN_RECORD_NET);
   struct Property {
@@ -3188,7 +3196,10 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
                                          {*netType, 0, 8}}
                                    : std::vector<ResolvedNetRunSpec>{});
   const uint64_t resolvedRunOffset = propertyOffset + properties.size() * 16;
-  bytes.resize(resolvedRunOffset + runs.size() * 24, 0);
+  const std::vector<NetDelayRunSpec> delays =
+      delayRuns.value_or(std::vector<NetDelayRunSpec>{});
+  const uint64_t delayRunOffset = resolvedRunOffset + runs.size() * 24;
+  bytes.resize(delayRunOffset + delays.size() * 48, 0);
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 32, semanticRootOffset);
@@ -3197,6 +3208,8 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
   put64(bytes, directoryOffset + 120, properties.size());
   put64(bytes, directoryOffset + 128, resolvedRunOffset);
   put64(bytes, directoryOffset + 136, runs.size());
+  put64(bytes, directoryOffset + 144, delayRunOffset);
+  put64(bytes, directoryOffset + 152, delays.size());
   put32(bytes, semanticRootOffset, UINT32_MAX);
   for (size_t index = 0; index != properties.size(); ++index) {
     const Property &property = properties[index];
@@ -3213,6 +3226,16 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
     put32(bytes, offset + 4, run.netType);
     put64(bytes, offset + 8, run.firstBit);
     put64(bytes, offset + 16, run.bitCount);
+  }
+  for (size_t index = 0; index != delays.size(); ++index) {
+    const NetDelayRunSpec &run = delays[index];
+    const uint64_t offset = delayRunOffset + index * 48;
+    put32(bytes, offset, 0); // The only physical object record.
+    put64(bytes, offset + 8, run.firstBit);
+    put64(bytes, offset + 16, run.bitCount);
+    put64(bytes, offset + 24, static_cast<uint64_t>(run.rise));
+    put64(bytes, offset + 32, static_cast<uint64_t>(run.fall));
+    put64(bytes, offset + 40, static_cast<uint64_t>(run.third));
   }
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
@@ -5945,6 +5968,109 @@ TEST(VPI, ReadsResolvedNetTypeAtExactIndexedSelectionGranularity) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ReadsImmutableNetDelaysAtExactSelectionGranularity) {
+  Fixture fixture;
+  fixture.database = makeVPINetPropertyDatabase(
+      vpiTriReg, false, false, false, false, 0, false, vpiNetArray,
+      std::nullopt, std::nullopt, std::vector<ResolvedNetRunSpec>{},
+      std::vector<NetDelayRunSpec>{{4, 4, 17, 19, -1}});
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  static constexpr char rootName[] = "$root";
+  static constexpr char topName[] = "top";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
+      {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
+  };
+  fixture.execution.dpi_scopes = scopes;
+  fixture.execution.dpi_scope_count = std::size(scopes);
+  fixture.execution.dpi_time_precision = -12;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  s_vpi_time wholeTime[3]{};
+  s_vpi_delay whole{wholeTime, 3, vpiSimTime, 0, 0, 0};
+  vpi_get_delays(root, &whole);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  vpiHandle first = vpi_handle_by_index(root, 0);
+  vpiHandle second = vpi_handle_by_index(root, 1);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+
+  s_vpi_time firstTimes[3]{};
+  s_vpi_delay firstDelay{firstTimes, 3, vpiSimTime, 0, 0, 0};
+  vpi_get_delays(first, &firstDelay);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (size_t index = 0; index != 3; ++index) {
+    EXPECT_EQ(firstTimes[index].type, vpiSimTime);
+    EXPECT_EQ(firstTimes[index].high, 0u);
+  }
+  EXPECT_EQ(firstTimes[0].low, 0u);
+  EXPECT_EQ(firstTimes[1].low, 0u);
+  EXPECT_EQ(firstTimes[2].low, 0u);
+
+  s_vpi_time expanded[18]{};
+  s_vpi_delay expandedDelay{expanded, 2, vpiScaledRealTime, 1, 0, 1};
+  vpi_get_delays(second, &expandedDelay);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (size_t index = 0; index != 9; ++index) {
+    EXPECT_EQ(expanded[index].type, vpiScaledRealTime);
+    EXPECT_DOUBLE_EQ(expanded[index].real, 0.017);
+  }
+  for (size_t index = 9; index != 18; ++index) {
+    EXPECT_EQ(expanded[index].type, vpiScaledRealTime);
+    EXPECT_DOUBLE_EQ(expanded[index].real, 0.019);
+  }
+
+  s_vpi_time retained[3]{};
+  s_vpi_delay retainedDelay{retained, 3, vpiSimTime, 0, 0, 0};
+  vpi_get_delays(second, &retainedDelay);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(retained[2].high, UINT32_MAX);
+  EXPECT_EQ(retained[2].low, UINT32_MAX);
+
+  s_vpi_time suppressed[1]{{vpiSimTime, 1, 2, 3.0}};
+  s_vpi_delay suppressDelay{suppressed, 1, vpiSuppressTime, 0, 0, 0};
+  vpi_get_delays(second, &suppressDelay);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(suppressed[0].type, vpiSuppressTime);
+  EXPECT_EQ(suppressed[0].high, 0u);
+  EXPECT_EQ(suppressed[0].low, 0u);
+  EXPECT_EQ(suppressed[0].real, 0.0);
+
+  s_vpi_delay invalid{suppressed, 0, vpiSimTime, 0, 0, 0};
+  vpi_get_delays(second, &invalid);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  invalid.no_of_delays = 4;
+  vpi_get_delays(second, &invalid);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  invalid.no_of_delays = 1;
+  invalid.time_type = 12345;
+  vpi_get_delays(second, &invalid);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  invalid.time_type = vpiSimTime;
+  invalid.da = nullptr;
+  vpi_get_delays(second, &invalid);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  vpi_get_delays(second, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(vpi_release_handle(second), 1);
+  EXPECT_EQ(vpi_release_handle(first), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
   for (const auto &[strength0, strength1] : {
            std::pair<uint32_t, uint32_t>{vpiStrongDrive, vpiStrongDrive},
@@ -6171,6 +6297,79 @@ TEST(DesignDatabase, RejectsMalformedResolvedNetRunImages) {
     auto database = makeVPINetPropertyDatabase(vpiWire);
     auto [run, directory] = locations(database);
     database.resize(run + 23);
+    expectInvalid(std::move(database));
+  }
+}
+
+TEST(DesignDatabase, RejectsMalformedNetDelayRunImages) {
+  auto make = [](std::vector<NetDelayRunSpec> runs) {
+    return makeVPINetPropertyDatabase(
+        vpiWire, false, false, false, false, 0, false, vpiNetArray,
+        std::nullopt, std::nullopt, std::vector<ResolvedNetRunSpec>{},
+        std::move(runs));
+  };
+  auto expectInvalid = [](std::vector<uint8_t> database) {
+    put64(database, 24, database.size());
+    put64(database, 32, imageChecksum(database));
+    Fixture fixture;
+    fixture.database = std::move(database);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(context, nullptr);
+  };
+  auto locations = [](const std::vector<uint8_t> &database) {
+    uint32_t directory = get32(database, 12);
+    return std::pair<uint64_t, uint64_t>{get64(database, directory + 144),
+                                         directory};
+  };
+
+  for (const auto &[fieldOffset, value] : {
+           std::pair<uint64_t, uint64_t>{0, 1},
+           {4, 1},
+           {8, 8},
+           {16, 0},
+           {24, UINT64_MAX},
+           {32, UINT64_MAX},
+           {40, UINT64_MAX - 1},
+       }) {
+    auto database = make({{0, 8, 7, 11, 13}});
+    auto [run, directory] = locations(database);
+    (void)directory;
+    if (fieldOffset <= 4)
+      put32(database, run + fieldOffset, static_cast<uint32_t>(value));
+    else
+      put64(database, run + fieldOffset, value);
+    expectInvalid(std::move(database));
+  }
+  for (const std::vector<NetDelayRunSpec> &runs : {
+           std::vector<NetDelayRunSpec>{{0, 8, 0, 0, 0}},
+           std::vector<NetDelayRunSpec>{{2, 4, 1, 2, 3}, {0, 2, 4, 5, 6}},
+           std::vector<NetDelayRunSpec>{{0, 5, 1, 2, 3}, {4, 4, 4, 5, 6}},
+           std::vector<NetDelayRunSpec>{{0, 4, 1, 2, 3}, {4, 4, 1, 2, 3}},
+       })
+    expectInvalid(make(runs));
+  {
+    auto database = make({{0, 8, 7, 11, 13}});
+    auto [run, directory] = locations(database);
+    (void)run;
+    put64(database, directory + 144, database.size() + 1);
+    expectInvalid(std::move(database));
+  }
+  {
+    auto database = make({{0, 8, 7, 11, 13}});
+    auto [run, directory] = locations(database);
+    (void)run;
+    put64(database, directory + 152, UINT64_MAX);
+    expectInvalid(std::move(database));
+  }
+  {
+    auto database = make({{0, 8, 7, 11, 13}});
+    auto [run, directory] = locations(database);
+    database.resize(run + 47);
     expectInvalid(std::move(database));
   }
 }

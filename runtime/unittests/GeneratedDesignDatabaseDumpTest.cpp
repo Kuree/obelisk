@@ -147,6 +147,7 @@ TEST(GeneratedDesignDatabase, Dump) {
   uint64_t relationIndexMemberOffset = 0, relationIndexMemberCount = 0;
   uint64_t fixedPropertyOffset = 0, fixedPropertyCount = 0;
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
+  uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -170,6 +171,8 @@ TEST(GeneratedDesignDatabase, Dump) {
     fixedPropertyCount = directory.getFixedPropertyCount();
     resolvedNetRunOffset = directory.getResolvedNetRunOffset();
     resolvedNetRunCount = directory.getResolvedNetRunCount();
+    netDelayRunOffset = directory.getNetDelayRunOffset();
+    netDelayRunCount = directory.getNetDelayRunCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -194,6 +197,7 @@ TEST(GeneratedDesignDatabase, Dump) {
                        FixedPropertyLayout);
   ASSERT_SECTION_RANGE(resolvedNetRunOffset, resolvedNetRunCount,
                        ResolvedNetRunLayout);
+  ASSERT_SECTION_RANGE(netDelayRunOffset, netDelayRunCount, NetDelayRunLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;
@@ -442,6 +446,18 @@ TEST(GeneratedDesignDatabase, Dump) {
               << " selector=" << property.getSelector()
               << " kind=" << property.getKindAndFlags() << " value=" << value
               << '\n';
+  }
+
+  for (uint64_t index = 0; index != netDelayRunCount; ++index) {
+    const NetDelayRunView run(image + netDelayRunOffset +
+                              index * NetDelayRunLayout.size);
+    ASSERT_LT(run.getObjectIndex(), objectIndexNames.size());
+    output << "net_delay_run object=" << run.getObjectIndex()
+           << " object_name=" << objectIndexNames[run.getObjectIndex()]
+           << " bits=[" << run.getFirstBit() << ':'
+           << run.getFirstBit() + run.getBitCount() << ") delays=["
+           << run.getRise() << ',' << run.getFall() << ',' << run.getThird()
+           << "]\n";
   }
 
   for (uint64_t index = 0; index != header.getStatementSiteCount(); ++index) {

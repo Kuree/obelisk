@@ -285,6 +285,22 @@ def ResolvedNetRun : ReflectionLayout<"ResolvedNetRun", 24,
   [ResolvedNetRunObjectIndex, ResolvedNetRunNetType,
    ResolvedNetRunFirstBit, ResolvedNetRunBitCount]>;
 
+// Effective net delays use the same per-bit run representation as resolved
+// net subtypes. Rise, fall, and third are scheduler ticks at the design-wide
+// time precision; Third is the turn-off delay for ordinary nets and the charge
+// decay time for trireg nets. Runs are sorted and maximally coalesced; missing
+// bits have the default zero delay and therefore consume no image space.
+def NetDelayRunObjectIndex : ReflectionField<"ObjectIndex", 0, U32LE>;
+def NetDelayRunReserved : ReflectionField<"Reserved", 4, U32LE>;
+def NetDelayRunFirstBit : ReflectionField<"FirstBit", 8, U64LE>;
+def NetDelayRunBitCount : ReflectionField<"BitCount", 16, U64LE>;
+def NetDelayRunRise : ReflectionField<"Rise", 24, I64LE>;
+def NetDelayRunFall : ReflectionField<"Fall", 32, I64LE>;
+def NetDelayRunThird : ReflectionField<"Third", 40, I64LE>;
+def NetDelayRun : ReflectionLayout<"NetDelayRun", 48,
+  [NetDelayRunObjectIndex, NetDelayRunReserved, NetDelayRunFirstBit,
+   NetDelayRunBitCount, NetDelayRunRise, NetDelayRunFall, NetDelayRunThird]>;
+
 // HeaderReserved is zero when no extension is present, otherwise it is the
 // absolute 32-bit image offset of this directory. Keeping the fixed header
 // stable lets future reflection producers add orthogonal generated sections
@@ -325,7 +341,11 @@ def SemanticDirectoryResolvedNetRunOffset
     : ReflectionField<"ResolvedNetRunOffset", 128, U64LE>;
 def SemanticDirectoryResolvedNetRunCount
     : ReflectionField<"ResolvedNetRunCount", 136, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 144,
+def SemanticDirectoryNetDelayRunOffset
+    : ReflectionField<"NetDelayRunOffset", 144, U64LE>;
+def SemanticDirectoryNetDelayRunCount
+    : ReflectionField<"NetDelayRunCount", 152, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 160,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -340,7 +360,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 144,
    SemanticDirectoryFixedPropertyOffset,
    SemanticDirectoryFixedPropertyCount,
    SemanticDirectoryResolvedNetRunOffset,
-   SemanticDirectoryResolvedNetRunCount]>;
+   SemanticDirectoryResolvedNetRunCount,
+   SemanticDirectoryNetDelayRunOffset,
+   SemanticDirectoryNetDelayRunCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

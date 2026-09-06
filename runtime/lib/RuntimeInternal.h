@@ -1425,6 +1425,8 @@ struct DesignDatabaseCache {
   uint64_t fixedPropertyCount = 0;
   uint64_t resolvedNetRuns = 0;
   uint64_t resolvedNetRunCount = 0;
+  uint64_t netDelayRuns = 0;
+  uint64_t netDelayRunCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -1442,6 +1444,12 @@ struct VPIFixedPropertyValue {
   uint64_t payload = 0;
   const uint8_t *stringData = nullptr;
   uint64_t stringSize = 0;
+};
+
+struct VPINetDelayValue {
+  int64_t rise = 0;
+  int64_t fall = 0;
+  int64_t third = 0;
 };
 
 struct VPIRelationIndexInfo {
@@ -2827,6 +2835,9 @@ obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
 obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_net_delay(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t bitWidth, VPINetDelayValue *outDelay) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;

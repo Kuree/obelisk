@@ -5249,7 +5249,97 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
   __vpiHandle *handle = findHandle(opaque);
   if (!handle || !allowProtectedSource(handle, "vpi_get_delays"))
     return;
-  setError(state, "VPI delay metadata is unavailable", vpiNotice);
+  if (handle->kind != VPIHandleKind::Object) {
+    setError(state, "VPI handle does not have delay metadata", vpiNotice);
+    return;
+  }
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return;
+  if (info.kind != OBELISK_RT_DESIGN_RECORD_NET) {
+    setError(state, "VPI delay metadata is unavailable", vpiNotice);
+    return;
+  }
+  if (destination->no_of_delays < 1 || destination->no_of_delays > 3) {
+    setError(state, "VPI net delay count must be between one and three");
+    return;
+  }
+  switch (destination->time_type) {
+  case vpiScaledRealTime:
+  case vpiSimTime:
+  case vpiSuppressTime:
+    break;
+  default:
+    setError(state, "unsupported VPI delay time format");
+    return;
+  }
+  if (!destination->da) {
+    setError(state, "VPI delay value array is null");
+    return;
+  }
+
+  uint64_t bitOffset =
+      handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
+  VPINetDelayValue delay{};
+  obelisk_rt_status status =
+      obelisk_rt_cached_vpi_net_delay(handle->owner->context, handle->cursor,
+                                      bitOffset, info.bit_width, &delay);
+  if (status != OBELISK_RT_OK) {
+    setError(state,
+             status == OBELISK_RT_EOF ? "VPI delay metadata is unavailable"
+                                      : "VPI net delay image lookup failed",
+             status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+    return;
+  }
+
+  int32_t precision = 0;
+  int32_t unit = 0;
+  long double timeScale = 1.0L;
+  if (destination->time_type == vpiScaledRealTime) {
+    if (!globalTimeExponent(state, precision))
+      return;
+    DpiScopeHandle *scope = timeScopeFor(handle);
+    if (!scope) {
+      setError(state, "VPI object timescale metadata is unavailable",
+               vpiNotice);
+      return;
+    }
+    unit = scope->timeUnit;
+    timeScale = std::pow(10.0L, static_cast<long double>(precision - unit));
+  }
+  const std::array<int64_t, 3> values{delay.rise, delay.fall, delay.third};
+  const size_t mtmCount = destination->mtm_flag ? 3 : 1;
+  const size_t pulseCount = destination->pulsere_flag ? 3 : 1;
+  for (size_t delayIndex = 0;
+       delayIndex != static_cast<size_t>(destination->no_of_delays);
+       ++delayIndex) {
+    for (size_t pulseIndex = 0; pulseIndex != pulseCount; ++pulseIndex) {
+      for (size_t mtmIndex = 0; mtmIndex != mtmCount; ++mtmIndex) {
+        const size_t resultIndex = delayIndex * pulseCount * mtmCount +
+                                   pulseIndex * mtmCount + mtmIndex;
+        s_vpi_time &result = destination->da[resultIndex];
+        result = {};
+        result.type = destination->time_type;
+        int64_t ticks = values[delayIndex];
+        switch (destination->time_type) {
+        case vpiSimTime: {
+          uint64_t encoded = static_cast<uint64_t>(ticks);
+          result.high = static_cast<PLI_UINT32>(encoded >> 32);
+          result.low = static_cast<PLI_UINT32>(encoded);
+          break;
+        }
+        case vpiScaledRealTime:
+          result.real = ticks == -1
+                            ? -1.0
+                            : static_cast<double>(
+                                  static_cast<long double>(ticks) * timeScale);
+          break;
+        case vpiSuppressTime:
+          break;
+        }
+      }
+    }
+  }
 }
 
 struct VPIArrayDimension {

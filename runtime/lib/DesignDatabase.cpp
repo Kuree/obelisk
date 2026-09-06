@@ -51,6 +51,8 @@ constexpr uint64_t kFixedPropertySize =
     obelisk::reflection::FixedPropertyLayout.size;
 constexpr uint64_t kResolvedNetRunSize =
     obelisk::reflection::ResolvedNetRunLayout.size;
+constexpr uint64_t kNetDelayRunSize =
+    obelisk::reflection::NetDelayRunLayout.size;
 
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
@@ -182,6 +184,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t relationIndexMemberOffset = 0, relationIndexMemberCount = 0;
   uint64_t fixedPropertyOffset = 0, fixedPropertyCount = 0;
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
+  uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -206,6 +209,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     fixedPropertyCount = read64(directory + 120);
     resolvedNetRunOffset = read64(directory + 128);
     resolvedNetRunCount = read64(directory + 136);
+    netDelayRunOffset = read64(directory + 144);
+    netDelayRunCount = read64(directory + 152);
   }
   database = {data,
               execution->design_database_size,
@@ -245,6 +250,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               fixedPropertyCount,
               resolvedNetRunOffset,
               resolvedNetRunCount,
+              netDelayRunOffset,
+              netDelayRunCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -279,6 +286,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kFixedPropertySize},
         {database.resolvedNetRuns, database.resolvedNetRunCount,
          kResolvedNetRunSize},
+        {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -308,8 +316,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
-        database.fixedPropertyCount != 0 ||
-        database.resolvedNetRunCount != 0)) ||
+        database.fixedPropertyCount != 0 || database.resolvedNetRunCount != 0 ||
+        database.netDelayRunCount != 0)) ||
       (semanticDirectory != 0 &&
        database.objectSemanticRootCount != database.objectCount) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
@@ -348,6 +356,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kFixedPropertySize, database.size) ||
       !validRange(database.resolvedNetRuns, database.resolvedNetRunCount,
                   kResolvedNetRunSize, database.size) ||
+      !validRange(database.netDelayRuns, database.netDelayRunCount,
+                  kNetDelayRunSize, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -371,6 +381,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.fixedProperties < kHeaderSize) ||
       ((database.resolvedNetRunCount != 0 || database.resolvedNetRuns != 0) &&
        database.resolvedNetRuns < kHeaderSize) ||
+      ((database.netDelayRunCount != 0 || database.netDelayRuns != 0) &&
+       database.netDelayRuns < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.stringSize == 0 || database.scopeCount > UINT32_MAX ||
       database.objectCount > UINT32_MAX ||
@@ -385,6 +397,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.relationIndexMemberCount > UINT32_MAX ||
       database.fixedPropertyCount > UINT32_MAX ||
       database.resolvedNetRunCount > UINT32_MAX ||
+      database.netDelayRunCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
@@ -578,6 +591,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kFixedPropertySize},
       {database.resolvedNetRuns, database.resolvedNetRunCount,
        kResolvedNetRunSize},
+      {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -1168,6 +1182,44 @@ bool validateDatabaseImpl(const Database &database) {
     previousResolvedObject = objectIndex;
     previousResolvedType = netType;
     previousResolvedEnd = firstBit + bitCount;
+  }
+
+  // Net delays form a canonical sparse per-object run map. Gaps represent the
+  // default zero delay. The third value may be -1 only for indefinite trireg
+  // charge retention.
+  bool havePreviousDelayRun = false;
+  uint32_t previousDelayObject = 0;
+  uint64_t previousDelayEnd = 0;
+  std::array<int64_t, 3> previousDelays{};
+  for (uint64_t index = 0; index != database.netDelayRunCount; ++index) {
+    const uint8_t *run =
+        database.data + database.netDelayRuns + index * kNetDelayRunSize;
+    uint32_t objectIndex = read32(run);
+    uint32_t reserved = read32(run + 4);
+    uint64_t firstBit = read64(run + 8);
+    uint64_t bitCount = read64(run + 16);
+    std::array<int64_t, 3> delays{readI64(run + 24), readI64(run + 32),
+                                  readI64(run + 40)};
+    if (objectIndex >= database.objectCount || reserved != 0 || bitCount == 0 ||
+        delays == std::array<int64_t, 3>{} || delays[0] < 0 || delays[1] < 0 ||
+        delays[2] < -1)
+      return false;
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
+    uint64_t width = read64(object + 56);
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET ||
+        firstBit > width || bitCount > width - firstBit)
+      return false;
+    if (havePreviousDelayRun &&
+        (objectIndex < previousDelayObject ||
+         (objectIndex == previousDelayObject &&
+          (firstBit < previousDelayEnd ||
+           (firstBit == previousDelayEnd && delays == previousDelays)))))
+      return false;
+    havePreviousDelayRun = true;
+    previousDelayObject = objectIndex;
+    previousDelayEnd = firstBit + bitCount;
+    previousDelays = delays;
   }
 
   for (uint64_t index = 0; index != database.typeCount; ++index) {
@@ -2798,6 +2850,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.fixedPropertyCount == right.fixedPropertyCount &&
          left.resolvedNetRuns == right.resolvedNetRuns &&
          left.resolvedNetRunCount == right.resolvedNetRunCount &&
+         left.netDelayRuns == right.netDelayRuns &&
+         left.netDelayRunCount == right.netDelayRunCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -3262,6 +3316,83 @@ obelisk_rt_status designVPIResolvedNetType(
   if (covered != selectedEnd || selectedType == 0)
     return OBELISK_RT_EOF;
   *outType = selectedType;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status designVPINetDelay(const Database &database,
+                                    obelisk_rt_design_cursor_v1 cursor,
+                                    uint64_t bitOffset, uint64_t bitWidth,
+                                    VPINetDelayValue *outDelay) {
+  if (!isObjectOffset(database, cursor.offset) || bitWidth == 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t objectIndex =
+      static_cast<uint32_t>((cursor.offset - database.objects) / kObjectSize);
+  const uint8_t *object = database.data + cursor.offset;
+  uint64_t width = read64(object + 56);
+  if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || bitOffset > width ||
+      bitWidth > width - bitOffset)
+    return OBELISK_RT_INVALID_HANDLE;
+
+  uint64_t low = 0;
+  uint64_t high = database.netDelayRunCount;
+  while (low != high) {
+    uint64_t middle = low + (high - low) / 2;
+    const uint8_t *run =
+        database.data + database.netDelayRuns + middle * kNetDelayRunSize;
+    uint32_t runObject = read32(run);
+    uint64_t runFirst = read64(run + 8);
+    if (runObject < objectIndex ||
+        (runObject == objectIndex && runFirst <= bitOffset))
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  uint64_t index = low;
+  uint64_t selectedEnd = bitOffset + bitWidth;
+  uint64_t covered = bitOffset;
+  VPINetDelayValue selected{};
+  if (low != 0) {
+    const uint8_t *previous =
+        database.data + database.netDelayRuns + (low - 1) * kNetDelayRunSize;
+    uint64_t previousFirst = read64(previous + 8);
+    uint64_t previousEnd = previousFirst + read64(previous + 16);
+    if (read32(previous) == objectIndex && previousFirst <= bitOffset &&
+        previousEnd > bitOffset) {
+      selected = {readI64(previous + 24), readI64(previous + 32),
+                  readI64(previous + 40)};
+      covered = std::min(selectedEnd, previousEnd);
+    }
+  }
+  while (covered != selectedEnd && index < database.netDelayRunCount) {
+    const uint8_t *run =
+        database.data + database.netDelayRuns + index * kNetDelayRunSize;
+    uint32_t runObject = read32(run);
+    uint64_t runFirst = read64(run + 8);
+    uint64_t runEnd = runFirst + read64(run + 16);
+    VPINetDelayValue delay{readI64(run + 24), readI64(run + 32),
+                           readI64(run + 40)};
+    if (runObject != objectIndex || runFirst >= selectedEnd)
+      break;
+    if (runEnd <= covered) {
+      ++index;
+      continue;
+    }
+    // A gap is an explicit zero-delay region.
+    if (runFirst > covered) {
+      if (selected.rise != 0 || selected.fall != 0 || selected.third != 0)
+        return OBELISK_RT_EOF;
+      covered = runFirst;
+    }
+    if (selected.rise != delay.rise || selected.fall != delay.fall ||
+        selected.third != delay.third)
+      return OBELISK_RT_EOF;
+    covered = std::min(selectedEnd, runEnd);
+    ++index;
+  }
+  if (covered != selectedEnd &&
+      (selected.rise != 0 || selected.fall != 0 || selected.third != 0))
+    return OBELISK_RT_EOF;
+  *outDelay = selected;
   return OBELISK_RT_OK;
 }
 
@@ -3830,6 +3961,19 @@ obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
   const Database *database = cachedDatabase(context);
   return database ? designVPIResolvedNetType(*database, cursor, bitOffset,
                                              bitWidth, outType)
+                  : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_net_delay(const obelisk_rt_context *context,
+                                obelisk_rt_design_cursor_v1 cursor,
+                                uint64_t bitOffset, uint64_t bitWidth,
+                                VPINetDelayValue *outDelay) noexcept {
+  if (!outDelay)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  return database ? designVPINetDelay(*database, cursor, bitOffset, bitWidth,
+                                      outDelay)
                   : OBELISK_RT_INVALID_HANDLE;
 }
 

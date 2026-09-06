@@ -494,6 +494,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t firstBit = 0;
     uint64_t bitCount = 0;
   };
+  struct NetDelayRunRecord {
+    uint32_t objectIndex = 0;
+    uint64_t firstBit = 0;
+    uint64_t bitCount = 0;
+    std::array<int64_t, 3> delays{};
+  };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
   SmallVector<StatementRecord> statements;
@@ -508,6 +514,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<RelationRecord> relations;
   SmallVector<FixedPropertyRecord> fixedProperties;
   SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
+  SmallVector<NetDelayRunRecord> netDelayRuns;
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
@@ -2450,6 +2457,54 @@ SmallVector<uint8_t> serializeDesignDatabase(
                  return std::tie(left.objectIndex, left.firstBit) <
                         std::tie(right.objectIndex, right.firstBit);
                });
+
+    // Freeze the effective delay of every reflected net bit. Missing delay
+    // metadata and the canonical all--1 per-bit marker both mean immediate
+    // propagation and are represented by gaps. Every net query remains total
+    // without touching execution state or scheduler structures.
+    auto appendNetDelayRun = [&](uint32_t objectIndex, uint64_t firstBit,
+                                 uint64_t bitCount,
+                                 std::array<int64_t, 3> delays) {
+      if (bitCount == 0 || delays == std::array<int64_t, 3>{})
+        return;
+      if (!netDelayRuns.empty()) {
+        NetDelayRunRecord &previous = netDelayRuns.back();
+        if (previous.objectIndex == objectIndex && previous.delays == delays &&
+            previous.firstBit + previous.bitCount == firstBit) {
+          previous.bitCount += bitCount;
+          return;
+        }
+      }
+      netDelayRuns.push_back({objectIndex, firstBit, bitCount, delays});
+    };
+    for (auto [objectIndex, object] : llvm::enumerate(objects)) {
+      if (object.kind != OBELISK_RT_DESIGN_RECORD_NET)
+        continue;
+      auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity);
+      std::optional<uint64_t> width = simulationWidth(object.type);
+      if (!net || !width)
+        continue;
+      ArrayRef<int64_t> encoded;
+      if (auto delays = net.getPropagationDelays())
+        encoded = *delays;
+      if (encoded.empty())
+        continue;
+      if (encoded.size() == 3) {
+        std::array<int64_t, 3> delays{};
+        if (encoded[0] != -1)
+          delays = {encoded[0], encoded[1], encoded[2]};
+        appendNetDelayRun(static_cast<uint32_t>(objectIndex), 0, *width,
+                          delays);
+        continue;
+      }
+      for (uint64_t bit = 0; bit != *width; ++bit) {
+        std::array<int64_t, 3> delays{};
+        size_t base = bit * 3;
+        if (encoded[base] != -1)
+          delays = {encoded[base], encoded[base + 1], encoded[base + 2]};
+        appendNetDelayRun(static_cast<uint32_t>(objectIndex), bit, 1, delays);
+      }
+    }
   }
 
   SmallVector<uint8_t> strings(1, 0);
@@ -2547,9 +2602,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       relationIndexMembers.size() * RelationIndexMemberLayout.size;
   uint64_t resolvedNetRunOffset =
       fixedPropertyOffset + fixedProperties.size() * FixedPropertyLayout.size;
+  uint64_t netDelayRunOffset =
+      resolvedNetRunOffset + resolvedNetRuns.size() * ResolvedNetRunLayout.size;
   uint64_t stringOffset =
-      resolvedNetRunOffset +
-      resolvedNetRuns.size() * ResolvedNetRunLayout.size;
+      netDelayRunOffset + netDelayRuns.size() * NetDelayRunLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -2787,6 +2843,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setFixedPropertyCount(fixedProperties.size());
     writer.setResolvedNetRunOffset(resolvedNetRunOffset);
     writer.setResolvedNetRunCount(resolvedNetRuns.size());
+    writer.setNetDelayRunOffset(netDelayRunOffset);
+    writer.setNetDelayRunCount(netDelayRuns.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -2917,6 +2975,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setNetType(entry.netType);
     writer.setFirstBit(entry.firstBit);
     writer.setBitCount(entry.bitCount);
+  }
+  for (auto [index, entry] : llvm::enumerate(netDelayRuns)) {
+    NetDelayRunWriter writer(output.data() + netDelayRunOffset +
+                             index * NetDelayRunLayout.size);
+    writer.setObjectIndex(entry.objectIndex);
+    writer.setReserved(0);
+    writer.setFirstBit(entry.firstBit);
+    writer.setBitCount(entry.bitCount);
+    writer.setRise(entry.delays[0]);
+    writer.setFall(entry.delays[1]);
+    writer.setThird(entry.delays[2]);
   }
   llvm::append_range(output, strings);
   alignTo(output, 8);
