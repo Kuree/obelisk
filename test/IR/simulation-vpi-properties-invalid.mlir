@@ -134,6 +134,20 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @authored_always_type {
+    obelisk_sim.scope.decl 0 hierarchy "top"
+    // expected-error @+1 {{vpiAlwaysType must use code_unit_kind as its canonical IR representation}}
+    obelisk_sim.code_unit.decl 1 in 0 always hierarchy "top.always" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 624 : i32, value = 2 : i32>
+      ]>
+    }
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @property_not_applicable {
     obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
     // expected-error @+1 {{VPI property 7 is not applicable to exact object kind 15}}

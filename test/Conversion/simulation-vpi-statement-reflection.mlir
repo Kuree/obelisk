@@ -84,6 +84,7 @@ module attributes {
 // DATABASE-NEXT: statement id=300 owner=6 scope=0 parent=4294967295 type=38 flags=0x0 source=test.sv:11:3 name=
 // DATABASE: fixed_property source_table=0 source=0 selector=15 kind=3 value=definition.sv
 // DATABASE-NEXT: fixed_property source_table=0 source=0 selector=16 kind=1 value=27
+// DATABASE-NEXT: fixed_property source_table=1 source=1 selector=624 kind=1 value=1
 // DATABASE-NEXT: fixed_property source_table=2 source=1 selector=74 kind=0 value=true
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0

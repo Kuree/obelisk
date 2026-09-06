@@ -2593,6 +2593,50 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makeAlwaysTypeDatabase(uint32_t alwaysType,
+                                            bool protectedObject = false) {
+  std::vector<uint8_t> bytes = makeCodeUnitDatabase();
+  constexpr uint64_t processOffset = 240;
+  put32(bytes, processOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiAlways));
+
+  struct Property {
+    uint16_t selector;
+    uint16_t kind;
+    uint64_t payload;
+  };
+  std::vector<Property> properties{{vpiAlwaysType, 1, alwaysType}};
+  if (protectedObject)
+    properties.push_back({vpiIsProtected, 0, 1});
+  std::sort(properties.begin(), properties.end(),
+            [](const Property &left, const Property &right) {
+              return left.selector < right.selector;
+            });
+
+  const uint64_t directoryOffset = bytes.size();
+  const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t propertyOffset = semanticRootOffset + 8;
+  bytes.resize(propertyOffset + properties.size() * 16, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 32, semanticRootOffset);
+  put64(bytes, directoryOffset + 40, 2);
+  put64(bytes, directoryOffset + 112, propertyOffset);
+  put64(bytes, directoryOffset + 120, properties.size());
+  put32(bytes, semanticRootOffset, UINT32_MAX);
+  put32(bytes, semanticRootOffset + 4, UINT32_MAX);
+  for (size_t index = 0; index != properties.size(); ++index) {
+    const Property &property = properties[index];
+    const uint64_t offset = propertyOffset + index * 16;
+    put32(bytes, offset, uint32_t{1} << 30); // The process object record.
+    put16(bytes, offset + 4, property.selector);
+    put16(bytes, offset + 6, property.kind);
+    put64(bytes, offset + 8, property.payload);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeStatementDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t childScopeOffset = 240;
@@ -9359,6 +9403,95 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
   EXPECT_EQ(vpi_compare_objects(child, vpi_scan(interfaces)), 1);
   EXPECT_EQ(vpi_scan(interfaces), nullptr);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsImmutableAlwaysTypeFromSparseImage) {
+  struct AlwaysTypeCase {
+    uint32_t value;
+    const char *name;
+  };
+  for (const AlwaysTypeCase &testCase : {
+           AlwaysTypeCase{vpiAlways, "vpiAlways"},
+           AlwaysTypeCase{vpiAlwaysComb, "vpiAlwaysComb"},
+           AlwaysTypeCase{vpiAlwaysFF, "vpiAlwaysFF"},
+           AlwaysTypeCase{vpiAlwaysLatch, "vpiAlwaysLatch"},
+       }) {
+    SCOPED_TRACE(testCase.name);
+    Fixture fixture;
+    fixture.database = makeAlwaysTypeDatabase(testCase.value);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              OBELISK_RT_EXECUTION_VPI_READ;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+    char processName[] = "top.proc";
+    char functionName[] = "top.fn";
+    vpiHandle process = vpi_handle_by_name(processName, nullptr);
+    vpiHandle function = vpi_handle_by_name(functionName, nullptr);
+    ASSERT_NE(process, nullptr);
+    ASSERT_NE(function, nullptr);
+    EXPECT_EQ(vpi_get(vpiAlwaysType, process), testCase.value);
+    EXPECT_EQ(vpi_get_str(vpiAlwaysType, process), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+    EXPECT_EQ(vpi_get(vpiAlwaysType, function), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+    EXPECT_EQ(vpi_get_str(vpiAlwaysType, function), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+    EXPECT_FALSE(context->nativeScheduleDeoptimized);
+    EXPECT_EQ(vpi_release_handle(function), 1);
+    EXPECT_EQ(vpi_release_handle(process), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, ProtectedAlwaysTypeIsDenied) {
+  Fixture fixture;
+  fixture.database = makeAlwaysTypeDatabase(vpiAlwaysFF, true);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char processName[] = "top.proc";
+  vpiHandle process = vpi_handle_by_name(processName, nullptr);
+  ASSERT_NE(process, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, process), 1);
+  EXPECT_EQ(vpi_get(vpiAlwaysType, process), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get_str(vpiAlwaysType, process), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(vpi_release_handle(process), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, RejectsAlwaysTypesOutsideGeneratedIntegerDomain) {
+  Fixture fixture;
+  fixture.database = makeAlwaysTypeDatabase(vpiAlwaysLatch + 1);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            OBELISK_RT_EXECUTION_VPI_READ;
+  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
 }
 
 TEST(VPI, BuildsStatementNamesFromCanonicalScopeOwners) {

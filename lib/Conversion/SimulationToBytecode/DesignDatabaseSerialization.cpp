@@ -2293,12 +2293,42 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       return success();
     };
+    auto addCodeUnitProperties = [&](Operation *operation,
+                                     uint32_t packedSource,
+                                     uint32_t exactKind) -> LogicalResult {
+      auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation);
+      if (!codeUnit ||
+          exactKind != static_cast<uint32_t>(VPIObjectKind::Always))
+        return success();
+      uint32_t alwaysType = 0;
+      switch (codeUnit.getCodeUnitKind()) {
+      case sim::EntryKind::Always:
+        alwaysType = 1;
+        break;
+      case sim::EntryKind::AlwaysComb:
+        alwaysType = 2;
+        break;
+      case sim::EntryKind::AlwaysFF:
+        alwaysType = 3;
+        break;
+      case sim::EntryKind::AlwaysLatch:
+        alwaysType = 4;
+        break;
+      default:
+        return codeUnit.emitOpError(
+            "VPI always object has a non-always code-unit kind");
+      }
+      return addFixedProperty(operation, packedSource, exactKind, 624,
+                              builder.getI32IntegerAttr(alwaysType));
+    };
     for (const auto &[packedSource, source] : propertySources) {
       if (source.vpiKind == 0)
         continue;
       for (Operation *operation : source.operations)
         if (failed(addOperationProperties(operation, packedSource,
-                                          source.vpiKind)))
+                                          source.vpiKind)) ||
+            failed(
+                addCodeUnitProperties(operation, packedSource, source.vpiKind)))
           return {};
     }
     // False is the canonical sparse representation of every immutable Boolean

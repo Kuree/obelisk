@@ -179,6 +179,13 @@ module attributes {
         #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>
       ]>
     }
+    obelisk_sim.code_unit.decl 3 in 1 always hierarchy "top.always"
+    obelisk_sim.code_unit.decl 4 in 1 always_comb hierarchy "top.always_comb"
+    obelisk_sim.code_unit.decl 5 in 1 always_ff hierarchy "top.always_ff"
+    obelisk_sim.code_unit.decl 6 in 1 always_latch hierarchy "top.always_latch"
+    obelisk_sim.code_unit.decl 7 in 1 always hierarchy "top.internal_always" {
+      internal
+    }
     obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.initial"
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context
         {obelisk_sim.capture_kind = 0 : i32})
@@ -199,11 +206,19 @@ module attributes {
 // relation-only, so it must not make the immutable name index ambiguous.
 // CHECK: object name=top kind=9 vpi_kind=633 caps=0x0 id=19
 // CHECK: object name=top.alias_t kind=9 vpi_kind=640 caps=0x80 id=4
+// CHECK: object name=top.always kind=5 vpi_kind=1 caps=0x0 id=3
+// CHECK: object name=top.always_comb kind=5 vpi_kind=1 caps=0x0 id=4
+// CHECK: object name=top.always_ff kind=5 vpi_kind=1 caps=0x0 id=5
+// CHECK: object name=top.always_latch kind=5 vpi_kind=1 caps=0x0 id=6
 // CHECK: object name=top.base_t kind=9 vpi_kind=640 caps=0x80 id=1
 // CHECK: object name=top.enum_array_t kind=9 vpi_kind=692 caps=0x80 id=10
 // The physical image keeps the unpacked source-order range and the nested
 // packed range used by vpi_handle_by_multi_index offset calculation.
 // CHECK: object name=top.indexed_value kind=2 vpi_kind=116 {{.*}} width=8 range=[0:1] {{.*}} type_kind=2 type_flags=0x1 {{.*}} element_kind=2 element_flags=0x5 element_width=4 element_range=[7:4] child_kind=1 child_flags=0x5 child_width=1
+// Initial code units do not carry vpiAlwaysType. Internal always helpers remain
+// outside the public VPI inventory and likewise have no fixed property.
+// CHECK: object name=top.initial kind=5 vpi_kind=24 caps=0x0 id=1
+// CHECK: object name=top.internal_always kind=5 vpi_kind=0 caps=0x20 id=7
 // CHECK: object name=top.record_t kind=9 vpi_kind=638 caps=0x80
 // CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=7
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
@@ -223,11 +238,19 @@ module attributes {
 // CHECK-DAG: fixed_property source_table=1 source=[[NET]] selector=43 kind=0 value=true
 // CHECK-DAG: fixed_property source_table=1 source=[[ZERO_NET:[0-9]+]] selector=22 kind=1 value=1
 // CHECK-DAG: fixed_property source_table=1 source=[[ZERO_NET]] selector=27 kind=1 value=0
+// CHECK-DAG: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=1
+// CHECK-DAG: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=2
+// CHECK-DAG: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=3
+// CHECK-DAG: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=4
 // Sorted fixed properties make adjacency an exact check that authored false
 // vpiCellInstance and vpiUnit values were erased from the image.
 // SPARSE: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
 // SPARSE-NEXT: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
 // SPARSE: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=1
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=2
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=3
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=4
 // Sparse false values are absent while neighboring true/integer values remain.
 // SPARSE: fixed_property source_table=1 source=[[SPARSE_NET:[0-9]+]] selector=22 kind=1 value=7
 // SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=24 kind=0 value=true

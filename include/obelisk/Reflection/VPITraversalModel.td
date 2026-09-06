@@ -877,7 +877,17 @@ def StructUnionMemberProperty : VPIProperty<"vpiStructUnionMember", 615,
 def VisibilityProperty : VPIProperty<"vpiVisibility", 620, IntegerProperty,
   VisibilityPropertyObjects, "37.17; 37.39">;
 def AlwaysTypeProperty : VPIProperty<"vpiAlwaysType", 624,
-  IntegerProperty, AlwaysObjects, "37.61">;
+  IntegerProperty, AlwaysObjects, "37.61", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty, AlwaysObjects>;
+def AlwaysTypeAlways
+    : VPIIntegerPropertyValue<AlwaysTypeProperty, 1>;
+def AlwaysTypeAlwaysComb
+    : VPIIntegerPropertyValue<AlwaysTypeProperty, 2>;
+def AlwaysTypeAlwaysFF
+    : VPIIntegerPropertyValue<AlwaysTypeProperty, 3>;
+def AlwaysTypeAlwaysLatch
+    : VPIIntegerPropertyValue<AlwaysTypeProperty, 4>;
 def DistTypeProperty : VPIProperty<"vpiDistType", 625, IntegerProperty,
   DistributionItemObjects, "37.32">;
 def VirtualProperty : VPIProperty<"vpiVirtual", 635, BooleanProperty,

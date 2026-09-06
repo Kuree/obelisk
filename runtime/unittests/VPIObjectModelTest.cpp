@@ -1416,6 +1416,32 @@ TEST(VPIObjectModel, SymbolicStringPropertiesExactlyMatchLrm) {
   EXPECT_EQ(actual, expected);
 }
 
+TEST(VPIObjectModel, AlwaysTypeNumericDomainMatchesLrmConstants) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+  };
+  for (const Entry &expected : {
+           Entry{vpiAlways, "vpiAlways"},
+           Entry{vpiAlwaysComb, "vpiAlwaysComb"},
+           Entry{vpiAlwaysFF, "vpiAlwaysFF"},
+           Entry{vpiAlwaysLatch, "vpiAlwaysLatch"},
+       }) {
+    SCOPED_TRACE(expected.name);
+    const auto *actual =
+        findVPIIntegerPropertyValue(vpiAlwaysType, expected.value);
+    ASSERT_NE(actual, nullptr) << expected.value;
+    EXPECT_STREQ(actual->symbolicName, "");
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiAlwaysType, expected.value, image));
+    EXPECT_EQ(image.symbolicName, nullptr);
+  }
+  EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiAlwaysType));
+  EXPECT_EQ(findVPIIntegerPropertyValue(vpiAlwaysType, vpiAlwaysLatch + 1),
+            nullptr);
+}
+
 TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
   struct Entry {
     uint32_t value;
@@ -1814,7 +1840,8 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     PropertyRealization expected = PropertyRealization::Derived;
     if (descriptor.property == vpiIsProtected ||
         descriptor.property == vpiDefFile ||
-        descriptor.property == vpiDefLineNo)
+        descriptor.property == vpiDefLineNo ||
+        descriptor.property == vpiAlwaysType)
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&

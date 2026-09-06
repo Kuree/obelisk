@@ -90,6 +90,10 @@ static LogicalResult verifyVPIProperties(Operation *operation,
       return operation->emitOpError()
              << "VPI definition file and line properties must use "
                 "definition_loc as their canonical IR representation";
+    if (selector == 624)
+      return operation->emitOpError()
+             << "vpiAlwaysType must use code_unit_kind as its canonical IR "
+                "representation";
     const auto *descriptor = reflection::findVPIProperty(exactKind, selector);
     if (!descriptor)
       return operation->emitOpError()
