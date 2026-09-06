@@ -5781,6 +5781,15 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   EXPECT_EQ(vpi_get(vpiType, stringVariable), vpiStringVar);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  auto expectString = [&](const char *expected, size_t size) {
+    s_vpi_value read{};
+    read.format = vpiStringVal;
+    vpi_get_value(stringVariable, &read);
+    ASSERT_NE(read.value.str, nullptr);
+    EXPECT_EQ(std::memcmp(read.value.str, expected, size), 0);
+    EXPECT_EQ(read.value.str[size], '\0');
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  };
 
   obelisk_rt_design_cursor_v1 cursor{};
   ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
@@ -5797,10 +5806,12 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   storeString("hello", 5);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 5);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  expectString("hello", 5); // SSO representation.
   const char embeddedNull[] = {'A', '\0', 'B'};
   storeString(embeddedNull, sizeof(embeddedNull));
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 3);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  expectString(embeddedNull, sizeof(embeddedNull));
 
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
@@ -5820,6 +5831,16 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), sizeof(heapText) - 1);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  expectString(heapText, sizeof(heapText) - 1);
+  vpiHandle scratchHandle = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(scratchHandle, nullptr);
+  s_vpi_value scratchRead{};
+  scratchRead.format = vpiObjTypeVal;
+  vpi_get_value(scratchHandle, &scratchRead);
+  ASSERT_EQ(scratchRead.format, vpiStringVal);
+  ASSERT_NE(scratchRead.value.str, nullptr);
+  const char *detachedScratch = scratchRead.value.str;
+  EXPECT_EQ(vpi_release_handle(scratchHandle), 1);
 
   // Replacing the state word before removing its last root makes reclamation
   // deterministic and exercises the lifetime boundary guarded by the query.
@@ -5830,6 +5851,7 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &heapStringRoot),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_STREQ(detachedScratch, heapText);
   EXPECT_EQ(obelisk_rt_validate_string(context, heapString),
             OBELISK_RT_INVALID_HANDLE);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
@@ -5838,6 +5860,10 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
       obelisk_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
       OBELISK_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  s_vpi_value invalidRead{};
+  invalidRead.format = vpiStringVal;
+  vpi_get_value(stringVariable, &invalidRead);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   ASSERT_EQ(
       obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
@@ -5874,6 +5900,10 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
       OBELISK_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  invalidRead = {};
+  invalidRead.format = vpiStringVal;
+  vpi_get_value(stringVariable, &invalidRead);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   ASSERT_EQ(
       obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
       OBELISK_RT_OK);
@@ -5901,8 +5931,21 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   EXPECT_EQ(vpi_get(vpiIsProtected, stringVariable), 1);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
-  EXPECT_EQ(vpi_release_handle(stringVariable), 1);
+  s_vpi_value protectedRead{};
+  protectedRead.format = vpiStringVal;
+  protectedRead.value.str = reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1});
+  vpi_get_value(stringVariable, &protectedRead);
+  EXPECT_EQ(protectedRead.value.str,
+            reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1}));
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  vpiHandle staleHandle = stringVariable;
   obelisk_rt_v1_context_destroy(context);
+  protectedRead = {};
+  protectedRead.format = vpiStringVal;
+  protectedRead.value.str = reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1});
+  vpi_get_value(staleHandle, &protectedRead);
+  EXPECT_EQ(protectedRead.value.str,
+            reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1}));
 }
 
 TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
@@ -5938,9 +5981,116 @@ TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
       OBELISK_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, element), 7);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  s_vpi_value read{};
+  read.format = vpiStringVal;
+  vpi_get_value(element, &read);
+  ASSERT_NE(read.value.str, nullptr);
+  EXPECT_STREQ(read.value.str, "indexed");
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   EXPECT_EQ(vpi_release_handle(element), 1);
   EXPECT_EQ(vpi_release_handle(array), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, StringValueSurvivesConcurrentReplacementAndCollection) {
+  Fixture fixture;
+  fixture.database = makeManagedScalarDatabase(vpiStringVar);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle handle = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(handle, nullptr);
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+
+  constexpr char first[] = "AAAAAAAA-heap-backed-string";
+  constexpr char second[] = "BBBBBBBB-heap-backed-string";
+  std::atomic<bool> done{false};
+  std::atomic<unsigned> failureStep{0};
+  std::thread writer([&] {
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    bool laneEntered = false;
+    if (obelisk_rt_v1_gc_lane_create(context, &lane) != OBELISK_RT_OK) {
+      failureStep = 1;
+      done = true;
+      return;
+    }
+    if (obelisk_rt_v1_gc_lane_enter(lane) != OBELISK_RT_OK) {
+      failureStep = 2;
+    } else {
+      laneEntered = true;
+    }
+    obelisk_rt_string_v1 current = 0;
+    obelisk_rt_gc_managed_root_v1 currentRoot{};
+    bool currentRootPushed = false;
+    if (failureStep == 0 && obelisk_rt_v1_gc_managed_root_push(
+                                lane, &currentRoot, &current) != OBELISK_RT_OK)
+      failureStep = 3;
+    else if (failureStep == 0)
+      currentRootPushed = true;
+    for (unsigned iteration = 0; iteration != 200 && failureStep == 0;
+         ++iteration) {
+      const char *text = iteration & 1 ? first : second;
+      const uint64_t size =
+          iteration & 1 ? sizeof(first) - 1 : sizeof(second) - 1;
+      obelisk_rt_string_v1 string = 0;
+      if (obelisk_rt_v1_string_create(lane, text, size, &string) !=
+          OBELISK_RT_OK) {
+        failureStep = 4;
+        break;
+      }
+      if (obelisk_rt_v1_design_write(context, cursor, &string, nullptr, 64) !=
+          OBELISK_RT_OK)
+        failureStep = 5;
+      if (failureStep == 0)
+        current = string;
+      if (failureStep == 0 && obelisk_rt_v1_gc_collect(lane) != OBELISK_RT_OK)
+        failureStep = 6;
+    }
+    obelisk_rt_string_v1 empty = 0;
+    if (failureStep == 0 &&
+        obelisk_rt_v1_design_write(context, cursor, &empty, nullptr, 64) !=
+            OBELISK_RT_OK)
+      failureStep = 7;
+    current = empty;
+    if (currentRootPushed &&
+        obelisk_rt_v1_gc_managed_root_pop(lane, &currentRoot) != OBELISK_RT_OK)
+      failureStep = 8;
+    if (laneEntered && obelisk_rt_v1_gc_lane_leave(lane) != OBELISK_RT_OK)
+      failureStep = 9;
+    if (obelisk_rt_v1_gc_lane_destroy(lane) != OBELISK_RT_OK)
+      failureStep = 10;
+    done = true;
+  });
+
+  while (!done) {
+    s_vpi_value read{};
+    read.format = vpiStringVal;
+    vpi_get_value(handle, &read);
+    if (vpi_chk_error(nullptr) != 0 || !read.value.str) {
+      failureStep = 11;
+      break;
+    }
+    if (read.value.str[0] != '\0' && std::strcmp(read.value.str, first) != 0 &&
+        std::strcmp(read.value.str, second) != 0) {
+      failureStep = 12;
+      break;
+    }
+  }
+  writer.join();
+  EXPECT_EQ(failureStep, 0u);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -6160,6 +6310,12 @@ TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
     else
       EXPECT_EQ(vpi_get64(vpiObjId, handle), vpiUndefined);
     EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    if (exactType == vpiStringVar) {
+      s_vpi_value read{};
+      read.format = vpiStringVal;
+      vpi_get_value(handle, &read);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    }
 
     unknown = 0;
     ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &value, &unknown, 64),
@@ -6169,9 +6325,44 @@ TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
     else
       EXPECT_EQ(vpi_get64(vpiObjId, handle), vpiUndefined);
     EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    if (exactType == vpiStringVar) {
+      s_vpi_value read{};
+      read.format = vpiStringVal;
+      vpi_get_value(handle, &read);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    }
     EXPECT_EQ(vpi_release_handle(handle), 1);
     obelisk_rt_v1_context_destroy(context);
   }
+}
+
+TEST(VPI, StringValueRejectsWrongWidthPhysicalStorage) {
+  Fixture fixture;
+  fixture.database = makeManagedScalarDatabase(vpiStringVar);
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t typeOffset = 336;
+  put64(fixture.database, objectOffset + 56, 32);
+  put64(fixture.database, objectOffset + 64, 31);
+  put64(fixture.database, typeOffset + 8, 32);
+  put64(fixture.database, typeOffset + 16, 31);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle handle = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(handle, nullptr);
+  s_vpi_value read{};
+  read.format = vpiStringVal;
+  vpi_get_value(handle, &read);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  EXPECT_EQ(vpi_release_handle(handle), 1);
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
@@ -8020,7 +8211,6 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
            DefaultCase{VPIShapeType::PackedStructOneBit, vpiStructVar,
                        vpiVectorVal},
            DefaultCase{VPIShapeType::BasicVector, vpiTimeVar, vpiTimeVal},
-           DefaultCase{VPIShapeType::BasicVector, vpiStringVar, vpiStringVal},
        }) {
     SCOPED_TRACE(testCase.type);
     Fixture local;

@@ -2566,6 +2566,26 @@ bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
   return true;
 }
 
+class ScopedManagedWordRoot {
+public:
+  ScopedManagedWordRoot(obelisk_rt_gc_lane_v1 *lane,
+                        obelisk_rt_managed_word_v1 *word)
+      : lane(lane),
+        status(obelisk_rt_v1_gc_managed_root_push(lane, &root, word)) {}
+  ScopedManagedWordRoot(const ScopedManagedWordRoot &) = delete;
+  ScopedManagedWordRoot &operator=(const ScopedManagedWordRoot &) = delete;
+  ~ScopedManagedWordRoot() {
+    if (status == OBELISK_RT_OK)
+      (void)obelisk_rt_v1_gc_managed_root_pop(lane, &root);
+  }
+  obelisk_rt_status getStatus() const { return status; }
+
+private:
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  obelisk_rt_gc_managed_root_v1 root{};
+  obelisk_rt_status status = OBELISK_RT_INVALID_HANDLE;
+};
+
 bool logicBit(const std::vector<uint64_t> &plane, uint64_t bit) {
   return (plane[static_cast<size_t>(bit / 64)] & (uint64_t{1} << (bit % 64))) !=
          0;
@@ -3803,10 +3823,17 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     uint64_t string = 0;
     if (!readManagedStateWord(handle, string))
       return vpiUndefined;
-    if (obelisk_rt_v1_gc_candidate_root(
-            handle->owner->context,
-            static_cast<obelisk_rt_managed_word_v1>(string),
-            OBELISK_RT_MANAGED_ROOT_KIND_STRING) != string) {
+    if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, string,
+                                        OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
+        string) {
+      setError(handle->owner, "invalid managed string in VPI design state",
+               vpiInternal);
+      return vpiUndefined;
+    }
+    ScopedManagedWordRoot root(managed.getLane(), &string);
+    if (root.getStatus() != OBELISK_RT_OK ||
+        obelisk_rt_validate_string(handle->owner->context, string) !=
+            OBELISK_RT_OK) {
       setError(handle->owner, "invalid managed string in VPI design state",
                vpiInternal);
       return vpiUndefined;
@@ -4407,12 +4434,46 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   }
   if (!valueRequirementsSatisfied(handle, info, *policy))
     return;
+  const PLI_INT32 exactType = vpiTypeForHandle(handle);
+  const bool managedStringSource = exactType == vpiStringVar;
+  std::optional<ContextTransaction> stringTransaction;
+  std::optional<ManagedExecutionScope> stringManaged;
+  if (managedStringSource) {
+    stringTransaction.emplace(handle->owner->context);
+    stringManaged.emplace(handle->owner->context);
+    if (stringManaged->getStatus() != OBELISK_RT_OK ||
+        !stringManaged->getLane()) {
+      setError(handle->owner, "managed string VPI query cannot enter GC scope",
+               vpiInternal);
+      return;
+    }
+  }
   std::vector<uint64_t> &value = handle->owner->readValueScratch;
   std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
-  if (!readValue(handle, info, value, unknown))
+  obelisk_rt_managed_word_v1 rootedString = 0;
+  std::optional<ScopedManagedWordRoot> stringRoot;
+  if (managedStringSource) {
+    if (!readManagedStateWord(handle, rootedString))
+      return;
+    if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, rootedString,
+                                        OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
+        rootedString) {
+      setError(handle->owner, "invalid managed string in VPI design state",
+               vpiInternal);
+      return;
+    }
+    stringRoot.emplace(stringManaged->getLane(), &rootedString);
+    if (stringRoot->getStatus() != OBELISK_RT_OK ||
+        obelisk_rt_validate_string(handle->owner->context, rootedString) !=
+            OBELISK_RT_OK) {
+      setError(handle->owner, "invalid managed string in VPI design state",
+               vpiInternal);
+      return;
+    }
+  } else if (!readValue(handle, info, value, unknown)) {
     return;
+  }
   uint64_t width = info.bit_width;
-  const PLI_INT32 exactType = vpiTypeForHandle(handle);
   uint32_t semanticKind = OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN;
   obelisk_rt_design_cursor_v1 semanticCursor{};
   if (semanticCursorFor(handle, semanticCursor)) {
@@ -4479,8 +4540,11 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     char scratch[8]{};
     const char *bytes = nullptr;
     uint64_t size = 0;
-    if (obelisk_rt_v1_string_view(static_cast<obelisk_rt_string_v1>(value[0]),
-                                  scratch, &bytes, &size) != OBELISK_RT_OK) {
+    obelisk_rt_string_v1 string =
+        managedStringSource ? rootedString
+                            : static_cast<obelisk_rt_string_v1>(value[0]);
+    if (obelisk_rt_v1_string_view(string, scratch, &bytes, &size) !=
+        OBELISK_RT_OK) {
       setError(handle->owner, "could not read SystemVerilog string value",
                vpiInternal);
       return;
