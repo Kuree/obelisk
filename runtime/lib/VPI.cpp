@@ -980,6 +980,34 @@ bool fixedPropertyFor(
   return false;
 }
 
+bool indexedImagePropertyFor(
+    __vpiHandle *handle,
+    const obelisk::reflection::VPIPropertyDescriptor &descriptor,
+    uint32_t &value) {
+  if (descriptor.property != vpiResolvedNetType) {
+    setError(handle->owner, "unsupported indexed-image VPI property",
+             vpiInternal);
+    return false;
+  }
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return false;
+  uint64_t bitOffset = handle->form == VPIObjectForm::Indexed
+                           ? handle->selectionBitOffset
+                           : 0;
+  obelisk_rt_status status = obelisk_rt_cached_vpi_resolved_net_type(
+      handle->owner->context, handle->cursor, bitOffset, info.bit_width,
+      &value);
+  if (status == OBELISK_RT_OK)
+    return true;
+  setError(handle->owner,
+           status == OBELISK_RT_EOF
+               ? "indexed VPI property value is unavailable"
+               : "indexed VPI property image lookup failed",
+           status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+  return false;
+}
+
 bool allowProtectedSource(__vpiHandle *handle, const char *operation) {
   if (!handle || !handle->protectedObject)
     return true;
@@ -3806,6 +3834,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     }
     return static_cast<PLI_INT32>(value.payload);
   }
+  if (propertyDescriptor->realization ==
+      obelisk::reflection::VPIPropertyRealization::IndexedImage) {
+    uint32_t value = 0;
+    return indexedImagePropertyFor(handle, *propertyDescriptor, value)
+               ? static_cast<PLI_INT32>(value)
+               : vpiUndefined;
+  }
   // Allocation provenance belongs to the handle rather than its exact kind:
   // an indexed variable has the lifetime of the object it selects.
   if (property == vpiAllocScheme)
@@ -4253,6 +4288,30 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       !propertyDescriptor->symbolicString) {
     setError(handle->owner, "property is not a string VPI property", vpiNotice);
     return nullptr;
+  }
+  if (propertyDescriptor &&
+      propertyDescriptor->realization ==
+          obelisk::reflection::VPIPropertyRealization::IndexedImage) {
+    uint32_t value = 0;
+    if (!indexedImagePropertyFor(handle, *propertyDescriptor, value))
+      return nullptr;
+    const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+        propertyDescriptor->property, value);
+    if (!symbolic || symbolic->symbolicName[0] == '\0') {
+      setError(handle->owner,
+               "VPI indexed integer property has no symbolic spelling",
+               vpiNotice);
+      return nullptr;
+    }
+    OBELISK_RT_TRY {
+      scratch = symbolic->symbolicName;
+      return scratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI symbolic-property buffer is out of memory",
+               vpiSystem);
+      return nullptr;
+    }
   }
   if (propertyDescriptor &&
       propertyDescriptor->realization ==

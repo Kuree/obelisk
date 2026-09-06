@@ -65,6 +65,13 @@ uint64_t get64(const std::vector<uint8_t> &bytes, size_t offset) {
   return value;
 }
 
+uint32_t get32(const std::vector<uint8_t> &bytes, size_t offset) {
+  uint32_t value = 0;
+  for (unsigned index = 0; index != 4; ++index)
+    value |= uint32_t{bytes[offset + index]} << (index * 8);
+  return value;
+}
+
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
   for (size_t index = 0; index != bytes.size(); ++index) {
@@ -3082,11 +3089,21 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
   return bytes;
 }
 
+struct ResolvedNetRunSpec {
+  uint32_t netType;
+  uint64_t firstBit;
+  uint64_t bitCount;
+};
+
 std::vector<uint8_t> makeVPINetPropertyDatabase(
     std::optional<uint32_t> netType, bool scalared = false,
     bool vectored = false, bool implicit = false,
     bool declarationAssign = false, uint32_t chargeStrength = 0,
-    bool protectedObject = false, uint32_t exactType = vpiNetArray) {
+    bool protectedObject = false, uint32_t exactType = vpiNetArray,
+    std::optional<uint32_t> strength0 = std::nullopt,
+    std::optional<uint32_t> strength1 = std::nullopt,
+    std::optional<std::vector<ResolvedNetRunSpec>> resolvedRuns =
+        std::nullopt) {
   std::vector<uint8_t> bytes = makeVPIIndexedDatabase(
       0, 1, 7, 4, exactType, OBELISK_RT_DESIGN_RECORD_NET);
   struct Property {
@@ -3106,8 +3123,11 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
   if (implicit)
     properties.push_back({vpiImplicitDecl, 0, 1});
   properties.push_back({vpiChargeStrength, 1, chargeStrength});
-  if (declarationAssign)
+  if (declarationAssign) {
     properties.push_back({vpiNetDeclAssign, 0, 1});
+    properties.push_back({vpiStrength0, 1, strength0.value_or(vpiStrongDrive)});
+    properties.push_back({vpiStrength1, 1, strength1.value_or(vpiStrongDrive)});
+  }
   if (protectedObject)
     properties.push_back({vpiIsProtected, 0, 1});
   std::sort(properties.begin(), properties.end(),
@@ -3118,13 +3138,20 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
   const uint64_t directoryOffset = bytes.size();
   const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t propertyOffset = semanticRootOffset + 4;
-  bytes.resize(propertyOffset + properties.size() * 16, 0);
+  std::vector<ResolvedNetRunSpec> runs =
+      resolvedRuns.value_or(netType ? std::vector<ResolvedNetRunSpec>{
+                                         {*netType, 0, 8}}
+                                   : std::vector<ResolvedNetRunSpec>{});
+  const uint64_t resolvedRunOffset = propertyOffset + properties.size() * 16;
+  bytes.resize(resolvedRunOffset + runs.size() * 24, 0);
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 32, semanticRootOffset);
   put64(bytes, directoryOffset + 40, 1);
   put64(bytes, directoryOffset + 112, propertyOffset);
   put64(bytes, directoryOffset + 120, properties.size());
+  put64(bytes, directoryOffset + 128, resolvedRunOffset);
+  put64(bytes, directoryOffset + 136, runs.size());
   put32(bytes, semanticRootOffset, UINT32_MAX);
   for (size_t index = 0; index != properties.size(); ++index) {
     const Property &property = properties[index];
@@ -3133,6 +3160,14 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
     put16(bytes, offset + 4, property.selector);
     put16(bytes, offset + 6, property.kind);
     put64(bytes, offset + 8, property.payload);
+  }
+  for (size_t index = 0; index != runs.size(); ++index) {
+    const ResolvedNetRunSpec &run = runs[index];
+    const uint64_t offset = resolvedRunOffset + index * 24;
+    put32(bytes, offset, 0); // The only physical object record.
+    put32(bytes, offset + 4, run.netType);
+    put64(bytes, offset + 8, run.firstBit);
+    put64(bytes, offset + 16, run.bitCount);
   }
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
@@ -5764,6 +5799,8 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
     for (vpiHandle handle : {root, element, bit}) {
       EXPECT_EQ(vpi_get(vpiNetType, handle), testCase.value);
       EXPECT_STREQ(vpi_get_str(vpiNetType, handle), testCase.name);
+      EXPECT_EQ(vpi_get(vpiResolvedNetType, handle), testCase.value);
+      EXPECT_STREQ(vpi_get_str(vpiResolvedNetType, handle), testCase.name);
       EXPECT_EQ(vpi_get(vpiChargeStrength, handle), 0);
       EXPECT_EQ(vpi_get(vpiExplicitScalared, handle), 0);
       EXPECT_EQ(vpi_get(vpiExplicitVectored, handle), 0);
@@ -5801,9 +5838,100 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
     EXPECT_EQ(vpi_get(vpiExpanded, net), exerciseFlags);
     EXPECT_EQ(vpi_get(vpiImplicitDecl, net), exerciseFlags);
     EXPECT_EQ(vpi_get(vpiNetDeclAssign, net), exerciseFlags);
+    if (exerciseFlags) {
+      EXPECT_EQ(vpi_get(vpiStrength0, net), vpiStrongDrive);
+      EXPECT_EQ(vpi_get(vpiStrength1, net), vpiStrongDrive);
+    } else {
+      EXPECT_EQ(vpi_get(vpiStrength0, net), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+      EXPECT_EQ(vpi_get(vpiStrength1, net), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+    }
     EXPECT_EQ(vpi_get(vpiChargeStrength, net), charge);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(net), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, ReadsResolvedNetTypeAtExactIndexedSelectionGranularity) {
+  Fixture fixture;
+  fixture.database = makeVPINetPropertyDatabase(
+      vpiWire, false, false, false, false, 0, false, vpiNetArray,
+      std::nullopt, std::nullopt,
+      std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4}, {vpiWand, 4, 4}});
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle root = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, root), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_get_str(vpiResolvedNetType, root), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+
+  vpiHandle element0 = vpi_handle_by_index(root, 0);
+  vpiHandle element1 = vpi_handle_by_index(root, 1);
+  ASSERT_NE(element0, nullptr);
+  ASSERT_NE(element1, nullptr);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, element0), vpiWire);
+  EXPECT_STREQ(vpi_get_str(vpiResolvedNetType, element0), "vpiWire");
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, element1), vpiWand);
+  EXPECT_STREQ(vpi_get_str(vpiResolvedNetType, element1), "vpiWand");
+
+  vpiHandle bit = vpi_handle_by_index(element1, 7);
+  ASSERT_NE(bit, nullptr);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, bit), vpiWand);
+  EXPECT_STREQ(vpi_get_str(vpiResolvedNetType, bit), "vpiWand");
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(bit), 1);
+  EXPECT_EQ(vpi_release_handle(element1), 1);
+  EXPECT_EQ(vpi_release_handle(element0), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
+  for (const auto &[strength0, strength1] : {
+           std::pair<uint32_t, uint32_t>{vpiStrongDrive, vpiStrongDrive},
+           {vpiSupplyDrive, vpiPullDrive},
+           {vpiWeakDrive, vpiHiZ},
+       }) {
+    SCOPED_TRACE(strength0);
+    SCOPED_TRACE(strength1);
+    Fixture fixture;
+    fixture.database = makeVPINetPropertyDatabase(
+        vpiWire, false, false, false, true, 0, false, vpiNetArray,
+        strength0, strength1);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle root = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(root, nullptr);
+    vpiHandle element = vpi_handle_by_index(root, 0);
+    ASSERT_NE(element, nullptr);
+    for (vpiHandle handle : {root, element}) {
+      EXPECT_EQ(vpi_get(vpiStrength0, handle), strength0);
+      EXPECT_EQ(vpi_get(vpiStrength1, handle), strength1);
+    }
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(element), 1);
+    EXPECT_EQ(vpi_release_handle(root), 1);
     obelisk_rt_v1_context_destroy(context);
   }
 }
@@ -5854,7 +5982,15 @@ TEST(VPI, ProtectedNetPropertiesAreDenied) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_get_str(vpiNetType, net), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get_str(vpiResolvedNetType, net), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_get(vpiChargeStrength, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiStrength0, net), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiStrength1, net), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   // Protection is checked before the sparse false/default path.
   EXPECT_EQ(vpi_get(vpiExplicitScalared, net), vpiUndefined);
@@ -5866,10 +6002,14 @@ TEST(VPI, ProtectedNetPropertiesAreDenied) {
 TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
   for (const auto &[selector, invalidValue] :
        {std::pair<uint16_t, uint64_t>{vpiNetType, vpiNone},
-        std::pair<uint16_t, uint64_t>{vpiChargeStrength, 3}}) {
+        std::pair<uint16_t, uint64_t>{vpiChargeStrength, 3},
+        std::pair<uint16_t, uint64_t>{vpiStrength0, 3},
+        std::pair<uint16_t, uint64_t>{vpiStrength1, 3}}) {
     SCOPED_TRACE(selector);
     Fixture fixture;
-    fixture.database = makeVPINetPropertyDatabase(vpiWire);
+    fixture.database = makeVPINetPropertyDatabase(
+        vpiWire, false, false, false,
+        selector == vpiStrength0 || selector == vpiStrength1);
     const uint32_t directoryOffset =
         static_cast<uint32_t>(fixture.database[12]) |
         (static_cast<uint32_t>(fixture.database[13]) << 8) |
@@ -5900,6 +6040,93 @@ TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
         obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
         OBELISK_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
+  }
+}
+
+TEST(DesignDatabase, RejectsMalformedResolvedNetRunImages) {
+  auto expectInvalid = [](std::vector<uint8_t> database) {
+    put64(database, 24, database.size());
+    put64(database, 32, imageChecksum(database));
+    Fixture fixture;
+    fixture.database = std::move(database);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(context, nullptr);
+  };
+  auto locations = [](const std::vector<uint8_t> &database) {
+    uint32_t directory = get32(database, 12);
+    return std::pair<uint64_t, uint64_t>{get64(database, directory + 128),
+                                         directory};
+  };
+
+  {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    (void)directory;
+    put32(database, run, 1); // Out-of-range object index.
+    expectInvalid(std::move(database));
+  }
+  {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    (void)directory;
+    uint64_t objectOffset = get64(database, 64);
+    uint32_t packedKind = get32(database, objectOffset);
+    put32(database, objectOffset,
+          (packedKind & UINT32_C(0xffff0000)) |
+              OBELISK_RT_DESIGN_RECORD_STORAGE);
+    expectInvalid(std::move(database));
+  }
+  for (const auto &[fieldOffset, value] : {
+           std::pair<uint64_t, uint64_t>{4, vpiNone},
+           {16, 0},
+           {8, 8},
+           {8, UINT64_MAX},
+       }) {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    (void)directory;
+    if (fieldOffset == 4)
+      put32(database, run + fieldOffset, static_cast<uint32_t>(value));
+    else
+      put64(database, run + fieldOffset, value);
+    expectInvalid(std::move(database));
+  }
+  for (const std::vector<ResolvedNetRunSpec> &runs : {
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 2, 4},
+                                           {vpiWand, 0, 2}},
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 5},
+                                           {vpiWand, 4, 4}},
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4},
+                                           {vpiWire, 4, 4}},
+       }) {
+    expectInvalid(makeVPINetPropertyDatabase(
+        vpiWire, false, false, false, false, 0, false, vpiNetArray,
+        std::nullopt, std::nullopt, runs));
+  }
+  {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    (void)run;
+    put64(database, directory + 128, database.size() + 1);
+    expectInvalid(std::move(database));
+  }
+  {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    (void)run;
+    put64(database, directory + 136, UINT64_MAX);
+    expectInvalid(std::move(database));
+  }
+  {
+    auto database = makeVPINetPropertyDatabase(vpiWire);
+    auto [run, directory] = locations(database);
+    database.resize(run + 23);
+    expectInvalid(std::move(database));
   }
 }
 

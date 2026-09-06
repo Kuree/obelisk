@@ -1416,6 +1416,8 @@ struct DesignDatabaseCache {
   uint64_t relationIndexMemberCount = 0;
   uint64_t fixedProperties = 0;
   uint64_t fixedPropertyCount = 0;
+  uint64_t resolvedNetRuns = 0;
+  uint64_t resolvedNetRunCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -2815,6 +2817,9 @@ obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;

@@ -1237,7 +1237,29 @@ materializeDesignDescriptors(ModuleOp module,
       }
     }
     addInteger(27, chargeStrength); // vpiChargeStrength
-    addBoolean(43, !getNetInitializerExpressions(net).empty());
+    bool declarationAssignment = !getNetInitializerExpressions(net).empty();
+    if (declarationAssignment) {
+      auto driveStrength = [](semantic::SVDriveStrength strength) -> int32_t {
+        switch (strength) {
+        case semantic::SVDriveStrength::Supply:
+          return 0x80; // vpiSupplyDrive
+        case semantic::SVDriveStrength::Strong:
+          return 0x40; // vpiStrongDrive
+        case semantic::SVDriveStrength::Pull:
+          return 0x20; // vpiPullDrive
+        case semantic::SVDriveStrength::Weak:
+          return 0x08; // vpiWeakDrive
+        case semantic::SVDriveStrength::HighZ:
+          return 0x01; // vpiHiZ
+        }
+        llvm_unreachable("unknown SystemVerilog drive strength");
+      };
+      addInteger(31, driveStrength(net.getDriveStrength0().value_or(
+                         semantic::SVDriveStrength::Strong)));
+      addInteger(32, driveStrength(net.getDriveStrength1().value_or(
+                         semantic::SVDriveStrength::Strong)));
+    }
+    addBoolean(43, declarationAssignment);
 
     return sim::VPIPropertySetAttr::get(builder.getContext(),
                                         builder.getArrayAttr(properties));

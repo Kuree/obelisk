@@ -104,7 +104,8 @@ module {
             is_implicit = false, name = "uwire", net_kind = 12 : i32,
             node_id = 16 : i64, semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
             sym_name = "uwire"} {}
-        obelisk.sv.symbol.net attributes {expansion_hint = 2 : i32,
+        obelisk.sv.symbol.net attributes {drive_strength0 = 2 : i32,
+            drive_strength1 = 3 : i32, expansion_hint = 2 : i32,
             hierarchical_name = "net_properties.scalared", is_implicit = true,
             name = "scalared", net_kind = 1 : i32, node_id = 17 : i64,
             semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
@@ -154,7 +155,7 @@ module {
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.supply1" {{.*}}selector = 22 : i32, value = 10 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.supply0" {{.*}}selector = 22 : i32, value = 11 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.uwire" {{.*}}selector = 22 : i32, value = 13 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 23 : i32, value = true>, #obelisk_sim.vpi_property<selector = 25 : i32, value = true>, #obelisk_sim.vpi_property<selector = 26 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>, #obelisk_sim.vpi_property<selector = 43 : i32, value = true>]>
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 23 : i32, value = true>, #obelisk_sim.vpi_property<selector = 25 : i32, value = true>, #obelisk_sim.vpi_property<selector = 26 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>, #obelisk_sim.vpi_property<selector = 31 : i32, value = 32 : i32>, #obelisk_sim.vpi_property<selector = 32 : i32, value = 8 : i32>, #obelisk_sim.vpi_property<selector = 43 : i32, value = true>]>
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.vectored" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 24 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>

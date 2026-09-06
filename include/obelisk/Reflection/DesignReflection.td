@@ -274,6 +274,17 @@ def FixedProperty : ReflectionLayout<"FixedProperty", 16,
   [FixedPropertySource, FixedPropertySelector, FixedPropertyKindAndFlags,
    FixedPropertyPayload]>;
 
+// Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
+// first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
+// mean that the exact dominating subtype is unavailable.
+def ResolvedNetRunObjectIndex : ReflectionField<"ObjectIndex", 0, U32LE>;
+def ResolvedNetRunNetType : ReflectionField<"NetType", 4, U32LE>;
+def ResolvedNetRunFirstBit : ReflectionField<"FirstBit", 8, U64LE>;
+def ResolvedNetRunBitCount : ReflectionField<"BitCount", 16, U64LE>;
+def ResolvedNetRun : ReflectionLayout<"ResolvedNetRun", 24,
+  [ResolvedNetRunObjectIndex, ResolvedNetRunNetType,
+   ResolvedNetRunFirstBit, ResolvedNetRunBitCount]>;
+
 // HeaderReserved is zero when no extension is present, otherwise it is the
 // absolute 32-bit image offset of this directory. Keeping the fixed header
 // stable lets future reflection producers add orthogonal generated sections
@@ -310,7 +321,11 @@ def SemanticDirectoryFixedPropertyOffset
     : ReflectionField<"FixedPropertyOffset", 112, U64LE>;
 def SemanticDirectoryFixedPropertyCount
     : ReflectionField<"FixedPropertyCount", 120, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 128,
+def SemanticDirectoryResolvedNetRunOffset
+    : ReflectionField<"ResolvedNetRunOffset", 128, U64LE>;
+def SemanticDirectoryResolvedNetRunCount
+    : ReflectionField<"ResolvedNetRunCount", 136, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 144,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -323,7 +338,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 128,
    SemanticDirectoryRelationIndexMemberOffset,
    SemanticDirectoryRelationIndexMemberCount,
    SemanticDirectoryFixedPropertyOffset,
-   SemanticDirectoryFixedPropertyCount]>;
+   SemanticDirectoryFixedPropertyCount,
+   SemanticDirectoryResolvedNetRunOffset,
+   SemanticDirectoryResolvedNetRunCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

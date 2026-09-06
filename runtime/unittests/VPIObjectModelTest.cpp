@@ -1445,9 +1445,15 @@ TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
     ASSERT_NE(image.symbolicName, nullptr);
     EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
                  expected.name);
+    const auto *resolved =
+        findVPIIntegerPropertyValue(vpiResolvedNetType, expected.value);
+    ASSERT_NE(resolved, nullptr) << expected.value;
+    EXPECT_STREQ(resolved->symbolicName, expected.name);
   }
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiNetType));
+  EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiResolvedNetType));
   EXPECT_EQ(findVPIIntegerPropertyValue(vpiNetType, vpiNone), nullptr);
+  EXPECT_EQ(findVPIIntegerPropertyValue(vpiResolvedNetType, vpiNone), nullptr);
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiChargeStrength));
   for (uint32_t value : {0u, uint32_t{vpiSmallCharge},
                          uint32_t{vpiMediumCharge}, uint32_t{vpiLargeCharge}}) {
@@ -1458,6 +1464,18 @@ TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
     ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
         vpiObjectModelImage, vpiChargeStrength, value, image));
     EXPECT_EQ(image.symbolicName, nullptr);
+  }
+  for (uint32_t property : {uint32_t{vpiStrength0},
+                            uint32_t{vpiStrength1}}) {
+    EXPECT_TRUE(hasVPIIntegerPropertyDomain(property));
+    for (uint32_t value : {uint32_t{vpiHiZ}, uint32_t{vpiWeakDrive},
+                           uint32_t{vpiPullDrive}, uint32_t{vpiStrongDrive},
+                           uint32_t{vpiSupplyDrive}}) {
+      const auto *strength = findVPIIntegerPropertyValue(property, value);
+      ASSERT_NE(strength, nullptr) << property << ": " << value;
+      EXPECT_STREQ(strength->symbolicName, "");
+    }
+    EXPECT_EQ(findVPIIntegerPropertyValue(property, 3), nullptr);
   }
 }
 
@@ -1821,8 +1839,12 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     const bool netSource =
         source && (source->families & vpiFamilyMask(VPIObjectFamily::Net)) != 0;
     if (netSource && (descriptor.property == vpiImplicitDecl ||
-                      descriptor.property == vpiNetDeclAssign))
+                      descriptor.property == vpiNetDeclAssign ||
+                      descriptor.property == vpiStrength0 ||
+                      descriptor.property == vpiStrength1))
       expected = PropertyRealization::FixedImage;
+    if (netSource && descriptor.property == vpiResolvedNetType)
+      expected = PropertyRealization::IndexedImage;
     if (descriptor.stability == PropertyStability::Dynamic)
       expected = PropertyRealization::Runtime;
     EXPECT_EQ(descriptor.realization, expected)

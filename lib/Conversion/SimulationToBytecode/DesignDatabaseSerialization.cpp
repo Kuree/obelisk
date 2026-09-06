@@ -7,6 +7,7 @@
 
 #include "BytecodeSerialization.h"
 
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
@@ -487,6 +488,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t payload = 0;
     std::string stringPayload;
   };
+  struct ResolvedNetRunRecord {
+    uint32_t objectIndex = 0;
+    uint32_t netType = 0;
+    uint64_t firstBit = 0;
+    uint64_t bitCount = 0;
+  };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
   SmallVector<StatementRecord> statements;
@@ -500,6 +507,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
   SmallVector<FixedPropertyRecord> fixedProperties;
+  SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
   auto fallbackName = [](StringRef kind, uint64_t id) {
     return (kind + "." + Twine(id)).str();
   };
@@ -2310,6 +2318,108 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return std::tie(left.sourceIndexAndTable, left.selector) <
              std::tie(right.sourceIndexAndTable, right.selector);
     });
+
+    // Freeze the exact post-collapse net subtype per physical bit. Execution
+    // deliberately canonicalizes wand/triand and wor/trior into common
+    // resolution categories, so the VPI image must follow the dominating
+    // declaration's original selector-22 value instead. Isolated ranges stay
+    // compact: only bits named by a connection split the declaration-wide
+    // default run.
+    analysis::NetConnectivityAnalysis connectivity(design);
+    DenseMap<uint64_t, std::pair<sim::SimNetDeclOp, uint32_t>> netObjects;
+    for (auto [objectIndex, object] : llvm::enumerate(objects))
+      if (object.kind == OBELISK_RT_DESIGN_RECORD_NET)
+        if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+          netObjects[net.getId()] =
+              {net, static_cast<uint32_t>(objectIndex)};
+    auto declaredNetType = [&](uint64_t netID) -> std::optional<uint32_t> {
+      auto found = netObjects.find(netID);
+      if (found == netObjects.end())
+        return std::nullopt;
+      uint32_t packedSource = 0;
+      if (!tryPackTableIndex(TableKind::Object, found->second.second,
+                             packedSource))
+        return std::nullopt;
+      auto property = std::lower_bound(
+          fixedProperties.begin(), fixedProperties.end(),
+          std::pair{packedSource, uint16_t{22}},
+          [](const FixedPropertyRecord &record, const auto &key) {
+            return std::pair{record.sourceIndexAndTable, record.selector} <
+                   key;
+          });
+      if (property == fixedProperties.end() ||
+          property->sourceIndexAndTable != packedSource ||
+          property->selector != 22 ||
+          property->kindAndFlags !=
+              static_cast<uint16_t>(VPIPropertyValueKind::Integer))
+        return std::nullopt;
+      return static_cast<uint32_t>(property->payload);
+    };
+    auto appendResolvedRun = [&](uint32_t objectIndex, uint64_t firstBit,
+                                 uint64_t bitCount,
+                                 std::optional<uint32_t> netType) {
+      if (bitCount == 0 || !netType)
+        return;
+      if (!resolvedNetRuns.empty()) {
+        ResolvedNetRunRecord &previous = resolvedNetRuns.back();
+        if (previous.objectIndex == objectIndex &&
+            previous.netType == *netType &&
+            previous.firstBit + previous.bitCount == firstBit) {
+          previous.bitCount += bitCount;
+          return;
+        }
+      }
+      resolvedNetRuns.push_back(
+          {objectIndex, *netType, firstBit, bitCount});
+    };
+    ArrayRef<analysis::NetBit> connected = connectivity.getConnectedBits();
+    for (const auto &[netID, entry] : netObjects) {
+      sim::SimNetDeclOp net = entry.first;
+      uint32_t objectIndex = entry.second;
+      std::optional<uint64_t> width = connectivity.getNetWidth(netID);
+      if (!width)
+        continue;
+      std::optional<uint32_t> ownType = declaredNetType(netID);
+      auto bit = std::lower_bound(
+          connected.begin(), connected.end(), analysis::NetBit{netID, 0});
+      uint64_t position = 0;
+      while (bit != connected.end() && bit->net == netID) {
+        if (bit->offset >= *width) {
+          net.emitOpError("connected net bit exceeds its declared width");
+          return {};
+        }
+        appendResolvedRun(objectIndex, position, bit->offset - position,
+                          ownType);
+        std::optional<uint32_t> resolvedType;
+        analysis::NetDominance dominance = connectivity.getDominance(*bit);
+        if (dominance.kind == analysis::NetDominanceKind::Isolated) {
+          resolvedType = ownType;
+        } else if (dominance.kind == analysis::NetDominanceKind::Unique ||
+                   dominance.kind == analysis::NetDominanceKind::Ambiguous) {
+          ArrayRef<analysis::NetBit> dominators =
+              connectivity.getDominatingBits(*bit);
+          for (analysis::NetBit dominator : dominators) {
+            std::optional<uint32_t> candidate =
+                declaredNetType(dominator.net);
+            if (!candidate || (resolvedType && resolvedType != candidate)) {
+              resolvedType.reset();
+              break;
+            }
+            resolvedType = candidate;
+          }
+        }
+        appendResolvedRun(objectIndex, bit->offset, 1, resolvedType);
+        position = bit->offset + 1;
+        ++bit;
+      }
+      appendResolvedRun(objectIndex, position, *width - position, ownType);
+    }
+    llvm::sort(resolvedNetRuns,
+               [](const ResolvedNetRunRecord &left,
+                  const ResolvedNetRunRecord &right) {
+                 return std::tie(left.objectIndex, left.firstBit) <
+                        std::tie(right.objectIndex, right.firstBit);
+               });
   }
 
   SmallVector<uint8_t> strings(1, 0);
@@ -2405,8 +2515,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t fixedPropertyOffset =
       relationIndexMemberOffset +
       relationIndexMembers.size() * RelationIndexMemberLayout.size;
-  uint64_t stringOffset =
+  uint64_t resolvedNetRunOffset =
       fixedPropertyOffset + fixedProperties.size() * FixedPropertyLayout.size;
+  uint64_t stringOffset =
+      resolvedNetRunOffset +
+      resolvedNetRuns.size() * ResolvedNetRunLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -2642,6 +2755,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setRelationIndexMemberCount(relationIndexMembers.size());
     writer.setFixedPropertyOffset(fixedPropertyOffset);
     writer.setFixedPropertyCount(fixedProperties.size());
+    writer.setResolvedNetRunOffset(resolvedNetRunOffset);
+    writer.setResolvedNetRunCount(resolvedNetRuns.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -2764,6 +2879,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                                 VPIPropertyValueKind::String)
                           ? stringOffset + intern(entry.stringPayload)
                           : entry.payload);
+  }
+  for (auto [index, entry] : llvm::enumerate(resolvedNetRuns)) {
+    ResolvedNetRunWriter writer(output.data() + resolvedNetRunOffset +
+                                index * ResolvedNetRunLayout.size);
+    writer.setObjectIndex(entry.objectIndex);
+    writer.setNetType(entry.netType);
+    writer.setFirstBit(entry.firstBit);
+    writer.setBitCount(entry.bitCount);
   }
   llvm::append_range(output, strings);
   alignTo(output, 8);

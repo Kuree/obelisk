@@ -144,6 +144,12 @@ obelisk_add_generated_process_object(
   Inputs/generated-vpi-static-arrays.mlir
   VPI read
 )
+obelisk_add_generated_process_object(
+  _generated_vpi_resolved_net_types_object
+  GeneratedVPIResolvedNetTypes
+  Inputs/generated-vpi-resolved-net-types.mlir
+  VPI read
+)
 add_executable(ObeliskGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
   "${_generated_process_object}"
@@ -167,6 +173,37 @@ add_executable(ObeliskGeneratedVPITraversalRuntimeTests
 add_executable(ObeliskGeneratedVPIStaticArraysRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStaticArraysTest.cpp"
   "${_generated_vpi_static_arrays_object}"
+)
+add_executable(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIResolvedNetTypesTest.cpp"
+  "${_generated_vpi_resolved_net_types_object}"
+)
+target_link_libraries(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_include_directories(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
+target_compile_features(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
+  cxx_std_17
+)
+set_target_properties(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
+
+add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedDesignDatabaseDumpTest.cpp"
+)
+target_link_libraries(obelisk-design-database-dump-test PRIVATE
+  ObeliskSimulationToBytecode
+  obelisk_rt
+  GTest::gtest_main
+  MLIRParser
+)
+target_compile_features(obelisk-design-database-dump-test PRIVATE cxx_std_17)
+set_target_properties(obelisk-design-database-dump-test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 target_link_libraries(ObeliskGeneratedVPIStaticArraysRuntimeTests PRIVATE
   obelisk_rt
@@ -228,6 +265,7 @@ set(OBELISK_RUNTIME_UNIT_TARGETS
   ObeliskGeneratedClassBitstreamNative
   ObeliskGeneratedProcessRuntimeTests
   ObeliskGeneratedVPIStaticArraysRuntimeTests
+  ObeliskGeneratedVPIResolvedNetTypesRuntimeTests
   ObeliskGeneratedVPITraversalRuntimeTests
   ObeliskProcessRuntimeTests
   ObeliskRuntimeTests
@@ -269,6 +307,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-opt
   obelisk-translate
   obelisk-sim-standard-api-test
+  obelisk-design-database-dump-test
   ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )

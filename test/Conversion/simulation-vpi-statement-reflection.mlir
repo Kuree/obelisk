@@ -1,9 +1,11 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s --check-prefix=DATABASE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s --check-prefix=WAVEFORM
+// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.read \
+// RUN:   OBELISK_TEST_VPI=read %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s --check-prefix=DATABASE < %t.read
+// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.off \
+// RUN:   OBELISK_TEST_VPI=off %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s --check-prefix=WAVEFORM < %t.off
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

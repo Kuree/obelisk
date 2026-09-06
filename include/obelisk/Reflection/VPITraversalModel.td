@@ -257,6 +257,10 @@ class VPIPropertyRealization<string cppName_, int value_> {
 def DerivedProperty : VPIPropertyRealization<"Derived", 0>;
 def FixedImageProperty : VPIPropertyRealization<"FixedImage", 1>;
 def RuntimeProperty : VPIPropertyRealization<"Runtime", 2>;
+// Immutable properties whose value can vary across a packed physical object.
+// The design image stores canonical bit runs and the query resolves a whole
+// handle or selection only when every selected bit has one exact value.
+def IndexedImageProperty : VPIPropertyRealization<"IndexedImage", 3>;
 
 class VPIProperty<string apiName_, int value_,
                   VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
@@ -724,9 +728,23 @@ def ArrayProperty : VPIProperty<"vpiArray", 28, BooleanProperty,
 def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
   ReadPrimTermObjects, "37.33">;
 def Strength0Property : VPIProperty<"vpiStrength0", 31, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.45">;
+  StrengthPropertyObjects, "37.16; 37.33; 37.45", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, NetPropertyObjects>;
 def Strength1Property : VPIProperty<"vpiStrength1", 32, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.45">;
+  StrengthPropertyObjects, "37.16; 37.33; 37.45", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, NetPropertyObjects>;
+def Strength0HiZ : VPIIntegerPropertyValue<Strength0Property, 1>;
+def Strength0Weak : VPIIntegerPropertyValue<Strength0Property, 8>;
+def Strength0Pull : VPIIntegerPropertyValue<Strength0Property, 32>;
+def Strength0Strong : VPIIntegerPropertyValue<Strength0Property, 64>;
+def Strength0Supply : VPIIntegerPropertyValue<Strength0Property, 128>;
+def Strength1HiZ : VPIIntegerPropertyValue<Strength1Property, 1>;
+def Strength1Weak : VPIIntegerPropertyValue<Strength1Property, 8>;
+def Strength1Pull : VPIIntegerPropertyValue<Strength1Property, 32>;
+def Strength1Strong : VPIIntegerPropertyValue<Strength1Property, 64>;
+def Strength1Supply : VPIIntegerPropertyValue<Strength1Property, 128>;
 def PrimTypeProperty : VPIProperty<"vpiPrimType", 33, IntegerProperty,
   PrimitiveDefinitionObjects, "37.33; 37.34", StaticProperty,
   DeniedWhenProtected, 1>;
@@ -788,7 +806,32 @@ def OffsetProperty : VPIProperty<"vpiOffset", 60, IntegerProperty,
   ContinuousAssignmentObjects, "37.45">;
 def ResolvedNetTypeProperty : VPIProperty<"vpiResolvedNetType", 61,
   IntegerProperty, NetPropertyObjects, "37.16", StaticProperty,
-  DeniedWhenProtected, 1>;
+  DeniedWhenProtected, 1, NoPropertyObjects, NoPropertyObjects,
+  IndexedImageProperty>;
+def ResolvedNetTypeWire
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 1, "vpiWire">;
+def ResolvedNetTypeWand
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 2, "vpiWand">;
+def ResolvedNetTypeWor
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 3, "vpiWor">;
+def ResolvedNetTypeTri
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 4, "vpiTri">;
+def ResolvedNetTypeTri0
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 5, "vpiTri0">;
+def ResolvedNetTypeTri1
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 6, "vpiTri1">;
+def ResolvedNetTypeTriReg
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 7, "vpiTriReg">;
+def ResolvedNetTypeTriAnd
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 8, "vpiTriAnd">;
+def ResolvedNetTypeTriOr
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 9, "vpiTriOr">;
+def ResolvedNetTypeSupply1
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 10, "vpiSupply1">;
+def ResolvedNetTypeSupply0
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 11, "vpiSupply0">;
+def ResolvedNetTypeUwire
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 13, "vpiUwire">;
 def SaveRestartIDProperty : VPIProperty<"vpiSaveRestartID", 62,
   IntegerProperty, NullOnlyPropertyObjects, "38.9; 38.36.1",
   DynamicProperty, DeniedWhenProtected, 0, NoPropertyObjects,

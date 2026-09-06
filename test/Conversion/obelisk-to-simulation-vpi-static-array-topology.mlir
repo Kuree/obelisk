@@ -1,8 +1,10 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=COUNT
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' '--encode-obelisk-sim-to-bytecode=vpi=read' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s --check-prefix=IMAGE
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o %t.mlir
+// RUN: env OBELISK_TEST_INPUT=%t.mlir OBELISK_TEST_OUTPUT=%t.dump \
+// RUN:   OBELISK_TEST_VPI=read %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s --check-prefix=IMAGE < %t.dump
 
 // Exercise recursive source geometry independently of executable array values.
 // The dimensions deliberately alternate direction and the singleton innermost
