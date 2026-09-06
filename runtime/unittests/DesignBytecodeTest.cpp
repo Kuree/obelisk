@@ -4,6 +4,7 @@
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
 #include "obelisk/Reflection/DesignReflection.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "sv_vpi_user.h"
@@ -1971,6 +1972,26 @@ std::vector<uint8_t> makeFixedPropertyDatabase(bool protectObject = true) {
   property(1, 0, vpiDefLineNo, 1, 29);
   if (protectObject)
     property(2, uint32_t{1} << 30, vpiIsProtected, 0, 1);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeProtectedScopeDatabase() {
+  std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes[12]) |
+                                   (static_cast<uint32_t>(bytes[13]) << 8) |
+                                   (static_cast<uint32_t>(bytes[14]) << 16) |
+                                   (static_cast<uint32_t>(bytes[15]) << 24);
+  const uint64_t propertyOffset = get64(bytes, directoryOffset + 112);
+  const uint64_t propertyCount = get64(bytes, directoryOffset + 120);
+  EXPECT_EQ(propertyCount, 2u);
+  bytes.resize(bytes.size() + 16, 0);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 120, propertyCount + 1);
+  put32(bytes, propertyOffset + propertyCount * 16, 0);
+  put16(bytes, propertyOffset + propertyCount * 16 + 4, vpiIsProtected);
+  put16(bytes, propertyOffset + propertyCount * 16 + 6, 0);
+  put64(bytes, propertyOffset + propertyCount * 16 + 8, 1);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -5338,11 +5359,14 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   vpiHandle second = vpi_register_cb(&data);
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, second), vpiOtherScheme);
   EXPECT_EQ(vpi_compare_objects(first, second), 0);
   EXPECT_EQ(vpi_release_handle(first), 1);
 
   vpiHandle iterator = vpi_iterate(vpiCallback, nullptr);
   ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, iterator), vpiCallback);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, iterator), vpiOtherScheme);
   EXPECT_EQ(vpi_handle(vpiUse, iterator), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   vpiHandle firstEquivalent = nullptr;
@@ -5528,6 +5552,98 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {
+  Fixture fixture;
+  fixture.database = makeFixedPropertyDatabase(false);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  const auto *compatibility =
+      obelisk::reflection::findVPIProperty(0, vpiCompatibilityMode);
+  ASSERT_NE(compatibility, nullptr);
+  EXPECT_EQ(compatibility->valueKind,
+            obelisk::reflection::VPIPropertyValueKind::Integer);
+  EXPECT_EQ(vpi_get(vpiCompatibilityMode, nullptr), vpiMode1800v2009);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_get(vpiSize, nullptr), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiCompatibilityMode, nullptr), vpiMode1800v2009);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  char rootName[] = "$root";
+  char valueName[] = "value";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  vpiHandle value = vpi_handle_by_name(valueName, root);
+  ASSERT_NE(root, nullptr);
+  ASSERT_NE(value, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiReg, root);
+  ASSERT_NE(iterator, nullptr);
+
+  struct PropertyCase {
+    vpiHandle handle;
+    PLI_INT32 exactType;
+    PLI_INT32 property;
+    PLI_INT32 expected;
+  };
+  // This is the deliberately narrow Priority-0 runtime oracle. Every row is
+  // first checked against the generated catalog, then exercised through the
+  // public API so catalog growth cannot silently turn a handler into a stub.
+  const PropertyCase cases[] = {
+      {root, vpiModule, vpiAllocScheme, vpiOtherScheme},
+      {root, vpiModule, vpiProtected, 0},
+      {value, vpiReg, vpiAllocScheme, vpiOtherScheme},
+      {value, vpiReg, vpiValid, 1},
+      {iterator, vpiIterator, vpiAllocScheme, vpiOtherScheme},
+      {iterator, vpiIterator, vpiIteratorType, vpiReg},
+  };
+  for (const PropertyCase &item : cases) {
+    const auto *descriptor =
+        obelisk::reflection::findVPIProperty(item.exactType, item.property);
+    ASSERT_NE(descriptor, nullptr) << item.exactType << ":" << item.property;
+    EXPECT_NE(descriptor->realization,
+              obelisk::reflection::VPIPropertyRealization::FixedImage);
+    EXPECT_EQ(vpi_get(item.property, item.handle), item.expected)
+        << descriptor->apiName;
+    EXPECT_EQ(vpi_chk_error(nullptr), 0) << descriptor->apiName;
+  }
+
+  EXPECT_EQ(vpi_release_handle(iterator), 1);
+  EXPECT_EQ(vpi_release_handle(value), 1);
+  EXPECT_EQ(vpi_get(vpiValid, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, LegacyProtectedPropertyDefaultsFalseAndFailsClosed) {
+  Fixture fixture;
+  fixture.database = makeProtectedScopeDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char rootName[] = "$root";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, root), 1);
+  EXPECT_EQ(vpi_get(vpiProtected, root), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
   Fixture fixture;
   fixture.database = makeFixedPropertyDatabase();
@@ -5551,6 +5667,10 @@ TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
   EXPECT_STREQ(vpi_get_str(vpiType, value), "vpiReg");
   EXPECT_EQ(vpi_get(vpiIsProtected, value), 1);
   EXPECT_EQ(vpi_get(vpiSize, value), 65); // LRM protected-expression exception.
+  EXPECT_EQ(vpi_get(vpiAllocScheme, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get(vpiValid, value), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_get_str(vpiName, value), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_get64(vpiObjId, value), vpiUndefined);
@@ -5991,6 +6111,7 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   vpiHandle multi = vpi_handle_by_multi_index(root, 2, multiIndices);
   ASSERT_NE(multi, nullptr);
   EXPECT_EQ(vpi_get(vpiType, multi), vpiRegBit);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, multi), vpiOtherScheme);
   EXPECT_EQ(integerValue(multi), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_STREQ(vpi_get_str(vpiFullName, multi), "top.value[1][7]");
@@ -6003,6 +6124,7 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
 
   vpiHandle indices = vpi_iterate(vpiIndex, multi);
   ASSERT_NE(indices, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, indices), vpiIndex);
   vpiHandle indexUse = vpi_handle(vpiUse, indices);
   ASSERT_NE(indexUse, nullptr);
   EXPECT_EQ(vpi_compare_objects(indexUse, multi), 1);
@@ -6599,6 +6721,7 @@ TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
   vpiHandle array = vpi_handle(vpiTypespec, object);
   ASSERT_NE(array, nullptr);
   EXPECT_EQ(vpi_get(vpiType, array), vpiArrayTypespec);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, array), vpiOtherScheme);
   EXPECT_EQ(vpi_get(vpiArrayType, array), vpiStaticArray);
   EXPECT_EQ(vpi_get_str(vpiName, array), nullptr);
   vpiHandle instance = vpi_handle(vpiInstance, array);
@@ -6609,6 +6732,7 @@ TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
 
   vpiHandle ranges = vpi_iterate(vpiRange, array);
   ASSERT_NE(ranges, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, ranges), vpiRange);
   vpiHandle use = vpi_handle(vpiUse, ranges);
   ASSERT_NE(use, nullptr);
   EXPECT_EQ(vpi_compare_objects(use, array), 1);
@@ -6617,11 +6741,13 @@ TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
   vpiHandle outerRange = vpi_scan(ranges);
   ASSERT_NE(outerRange, nullptr);
   EXPECT_EQ(vpi_get(vpiType, outerRange), vpiRange);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, outerRange), vpiOtherScheme);
   EXPECT_EQ(vpi_get(vpiSize, outerRange), 4);
   vpiHandle left = vpi_handle(vpiLeftRange, outerRange);
   vpiHandle right = vpi_handle(vpiRightRange, outerRange);
   ASSERT_NE(left, nullptr);
   ASSERT_NE(right, nullptr);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, left), vpiOtherScheme);
   EXPECT_EQ(integerValue(left), 3);
   EXPECT_EQ(integerValue(right), 0);
   release(left);
@@ -8162,6 +8288,7 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
   ASSERT_NE(module, nullptr);
   vpiHandle processes = vpi_iterate(vpiProcess, module);
   ASSERT_NE(processes, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, processes), vpiProcess);
   process = vpi_scan(processes);
   ASSERT_NE(process, nullptr);
   EXPECT_EQ(vpi_get(vpiType, process), vpiInitial);
@@ -8767,6 +8894,7 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
 
   vpiHandle iterator = vpi_iterate(vpiTimeQueue, nullptr);
   ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, iterator), vpiTimeQueue);
   EXPECT_EQ(vpi_handle(vpiUse, iterator), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   // Iterator contents are a snapshot, not a live view of scheduler storage.
@@ -8777,6 +8905,7 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   for (uint64_t scheduledTime : expected) {
     vpiHandle queue = vpi_scan(iterator);
     ASSERT_NE(queue, nullptr);
+    EXPECT_EQ(vpi_get(vpiAllocScheme, queue), vpiOtherScheme);
     EXPECT_EQ(vpi_get(vpiType, queue), vpiTimeQueue);
     EXPECT_STREQ(vpi_get_str(vpiType, queue), "vpiTimeQueue");
     EXPECT_EQ(vpi_get(vpiIsProtected, queue), 0);

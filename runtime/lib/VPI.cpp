@@ -122,6 +122,12 @@ struct __vpiHandle {
   std::vector<obelisk_rt_design_cursor_v1> items;
   std::vector<uint64_t> timeQueueItems;
   std::vector<VPISelectionStep> indexItems;
+  // Preserve the selector passed to vpi_iterate(). Iterator storage may use
+  // a normalized relation selector, but vpiIteratorType is the requested one.
+  PLI_INT32 iteratorType = vpiUndefined;
+  // Immutable design handles are persistent. Indexed handles inherit this
+  // explicit provenance from their source, ready for future transient kinds.
+  PLI_INT32 allocationScheme = vpiOtherScheme;
   bool callbackIterator = false;
   bool timeQueueIterator = false;
   bool designIterator = false;
@@ -142,6 +148,7 @@ struct __vpiHandle {
   obelisk::reflection::VPIIndexedAccessKind useSelectionAccessKind =
       obelisk::reflection::VPIIndexedAccessKind::VariableElement;
   uint64_t useSelectionBitOffset = 0;
+  PLI_INT32 useAllocationScheme = vpiOtherScheme;
   std::vector<VPISelectionStep> useSelectionSteps;
   obelisk::reflection::VPIObjectSetID requestedTargets{};
   VPIRelationRange relationRange{};
@@ -1479,6 +1486,7 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->exactVpiType = steps.back().exactVpiType;
     handle->statement = source->statement;
     handle->protectedObject = source->protectedObject;
+    handle->allocationScheme = source->allocationScheme;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
     handle->suppressSemanticDimension = steps.back().suppressSemanticDimension;
     handle->selectionRootType = rootType;
@@ -1691,6 +1699,7 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->exactVpiType = rootType;
     handle->statement = false;
     handle->protectedObject = source->protectedObject;
+    handle->allocationScheme = source->allocationScheme;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
     handle->selectionRootType = rootType;
     handle->selectionAccessKind =
@@ -2237,16 +2246,23 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.useSelectionRootType = source.selectionRootType;
   iterator.useSelectionAccessKind = source.selectionAccessKind;
   iterator.useSelectionBitOffset = source.selectionBitOffset;
+  iterator.useAllocationScheme = source.allocationScheme;
   iterator.useSelectionSteps = source.selectionSteps;
 }
 
 vpiHandle makeUseHandle(__vpiHandle *iterator) {
   if (!iterator->hasUse)
     return nullptr;
-  if (iterator->useForm == VPIObjectForm::Design)
-    return makeHandle(iterator->owner, iterator->useCursor, iterator->useType,
-                      iterator->useStatement,
-                      iterator->useClassDefinitionOrigin);
+  if (iterator->useForm == VPIObjectForm::Design) {
+    vpiHandle result =
+        makeHandle(iterator->owner, iterator->useCursor, iterator->useType,
+                   iterator->useStatement, iterator->useClassDefinitionOrigin);
+    if (result) {
+      if (__vpiHandle *handle = findHandle(result))
+        handle->allocationScheme = iterator->useAllocationScheme;
+    }
+    return result;
+  }
   if (iterator->useForm == VPIObjectForm::Indexed) {
     OBELISK_RT_TRY {
       __vpiHandle source;
@@ -2257,6 +2273,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       source.selectionRootType = iterator->useSelectionRootType;
       source.selectionAccessKind = iterator->useSelectionAccessKind;
       source.selectionBitOffset = iterator->useSelectionBitOffset;
+      source.allocationScheme = iterator->useAllocationScheme;
       source.form = VPIObjectForm::Indexed;
       source.exactVpiType = iterator->useType;
       source.selectionSteps = iterator->useSelectionSteps;
@@ -2284,6 +2301,8 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
     if (handle)
       handle->suppressSemanticDimension =
           iterator->useSuppressSemanticDimension;
+    if (handle)
+      handle->allocationScheme = iterator->useAllocationScheme;
   }
   return result;
 }
@@ -2317,6 +2336,7 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
+    iterator->iteratorType = selector;
     iterator->semanticIterator = kind;
     iterator->cursor = source->cursor;
     iterator->semanticCursor = semantic;
@@ -3222,6 +3242,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       auto iterator = std::make_unique<__vpiHandle>();
       iterator->owner = state;
       iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
       iterator->items = std::move(callbacks);
       iterator->callbackIterator = true;
       return keepHandle(state, std::move(iterator));
@@ -3258,6 +3279,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       auto iterator = std::make_unique<__vpiHandle>();
       iterator->owner = state;
       iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
       iterator->timeQueueItems = std::move(times);
       iterator->timeQueueIterator = true;
       return keepHandle(state, std::move(iterator));
@@ -3316,6 +3338,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         auto iterator = std::make_unique<__vpiHandle>();
         iterator->owner = state;
         iterator->kind = VPIHandleKind::Iterator;
+        iterator->iteratorType = type;
         iterator->semanticIterator = VPISemanticIteratorKind::Indices;
         iterator->cursor = handle->cursor;
         iterator->semanticCursor = handle->semanticCursor;
@@ -3376,6 +3399,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       auto iterator = std::make_unique<__vpiHandle>();
       iterator->owner = state;
       iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
       iterator->relationIterator = true;
       iterator->relationRange = range;
       if (reference) {
@@ -3416,6 +3440,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = state;
     iterator->kind = VPIHandleKind::Iterator;
+    iterator->iteratorType = type;
     iterator->designIterator = true;
     iterator->requestedTargets = edge->targets;
     iterator->cursor = cursor;
@@ -3622,8 +3647,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
   beginVPICall();
-  if (!opaque && (property == vpiTimeUnit || property == vpiTimePrecision)) {
+  if (!opaque) {
     VPIState *state = requireState();
+    if (!state)
+      return vpiUndefined;
+    if (property == vpiCompatibilityMode)
+      return vpiMode1800v2009;
+    if (property != vpiTimeUnit && property != vpiTimePrecision) {
+      setError(state, "invalid NULL VPI handle for property query");
+      return vpiUndefined;
+    }
     int32_t exponent = 0;
     return globalTimeExponent(state, exponent) ? exponent : vpiUndefined;
   }
@@ -3658,6 +3691,20 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     }
     return static_cast<PLI_INT32>(value.payload);
   }
+  // Allocation provenance belongs to the handle rather than its exact kind:
+  // an indexed variable has the lifetime of the object it selects.
+  if (property == vpiAllocScheme)
+    return handle->allocationScheme;
+  if (property == vpiIteratorType && handle->kind == VPIHandleKind::Iterator)
+    return handle->iteratorType;
+  // Released and reclaimed handles fail findHandle() above. A live variable
+  // or frame handle is therefore valid at the instant of this query.
+  if (property == vpiValid)
+    return 1;
+  // propertyFor() already rejected protected sources. The applicable legacy
+  // scope property has the canonical false value in every other case.
+  if (property == vpiProtected)
+    return 0;
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
   if (handle->kind == VPIHandleKind::Object &&
       handle->form == VPIObjectForm::IntegralConstant) {
