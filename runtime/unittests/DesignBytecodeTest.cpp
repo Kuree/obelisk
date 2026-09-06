@@ -5190,6 +5190,14 @@ PLI_INT32 lifecycleProbeCallback(p_cb_data data) {
   return 73;
 }
 
+PLI_INT32 systemTfCall(PLI_BYTE8 *userData) {
+  return userData ? *reinterpret_cast<unsigned char *>(userData) : 0;
+}
+
+PLI_INT32 systemTfCompile(PLI_BYTE8 *userData) { return userData ? 17 : 0; }
+
+PLI_INT32 systemTfSize(PLI_BYTE8 *userData) { return userData ? 65 : 32; }
+
 struct VPIRegistrationProbe {
   std::vector<int> reasons;
   VPILifecycleProbe start;
@@ -5406,6 +5414,34 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_context_destroy(context);
 
+  Fixture systemTfFixture;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&systemTfFixture.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  reset(4);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  EXPECT_EQ(query(0), 1);
+  EXPECT_EQ(query(4), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  vpiHandle systemTfIterator = vpi_iterate(vpiUserSystf, nullptr);
+  ASSERT_NE(systemTfIterator, nullptr);
+  vpiHandle systemTf = vpi_scan(systemTfIterator);
+  ASSERT_NE(systemTf, nullptr);
+  s_vpi_systf_data systemTfInfo{};
+  vpi_get_systf_info(systemTf, &systemTfInfo);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(systemTfInfo.type, vpiSysTask);
+  EXPECT_STREQ(systemTfInfo.tfname, "$startup_inspect");
+  EXPECT_NE(systemTfInfo.calltf, nullptr);
+  EXPECT_NE(systemTfInfo.user_data, nullptr);
+  EXPECT_EQ(vpi_scan(systemTfIterator), nullptr);
+  EXPECT_EQ(vpi_release_handle(systemTf), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  obelisk_rt_v1_context_destroy(context);
+
   Fixture failingFixture;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&failingFixture.execution,
                                                     &context),
@@ -5578,6 +5614,118 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   EXPECT_TRUE(probe.end.actionFieldsWereNull);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   obelisk_rt_v1_vpi_shutdown(context);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, RegistersQueriesAndIteratesSystemTasksAndFunctions) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+
+  EXPECT_EQ(vpi_register_systf(nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  char invalidName[] = "$bad-name";
+  s_vpi_systf_data invalid{};
+  invalid.type = vpiSysTask;
+  invalid.tfname = invalidName;
+  EXPECT_EQ(vpi_register_systf(&invalid), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  char invalidFunctionName[] = "$bad_function";
+  invalid = {};
+  invalid.type = vpiSysFunc;
+  invalid.tfname = invalidFunctionName;
+  EXPECT_EQ(vpi_register_systf(&invalid), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  PLI_BYTE8 userData = 29;
+  char taskName[] = "$inspect_29";
+  s_vpi_systf_data task{};
+  task.type = vpiSysTask;
+  task.sysfunctype = 12345; // Ignored and canonicalized for a task.
+  task.tfname = taskName;
+  task.calltf = systemTfCall;
+  task.compiletf = systemTfCompile;
+  task.sizetf = systemTfSize; // Not applicable to tasks.
+  task.user_data = &userData;
+  vpiHandle taskHandle = vpi_register_systf(&task);
+  ASSERT_NE(taskHandle, nullptr);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->vpiObservationDemand);
+
+  char functionName[] = "$sized_function";
+  s_vpi_systf_data function{};
+  function.type = vpiSysFunc;
+  function.sysfunctype = vpiSizedSignedFunc;
+  function.tfname = functionName;
+  function.calltf = systemTfCall;
+  function.compiletf = systemTfCompile;
+  function.sizetf = systemTfSize;
+  function.user_data = &userData;
+  vpiHandle functionHandle = vpi_register_systf(&function);
+  ASSERT_NE(functionHandle, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get(vpiType, taskHandle), vpiUserSystf);
+  EXPECT_EQ(vpi_register_systf(&function), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  taskName[1] = 'X';
+  task = {};
+  s_vpi_systf_data copied{};
+  vpi_get_systf_info(taskHandle, &copied);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(copied.type, vpiSysTask);
+  EXPECT_EQ(copied.sysfunctype, 0);
+  EXPECT_STREQ(copied.tfname, "$inspect_29");
+  EXPECT_EQ(copied.calltf, systemTfCall);
+  EXPECT_EQ(copied.compiletf, systemTfCompile);
+  EXPECT_EQ(copied.sizetf, nullptr);
+  EXPECT_EQ(copied.user_data, &userData);
+
+  copied = {};
+  vpi_get_systf_info(functionHandle, &copied);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(copied.type, vpiSysFunc);
+  EXPECT_EQ(copied.sysfunctype, vpiSizedSignedFunc);
+  EXPECT_STREQ(copied.tfname, "$sized_function");
+  EXPECT_EQ(copied.calltf, systemTfCall);
+  EXPECT_EQ(copied.compiletf, systemTfCompile);
+  EXPECT_EQ(copied.sizetf, systemTfSize);
+  EXPECT_EQ(copied.user_data, &userData);
+
+  vpi_get_systf_info(functionHandle, nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  char rootName[] = "$root";
+  vpiHandle root = vpi_handle_by_name(rootName, nullptr);
+  ASSERT_NE(root, nullptr);
+  copied.type = -1;
+  vpi_get_systf_info(root, &copied);
+  EXPECT_EQ(copied.type, 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+
+  vpiHandle iterator = vpi_iterate(vpiUserSystf, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, iterator), vpiUserSystf);
+  vpiHandle scannedTask = vpi_scan(iterator);
+  vpiHandle scannedFunction = vpi_scan(iterator);
+  ASSERT_NE(scannedTask, nullptr);
+  ASSERT_NE(scannedFunction, nullptr);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_compare_objects(taskHandle, scannedTask), 1);
+  EXPECT_EQ(vpi_compare_objects(functionHandle, scannedFunction), 1);
+  copied = {};
+  vpi_get_systf_info(scannedTask, &copied);
+  EXPECT_STREQ(copied.tfname, "$inspect_29");
+
+  EXPECT_EQ(vpi_release_handle(scannedFunction), 1);
+  EXPECT_EQ(vpi_release_handle(scannedTask), 1);
+  EXPECT_EQ(vpi_release_handle(functionHandle), 1);
+  EXPECT_EQ(vpi_release_handle(taskHandle), 1);
+  EXPECT_EQ(vpi_release_handle(root), 1);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
   obelisk_rt_v1_context_destroy(context);
 }
@@ -10355,9 +10503,8 @@ TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
 
   s_vpi_systf_data systf{};
   vpi_get_systf_info(object, &systf);
-  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.message,
-               "VPI system task/function metadata is unavailable");
+  EXPECT_EQ(vpi_chk_error(&error), vpiError);
+  EXPECT_STREQ(error.message, "wrong-kind VPI handle");
 
   EXPECT_EQ(vpi_get_data(1, nullptr, 0), 0);
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);

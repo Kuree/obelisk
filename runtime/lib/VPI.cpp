@@ -129,6 +129,7 @@ struct __vpiHandle {
   // explicit provenance from their source, ready for future transient kinds.
   PLI_INT32 allocationScheme = vpiOtherScheme;
   bool callbackIterator = false;
+  bool systemTfIterator = false;
   bool timeQueueIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
@@ -177,6 +178,17 @@ struct VPICallback {
   PLI_BYTE8 *userData = nullptr;
 };
 
+struct VPISystemTf {
+  uint64_t id = 0;
+  PLI_INT32 type = 0;
+  PLI_INT32 sysfunctype = 0;
+  std::string name;
+  PLI_INT32 (*calltf)(PLI_BYTE8 *) = nullptr;
+  PLI_INT32 (*compiletf)(PLI_BYTE8 *) = nullptr;
+  PLI_INT32 (*sizetf)(PLI_BYTE8 *) = nullptr;
+  PLI_BYTE8 *userData = nullptr;
+};
+
 struct VPIState {
   obelisk_rt_context *context = nullptr;
   // Keep the simulation thread's binding slot alive even if that thread exits
@@ -189,10 +201,13 @@ struct VPIState {
   bool unsupportedStartup = false;
   VPIPhase phase = VPIPhase::StartupRestricted;
   uint64_t nextCallbackId = 1;
+  uint64_t nextSystemTfId = 1;
   uint32_t callbackDepth = 0;
   uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
   std::vector<uint64_t> callbackOrder;
+  std::unordered_map<uint64_t, VPISystemTf> systemTfs;
+  std::vector<uint64_t> systemTfOrder;
   // IEEE temporary results are invalidated by the next routine call of the
   // same family, irrespective of which object handle was used.
   std::string propertyStringScratch;
@@ -521,6 +536,26 @@ vpiHandle makeCallbackHandle(VPIState *state, uint64_t callbackId) {
   }
 }
 
+vpiHandle makeSystemTfHandle(VPIState *state, uint64_t systemTfId) {
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = state;
+    handle->kind = VPIHandleKind::SystemTf;
+    handle->cursor.offset = systemTfId;
+    return keepHandle(state, std::move(handle));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI system task/function handle arena is out of memory",
+             vpiSystem);
+    return nullptr;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI system task/function handle",
+             vpiInternal);
+    return nullptr;
+  }
+}
+
 vpiHandle makeTimeQueueHandle(VPIState *state, uint64_t scheduledTime) {
   OBELISK_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
@@ -548,6 +583,13 @@ VPICallback *findCallback(__vpiHandle *handle) {
     return nullptr;
   }
   return &found->second;
+}
+
+VPISystemTf *findSystemTf(__vpiHandle *handle) {
+  if (!handle || handle->kind != VPIHandleKind::SystemTf)
+    return nullptr;
+  auto found = handle->owner->systemTfs.find(handle->cursor.offset);
+  return found == handle->owner->systemTfs.end() ? nullptr : &found->second;
 }
 
 bool isLifecycleReason(PLI_INT32 reason) {
@@ -2957,13 +2999,6 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
   }
 }
 
-void unsupportedStartup(const char *feature) {
-  VPIState *state = currentState();
-  if (state)
-    state->unsupportedStartup = true;
-  setError(state, feature, vpiError, "OBELISK_VPI_UNSUPPORTED_STARTUP");
-}
-
 } // namespace
 
 extern "C" OBELISK_VPI_EXPORT const obelisk_rt_vpi_object_model_v1 *
@@ -3396,6 +3431,29 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     }
   }
+  if (type == vpiUserSystf && !reference) {
+    std::vector<obelisk_rt_design_cursor_v1> systemTfs;
+    OBELISK_RT_TRY {
+      systemTfs.reserve(state->systemTfs.size());
+      for (uint64_t id : state->systemTfOrder)
+        if (state->systemTfs.find(id) != state->systemTfs.end())
+          systemTfs.push_back({id});
+      if (systemTfs.empty())
+        return nullptr;
+      auto iterator = std::make_unique<__vpiHandle>();
+      iterator->owner = state;
+      iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
+      iterator->items = std::move(systemTfs);
+      iterator->systemTfIterator = true;
+      return keepHandle(state, std::move(iterator));
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not allocate VPI system task/function iterator",
+               vpiSystem);
+      return nullptr;
+    }
+  }
   if (type == vpiTimeQueue && !reference) {
     OBELISK_RT_TRY {
       std::vector<uint64_t> times;
@@ -3617,6 +3675,22 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         VPIState *state = iterator->owner;
         const uintptr_t iteratorToken = iterator->token;
         vpiHandle result = makeCallbackHandle(state, id);
+        if (!result)
+          state->handles.erase(iteratorToken);
+        return result;
+      }
+    }
+    iterator->owner->handles.erase(iterator->token);
+    return nullptr;
+  }
+  if (iterator->systemTfIterator) {
+    while (iterator->next != iterator->items.size()) {
+      uint64_t id = iterator->items[iterator->next++].offset;
+      if (iterator->owner->systemTfs.find(id) !=
+          iterator->owner->systemTfs.end()) {
+        VPIState *state = iterator->owner;
+        const uintptr_t iteratorToken = iterator->token;
+        vpiHandle result = makeSystemTfHandle(state, id);
         if (!result)
           state->handles.erase(iteratorToken);
         return result;
@@ -4970,6 +5044,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
   if (!left || !right || left->kind != right->kind)
     return 0;
   if (left->kind == VPIHandleKind::Callback ||
+      left->kind == VPIHandleKind::SystemTf ||
       left->kind == VPIHandleKind::TimeQueue)
     return left->cursor.offset == right->cursor.offset;
   if (left->kind != VPIHandleKind::Object) {
@@ -5171,18 +5246,111 @@ vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
     setError(state, "VPI system task/function info destination is null");
     return;
   }
-  __vpiHandle *handle = findHandle(opaque);
-  if (!handle)
+  __vpiHandle *handle = validate(opaque, VPIHandleKind::SystemTf);
+  VPISystemTf *systemTf = findSystemTf(handle);
+  if (!systemTf) {
+    if (handle)
+      setError(state, "VPI system task/function registration is unavailable",
+               vpiInternal);
     return;
-  setError(state, "VPI system task/function metadata is unavailable",
-           vpiNotice);
+  }
+  destination->type = systemTf->type;
+  destination->sysfunctype = systemTf->sysfunctype;
+  destination->tfname = reinterpret_cast<PLI_BYTE8 *>(systemTf->name.data());
+  destination->calltf = systemTf->calltf;
+  destination->compiletf = systemTf->compiletf;
+  destination->sizetf = systemTf->sizetf;
+  destination->user_data = systemTf->userData;
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_register_systf(p_vpi_systf_data) {
+extern "C" OBELISK_VPI_EXPORT vpiHandle
+vpi_register_systf(p_vpi_systf_data registration) {
   beginVPICall();
-  unsupportedStartup(
-      "VPI system task/function registration is not supported during startup");
-  return nullptr;
+  VPIState *state = currentState();
+  if (!state || !registration) {
+    setError(state, "VPI system task/function registration requires data");
+    return nullptr;
+  }
+  if (state->phase != VPIPhase::StartupRestricted &&
+      state->phase != VPIPhase::BeforeEndCompile) {
+    setError(state, "VPI system task/function registration must occur before "
+                    "elaboration");
+    return nullptr;
+  }
+  if (registration->type != vpiSysTask && registration->type != vpiSysFunc) {
+    setError(state,
+             "VPI system task/function type must be vpiSysTask or vpiSysFunc");
+    return nullptr;
+  }
+  if (registration->type == vpiSysFunc &&
+      (registration->sysfunctype < vpiIntFunc ||
+       registration->sysfunctype > vpiSizedSignedFunc)) {
+    setError(state, "unsupported VPI system function return type");
+    return nullptr;
+  }
+  if (!registration->tfname || registration->tfname[0] != '$' ||
+      registration->tfname[1] == '\0') {
+    setError(state, "VPI system task/function name must start with '$' and be "
+                    "nonempty");
+    return nullptr;
+  }
+  for (const unsigned char *character =
+           reinterpret_cast<const unsigned char *>(registration->tfname + 1);
+       *character; ++character) {
+    if ((*character >= 'A' && *character <= 'Z') ||
+        (*character >= 'a' && *character <= 'z') ||
+        (*character >= '0' && *character <= '9') || *character == '_' ||
+        *character == '$')
+      continue;
+    setError(state, "VPI system task/function name is not a simple identifier");
+    return nullptr;
+  }
+
+  OBELISK_RT_TRY {
+    if (state->nextSystemTfId == std::numeric_limits<uint64_t>::max()) {
+      setError(state, "VPI system task/function identifier space is exhausted",
+               vpiSystem);
+      return nullptr;
+    }
+    const uint64_t id = state->nextSystemTfId++;
+    VPISystemTf systemTf;
+    systemTf.id = id;
+    systemTf.type = registration->type;
+    systemTf.sysfunctype =
+        registration->type == vpiSysFunc ? registration->sysfunctype : 0;
+    systemTf.name = registration->tfname;
+    systemTf.calltf = registration->calltf;
+    systemTf.compiletf = registration->compiletf;
+    systemTf.sizetf =
+        registration->type == vpiSysFunc ? registration->sizetf : nullptr;
+    systemTf.userData = registration->user_data;
+    auto inserted = state->systemTfs.try_emplace(id, std::move(systemTf));
+    if (!inserted.second) {
+      setError(state, "VPI system task/function identifier collision",
+               vpiInternal);
+      return nullptr;
+    }
+    OBELISK_RT_TRY { state->systemTfOrder.push_back(id); }
+    OBELISK_RT_CATCH_ALL {
+      state->systemTfs.erase(id);
+      OBELISK_RT_RETHROW;
+    }
+    vpiHandle result = makeSystemTfHandle(state, id);
+    if (!result) {
+      state->systemTfs.erase(id);
+      state->systemTfOrder.pop_back();
+    }
+    return result;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setError(state, "VPI system task/function registry is out of memory",
+             vpiSystem);
+    return nullptr;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not register VPI system task/function", vpiInternal);
+    return nullptr;
+  }
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32
