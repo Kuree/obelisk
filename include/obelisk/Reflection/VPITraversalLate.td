@@ -566,3 +566,5 @@ def LateGenScopeAliases : VPITraversalEdge<LateGenScopeSource, AliasStmt,
   IterateMode, AliasStmtObjects, NoOrder, "37.85", 1>;
 def LateGenScopeClockingBlocks : VPITraversalEdge<LateGenScopeSource,
   ClockingBlock, IterateMode, ClockingBlockObjects, NoOrder, "37.85">;
+def LateGenScopeNettypeDecls : VPITraversalEdge<LateGenScopeSource,
+  NetTypedefRel, IterateMode, VPIEarlyNettypeDecls, NoOrder, "37.85">;

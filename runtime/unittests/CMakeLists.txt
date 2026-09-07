@@ -11,8 +11,12 @@ FetchContent_MakeAvailable(googletest)
 
 add_library(ObeliskRuntimeCAPISmoke OBJECT
   RuntimeCAPISmoke.c
+  VPI2023HeaderSmoke.c
 )
 target_link_libraries(ObeliskRuntimeCAPISmoke PRIVATE obelisk_rt)
+target_include_directories(ObeliskRuntimeCAPISmoke SYSTEM BEFORE PRIVATE
+  "${CMAKE_BINARY_DIR}/lib/obelisk/include"
+)
 set_target_properties(ObeliskRuntimeCAPISmoke PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

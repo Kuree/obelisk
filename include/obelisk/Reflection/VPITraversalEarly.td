@@ -40,7 +40,19 @@ def VPIEarlyTypespecs : VPIObjectSet<"EarlyTypespecs",
    IntegerTypespec, TimeTypespec, RealTypespec, StructTypespec,
    UnionTypespec, BitTypespec, LogicTypespec, ArrayTypespec, VoidTypespec,
    PackedArrayTypespec, SequenceTypespec, PropertyTypespec, EventTypespec,
-   InterfaceTypespec, TypeParameter, NettypeDecl]>;
+   InterfaceTypespec, TypeParameter]>;
+// A net declared with a user-defined nettype returns that declaration from
+// vpiTypespec. Nettype declarations are not themselves members of the
+// generic 37.25 typespec family.
+def VPIEarlyNetTypespecTargets : VPIObjectSet<"EarlyNetTypespecTargets",
+  [NettypeDecl], [TypespecFamily], [TypespecMember]>;
+def VPIEarlyNettypeDecls : VPIObjectSet<"EarlyNettypeDecls", [NettypeDecl]>;
+def VPIEarlyInterconnectArrays : VPIObjectSet<"EarlyInterconnectArrays",
+  [InterconnectArray]>;
+def VPIEarlyInterconnectNets : VPIObjectSet<"EarlyInterconnectNets",
+  [InterconnectNet]>;
+def VPIEarlyInterconnectArrayElementTargets : VPIObjectSet<
+  "EarlyInterconnectArrayElements", [InterconnectArray, InterconnectNet]>;
 def VPIEarlyAssertions : VPIObjectSet<"EarlyAssertions",
   [SequenceInst, Assert, Assume, Cover, Restrict, PropertyInst,
    ImmediateAssert, ImmediateAssume, ImmediateCover]>;
@@ -255,6 +267,8 @@ def VPIEarlyInstancePrograms : VPITraversalEdge<InstanceObjects, Program,
   IterateMode, ProgramObjects, NoOrder, "37.10">;
 def VPIEarlyInstanceProgramArrays : VPITraversalEdge<InstanceObjects,
   ProgramArray, IterateMode, ProgramArrayObjects, NoOrder, "37.10">;
+def VPIEarlyInstanceNettypeDecls : VPITraversalEdge<InstanceObjects,
+  NetTypedefRel, IterateMode, VPIEarlyNettypeDecls, NoOrder, "37.10">;
 
 // 37.11 Instance arrays.
 def VPIEarlyInstanceArrayExpr : VPITraversalEdge<InstanceArrayObjects,
@@ -385,7 +399,7 @@ def VPIEarlyNetIndices : VPITraversalEdge<VPIEarlyNets, IndexRel, IterateMode,
 def VPIEarlyArrayNetModule : VPITraversalEdge<NetArrayObjects, Module,
   HandleMode, ModuleTarget, NoOrder, "37.16">;
 def VPIEarlyArrayNetRanges : VPITraversalEdge<NetArrayObjects, Range,
-  IterateMode, RangeObjects, IndexOrder, "37.16">;
+  IterateMode, RangeObjects, IndexOrder, "37.16; 37.24">;
 def VPIEarlyNetParent : VPITraversalEdge<NetObjects, ParentRel, HandleMode,
   VPIEarlyNets, NoOrder, "37.16">;
 def VPIEarlyNetDrivers : VPITraversalEdge<NetObjects, DriverRel, IterateMode,
@@ -406,8 +420,10 @@ def VPIEarlyNetTchkTerms : VPITraversalEdge<NetObjects, TchkTerm, IterateMode,
   TchkTermObjects, NoOrder, "37.16">;
 def VPIEarlyNetSimNet : VPITraversalEdge<NetObjects, SimNetRel, HandleMode,
   VPIEarlyNets, NoOrder, "37.16">;
-def VPIEarlyNetTypespec : VPITraversalEdge<NetObjects, Typespec, HandleMode,
-  VPIEarlyTypespecs, NoOrder, "37.16">;
+def VPIEarlyNetTypespec : VPITraversalEdge<
+  VPIObjectSet<"EarlyNetTypespecSources", [], [NetFamily],
+    [InterconnectArray]>,
+  Typespec, HandleMode, VPIEarlyNetTypespecTargets, NoOrder, "37.16; 37.24">;
 def VPIEarlyVectorNetRanges : VPITraversalEdge<
   VPIObjectSet<"EarlyVectorNetSources", [Net, StructNet, EnumNet, IntegerNet,
     TimeNet, PackedArrayNet]>, Range, IterateMode, RangeObjects, IndexOrder,
@@ -514,11 +530,34 @@ def VPIEarlyMemoryWords : VPITraversalEdge<RegArrayObjects, MemoryWord,
 def VPIEarlyMemoryWordIndex : VPITraversalEdge<RegObjects, IndexRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.20">;
 
-// 37.22-37.27 Range, typespecs, structures/unions, and named events.
+// 37.22-37.27 Range, nettypes, generic interconnect, typespecs,
+// structures/unions, and named events.
 def VPIEarlyRangeLeft : VPITraversalEdge<RangeObjects, LeftRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.22">;
 def VPIEarlyRangeRight : VPITraversalEdge<RangeObjects, RightRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.22">;
+def VPIEarlyNettypeAlias : VPITraversalEdge<
+  VPIEarlyNettypeDecls, NetTypedefAliasRel, HandleMode,
+  VPIEarlyNettypeDecls, NoOrder, "37.23">;
+def VPIEarlyNettypeTypespec : VPITraversalEdge<VPIEarlyNettypeDecls, Typespec,
+  HandleMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+def VPIEarlyNettypeWith : VPITraversalEdge<VPIEarlyNettypeDecls, WithRel,
+  HandleMode, FunctionObjects, NoOrder,
+  "37.23">;
+def VPIEarlyInterconnectArrayLeft : VPITraversalEdge<
+  VPIEarlyInterconnectArrays,
+  LeftRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.24">;
+def VPIEarlyInterconnectArrayRight : VPITraversalEdge<
+  VPIEarlyInterconnectArrays,
+  RightRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.24">;
+def VPIEarlyInterconnectArrayElements : VPITraversalEdge<
+  VPIEarlyInterconnectArrays, ElementRel, IterateMode,
+  VPIEarlyInterconnectArrayElementTargets,
+  IndexOrder, "37.24">;
+def VPIEarlyInterconnectNetElements : VPITraversalEdge<VPIEarlyInterconnectNets,
+  ElementRel, IterateMode, VPIEarlyNets, IndexOrder, "37.24">;
+def VPIEarlyInterconnectNetMembers : VPITraversalEdge<VPIEarlyInterconnectNets,
+  MemberRel, IterateMode, VPIEarlyNets, DeclarationOrder, "37.24">;
 def VPIEarlyInstanceTypespecs : VPITraversalEdge<InstanceObjects, Typespec,
   IterateMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyTypespecInstance : VPITraversalEdge<VPIEarlyTypespecs,

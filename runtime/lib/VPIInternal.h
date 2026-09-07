@@ -19,6 +19,7 @@
 
 #include "vpi_user.h"
 #include "sv_vpi_user.h"
+#include "obelisk/vpi_user_compat.h"
 
 #include "obelisk/Reflection/VPIObjectModel.h"
 

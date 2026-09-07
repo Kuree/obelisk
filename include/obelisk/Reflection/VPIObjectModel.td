@@ -347,7 +347,7 @@ def Continue : VPIObjectKind<"vpiContinue", 685, [StatementFamily]>;
 def PackedArrayNet : VPIObjectKind<"vpiPackedArrayNet", 693,
   [ArrayFamily, NetFamily]>;
 def NettypeDecl : VPIObjectKind<"vpiNettypeDecl", 523,
-  [DeclarationFamily, TypespecFamily]>;
+  [DeclarationFamily]>;
 def ConstraintExpr : VPIObjectKind<"vpiConstraintExpr", 747,
   [ExpressionFamily], "", AbstractSelectorRole>;
 def ElseConst : VPIObjectKind<"vpiElseConst", 748, [OtherFamily], "",
@@ -552,6 +552,10 @@ def ElseConstRel : VPIRelation<"vpiElseConst", 748, One>;
 def TypedefRel : VPIRelation<"vpiTypedef", 725, Many>;
 def ImportRel : VPIRelation<"vpiImport", 726, Many>;
 def DerivedClassesRel : VPIRelation<"vpiDerivedClasses", 727, Many>;
+// IEEE 1800-2023 figures 37-10 and 37-85 use this iterator selector.  The
+// published header shipped by Slang omits its definition; 729 is the vacant
+// one-to-many selector immediately before vpiMethods (730).
+def NetTypedefRel : VPIRelation<"vpiNetTypedef", 729, Many>;
 // Deprecated spelling for the vpiVirtualInterfaceVar object selector.  The
 // relation and object namespaces form a selector union at the API boundary.
 def InterfaceDeclRel : VPIRelation<"vpiInterfaceDecl", 728, Many,

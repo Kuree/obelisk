@@ -59,10 +59,10 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
-constexpr size_t kExpectedTraversalCount = 1883;
+constexpr size_t kExpectedTraversalCount = 1893;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-constexpr size_t kExpectedPropertyCount = 2337;
+constexpr size_t kExpectedPropertyCount = 2338;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
 constexpr size_t kExpectedValuePolicyCount = 56;
@@ -388,7 +388,7 @@ std::map<uint32_t, KindSet> buildReadPropertyApplicabilityOracle() {
       merge(std::move(ordinaryExpressions),
             makePropertyObjectSet({}, {VPIObjectFamily::Net}));
   add({vpiPackedArrayVar, vpiStructVar, vpiUnionVar, vpiEnumVar,
-       vpiStructTypespec, vpiUnionTypespec},
+       vpiStructTypespec, vpiUnionTypespec, vpiInterconnectArray},
       {vpiPacked});
   add({vpiUnionTypespec}, {vpiTagged});
   add({vpiRegArray, vpiArrayTypespec}, {vpiArrayType});
@@ -500,7 +500,8 @@ std::map<uint32_t, KindSet> buildReadPropertyApplicabilityOracle() {
                              vpiReturnStmt,
                              vpiBreak,
                              vpiContinue,
-                             vpiEnumConst},
+                             vpiEnumConst,
+                             vpiNettypeDecl},
                             {VPIObjectFamily::Variable, VPIObjectFamily::Net,
                              VPIObjectFamily::Typespec}),
       {vpiName});
@@ -1055,9 +1056,9 @@ TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
        "37.28; 37.35; 37.36; 37.41; 37.59; 37.85"},
       {vpiPacked,
        {vpiPackedArrayVar, vpiStructVar, vpiUnionVar, vpiEnumVar,
-        vpiStructTypespec, vpiUnionTypespec},
+        vpiStructTypespec, vpiUnionTypespec, vpiInterconnectArray},
        PropertyKind::Boolean,
-       "37.18; 37.25; 37.26"},
+       "37.18; 37.24; 37.25; 37.26"},
       {vpiTagged, {vpiUnionTypespec}, PropertyKind::Boolean, "37.25"},
       {vpiArrayType,
        {vpiRegArray, vpiArrayTypespec},
@@ -1246,7 +1247,7 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
       STATIC_PROPERTY(vpiVisibility, Integer, "37.17; 37.41"),
       STATIC_PROPERTY(vpiAlwaysType, Integer, "37.63"),
       STATIC_PROPERTY(vpiDistType, Integer, "37.34"),
-      STATIC_PROPERTY(vpiPacked, Boolean, "37.18; 37.25; 37.26"),
+      STATIC_PROPERTY(vpiPacked, Boolean, "37.18; 37.24; 37.25; 37.26"),
       STATIC_PROPERTY(vpiTagged, Boolean, "37.25"),
       STATIC_PROPERTY(vpiVirtual, Boolean, "37.31; 37.34; 37.41"),
       DYNAMIC_PROPERTY(vpiHasActual, Boolean, "37.61"),
@@ -1484,6 +1485,24 @@ TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
         findVPIIntegerPropertyValue(vpiResolvedNetType, expected.value);
     ASSERT_NE(resolved, nullptr) << expected.value;
     EXPECT_STREQ(resolved->symbolicName, expected.name);
+  }
+  for (const Entry &expected : {
+           Entry{vpiNettypeNet, "vpiNettypeNet"},
+           Entry{vpiNettypeNetSelect, "vpiNettypeNetSelect"},
+           Entry{vpiInterconnect, "vpiInterconnect"},
+       }) {
+    const auto *actual =
+        findVPIIntegerPropertyValue(vpiNetType, expected.value);
+    ASSERT_NE(actual, nullptr) << expected.value;
+    EXPECT_STREQ(actual->symbolicName, expected.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiNetType, expected.value, image));
+    ASSERT_NE(image.symbolicName, nullptr);
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 expected.name);
+    EXPECT_EQ(findVPIIntegerPropertyValue(vpiResolvedNetType, expected.value),
+              nullptr);
   }
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiNetType));
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiResolvedNetType));
@@ -2147,10 +2166,11 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
       vpiIntegerNet,   vpiTimeNet,         vpiUnionNet,
       vpiShortRealNet, vpiRealNet,         vpiByteNet,
       vpiShortIntNet,  vpiIntNet,          vpiLongIntNet,
-      vpiBitNet,       vpiInterconnectNet, vpiInterconnectArray,
-      vpiStructNet,    vpiPackedArrayNet};
+      vpiBitNet,       vpiInterconnectNet, vpiStructNet,
+      vpiPackedArrayNet};
   const std::map<uint32_t, IndexedKind> exactKinds{
-      {vpiPort, IndexedKind::PortElement}};
+      {vpiPort, IndexedKind::PortElement},
+      {vpiInterconnectArray, IndexedKind::NetElement}};
   struct RelationPolicy {
     uint32_t partial;
     uint32_t terminal;
@@ -2170,6 +2190,8 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
   variableTargets.insert(vpiRegBit);
   KindSet netTargets = netSources;
   netTargets.insert(vpiNetBit);
+  KindSet interconnectTargets = netTargets;
+  interconnectTargets.insert(vpiInterconnectArray);
   const KindSet portTargets{vpiPort, vpiPortBit};
 
   size_t seen = 0;
@@ -2222,7 +2244,8 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
     if (relation != relationPolicies.end())
       relationTargets = {relation->second.partial, relation->second.terminal};
     const KindSet &expectedTargets =
-        relation != relationPolicies.end()              ? relationTargets
+        access.sourceType == vpiInterconnectArray       ? interconnectTargets
+        : relation != relationPolicies.end()            ? relationTargets
         : access.accessKind == IndexedKind::PortElement ? portTargets
         : access.accessKind == IndexedKind::NetElement  ? netTargets
                                                         : variableTargets;
@@ -3013,6 +3036,38 @@ TEST(VPIObjectModel, TypeRelationsPreserveLrmNarrowing) {
   expectAbsent(vpiPackedArrayVar, vpiVarSelect, Mode::Iterate);
   expectTargetsExactly(vpiRegArray, vpiVarSelect, Mode::Iterate,
                        {vpiVarSelect});
+}
+
+TEST(VPIObjectModel, NettypesAndGenericInterconnectMatch2023Diagrams) {
+  expectTargetsExactly(vpiNettypeDecl, vpiNetTypedefAlias, Mode::Handle,
+                       {vpiNettypeDecl});
+  expectContains(vpiNettypeDecl, vpiTypespec, Mode::Handle,
+                 {vpiLogicTypespec, vpiStructTypespec}, {vpiNettypeDecl});
+  expectTargetsExactly(vpiNettypeDecl, vpiWith, Mode::Handle,
+                       {vpiFunction});
+  EXPECT_NE(findVPIProperty(vpiNettypeDecl, vpiName), nullptr);
+  for (uint32_t source : {vpiModule, vpiPackage, vpiInterface, vpiProgram,
+                          vpiGenScope})
+    expectTargetsExactly(source, vpiNetTypedef, Mode::Iterate,
+                         {vpiNettypeDecl});
+
+  EXPECT_NE(findVPIProperty(vpiInterconnectArray, vpiPacked), nullptr);
+  expectTargetsExactly(vpiInterconnectArray, vpiRange, Mode::Iterate,
+                       {vpiRange});
+  expectOrdinaryExpressionTargets(vpiInterconnectArray, vpiLeftRange,
+                                  Mode::Handle);
+  expectOrdinaryExpressionTargets(vpiInterconnectArray, vpiRightRange,
+                                  Mode::Handle);
+  expectTargetsExactly(vpiInterconnectArray, vpiElement, Mode::Iterate,
+                       {vpiInterconnectArray, vpiInterconnectNet});
+  expectContains(vpiInterconnectNet, vpiTypespec, Mode::Handle,
+                 {vpiNettypeDecl, vpiLogicTypespec, vpiStructTypespec});
+  expectContains(vpiInterconnectNet, vpiElement, Mode::Iterate,
+                 {vpiNet, vpiInterconnectNet, vpiPackedArrayNet});
+  expectContains(vpiInterconnectNet, vpiMember, Mode::Iterate,
+                 {vpiNet, vpiInterconnectNet, vpiStructNet});
+  expectAbsent(vpiInterconnectArray, vpiTypespec, Mode::Handle);
+
 }
 
 // 37.14-37.17.  Connection relations have deliberately different target

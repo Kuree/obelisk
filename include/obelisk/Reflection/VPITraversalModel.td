@@ -402,7 +402,7 @@ def DynamicAllocSchemeObjects : VPIObjectSet<"DynamicAllocSchemeObjects",
    MethodTaskCall], [VariableFamily, NetFamily, TransientFamily]>;
 def PackedPropertyObjects : VPIObjectSet<"PackedPropertyObjects",
   [PackedArrayVar, StructVar, UnionVar, EnumVar, StructTypespec,
-   UnionTypespec]>;
+   UnionTypespec, InterconnectArray]>;
 def TaggedTypespecObjects : VPIObjectSet<"TaggedTypespecObjects",
   [UnionTypespec]>;
 def ArrayTypespecObjects : VPIObjectSet<"ArrayTypespecObjects",
@@ -470,7 +470,7 @@ def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
   ProtectedExpressionSizeObjects, DerivedProperty, NoPropertyObjects,
   DynamicSizePropertyObjects>;
 def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
-  BooleanProperty, PackedPropertyObjects, "37.18; 37.25; 37.26">;
+  BooleanProperty, PackedPropertyObjects, "37.18; 37.24; 37.25; 37.26">;
 def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
   BooleanProperty, TaggedTypespecObjects, "37.25">;
 def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
@@ -512,7 +512,7 @@ def NamedPropertyObjects : VPIObjectSet<"NamedPropertyObjects",
    Force, Forever, Fork, If, IfElse, NamedBegin, NamedFork, NullStmt, Release,
    Repeat, RepeatControl, SysTaskCall, TaskCall, Wait, While, MethodTaskCall,
    DoWhile, OrderedWait, WaitFork, DisableFork, ExpectStmt, ForeachStmt,
-   ReturnStmt, Break, Continue, EnumConst],
+   ReturnStmt, Break, Continue, EnumConst, NettypeDecl],
   [VariableFamily, NetFamily, TypespecFamily]>;
 def FullNamePropertyObjects : VPIObjectSet<"FullNamePropertyObjects",
   [ModuleArray, InterfaceArray, ProgramArray, GateArray, SwitchArray, UdpArray,
@@ -696,6 +696,12 @@ def NetTypeSupply0
     : VPISymbolicPropertyValue<NetTypeProperty, 11, "vpiSupply0">;
 def NetTypeUwire
     : VPISymbolicPropertyValue<NetTypeProperty, 13, "vpiUwire">;
+def NetTypeNettypeNet
+    : VPISymbolicPropertyValue<NetTypeProperty, 14, "vpiNettypeNet">;
+def NetTypeNettypeNetSelect
+    : VPISymbolicPropertyValue<NetTypeProperty, 15, "vpiNettypeNetSelect">;
+def NetTypeInterconnect
+    : VPISymbolicPropertyValue<NetTypeProperty, 16, "vpiInterconnect">;
 def ExplicitScalaredProperty : VPIProperty<"vpiExplicitScalared", 23,
   BooleanProperty, NetPropertyObjects, "37.16", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
@@ -1292,6 +1298,8 @@ def IndexedNetSources : VPIObjectSet<"IndexedNetSources",
   [Net, NetArray, EnumNet, IntegerNet, TimeNet, UnionNet, ShortRealNet,
    RealNet, ByteNet, ShortIntNet, IntNet, LongIntNet, BitNet,
    InterconnectNet, StructNet, PackedArrayNet]>;
+def IndexedNetResults : VPIObjectSet<"IndexedNetResults", [], [NetFamily],
+  [InterconnectArray]>;
 def IndexedInterconnectArraySource : VPIObjectSet<
   "IndexedInterconnectArraySource", [InterconnectArray]>;
 def IndexedVariableSources : VPIObjectSet<"IndexedVariableSources",
@@ -1303,7 +1311,7 @@ def IndexedPort : VPIIndexedAccess<IndexedPortSource, PortElementAccess,
   PortObjects, PortBit, Port, Port, 0,
   "37.14; 38.19; 38.20">;
 def IndexedNet : VPIIndexedAccess<IndexedNetSources, NetElementAccess,
-  VPIEarlyNets, NetBit, NetArray, Net, 1, "37.16; 38.19; 38.20">;
+  IndexedNetResults, NetBit, NetArray, Net, 1, "37.16; 38.19; 38.20">;
 def IndexedInterconnectArray : VPIIndexedAccess<
   IndexedInterconnectArraySource, NetElementAccess, VPIEarlyNets, NetBit,
   InterconnectArray, InterconnectNet, 0, "37.16; 38.19; 38.20">;
