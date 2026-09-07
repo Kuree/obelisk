@@ -5280,6 +5280,29 @@ TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, CurrentFrameNullQueryIsQuietOutsideProceduralExecution) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  // IEEE 1800-2023 37.43 detail 4: NULL is the defined reference for the
+  // current-frame query. There is no active procedural frame between
+  // scheduler invocations.
+  EXPECT_EQ(vpi_handle(vpiFrame, nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  // IEEE 1800-2023 37.44 has no NULL-root thread iteration.
+  EXPECT_EQ(vpi_iterate(vpiThread, nullptr), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, ContextDestroyRevokesAndFreesStateAcrossThreads) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;

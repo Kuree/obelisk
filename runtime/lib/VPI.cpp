@@ -3370,6 +3370,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
   beginVPICall();
+  // IEEE 1800-2023 37.43 detail 4 defines this NULL-root query as the
+  // currently active frame. Live frame materialization is intentionally a
+  // separate feature; outside procedural execution the correct result is a
+  // quiet NULL, rather than treating the NULL reference as an invalid handle.
+  if (!reference && type == vpiFrame) {
+    if (!requireState())
+      return nullptr;
+    return nullptr;
+  }
   __vpiHandle *handle = findHandle(reference);
   if (!handle)
     return nullptr;

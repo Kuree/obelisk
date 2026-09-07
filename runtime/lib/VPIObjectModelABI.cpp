@@ -387,9 +387,18 @@ static_assert(hasVPITraversal(vpiTypeParameter, vpiScope,
 static_assert(vpiObjectSetContains(
     findVPITraversal(vpiTaskCall, vpiScope, VPITraversalMode::Handle)->targets,
     vpiClassObj));
-static_assert(vpiObjectSetContains(
+static_assert(!vpiObjectSetContains(
     findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
     vpiClassObj));
+static_assert(vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNet));
+static_assert(vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNetArray));
+static_assert(!vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNetBit));
 static_assert(vpiObjectSetContains(
     findVPITraversal(vpiRefObj, vpiActual, VPITraversalMode::Handle)->targets,
     vpiNetArray));

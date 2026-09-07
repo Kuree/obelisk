@@ -59,7 +59,7 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
-constexpr size_t kExpectedTraversalCount = 1884;
+constexpr size_t kExpectedTraversalCount = 1883;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;
@@ -1183,8 +1183,8 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
                       "37.10; 37.16; 37.17; 37.25; 37.33; 37.83"),
       STATIC_PROPERTY(vpiPortIndex, Integer, "37.14"),
       STATIC_PROPERTY(vpiTermIndex, Integer, "37.33"),
-      STATIC_PROPERTY(vpiStrength0, Integer, "37.16; 37.33; 37.45"),
-      STATIC_PROPERTY(vpiStrength1, Integer, "37.16; 37.33; 37.45"),
+      STATIC_PROPERTY(vpiStrength0, Integer, "37.16; 37.33; 37.47"),
+      STATIC_PROPERTY(vpiStrength1, Integer, "37.16; 37.33; 37.47"),
       SYMBOLIC_PROPERTY(vpiPrimType, "37.33; 37.34"),
       STATIC_PROPERTY(vpiPolarity, Integer, "37.37"),
       STATIC_PROPERTY(vpiDataPolarity, Integer, "37.37"),
@@ -1195,13 +1195,13 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
       STATIC_PROPERTY(vpiConstType, Integer, "37.26; 37.57"),
       STATIC_PROPERTY(vpiBlocking, Boolean, "37.60; 37.62"),
       STATIC_PROPERTY(vpiCaseType, Integer, "37.70"),
-      STATIC_PROPERTY(vpiNetDeclAssign, Boolean, "37.16; 37.45"),
+      STATIC_PROPERTY(vpiNetDeclAssign, Boolean, "37.16; 37.47"),
       STATIC_PROPERTY(vpiFuncType, Integer, "37.39; 37.40"),
       STATIC_PROPERTY(vpiUserDefn, Boolean, "37.40"),
       DYNAMIC_PROPERTY(vpiScheduled, Boolean, "38.34"),
       STATIC_PROPERTY(vpiDefDelayMode, Integer, "37.10"),
       STATIC_PROPERTY(vpiDefDecayTime, Integer, "37.5"),
-      DYNAMIC_PROPERTY(vpiActive, Boolean, "37.41; 37.42"),
+      DYNAMIC_PROPERTY(vpiActive, Boolean, "37.43; 37.44"),
       STATIC_PROPERTY(vpiAutomatic, Boolean,
                       "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; 37.32; "
                       "37.39"),
@@ -1211,10 +1211,10 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
                       "37.16; 37.17; 37.18; 37.19; 37.57"),
       STATIC_PROPERTY(vpiDecompile, String, "37.40; 37.57"),
       STATIC_PROPERTY(vpiDefAttribute, Boolean, "37.81"),
-      SYMBOLIC_PROPERTY(vpiDelayType, "37.43"),
+      SYMBOLIC_PROPERTY(vpiDelayType, "37.45"),
       STATIC_PROPERTY(vpiIteratorType, Integer, "37.82"),
       STATIC_PROPERTY(vpiLibrary, String, "37.10"),
-      STATIC_PROPERTY(vpiOffset, Integer, "37.45"),
+      STATIC_PROPERTY(vpiOffset, Integer, "37.47"),
       SYMBOLIC_PROPERTY(vpiResolvedNetType, "37.16"),
       DYNAMIC_PROPERTY(vpiSaveRestartID, Integer, "38.9; 38.36.1"),
       DYNAMIC_PROPERTY(vpiSaveRestartLocation, String, "38.9; 38.11; 38.36.1"),
@@ -1251,22 +1251,22 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
       STATIC_PROPERTY(vpiSoft, Boolean, "37.36"),
       STATIC_PROPERTY(vpiClassType, Integer, "37.30"),
       STATIC_PROPERTY(vpiMethod, Boolean, "37.39"),
-      STATIC_PROPERTY(vpiIsClockInferred, Boolean, "37.48"),
+      STATIC_PROPERTY(vpiIsClockInferred, Boolean, "37.50"),
       STATIC_PROPERTY(vpiQualifier, Integer, "37.69; 37.70"),
-      STATIC_PROPERTY(vpiInputEdge, Integer, "37.46"),
-      STATIC_PROPERTY(vpiOutputEdge, Integer, "37.46"),
+      STATIC_PROPERTY(vpiInputEdge, Integer, "37.48"),
+      STATIC_PROPERTY(vpiOutputEdge, Integer, "37.48"),
       STATIC_PROPERTY(vpiGeneric, Boolean, "37.15"),
       STATIC_PROPERTY(vpiCompatibilityMode, Integer, "Annex M"),
       STATIC_PROPERTY(vpiPackedArrayMember, Boolean, "37.16; 37.17; 37.18"),
       STATIC_PROPERTY(vpiOpStrong, Boolean, "37.50"),
       STATIC_PROPERTY(vpiIsDeferred, Integer, "37.53"),
       STATIC_PROPERTY(vpiAllocScheme, Integer, "37.3.7"),
-      STATIC_PROPERTY(vpiIsCoverSequence, Boolean, "37.48"),
+      STATIC_PROPERTY(vpiIsCoverSequence, Boolean, "37.50"),
       DYNAMIC_PROPERTY(vpiObjId, Int64, "37.31"),
-      STATIC_PROPERTY(vpiStartLine, Integer, "37.47"),
-      STATIC_PROPERTY(vpiColumn, Integer, "37.47"),
-      STATIC_PROPERTY(vpiEndLine, Integer, "37.47"),
-      STATIC_PROPERTY(vpiEndColumn, Integer, "37.47"),
+      STATIC_PROPERTY(vpiStartLine, Integer, "37.49"),
+      STATIC_PROPERTY(vpiColumn, Integer, "37.49"),
+      STATIC_PROPERTY(vpiEndLine, Integer, "37.49"),
+      STATIC_PROPERTY(vpiEndColumn, Integer, "37.49"),
       STATIC_PROPERTY(vpiDPIPure, Boolean, "37.39"),
       STATIC_PROPERTY(vpiDPIContext, Boolean, "37.39"),
       STATIC_PROPERTY(vpiDPICStr, Integer, "37.39"),
@@ -2961,7 +2961,7 @@ TEST(VPIObjectModel, InstanceScopeAndArrayRelationsDoNotLeak) {
 
 // Cross-checks for dashed enclosures that span multiple concrete object
 // kinds.  These are transcribed from 37.10, 37.12, 37.15-37.16, 37.26,
-// 37.29, 37.32, 37.36-37.37, and 37.41.
+// 37.29, 37.32, 37.36-37.37, and IEEE 1800-2023 37.43.
 TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
   expectContains(vpiModule, vpiParameter, Mode::Iterate,
                  {vpiParameter, vpiTypeParameter}, {vpiSpecParam});
@@ -2970,7 +2970,8 @@ TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
   expectContains(vpiAssignment, vpiScope, Mode::Handle,
                  {vpiModule, vpiTask, vpiFunction, vpiClassObj});
   expectContains(vpiFrame, vpiOrigin, Mode::Handle,
-                 {vpiModule, vpiTask, vpiFunction, vpiClassObj});
+                 {vpiModule, vpiTask, vpiFunction, vpiNet, vpiNetArray},
+                 {vpiClassObj, vpiNetBit});
   expectContains(vpiRefObj, vpiActual, Mode::Handle,
                  {vpiNetArray, vpiInterconnectArray});
 
@@ -3064,18 +3065,36 @@ TEST(VPIObjectModel, ConcurrentAssertionEdgesMatchEachStatementKind) {
     expectAbsent(source, vpiDisableCondition, Mode::Handle);
 }
 
-// 37.40-37.46.  Calls, runtime frames, continuous assignments, and clocking
-// declarations are separate diagrams even though they share many expression
-// targets.  These checks keep their object-specific reverse edges intact.
+// IEEE 1800-2023 37.42-37.48. Calls, runtime frames, continuous assignments,
+// and clocking declarations are separate diagrams even though they share many
+// expression targets. These checks keep their object-specific reverse edges
+// intact.
 TEST(VPIObjectModel, CallsFramesAssignmentsAndClockingKeepSpecificEdges) {
   expectTargetsExactly(vpiTaskCall, vpiTask, Mode::Handle, {vpiTask});
   expectTargetsExactly(vpiFuncCall, vpiFunction, Mode::Handle, {vpiFunction});
-  expectContains(vpiFrame, vpiParent, Mode::Handle,
+  expectTargetsExactly(vpiFrame, vpiParent, Mode::Handle, {vpiFrame});
+  expectContains(vpiFrame, vpiOrigin, Mode::Handle,
                  {vpiModule, vpiTask, vpiFunction, vpiTaskCall, vpiFuncCall,
-                  vpiFrame, vpiMethodTaskCall, vpiMethodFuncCall},
-                 {vpiThread});
+                  vpiMethodTaskCall, vpiMethodFuncCall, vpiNet, vpiNetArray,
+                  vpiStructNet, vpiPackedArrayNet},
+                 {vpiClassObj, vpiNetBit, vpiThread});
   expectTargetsExactly(vpiThread, vpiParent, Mode::Handle, {vpiThread});
   expectTargetsExactly(vpiThread, vpiFrame, Mode::Handle, {vpiFrame});
+  expectAbsent(0, vpiThread, Mode::Iterate);
+  EXPECT_STREQ(requireTraversal(vpiFrame, vpiOrigin, Mode::Handle).clause,
+               "37.43");
+  EXPECT_STREQ(requireTraversal(vpiThread, vpiOrigin, Mode::Handle).clause,
+               "37.44");
+  EXPECT_STREQ(requireTraversal(vpiDelayTerm, vpiDriver, Mode::Iterate).clause,
+               "37.45");
+  EXPECT_STREQ(requireTraversal(vpiContAssign, vpiLhs, Mode::Handle).clause,
+               "37.47");
+  EXPECT_STREQ(
+      requireTraversal(vpiClockingBlock, vpiClockingEvent, Mode::Handle)
+          .clause,
+      "37.48");
+  EXPECT_STREQ(requireTraversal(vpiAssert, vpiProperty, Mode::Handle).clause,
+               "37.50");
   expectContains(vpiContAssign, vpiLhs, Mode::Handle,
                  {vpiConstant, vpiOperation, vpiRefObj},
                  {vpiAssignStmt, vpiPropertyExpr, vpiNamedEvent});

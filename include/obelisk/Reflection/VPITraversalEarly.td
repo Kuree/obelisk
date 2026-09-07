@@ -1,4 +1,4 @@
-//===- VPITraversalEarly.td - IEEE 1800-2017 37.5-37.48 edges -----------===//
+//===- VPITraversalEarly.td - IEEE VPI 37.5-37.50 edges -----------------===//
 //
 // Standalone continuation of VPITraversalModel.td.  This file is intended to
 // be included after that file's common VPIObjectSet definitions.  It contains
@@ -112,12 +112,13 @@ def VPIEarlyVariableDrivers : VPIObjectSet<"EarlyVariableDrivers",
   [Port, Force, ContAssign, ContAssignBit, AssignStmt]>;
 def VPIEarlyVariableLoads : VPIObjectSet<"EarlyVariableLoads",
   [AssignStmt, Force, ContAssign, ContAssignBit]>;
+// IEEE 1800-2023 37.43 deliberately replaces the pre-2023 frame graph.
+// "nets" here denotes whole net and net-array objects; a selected net bit is
+// not an elaboration-hierarchy origin for a resolution-function activation.
 def VPIEarlyFramesOrigins : VPIObjectSet<"EarlyFrameOrigins",
-  [TaskCall, FuncCall, MethodTaskCall, MethodFuncCall, ClassObj],
-  [ScopeFamily]>;
-def VPIEarlyFrameParents : VPIObjectSet<"EarlyFrameParents",
-  [Frame, TaskCall, FuncCall, MethodTaskCall, MethodFuncCall, ClassObj],
-  [ScopeFamily]>;
+  [TaskCall, FuncCall, MethodTaskCall, MethodFuncCall],
+  [ScopeFamily, NetFamily], [NetBit]>;
+def VPIEarlyFrameParents : VPIObjectSet<"EarlyFrameParents", [Frame]>;
 def VPIEarlyAutomatics : VPIObjectSet<"EarlyAutomatics",
   [], [VariableFamily], [Parameter, SpecParam]>;
 def VPIEarlyPropertyTargets : VPIObjectSet<"EarlyPropertyTargets",
@@ -220,7 +221,7 @@ def VPIEarlyArrayInterfaces : VPITraversalEdge<InterfaceArrayObjects,
   Interface, IterateMode, InterfaceObjects, IndexOrder, "37.6">;
 def VPIEarlyInstanceOfInterfaceChild : VPITraversalEdge<
   VPIEarlyInterfaceChildren, InstanceRel, HandleMode, VPIEarlyInstances,
-  NoOrder, "37.6; 37.9; 37.37; 37.46", 0, AutomaticParentScope>;
+  NoOrder, "37.6; 37.9; 37.37; 37.48", 0, AutomaticParentScope>;
 def VPIEarlyModPathInstance : VPITraversalEdge<ModPathObjects, InstanceRel,
   HandleMode, VPIEarlyModPathInstances, NoOrder, "37.37">;
 
@@ -388,9 +389,9 @@ def VPIEarlyArrayNetRanges : VPITraversalEdge<NetArrayObjects, Range,
 def VPIEarlyNetParent : VPITraversalEdge<NetObjects, ParentRel, HandleMode,
   VPIEarlyNets, NoOrder, "37.16">;
 def VPIEarlyNetDrivers : VPITraversalEdge<NetObjects, DriverRel, IterateMode,
-  VPIEarlyNetDriverTargets, NoOrder, "37.16; 37.44">;
+  VPIEarlyNetDriverTargets, NoOrder, "37.16; 37.46">;
 def VPIEarlyNetLoads : VPITraversalEdge<NetObjects, LoadRel, IterateMode,
-  VPIEarlyLoads, NoOrder, "37.16; 37.44">;
+  VPIEarlyLoads, NoOrder, "37.16; 37.46">;
 def VPIEarlyNetLocalDrivers : VPITraversalEdge<NetObjects, LocalDriverRel,
   IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.16">;
 def VPIEarlyNetLocalLoads : VPITraversalEdge<NetObjects, LocalLoadRel,
@@ -863,88 +864,87 @@ def VPIEarlyMethodWith : VPITraversalEdge<
 def VPIEarlySysCallUserSystf : VPITraversalEdge<VPIEarlySysCalls, UserSystf,
   HandleMode, UserSystfObjects, NoOrder, "37.40">;
 
-// 37.41-37.43 Frames, threads, and delay terminals.
+// 37.43-37.45 Frames, threads, and delay terminals.  The 2023 frame object
+// model is explicitly not backward compatible with IEEE 1800-2017.
 def VPIEarlyFrameOrigin : VPITraversalEdge<FrameObjects, OriginRel,
-  HandleMode, VPIEarlyFramesOrigins, NoOrder, "37.41">;
+  HandleMode, VPIEarlyFramesOrigins, NoOrder, "37.43">;
 def VPIEarlyFrameParent : VPITraversalEdge<FrameObjects, ParentRel,
-  HandleMode, VPIEarlyFrameParents, NoOrder, "37.41">;
+  HandleMode, VPIEarlyFrameParents, NoOrder, "37.43">;
 def VPIEarlyFrameStmt : VPITraversalEdge<FrameObjects, StmtRel, HandleMode,
-  StatementObjects, NoOrder, "37.41">;
+  StatementObjects, NoOrder, "37.43">;
 def VPIEarlyFrameThread : VPITraversalEdge<FrameObjects, Thread, HandleMode,
-  ThreadObjects, NoOrder, "37.41">;
+  ThreadObjects, NoOrder, "37.43">;
 def VPIEarlyThreadFrame : VPITraversalEdge<ThreadObjects, Frame, HandleMode,
-  FrameObjects, NoOrder, "37.41; 37.42">;
+  FrameObjects, NoOrder, "37.43; 37.44">;
 def VPIEarlyFrameAutomatics : VPITraversalEdge<FrameObjects, AutomaticsRel,
-  IterateMode, VPIEarlyAutomatics, NoOrder, "37.41">;
-def VPIEarlyRootThreads : VPITraversalEdge<RootSource, Thread, IterateMode,
-  ThreadObjects, NoOrder, "37.42">;
+  IterateMode, VPIEarlyAutomatics, NoOrder, "37.43">;
 def VPIEarlyThreadParent : VPITraversalEdge<ThreadObjects, ParentRel,
-  HandleMode, ThreadObjects, NoOrder, "37.42">;
+  HandleMode, ThreadObjects, NoOrder, "37.44">;
 def VPIEarlyThreadOrigin : VPITraversalEdge<ThreadObjects, OriginRel,
-  HandleMode, StatementObjects, NoOrder, "37.42">;
+  HandleMode, StatementObjects, NoOrder, "37.44">;
 def VPIEarlyThreadChildren : VPITraversalEdge<ThreadObjects, Thread,
-  IterateMode, ThreadObjects, NoOrder, "37.42">;
+  IterateMode, ThreadObjects, NoOrder, "37.44">;
 def VPIEarlyDelayDeviceModule : VPITraversalEdge<DelayDeviceObjects, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.43">;
+  HandleMode, ModuleTarget, NoOrder, "37.45">;
 def VPIEarlyDelayDeviceInTerm : VPITraversalEdge<DelayDeviceObjects,
-  InTermRel, HandleMode, DelayTermObjects, NoOrder, "37.43">;
+  InTermRel, HandleMode, DelayTermObjects, NoOrder, "37.45">;
 def VPIEarlyDelayDeviceOutTerm : VPITraversalEdge<DelayDeviceObjects,
-  OutTermRel, HandleMode, DelayTermObjects, NoOrder, "37.43">;
+  OutTermRel, HandleMode, DelayTermObjects, NoOrder, "37.45">;
 def VPIEarlyDelayTermDrivers : VPITraversalEdge<DelayTermObjects, DriverRel,
-  IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.43">;
+  IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.45">;
 def VPIEarlyDelayTermLoads : VPITraversalEdge<DelayTermObjects, LoadRel,
-  IterateMode, VPIEarlyLoads, NoOrder, "37.43">;
+  IterateMode, VPIEarlyLoads, NoOrder, "37.45">;
 
-// 37.45 Continuous assignments.
+// 37.47 Continuous assignments.
 def VPIEarlyContAssignDelay : VPITraversalEdge<ContAssignObjects, DelayRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.45">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.47">;
 def VPIEarlyContAssignBits : VPITraversalEdge<ContAssignObjects, BitRel,
   IterateMode, VPIObjectSet<"EarlyContAssignBitTargets", [ContAssignBit]>,
-  IndexOrder, "37.45", 1>;
+  IndexOrder, "37.47", 1>;
 def VPIEarlyContAssignBitParent : VPITraversalEdge<
   VPIObjectSet<"EarlyContAssignBitSources", [ContAssignBit]>, ParentRel,
-  HandleMode, ContAssignObjects, NoOrder, "37.45">;
+  HandleMode, ContAssignObjects, NoOrder, "37.47">;
 def VPIEarlyContAssignRhs : VPITraversalEdge<ContAssignObjects, RhsRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.45">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.47">;
 def VPIEarlyContAssignLhs : VPITraversalEdge<ContAssignObjects, LhsRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.45">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.47">;
 
-// 37.46 Clocking blocks and clocking IO declarations.
+// 37.48 Clocking blocks and clocking IO declarations.
 def VPIEarlyClockingInputSkew : VPITraversalEdge<ClockingBlockObjects,
-  InputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.46">;
+  InputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.48">;
 def VPIEarlyClockingOutputSkew : VPITraversalEdge<ClockingBlockObjects,
-  OutputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.46">;
+  OutputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.48">;
 def VPIEarlyClockingEvent : VPITraversalEdge<ClockingBlockObjects,
-  ClockingEventRel, HandleMode, EventControlObjects, NoOrder, "37.46">;
+  ClockingEventRel, HandleMode, EventControlObjects, NoOrder, "37.48">;
 def VPIEarlyClockingIODecls : VPITraversalEdge<ClockingBlockObjects,
-  ClockingIODecl, IterateMode, ClockingIODeclObjects, NoOrder, "37.46">;
+  ClockingIODecl, IterateMode, ClockingIODeclObjects, NoOrder, "37.48">;
 def VPIEarlyClockingPrefix : VPITraversalEdge<ClockingBlockObjects,
-  PrefixRel, HandleMode, VirtualInterfaceObjects, NoOrder, "37.46">;
+  PrefixRel, HandleMode, VirtualInterfaceObjects, NoOrder, "37.48">;
 def VPIEarlyClockingActual : VPITraversalEdge<ClockingBlockObjects,
-  ActualRel, HandleMode, ClockingBlockObjects, NoOrder, "37.46">;
+  ActualRel, HandleMode, ClockingBlockObjects, NoOrder, "37.48">;
 def VPIEarlyClockingIOInputSkew : VPITraversalEdge<ClockingIODeclObjects,
-  InputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.46">;
+  InputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.48">;
 def VPIEarlyClockingIOOutputSkew : VPITraversalEdge<ClockingIODeclObjects,
-  OutputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.46">;
+  OutputSkewRel, HandleMode, DelayControlObjects, NoOrder, "37.48">;
 def VPIEarlyClockingIOExpr : VPITraversalEdge<ClockingIODeclObjects, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.46">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.48">;
 
-// 37.47-37.48 Assertion and concurrent assertion diagrams.
+// 37.49-37.50 Assertion and concurrent assertion diagrams.
 def VPIEarlyRootAssertions : VPITraversalEdge<RootSource, AssertionRel,
-  IterateMode, VPIEarlyAssertions, NoOrder, "37.47">;
+  IterateMode, VPIEarlyAssertions, NoOrder, "37.49">;
 def VPIEarlyAssertionInstance : VPITraversalEdge<VPIEarlyAssertions,
-  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.47">;
+  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.49">;
 def VPIEarlyAssertionClockingBlock : VPITraversalEdge<VPIEarlyAssertions,
-  ClockingBlock, HandleMode, ClockingBlockObjects, NoOrder, "37.47">;
+  ClockingBlock, HandleMode, ClockingBlockObjects, NoOrder, "37.49">;
 def VPIEarlyConcurrentClockingEvent : VPITraversalEdge<
   VPIEarlyConcurrentAssertions, ClockingEventRel, HandleMode,
-  VPIEarlyOrdinaryExpressions, NoOrder, "37.48">;
+  VPIEarlyOrdinaryExpressions, NoOrder, "37.50">;
 def VPIEarlyConcurrentStmt : VPITraversalEdge<
   VPIObjectSet<"EarlyConcurrentStatementSources", [Assert, Assume, Cover]>,
-  StmtRel, HandleMode, StatementObjects, NoOrder, "37.48", 1>;
+  StmtRel, HandleMode, StatementObjects, NoOrder, "37.50", 1>;
 def VPIEarlyConcurrentElseStmt : VPITraversalEdge<
   VPIObjectSet<"EarlyConcurrentElseSources", [Assert]>, ElseStmtRel,
-  HandleMode, StatementObjects, NoOrder, "37.48", 1>;
+  HandleMode, StatementObjects, NoOrder, "37.50", 1>;
 def VPIEarlyConcurrentProperty : VPITraversalEdge<
   VPIEarlyConcurrentAssertions, PropertyRel, HandleMode,
-  VPIEarlyPropertyTargets, NoOrder, "37.48">;
+  VPIEarlyPropertyTargets, NoOrder, "37.50">;

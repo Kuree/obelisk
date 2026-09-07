@@ -728,11 +728,11 @@ def ArrayProperty : VPIProperty<"vpiArray", 28, BooleanProperty,
 def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
   ReadPrimTermObjects, "37.33">;
 def Strength0Property : VPIProperty<"vpiStrength0", 31, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.45", StaticProperty,
+  StrengthPropertyObjects, "37.16; 37.33; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def Strength1Property : VPIProperty<"vpiStrength1", 32, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.45", StaticProperty,
+  StrengthPropertyObjects, "37.16; 37.33; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def Strength0HiZ : VPIIntegerPropertyValue<Strength0Property, 1>;
@@ -766,7 +766,7 @@ def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
 def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
   ReadCaseObjects, "37.70">;
 def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
-  BooleanProperty, NetAndContinuousObjects, "37.16; 37.45", StaticProperty,
+  BooleanProperty, NetAndContinuousObjects, "37.16; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def FuncTypeProperty : VPIProperty<"vpiFuncType", 44, IntegerProperty,
@@ -781,7 +781,7 @@ def DefDelayModeProperty : VPIProperty<"vpiDefDelayMode", 47,
 def DefDecayTimeProperty : VPIProperty<"vpiDefDecayTime", 48,
   IntegerProperty, ModuleSource, "37.5">;
 def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
-  ActivePropertyObjects, "37.41; 37.42", DynamicProperty,
+  ActivePropertyObjects, "37.43; 37.44", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
@@ -797,13 +797,13 @@ def DecompileProperty : VPIProperty<"vpiDecompile", 54, StringProperty,
 def DefAttributeProperty : VPIProperty<"vpiDefAttribute", 55,
   BooleanProperty, ReadAttributeObjects, "37.81">;
 def DelayTypeProperty : VPIProperty<"vpiDelayType", 56, IntegerProperty,
-  DelayTypePropertyObjects, "37.43", StaticProperty, DeniedWhenProtected, 1>;
+  DelayTypePropertyObjects, "37.45", StaticProperty, DeniedWhenProtected, 1>;
 def IteratorTypeProperty : VPIProperty<"vpiIteratorType", 57,
   IntegerProperty, ReadIteratorObjects, "37.82">;
 def LibraryProperty : VPIProperty<"vpiLibrary", 58, StringProperty,
   InstanceObjects, "37.10">;
 def OffsetProperty : VPIProperty<"vpiOffset", 60, IntegerProperty,
-  ContinuousAssignmentObjects, "37.45">;
+  ContinuousAssignmentObjects, "37.47">;
 def ResolvedNetTypeProperty : VPIProperty<"vpiResolvedNetType", 61,
   IntegerProperty, NetPropertyObjects, "37.16", StaticProperty,
   DeniedWhenProtected, 1, NoPropertyObjects, NoPropertyObjects,
@@ -907,13 +907,13 @@ def ClassTypeProperty : VPIProperty<"vpiClassType", 640, IntegerProperty,
 def MethodProperty : VPIProperty<"vpiMethod", 645, BooleanProperty,
   TaskFunctionDeclObjects, "37.39">;
 def IsClockInferredProperty : VPIProperty<"vpiIsClockInferred", 649,
-  BooleanProperty, ConcurrentAssertionPropertyObjects, "37.48">;
+  BooleanProperty, ConcurrentAssertionPropertyObjects, "37.50">;
 def QualifierProperty : VPIProperty<"vpiQualifier", 650, IntegerProperty,
   QualifierPropertyObjects, "37.69; 37.70">;
 def InputEdgeProperty : VPIProperty<"vpiInputEdge", 651, IntegerProperty,
-  ClockingPropertyObjects, "37.46">;
+  ClockingPropertyObjects, "37.48">;
 def OutputEdgeProperty : VPIProperty<"vpiOutputEdge", 652, IntegerProperty,
-  ClockingPropertyObjects, "37.46">;
+  ClockingPropertyObjects, "37.48">;
 def GenericProperty : VPIProperty<"vpiGeneric", 653, BooleanProperty,
   ReferenceObjects, "37.15">;
 def CompatibilityModeProperty : VPIProperty<"vpiCompatibilityMode", 654,
@@ -927,15 +927,15 @@ def AllocSchemeProperty : VPIProperty<"vpiAllocScheme", 658,
   DeniedWhenProtected, 0, DynamicAllocSchemeObjects, NoPropertyObjects,
   DerivedProperty, NoPropertyObjects, DynamicAllocSchemeObjects>;
 def IsCoverSequenceProperty : VPIProperty<"vpiIsCoverSequence", 659,
-  BooleanProperty, CoverObjects, "37.48">;
+  BooleanProperty, CoverObjects, "37.50">;
 def StartLineProperty : VPIProperty<"vpiStartLine", 661, IntegerProperty,
-  AssertionLocationPropertyObjects, "37.47">;
+  AssertionLocationPropertyObjects, "37.49">;
 def ColumnProperty : VPIProperty<"vpiColumn", 662, IntegerProperty,
-  AssertionLocationPropertyObjects, "37.47">;
+  AssertionLocationPropertyObjects, "37.49">;
 def EndLineProperty : VPIProperty<"vpiEndLine", 663, IntegerProperty,
-  AssertionLocationPropertyObjects, "37.47">;
+  AssertionLocationPropertyObjects, "37.49">;
 def EndColumnProperty : VPIProperty<"vpiEndColumn", 664, IntegerProperty,
-  AssertionLocationPropertyObjects, "37.47">;
+  AssertionLocationPropertyObjects, "37.49">;
 def DPIPureProperty : VPIProperty<"vpiDPIPure", 665, BooleanProperty,
   TaskFunctionDeclObjects, "37.39">;
 def DPIContextProperty : VPIProperty<"vpiDPIContext", 666, BooleanProperty,
@@ -1271,7 +1271,7 @@ def RootUserSystfs : VPITraversalEdge<RootSource, UserSystf, IterateMode,
 def RootCurrentSysTfCall : VPITraversalEdge<RootSource, SysTfCallRel,
   HandleMode, SystemTfCallObjects, NoOrder, "37.40">;
 def RootCurrentFrame : VPITraversalEdge<RootSource, Frame, HandleMode,
-  FrameObjects, NoOrder, "37.41">;
+  FrameObjects, NoOrder, "37.43">;
 def RootCallbacks : VPITraversalEdge<RootSource, Callback, IterateMode,
   CallbackObjects, NoOrder, "37.78">;
 def RootTimeQueues : VPITraversalEdge<RootSource, TimeQueue, IterateMode,
