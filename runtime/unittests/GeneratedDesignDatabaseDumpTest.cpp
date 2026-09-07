@@ -13,6 +13,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
 
+#include "sv_vpi_user.h"
 #include "vpi_user.h"
 
 #include <array>
@@ -665,5 +666,159 @@ TEST(GeneratedDesignDatabase, InterModPathQueries) {
   EXPECT_EQ(vpi_release_handle(other), 1);
   EXPECT_EQ(vpi_release_handle(input), 1);
   EXPECT_EQ(vpi_release_handle(output), 1);
+  obelisk_rt_v1_context_destroy(runtime);
+}
+
+TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module) << "failed to parse " << inputPath;
+  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  module->walk(
+      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+  ASSERT_EQ(designs.size(), 1u);
+
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
+      obelisk::encodeSimulationDesign(designs.front(), options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  ASSERT_GE(encoded->bytecode.size(), 40u);
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  PLI_BYTE8 topName[] = "top";
+  PLI_BYTE8 generateName[] = "top.g";
+  PLI_BYTE8 interfaceName[] = "iface";
+  PLI_BYTE8 programName[] = "prog";
+  vpiHandle top = vpi_handle_by_name(topName, nullptr);
+  vpiHandle generated = vpi_handle_by_name(generateName, nullptr);
+  vpiHandle interface = vpi_handle_by_name(interfaceName, nullptr);
+  vpiHandle program = vpi_handle_by_name(programName, nullptr);
+  ASSERT_NE(top, nullptr);
+  ASSERT_NE(generated, nullptr);
+  ASSERT_NE(interface, nullptr);
+  ASSERT_NE(program, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, top), vpiModule);
+  EXPECT_EQ(vpi_get(vpiType, generated), vpiGenScope);
+  EXPECT_EQ(vpi_get(vpiType, interface), vpiInterface);
+  EXPECT_EQ(vpi_get(vpiType, program), vpiProgram);
+
+  vpiHandle topAssignments = vpi_iterate(vpiContAssign, top);
+  ASSERT_NE(topAssignments, nullptr);
+  vpiHandle directAssignment = vpi_scan(topAssignments);
+  ASSERT_NE(directAssignment, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, directAssignment), vpiContAssign);
+  EXPECT_STREQ(vpi_get_str(vpiFile, directAssignment), "scope_owned.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, directAssignment), 10);
+  EXPECT_EQ(vpi_scan(topAssignments), nullptr);
+
+  vpiHandle topAliases = vpi_iterate(vpiAliasStmt, top);
+  ASSERT_NE(topAliases, nullptr);
+  std::array<vpiHandle, 3> directAliases{};
+  for (vpiHandle &alias : directAliases) {
+    alias = vpi_scan(topAliases);
+    ASSERT_NE(alias, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, alias), vpiAliasStmt);
+    EXPECT_STREQ(vpi_get_str(vpiFile, alias), "scope_owned.sv");
+    EXPECT_EQ(vpi_get(vpiLineNo, alias), 11);
+  }
+  EXPECT_EQ(vpi_scan(topAliases), nullptr);
+
+  vpiHandle generatedAssignments = vpi_iterate(vpiContAssign, generated);
+  ASSERT_NE(generatedAssignments, nullptr);
+  vpiHandle generatedAssignment = vpi_scan(generatedAssignments);
+  ASSERT_NE(generatedAssignment, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, generatedAssignment), vpiContAssign);
+  EXPECT_EQ(vpi_get(vpiLineNo, generatedAssignment), 20);
+  EXPECT_EQ(vpi_scan(generatedAssignments), nullptr);
+
+  vpiHandle generatedAliases = vpi_iterate(vpiAliasStmt, generated);
+  ASSERT_NE(generatedAliases, nullptr);
+  vpiHandle generatedAlias = vpi_scan(generatedAliases);
+  ASSERT_NE(generatedAlias, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, generatedAlias), vpiAliasStmt);
+  EXPECT_EQ(vpi_get(vpiLineNo, generatedAlias), 21);
+  EXPECT_EQ(vpi_scan(generatedAliases), nullptr);
+
+  vpiHandle interfaceAssignments = vpi_iterate(vpiContAssign, interface);
+  vpiHandle programAssignments = vpi_iterate(vpiContAssign, program);
+  ASSERT_NE(interfaceAssignments, nullptr);
+  ASSERT_NE(programAssignments, nullptr);
+  vpiHandle interfaceAssignment = vpi_scan(interfaceAssignments);
+  vpiHandle programAssignment = vpi_scan(programAssignments);
+  ASSERT_NE(interfaceAssignment, nullptr);
+  ASSERT_NE(programAssignment, nullptr);
+  EXPECT_EQ(vpi_get(vpiLineNo, interfaceAssignment), 40);
+  EXPECT_EQ(vpi_get(vpiLineNo, programAssignment), 50);
+  EXPECT_EQ(vpi_scan(interfaceAssignments), nullptr);
+  EXPECT_EQ(vpi_scan(programAssignments), nullptr);
+  vpiHandle interfaceAssignmentInstance =
+      vpi_handle(vpiInstance, interfaceAssignment);
+  vpiHandle programAssignmentInstance =
+      vpi_handle(vpiInstance, programAssignment);
+  ASSERT_NE(interfaceAssignmentInstance, nullptr);
+  ASSERT_NE(programAssignmentInstance, nullptr);
+  EXPECT_EQ(vpi_compare_objects(interface, interfaceAssignmentInstance), 1);
+  EXPECT_EQ(vpi_compare_objects(program, programAssignmentInstance), 1);
+
+  vpiHandle directAssignmentModule = vpi_handle(vpiModule, directAssignment);
+  vpiHandle generatedAssignmentModule =
+      vpi_handle(vpiModule, generatedAssignment);
+  vpiHandle directAliasInstance =
+      vpi_handle(vpiInstance, directAliases.front());
+  vpiHandle generatedAliasInstance = vpi_handle(vpiInstance, generatedAlias);
+  ASSERT_NE(directAssignmentModule, nullptr);
+  ASSERT_NE(generatedAssignmentModule, nullptr);
+  ASSERT_NE(directAliasInstance, nullptr);
+  ASSERT_NE(generatedAliasInstance, nullptr);
+  EXPECT_EQ(vpi_compare_objects(top, directAssignmentModule), 1);
+  EXPECT_EQ(vpi_compare_objects(top, generatedAssignmentModule), 1);
+  EXPECT_EQ(vpi_compare_objects(top, directAliasInstance), 1);
+  EXPECT_EQ(vpi_compare_objects(top, generatedAliasInstance), 1);
+
+  EXPECT_EQ(vpi_release_handle(generatedAliasInstance), 1);
+  EXPECT_EQ(vpi_release_handle(directAliasInstance), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAssignmentModule), 1);
+  EXPECT_EQ(vpi_release_handle(directAssignmentModule), 1);
+  EXPECT_EQ(vpi_release_handle(programAssignmentInstance), 1);
+  EXPECT_EQ(vpi_release_handle(interfaceAssignmentInstance), 1);
+  EXPECT_EQ(vpi_release_handle(programAssignment), 1);
+  EXPECT_EQ(vpi_release_handle(interfaceAssignment), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAlias), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAssignment), 1);
+  for (vpiHandle alias : directAliases)
+    EXPECT_EQ(vpi_release_handle(alias), 1);
+  EXPECT_EQ(vpi_release_handle(directAssignment), 1);
+  EXPECT_EQ(vpi_release_handle(generated), 1);
+  EXPECT_EQ(vpi_release_handle(program), 1);
+  EXPECT_EQ(vpi_release_handle(interface), 1);
+  EXPECT_EQ(vpi_release_handle(top), 1);
   obelisk_rt_v1_context_destroy(runtime);
 }

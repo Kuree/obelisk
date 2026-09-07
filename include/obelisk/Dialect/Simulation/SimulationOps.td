@@ -120,10 +120,13 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
     Describes one elaborated statement occurrence independently of executable
     fragments and bytecode. The exact callback sites are separate inventory
     records because one statement (notably `for`) may have multiple semantic
-    cbStmt points. `scope_id` is the exact elaborated hierarchy scope. The
+    cbStmt points. `scope_id` is the physical/runtime enclosing scope. The
     optional code-unit ID owns behavioral statements; scope-owned static
-    statement objects omit it and are owned by `scope_id`. Statement nesting
-    is represented only by `parent_id`.
+    statement objects omit it, and their incoming containment relation is the
+    authoritative exact lexical owner (for example, an unbacked generate
+    scope). Statement nesting is represented only by `parent_id`. Source
+    provenance is retained when the frontend provides it, but does not control
+    whether the statement exists.
   }];
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$code_unit_id,
                        I64Attr:$scope_id, I32Attr:$vpi_kind,
@@ -157,10 +160,12 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let summary = "immutable VPI statement-containment relation";
   let description = [{
     Records one semantic incoming containment edge for a statement. The source
-    is a stable tagged scope, code-unit, or statement ID. `mode_mask` uses bit
-    zero for `vpi_handle` and bit one for `vpi_iterate`; when both access modes
-    expose the same semantic child they are merged into one record. `ordinal`
-    is dense independently for each source, selector, and access mode.
+    is a stable tagged scope, code-unit, statement, or VPI-anchor inventory ID.
+    Anchor sources retain lexical scopes, such as generate scopes, which do not
+    have an executable `scope.decl`. `mode_mask` uses bit zero for `vpi_handle`
+    and bit one for `vpi_iterate`; when both access modes expose the same
+    semantic child they are merged into one record. `ordinal` is dense
+    independently for each source, selector, and access mode.
 
     This is static reflection inventory. It does not register callbacks or add
     work to the scheduler.

@@ -2366,9 +2366,19 @@ bool validateDatabaseImpl(const Database &database) {
       uint64_t sourceScope = read64(sourceRecord + 16);
       uint32_t sourceScopeIndex =
           static_cast<uint32_t>((sourceScope - database.scopes) / kScopeSize);
-      if (targetOwner != sourceIndex || targetParent != UINT32_MAX ||
-          targetScope != sourceScopeIndex)
+      if (targetParent != UINT32_MAX || targetScope != sourceScopeIndex)
         return false;
+      if (targetOwner == UINT32_MAX) {
+        const auto *sourceDescriptor =
+            obelisk::reflection::findVPIObjectKind(sourceKind);
+        if (!sourceDescriptor ||
+            (sourceDescriptor->families &
+             obelisk::reflection::vpiFamilyMask(
+                 obelisk::reflection::VPIObjectFamily::Scope)) == 0)
+          return false;
+      } else if (targetOwner != sourceIndex) {
+        return false;
+      }
       break;
     }
     case obelisk::reflection::TableKind::Statement:

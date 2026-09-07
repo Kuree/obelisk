@@ -46,6 +46,20 @@ module {
     obelisk_sim.statement.decl 1 in 1 scope 0 type 3 loc("legacy.sv":1:1)
     obelisk_sim.statement_site.decl 2 on 1 phase 0
   }
+
+  // Generate scopes have immutable reflection identity without becoming
+  // executable simulator scopes. Their statements therefore use the anchor
+  // inventory ID as the exact forward-containment source.
+  obelisk_sim.design @anchor_source {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 0 ordinal 0
+        hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 0 : i64>}
+    obelisk_sim.vpi_object.anchor @generated id 1 type 134 in 0 parent @top
+        ordinal 0 hierarchy "top.g" debug "g"
+    obelisk_sim.statement.decl 1 scope 0 type 8
+    obelisk_sim.vpi_statement_relation.decl anchor 1 type 134 selector 8
+        ordinal 0 modes 2 to 1
+  }
 }
 
 // CHECK-LABEL: obelisk_sim.design @statement_relations
@@ -58,3 +72,5 @@ module {
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 120 type 15 selector 75 ordinal 0 modes 3 to 121
 // CHECK: obelisk_sim.vpi_statement_relation.decl statement 120 type 15 selector 75 ordinal 1 modes 2 to 122
 // CHECK-LABEL: obelisk_sim.design @legacy_without_relations
+// CHECK-LABEL: obelisk_sim.design @anchor_source
+// CHECK: obelisk_sim.vpi_statement_relation.decl anchor 1 type 134 selector 8 ordinal 0 modes 2 to 1

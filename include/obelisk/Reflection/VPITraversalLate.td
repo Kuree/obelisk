@@ -489,7 +489,7 @@ def LateAliasLhs : VPITraversalEdge<LateAliasSource, LhsRel, HandleMode,
 def LateAliasRhs : VPITraversalEdge<LateAliasSource, RhsRel, HandleMode,
   LateOrdinaryExpressionTargets, NoOrder, "37.74">;
 def LateAliasInstance : VPITraversalEdge<LateAliasSource, InstanceRel,
-  HandleMode, InstanceObjects, NoOrder, "37.74">;
+  HandleMode, InstanceObjects, NoOrder, "37.74", 0, AutomaticParentScope>;
 
 // 37.75 Disables.
 def LateDisableExpr : VPITraversalEdge<LateDisableSource, ExprRel, HandleMode,

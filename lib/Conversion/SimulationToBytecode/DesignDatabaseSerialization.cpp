@@ -509,6 +509,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
   llvm::StringMap<sim::SimVPIObjectAnchorOp> anchorsBySymbol;
+  DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
   llvm::StringMap<sim::SimVPITypespecDeclOp> typespecsBySymbol;
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
@@ -571,6 +572,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (includeStatements) {
         anchors.push_back(anchor);
         anchorsBySymbol[anchor.getSymName()] = anchor;
+        anchorsByInventoryId[anchor.getInventoryId()] = anchor;
       }
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (includeStatements) {
@@ -1507,6 +1509,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       sourceIndex = source->second;
+      break;
+    }
+    case sim::VPIStatementSourceKind::Anchor: {
+      auto source = anchorsByInventoryId.find(relation.getSourceId());
+      if (source == anchorsByInventoryId.end()) {
+        relation.emitOpError("relation source VPI anchor was not serialized");
+        return {};
+      }
+      auto reference = anchorRefs.find(source->second);
+      if (reference == anchorRefs.end()) {
+        relation.emitOpError(
+            "relation source VPI anchor has no image object reference");
+        return {};
+      }
+      sourceTable = reference->second.table;
+      sourceIndex = reference->second.index;
       break;
     }
     }

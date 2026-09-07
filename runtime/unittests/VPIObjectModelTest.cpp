@@ -866,6 +866,12 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
       Automatic::DirectPortConnection);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
+  EXPECT_EQ(requireTraversal(vpiAliasStmt, vpiModule, Mode::Handle)
+                .automaticRelation,
+            Automatic::ParentScope);
+  EXPECT_EQ(requireTraversal(vpiAliasStmt, vpiInstance, Mode::Handle)
+                .automaticRelation,
+            Automatic::ParentScope);
 
   // General connectivity and expression relations cannot be inferred from
   // structural ownership and must remain explicit producer data. Direct

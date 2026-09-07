@@ -37,10 +37,12 @@ def SimVPIStatementSourceCodeUnit
     : I32EnumAttrCase<"CodeUnit", 1, "code_unit">;
 def SimVPIStatementSourceStatement
     : I32EnumAttrCase<"Statement", 2, "statement">;
+def SimVPIStatementSourceAnchor
+    : I32EnumAttrCase<"Anchor", 3, "anchor">;
 def SimVPIStatementSourceKind : I32EnumAttr<
     "VPIStatementSourceKind", "VPI statement-relation source kind", [
       SimVPIStatementSourceScope, SimVPIStatementSourceCodeUnit,
-      SimVPIStatementSourceStatement
+      SimVPIStatementSourceStatement, SimVPIStatementSourceAnchor
     ]> {
   let cppNamespace = "::obelisk::sim";
 }

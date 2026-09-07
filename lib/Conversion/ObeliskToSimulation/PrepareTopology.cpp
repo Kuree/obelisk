@@ -1075,11 +1075,14 @@ materializeDesignDescriptors(ModuleOp module,
     anchorKinds[operation] = *kind;
   });
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> anchorSymbols;
+  llvm::DenseMap<Operation *, uint64_t> anchorInventoryIds;
+  llvm::DenseMap<Operation *, sim::SimVPIObjectAnchorOp> anchorDeclarations;
   for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
     std::string symbolName =
         "__obelisk_vpi_anchor_" + std::to_string(inventoryId);
     anchorSymbols[source] =
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
+    anchorInventoryIds[source] = inventoryId;
   }
   llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
   auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
@@ -1367,11 +1370,108 @@ materializeDesignDescriptors(ModuleOp module,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount);
+    anchorDeclarations[source] = anchor;
     if (sim::VPIPropertySetAttr properties =
             identityProperties(source, sourceKind))
       anchor->setAttr("vpi_properties", properties);
     source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
   }
+
+  // Continuous assignments and net aliases are scope-owned VPI statement
+  // objects even though continuous assignments also have an internal
+  // executable code unit. Preserve their source identity independently of
+  // that executable representation. The generated traversal model decides
+  // whether the exact lexical scope may expose each statement kind.
+  uint64_t nextStatementId = 1;
+  llvm::DenseMap<Operation *, llvm::DenseMap<uint32_t, uint64_t>>
+      nextStatementOrdinal;
+  auto isInUninstantiatedGenerate = [](Operation *operation) {
+    for (Operation *cursor = operation; cursor; cursor = cursor->getParentOp()) {
+      auto generate = dyn_cast<semantic::SVGenerateBlockSymbolOp>(cursor);
+      if (!generate)
+        continue;
+      auto uninstantiated =
+          generate->getAttrOfType<BoolAttr>("is_uninstantiated");
+      if (uninstantiated && uninstantiated.getValue())
+        return true;
+    }
+    return false;
+  };
+  semanticRoot->walk<WalkOrder::PreOrder>(
+      [&](Operation *source) {
+        VPIKind statementKind;
+        if (isa<semantic::SVContinuousAssignSymbolOp>(source))
+          statementKind = VPIKind::ContAssign;
+        else if (isa<semantic::SVNetAliasSymbolOp>(source))
+          statementKind = VPIKind::AliasStmt;
+        else
+          return;
+        if (isCompileTimeOnlyInstanceMember(source) ||
+            isInUninstantiatedGenerate(source))
+          return;
+
+        Location location = getSemanticLocation(source);
+        Operation *owner = source->getParentOp();
+        while (owner && !anchorKinds.count(owner))
+          owner = owner->getParentOp();
+        if (!owner) {
+          emitError(location)
+              << "VPI scope-owned statement has no persistent lexical anchor";
+          invalid = true;
+          return;
+        }
+
+        uint32_t ownerKind = static_cast<uint32_t>(anchorKinds.lookup(owner));
+        uint32_t selector = static_cast<uint32_t>(statementKind);
+        const auto *edge = reflection::findVPITraversal(
+            ownerKind, selector, reflection::VPITraversalMode::Iterate);
+        if (!edge || !edge->statementContainment ||
+            !reflection::vpiObjectSetContains(edge->targets, selector)) {
+          emitError(location)
+              << "VPI " << reflection::findVPIObjectKind(selector)->apiName
+              << " is not legal in lexical owner kind " << ownerKind;
+          invalid = true;
+          return;
+        }
+
+        sim::SimVPIObjectAnchorOp ownerAnchor =
+            anchorDeclarations.lookup(owner);
+        if (!ownerAnchor) {
+          emitError(location)
+              << "VPI statement lexical anchor was not materialized";
+          invalid = true;
+          return;
+        }
+        sim::VPIObjectBackingAttr backing = ownerAnchor.getBackingAttr();
+        bool physicalScope =
+            backing && backing.getKind() == sim::VPIObjectBackingKind::Scope;
+        // IEEE 1800-2017 37.74 defines an N-net alias declaration as N-1
+        // alias objects, each relating one of the first N-1 nets to the final
+        // net. A continuous-assignment declaration always contributes one.
+        size_t statementCount = 1;
+        if (isa<semantic::SVNetAliasSymbolOp>(source)) {
+          size_t operandCount = getChildren(source).size();
+          statementCount = operandCount > 1 ? operandCount - 1 : 0;
+        }
+        for (size_t statement = 0; statement != statementCount; ++statement) {
+          uint64_t statementId = nextStatementId++;
+          uint64_t ordinal = nextStatementOrdinal[owner][selector]++;
+          sim::SimStatementDeclOp::create(
+              builder, location, statementId, IntegerAttr{},
+              scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
+              UnitAttr{}, UnitAttr{});
+          sim::SimVPIStatementRelationDeclOp::create(
+              builder, location,
+              physicalScope ? sim::VPIStatementSourceKind::Scope
+                            : sim::VPIStatementSourceKind::Anchor,
+              physicalScope ? backing.getId().getValue().getZExtValue()
+                            : anchorInventoryIds.lookup(owner),
+              ownerKind, selector, ordinal,
+              uint32_t{1} << static_cast<uint32_t>(
+                  reflection::VPITraversalMode::Iterate),
+              statementId);
+        }
+      });
   uint64_t nextSyntheticInventoryId = anchorSources.size();
   for (Operation *source : anchorSources) {
     auto eventArray = namedEventArrayRanges.find(source);

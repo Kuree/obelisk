@@ -317,9 +317,6 @@ LogicalResult SimStatementDeclOp::verify() {
   if (requiresScope && !getIsScope())
     return emitOpError(
         "named begin/fork and foreach statements must be marked is_scope");
-  auto source = getLoc()->findInstanceOf<FileLineColLoc>();
-  if (!source || source.getLine() == 0 || source.getColumn() == 0)
-    return emitOpError("requires a concrete source file, line, and column");
   return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
 }
@@ -1952,6 +1949,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
+  llvm::DenseMap<uint64_t, SimVPIObjectAnchorOp> vpiAnchorsById;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
@@ -2004,6 +2002,7 @@ LogicalResult SimDesignOp::verifyRegions() {
                        "VPI object anchor")))
         return failure();
       vpiAnchors.push_back(anchor);
+      vpiAnchorsById[anchor.getInventoryId()] = anchor;
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
         return failure();
@@ -2420,8 +2419,8 @@ LogicalResult SimDesignOp::verifyRegions() {
             0)
           return relation.emitOpError(
               "scope source VPI kind is not a scope object");
-        if (source->second.getInterfaceType().has_value() !=
-            (StringRef(sourceKind->apiName) == "vpiInterface"))
+        if (source->second.getInterfaceType() &&
+            StringRef(sourceKind->apiName) != "vpiInterface")
           return relation.emitOpError(
               "interface scope metadata and source VPI kind disagree");
         if (effectiveScopeVPIKind(source->second) !=
@@ -2491,6 +2490,29 @@ LogicalResult SimDesignOp::verifyRegions() {
             target->second.getScopeId() != source->second.getScopeId())
           return relation.emitOpError(
               "statement source does not match the target's structural parent");
+        break;
+      }
+      case VPIStatementSourceKind::Anchor: {
+        auto source = vpiAnchorsById.find(relation.getSourceId());
+        if (source == vpiAnchorsById.end())
+          return relation.emitOpError(
+              "references an unknown source VPI anchor inventory ID");
+        if (source->second.getVpiKind() != relation.getSourceVpiKind())
+          return relation.emitOpError(
+              "source VPI kind does not match the anchor declaration");
+        if (source->second.getBackingAttr())
+          return relation.emitOpError(
+              "backed anchor source must use its canonical scope or "
+              "code-unit ID");
+        if ((sourceKind->families &
+             reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) ==
+            0)
+          return relation.emitOpError(
+              "anchor source VPI kind is not a scope object");
+        if (target->second.getCodeUnitId() || target->second.getParentId() ||
+            target->second.getScopeId() != source->second.getEnclosingScopeId())
+          return relation.emitOpError(
+              "anchor source does not own the root scope-owned statement");
         break;
       }
       }
