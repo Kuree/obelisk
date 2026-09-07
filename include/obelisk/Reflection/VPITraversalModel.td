@@ -1,7 +1,7 @@
 //===- VPITraversalModel.td - IEEE VPI legal traversal graph ------------===//
 //
 // This file describes the legal source/selector/target graph from IEEE
-// 1800-2017 Chapter 37.  It is deliberately separate from the public spelling
+// 1800-2023 Chapter 37. It is deliberately separate from the public spelling
 // inventory: a numeric constant can be an object kind, a traversal selector,
 // or both, while only legal edges determine how a call is dispatched.
 //
@@ -240,8 +240,8 @@ class VPIPropertyStability<string cppName_, int value_> {
 def StaticProperty : VPIPropertyStability<"Static", 0>;
 def DynamicProperty : VPIPropertyStability<"Dynamic", 1>;
 
-// IEEE 1800-2017 37.3.6 generally permits only vpiType and vpiIsProtected on
-// a protected object. Section 37.57 additionally permits vpiSize for protected
+// IEEE 1800-2023 37.3.6 generally permits only vpiType and vpiIsProtected on
+// a protected object. Section 37.59 additionally permits vpiSize for protected
 // expression objects; that source-specific exception is modeled below.
 class VPIPropertyProtectedAccess<string cppName_, int value_> {
   string cppName = cppName_;
@@ -337,16 +337,16 @@ def IsProtectedProperty : VPIProperty<"vpiIsProtected", 74, BooleanProperty,
   AllConcreteObjects, "37.3.6", StaticProperty, AllowedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def ObjIdProperty : VPIProperty<"vpiObjId", 660, Int64Property,
-  ClassIdentityObjects, "37.31", DynamicProperty, DeniedWhenProtected, 0,
+  ClassIdentityObjects, "37.33", DynamicProperty, DeniedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, RuntimeProperty>;
 
 def ScalarProperty : VPIProperty<"vpiScalar", 17, BooleanProperty,
   ScalarVectorObjects, "37.14; 37.16; 37.17">;
 def VectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
-  VectorPropertyObjects, "37.14; 37.16; 37.17; 37.23">;
+  VectorPropertyObjects, "37.14; 37.16; 37.17; 37.25">;
 def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
   DirectionPropertyObjects,
-  "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51">;
+  "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53">;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
   PortObjects, "37.14">;
 def PortTypeProperty : VPIProperty<"vpiPortType", 611, IntegerProperty,
@@ -464,34 +464,34 @@ def ArrayMemberObjects : VPIObjectSet<"ArrayMemberObjects",
 
 def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
   StructuralSizeObjects,
-  "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; 37.26; "
-  "37.33; 37.34; 37.39; 37.57; 37.83", StaticProperty,
+  "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; 37.28; "
+  "37.35; 37.36; 37.41; 37.59; 37.85", StaticProperty,
   DeniedWhenProtected, 0, DynamicSizePropertyObjects,
   ProtectedExpressionSizeObjects, DerivedProperty, NoPropertyObjects,
   DynamicSizePropertyObjects>;
 def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
-  BooleanProperty, PackedPropertyObjects, "37.18; 37.23; 37.24">;
+  BooleanProperty, PackedPropertyObjects, "37.18; 37.25; 37.26">;
 def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
-  BooleanProperty, TaggedTypespecObjects, "37.23">;
+  BooleanProperty, TaggedTypespecObjects, "37.25">;
 def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
-  IntegerProperty, ArrayTypePropertyObjects, "37.17; 37.23">;
+  IntegerProperty, ArrayTypePropertyObjects, "37.17; 37.25">;
 def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
-  IntegerProperty, RandomizationTypeObjects, "37.17; 37.23">;
+  IntegerProperty, RandomizationTypeObjects, "37.17; 37.25">;
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
-  IntegerProperty, ConstantTypePropertyObjects, "37.26; 37.57">;
+  IntegerProperty, ConstantTypePropertyObjects, "37.28; 37.59">;
 def IndexedArrayMemberProperty : VPIProperty<"vpiArrayMember", 607,
   BooleanProperty, ArrayMemberObjects,
-  "37.5; 37.6; 37.9; 37.16; 37.17; 37.25; 37.33; 37.83">;
+  "37.5; 37.6; 37.9; 37.16; 37.17; 37.27; 37.35; 37.85">;
 def IndexedPackedArrayMemberProperty : VPIProperty<"vpiPackedArrayMember", 655,
   BooleanProperty, PackedArrayMemberPropertyObjects, "37.16; 37.17; 37.18">;
 def IndexedConstantSelectProperty : VPIProperty<"vpiConstantSelect", 53,
   BooleanProperty, ConstantSelectPropertyObjects,
-  "37.16; 37.17; 37.18; 37.19; 37.57">;
+  "37.16; 37.17; 37.18; 37.19; 37.59">;
 def IndexedSignedProperty : VPIProperty<"vpiSigned", 65,
   BooleanProperty, SignedPropertyObjects,
-  "37.13; 37.16; 37.17; 37.26; 37.39; 37.57">;
+  "37.13; 37.16; 37.17; 37.28; 37.41; 37.59">;
 
-// Complete IEEE 1800-2017 read-property inventory.  These sets follow the
+// Complete IEEE 1800-2023 read-property inventory. These sets follow the
 // object boxes in Chapter 37.  A property may legally return a null string or
 // a false/default value; applicability is independent of that value.
 def InstanceArrayPropertyObjects : VPIObjectSet<
@@ -643,9 +643,9 @@ def InterfaceTypePropertyObjects : VPIObjectSet<
   "InterfaceTypePropertyObjects", [VirtualInterfaceVar, InterfaceTypespec]>;
 
 def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
-  NamedPropertyObjects, "37.4-37.83">;
+  NamedPropertyObjects, "37.4-37.85">;
 def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
-  FullNamePropertyObjects, "37.10-37.83">;
+  FullNamePropertyObjects, "37.10-37.85">;
 def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
   ModuleSource, "37.5", StaticProperty, DeniedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
@@ -654,27 +654,27 @@ def CellInstanceProperty : VPIProperty<"vpiCellInstance", 8,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   FixedImageProperty>;
 def DefNameProperty : VPIProperty<"vpiDefName", 9, StringProperty,
-  DefinitionNameObjects, "37.10; 37.15; 37.28; 37.33; 37.34",
+  DefinitionNameObjects, "37.10; 37.15; 37.30; 37.35; 37.36",
   StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects,
   NoPropertyObjects, DerivedProperty, InstanceObjects>;
 def ProtectedProperty : VPIProperty<"vpiProtected", 10, BooleanProperty,
-  ProtectedLegacyObjects, "37.10; 37.34; 37.83">;
+  ProtectedLegacyObjects, "37.10; 37.36; 37.85">;
 def DefNetTypeProperty : VPIProperty<"vpiDefNetType", 13, IntegerProperty,
   InstanceObjects, "37.10">;
 def UnconnDriveProperty : VPIProperty<"vpiUnconnDrive", 14, IntegerProperty,
   InstanceObjects, "37.10">;
 def DefFileProperty : VPIProperty<"vpiDefFile", 15, StringProperty,
-  DefinitionLocationObjects, "37.10; 37.81", StaticProperty,
+  DefinitionLocationObjects, "37.10; 37.83", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   FixedImageProperty>;
 def DefLineNoProperty : VPIProperty<"vpiDefLineNo", 16, IntegerProperty,
-  DefinitionLocationObjects, "37.10; 37.81", StaticProperty,
+  DefinitionLocationObjects, "37.10; 37.83", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   FixedImageProperty>;
 def ExplicitNameProperty : VPIProperty<"vpiExplicitName", 19,
   BooleanProperty, PortObjects, "37.14">;
 def ConnByNameProperty : VPIProperty<"vpiConnByName", 21, BooleanProperty,
-  PortAndParamAssignObjects, "37.14; 37.26">;
+  PortAndParamAssignObjects, "37.14; 37.28">;
 def NetTypeProperty : VPIProperty<"vpiNetType", 22, IntegerProperty,
   NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 1,
   NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
@@ -708,7 +708,7 @@ def ExpandedProperty : VPIProperty<"vpiExpanded", 25, BooleanProperty,
   NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
 def ImplicitDeclProperty : VPIProperty<"vpiImplicitDecl", 26,
-  BooleanProperty, NetAndGenScopeObjects, "37.16; 37.83", StaticProperty,
+  BooleanProperty, NetAndGenScopeObjects, "37.16; 37.85", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def ChargeStrengthProperty : VPIProperty<"vpiChargeStrength", 27,
@@ -724,15 +724,15 @@ def ChargeStrengthMedium
 def ChargeStrengthLarge
     : VPIIntegerPropertyValue<ChargeStrengthProperty, 16>;
 def ArrayProperty : VPIProperty<"vpiArray", 28, BooleanProperty,
-  ArrayMemberObjects, "37.10; 37.16; 37.17; 37.25; 37.33; 37.83">;
+  ArrayMemberObjects, "37.10; 37.16; 37.17; 37.27; 37.35; 37.85">;
 def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
-  ReadPrimTermObjects, "37.33">;
+  ReadPrimTermObjects, "37.35">;
 def Strength0Property : VPIProperty<"vpiStrength0", 31, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.47", StaticProperty,
+  StrengthPropertyObjects, "37.16; 37.35; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def Strength1Property : VPIProperty<"vpiStrength1", 32, IntegerProperty,
-  StrengthPropertyObjects, "37.16; 37.33; 37.47", StaticProperty,
+  StrengthPropertyObjects, "37.16; 37.35; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def Strength0HiZ : VPIIntegerPropertyValue<Strength0Property, 1>;
@@ -746,33 +746,33 @@ def Strength1Pull : VPIIntegerPropertyValue<Strength1Property, 32>;
 def Strength1Strong : VPIIntegerPropertyValue<Strength1Property, 64>;
 def Strength1Supply : VPIIntegerPropertyValue<Strength1Property, 128>;
 def PrimTypeProperty : VPIProperty<"vpiPrimType", 33, IntegerProperty,
-  PrimitiveDefinitionObjects, "37.33; 37.34", StaticProperty,
+  PrimitiveDefinitionObjects, "37.35; 37.36", StaticProperty,
   DeniedWhenProtected, 1>;
 def PolarityProperty : VPIProperty<"vpiPolarity", 34, IntegerProperty,
-  ReadModPathObjects, "37.37">;
+  ReadModPathObjects, "37.39">;
 def DataPolarityProperty : VPIProperty<"vpiDataPolarity", 35,
-  IntegerProperty, ReadModPathObjects, "37.37">;
+  IntegerProperty, ReadModPathObjects, "37.39">;
 def EdgeProperty : VPIProperty<"vpiEdge", 36, IntegerProperty,
-  EdgePropertyObjects, "37.37; 37.38">;
+  EdgePropertyObjects, "37.39; 37.40">;
 def PathTypeProperty : VPIProperty<"vpiPathType", 37, IntegerProperty,
-  ReadModPathObjects, "37.37">;
+  ReadModPathObjects, "37.39">;
 def TchkTypeProperty : VPIProperty<"vpiTchkType", 38, IntegerProperty,
-  TimingCheckObjects, "37.38", StaticProperty, DeniedWhenProtected, 1>;
+  TimingCheckObjects, "37.40", StaticProperty, DeniedWhenProtected, 1>;
 def OpTypeProperty : VPIProperty<"vpiOpType", 39, IntegerProperty,
-  OperationPropertyObjects, "37.50; 37.52; 37.57; 37.62", StaticProperty,
+  OperationPropertyObjects, "37.52; 37.54; 37.59; 37.64", StaticProperty,
   DeniedWhenProtected, 1>;
 def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
-  BlockingPropertyObjects, "37.60; 37.62">;
+  BlockingPropertyObjects, "37.62; 37.64">;
 def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
-  ReadCaseObjects, "37.70">;
+  ReadCaseObjects, "37.72">;
 def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
   BooleanProperty, NetAndContinuousObjects, "37.16; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   DerivedProperty, NetPropertyObjects>;
 def FuncTypeProperty : VPIProperty<"vpiFuncType", 44, IntegerProperty,
-  FunctionPropertyObjects, "37.39; 37.40">;
+  FunctionPropertyObjects, "37.41; 37.42">;
 def UserDefnProperty : VPIProperty<"vpiUserDefn", 45, BooleanProperty,
-  SystemCallObjects, "37.40">;
+  SystemCallObjects, "37.42">;
 def ScheduledProperty : VPIProperty<"vpiScheduled", 46, BooleanProperty,
   ScheduledEventObjects, "38.34", DynamicProperty, DeniedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, RuntimeProperty>;
@@ -785,21 +785,21 @@ def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
-  AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; "
-  "37.32; 37.39", StaticProperty, DeniedWhenProtected, 0,
+  AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.27; 37.31; 37.32; "
+  "37.34; 37.41", StaticProperty, DeniedWhenProtected, 0,
   NoPropertyObjects, NoPropertyObjects, DerivedProperty, InstanceObjects>;
 def CellProperty : VPIProperty<"vpiCell", 51, StringProperty,
   InstanceObjects, "37.10">;
 def ConfigProperty : VPIProperty<"vpiConfig", 52, StringProperty,
   InstanceObjects, "37.10">;
 def DecompileProperty : VPIProperty<"vpiDecompile", 54, StringProperty,
-  DecompilePropertyObjects, "37.40; 37.57">;
+  DecompilePropertyObjects, "37.42; 37.59">;
 def DefAttributeProperty : VPIProperty<"vpiDefAttribute", 55,
-  BooleanProperty, ReadAttributeObjects, "37.81">;
+  BooleanProperty, ReadAttributeObjects, "37.83">;
 def DelayTypeProperty : VPIProperty<"vpiDelayType", 56, IntegerProperty,
   DelayTypePropertyObjects, "37.45", StaticProperty, DeniedWhenProtected, 1>;
 def IteratorTypeProperty : VPIProperty<"vpiIteratorType", 57,
-  IntegerProperty, ReadIteratorObjects, "37.82">;
+  IntegerProperty, ReadIteratorObjects, "37.84">;
 def LibraryProperty : VPIProperty<"vpiLibrary", 58, StringProperty,
   InstanceObjects, "37.10">;
 def OffsetProperty : VPIProperty<"vpiOffset", 60, IntegerProperty,
@@ -845,11 +845,11 @@ def ValidProperty : VPIProperty<"vpiValid", 64, IntegerProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def LocalParamProperty : VPIProperty<"vpiLocalParam", 70, BooleanProperty,
-  ReadParameterObjects, "37.26; 37.29; 37.83">;
+  ReadParameterObjects, "37.28; 37.31; 37.85">;
 def ModPathHasIfNoneProperty : VPIProperty<"vpiModPathHasIfNone", 71,
-  BooleanProperty, ReadModPathObjects, "37.37">;
+  BooleanProperty, ReadModPathObjects, "37.39">;
 def IndexedPartSelectTypeProperty : VPIProperty<"vpiIndexedPartSelectType",
-  72, IntegerProperty, IndexedPartSelectObjects, "37.57">;
+  72, IntegerProperty, IndexedPartSelectObjects, "37.59">;
 def IsMemoryProperty : VPIProperty<"vpiIsMemory", 73, BooleanProperty,
   ReadRegArrayObjects, "37.20">;
 
@@ -862,22 +862,22 @@ def UnitProperty : VPIProperty<"vpiUnit", 602, BooleanProperty,
 def JoinTypeProperty : VPIProperty<"vpiJoinType", 603, IntegerProperty,
   ForkObjects, "37.12">;
 def AccessTypeProperty : VPIProperty<"vpiAccessType", 604, IntegerProperty,
-  AccessTypePropertyObjects, "37.8; 37.32; 37.39">;
+  AccessTypePropertyObjects, "37.8; 37.34; 37.41">;
 def IsRandomizedProperty : VPIProperty<"vpiIsRandomized", 608,
   BooleanProperty, OrdinaryVariablePropertyObjects, "37.17", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def LocalVarDeclsProperty : VPIProperty<"vpiLocalVarDecls", 609,
-  IntegerProperty, ReadForObjects, "37.72">;
+  IntegerProperty, ReadForObjects, "37.74">;
 def ConstantVariableProperty : VPIProperty<"vpiConstantVariable", 612,
   BooleanProperty, OrdinaryVariablePropertyObjects, "37.17">;
 def StructUnionMemberProperty : VPIProperty<"vpiStructUnionMember", 615,
   BooleanProperty, StructUnionMemberPropertyObjects,
   "37.16; 37.17; 37.18">;
 def VisibilityProperty : VPIProperty<"vpiVisibility", 620, IntegerProperty,
-  VisibilityPropertyObjects, "37.17; 37.39">;
+  VisibilityPropertyObjects, "37.17; 37.41">;
 def AlwaysTypeProperty : VPIProperty<"vpiAlwaysType", 624,
-  IntegerProperty, AlwaysObjects, "37.61", StaticProperty,
+  IntegerProperty, AlwaysObjects, "37.63", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   FixedImageProperty, AlwaysObjects>;
 def AlwaysTypeAlways
@@ -889,27 +889,27 @@ def AlwaysTypeAlwaysFF
 def AlwaysTypeAlwaysLatch
     : VPIIntegerPropertyValue<AlwaysTypeProperty, 4>;
 def DistTypeProperty : VPIProperty<"vpiDistType", 625, IntegerProperty,
-  DistributionItemObjects, "37.32">;
+  DistributionItemObjects, "37.34">;
 def VirtualProperty : VPIProperty<"vpiVirtual", 635, BooleanProperty,
-  VirtualPropertyObjects, "37.29; 37.32; 37.39">;
+  VirtualPropertyObjects, "37.31; 37.34; 37.41">;
 def HasActualProperty : VPIProperty<"vpiHasActual", 636, BooleanProperty,
-  DynamicPrefixPropertyObjects, "37.59", DynamicProperty,
+  DynamicPrefixPropertyObjects, "37.61", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def IsConstraintEnabledProperty : VPIProperty<"vpiIsConstraintEnabled", 638,
-  BooleanProperty, ReadConstraintObjects, "37.32", DynamicProperty,
+  BooleanProperty, ReadConstraintObjects, "37.34", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def SoftProperty : VPIProperty<"vpiSoft", 639, BooleanProperty,
-  ConstraintExpressionPropertyObjects, "37.36">;
+  ConstraintExpressionPropertyObjects, "37.38">;
 def ClassTypeProperty : VPIProperty<"vpiClassType", 640, IntegerProperty,
-  ReadClassTypespecObjects, "37.30">;
+  ReadClassTypespecObjects, "37.32">;
 def MethodProperty : VPIProperty<"vpiMethod", 645, BooleanProperty,
-  TaskFunctionDeclObjects, "37.39">;
+  TaskFunctionDeclObjects, "37.41">;
 def IsClockInferredProperty : VPIProperty<"vpiIsClockInferred", 649,
   BooleanProperty, ConcurrentAssertionPropertyObjects, "37.50">;
 def QualifierProperty : VPIProperty<"vpiQualifier", 650, IntegerProperty,
-  QualifierPropertyObjects, "37.69; 37.70">;
+  QualifierPropertyObjects, "37.71; 37.72">;
 def InputEdgeProperty : VPIProperty<"vpiInputEdge", 651, IntegerProperty,
   ClockingPropertyObjects, "37.48">;
 def OutputEdgeProperty : VPIProperty<"vpiOutputEdge", 652, IntegerProperty,
@@ -919,9 +919,9 @@ def GenericProperty : VPIProperty<"vpiGeneric", 653, BooleanProperty,
 def CompatibilityModeProperty : VPIProperty<"vpiCompatibilityMode", 654,
   IntegerProperty, NullOnlyPropertyObjects, "Annex M">;
 def OpStrongProperty : VPIProperty<"vpiOpStrong", 656, BooleanProperty,
-  PropertySpecificationObjects, "37.50">;
+  PropertySpecificationObjects, "37.52">;
 def IsDeferredProperty : VPIProperty<"vpiIsDeferred", 657, IntegerProperty,
-  ImmediateAssertionPropertyObjects, "37.53">;
+  ImmediateAssertionPropertyObjects, "37.55">;
 def AllocSchemeProperty : VPIProperty<"vpiAllocScheme", 658,
   IntegerProperty, AllConcreteObjects, "37.3.7", StaticProperty,
   DeniedWhenProtected, 0, DynamicAllocSchemeObjects, NoPropertyObjects,
@@ -937,17 +937,17 @@ def EndLineProperty : VPIProperty<"vpiEndLine", 663, IntegerProperty,
 def EndColumnProperty : VPIProperty<"vpiEndColumn", 664, IntegerProperty,
   AssertionLocationPropertyObjects, "37.49">;
 def DPIPureProperty : VPIProperty<"vpiDPIPure", 665, BooleanProperty,
-  TaskFunctionDeclObjects, "37.39">;
+  TaskFunctionDeclObjects, "37.41">;
 def DPIContextProperty : VPIProperty<"vpiDPIContext", 666, BooleanProperty,
-  TaskFunctionDeclObjects, "37.39">;
+  TaskFunctionDeclObjects, "37.41">;
 def DPICStrProperty : VPIProperty<"vpiDPICStr", 667, IntegerProperty,
-  TaskFunctionDeclObjects, "37.39">;
+  TaskFunctionDeclObjects, "37.41">;
 def DPICIdentifierProperty : VPIProperty<"vpiDPICIdentifier", 668,
-  StringProperty, TaskFunctionDeclObjects, "37.39">;
+  StringProperty, TaskFunctionDeclObjects, "37.41">;
 def IsModPortProperty : VPIProperty<"vpiIsModPort", 669, BooleanProperty,
-  InterfaceTypePropertyObjects, "37.27; 37.28">;
+  InterfaceTypePropertyObjects, "37.29; 37.30">;
 def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
-  ImmediateAssertionPropertyObjects, "37.53">;
+  ImmediateAssertionPropertyObjects, "37.55">;
 // Exact source-only identities that may occupy an immutable static-object
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
@@ -1243,41 +1243,41 @@ def ScopeConcurrentAssertions : VPITraversalEdge<ScopeSource,
   ConcurrentAssertionRel, IterateMode, ConcurrentAssertionObjects,
   NoOrder, "37.12">;
 def ScopeNamedEvents : VPITraversalEdge<NonInstanceScopeObjects, NamedEvent,
-  IterateMode, NamedEventTargetObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, NamedEventTargetObjects, NoOrder, "37.12; 37.85">;
 def ScopeNamedEventArrays : VPITraversalEdge<NonInstanceScopeObjects,
   NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder,
-  "37.12; 37.83">;
+  "37.12; 37.85">;
 def ScopeVariables : VPITraversalEdge<NonInstanceScopeObjects, VariablesRel,
-  IterateMode, DataVariableObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, DataVariableObjects, NoOrder, "37.12; 37.85">;
 def ScopeVirtualInterfaces : VPITraversalEdge<ScopeSource,
   VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
   "37.12">;
 def ScopeParameters : VPITraversalEdge<NonInstanceScopeObjects, Parameter,
-  IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.85">;
 def ScopeInternalScopes : VPITraversalEdge<ScopeWithoutModuleObjects,
   InternalScopeRel,
-  IterateMode, ScopeObjects, NoOrder, "37.12; 37.83", 0,
+  IterateMode, ScopeObjects, NoOrder, "37.12; 37.85", 0,
   AutomaticDirectChild>;
 def ScopeImports : VPITraversalEdge<ScopeSource, ImportRel, IterateMode,
   DeclarationObjects, NoOrder, "37.12">;
 def ScopeTypedefs : VPITraversalEdge<NonInstanceScopeObjects, TypedefRel,
-  IterateMode, TypedefTargetObjects, NoOrder, "37.12; 37.83">;
+  IterateMode, TypedefTargetObjects, NoOrder, "37.12; 37.85">;
 def ScopeLets : VPITraversalEdge<ScopeSource, LetDecl, IterateMode,
   LetDeclObjects, NoOrder, "37.12">;
 
 // NULL-root relations.
 def RootUserSystfs : VPITraversalEdge<RootSource, UserSystf, IterateMode,
-  UserSystfObjects, NoOrder, "37.40">;
+  UserSystfObjects, NoOrder, "37.42">;
 def RootCurrentSysTfCall : VPITraversalEdge<RootSource, SysTfCallRel,
-  HandleMode, SystemTfCallObjects, NoOrder, "37.40">;
+  HandleMode, SystemTfCallObjects, NoOrder, "37.42">;
 def RootCurrentFrame : VPITraversalEdge<RootSource, Frame, HandleMode,
   FrameObjects, NoOrder, "37.43">;
 def RootCallbacks : VPITraversalEdge<RootSource, Callback, IterateMode,
-  CallbackObjects, NoOrder, "37.78">;
+  CallbackObjects, NoOrder, "37.80">;
 def RootTimeQueues : VPITraversalEdge<RootSource, TimeQueue, IterateMode,
-  TimeQueueObjects, TimeOrder, "37.79">;
+  TimeQueueObjects, TimeOrder, "37.81">;
 def RootActiveTimeFormat : VPITraversalEdge<RootSource, ActiveTimeFormatRel,
-  HandleMode, SysTaskCallObjects, NoOrder, "37.80">;
+  HandleMode, SysTaskCallObjects, NoOrder, "37.82">;
 
 include "VPITraversalEarly.td"
 include "VPITraversalLate.td"
@@ -1339,19 +1339,19 @@ def IndexedProgramArray : VPIRelationIndexedAccess<
   "37.9; 37.11; 38.19; 38.20">;
 def IndexedGateArray : VPIRelationIndexedAccess<
   VPIEarlyGateArrayElements, IndexedGateArrayResults, GateArray, Gate,
-  "37.11; 37.33; 38.19; 38.20">;
+  "37.11; 37.35; 38.19; 38.20">;
 def IndexedSwitchArray : VPIRelationIndexedAccess<
   VPIEarlySwitchArrayElements, IndexedSwitchArrayResults, SwitchArray, Switch,
-  "37.11; 37.33; 38.19; 38.20">;
+  "37.11; 37.35; 38.19; 38.20">;
 def IndexedUdpArray : VPIRelationIndexedAccess<
   VPIEarlyUdpArrayElements, IndexedUdpArrayResults, UdpArray, Udp,
-  "37.11; 37.33; 38.19; 38.20">;
+  "37.11; 37.35; 38.19; 38.20">;
 def IndexedNamedEventArray : VPIRelationIndexedAccess<
   VPIEarlyNamedEventArrayElements, IndexedNamedEventArrayResults,
-  NamedEventArray, NamedEvent, "37.25; 38.19; 38.20">;
+  NamedEventArray, NamedEvent, "37.27; 38.19; 38.20">;
 def IndexedGenScopeArray : VPIRelationIndexedAccess<
   LateGenScopeArrayElements, IndexedGenScopeArrayResults, GenScopeArray,
-  GenScope, "37.83; 38.19; 38.20">;
+  GenScope, "37.85; 38.19; 38.20">;
 
 multiclass IndexedValueTypeResult<VPIObjectKind typespec,
                                   VPIObjectKind variable,

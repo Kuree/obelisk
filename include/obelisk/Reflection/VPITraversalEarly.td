@@ -1,4 +1,4 @@
-//===- VPITraversalEarly.td - IEEE VPI 37.5-37.50 edges -----------------===//
+//===- VPITraversalEarly.td - IEEE 1800-2023 37.5-37.50 edges -----------===//
 //
 // Standalone continuation of VPITraversalModel.td.  This file is intended to
 // be included after that file's common VPIObjectSet definitions.  It contains
@@ -221,9 +221,9 @@ def VPIEarlyArrayInterfaces : VPITraversalEdge<InterfaceArrayObjects,
   Interface, IterateMode, InterfaceObjects, IndexOrder, "37.6">;
 def VPIEarlyInstanceOfInterfaceChild : VPITraversalEdge<
   VPIEarlyInterfaceChildren, InstanceRel, HandleMode, VPIEarlyInstances,
-  NoOrder, "37.6; 37.9; 37.37; 37.48", 0, AutomaticParentScope>;
+  NoOrder, "37.6; 37.9; 37.39; 37.48", 0, AutomaticParentScope>;
 def VPIEarlyModPathInstance : VPITraversalEdge<ModPathObjects, InstanceRel,
-  HandleMode, VPIEarlyModPathInstances, NoOrder, "37.37">;
+  HandleMode, VPIEarlyModPathInstances, NoOrder, "37.39">;
 
 // 37.7 Modport and 37.8 interface task/function declaration.
 def VPIEarlyModportInterface : VPITraversalEdge<ModportObjects, Interface,
@@ -277,22 +277,22 @@ def VPIEarlyInstanceArrayParamAssigns : VPITraversalEdge<
   NoOrder, "37.11">;
 def VPIEarlyGateContainingArray : VPITraversalEdge<VPIEarlyGateObjects,
   PrimitiveArray, HandleMode, VPIEarlyGateArrayObjects, NoOrder,
-  "37.11; 37.33", 0, AutomaticIndexedContainer>;
+  "37.11; 37.35", 0, AutomaticIndexedContainer>;
 def VPIEarlySwitchContainingArray : VPITraversalEdge<VPIEarlySwitchObjects,
   PrimitiveArray, HandleMode, VPIEarlySwitchArrayObjects, NoOrder,
-  "37.11; 37.33", 0, AutomaticIndexedContainer>;
+  "37.11; 37.35", 0, AutomaticIndexedContainer>;
 def VPIEarlyUdpContainingArray : VPITraversalEdge<VPIEarlyUdpObjects,
   PrimitiveArray, HandleMode, VPIEarlyUdpArrayObjects, NoOrder,
-  "37.11; 37.33", 0, AutomaticIndexedContainer>;
+  "37.11; 37.35", 0, AutomaticIndexedContainer>;
 def VPIEarlyGateArrayElements : VPITraversalEdge<VPIEarlyGateArrayObjects,
   PrimitiveRel, IterateMode, VPIEarlyGateObjects, IndexOrder,
-  "37.11; 37.33">;
+  "37.11; 37.35">;
 def VPIEarlySwitchArrayElements : VPITraversalEdge<
   VPIEarlySwitchArrayObjects, PrimitiveRel, IterateMode, VPIEarlySwitchObjects,
-  IndexOrder, "37.11; 37.33">;
+  IndexOrder, "37.11; 37.35">;
 def VPIEarlyUdpArrayElements : VPITraversalEdge<VPIEarlyUdpArrayObjects,
   PrimitiveRel, IterateMode, VPIEarlyUdpObjects, IndexOrder,
-  "37.11; 37.33">;
+  "37.11; 37.35">;
 def VPIEarlyPrimitiveArrayDelay : VPITraversalEdge<PrimitiveArrayObjects,
   DelayRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.11">;
 
@@ -302,12 +302,12 @@ def VPIEarlyScopeStatement : VPITraversalEdge<TaskFunctionDeclObjects,
 def VPIEarlyBlockStatements : VPITraversalEdge<VPIEarlyBlockScopes, StmtRel,
   IterateMode, StatementObjects, NoOrder, "37.12", 1>;
 def VPIEarlyScopeRegs : VPITraversalEdge<NonInstanceScopeObjects, Reg,
-  IterateMode, RegObjects, NoOrder, "37.12; 37.83", 0,
+  IterateMode, RegObjects, NoOrder, "37.12; 37.85", 0,
   AutomaticDirectChild>;
 def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,
   RegArray, IterateMode, RegArrayObjects, NoOrder, "37.12">;
 def VPIEarlyScopeMemories : VPITraversalEdge<NonInstanceScopeObjects, Memory,
-  IterateMode, RegArrayObjects, NoOrder, "37.12; 37.20; 37.83">;
+  IterateMode, RegArrayObjects, NoOrder, "37.12; 37.20; 37.85">;
 def VPIEarlyScopeOfChild : VPITraversalEdge<StatementObjects, ScopeRel,
   HandleMode, ScopeObjects, NoOrder, "37.12", 0, AutomaticParentScope>;
 def VPIEarlyScopeOfDeclaredChild : VPITraversalEdge<VPIEarlyScopeChildren,
@@ -323,7 +323,7 @@ def VPIEarlyIODeclInstance : VPITraversalEdge<IODeclObjects, InstanceRel,
   HandleMode, VPIEarlyInstances, NoOrder, "37.13">;
 def VPIEarlyIODeclUdpDefn : VPITraversalEdge<IODeclObjects, UdpDefn,
   HandleMode, VPIObjectSet<"EarlyUdpDefnTarget", [UdpDefn]>, NoOrder,
-  "37.13; 37.34">;
+  "37.13; 37.36">;
 def VPIEarlyIODeclExpr : VPITraversalEdge<IODeclObjects, ExprRel, HandleMode,
   VPIEarlyIOExprs, NoOrder, "37.13">;
 def VPIEarlyIODeclLeftRange : VPITraversalEdge<IODeclObjects, LeftRangeRel,
@@ -483,7 +483,7 @@ def VPIEarlyVectorVarRightRange : VPITraversalEdge<
   VPIEarlyOrdinaryExpressions, NoOrder, "37.17">;
 def VPIEarlyStructUnionMembers : VPITraversalEdge<
   VPIObjectSet<"EarlyStructUnionSources", [StructVar, UnionVar]>, MemberRel,
-  IterateMode, VPIEarlyVariables, NoOrder, "37.17; 37.24">;
+  IterateMode, VPIEarlyVariables, NoOrder, "37.17; 37.26">;
 def VPIEarlyPackedVarElementsEdge : VPITraversalEdge<
   VPIObjectSet<"EarlyPackedVarSources", [PackedArrayVar]>, ElementRel,
   IterateMode, VPIEarlyPackedVarElements, IndexOrder, "37.18">;
@@ -495,14 +495,14 @@ def VPIEarlyVarSelectParent : VPITraversalEdge<
   HandleMode, RegArrayObjects, NoOrder, "37.19">;
 def VPIEarlyVarSelectIndex : VPITraversalEdge<
   VPIObjectSet<"EarlyIndexedSelectSources", [VarSelect, BitSelect]>, IndexRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.19; 37.56">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.19; 37.58">;
 def VPIEarlyVarSelectIndices : VPITraversalEdge<
   VPIObjectSet<"EarlyVarSelectSource", [VarSelect]>, IndexRel, IterateMode,
   VPIEarlyOrdinaryExpressions, IndexOrder, "37.19">;
 def VPIEarlyVarSelectTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlySelectTypespecSources",
     [VarSelect, BitSelect, PartSelect, IndexedPartSelect]>,
-  Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.19; 37.56; 37.57">;
+  Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.19; 37.58; 37.59">;
 def VPIEarlyModuleMemories : VPITraversalEdge<ModuleSource, Memory,
   IterateMode, RegArrayObjects, NoOrder, "37.20">;
 def VPIEarlyMemoryLeftRange : VPITraversalEdge<RegArrayObjects, LeftRangeRel,
@@ -514,355 +514,355 @@ def VPIEarlyMemoryWords : VPITraversalEdge<RegArrayObjects, MemoryWord,
 def VPIEarlyMemoryWordIndex : VPITraversalEdge<RegObjects, IndexRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.20">;
 
-// 37.22-37.25 Range, typespecs, structures/unions, and named events.
+// 37.22-37.27 Range, typespecs, structures/unions, and named events.
 def VPIEarlyRangeLeft : VPITraversalEdge<RangeObjects, LeftRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.22">;
 def VPIEarlyRangeRight : VPITraversalEdge<RangeObjects, RightRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.22">;
 def VPIEarlyInstanceTypespecs : VPITraversalEdge<InstanceObjects, Typespec,
-  IterateMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+  IterateMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyTypespecInstance : VPITraversalEdge<VPIEarlyTypespecs,
-  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.23">;
+  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.25">;
 def VPIEarlyTypespecAlias : VPITraversalEdge<VPIEarlyTypespecs,
-  TypedefAliasRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+  TypedefAliasRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyEnumBase : VPITraversalEdge<
   VPIObjectSet<"EarlyEnumTypespecSource", [EnumTypespec]>, BaseTypespecRel,
-  HandleMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+  HandleMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyEnumConstants : VPITraversalEdge<
   VPIObjectSet<"EarlyEnumTypespecConstSource", [EnumTypespec]>, EnumConst,
-  IterateMode, VPIEarlyEnumConsts, NoOrder, "37.23">;
+  IterateMode, VPIEarlyEnumConsts, NoOrder, "37.25">;
 def VPIEarlyEnumConstantTypespec : VPITraversalEdge<VPIEarlyEnumConsts,
   EnumTypespec, HandleMode,
-  VPIObjectSet<"EarlyEnumTypespecTarget", [EnumTypespec]>, NoOrder, "37.23">;
+  VPIObjectSet<"EarlyEnumTypespecTarget", [EnumTypespec]>, NoOrder, "37.25">;
 def VPIEarlyTypespecMemberTypespec : VPITraversalEdge<
   VPIEarlyTypespecMembers, Typespec, HandleMode, VPIEarlyTypespecs, NoOrder,
-  "37.23">;
+  "37.25">;
 def VPIEarlyTypespecMemberExpr : VPITraversalEdge<VPIEarlyTypespecMembers,
-  ExprRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.23">;
+  ExprRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.25">;
 def VPIEarlyAggregateTypespecMembers : VPITraversalEdge<
   VPIObjectSet<"EarlyAggregateTypespecSources", [StructTypespec,
     UnionTypespec]>, TypespecMember, IterateMode, VPIEarlyTypespecMembers,
-  NoOrder, "37.23">;
+  NoOrder, "37.25">;
 def VPIEarlyPackedTypespecRanges : VPITraversalEdge<
   VPIObjectSet<"EarlyPackedTypespecSources", [BitTypespec, LogicTypespec,
     PackedArrayTypespec, ArrayTypespec]>, Range, IterateMode, RangeObjects,
-  IndexOrder, "37.23">;
+  IndexOrder, "37.25">;
 def VPIEarlyPackedTypespecLeft : VPITraversalEdge<
   VPIObjectSet<"EarlyPackedTypespecLeftSources", [BitTypespec,
     LogicTypespec, PackedArrayTypespec, ArrayTypespec]>, LeftRangeRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.23">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.25">;
 def VPIEarlyPackedTypespecRight : VPITraversalEdge<
   VPIObjectSet<"EarlyPackedTypespecRightSources", [BitTypespec,
     LogicTypespec, PackedArrayTypespec, ArrayTypespec]>, RightRangeRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.23">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.25">;
 def VPIEarlyArrayIndexTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyArrayTypespecIndexSource", [ArrayTypespec]>,
-  IndexTypespecRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+  IndexTypespecRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyBitElemTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyBitTypespecSource", [BitTypespec]>, ElemTypespecRel,
   HandleMode, VPIObjectSet<"EarlyBitTypespecTarget", [BitTypespec]>,
-  NoOrder, "37.23">;
+  NoOrder, "37.25">;
 def VPIEarlyLogicElemTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyLogicTypespecSource", [LogicTypespec]>, ElemTypespecRel,
   HandleMode, VPIObjectSet<"EarlyLogicTypespecTarget", [LogicTypespec]>,
-  NoOrder, "37.23">;
+  NoOrder, "37.25">;
 def VPIEarlyPackedArrayElemTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyPackedArrayTypespecSource", [PackedArrayTypespec]>,
   ElemTypespecRel, HandleMode,
   VPIObjectSet<"EarlyPackedArrayTypespecTargets", [EnumTypespec,
-    StructTypespec, UnionTypespec, PackedArrayTypespec]>, NoOrder, "37.23">;
+    StructTypespec, UnionTypespec, PackedArrayTypespec]>, NoOrder, "37.25">;
 def VPIEarlyArrayElemTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyArrayTypespecSource", [ArrayTypespec]>, ElemTypespecRel,
-  HandleMode, VPIEarlyTypespecs, NoOrder, "37.23">;
+  HandleMode, VPIEarlyTypespecs, NoOrder, "37.25">;
 def VPIEarlyNamedEventTypespec : VPITraversalEdge<
   NamedEventTargetObjects, Typespec, HandleMode,
   VPIObjectSet<"EarlyEventTypespecTarget", [EventTypespec]>, NoOrder,
-  "37.25">;
+  "37.27">;
 def VPIEarlyNamedEventModule : VPITraversalEdge<NamedEventTargetObjects, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.25", 0, AutomaticParentScope>;
+  HandleMode, ModuleTarget, NoOrder, "37.27", 0, AutomaticParentScope>;
 def VPIEarlyNamedEventInstance : VPITraversalEdge<NamedEventTargetObjects,
-  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.25", 0,
+  InstanceRel, HandleMode, VPIEarlyInstances, NoOrder, "37.27", 0,
   AutomaticParentScope>;
 def VPIEarlyNamedEventWaiters : VPITraversalEdge<NamedEventTargetObjects,
-  WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.25">;
+  WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.27">;
 def VPIEarlyNamedEventArrayRange : VPITraversalEdge<NamedEventArrayObjects,
-  Range, IterateMode, RangeObjects, IndexOrder, "37.25">;
+  Range, IterateMode, RangeObjects, IndexOrder, "37.27">;
 def VPIEarlyNamedEventArrayTypespec : VPITraversalEdge<NamedEventArrayObjects,
   Typespec, HandleMode,
   VPIObjectSet<"EarlyNamedEventArrayTypespecTarget", [ArrayTypespec]>,
-  NoOrder, "37.25">;
+  NoOrder, "37.27">;
 def VPIEarlyNamedEventArrayModule : VPITraversalEdge<NamedEventArrayObjects,
-  Module, HandleMode, ModuleTarget, NoOrder, "37.25", 0,
+  Module, HandleMode, ModuleTarget, NoOrder, "37.27", 0,
   AutomaticParentScope>;
 def VPIEarlyNamedEventArrayInstance : VPITraversalEdge<
   NamedEventArrayObjects, InstanceRel, HandleMode, VPIEarlyInstances, NoOrder,
-  "37.25", 0, AutomaticParentScope>;
+  "37.27", 0, AutomaticParentScope>;
 def VPIEarlyNamedEventArrayElements : VPITraversalEdge<NamedEventArrayObjects,
-  NamedEvent, IterateMode, NamedEventTargetObjects, IndexOrder, "37.25">;
+  NamedEvent, IterateMode, NamedEventTargetObjects, IndexOrder, "37.27">;
 def VPIEarlyNamedEventParent : VPITraversalEdge<NamedEventTargetObjects,
-  ParentRel, HandleMode, NamedEventArrayObjects, NoOrder, "37.25", 0,
+  ParentRel, HandleMode, NamedEventArrayObjects, NoOrder, "37.27", 0,
   AutomaticIndexedContainer>;
 def VPIEarlyNamedEventIndices : VPITraversalEdge<NamedEventTargetObjects,
-  IndexRel, IterateMode, VPIEarlyOrdinaryExpressions, IndexOrder, "37.25">;
+  IndexRel, IterateMode, VPIEarlyOrdinaryExpressions, IndexOrder, "37.27">;
 
-// 37.26 Parameters and assignments.
+// 37.28 Parameters and assignments.
 def VPIEarlyParameterModule : VPITraversalEdge<VPIEarlyParameters, Module,
-  HandleMode, ModuleTarget, NoOrder, "37.26">;
+  HandleMode, ModuleTarget, NoOrder, "37.28">;
 def VPIEarlyParameterTypespec : VPITraversalEdge<ParameterObjects, Typespec,
-  HandleMode, VPIEarlyTypespecs, NoOrder, "37.26">;
+  HandleMode, VPIEarlyTypespecs, NoOrder, "37.28">;
 def VPIEarlyParameterExpr : VPITraversalEdge<ParameterObjects, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.26">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.28">;
 def VPIEarlyParameterLeft : VPITraversalEdge<ParameterObjects, LeftRangeRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.26">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.28">;
 def VPIEarlyParameterRight : VPITraversalEdge<ParameterObjects,
-  RightRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.26">;
+  RightRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.28">;
 def VPIEarlyTypeParameterTypespec : VPITraversalEdge<TypeParameterObjects,
-  Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.26">;
+  Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.28">;
 def VPIEarlyTypeParameterExpr : VPITraversalEdge<TypeParameterObjects,
-  ExprRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.26">;
+  ExprRel, HandleMode, VPIEarlyTypespecs, NoOrder, "37.28">;
 def VPIEarlyDefParamLhs : VPITraversalEdge<DefParamObjects, LhsRel,
-  HandleMode, ParameterObjects, NoOrder, "37.26">;
+  HandleMode, ParameterObjects, NoOrder, "37.28">;
 def VPIEarlyDefParamRhs : VPITraversalEdge<DefParamObjects, RhsRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.26">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.28">;
 def VPIEarlyModuleParamAssigns : VPITraversalEdge<ModuleSource, ParamAssign,
   IterateMode, VPIObjectSet<"EarlyModuleParamAssignTargets", [ParamAssign]>,
-  NoOrder, "37.26">;
+  NoOrder, "37.28">;
 def VPIEarlyScopeParamAssigns : VPITraversalEdge<NonInstanceScopeObjects,
   ParamAssign, IterateMode,
   VPIObjectSet<"EarlyScopeParamAssignTargets", [ParamAssign]>,
-  NoOrder, "37.26">;
+  NoOrder, "37.28">;
 def VPIEarlyParamAssignModule : VPITraversalEdge<
   VPIObjectSet<"EarlyParamAssignSources", [ParamAssign]>, Module, HandleMode,
-  ModuleTarget, NoOrder, "37.26">;
+  ModuleTarget, NoOrder, "37.28">;
 def VPIEarlyParamAssignLhs : VPITraversalEdge<
   VPIObjectSet<"EarlyParamAssignLhsSources", [ParamAssign]>, LhsRel,
-  HandleMode, VPIEarlyParameters, NoOrder, "37.26">;
+  HandleMode, VPIEarlyParameters, NoOrder, "37.28">;
 def VPIEarlyParamAssignRhs : VPITraversalEdge<
   VPIObjectSet<"EarlyParamAssignRhsSources", [ParamAssign]>, RhsRel,
-  HandleMode, VPIEarlyParamAssignRhsTargets, NoOrder, "37.26">;
+  HandleMode, VPIEarlyParamAssignRhsTargets, NoOrder, "37.28">;
 
-// 37.27-37.31 Interface/class types and class instances.
+// 37.29-37.33 Interface/class types and class instances.
 def VPIEarlyVirtualInterfaceActual : VPITraversalEdge<
   VirtualInterfaceObjects, ActualRel, HandleMode, InterfaceModportObjects,
-  NoOrder, "37.27">;
+  NoOrder, "37.29">;
 def VPIEarlyVirtualInterfaceTypespec : VPITraversalEdge<
   VirtualInterfaceObjects, Typespec, HandleMode,
   VPIObjectSet<"EarlyVirtualInterfaceTypespecTarget", [InterfaceTypespec]>,
-  NoOrder, "37.27">;
+  NoOrder, "37.29">;
 def VPIEarlyVirtualInterfaceExpr : VPITraversalEdge<
   VirtualInterfaceObjects, ExprRel, HandleMode,
-  VPIEarlyVirtualInterfaceExprs, NoOrder, "37.27">;
+  VPIEarlyVirtualInterfaceExprs, NoOrder, "37.29">;
 def VPIEarlyInterfaceTypespecParent : VPITraversalEdge<
   VPIObjectSet<"EarlyInterfaceTypespecSource", [InterfaceTypespec]>,
   ParentRel, HandleMode,
   VPIObjectSet<"EarlyParentInterfaceTypespecTarget", [InterfaceTypespec]>,
-  NoOrder, "37.28">;
+  NoOrder, "37.30">;
 def VPIEarlyInterfaceTypespecParamAssigns : VPITraversalEdge<
   VPIObjectSet<"EarlyInterfaceTypespecParamSource", [InterfaceTypespec]>,
   ParamAssign, IterateMode,
   VPIObjectSet<"EarlyInterfaceTypespecParamTargets", [ParamAssign]>,
-  NoOrder, "37.28">;
+  NoOrder, "37.30">;
 def VPIEarlyParamAssignInterfaceTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyInterfaceParamAssignSource", [ParamAssign]>,
   InterfaceTypespec, HandleMode,
   VPIObjectSet<"EarlyInterfaceParamAssignTarget", [InterfaceTypespec]>,
-  NoOrder, "37.28">;
+  NoOrder, "37.30">;
 def VPIEarlyRootClassDefns : VPITraversalEdge<RootSource, ClassDefn,
-  IterateMode, ClassDefnObjects, NoOrder, "37.29">;
+  IterateMode, ClassDefnObjects, NoOrder, "37.31">;
 def VPIEarlyClassDefnTypespec : VPITraversalEdge<ClassDefnObjects,
-  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.29">;
+  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.31">;
 def VPIEarlyClassExtends : VPITraversalEdge<ClassDefnObjects, ExtendsRel,
   HandleMode, VPIObjectSet<"EarlyExtendsTarget", [Extends]>, NoOrder,
-  "37.29">;
+  "37.31">;
 def VPIEarlyExtendsClassDefn : VPITraversalEdge<
   VPIObjectSet<"EarlyExtendsSource", [Extends]>, ClassDefn, HandleMode,
-  ClassDefnObjects, NoOrder, "37.29">;
+  ClassDefnObjects, NoOrder, "37.31">;
 def VPIEarlyExtendsTypespec : VPITraversalEdge<
   VPIObjectSet<"EarlyExtendsTypespecSource", [Extends]>, ClassTypespec,
-  HandleMode, ClassTypespecObjects, NoOrder, "37.29">;
+  HandleMode, ClassTypespecObjects, NoOrder, "37.31">;
 def VPIEarlyExtendsArguments : VPITraversalEdge<
   VPIObjectSet<"EarlyExtendsArgumentSource", [Extends]>, ArgumentRel,
-  IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.29">;
+  IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.31">;
 def VPIEarlyDerivedClasses : VPITraversalEdge<ClassDefnObjects,
   DerivedClassesRel, IterateMode, ClassDefnObjects, NoOrder,
-  "37.29">;
+  "37.31">;
 def VPIEarlyClassDefnInstances : VPITraversalEdge<ClassDefnObjects,
-  InstanceRel, IterateMode, VPIEarlyInstances, NoOrder, "37.29">;
+  InstanceRel, IterateMode, VPIEarlyInstances, NoOrder, "37.31">;
 def VPIEarlyClassDefnMethods : VPITraversalEdge<ClassDefnObjects, MethodsRel,
-  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.29", 0,
+  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.31", 0,
   AutomaticDirectChild>;
 def VPIEarlyClassDefnConstraints : VPITraversalEdge<ClassDefnObjects,
-  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.29">;
+  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.31">;
 def VPIEarlyClassTypespecClassDefn : VPITraversalEdge<ClassTypespecObjects,
-  ClassDefn, HandleMode, ClassDefnObjects, NoOrder, "37.30">;
+  ClassDefn, HandleMode, ClassDefnObjects, NoOrder, "37.32">;
 def VPIEarlyClassTypespecExtends : VPITraversalEdge<ClassTypespecObjects,
-  ExtendsRel, HandleMode, ClassTypespecObjects, NoOrder, "37.30">;
+  ExtendsRel, HandleMode, ClassTypespecObjects, NoOrder, "37.32">;
 def VPIEarlyClassTypespecMethods : VPITraversalEdge<ClassTypespecObjects,
-  MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.30">;
+  MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.32">;
 def VPIEarlyClassTypespecConstraints : VPITraversalEdge<ClassTypespecObjects,
-  Constraint, IterateMode, ConstraintObjects, NoOrder, "37.30">;
+  Constraint, IterateMode, ConstraintObjects, NoOrder, "37.32">;
 def VPIEarlyClassVarObject : VPITraversalEdge<ClassVarObjects, ClassObj,
-  HandleMode, ClassObjectObjects, NoOrder, "37.31">;
+  HandleMode, ClassObjectObjects, NoOrder, "37.33">;
 def VPIEarlyClassVarTypespec : VPITraversalEdge<ClassVarObjects,
-  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.31">;
+  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjTypespec : VPITraversalEdge<ClassObjectObjects,
-  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.31">;
+  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjVariables : VPITraversalEdge<ClassObjectObjects,
-  VariablesRel, IterateMode, VPIEarlyVariables, NoOrder, "37.31">;
+  VariablesRel, IterateMode, VPIEarlyVariables, NoOrder, "37.33">;
 def VPIEarlyClassObjWaiters : VPITraversalEdge<ClassObjectObjects,
-  WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.31">;
+  WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjMessages : VPITraversalEdge<ClassObjectObjects,
-  MessagesRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.31">;
+  MessagesRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.33">;
 def VPIEarlyClassObjMethods : VPITraversalEdge<ClassObjectObjects, MethodsRel,
-  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.31">;
+  IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.33">;
 def VPIEarlyClassObjConstraints : VPITraversalEdge<ClassObjectObjects,
-  Constraint, IterateMode, ConstraintObjects, NoOrder, "37.31">;
+  Constraint, IterateMode, ConstraintObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjParameters : VPITraversalEdge<ClassObjectObjects,
-  Parameter, IterateMode, ParameterIterationObjects, NoOrder, "37.31">;
+  Parameter, IterateMode, ParameterIterationObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjVirtualInterfaces : VPITraversalEdge<ClassObjectObjects,
   VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
-  "37.31">;
+  "37.33">;
 def VPIEarlyClassObjNamedEvents : VPITraversalEdge<ClassObjectObjects,
-  NamedEvent, IterateMode, NamedEventTargetObjects, NoOrder, "37.31">;
+  NamedEvent, IterateMode, NamedEventTargetObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjNamedEventArrays : VPITraversalEdge<ClassObjectObjects,
-  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.31">;
+  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjScopes : VPITraversalEdge<ClassObjectObjects,
-  InternalScopeRel, IterateMode, VPIEarlyScopes, NoOrder, "37.31">;
+  InternalScopeRel, IterateMode, VPIEarlyScopes, NoOrder, "37.33">;
 
-// 37.32 Constraint/order/distribution and 37.36 constraint expressions.
+// 37.34 Constraint/order/distribution and 37.38 constraint expressions.
 def VPIEarlyRootConstraints : VPITraversalEdge<RootSource, Constraint,
-  IterateMode, ConstraintObjects, NoOrder, "37.32">;
+  IterateMode, ConstraintObjects, NoOrder, "37.34">;
 def VPIEarlyConstraintParent : VPITraversalEdge<ConstraintObjects, ParentRel,
-  HandleMode, ClassObjectObjects, NoOrder, "37.32">;
+  HandleMode, ClassObjectObjects, NoOrder, "37.34">;
 def VPIEarlyConstraintItemsEdge : VPITraversalEdge<ConstraintObjects,
   ConstraintItemRel, IterateMode, VPIEarlyConstraintItems, SourceOrder,
-  "37.32">;
+  "37.34">;
 def VPIEarlySolveBefore : VPITraversalEdge<ConstraintOrderingObjects,
-  SolveBeforeRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.32">;
+  SolveBeforeRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.34">;
 def VPIEarlySolveAfter : VPITraversalEdge<ConstraintOrderingObjects,
-  SolveAfterRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.32">;
+  SolveAfterRel, IterateMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.34">;
 def VPIEarlyDistributionItems : VPITraversalEdge<
   VPIObjectSet<"EarlyDistributionSource", [Distribution]>, DistItem,
-  IterateMode, DistItemObjects, NoOrder, "37.32">;
+  IterateMode, DistItemObjects, NoOrder, "37.34">;
 def VPIEarlyDistItemParent : VPITraversalEdge<DistItemObjects, Distribution,
   HandleMode, VPIObjectSet<"EarlyDistributionTarget", [Distribution]>,
-  NoOrder, "37.32">;
+  NoOrder, "37.34">;
 def VPIEarlyDistributionExpr : VPITraversalEdge<
   VPIObjectSet<"EarlyDistributionExprSource", [Distribution]>, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.32">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.34">;
 def VPIEarlyDistItemValueRange : VPITraversalEdge<DistItemObjects,
   ValueRangeRel, HandleMode, VPIEarlyDistributionValueTargets, NoOrder,
-  "37.32">;
+  "37.34">;
 def VPIEarlyDistItemWeight : VPITraversalEdge<DistItemObjects, WeightRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.32">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.34">;
 def VPIEarlyConstraintCondition : VPITraversalEdge<
   VPIObjectSet<"EarlyConditionalConstraintSources", [Implication, ConstrIf,
     ConstrIfElse]>, ConditionRel, HandleMode, VPIEarlyOrdinaryExpressions,
-  NoOrder, "37.36">;
+  NoOrder, "37.38">;
 def VPIEarlyConstraintSubexpressions : VPITraversalEdge<
   VPIObjectSet<"EarlyConstraintSubexprSources", [Implication, ConstrIf,
     ConstrIfElse, ConstrForEach]>, ConstraintExpr, IterateMode,
-  VPIEarlyConstraintExpressions, SourceOrder, "37.36">;
+  VPIEarlyConstraintExpressions, SourceOrder, "37.38">;
 def VPIEarlyConstraintElse : VPITraversalEdge<
   VPIObjectSet<"EarlyConstraintElseSources", [ConstrIfElse]>, ElseConstRel,
-  HandleMode, VPIEarlyConstraintExpressions, NoOrder, "37.36">;
+  HandleMode, VPIEarlyConstraintExpressions, NoOrder, "37.38">;
 def VPIEarlySoftDisableExpr : VPITraversalEdge<
   VPIObjectSet<"EarlySoftDisableSource", [SoftDisable]>, ExprRel, HandleMode,
-  VPIEarlyOrdinaryExpressions, NoOrder, "37.36">;
+  VPIEarlyOrdinaryExpressions, NoOrder, "37.38">;
 def VPIEarlyForeachVariables : VPITraversalEdge<
   VPIObjectSet<"EarlyConstrForeachSource", [ConstrForEach]>, VariablesRel,
   IterateMode,
   VPIObjectSet<"EarlyConstraintIndexedVariables", [RegArray, PackedArrayVar]>,
-  NoOrder, "37.36">;
+  NoOrder, "37.38">;
 def VPIEarlyForeachLoopVars : VPITraversalEdge<
   VPIObjectSet<"EarlyConstrForeachLoopSource", [ConstrForEach]>, LoopVarsRel,
-  IterateMode, VPIEarlyLoopVars, SourceOrder, "37.36">;
+  IterateMode, VPIEarlyLoopVars, SourceOrder, "37.38">;
 
-// 37.33-37.35 Primitive/UDP/intermodule path.
+// 37.35-37.37 Primitive/UDP/intermodule path.
 def VPIEarlyPrimitiveDelay : VPITraversalEdge<VPIEarlyPrimitives, DelayRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.33">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.35">;
 def VPIEarlyPrimitiveIndex : VPITraversalEdge<PrimitiveObjects, IndexRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.33">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.35">;
 def VPIEarlyPrimitiveUdpDefn : VPITraversalEdge<
   VPIObjectSet<"EarlyUdpPrimitiveSource", [Udp]>, UdpDefn, HandleMode,
-  VPIObjectSet<"EarlyPrimitiveUdpDefnTarget", [UdpDefn]>, NoOrder, "37.33">;
+  VPIObjectSet<"EarlyPrimitiveUdpDefnTarget", [UdpDefn]>, NoOrder, "37.35">;
 def VPIEarlyPrimitiveTerms : VPITraversalEdge<PrimitiveObjects, PrimTerm,
-  IterateMode, PrimTermObjects, IndexOrder, "37.33">;
+  IterateMode, PrimTermObjects, IndexOrder, "37.35">;
 def VPIEarlyPrimTermPrimitive : VPITraversalEdge<PrimTermObjects,
-  PrimitiveRel, HandleMode, VPIEarlyPrimitives, NoOrder, "37.33">;
+  PrimitiveRel, HandleMode, VPIEarlyPrimitives, NoOrder, "37.35">;
 def VPIEarlyPrimTermExpr : VPITraversalEdge<PrimTermObjects, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.33">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.35">;
 def VPIEarlyRootUdpDefns : VPITraversalEdge<RootSource, UdpDefn, IterateMode,
-  VPIObjectSet<"EarlyRootUdpDefnTargets", [UdpDefn]>, NoOrder, "37.34">;
+  VPIObjectSet<"EarlyRootUdpDefnTargets", [UdpDefn]>, NoOrder, "37.36">;
 def VPIEarlyUdpTableEntries : VPITraversalEdge<
   VPIObjectSet<"EarlyUdpDefinitionSource", [UdpDefn]>, TableEntry,
   IterateMode, VPIObjectSet<"EarlyTableEntryTargets", [TableEntry]>,
-  NoOrder, "37.34">;
+  NoOrder, "37.36">;
 def VPIEarlyUdpInitial : VPITraversalEdge<
   VPIObjectSet<"EarlyUdpInitialSource", [UdpDefn]>, Initial, HandleMode,
-  VPIObjectSet<"EarlyUdpInitialTarget", [Initial]>, NoOrder, "37.34">;
+  VPIObjectSet<"EarlyUdpInitialTarget", [Initial]>, NoOrder, "37.36">;
 def VPIEarlyInterModPathPorts : VPITraversalEdge<InterModPathObjects,
-  PortsRel, IterateMode, VPIEarlyPorts, NoOrder, "37.35">;
+  PortsRel, IterateMode, VPIEarlyPorts, NoOrder, "37.37">;
 
-// 37.37 Module paths and 37.38 timing checks.
+// 37.39 Module paths and 37.40 timing checks.
 def VPIEarlyModPathCondition : VPITraversalEdge<ModPathObjects, ConditionRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.37">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.39">;
 def VPIEarlyModPathDelay : VPITraversalEdge<ModPathObjects, DelayRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.37">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.39">;
 def VPIEarlyModDataPathIn : VPITraversalEdge<ModPathObjects,
-  ModDataPathInRel, IterateMode, PathTermObjects, NoOrder, "37.37">;
+  ModDataPathInRel, IterateMode, PathTermObjects, NoOrder, "37.39">;
 def VPIEarlyModPathOut : VPITraversalEdge<ModPathObjects, ModPathOutRel,
-  IterateMode, PathTermObjects, NoOrder, "37.37">;
+  IterateMode, PathTermObjects, NoOrder, "37.39">;
 def VPIEarlyModPathIn : VPITraversalEdge<ModPathObjects, ModPathInRel,
-  IterateMode, PathTermObjects, NoOrder, "37.37">;
+  IterateMode, PathTermObjects, NoOrder, "37.39">;
 def VPIEarlyPathTermModPath : VPITraversalEdge<PathTermObjects, ModPath,
-  HandleMode, ModPathObjects, NoOrder, "37.37">;
+  HandleMode, ModPathObjects, NoOrder, "37.39">;
 def VPIEarlyPathTermExpr : VPITraversalEdge<PathTermObjects, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.37">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.39">;
 def VPIEarlyTchkDelay : VPITraversalEdge<TchkObjects, DelayRel, HandleMode,
-  VPIEarlyOrdinaryExpressions, NoOrder, "37.38">;
+  VPIEarlyOrdinaryExpressions, NoOrder, "37.40">;
 def VPIEarlyTchkExprs : VPITraversalEdge<TchkObjects, ExprRel, IterateMode,
-  VPIEarlyTchkExprTargets, NoOrder, "37.38">;
+  VPIEarlyTchkExprTargets, NoOrder, "37.40">;
 def VPIEarlyTchkRefTerm : VPITraversalEdge<TchkObjects, TchkRefTermRel,
-  HandleMode, TchkTermObjects, NoOrder, "37.38">;
+  HandleMode, TchkTermObjects, NoOrder, "37.40">;
 def VPIEarlyTchkDataTerm : VPITraversalEdge<TchkObjects, TchkDataTermRel,
-  HandleMode, TchkTermObjects, NoOrder, "37.38">;
+  HandleMode, TchkTermObjects, NoOrder, "37.40">;
 def VPIEarlyTchkNotifier : VPITraversalEdge<TchkObjects, TchkNotifierRel,
-  HandleMode, RegObjects, NoOrder, "37.38">;
+  HandleMode, RegObjects, NoOrder, "37.40">;
 def VPIEarlyTchkTermExpr : VPITraversalEdge<TchkTermObjects, ExprRel,
-  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.38">;
+  HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.40">;
 def VPIEarlyTchkTermCondition : VPITraversalEdge<TchkTermObjects,
-  ConditionRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.38">;
+  ConditionRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.40">;
 
-// 37.39-37.40 Task/function declarations and calls.
+// 37.41-37.42 Task/function declarations and calls.
 def VPIEarlyFunctionLeftRange : VPITraversalEdge<FunctionObjects,
-  LeftRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.39">;
+  LeftRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.41">;
 def VPIEarlyFunctionRightRange : VPITraversalEdge<FunctionObjects,
-  RightRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.39">;
+  RightRangeRel, HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.41">;
 def VPIEarlyFunctionReturn : VPITraversalEdge<FunctionObjects, ReturnRel,
-  HandleMode, VPIEarlyVariables, NoOrder, "37.39">;
+  HandleMode, VPIEarlyVariables, NoOrder, "37.41">;
 def VPIEarlyFunctionClassDefn : VPITraversalEdge<FunctionObjects, ClassDefn,
-  HandleMode, ClassDefnObjects, NoOrder, "37.39">;
+  HandleMode, ClassDefnObjects, NoOrder, "37.41">;
 def VPIEarlyTaskFuncParent : VPITraversalEdge<TaskFunctionDeclObjects,
-  ParentRel, HandleMode, RefObjectObjects, NoOrder, "37.39">;
+  ParentRel, HandleMode, RefObjectObjects, NoOrder, "37.41">;
 def VPIEarlyFuncCallFunction : VPITraversalEdge<
   VPIObjectSet<"EarlyFunctionCallSources", [FuncCall, MethodFuncCall]>,
-  Function, HandleMode, FunctionObjects, NoOrder, "37.39; 37.40">;
+  Function, HandleMode, FunctionObjects, NoOrder, "37.41; 37.42">;
 def VPIEarlyTaskCallTask : VPITraversalEdge<
   VPIObjectSet<"EarlyTaskCallSources", [TaskCall, MethodTaskCall]>, Task,
   HandleMode, VPIObjectSet<"EarlyTaskTarget", [Task]>, NoOrder,
-  "37.39; 37.40">;
+  "37.41; 37.42">;
 def VPIEarlyCallScope : VPITraversalEdge<
   VPIObjectSet<"EarlyExpressionCallSources",
     [FuncCall, MethodFuncCall, SysFuncCall]>,
-  ScopeRel, HandleMode, VPIEarlyScopes, NoOrder, "37.40">;
+  ScopeRel, HandleMode, VPIEarlyScopes, NoOrder, "37.42">;
 def VPIEarlyCallArgumentsEdge : VPITraversalEdge<TaskFunctionCallObjects,
-  ArgumentRel, IterateMode, VPIEarlyCallArguments, NoOrder, "37.40">;
+  ArgumentRel, IterateMode, VPIEarlyCallArguments, NoOrder, "37.42">;
 def VPIEarlyMethodWith : VPITraversalEdge<
   VPIObjectSet<"EarlyMethodWithSources", [MethodFuncCall, MethodTaskCall]>,
-  WithRel, HandleMode, VPIEarlyMethodWithTargets, NoOrder, "37.40">;
+  WithRel, HandleMode, VPIEarlyMethodWithTargets, NoOrder, "37.42">;
 def VPIEarlySysCallUserSystf : VPITraversalEdge<VPIEarlySysCalls, UserSystf,
-  HandleMode, UserSystfObjects, NoOrder, "37.40">;
+  HandleMode, UserSystfObjects, NoOrder, "37.42">;
 
 // 37.43-37.45 Frames, threads, and delay terminals.  The 2023 frame object
 // model is explicitly not backward compatible with IEEE 1800-2017.

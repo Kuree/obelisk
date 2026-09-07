@@ -1,4 +1,4 @@
-// IEEE VPI clauses 37.5-37.50. This is deliberately a test-side
+// IEEE 1800-2023 clauses 37.5-37.50. This is deliberately a test-side
 // concrete-object oracle: every entry names the LRM clause, the complete
 // expanded source set, selector/mode, complete concrete target set, and
 // ordering.  Do not replace these relations with production TableGen sets;
@@ -39,11 +39,11 @@ add("37.9", S({vpiProgram}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
     Order::None, true);
 add("37.5", S({vpiModule}), vpiDefParam, Mode::Iterate, S({vpiDefParam}),
     Order::None);
-add("37.39; 37.40", S({vpiFuncCall, vpiMethodFuncCall}), vpiFunction,
+add("37.41; 37.42", S({vpiFuncCall, vpiMethodFuncCall}), vpiFunction,
     Mode::Handle, S({vpiFunction}), Order::None);
 add("37.8", S({vpiInterfaceTfDecl}), vpiFunction, Mode::Iterate,
     S({vpiFunction}), Order::None);
-add("37.34", S({vpiUdpDefn}), vpiInitial, Mode::Handle, S({vpiInitial}),
+add("37.36", S({vpiUdpDefn}), vpiInitial, Mode::Handle, S({vpiInitial}),
     Order::None);
 add("37.5", S({vpiModule}), vpiIODecl, Mode::Iterate, S({vpiIODecl}),
     Order::None);
@@ -52,7 +52,7 @@ add("37.13",
     vpiIODecl, Mode::Iterate, S({vpiIODecl}), Order::None);
 add("37.7", S({vpiModport}), vpiIODecl, Mode::Iterate, S({vpiIODecl}),
     Order::None);
-add("37.12; 37.20; 37.83",
+add("37.12; 37.20; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiMemory, Mode::Iterate, S({vpiRegArray}), Order::None);
@@ -60,7 +60,7 @@ add("37.20", S({vpiModule}), vpiMemory, Mode::Iterate, S({vpiRegArray}),
     Order::None);
 add("37.20", S({vpiRegArray}), vpiMemoryWord, Mode::Iterate, S({vpiReg}),
     Order::Index);
-add("37.37", S({vpiPathTerm}), vpiModPath, Mode::Handle, S({vpiModPath}),
+add("37.39", S({vpiPathTerm}), vpiModPath, Mode::Handle, S({vpiModPath}),
     Order::None);
 add("37.5", S({vpiModule}), vpiModPath, Mode::Iterate, S({vpiModPath}),
     Order::None);
@@ -76,7 +76,7 @@ add("37.5",
        vpiClassTypespec, vpiAliasStmt,  vpiClockingBlock, vpiClassDefn,
        vpiForeachStmt}),
     vpiModule, Mode::Handle, S({vpiModule}), Order::None);
-add("37.26", S({vpiParamAssign, vpiParameter, vpiTypeParameter}), vpiModule,
+add("37.28", S({vpiParamAssign, vpiParameter, vpiTypeParameter}), vpiModule,
     Mode::Handle, S({vpiModule}), Order::None);
 add("37.17; 37.20",
     S({vpiIntegerVar,
@@ -100,7 +100,7 @@ add("37.17; 37.20",
        vpiPackedArrayVar,
        vpiVirtualInterfaceVar}),
     vpiModule, Mode::Handle, S({vpiModule}), Order::None);
-add("37.25", S({vpiNamedEvent, vpiNamedEventArray}), vpiModule, Mode::Handle,
+add("37.27", S({vpiNamedEvent, vpiNamedEventArray}), vpiModule, Mode::Handle,
     S({vpiModule}), Order::None);
 add("37.16", S({vpiNetArray, vpiInterconnectArray}), vpiModule, Mode::Handle,
     S({vpiModule}), Order::None);
@@ -112,13 +112,13 @@ add("37.5; 37.11", S({vpiModuleArray}), vpiModule, Mode::Iterate,
     S({vpiModule}), Order::Index);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiNamedEvent, Mode::Iterate, S({vpiNamedEvent}), Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiNamedEvent, Mode::Iterate, S({vpiNamedEvent}), Order::None);
-add("37.31", S({vpiClassObj}), vpiNamedEvent, Mode::Iterate, S({vpiNamedEvent}),
+add("37.33", S({vpiClassObj}), vpiNamedEvent, Mode::Iterate, S({vpiNamedEvent}),
     Order::None);
-add("37.25", S({vpiNamedEventArray}), vpiNamedEvent, Mode::Iterate,
+add("37.27", S({vpiNamedEventArray}), vpiNamedEvent, Mode::Iterate,
     S({vpiNamedEvent}), Order::Index);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiNet,
     Mode::Iterate,
@@ -129,22 +129,22 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiNet,
     Order::None);
 add("37.11", S({vpiModuleArray, vpiInterfaceArray, vpiProgramArray}),
     vpiParamAssign, Mode::Iterate, S({vpiParamAssign}), Order::None);
-add("37.28", S({vpiInterfaceTypespec}), vpiParamAssign, Mode::Iterate,
+add("37.30", S({vpiInterfaceTypespec}), vpiParamAssign, Mode::Iterate,
     S({vpiParamAssign}), Order::None);
-add("37.26", S({vpiModule}), vpiParamAssign, Mode::Iterate, S({vpiParamAssign}),
+add("37.28", S({vpiModule}), vpiParamAssign, Mode::Iterate, S({vpiParamAssign}),
     Order::None);
-add("37.26",
+add("37.28",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiParamAssign, Mode::Iterate, S({vpiParamAssign}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiParameter,
     Mode::Iterate, S({vpiParameter, vpiTypeParameter}), Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiParameter, Mode::Iterate, S({vpiParameter, vpiTypeParameter}),
     Order::None);
-add("37.31", S({vpiClassObj}), vpiParameter, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiParameter, Mode::Iterate,
     S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.17",
     S({vpiIntegerVar,
@@ -205,19 +205,19 @@ add("37.16",
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiPrimTerm, Mode::Iterate, S({vpiPrimTerm}), Order::None);
-add("37.33", S({vpiGate, vpiSwitch, vpiUdp}), vpiPrimTerm, Mode::Iterate,
+add("37.35", S({vpiGate, vpiSwitch, vpiUdp}), vpiPrimTerm, Mode::Iterate,
     S({vpiPrimTerm}), Order::Index);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiReg,
     Mode::Iterate, S({vpiReg}), Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiReg, Mode::Iterate, S({vpiReg}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiSpecParam,
     Mode::Iterate, S({vpiSpecParam}), Order::None);
-add("37.34", S({vpiUdpDefn}), vpiTableEntry, Mode::Iterate, S({vpiTableEntry}),
+add("37.36", S({vpiUdpDefn}), vpiTableEntry, Mode::Iterate, S({vpiTableEntry}),
     Order::None);
-add("37.39; 37.40", S({vpiTaskCall, vpiMethodTaskCall}), vpiTask, Mode::Handle,
+add("37.41; 37.42", S({vpiTaskCall, vpiMethodTaskCall}), vpiTask, Mode::Handle,
     S({vpiTask}), Order::None);
 add("37.8", S({vpiInterfaceTfDecl}), vpiTask, Mode::Iterate, S({vpiTask}),
     Order::None);
@@ -250,18 +250,18 @@ add("37.16",
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiTchkTerm, Mode::Iterate, S({vpiTchkTerm}), Order::None);
-add("37.33", S({vpiUdp}), vpiUdpDefn, Mode::Handle, S({vpiUdpDefn}),
+add("37.35", S({vpiUdp}), vpiUdpDefn, Mode::Handle, S({vpiUdpDefn}),
     Order::None);
-add("37.13; 37.34", S({vpiIODecl}), vpiUdpDefn, Mode::Handle, S({vpiUdpDefn}),
+add("37.13; 37.36", S({vpiIODecl}), vpiUdpDefn, Mode::Handle, S({vpiUdpDefn}),
     Order::None);
-add("37.34", S({0}), vpiUdpDefn, Mode::Iterate, S({vpiUdpDefn}), Order::None);
-add("37.40", S({vpiSysFuncCall, vpiSysTaskCall}), vpiUserSystf, Mode::Handle,
+add("37.36", S({0}), vpiUdpDefn, Mode::Iterate, S({vpiUdpDefn}), Order::None);
+add("37.42", S({vpiSysFuncCall, vpiSysTaskCall}), vpiUserSystf, Mode::Handle,
     S({vpiUserSystf}), Order::None);
-add("37.40", S({0}), vpiUserSystf, Mode::Iterate, S({vpiUserSystf}),
+add("37.42", S({0}), vpiUserSystf, Mode::Iterate, S({vpiUserSystf}),
     Order::None);
 add("37.17; 37.19", S({vpiRegArray}), vpiVarSelect, Mode::Iterate,
     S({vpiVarSelect}), Order::Index);
-add("37.37", S({vpiModPath}), vpiCondition, Mode::Handle,
+add("37.39", S({vpiModPath}), vpiCondition, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -313,7 +313,7 @@ add("37.37", S({vpiModPath}), vpiCondition, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.38", S({vpiTchkTerm}), vpiCondition, Mode::Handle,
+add("37.40", S({vpiTchkTerm}), vpiCondition, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -365,7 +365,7 @@ add("37.38", S({vpiTchkTerm}), vpiCondition, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.36", S({vpiConstrIf, vpiConstrIfElse, vpiImplication}), vpiCondition,
+add("37.38", S({vpiConstrIf, vpiConstrIfElse, vpiImplication}), vpiCondition,
     Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
@@ -470,7 +470,7 @@ add("37.47", S({vpiContAssign}), vpiDelay, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.33", S({vpiGate, vpiSwitch, vpiUdp}), vpiDelay, Mode::Handle,
+add("37.35", S({vpiGate, vpiSwitch, vpiUdp}), vpiDelay, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -522,7 +522,7 @@ add("37.33", S({vpiGate, vpiSwitch, vpiUdp}), vpiDelay, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.37", S({vpiModPath}), vpiDelay, Mode::Handle,
+add("37.39", S({vpiModPath}), vpiDelay, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -574,7 +574,7 @@ add("37.37", S({vpiModPath}), vpiDelay, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.38", S({vpiTchk}), vpiDelay, Mode::Handle,
+add("37.40", S({vpiTchk}), vpiDelay, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -823,9 +823,9 @@ add("37.47", S({vpiContAssign}), vpiLhs, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.26", S({vpiParamAssign}), vpiLhs, Mode::Handle,
+add("37.28", S({vpiParamAssign}), vpiLhs, Mode::Handle,
     S({vpiParameter, vpiTypeParameter}), Order::None);
-add("37.26", S({vpiDefParam}), vpiLhs, Mode::Handle, S({vpiParameter}),
+add("37.28", S({vpiDefParam}), vpiLhs, Mode::Handle, S({vpiParameter}),
     Order::None);
 add("37.5", S({vpiModule}), vpiIndex, Mode::Handle,
     S({vpiConstant,
@@ -879,7 +879,7 @@ add("37.5", S({vpiModule}), vpiIndex, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.33", S({vpiGate, vpiSwitch, vpiUdp}), vpiIndex, Mode::Handle,
+add("37.35", S({vpiGate, vpiSwitch, vpiUdp}), vpiIndex, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -1088,7 +1088,7 @@ add("37.16", S({vpiNetBit, vpiEnumNet, vpiStructNet, vpiPackedArrayNet}),
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.19; 37.56", S({vpiVarSelect, vpiBitSelect}), vpiIndex, Mode::Handle,
+add("37.19; 37.58", S({vpiVarSelect, vpiBitSelect}), vpiIndex, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -1370,7 +1370,7 @@ add("37.17; 37.18",
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::Index);
-add("37.25", S({vpiNamedEvent}), vpiIndex, Mode::Iterate,
+add("37.27", S({vpiNamedEvent}), vpiIndex, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -1545,7 +1545,7 @@ add("37.19", S({vpiVarSelect}), vpiIndex, Mode::Iterate,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::Index);
-add("37.26", S({vpiParameter}), vpiLeftRange, Mode::Handle,
+add("37.28", S({vpiParameter}), vpiLeftRange, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -1649,7 +1649,7 @@ add("37.13", S({vpiIODecl}), vpiLeftRange, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.39", S({vpiFunction}), vpiLeftRange, Mode::Handle,
+add("37.41", S({vpiFunction}), vpiLeftRange, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -1808,7 +1808,7 @@ add("37.20", S({vpiRegArray}), vpiLeftRange, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.23",
+add("37.25",
     S({vpiBitTypespec, vpiLogicTypespec, vpiArrayTypespec,
        vpiPackedArrayTypespec}),
     vpiLeftRange, Mode::Handle,
@@ -2075,7 +2075,7 @@ add("37.14; 37.15; 37.16; 37.17", S({vpiPort}), vpiLowConn, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.32", S({vpiConstraint}), vpiParent, Mode::Handle, S({vpiClassObj}),
+add("37.34", S({vpiConstraint}), vpiParent, Mode::Handle, S({vpiClassObj}),
     Order::None);
 add("37.47", S({vpiContAssignBit}), vpiParent, Mode::Handle, S({vpiContAssign}),
     Order::None);
@@ -2092,7 +2092,7 @@ add("37.16",
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     Order::None);
-add("37.28", S({vpiInterfaceTypespec}), vpiParent, Mode::Handle,
+add("37.30", S({vpiInterfaceTypespec}), vpiParent, Mode::Handle,
     S({vpiInterfaceTypespec}), Order::None);
 add("37.14", S({vpiPortBit}), vpiParent, Mode::Handle, S({vpiPort}),
     Order::None);
@@ -2120,9 +2120,9 @@ add("37.17",
     vpiParent, Mode::Handle,
     S({vpiRegArray, vpiClassVar, vpiStructVar, vpiUnionVar, vpiPackedArrayVar}),
     Order::None);
-add("37.25", S({vpiNamedEvent}), vpiParent, Mode::Handle,
+add("37.27", S({vpiNamedEvent}), vpiParent, Mode::Handle,
     S({vpiNamedEventArray}), Order::None);
-add("37.39", S({vpiFunction, vpiTask}), vpiParent, Mode::Handle, S({vpiRefObj}),
+add("37.41", S({vpiFunction, vpiTask}), vpiParent, Mode::Handle, S({vpiRefObj}),
     Order::None);
 add("37.15", S({vpiRefObj}), vpiParent, Mode::Handle, S({vpiRefObj}),
     Order::None);
@@ -2130,7 +2130,7 @@ add("37.19", S({vpiVarSelect}), vpiParent, Mode::Handle, S({vpiRegArray}),
     Order::None);
 add("37.44", S({vpiThread}), vpiParent, Mode::Handle, S({vpiThread}),
     Order::None);
-add("37.26", S({vpiDefParam}), vpiRhs, Mode::Handle,
+add("37.28", S({vpiDefParam}), vpiRhs, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -2234,7 +2234,7 @@ add("37.47", S({vpiContAssign}), vpiRhs, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.26", S({vpiParamAssign}), vpiRhs, Mode::Handle,
+add("37.28", S({vpiParamAssign}), vpiRhs, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -2312,7 +2312,7 @@ add("37.26", S({vpiParamAssign}), vpiRhs, Mode::Handle,
        vpiLetExpr,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.26", S({vpiParameter}), vpiRightRange, Mode::Handle,
+add("37.28", S({vpiParameter}), vpiRightRange, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -2416,7 +2416,7 @@ add("37.13", S({vpiIODecl}), vpiRightRange, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.39", S({vpiFunction}), vpiRightRange, Mode::Handle,
+add("37.41", S({vpiFunction}), vpiRightRange, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -2575,7 +2575,7 @@ add("37.20", S({vpiRegArray}), vpiRightRange, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.23",
+add("37.25",
     S({vpiBitTypespec, vpiLogicTypespec, vpiArrayTypespec,
        vpiPackedArrayTypespec}),
     vpiRightRange, Mode::Handle,
@@ -2792,7 +2792,7 @@ add("37.22", S({vpiRange}), vpiRightRange, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.40", S({vpiFuncCall, vpiSysFuncCall, vpiMethodFuncCall}), vpiScope,
+add("37.42", S({vpiFuncCall, vpiSysFuncCall, vpiMethodFuncCall}), vpiScope,
     Mode::Handle,
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiModule, vpiNamedBegin,
        vpiNamedFork, vpiTask, vpiGenScope, vpiPackage, vpiInterface, vpiProgram,
@@ -2881,15 +2881,15 @@ add("37.12",
        vpiClassObj, vpiClassTypespec, vpiClockingBlock, vpiClassDefn,
        vpiForeachStmt}),
     Order::None);
-add("37.40", S({0}), vpiSysTfCall, Mode::Handle,
+add("37.42", S({0}), vpiSysTfCall, Mode::Handle,
     S({vpiSysFuncCall, vpiSysTaskCall}), Order::None);
-add("37.38", S({vpiTchk}), vpiTchkDataTerm, Mode::Handle, S({vpiTchkTerm}),
+add("37.40", S({vpiTchk}), vpiTchkDataTerm, Mode::Handle, S({vpiTchkTerm}),
     Order::None);
-add("37.38", S({vpiTchk}), vpiTchkNotifier, Mode::Handle, S({vpiReg}),
+add("37.40", S({vpiTchk}), vpiTchkNotifier, Mode::Handle, S({vpiReg}),
     Order::None);
-add("37.38", S({vpiTchk}), vpiTchkRefTerm, Mode::Handle, S({vpiTchkTerm}),
+add("37.40", S({vpiTchk}), vpiTchkRefTerm, Mode::Handle, S({vpiTchkTerm}),
     Order::None);
-add("37.40",
+add("37.42",
     S({vpiFuncCall, vpiSysFuncCall, vpiSysTaskCall, vpiTaskCall,
        vpiMethodFuncCall, vpiMethodTaskCall}),
     vpiArgument, Mode::Iterate,
@@ -2968,7 +2968,7 @@ add("37.40",
        vpiVirtualInterfaceVar,
        vpiLetExpr}),
     Order::None);
-add("37.29", S({vpiExtends}), vpiArgument, Mode::Iterate,
+add("37.31", S({vpiExtends}), vpiArgument, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3069,7 +3069,7 @@ add("37.17; 37.21",
     vpiDriver, Mode::Iterate,
     S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiContAssignBit}),
     Order::None);
-add("37.31", S({vpiClassObj}), vpiInternalScope, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiInternalScope, Mode::Iterate,
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiModule, vpiNamedBegin,
        vpiNamedFork, vpiTask, vpiGenScope, vpiPackage, vpiInterface, vpiProgram,
        vpiClassObj, vpiClassTypespec, vpiClockingBlock, vpiClassDefn,
@@ -3081,7 +3081,7 @@ add("37.5", S({vpiModule}), vpiInternalScope, Mode::Iterate,
        vpiClassObj, vpiClassTypespec, vpiClockingBlock, vpiClassDefn,
        vpiForeachStmt}),
     Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiPackage, vpiInterface, vpiProgram,
        vpiClassTypespec, vpiClockingBlock, vpiClassDefn, vpiForeachStmt}),
@@ -3127,11 +3127,11 @@ add("37.17; 37.21",
        vpiVirtualInterfaceVar}),
     vpiLoad, Mode::Iterate,
     S({vpiAssignStmt, vpiContAssign, vpiForce, vpiContAssignBit}), Order::None);
-add("37.37", S({vpiModPath}), vpiModDataPathIn, Mode::Iterate, S({vpiPathTerm}),
+add("37.39", S({vpiModPath}), vpiModDataPathIn, Mode::Iterate, S({vpiPathTerm}),
     Order::None);
-add("37.37", S({vpiModPath}), vpiModPathIn, Mode::Iterate, S({vpiPathTerm}),
+add("37.39", S({vpiModPath}), vpiModPathIn, Mode::Iterate, S({vpiPathTerm}),
     Order::None);
-add("37.37", S({vpiModPath}), vpiModPathOut, Mode::Iterate, S({vpiPathTerm}),
+add("37.39", S({vpiModPath}), vpiModPathOut, Mode::Iterate, S({vpiPathTerm}),
     Order::None);
 add("37.17",
     S({vpiIntegerVar,
@@ -3182,7 +3182,7 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiVariables,
                       vpiBitVar,         vpiChandleVar,
                       vpiPackedArrayVar, vpiVirtualInterfaceVar}),
     Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiVariables, Mode::Iterate, S({vpiIntegerVar,     vpiNamedEvent,
@@ -3197,9 +3197,9 @@ add("37.12; 37.83",
                                     vpiBitVar,         vpiChandleVar,
                                     vpiPackedArrayVar, vpiVirtualInterfaceVar}),
     Order::None);
-add("37.36", S({vpiConstrForEach}), vpiVariables, Mode::Iterate,
+add("37.38", S({vpiConstrForEach}), vpiVariables, Mode::Iterate,
     S({vpiRegArray, vpiPackedArrayVar}), Order::None);
-add("37.31", S({vpiClassObj}), vpiVariables, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiVariables, Mode::Iterate,
     S({vpiIntegerVar,
        vpiRealVar,
        vpiReg,
@@ -3267,7 +3267,7 @@ add("37.11",
     S({vpiGateArray, vpiModuleArray, vpiSwitchArray, vpiUdpArray,
        vpiInterfaceArray, vpiProgramArray}),
     vpiExpr, Mode::Handle, S({vpiOperation}), Order::None);
-add("37.32", S({vpiDistribution}), vpiExpr, Mode::Handle,
+add("37.34", S({vpiDistribution}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3319,7 +3319,7 @@ add("37.32", S({vpiDistribution}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.26", S({vpiParameter}), vpiExpr, Mode::Handle,
+add("37.28", S({vpiParameter}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3371,7 +3371,7 @@ add("37.26", S({vpiParameter}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.33", S({vpiPrimTerm}), vpiExpr, Mode::Handle,
+add("37.35", S({vpiPrimTerm}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3480,7 +3480,7 @@ add("37.17",
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.37", S({vpiPathTerm}), vpiExpr, Mode::Handle,
+add("37.39", S({vpiPathTerm}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3532,7 +3532,7 @@ add("37.37", S({vpiPathTerm}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.23", S({vpiTypespecMember}), vpiExpr, Mode::Handle,
+add("37.25", S({vpiTypespecMember}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3584,7 +3584,7 @@ add("37.23", S({vpiTypespecMember}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.38", S({vpiTchkTerm}), vpiExpr, Mode::Handle,
+add("37.40", S({vpiTchkTerm}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3688,7 +3688,7 @@ add("37.48", S({vpiClockingIODecl}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.36", S({vpiSoftDisable}), vpiExpr, Mode::Handle,
+add("37.38", S({vpiSoftDisable}), vpiExpr, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -3740,7 +3740,7 @@ add("37.36", S({vpiSoftDisable}), vpiExpr, Mode::Handle,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.26", S({vpiTypeParameter}), vpiExpr, Mode::Handle,
+add("37.28", S({vpiTypeParameter}), vpiExpr, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -3751,11 +3751,11 @@ add("37.26", S({vpiTypeParameter}), vpiExpr, Mode::Handle,
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.27", S({vpiVirtualInterfaceVar}), vpiExpr, Mode::Handle,
+add("37.29", S({vpiVirtualInterfaceVar}), vpiExpr, Mode::Handle,
     S({vpiConstant, vpiInterface, vpiModport, vpiRefObj,
        vpiVirtualInterfaceVar}),
     Order::None);
-add("37.38", S({vpiTchk}), vpiExpr, Mode::Iterate,
+add("37.40", S({vpiTchk}), vpiExpr, Mode::Iterate,
     S({vpiConstant,        vpiFuncCall,
        vpiIntegerVar,      vpiNet,
        vpiNetBit,          vpiOperation,
@@ -3783,15 +3783,15 @@ add("37.38", S({vpiTchk}), vpiExpr, Mode::Iterate,
        vpiStructNet,       vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.33", S({vpiPrimTerm}), vpiPrimitive, Mode::Handle,
+add("37.35", S({vpiPrimTerm}), vpiPrimitive, Mode::Handle,
     S({vpiGate, vpiSwitch, vpiUdp}), Order::None);
 add("37.5", S({vpiModule}), vpiPrimitive, Mode::Iterate,
     S({vpiGate, vpiSwitch, vpiUdp}), Order::None);
-add("37.11; 37.33", S({vpiGateArray}), vpiPrimitive, Mode::Iterate,
+add("37.11; 37.35", S({vpiGateArray}), vpiPrimitive, Mode::Iterate,
     S({vpiGate}), Order::Index);
-add("37.11; 37.33", S({vpiSwitchArray}), vpiPrimitive, Mode::Iterate,
+add("37.11; 37.35", S({vpiSwitchArray}), vpiPrimitive, Mode::Iterate,
     S({vpiSwitch}), Order::Index);
-add("37.11; 37.33", S({vpiUdpArray}), vpiPrimitive, Mode::Iterate, S({vpiUdp}),
+add("37.11; 37.35", S({vpiUdpArray}), vpiPrimitive, Mode::Iterate, S({vpiUdp}),
     Order::Index);
 add("37.43", S({vpiFrame}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
@@ -3961,11 +3961,11 @@ add("37.5; 37.11", S({vpiModule}), vpiModuleArray, Mode::Handle,
     S({vpiModuleArray}), Order::None);
 add("37.5", S({vpiModule}), vpiModuleArray, Mode::Iterate, S({vpiModuleArray}),
     Order::None);
-add("37.11; 37.33", S({vpiGate}), vpiPrimitiveArray, Mode::Handle,
+add("37.11; 37.35", S({vpiGate}), vpiPrimitiveArray, Mode::Handle,
     S({vpiGateArray}), Order::None);
-add("37.11; 37.33", S({vpiSwitch}), vpiPrimitiveArray, Mode::Handle,
+add("37.11; 37.35", S({vpiSwitch}), vpiPrimitiveArray, Mode::Handle,
     S({vpiSwitchArray}), Order::None);
-add("37.11; 37.33", S({vpiUdp}), vpiPrimitiveArray, Mode::Handle,
+add("37.11; 37.35", S({vpiUdp}), vpiPrimitiveArray, Mode::Handle,
     S({vpiUdpArray}), Order::None);
 add("37.5", S({vpiModule}), vpiPrimitiveArray, Mode::Iterate,
     S({vpiGateArray, vpiSwitchArray, vpiUdpArray}), Order::None);
@@ -3977,11 +3977,11 @@ add("37.17",
     S({vpiReg, vpiEnumVar, vpiStructVar, vpiUnionVar, vpiBitVar,
        vpiPackedArrayVar}),
     vpiRange, Mode::Iterate, S({vpiRange}), Order::Index);
-add("37.23",
+add("37.25",
     S({vpiBitTypespec, vpiLogicTypespec, vpiArrayTypespec,
        vpiPackedArrayTypespec}),
     vpiRange, Mode::Iterate, S({vpiRange}), Order::Index);
-add("37.25", S({vpiNamedEventArray}), vpiRange, Mode::Iterate, S({vpiRange}),
+add("37.27", S({vpiNamedEventArray}), vpiRange, Mode::Iterate, S({vpiRange}),
     Order::Index);
 add("37.16",
     S({vpiNet, vpiNetArray, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
@@ -4025,7 +4025,7 @@ add("37.16",
     Order::None);
 add("37.45", S({vpiDelayDevice}), vpiOutTerm, Mode::Handle, S({vpiDelayTerm}),
     Order::None);
-add("37.35", S({vpiInterModPath}), vpiPorts, Mode::Iterate,
+add("37.37", S({vpiInterModPath}), vpiPorts, Mode::Iterate,
     S({vpiPort, vpiPortBit}), Order::None);
 add("37.16",
     S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
@@ -4047,12 +4047,12 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTaskFunc,
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiNamedEventArray, Mode::Iterate, S({vpiNamedEventArray}),
     Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiNamedEventArray, Mode::Iterate, S({vpiNamedEventArray}),
     Order::None);
-add("37.31", S({vpiClassObj}), vpiNamedEventArray, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiNamedEventArray, Mode::Iterate,
     S({vpiNamedEventArray}), Order::None);
 add("37.43", S({vpiFrame}), vpiAutomatics, Mode::Iterate,
     S({vpiIntegerVar,     vpiNamedEvent,
@@ -4089,11 +4089,11 @@ add("37.9", S({vpiProgram}), vpiInterfaceArray, Mode::Iterate,
     S({vpiInterfaceArray}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiProgramArray, Mode::Iterate, S({vpiProgramArray}), Order::None);
-add("37.25", S({vpiNamedEvent}), vpiTypespec, Mode::Handle,
+add("37.27", S({vpiNamedEvent}), vpiTypespec, Mode::Handle,
     S({vpiEventTypespec}), Order::None);
-add("37.25", S({vpiNamedEventArray}), vpiTypespec, Mode::Handle,
+add("37.27", S({vpiNamedEventArray}), vpiTypespec, Mode::Handle,
     S({vpiArrayTypespec}), Order::None);
-add("37.26", S({vpiParameter, vpiTypeParameter}), vpiTypespec, Mode::Handle,
+add("37.28", S({vpiParameter, vpiTypeParameter}), vpiTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4131,7 +4131,7 @@ add("37.17",
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.23", S({vpiTypespecMember}), vpiTypespec, Mode::Handle,
+add("37.25", S({vpiTypespecMember}), vpiTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4158,7 +4158,7 @@ add("37.16",
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.19; 37.56; 37.57",
+add("37.19; 37.58; 37.59",
     S({vpiPartSelect, vpiVarSelect, vpiBitSelect, vpiIndexedPartSelect}),
     vpiTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
@@ -4193,9 +4193,9 @@ add("37.15", S({vpiRefObj}), vpiTypespec, Mode::Handle,
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.27", S({vpiVirtualInterfaceVar}), vpiTypespec, Mode::Handle,
+add("37.29", S({vpiVirtualInterfaceVar}), vpiTypespec, Mode::Handle,
     S({vpiInterfaceTypespec}), Order::None);
-add("37.23", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTypespec,
+add("37.25", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTypespec,
     Mode::Iterate,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
@@ -4215,19 +4215,19 @@ add("37.6", S({vpiInterface}), vpiInterfaceTfDecl, Mode::Iterate,
     S({vpiInterfaceTfDecl}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiTypeParameter, Mode::Iterate, S({vpiTypeParameter}), Order::None);
-add("37.31", S({vpiClassVar}), vpiClassObj, Mode::Handle, S({vpiClassObj}),
+add("37.33", S({vpiClassVar}), vpiClassObj, Mode::Handle, S({vpiClassObj}),
     Order::None);
-add("37.29", S({vpiClassDefn, vpiExtends}), vpiClassTypespec, Mode::Handle,
+add("37.31", S({vpiClassDefn, vpiExtends}), vpiClassTypespec, Mode::Handle,
     S({vpiClassTypespec}), Order::None);
-add("37.31", S({vpiClassVar, vpiClassObj}), vpiClassTypespec, Mode::Handle,
+add("37.33", S({vpiClassVar, vpiClassObj}), vpiClassTypespec, Mode::Handle,
     S({vpiClassTypespec}), Order::None);
-add("37.23", S({vpiEnumConst}), vpiEnumTypespec, Mode::Handle,
+add("37.25", S({vpiEnumConst}), vpiEnumTypespec, Mode::Handle,
     S({vpiEnumTypespec}), Order::None);
-add("37.23", S({vpiEnumTypespec}), vpiEnumConst, Mode::Iterate,
+add("37.25", S({vpiEnumTypespec}), vpiEnumConst, Mode::Iterate,
     S({vpiEnumConst}), Order::None);
-add("37.23", S({vpiStructTypespec, vpiUnionTypespec}), vpiTypespecMember,
+add("37.25", S({vpiStructTypespec, vpiUnionTypespec}), vpiTypespecMember,
     Mode::Iterate, S({vpiTypespecMember}), Order::None);
-add("37.32", S({vpiDistribution}), vpiDistItem, Mode::Iterate, S({vpiDistItem}),
+add("37.34", S({vpiDistribution}), vpiDistItem, Mode::Iterate, S({vpiDistItem}),
     Order::None);
 add("37.5", S({vpiModule}), vpiAliasStmt, Mode::Iterate, S({vpiAliasStmt}),
     Order::None, true);
@@ -4248,23 +4248,23 @@ add("37.9", S({vpiProgram}), vpiClockingBlock, Mode::Iterate,
     S({vpiClockingBlock}), Order::None);
 add("37.48", S({vpiClockingBlock}), vpiClockingIODecl, Mode::Iterate,
     S({vpiClockingIODecl}), Order::None);
-add("37.29", S({vpiExtends}), vpiClassDefn, Mode::Handle, S({vpiClassDefn}),
+add("37.31", S({vpiExtends}), vpiClassDefn, Mode::Handle, S({vpiClassDefn}),
     Order::None);
-add("37.39", S({vpiFunction}), vpiClassDefn, Mode::Handle, S({vpiClassDefn}),
+add("37.41", S({vpiFunction}), vpiClassDefn, Mode::Handle, S({vpiClassDefn}),
     Order::None);
-add("37.30", S({vpiClassTypespec}), vpiClassDefn, Mode::Handle,
+add("37.32", S({vpiClassTypespec}), vpiClassDefn, Mode::Handle,
     S({vpiClassDefn}), Order::None);
-add("37.29", S({0}), vpiClassDefn, Mode::Iterate, S({vpiClassDefn}),
+add("37.31", S({0}), vpiClassDefn, Mode::Iterate, S({vpiClassDefn}),
     Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiClassDefn,
     Mode::Iterate, S({vpiClassDefn}), Order::None);
-add("37.32", S({0}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
+add("37.34", S({0}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
     Order::None);
-add("37.31", S({vpiClassObj}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
+add("37.33", S({vpiClassObj}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
     Order::None);
-add("37.30", S({vpiClassTypespec}), vpiConstraint, Mode::Iterate,
+add("37.32", S({vpiClassTypespec}), vpiConstraint, Mode::Iterate,
     S({vpiConstraint}), Order::None);
-add("37.29", S({vpiClassDefn}), vpiConstraint, Mode::Iterate,
+add("37.31", S({vpiClassDefn}), vpiConstraint, Mode::Iterate,
     S({vpiConstraint}), Order::Declaration);
 add("37.12",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiModule, vpiNamedBegin,
@@ -4276,7 +4276,7 @@ add("37.12",
        vpiNamedFork, vpiTask, vpiGenScope, vpiPackage, vpiInterface, vpiProgram,
        vpiClassTypespec, vpiClockingBlock, vpiClassDefn, vpiForeachStmt}),
     vpiSequenceDecl, Mode::Iterate, S({vpiSequenceDecl}), Order::None);
-add("37.39", S({vpiFunction}), vpiReturn, Mode::Handle,
+add("37.41", S({vpiFunction}), vpiReturn, Mode::Handle,
     S({vpiIntegerVar,
        vpiRealVar,
        vpiReg,
@@ -4298,11 +4298,11 @@ add("37.39", S({vpiFunction}), vpiReturn, Mode::Handle,
        vpiPackedArrayVar,
        vpiVirtualInterfaceVar}),
     Order::None);
-add("37.30", S({vpiClassTypespec}), vpiExtends, Mode::Handle,
+add("37.32", S({vpiClassTypespec}), vpiExtends, Mode::Handle,
     S({vpiClassTypespec}), Order::None);
-add("37.29", S({vpiClassDefn}), vpiExtends, Mode::Handle, S({vpiExtends}),
+add("37.31", S({vpiClassDefn}), vpiExtends, Mode::Handle, S({vpiExtends}),
     Order::None);
-add("37.32", S({vpiDistItem}), vpiDistribution, Mode::Handle,
+add("37.34", S({vpiDistItem}), vpiDistribution, Mode::Handle,
     S({vpiDistribution}), Order::None);
 add("37.50", S({vpiAssert, vpiAssume, vpiCover, vpiRestrict}), vpiClockingEvent,
     Mode::Handle,
@@ -4407,9 +4407,9 @@ add("37.15", S({vpiRefObj}), vpiActual, Mode::Handle,
        vpiPackedArrayNet,
        vpiVirtualInterfaceVar}),
     Order::None);
-add("37.27", S({vpiVirtualInterfaceVar}), vpiActual, Mode::Handle,
+add("37.29", S({vpiVirtualInterfaceVar}), vpiActual, Mode::Handle,
     S({vpiInterface, vpiModport}), Order::None);
-add("37.23",
+add("37.25",
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4430,7 +4430,7 @@ add("37.23",
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.23", S({vpiArrayTypespec}), vpiIndexTypespec, Mode::Handle,
+add("37.25", S({vpiArrayTypespec}), vpiIndexTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4441,7 +4441,7 @@ add("37.23", S({vpiArrayTypespec}), vpiIndexTypespec, Mode::Handle,
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.23", S({vpiEnumTypespec}), vpiBaseTypespec, Mode::Handle,
+add("37.25", S({vpiEnumTypespec}), vpiBaseTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4452,15 +4452,15 @@ add("37.23", S({vpiEnumTypespec}), vpiBaseTypespec, Mode::Handle,
        vpiSequenceTypespec,  vpiPropertyTypespec, vpiEventTypespec,
        vpiInterfaceTypespec}),
     Order::None);
-add("37.23", S({vpiBitTypespec}), vpiElemTypespec, Mode::Handle,
+add("37.25", S({vpiBitTypespec}), vpiElemTypespec, Mode::Handle,
     S({vpiBitTypespec}), Order::None);
-add("37.23", S({vpiLogicTypespec}), vpiElemTypespec, Mode::Handle,
+add("37.25", S({vpiLogicTypespec}), vpiElemTypespec, Mode::Handle,
     S({vpiLogicTypespec}), Order::None);
-add("37.23", S({vpiPackedArrayTypespec}), vpiElemTypespec, Mode::Handle,
+add("37.25", S({vpiPackedArrayTypespec}), vpiElemTypespec, Mode::Handle,
     S({vpiEnumTypespec, vpiStructTypespec, vpiUnionTypespec,
        vpiPackedArrayTypespec}),
     Order::None);
-add("37.23", S({vpiArrayTypespec}), vpiElemTypespec, Mode::Handle,
+add("37.25", S({vpiArrayTypespec}), vpiElemTypespec, Mode::Handle,
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -4702,7 +4702,7 @@ add("37.44", S({vpiThread}), vpiOrigin, Mode::Handle,
        vpiImmediateAssume,
        vpiImmediateCover}),
     Order::None);
-add("37.40; 37.59",
+add("37.42; 37.61",
     S({vpiFuncCall,
        vpiIntegerVar,
        vpiNamedEvent,
@@ -4812,7 +4812,7 @@ add("37.40; 37.59",
     Order::None);
 add("37.48", S({vpiClockingBlock}), vpiPrefix, Mode::Handle,
     S({vpiVirtualInterfaceVar}), Order::None);
-add("37.40", S({vpiMethodFuncCall, vpiMethodTaskCall}), vpiWith, Mode::Handle,
+add("37.42", S({vpiMethodFuncCall, vpiMethodTaskCall}), vpiWith, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -4867,7 +4867,7 @@ add("37.40", S({vpiMethodFuncCall, vpiMethodTaskCall}), vpiWith, Mode::Handle,
     Order::None);
 add("37.50", S({vpiAssert, vpiAssume, vpiCover, vpiRestrict}), vpiProperty,
     Mode::Handle, S({vpiPropertySpec, vpiPropertyInst}), Order::None);
-add("37.32", S({vpiDistItem}), vpiValueRange, Mode::Handle,
+add("37.34", S({vpiDistItem}), vpiValueRange, Mode::Handle,
     S({vpiConstant,        vpiFuncCall,
        vpiIntegerVar,      vpiNet,
        vpiNetBit,          vpiOperation,
@@ -4895,7 +4895,7 @@ add("37.32", S({vpiDistItem}), vpiValueRange, Mode::Handle,
        vpiStructNet,       vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.32", S({vpiDistItem}), vpiWeight, Mode::Handle,
+add("37.34", S({vpiDistItem}), vpiWeight, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -4958,7 +4958,7 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTypedef,
        vpiPackedArrayTypespec, vpiSequenceTypespec,  vpiPropertyTypespec,
        vpiEventTypespec,       vpiInterfaceTypespec}),
     Order::None);
-add("37.12; 37.83",
+add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
     vpiTypedef, Mode::Iterate,
@@ -4987,7 +4987,7 @@ add("37.12",
        vpiPropertyDecl,  vpiSequenceDecl,    vpiExtends,
        vpiSeqFormalDecl, vpiPropFormalDecl,  vpiLetDecl}),
     Order::None);
-add("37.29", S({vpiClassDefn}), vpiDerivedClasses, Mode::Iterate,
+add("37.31", S({vpiClassDefn}), vpiDerivedClasses, Mode::Iterate,
     S({vpiClassDefn}), Order::None);
 add("37.12",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiModule, vpiNamedBegin,
@@ -4995,15 +4995,15 @@ add("37.12",
        vpiClassTypespec, vpiClockingBlock, vpiClassDefn, vpiForeachStmt}),
     vpiVirtualInterfaceVar, Mode::Iterate, S({vpiVirtualInterfaceVar}),
     Order::None);
-add("37.31", S({vpiClassObj}), vpiVirtualInterfaceVar, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiVirtualInterfaceVar, Mode::Iterate,
     S({vpiVirtualInterfaceVar}), Order::None);
-add("37.29", S({vpiClassDefn}), vpiMethods, Mode::Iterate,
+add("37.31", S({vpiClassDefn}), vpiMethods, Mode::Iterate,
     S({vpiFunction, vpiTask}), Order::None);
-add("37.31", S({vpiClassObj}), vpiMethods, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiMethods, Mode::Iterate,
     S({vpiFunction, vpiTask}), Order::None);
-add("37.30", S({vpiClassTypespec}), vpiMethods, Mode::Iterate,
+add("37.32", S({vpiClassTypespec}), vpiMethods, Mode::Iterate,
     S({vpiFunction, vpiTask}), Order::None);
-add("37.32", S({vpiConstraintOrdering}), vpiSolveBefore, Mode::Iterate,
+add("37.34", S({vpiConstraintOrdering}), vpiSolveBefore, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -5055,7 +5055,7 @@ add("37.32", S({vpiConstraintOrdering}), vpiSolveBefore, Mode::Iterate,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.32", S({vpiConstraintOrdering}), vpiSolveAfter, Mode::Iterate,
+add("37.34", S({vpiConstraintOrdering}), vpiSolveAfter, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -5107,11 +5107,11 @@ add("37.32", S({vpiConstraintOrdering}), vpiSolveAfter, Mode::Iterate,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.25", S({vpiNamedEvent}), vpiWaitingProcesses, Mode::Iterate,
+add("37.27", S({vpiNamedEvent}), vpiWaitingProcesses, Mode::Iterate,
     S({vpiThread}), Order::None);
-add("37.31", S({vpiClassObj}), vpiWaitingProcesses, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiWaitingProcesses, Mode::Iterate,
     S({vpiThread}), Order::None);
-add("37.31", S({vpiClassObj}), vpiMessages, Mode::Iterate,
+add("37.33", S({vpiClassObj}), vpiMessages, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -5163,7 +5163,7 @@ add("37.31", S({vpiClassObj}), vpiMessages, Mode::Iterate,
        vpiPackedArrayNet,
        vpiLetExpr}),
     Order::None);
-add("37.36", S({vpiConstrForEach}), vpiLoopVars, Mode::Iterate,
+add("37.38", S({vpiConstrForEach}), vpiLoopVars, Mode::Iterate,
     S({vpiIntegerVar, vpiOperation, vpiReg, vpiRegBit, vpiTimeVar, vpiRegArray,
        vpiLongIntVar, vpiShortIntVar, vpiIntVar, vpiByteVar, vpiClassVar,
        vpiStringVar, vpiEnumVar, vpiStructVar, vpiUnionVar, vpiBitVar,
@@ -5181,7 +5181,7 @@ add("37.16", S({vpiStructNet}), vpiMember, Mode::Iterate,
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     Order::None);
-add("37.17; 37.24", S({vpiStructVar, vpiUnionVar}), vpiMember, Mode::Iterate,
+add("37.17; 37.26", S({vpiStructVar, vpiUnionVar}), vpiMember, Mode::Iterate,
     S({vpiIntegerVar,
        vpiRealVar,
        vpiReg,
@@ -5222,7 +5222,7 @@ add("37.49",
        vpiRestrict}),
     vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
-add("37.6; 37.9; 37.37; 37.48",
+add("37.6; 37.9; 37.39; 37.48",
     S({vpiAlways, vpiContAssign, vpiInitial, vpiInterface, vpiProgram,
        vpiInterfaceArray, vpiModport, vpiInterfaceTfDecl, vpiClockingBlock,
        vpiFinal}),
@@ -5253,7 +5253,7 @@ add("37.17",
        vpiVirtualInterfaceVar}),
     vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
-add("37.23",
+add("37.25",
     S({vpiNettypeDecl,       vpiTypeParameter,    vpiLongIntTypespec,
        vpiShortRealTypespec, vpiByteTypespec,     vpiShortIntTypespec,
        vpiIntTypespec,       vpiClassTypespec,    vpiStringTypespec,
@@ -5265,15 +5265,15 @@ add("37.23",
        vpiInterfaceTypespec}),
     vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
-add("37.25", S({vpiNamedEvent, vpiNamedEventArray}), vpiInstance, Mode::Handle,
+add("37.27", S({vpiNamedEvent, vpiNamedEventArray}), vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
 add("37.14", S({vpiPort}), vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
 add("37.15", S({vpiRefObj}), vpiInstance, Mode::Handle,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
-add("37.37", S({vpiModPath}), vpiInstance, Mode::Handle,
+add("37.39", S({vpiModPath}), vpiInstance, Mode::Handle,
     S({vpiModule, vpiInterface}), Order::None);
-add("37.29", S({vpiClassDefn}), vpiInstance, Mode::Iterate,
+add("37.31", S({vpiClassDefn}), vpiInstance, Mode::Iterate,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
 add("37.10", S({0}), vpiInstance, Mode::Iterate,
     S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), Order::None);
@@ -5283,7 +5283,7 @@ add("37.11", S({vpiModuleArray}), vpiInstance, Mode::Iterate, S({vpiModule}),
     Order::Index);
 add("37.11", S({vpiProgramArray}), vpiInstance, Mode::Iterate, S({vpiProgram}),
     Order::Index);
-add("37.32", S({vpiConstraint}), vpiConstraintItem, Mode::Iterate,
+add("37.34", S({vpiConstraint}), vpiConstraintItem, Mode::Iterate,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -5340,7 +5340,7 @@ add("37.32", S({vpiConstraint}), vpiConstraintItem, Mode::Iterate,
        vpiImplication,
        vpiLetExpr}),
     Order::Source);
-add("37.36",
+add("37.38",
     S({vpiConstrForEach, vpiConstrIf, vpiConstrIfElse, vpiImplication}),
     vpiConstraintExpr, Mode::Iterate,
     S({vpiConstant,
@@ -5398,7 +5398,7 @@ add("37.36",
        vpiImplication,
        vpiLetExpr}),
     Order::Source);
-add("37.36", S({vpiConstrIfElse}), vpiElseConst, Mode::Handle,
+add("37.38", S({vpiConstrIfElse}), vpiElseConst, Mode::Handle,
     S({vpiConstant,
        vpiFuncCall,
        vpiIntegerVar,
@@ -5459,7 +5459,7 @@ add("37.12",
        vpiNamedFork, vpiTask, vpiGenScope, vpiPackage, vpiInterface, vpiProgram,
        vpiClassTypespec, vpiClockingBlock, vpiClassDefn, vpiForeachStmt}),
     vpiLetDecl, Mode::Iterate, S({vpiLetDecl}), Order::None);
-add("37.28", S({vpiParamAssign}), vpiInterfaceTypespec, Mode::Handle,
+add("37.30", S({vpiParamAssign}), vpiInterfaceTypespec, Mode::Handle,
     S({vpiInterfaceTypespec}), Order::None);
-// Hand-maintained GoogleTest oracle for IEEE VPI clauses 37.5-37.50.
+// Hand-maintained GoogleTest oracle for IEEE 1800-2023 clauses 37.5-37.50.
 // This is test source, not an obelisk-tblgen output or build artifact.

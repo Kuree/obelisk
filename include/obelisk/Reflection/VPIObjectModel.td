@@ -60,7 +60,7 @@ class VPIObjectKind<string apiName_, int value_,
   VPIObjectRole role = role_;
 }
 
-// IEEE 1800-2017 Annex K object types inherited from Verilog VPI.
+// IEEE 1800-2023 Annex K object types inherited from Verilog VPI.
 def Always : VPIObjectKind<"vpiAlways", 1, [ProcessFamily]>;
 def AssignStmt : VPIObjectKind<"vpiAssignStmt", 2, [StatementFamily]>;
 def Assignment : VPIObjectKind<"vpiAssignment", 3, [StatementFamily]>;
@@ -364,7 +364,7 @@ def LetExpr : VPIObjectKind<"vpiLetExpr", 904, [ExpressionFamily]>;
 def Fsm : VPIObjectKind<"vpiFsm", 758, [RuntimeFamily]>;
 def FsmHandle : VPIObjectKind<"vpiFsmHandle", 759, [RuntimeFamily]>;
 
-// IEEE 1800-2017 Table 38-6 is deliberately modeled separately from the
+// IEEE 1800-2023 Table 38-6 is deliberately modeled separately from the
 // statement family.  Not every object classified as a statement by Chapter
 // 37 is eligible for cbStmt (for example vpiNullStmt and vpiCaseItem).
 class VPIStatementCallbackPhase<string cppName_, int value_> {
@@ -407,7 +407,7 @@ class VPIStatementCallbackSpec<VPIObjectKind object_,
                                VPIStatementCallbackPolicy policy_> {
   VPIObjectKind object = object_;
   VPIStatementCallbackPolicy policy = policy_;
-  string clause = "IEEE 1800-2017 Table 38-6";
+  string clause = "IEEE 1800-2023 Table 38-6";
 }
 
 def BeginCallback : VPIStatementCallbackSpec<Begin, OnceBeforePolicy>;

@@ -694,6 +694,9 @@ TEST(VPIObjectModel, TraversalGraphExactlyMatchesIndependentLrmOracle) {
     EXPECT_EQ(edge.statementContainment, iterator->second.statementContainment)
         << keyName(edge.sourceType, edge.selector, edge.mode)
         << " has incorrect statement-containment semantics";
+    EXPECT_STREQ(edge.clause, iterator->second.clause)
+        << keyName(edge.sourceType, edge.selector, edge.mode)
+        << " has an incorrect IEEE 1800-2023 clause citation";
   }
 
   EXPECT_EQ(actualKeys.size(), expected.size());
@@ -733,7 +736,7 @@ TEST(VPIObjectModel, StatementCallbacksExactlyMatchLrmTable38_6) {
   std::map<uint32_t, Policy> actual;
   for (const auto &callback : vpiStatementCallbacks) {
     EXPECT_TRUE(actual.emplace(callback.objectType, callback.policy).second);
-    EXPECT_STREQ(callback.clause, "IEEE 1800-2017 Table 38-6");
+    EXPECT_STREQ(callback.clause, "IEEE 1800-2023 Table 38-6");
     EXPECT_EQ(callback.phaseMask,
               callback.objectType == vpiFor ? uint8_t{0x6} : uint8_t{0x1})
         << objectName(callback.objectType);
@@ -955,7 +958,7 @@ TEST(VPIObjectModel, ScalarVectorPropertiesHaveExactLrmApplicability) {
       if (descriptor) {
         EXPECT_EQ(descriptor->valueKind, PropertyKind::Boolean);
         EXPECT_STREQ(descriptor->clause, property == vpiVector
-                                             ? "37.14; 37.16; 37.17; 37.23"
+                                             ? "37.14; 37.16; 37.17; 37.25"
                                              : "37.14; 37.16; 37.17");
       }
       VPIObjectModelImageProperty imageProperty{};
@@ -1049,17 +1052,17 @@ TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
         vpiGenScopeArray},
        PropertyKind::Integer,
        "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; "
-       "37.26; 37.33; 37.34; 37.39; 37.57; 37.83"},
+       "37.28; 37.35; 37.36; 37.41; 37.59; 37.85"},
       {vpiPacked,
        {vpiPackedArrayVar, vpiStructVar, vpiUnionVar, vpiEnumVar,
         vpiStructTypespec, vpiUnionTypespec},
        PropertyKind::Boolean,
-       "37.18; 37.23; 37.24"},
-      {vpiTagged, {vpiUnionTypespec}, PropertyKind::Boolean, "37.23"},
+       "37.18; 37.25; 37.26"},
+      {vpiTagged, {vpiUnionTypespec}, PropertyKind::Boolean, "37.25"},
       {vpiArrayType,
        {vpiRegArray, vpiArrayTypespec},
        PropertyKind::Integer,
-       "37.17; 37.23"},
+       "37.17; 37.25"},
       {vpiRandType,
        {vpiIntegerVar,
         vpiRealVar,
@@ -1083,11 +1086,11 @@ TEST(VPIObjectModel, StructuralTypePropertiesHaveExactLrmApplicability) {
         vpiRegArray,
         vpiTypespecMember},
        PropertyKind::Integer,
-       "37.17; 37.23"},
+       "37.17; 37.25"},
       {vpiConstType,
        {vpiConstant, vpiParameter},
        PropertyKind::Integer,
-       "37.26; 37.57"},
+       "37.28; 37.59"},
   }};
   for (const Expected &item : expected) {
     for (const auto &object : vpiObjectKinds) {
@@ -1150,69 +1153,69 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
   }
   const std::array<Expected, 114> expected{{
       PROTECTED_SYMBOLIC_PROPERTY(vpiType, "37.3.2"),
-      STATIC_PROPERTY(vpiName, String, "37.4-37.83"),
-      STATIC_PROPERTY(vpiFullName, String, "37.10-37.83"),
+      STATIC_PROPERTY(vpiName, String, "37.4-37.85"),
+      STATIC_PROPERTY(vpiFullName, String, "37.10-37.85"),
       STATIC_PROPERTY(vpiSize, Integer,
                       "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; "
-                      "37.22; 37.26; 37.33; 37.34; 37.39; 37.57; 37.83"),
+                      "37.22; 37.28; 37.35; 37.36; 37.41; 37.59; 37.85"),
       STATIC_PROPERTY(vpiFile, String, "37.3.3"),
       STATIC_PROPERTY(vpiLineNo, Integer, "37.3.3"),
       STATIC_PROPERTY(vpiTopModule, Boolean, "37.5"),
       STATIC_PROPERTY(vpiCellInstance, Boolean, "37.10"),
-      STATIC_PROPERTY(vpiDefName, String, "37.10; 37.15; 37.28; 37.33; 37.34"),
-      STATIC_PROPERTY(vpiProtected, Boolean, "37.10; 37.34; 37.83"),
+      STATIC_PROPERTY(vpiDefName, String, "37.10; 37.15; 37.30; 37.35; 37.36"),
+      STATIC_PROPERTY(vpiProtected, Boolean, "37.10; 37.36; 37.85"),
       STATIC_PROPERTY(vpiTimeUnit, Integer, "37.10; 38.6"),
       STATIC_PROPERTY(vpiTimePrecision, Integer, "37.10; 38.6"),
       STATIC_PROPERTY(vpiDefNetType, Integer, "37.10"),
       STATIC_PROPERTY(vpiUnconnDrive, Integer, "37.10"),
-      STATIC_PROPERTY(vpiDefFile, String, "37.10; 37.81"),
-      STATIC_PROPERTY(vpiDefLineNo, Integer, "37.10; 37.81"),
+      STATIC_PROPERTY(vpiDefFile, String, "37.10; 37.83"),
+      STATIC_PROPERTY(vpiDefLineNo, Integer, "37.10; 37.83"),
       STATIC_PROPERTY(vpiScalar, Boolean, "37.14; 37.16; 37.17"),
-      STATIC_PROPERTY(vpiVector, Boolean, "37.14; 37.16; 37.17; 37.23"),
+      STATIC_PROPERTY(vpiVector, Boolean, "37.14; 37.16; 37.17; 37.25"),
       STATIC_PROPERTY(vpiExplicitName, Boolean, "37.14"),
       STATIC_PROPERTY(vpiDirection, Integer,
-                      "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51"),
-      STATIC_PROPERTY(vpiConnByName, Boolean, "37.14; 37.26"),
+                      "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53"),
+      STATIC_PROPERTY(vpiConnByName, Boolean, "37.14; 37.28"),
       SYMBOLIC_PROPERTY(vpiNetType, "37.16"),
       STATIC_PROPERTY(vpiExplicitScalared, Boolean, "37.16"),
       STATIC_PROPERTY(vpiExplicitVectored, Boolean, "37.16"),
       STATIC_PROPERTY(vpiExpanded, Boolean, "37.16"),
-      STATIC_PROPERTY(vpiImplicitDecl, Boolean, "37.16; 37.83"),
+      STATIC_PROPERTY(vpiImplicitDecl, Boolean, "37.16; 37.85"),
       STATIC_PROPERTY(vpiChargeStrength, Integer, "37.16"),
       STATIC_PROPERTY(vpiArray, Boolean,
-                      "37.10; 37.16; 37.17; 37.25; 37.33; 37.83"),
+                      "37.10; 37.16; 37.17; 37.27; 37.35; 37.85"),
       STATIC_PROPERTY(vpiPortIndex, Integer, "37.14"),
-      STATIC_PROPERTY(vpiTermIndex, Integer, "37.33"),
-      STATIC_PROPERTY(vpiStrength0, Integer, "37.16; 37.33; 37.47"),
-      STATIC_PROPERTY(vpiStrength1, Integer, "37.16; 37.33; 37.47"),
-      SYMBOLIC_PROPERTY(vpiPrimType, "37.33; 37.34"),
-      STATIC_PROPERTY(vpiPolarity, Integer, "37.37"),
-      STATIC_PROPERTY(vpiDataPolarity, Integer, "37.37"),
-      STATIC_PROPERTY(vpiEdge, Integer, "37.37; 37.38"),
-      STATIC_PROPERTY(vpiPathType, Integer, "37.37"),
-      SYMBOLIC_PROPERTY(vpiTchkType, "37.38"),
-      SYMBOLIC_PROPERTY(vpiOpType, "37.50; 37.52; 37.57; 37.62"),
-      STATIC_PROPERTY(vpiConstType, Integer, "37.26; 37.57"),
-      STATIC_PROPERTY(vpiBlocking, Boolean, "37.60; 37.62"),
-      STATIC_PROPERTY(vpiCaseType, Integer, "37.70"),
+      STATIC_PROPERTY(vpiTermIndex, Integer, "37.35"),
+      STATIC_PROPERTY(vpiStrength0, Integer, "37.16; 37.35; 37.47"),
+      STATIC_PROPERTY(vpiStrength1, Integer, "37.16; 37.35; 37.47"),
+      SYMBOLIC_PROPERTY(vpiPrimType, "37.35; 37.36"),
+      STATIC_PROPERTY(vpiPolarity, Integer, "37.39"),
+      STATIC_PROPERTY(vpiDataPolarity, Integer, "37.39"),
+      STATIC_PROPERTY(vpiEdge, Integer, "37.39; 37.40"),
+      STATIC_PROPERTY(vpiPathType, Integer, "37.39"),
+      SYMBOLIC_PROPERTY(vpiTchkType, "37.40"),
+      SYMBOLIC_PROPERTY(vpiOpType, "37.52; 37.54; 37.59; 37.64"),
+      STATIC_PROPERTY(vpiConstType, Integer, "37.28; 37.59"),
+      STATIC_PROPERTY(vpiBlocking, Boolean, "37.62; 37.64"),
+      STATIC_PROPERTY(vpiCaseType, Integer, "37.72"),
       STATIC_PROPERTY(vpiNetDeclAssign, Boolean, "37.16; 37.47"),
-      STATIC_PROPERTY(vpiFuncType, Integer, "37.39; 37.40"),
-      STATIC_PROPERTY(vpiUserDefn, Boolean, "37.40"),
+      STATIC_PROPERTY(vpiFuncType, Integer, "37.41; 37.42"),
+      STATIC_PROPERTY(vpiUserDefn, Boolean, "37.42"),
       DYNAMIC_PROPERTY(vpiScheduled, Boolean, "38.34"),
       STATIC_PROPERTY(vpiDefDelayMode, Integer, "37.10"),
       STATIC_PROPERTY(vpiDefDecayTime, Integer, "37.5"),
       DYNAMIC_PROPERTY(vpiActive, Boolean, "37.43; 37.44"),
       STATIC_PROPERTY(vpiAutomatic, Boolean,
-                      "37.3.7; 37.10; 37.17; 37.25; 37.29; 37.30; 37.32; "
-                      "37.39"),
+                      "37.3.7; 37.10; 37.17; 37.27; 37.31; 37.32; 37.34; "
+                      "37.41"),
       STATIC_PROPERTY(vpiCell, String, "37.10"),
       STATIC_PROPERTY(vpiConfig, String, "37.10"),
       STATIC_PROPERTY(vpiConstantSelect, Boolean,
-                      "37.16; 37.17; 37.18; 37.19; 37.57"),
-      STATIC_PROPERTY(vpiDecompile, String, "37.40; 37.57"),
-      STATIC_PROPERTY(vpiDefAttribute, Boolean, "37.81"),
+                      "37.16; 37.17; 37.18; 37.19; 37.59"),
+      STATIC_PROPERTY(vpiDecompile, String, "37.42; 37.59"),
+      STATIC_PROPERTY(vpiDefAttribute, Boolean, "37.83"),
       SYMBOLIC_PROPERTY(vpiDelayType, "37.45"),
-      STATIC_PROPERTY(vpiIteratorType, Integer, "37.82"),
+      STATIC_PROPERTY(vpiIteratorType, Integer, "37.84"),
       STATIC_PROPERTY(vpiLibrary, String, "37.10"),
       STATIC_PROPERTY(vpiOffset, Integer, "37.47"),
       SYMBOLIC_PROPERTY(vpiResolvedNetType, "37.16"),
@@ -1220,59 +1223,59 @@ TEST(VPIObjectModel, ReadPropertySelectorInventoryIsExhaustive) {
       DYNAMIC_PROPERTY(vpiSaveRestartLocation, String, "38.9; 38.11; 38.36.1"),
       DYNAMIC_PROPERTY(vpiValid, Integer, "37.3.7; Annex I"),
       STATIC_PROPERTY(vpiSigned, Boolean,
-                      "37.13; 37.16; 37.17; 37.26; 37.39; 37.57"),
-      STATIC_PROPERTY(vpiLocalParam, Boolean, "37.26; 37.29; 37.83"),
-      STATIC_PROPERTY(vpiModPathHasIfNone, Boolean, "37.37"),
-      STATIC_PROPERTY(vpiIndexedPartSelectType, Integer, "37.57"),
+                      "37.13; 37.16; 37.17; 37.28; 37.41; 37.59"),
+      STATIC_PROPERTY(vpiLocalParam, Boolean, "37.28; 37.31; 37.85"),
+      STATIC_PROPERTY(vpiModPathHasIfNone, Boolean, "37.39"),
+      STATIC_PROPERTY(vpiIndexedPartSelectType, Integer, "37.59"),
       STATIC_PROPERTY(vpiIsMemory, Boolean, "37.20"),
       PROTECTED_PROPERTY(vpiIsProtected, Boolean, "37.3.6"),
       STATIC_PROPERTY(vpiTop, Boolean, "37.10"),
       STATIC_PROPERTY(vpiUnit, Boolean, "37.10"),
       STATIC_PROPERTY(vpiJoinType, Integer, "37.12"),
-      STATIC_PROPERTY(vpiAccessType, Integer, "37.8; 37.32; 37.39"),
-      STATIC_PROPERTY(vpiArrayType, Integer, "37.17; 37.23"),
+      STATIC_PROPERTY(vpiAccessType, Integer, "37.8; 37.34; 37.41"),
+      STATIC_PROPERTY(vpiArrayType, Integer, "37.17; 37.25"),
       STATIC_PROPERTY(vpiArrayMember, Boolean,
-                      "37.5; 37.6; 37.9; 37.16; 37.17; 37.25; 37.33; "
-                      "37.83"),
+                      "37.5; 37.6; 37.9; 37.16; 37.17; 37.27; 37.35; "
+                      "37.85"),
       DYNAMIC_PROPERTY(vpiIsRandomized, Boolean, "37.17"),
-      STATIC_PROPERTY(vpiLocalVarDecls, Integer, "37.72"),
-      STATIC_PROPERTY(vpiRandType, Integer, "37.17; 37.23"),
+      STATIC_PROPERTY(vpiLocalVarDecls, Integer, "37.74"),
+      STATIC_PROPERTY(vpiRandType, Integer, "37.17; 37.25"),
       STATIC_PROPERTY(vpiPortType, Integer, "37.14"),
       STATIC_PROPERTY(vpiConstantVariable, Boolean, "37.17"),
       STATIC_PROPERTY(vpiStructUnionMember, Boolean, "37.16; 37.17; 37.18"),
-      STATIC_PROPERTY(vpiVisibility, Integer, "37.17; 37.39"),
-      STATIC_PROPERTY(vpiAlwaysType, Integer, "37.61"),
-      STATIC_PROPERTY(vpiDistType, Integer, "37.32"),
-      STATIC_PROPERTY(vpiPacked, Boolean, "37.18; 37.23; 37.24"),
-      STATIC_PROPERTY(vpiTagged, Boolean, "37.23"),
-      STATIC_PROPERTY(vpiVirtual, Boolean, "37.29; 37.32; 37.39"),
-      DYNAMIC_PROPERTY(vpiHasActual, Boolean, "37.59"),
-      DYNAMIC_PROPERTY(vpiIsConstraintEnabled, Boolean, "37.32"),
-      STATIC_PROPERTY(vpiSoft, Boolean, "37.36"),
-      STATIC_PROPERTY(vpiClassType, Integer, "37.30"),
-      STATIC_PROPERTY(vpiMethod, Boolean, "37.39"),
+      STATIC_PROPERTY(vpiVisibility, Integer, "37.17; 37.41"),
+      STATIC_PROPERTY(vpiAlwaysType, Integer, "37.63"),
+      STATIC_PROPERTY(vpiDistType, Integer, "37.34"),
+      STATIC_PROPERTY(vpiPacked, Boolean, "37.18; 37.25; 37.26"),
+      STATIC_PROPERTY(vpiTagged, Boolean, "37.25"),
+      STATIC_PROPERTY(vpiVirtual, Boolean, "37.31; 37.34; 37.41"),
+      DYNAMIC_PROPERTY(vpiHasActual, Boolean, "37.61"),
+      DYNAMIC_PROPERTY(vpiIsConstraintEnabled, Boolean, "37.34"),
+      STATIC_PROPERTY(vpiSoft, Boolean, "37.38"),
+      STATIC_PROPERTY(vpiClassType, Integer, "37.32"),
+      STATIC_PROPERTY(vpiMethod, Boolean, "37.41"),
       STATIC_PROPERTY(vpiIsClockInferred, Boolean, "37.50"),
-      STATIC_PROPERTY(vpiQualifier, Integer, "37.69; 37.70"),
+      STATIC_PROPERTY(vpiQualifier, Integer, "37.71; 37.72"),
       STATIC_PROPERTY(vpiInputEdge, Integer, "37.48"),
       STATIC_PROPERTY(vpiOutputEdge, Integer, "37.48"),
       STATIC_PROPERTY(vpiGeneric, Boolean, "37.15"),
       STATIC_PROPERTY(vpiCompatibilityMode, Integer, "Annex M"),
       STATIC_PROPERTY(vpiPackedArrayMember, Boolean, "37.16; 37.17; 37.18"),
-      STATIC_PROPERTY(vpiOpStrong, Boolean, "37.50"),
-      STATIC_PROPERTY(vpiIsDeferred, Integer, "37.53"),
+      STATIC_PROPERTY(vpiOpStrong, Boolean, "37.52"),
+      STATIC_PROPERTY(vpiIsDeferred, Integer, "37.55"),
       STATIC_PROPERTY(vpiAllocScheme, Integer, "37.3.7"),
       STATIC_PROPERTY(vpiIsCoverSequence, Boolean, "37.50"),
-      DYNAMIC_PROPERTY(vpiObjId, Int64, "37.31"),
+      DYNAMIC_PROPERTY(vpiObjId, Int64, "37.33"),
       STATIC_PROPERTY(vpiStartLine, Integer, "37.49"),
       STATIC_PROPERTY(vpiColumn, Integer, "37.49"),
       STATIC_PROPERTY(vpiEndLine, Integer, "37.49"),
       STATIC_PROPERTY(vpiEndColumn, Integer, "37.49"),
-      STATIC_PROPERTY(vpiDPIPure, Boolean, "37.39"),
-      STATIC_PROPERTY(vpiDPIContext, Boolean, "37.39"),
-      STATIC_PROPERTY(vpiDPICStr, Integer, "37.39"),
-      STATIC_PROPERTY(vpiDPICIdentifier, String, "37.39"),
-      STATIC_PROPERTY(vpiIsModPort, Boolean, "37.27; 37.28"),
-      STATIC_PROPERTY(vpiIsFinal, Integer, "37.53"),
+      STATIC_PROPERTY(vpiDPIPure, Boolean, "37.41"),
+      STATIC_PROPERTY(vpiDPIContext, Boolean, "37.41"),
+      STATIC_PROPERTY(vpiDPICStr, Integer, "37.41"),
+      STATIC_PROPERTY(vpiDPICIdentifier, String, "37.41"),
+      STATIC_PROPERTY(vpiIsModPort, Boolean, "37.29; 37.30"),
+      STATIC_PROPERTY(vpiIsFinal, Integer, "37.55"),
   }};
 #undef STATIC_PROPERTY
 #undef DYNAMIC_PROPERTY
@@ -1631,26 +1634,26 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
       rejectNonRuntimeOrigin, "37.17; 38.15");
   add({vpiStructVar, vpiUnionVar}, fullFormats, ValueDefault::ScalarOrVector,
       ValueRead::Snapshot, rejectWholeUnpacked | rejectNonRuntimeOrigin,
-      "37.17; 37.24; 38.15");
+      "37.17; 37.26; 38.15");
 
   add({vpiVarSelect, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect,
        vpiOperation, vpiFuncCall, vpiMethodFuncCall, vpiSysFuncCall,
        vpiLetExpr},
       fullFormats, ValueDefault::Semantic, ValueRead::Evaluate,
-      rejectNonRuntimeOrigin, "37.19; 37.57; 38.15");
+      rejectNonRuntimeOrigin, "37.19; 37.59; 38.15");
   add({vpiConstant}, fullFormats, ValueDefault::Semantic, ValueRead::Snapshot,
-      restrictStringConstant, "37.57; 38.15");
+      restrictStringConstant, "37.59; 38.15");
   add({vpiParameter, vpiSpecParam, vpiEnumConst, vpiAttribute}, fullFormats,
       ValueDefault::Semantic, ValueRead::Snapshot, 0,
-      "37.23; 37.26; 37.81; 38.15");
+      "37.25; 37.28; 37.83; 38.15");
   add({vpiGate, vpiSwitch, vpiUdp, vpiPrimTerm, vpiDelayTerm, vpiContAssign,
        vpiContAssignBit},
       fullFormats, ValueDefault::Semantic, ValueRead::Snapshot, 0,
-      "37.33; 37.43; 37.45; 38.15");
+      "37.35; 37.45; 37.47; 38.15");
   add({vpiFsmHandle}, fullFormats, ValueDefault::Semantic, ValueRead::Snapshot,
       0, "40.5.3");
   add({vpiTableEntry}, tableEntryFormats, ValueDefault::String,
-      ValueRead::Snapshot, 0, "37.34; 38.15");
+      ValueRead::Snapshot, 0, "37.36; 38.15");
 
   ASSERT_EQ(oracle.size(), kExpectedValuePolicyCount);
   const VPIValuePolicyDescriptor *previous = nullptr;
@@ -2016,7 +2019,7 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
     if (descriptor) {
       EXPECT_EQ(descriptor->valueKind, PropertyKind::Integer);
       EXPECT_STREQ(descriptor->clause,
-                   "37.13; 37.14; 37.33; 37.37; 37.46; 37.49; 37.51");
+                   "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53");
     }
   }
 }
@@ -2847,7 +2850,7 @@ TEST(VPIObjectModel, EveryTraversalHasConcreteNonemptyTargets) {
   }
 }
 
-// The unqualified "expr" enclosure recurs throughout 37.5-37.83.  Every one
+// The unqualified "expr" enclosure recurs throughout 37.5-37.85.  Every one
 // of these independently listed arcs accepts nets and variables as ordinary
 // expressions, while assertion, pattern, and constraint nodes belong only to
 // diagrams that name those nodes explicitly.
@@ -2929,7 +2932,7 @@ TEST(VPIObjectModel, OrdinaryExpressionArcsUseTheExactLrmUnion) {
   }
 }
 
-// IEEE 1800-2017 37.5, 37.40, 37.41, and 37.79-37.80.  Root traversals are
+// IEEE 1800-2023 37.5, 37.42, 37.43, and 37.81-37.82. Root traversals are
 // unusually easy to over-broaden because their reference object is NULL.
 TEST(VPIObjectModel, RootTraversalsHaveExactSpecialTargetsAndOrders) {
   expectTargetsExactly(0, vpiModule, Mode::Iterate, {vpiModule});
@@ -2960,8 +2963,8 @@ TEST(VPIObjectModel, InstanceScopeAndArrayRelationsDoNotLeak) {
 }
 
 // Cross-checks for dashed enclosures that span multiple concrete object
-// kinds.  These are transcribed from 37.10, 37.12, 37.15-37.16, 37.26,
-// 37.29, 37.32, 37.36-37.37, and IEEE 1800-2023 37.43.
+// kinds.  These are transcribed from 37.10, 37.12, 37.15-37.16, 37.28,
+// 37.31, 37.34, 37.38-37.39, and IEEE 1800-2023 37.43.
 TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
   expectContains(vpiModule, vpiParameter, Mode::Iterate,
                  {vpiParameter, vpiTypeParameter}, {vpiSpecParam});
@@ -2996,7 +2999,7 @@ TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
             Order::None);
 }
 
-// 37.19-37.28 defines typespec, parameter, enum, array, and virtual-interface
+// 37.19-37.30 defines typespec, parameter, enum, array, and virtual-interface
 // relations.  In particular, a virtual interface cannot accept an arbitrary
 // concrete typespec merely because both are declarations.
 TEST(VPIObjectModel, TypeRelationsPreserveLrmNarrowing) {
@@ -3035,7 +3038,7 @@ TEST(VPIObjectModel, PortsReferencesNetsAndVariablesKeepConnectionKinds) {
                  {vpiPrimTerm, vpiDelayTerm, vpiAssignment});
 }
 
-// 37.29-37.36.  Constraints use expression nodes, never constraint-item
+// 37.31-37.38.  Constraints use expression nodes, never constraint-item
 // declarations, and only UDP instances have a UDP definition transition.
 TEST(VPIObjectModel, ClassesConstraintsAndPrimitivesUseExactNodeKinds) {
   expectContains(vpiConstrIfElse, vpiConstraintExpr, Mode::Iterate,
@@ -3050,7 +3053,7 @@ TEST(VPIObjectModel, ClassesConstraintsAndPrimitivesUseExactNodeKinds) {
   expectTargetsExactly(vpiUdpArray, vpiPrimitive, Mode::Iterate, {vpiUdp});
 }
 
-// 37.48: restrict has no action statement.  Assert alone has a fail action;
+// 37.50: restrict has no action statement.  Assert alone has a fail action;
 // the disable condition belongs to the referenced property object rather than
 // directly to each concurrent assertion statement.
 TEST(VPIObjectModel, ConcurrentAssertionEdgesMatchEachStatementKind) {
@@ -3104,7 +3107,7 @@ TEST(VPIObjectModel, CallsFramesAssignmentsAndClockingKeepSpecificEdges) {
                        {vpiClockingBlock});
 }
 
-// 37.40-37.41.  Task/function arguments use a broader explicit union than an
+// 37.42-37.43.  Task/function arguments use a broader explicit union than an
 // ordinary expression, but "primitive" means concrete gate/switch/UDP
 // objects, never terminals or primitive arrays.  Automatic frame state also
 // includes virtual-interface variables.
@@ -3126,7 +3129,7 @@ TEST(VPIObjectModel, CallArgumentsAndFrameAutomaticsUseExactUnions) {
                  {vpiParameter, vpiSpecParam});
 }
 
-// 37.26, 37.32, 37.36, 37.38, 37.40, and 37.46 each augment an ordinary
+// 37.28, 37.34, 37.38, 37.40, 37.42, and 37.48 each augment an ordinary
 // expression with one diagram-specific node.  None admits arbitrary members
 // of ExpressionFamily.
 TEST(VPIObjectModel, SpecialExpressionRelationsAddOnlyTheirNamedNodes) {
@@ -3168,7 +3171,7 @@ TEST(VPIObjectModel, ClassClassObjectAndClockingIterationsDoNotInventOrder) {
   expectNoOrder(vpiClockingBlock, vpiClockingIODecl, Mode::Iterate);
 }
 
-// 37.49-37.50: property arguments and formals admit named events, but not
+// 37.51-37.52: property arguments and formals admit named events, but not
 // named-event arrays; disable conditions are ordinary expressions (plus a
 // distribution on property spec), not sequence-instance nodes.
 TEST(VPIObjectModel, PropertyRelationsUsePropertySpecificExpressionUnions) {
@@ -3188,7 +3191,7 @@ TEST(VPIObjectModel, PropertyRelationsUsePropertySpecificExpressionUnions) {
                  {vpiSequenceInst, vpiNamedEvent});
 }
 
-// 37.51-37.53: a sequence actual/formal may be a named event; a match item
+// 37.53-37.55: a sequence actual/formal may be a named event; a match item
 // may hang off any complete sequence expression, including an ordinary
 // expression, but never off a property expression.
 TEST(VPIObjectModel, SequenceRelationsUseCompleteSequenceExpressionUnion) {
@@ -3207,7 +3210,7 @@ TEST(VPIObjectModel, SequenceRelationsUseCompleteSequenceExpressionUnion) {
   expectAbsent(vpiPropertyExpr, vpiMatchItem, Mode::Iterate);
 }
 
-// 37.54-37.57 and 37.60.  Immediate assertions are statements, while event
+// 37.56-37.59 and 37.62.  Immediate assertions are statements, while event
 // statements point to a named-event object.  Expression operands may include
 // interface expressions and assertion expressions, but a use traversal is
 // only available on simple expressions.
@@ -3228,9 +3231,9 @@ TEST(VPIObjectModel, ImmediateAssertionsAndExpressionNodesStayDistinct) {
   expectAbsent(vpiOperation, vpiUse, Mode::Iterate);
 }
 
-// 37.40 and 37.59.  Method receivers admit ordinary expression objects, while
+// 37.42 and 37.61.  Method receivers admit ordinary expression objects, while
 // dynamic prefixing adds class variables, virtual interfaces, and clocking
-// blocks.  Named events are source objects in 37.59, not receiver targets.
+// blocks.  Named events are source objects in 37.61, not receiver targets.
 TEST(VPIObjectModel, ExpressionPrefixAndTypespecExceptionsAreExact) {
   expectContains(vpiMethodFuncCall, vpiPrefix, Mode::Handle,
                  {vpiClockingBlock, vpiClassVar, vpiVirtualInterfaceVar,
@@ -3242,7 +3245,7 @@ TEST(VPIObjectModel, ExpressionPrefixAndTypespecExceptionsAreExact) {
         << objectName(source);
 }
 
-// 37.61-37.77 statement diagrams.  These assertions cover distinctions that
+// 37.63-37.79 statement diagrams.  These assertions cover distinctions that
 // broad Statement/Expression family sets tend to erase.
 TEST(VPIObjectModel, StatementRelationsKeepHandleAndIterationSemantics) {
   expectAbsent(vpiOrderedWait, vpiCondition, Mode::Handle);
@@ -3263,7 +3266,7 @@ TEST(VPIObjectModel, StatementRelationsKeepHandleAndIterationSemantics) {
                        {vpiModule, vpiInterface, vpiProgram, vpiPackage});
 }
 
-// 37.78-37.83: callbacks and attributes are associated only through the
+// 37.80-37.85: callbacks and attributes are associated only through the
 // diagram's source objects.  They must not become generic transitions from a
 // relation-only selector or the NULL root beyond the explicitly listed root
 // callback edge.

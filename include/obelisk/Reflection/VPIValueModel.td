@@ -13,7 +13,7 @@ class VPIValueFormat<string cppName_, int value_> {
   int value = value_;
 }
 
-// IEEE 1800-2017 Table 38-3.  The array-query formats from 38.16 and the
+// IEEE 1800-2023 Table 38-3. The array-query formats from 38.16 and the
 // callback-only suppression format from Table 38-5 are not part of this model
 // and must never be accepted by scalar vpi_get_value.
 def BinStrValueFormat : VPIValueFormat<"BinStr", 1>;
@@ -166,7 +166,7 @@ def AggregateVariableValues
     : OrdinaryVPIValuePolicy<AggregateVariableValueObjects,
         ScalarOrVectorValueDefault, SnapshotValueRead,
         [RejectWholeUnpackedValue, RejectClassDefinitionOriginValue,
-         RejectNonStaticClassTypespecOriginValue], "37.17; 37.24; 38.15">;
+         RejectNonStaticClassTypespecOriginValue], "37.17; 37.26; 38.15">;
 
 def EvaluatedValueObjects : VPIObjectSet<"EvaluatedValueObjects",
   [VarSelect, BitSelect, PartSelect, IndexedPartSelect, Operation,
@@ -183,23 +183,23 @@ def TableEntryValueObjects : VPIObjectSet<"TableEntryValueObjects",
 def EvaluatedValues : OrdinaryVPIValuePolicy<EvaluatedValueObjects,
   SemanticValueDefault, EvaluateValueRead,
   [RejectClassDefinitionOriginValue,
-   RejectNonStaticClassTypespecOriginValue], "37.19; 37.57; 38.15">;
+   RejectNonStaticClassTypespecOriginValue], "37.19; 37.59; 38.15">;
 def ConstantValues : OrdinaryVPIValuePolicy<ConstantValueObjects,
   SemanticValueDefault, SnapshotValueRead, [RestrictStringConstantValue],
-  "37.57; 38.15">;
+  "37.59; 38.15">;
 def ImmutableValues : OrdinaryVPIValuePolicy<ImmutableValueObjects,
   SemanticValueDefault, SnapshotValueRead, [],
-  "37.23; 37.26; 37.81; 38.15">;
+  "37.25; 37.28; 37.83; 38.15">;
 def PrimitiveValues : OrdinaryVPIValuePolicy<PrimitiveValueObjects,
   SemanticValueDefault, SnapshotValueRead, [],
-  "37.33; 37.43; 37.45; 38.15">;
+  "37.35; 37.45; 37.47; 38.15">;
 def FsmStateValues : OrdinaryVPIValuePolicy<FsmStateValueObjects,
   SemanticValueDefault, SnapshotValueRead, [], "40.5.3">;
 def TableEntryValues : VPIValuePolicy<TableEntryValueObjects,
   [StringValueFormat, VectorValueFormat], StringValueDefault,
-  SnapshotValueRead, [], "37.34; 38.15">;
+  SnapshotValueRead, [], "37.36; 38.15">;
 
-// IEEE 1800-2017 38.16 static unpacked array value formats.  Unlike
+// IEEE 1800-2023 38.16 static unpacked array value formats. Unlike
 // vpi_get_value(), vpi_get_value_array() does not perform arbitrary scalar
 // format conversions: each requested layout has an exact set of compatible
 // fully-indexed element object kinds.
