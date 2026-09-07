@@ -376,6 +376,27 @@ LogicalResult SimVPIRelationDeclOp::verify() {
   return success();
 }
 
+LogicalResult SimVPINetIdentityDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "VPI net identity ID")) ||
+      failed(
+          verifyNonnegative(*this, getBackingNetIdAttr(), "backing net ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getHierarchicalName().empty())
+    return emitOpError("requires a nonempty source hierarchy name");
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  if (failed(verifyVPITypeSemantics(emit, getType(), getVpiType())))
+    return failure();
+  uint32_t kind = vpiKindForNet(getVpiTypeAttr());
+  const auto *object = reflection::findVPIObjectKind(kind);
+  if (!kind || !object || object->role != reflection::VPIObjectRole::Concrete)
+    return emitOpError("source type has no concrete VPI net object");
+  return verifyFixedReflection(*this, kind, reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
 LogicalResult SimVPIObjectAnchorOp::verify() {
   if (failed(verifyNonnegative(*this, getInventoryIdAttr(),
                                "VPI anchor inventory ID")) ||
@@ -1959,7 +1980,8 @@ LogicalResult SimDesignOp::verifyRegions() {
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, statementIds,
       statementSiteIds, storageIds, netIds, driverIds, portIds, connectionIds,
-      covergroupIds, classIds, vpiAnchorIds, typespecIds, enumConstIds;
+      covergroupIds, classIds, vpiAnchorIds, vpiNetIdentityIds, typespecIds,
+      enumConstIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
@@ -1969,6 +1991,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
+  llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
+  SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPITypespecDeclOp> typespecs;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
@@ -2015,6 +2039,12 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementRelations.push_back(relation);
     } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
       vpiRelations.push_back(relation);
+    } else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op)) {
+      if (failed(addId(identity.getIdAttr(), vpiNetIdentityIds,
+                       "VPI net identity")))
+        return failure();
+      vpiNetIdentities.push_back(identity);
+      vpiNetIdentitiesById[identity.getId()] = identity;
     } else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op)) {
       if (failed(addId(anchor.getInventoryIdAttr(), vpiAnchorIds,
                        "VPI object anchor")))
@@ -2299,6 +2329,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       semantic = storage.getVpiTypeAttr();
     else if (auto net = dyn_cast<SimNetDeclOp>(op))
       semantic = net.getVpiTypeAttr();
+    else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op))
+      semantic = identity.getVpiTypeAttr();
     else if (auto port = dyn_cast<SimPortDeclOp>(op))
       semantic = port.getVpiTypeAttr();
     if (!semantic)
@@ -2656,6 +2688,31 @@ LogicalResult SimDesignOp::verifyRegions() {
             "is missing its semantic VPI statement-containment relation");
   }
 
+  llvm::StringMap<Operation *> declaredNetNames;
+  for (auto [id, net] : nets)
+    if (auto hierarchy = net.getHierarchicalName())
+      declaredNetNames.try_emplace(*hierarchy, net);
+  for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
+    if (!scopeIds.count(identity.getScopeId()))
+      return identity.emitOpError("references an unknown scope ID");
+    auto backing = nets.find(identity.getBackingNetId());
+    if (backing == nets.end())
+      return identity.emitOpError("references an unknown backing net ID");
+    std::optional<uint64_t> backingWidth =
+        getProvenanceSpan(backing->second.getType());
+    std::optional<uint64_t> identityWidth =
+        getProvenanceSpan(identity.getType());
+    if (!backingWidth || !identityWidth || *backingWidth != *identityWidth)
+      return identity.emitOpError(
+          "net identity width does not match its backing net");
+    auto [sameName, inserted] =
+        declaredNetNames.try_emplace(identity.getHierarchicalName(), identity);
+    if (!inserted)
+      return identity.emitOpError()
+             << "duplicates declared net hierarchy owned by "
+             << sameName->second->getName();
+  }
+
   // General relations describe immutable, non-containment graph edges. Their
   // exact endpoint kinds are derived from inventory declarations so stale or
   // hand-authored metadata cannot smuggle a mismatched kind into the image.
@@ -2700,6 +2757,13 @@ LogicalResult SimDesignOp::verifyRegions() {
       case VPIObjectRefKind::Net: {
         auto found = nets.find(id);
         if (found == nets.end())
+          return missing();
+        kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        break;
+      }
+      case VPIObjectRefKind::NetIdentity: {
+        auto found = vpiNetIdentitiesById.find(id);
+        if (found == vpiNetIdentitiesById.end())
           return missing();
         kind = vpiKindForNet(found->second.getVpiTypeAttr());
         break;
@@ -2757,6 +2821,9 @@ LogicalResult SimDesignOp::verifyRegions() {
            std::tie(right.sourceTag, right.sourceId, right.selector,
                     right.mode);
   };
+  constexpr uint32_t simNetSelector =
+      static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel);
+  llvm::DenseMap<uint64_t, GeneralRelation *> identitySimNets;
   for (size_t begin = 0; begin != generalRelations.size();) {
     size_t end = begin + 1;
     while (end != generalRelations.size() &&
@@ -2782,8 +2849,24 @@ LogicalResult SimDesignOp::verifyRegions() {
                   "mode, and ordinal"
                 : "ordinals must be dense from zero for each source, "
                   "selector, and access mode");
+      if (entry.sourceTag ==
+              static_cast<uint32_t>(VPIObjectRefKind::NetIdentity) &&
+          entry.selector == simNetSelector &&
+          entry.mode == static_cast<uint32_t>(VPIRelationMode::Handle))
+        identitySimNets[entry.sourceId] = &entry;
     }
     begin = end;
+  }
+  for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
+    auto found = identitySimNets.find(identity.getId());
+    if (found == identitySimNets.end())
+      return identity.emitOpError(
+          "requires one vpiSimNet relation to its backing net");
+    GeneralRelation *simNet = found->second;
+    if (simNet->targetTag != static_cast<uint32_t>(VPIObjectRefKind::Net) ||
+        simNet->targetId != identity.getBackingNetId())
+      return simNet->relation.emitOpError(
+          "vpiSimNet target does not match the net identity's backing net");
   }
 
   struct ElementShape {
@@ -2859,6 +2942,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   };
   if (failed(verifyDense(scopeIds, "scope")) ||
       failed(verifyDense(vpiAnchorIds, "VPI object anchor")) ||
+      failed(verifyDense(vpiNetIdentityIds, "VPI net identity")) ||
       failed(verifyDense(typespecIds, "VPI typespec")) ||
       failed(verifyDense(enumConstIds, "VPI enum constant")) ||
       failed(verifyDense(storageIds, "storage")) ||

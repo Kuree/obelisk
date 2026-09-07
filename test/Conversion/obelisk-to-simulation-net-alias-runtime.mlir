@@ -10,11 +10,11 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s --check-prefix=RUNTIME
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=TOPOLOGY \
-// RUN:     --implicit-check-not='hierarchy "t.alias_name"'
+// RUN:   | FileCheck %s --check-prefix=TOPOLOGY
 
-// IEEE 1800-2017 10.10: a net alias is one statically shared resolved net.
-// The alias adds neither a second net descriptor nor runtime propagation.
+// IEEE 1800-2023 10.11: a net alias is one statically shared resolved net.
+// The declared alias identity remains available to VPI, but it adds neither a
+// second physical net descriptor nor runtime propagation.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -67,5 +67,7 @@ module attributes {
   }
 }
 
-// TOPOLOGY: obelisk_sim.net.decl 0 {{.*}} hierarchy "t.source"
+// TOPOLOGY: obelisk_sim.net.decl [[NET:[0-9]+]] {{.*}} hierarchy "t.source"
+// TOPOLOGY: obelisk_sim.vpi_net_identity.decl {{[0-9]+}} backed_by [[NET]] {{.*}} hierarchy "t.alias_name"
+// TOPOLOGY-NOT: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "t.alias_name"
 // RUNTIME: alias=1

@@ -5,6 +5,8 @@
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/RuntimeInternal.h"
+
 #include "gtest/gtest.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -748,7 +750,7 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_scan(topAssignments), nullptr);
 
   PLI_BYTE8 lhsName[] = "top.direct_lhs";
-  PLI_BYTE8 rhsName[] = "top.source";
+  PLI_BYTE8 rhsName[] = "top.d";
   vpiHandle expectedLhs = vpi_handle_by_name(lhsName, nullptr);
   vpiHandle expectedRhs = vpi_handle_by_name(rhsName, nullptr);
   vpiHandle assignmentLhs = vpi_handle(vpiLhs, directAssignment);
@@ -759,6 +761,9 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   ASSERT_NE(assignmentRhs, nullptr);
   EXPECT_EQ(vpi_compare_objects(expectedLhs, assignmentLhs), 1);
   EXPECT_EQ(vpi_compare_objects(expectedRhs, assignmentRhs), 1);
+  vpiHandle directSimNet = vpi_handle(vpiSimNet, assignmentLhs);
+  ASSERT_NE(directSimNet, nullptr);
+  EXPECT_EQ(vpi_compare_objects(assignmentLhs, directSimNet), 1);
 
   auto expectOnlyAssignment = [&](PLI_INT32 relation, vpiHandle source,
                                   vpiHandle expected) {
@@ -824,14 +829,62 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   vpiHandle topAliases = vpi_iterate(vpiAliasStmt, top);
   ASSERT_NE(topAliases, nullptr);
   std::array<vpiHandle, 3> directAliases{};
+  std::unordered_map<std::string, unsigned> directAliasPairs;
   for (vpiHandle &alias : directAliases) {
     alias = vpi_scan(topAliases);
     ASSERT_NE(alias, nullptr);
     EXPECT_EQ(vpi_get(vpiType, alias), vpiAliasStmt);
     EXPECT_STREQ(vpi_get_str(vpiFile, alias), "scope_owned.sv");
     EXPECT_EQ(vpi_get(vpiLineNo, alias), 11);
+    vpiHandle lhs = vpi_handle(vpiLhs, alias);
+    vpiHandle rhs = vpi_handle(vpiRhs, alias);
+    ASSERT_NE(lhs, nullptr);
+    ASSERT_NE(rhs, nullptr);
+    const char *lhsText = vpi_get_str(vpiFullName, lhs);
+    ASSERT_NE(lhsText, nullptr);
+    std::string lhsName(lhsText);
+    const char *rhsText = vpi_get_str(vpiFullName, rhs);
+    ASSERT_NE(rhsText, nullptr);
+    ++directAliasPairs[lhsName + "=" + rhsText];
+    EXPECT_EQ(vpi_release_handle(rhs), 1);
+    EXPECT_EQ(vpi_release_handle(lhs), 1);
   }
   EXPECT_EQ(vpi_scan(topAliases), nullptr);
+  EXPECT_EQ(directAliasPairs["top.a=top.d"], 1u);
+  EXPECT_EQ(directAliasPairs["top.b=top.d"], 1u);
+  EXPECT_EQ(directAliasPairs["top.c=top.d"], 1u);
+
+  PLI_BYTE8 aliasAName[] = "top.a";
+  PLI_BYTE8 aliasBName[] = "top.b";
+  PLI_BYTE8 aliasCName[] = "top.c";
+  PLI_BYTE8 aliasDName[] = "top.d";
+  std::array<vpiHandle, 4> declaredAliases{
+      vpi_handle_by_name(aliasAName, nullptr),
+      vpi_handle_by_name(aliasBName, nullptr),
+      vpi_handle_by_name(aliasCName, nullptr),
+      vpi_handle_by_name(aliasDName, nullptr)};
+  for (vpiHandle declared : declaredAliases)
+    ASSERT_NE(declared, nullptr);
+  for (size_t left = 0; left != declaredAliases.size(); ++left)
+    for (size_t right = left + 1; right != declaredAliases.size(); ++right)
+      EXPECT_EQ(
+          vpi_compare_objects(declaredAliases[left], declaredAliases[right]),
+          0);
+  std::array<vpiHandle, 4> simulatedAliases{};
+  for (size_t index = 0; index != declaredAliases.size(); ++index) {
+    EXPECT_EQ(vpi_get(vpiResolvedNetType, declaredAliases[index]), vpiWire);
+    simulatedAliases[index] = vpi_handle(vpiSimNet, declaredAliases[index]);
+    ASSERT_NE(simulatedAliases[index], nullptr);
+    EXPECT_EQ(
+        vpi_compare_objects(declaredAliases.front(), simulatedAliases[index]),
+        1);
+    expectOnlyAssignment(vpiLoad, declaredAliases[index], directAssignment);
+    expectOnlyAssignment(vpiLocalLoad, declaredAliases[index],
+                         directAssignment);
+    if (index + 1 != declaredAliases.size()) {
+      EXPECT_EQ(vpi_iterate(vpiUse, declaredAliases[index]), nullptr);
+    }
+  }
 
   vpiHandle generatedAssignments = vpi_iterate(vpiContAssign, generated);
   ASSERT_NE(generatedAssignments, nullptr);
@@ -840,10 +893,19 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_get(vpiType, generatedAssignment), vpiContAssign);
   EXPECT_EQ(vpi_get(vpiLineNo, generatedAssignment), 20);
   EXPECT_EQ(vpi_scan(generatedAssignments), nullptr);
-  // The assignment names a net whose physical descriptor is collapsed by an
-  // alias statement. Until alias identities are serialized separately, do
-  // not return the wrong declared net as the assignment endpoint.
-  EXPECT_EQ(vpi_handle(vpiLhs, generatedAssignment), nullptr);
+  PLI_BYTE8 generatedAName[] = "top.g.a";
+  PLI_BYTE8 generatedBName[] = "top.g.b";
+  vpiHandle generatedA = vpi_handle_by_name(generatedAName, nullptr);
+  vpiHandle generatedB = vpi_handle_by_name(generatedBName, nullptr);
+  vpiHandle generatedAssignmentLhs = vpi_handle(vpiLhs, generatedAssignment);
+  ASSERT_NE(generatedA, nullptr);
+  ASSERT_NE(generatedB, nullptr);
+  ASSERT_NE(generatedAssignmentLhs, nullptr);
+  EXPECT_EQ(vpi_compare_objects(generatedA, generatedAssignmentLhs), 1);
+  EXPECT_EQ(vpi_compare_objects(generatedA, generatedB), 0);
+  expectOnlyAssignment(vpiContAssign, generatedB, generatedAssignment);
+  expectOnlyAssignment(vpiDriver, generatedB, generatedAssignment);
+  expectOnlyAssignment(vpiLocalDriver, generatedB, generatedAssignment);
 
   vpiHandle generatedAliases = vpi_iterate(vpiAliasStmt, generated);
   ASSERT_NE(generatedAliases, nullptr);
@@ -852,6 +914,12 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_get(vpiType, generatedAlias), vpiAliasStmt);
   EXPECT_EQ(vpi_get(vpiLineNo, generatedAlias), 21);
   EXPECT_EQ(vpi_scan(generatedAliases), nullptr);
+  vpiHandle generatedAliasLhs = vpi_handle(vpiLhs, generatedAlias);
+  vpiHandle generatedAliasRhs = vpi_handle(vpiRhs, generatedAlias);
+  ASSERT_NE(generatedAliasLhs, nullptr);
+  ASSERT_NE(generatedAliasRhs, nullptr);
+  EXPECT_EQ(vpi_compare_objects(generatedA, generatedAliasLhs), 1);
+  EXPECT_EQ(vpi_compare_objects(generatedB, generatedAliasRhs), 1);
 
   vpiHandle interfaceAssignments = vpi_iterate(vpiContAssign, interface);
   vpiHandle programAssignments = vpi_iterate(vpiContAssign, program);
@@ -898,7 +966,16 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_release_handle(programAssignment), 1);
   EXPECT_EQ(vpi_release_handle(interfaceAssignment), 1);
   EXPECT_EQ(vpi_release_handle(generatedAlias), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAliasRhs), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAliasLhs), 1);
+  EXPECT_EQ(vpi_release_handle(generatedAssignmentLhs), 1);
+  EXPECT_EQ(vpi_release_handle(generatedB), 1);
+  EXPECT_EQ(vpi_release_handle(generatedA), 1);
   EXPECT_EQ(vpi_release_handle(generatedAssignment), 1);
+  for (vpiHandle simulated : simulatedAliases)
+    EXPECT_EQ(vpi_release_handle(simulated), 1);
+  for (vpiHandle declared : declaredAliases)
+    EXPECT_EQ(vpi_release_handle(declared), 1);
   for (vpiHandle alias : directAliases)
     EXPECT_EQ(vpi_release_handle(alias), 1);
   EXPECT_EQ(vpi_release_handle(vectorRhs), 1);
@@ -913,6 +990,7 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_release_handle(variableAssignment), 1);
   EXPECT_EQ(vpi_release_handle(assignmentRhs), 1);
   EXPECT_EQ(vpi_release_handle(assignmentLhs), 1);
+  EXPECT_EQ(vpi_release_handle(directSimNet), 1);
   EXPECT_EQ(vpi_release_handle(expectedRhs), 1);
   EXPECT_EQ(vpi_release_handle(expectedLhs), 1);
   EXPECT_EQ(vpi_release_handle(directAssignment), 1);
@@ -920,5 +998,248 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_release_handle(program), 1);
   EXPECT_EQ(vpi_release_handle(interface), 1);
   EXPECT_EQ(vpi_release_handle(top), 1);
+  obelisk_rt_v1_context_destroy(runtime);
+}
+
+TEST(GeneratedDesignDatabase, NetIdentityQueries) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+  const bool aliasShape = std::getenv("OBELISK_TEST_ALIAS_SHAPE") != nullptr;
+
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module) << "failed to parse " << inputPath;
+  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  module->walk(
+      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+  ASSERT_EQ(designs.size(), 1u);
+
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
+      obelisk::encodeSimulationDesign(designs.front(), options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  ASSERT_GE(encoded->bytecode.size(), 40u);
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  std::string physicalName = aliasShape ? "top.a" : "top.uniform";
+  std::string aliasName = aliasShape ? "top.b" : "top.uniform_alias";
+  vpiHandle physical = vpi_handle_by_name(
+      reinterpret_cast<PLI_BYTE8 *>(physicalName.data()), nullptr);
+  vpiHandle alias = vpi_handle_by_name(
+      reinterpret_cast<PLI_BYTE8 *>(aliasName.data()), nullptr);
+  ASSERT_NE(physical, nullptr);
+  ASSERT_NE(alias, nullptr);
+  EXPECT_EQ(vpi_compare_objects(physical, alias), 0);
+  EXPECT_EQ(vpi_get(vpiType, physical), vpiNet);
+  EXPECT_EQ(vpi_get(vpiType, alias), vpiNet);
+  EXPECT_EQ(vpi_get(vpiSize, alias), 4);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, physical), vpiWire);
+  EXPECT_EQ(vpi_get(vpiResolvedNetType, alias), vpiWire);
+
+  obelisk_rt_design_cursor_v1 physicalCursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &execution,
+                reinterpret_cast<const uint8_t *>(physicalName.data()),
+                physicalName.size(), &physicalCursor),
+            OBELISK_RT_OK);
+  uint64_t stateOffset = 0;
+  ASSERT_EQ(
+      obelisk_rt_design_state_offset(runtime, physicalCursor, 0, &stateOffset),
+      OBELISK_RT_OK);
+  for (uint64_t bit = 0; bit != 4; ++bit) {
+    const uint64_t absolute = stateOffset + bit;
+    const uint64_t mask = uint64_t{1} << (absolute % 64);
+    if ((UINT64_C(0xa) & (uint64_t{1} << bit)) != 0)
+      runtime->stateValue[absolute / 64] |= mask;
+    else
+      runtime->stateValue[absolute / 64] &= ~mask;
+    runtime->stateUnknown[absolute / 64] &= ~mask;
+  }
+  s_vpi_value wholeValue{};
+  wholeValue.format = vpiBinStrVal;
+  vpi_get_value(physical, &wholeValue);
+  ASSERT_NE(wholeValue.value.str, nullptr);
+  std::string physicalValue(wholeValue.value.str);
+  wholeValue = {};
+  wholeValue.format = vpiBinStrVal;
+  vpi_get_value(alias, &wholeValue);
+  ASSERT_NE(wholeValue.value.str, nullptr);
+  EXPECT_EQ(physicalValue, "1010");
+  EXPECT_STREQ(wholeValue.value.str, physicalValue.c_str());
+
+  auto expectDelays = [](vpiHandle net) {
+    std::array<s_vpi_time, 3> values{};
+    s_vpi_delay delays{};
+    delays.da = values.data();
+    delays.no_of_delays = 3;
+    delays.time_type = vpiSimTime;
+    vpi_get_delays(net, &delays);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(values[0].low, 7u);
+    EXPECT_EQ(values[1].low, 11u);
+    EXPECT_EQ(values[2].low, 13u);
+    for (const s_vpi_time &value : values) {
+      EXPECT_EQ(value.type, vpiSimTime);
+      EXPECT_EQ(value.high, 0u);
+    }
+  };
+  if (!aliasShape) {
+    expectDelays(physical);
+    expectDelays(alias);
+  }
+
+  vpiHandle physicalSimNet = vpi_handle(vpiSimNet, physical);
+  vpiHandle aliasSimNet = vpi_handle(vpiSimNet, alias);
+  ASSERT_NE(physicalSimNet, nullptr);
+  ASSERT_NE(aliasSimNet, nullptr);
+  EXPECT_EQ(vpi_compare_objects(physical, physicalSimNet), 1);
+  EXPECT_EQ(vpi_compare_objects(physical, aliasSimNet), 1);
+
+  std::array<vpiHandle, 4> aliasBits{};
+  std::array<vpiHandle, 4> physicalBits{};
+  std::array<vpiHandle, 4> simulatedAliasBits{};
+  std::array<vpiHandle, 4> simulatedPhysicalBits{};
+  for (int index = 0; index != 4; ++index) {
+    aliasBits[index] = vpi_handle_by_index(alias, index);
+    physicalBits[index] = vpi_handle_by_index(physical, 3 - index);
+    ASSERT_NE(aliasBits[index], nullptr);
+    ASSERT_NE(physicalBits[index], nullptr);
+    simulatedAliasBits[index] = vpi_handle(vpiSimNet, aliasBits[index]);
+    simulatedPhysicalBits[index] = vpi_handle(vpiSimNet, physicalBits[index]);
+    ASSERT_NE(simulatedAliasBits[index], nullptr);
+    ASSERT_NE(simulatedPhysicalBits[index], nullptr);
+    EXPECT_EQ(vpi_get(vpiType, simulatedAliasBits[index]), vpiNetBit);
+    EXPECT_EQ(vpi_compare_objects(simulatedAliasBits[index],
+                                  simulatedPhysicalBits[index]),
+              1);
+  }
+  for (int index = 0; index != 3; ++index)
+    EXPECT_EQ(vpi_compare_objects(simulatedAliasBits[index],
+                                  simulatedPhysicalBits[index + 1]),
+              0);
+  for (int index = 0; index != 4; ++index) {
+    s_vpi_value aliasValue{};
+    aliasValue.format = vpiScalarVal;
+    vpi_get_value(aliasBits[index], &aliasValue);
+    s_vpi_value physicalValue{};
+    physicalValue.format = vpiScalarVal;
+    vpi_get_value(physicalBits[index], &physicalValue);
+    EXPECT_EQ(aliasValue.value.scalar, physicalValue.value.scalar);
+    if (index != 3) {
+      s_vpi_value mismatchedValue{};
+      mismatchedValue.format = vpiScalarVal;
+      vpi_get_value(physicalBits[index + 1], &mismatchedValue);
+      EXPECT_NE(aliasValue.value.scalar, mismatchedValue.value.scalar);
+    }
+  }
+  vpiHandle simulatedIndex = vpi_handle(vpiIndex, simulatedAliasBits[0]);
+  ASSERT_NE(simulatedIndex, nullptr);
+  s_vpi_value indexValue{};
+  indexValue.format = vpiIntVal;
+  vpi_get_value(simulatedIndex, &indexValue);
+  EXPECT_EQ(indexValue.value.integer, 3);
+  vpiHandle simulatedBitParent = vpi_handle(vpiParent, simulatedAliasBits[0]);
+  ASSERT_NE(simulatedBitParent, nullptr);
+  EXPECT_EQ(vpi_compare_objects(physical, simulatedBitParent), 1);
+
+  vpiHandle netScope = nullptr;
+  if (aliasShape) {
+    PLI_BYTE8 topName[] = "top";
+    netScope = vpi_handle_by_name(topName, nullptr);
+    ASSERT_NE(netScope, nullptr);
+  }
+  vpiHandle aliasTypespec = vpi_handle(vpiTypespec, alias);
+  ASSERT_NE(aliasTypespec, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, aliasTypespec), vpiLogicTypespec);
+  vpiHandle typedefAlias = nullptr;
+  vpiHandle declaredTypedef = nullptr;
+  if (aliasShape) {
+    typedefAlias = vpi_handle(vpiTypedefAlias, aliasTypespec);
+    ASSERT_NE(typedefAlias, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, typedefAlias), vpiLogicTypespec);
+    vpiHandle typedefs = vpi_iterate(vpiTypedef, netScope);
+    ASSERT_NE(typedefs, nullptr);
+    declaredTypedef = vpi_scan(typedefs);
+    ASSERT_NE(declaredTypedef, nullptr);
+    EXPECT_EQ(vpi_scan(typedefs), nullptr);
+    EXPECT_EQ(vpi_compare_objects(aliasTypespec, declaredTypedef), 1);
+    EXPECT_EQ(vpi_compare_objects(typedefAlias, declaredTypedef), 0);
+  }
+  vpiHandle aliasLeft = vpi_handle(vpiLeftRange, alias);
+  vpiHandle aliasRight = vpi_handle(vpiRightRange, alias);
+  ASSERT_NE(aliasLeft, nullptr);
+  ASSERT_NE(aliasRight, nullptr);
+  indexValue = {};
+  indexValue.format = vpiIntVal;
+  vpi_get_value(aliasLeft, &indexValue);
+  EXPECT_EQ(indexValue.value.integer, 0);
+  indexValue = {};
+  indexValue.format = vpiIntVal;
+  vpi_get_value(aliasRight, &indexValue);
+  EXPECT_EQ(indexValue.value.integer, 3);
+
+  std::unordered_map<std::string, unsigned> netNames;
+  vpiHandle nets = vpi_iterate(vpiNet, netScope);
+  ASSERT_NE(nets, nullptr);
+  while (vpiHandle net = vpi_scan(nets)) {
+    const char *name = vpi_get_str(vpiFullName, net);
+    ASSERT_NE(name, nullptr);
+    ++netNames[name];
+    EXPECT_EQ(vpi_release_handle(net), 1);
+  }
+  EXPECT_EQ(netNames[physicalName], 1u);
+  EXPECT_EQ(netNames[aliasName], 1u);
+  if (netScope) {
+    EXPECT_EQ(vpi_release_handle(netScope), 1);
+  }
+
+  EXPECT_EQ(vpi_release_handle(aliasRight), 1);
+  EXPECT_EQ(vpi_release_handle(aliasLeft), 1);
+  if (declaredTypedef) {
+    EXPECT_EQ(vpi_release_handle(declaredTypedef), 1);
+  }
+  if (typedefAlias) {
+    EXPECT_EQ(vpi_release_handle(typedefAlias), 1);
+  }
+  EXPECT_EQ(vpi_release_handle(aliasTypespec), 1);
+  EXPECT_EQ(vpi_release_handle(simulatedBitParent), 1);
+  EXPECT_EQ(vpi_release_handle(simulatedIndex), 1);
+  for (vpiHandle bit : simulatedPhysicalBits)
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+  for (vpiHandle bit : simulatedAliasBits)
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+  for (vpiHandle bit : physicalBits)
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+  for (vpiHandle bit : aliasBits)
+    EXPECT_EQ(vpi_release_handle(bit), 1);
+  EXPECT_EQ(vpi_release_handle(aliasSimNet), 1);
+  EXPECT_EQ(vpi_release_handle(physicalSimNet), 1);
+  EXPECT_EQ(vpi_release_handle(alias), 1);
+  EXPECT_EQ(vpi_release_handle(physical), 1);
   obelisk_rt_v1_context_destroy(runtime);
 }

@@ -263,7 +263,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     });
   };
 
-  // IEEE 1800-2017 10.10 net aliases are static topology, not executable
+  // IEEE 1800-2023 10.11 net aliases are static topology, not executable
   // connectivity.  Collapse direct whole-net aliases onto one descriptor so
   // drivers, readers, and observers all use the same resolved net without
   // adding any runtime propagation work.
@@ -602,12 +602,6 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     if (path != canonical)
       result.aliases[path] = canonical.str();
   }
-  llvm::StringMap<unsigned> aliasGroupSizes;
-  for (const auto &entry : netAliasParents)
-    ++aliasGroupSizes[findNetAlias(entry.getKey())];
-  for (const auto &entry : netAliasParents)
-    if (aliasGroupSizes.lookup(findNetAlias(entry.getKey())) > 1)
-      result.collapsedAliasPaths.insert(entry.getKey());
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
     if (isCompileTimeOnlyInstanceMember(port))
       return;
@@ -1395,6 +1389,8 @@ materializeDesignDescriptors(ModuleOp module,
     uint64_t statementId;
     uint64_t scopeId;
     VPIKind kind;
+    Operation *lhs = nullptr;
+    Operation *rhs = nullptr;
   };
   SmallVector<ScopeOwnedStatementPlan> scopeOwnedStatementPlans;
   llvm::DenseMap<Operation *, llvm::DenseMap<uint32_t, uint64_t>>
@@ -1463,8 +1459,10 @@ materializeDesignDescriptors(ModuleOp module,
         // alias objects, each relating one of the first N-1 nets to the final
         // net. A continuous-assignment declaration always contributes one.
         size_t statementCount = 1;
+        SmallVector<Operation *> aliasOperands;
         if (isa<semantic::SVNetAliasSymbolOp>(source)) {
-          size_t operandCount = getChildren(source).size();
+          aliasOperands = getChildren(source);
+          size_t operandCount = aliasOperands.size();
           statementCount = operandCount > 1 ? operandCount - 1 : 0;
         }
         for (size_t statement = 0; statement != statementCount; ++statement) {
@@ -1477,6 +1475,10 @@ materializeDesignDescriptors(ModuleOp module,
           if (statementKind == VPIKind::ContAssign)
             scopeOwnedStatementPlans.push_back(
                 {source, statementId, scopes.lookup(source), statementKind});
+          else
+            scopeOwnedStatementPlans.push_back(
+                {source, statementId, scopes.lookup(source), statementKind,
+                 aliasOperands[statement], aliasOperands.back()});
           sim::SimVPIStatementRelationDeclOp::create(
               builder, location,
               physicalScope ? sim::VPIStatementSourceKind::Scope
@@ -2732,6 +2734,111 @@ materializeDesignDescriptors(ModuleOp module,
     retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
   }
 
+  // Execution collapses whole-net aliases onto one resolved-net descriptor.
+  // Preserve every other declared spelling as a separate cold VPI object
+  // whose value plane is the canonical descriptor's state offset. The
+  // canonical spelling continues to use the physical net declaration itself.
+  struct DeclaredNetObject {
+    sim::VPIObjectRefAttr reference;
+    uint32_t vpiKind;
+    uint64_t scopeId;
+    Type type;
+    uint64_t backingNetId;
+  };
+  llvm::StringMap<DeclaredNetObject> declaredNets;
+  llvm::DenseMap<uint64_t, SmallVector<DeclaredNetObject, 2>>
+      declaredNetsByBacking;
+  uint64_t nextVPINetIdentityId = 0;
+  for (Operation *operation : designObjects) {
+    auto net = dyn_cast<semantic::SVNetSymbolOp>(operation);
+    if (!net)
+      continue;
+    StringRef path = getHierarchyName(operation);
+    auto descriptor = descriptors.find(path);
+    if (path.empty() || descriptor == descriptors.end() ||
+        descriptor->second.kind != DescriptorInfo::Kind::Net ||
+        descriptor->second.viewOffset != 0 ||
+        descriptor->second.packedViewOffset != 0 ||
+        !descriptor->second.viewIndices.empty() ||
+        descriptor->second.type != descriptor->second.rootType)
+      continue;
+    uint64_t scopeId = scopes.lookup(operation);
+
+    if (!portAliases.aliases.count(path)) {
+      sim::VPIObjectRefAttr reference = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Net,
+          builder.getI64IntegerAttr(descriptor->second.id));
+      DeclaredNetObject declared{
+          reference, sim::vpiKindForNet(descriptor->second.vpiType), scopeId,
+          descriptor->second.type, descriptor->second.id};
+      declaredNets[path] = declared;
+      declaredNetsByBacking[descriptor->second.id].push_back(declared);
+      continue;
+    }
+
+    FailureOr<Type> sourceType = getNormalizedSemanticType(operation);
+    auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
+    FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+        semanticType
+            ? makeVPITypeSemantics(semanticType.getValue(),
+                                   getSemanticLocation(operation),
+                                   typedefLayersFor(operation), operation)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    if (failed(sourceType) || failed(vpiType)) {
+      if (!semanticType)
+        emitError(getSemanticLocation(operation))
+            << "aliased net is missing semantic type metadata";
+      invalid = true;
+      continue;
+    }
+    sim::VPITypeSemanticsAttr retainedVPIType =
+        retainVPITypeForPersistentOwner(operation, *vpiType);
+    if (!retainedVPIType) {
+      emitError(getSemanticLocation(operation))
+          << "aliased net source type cannot be retained for VPI";
+      invalid = true;
+      continue;
+    }
+    uint64_t identityId = nextVPINetIdentityId++;
+    sim::SimVPINetIdentityDeclOp identity =
+        sim::SimVPINetIdentityDeclOp::create(
+            builder, getSemanticLocation(operation), identityId,
+            descriptor->second.id, scopeId, *sourceType,
+            builder.getStringAttr(path),
+            builder.getStringAttr(getDebugName(operation)), retainedVPIType);
+    identity->setAttr("vpi_properties", netProperties(net));
+    retainVPISourceTypeIdentity(operation, identity, retainedVPIType);
+    sim::VPIObjectRefAttr reference = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::NetIdentity,
+        builder.getI64IntegerAttr(identityId));
+    DeclaredNetObject declared{reference, sim::vpiKindForNet(retainedVPIType),
+                               scopeId, *sourceType, descriptor->second.id};
+    declaredNets[path] = declared;
+    declaredNetsByBacking[descriptor->second.id].push_back(declared);
+  }
+
+  // IEEE 1800-2023 37.16 requires every collapsed declared net to identify
+  // one unique simulated net. Only collapsed spellings need image edges;
+  // the cold VPI query returns an uncollapsed net itself without storing one
+  // redundant relation for every physical net in the design.
+  for (Operation *operation : designObjects) {
+    StringRef path = getHierarchyName(operation);
+    auto source = declaredNets.find(path);
+    auto descriptor = descriptors.find(path);
+    if (source == declaredNets.end() || descriptor == descriptors.end() ||
+        descriptor->second.kind != DescriptorInfo::Kind::Net ||
+        source->second.reference.getKind() !=
+            sim::VPIObjectRefKind::NetIdentity)
+      continue;
+    sim::VPIObjectRefAttr target = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Net,
+        builder.getI64IntegerAttr(descriptor->second.id));
+    sim::SimVPIRelationDeclOp::create(
+        builder, getSemanticLocation(operation), source->second.reference,
+        static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel),
+        sim::VPIRelationMode::Handle, 0, target);
+  }
+
   // Preserve direct whole-object operands of scope-owned statements as cold
   // immutable relation inventory. Selects and computed expressions require a
   // distinct occurrence identity and are intentionally left for the compact
@@ -2740,14 +2847,15 @@ materializeDesignDescriptors(ModuleOp module,
     sim::VPIObjectRefAttr reference;
     const DescriptorInfo *descriptor;
     uint32_t vpiKind;
+    uint64_t scopeId;
+    Type type;
   };
   auto directEndpoint =
       [&](Operation *expression) -> std::optional<DirectEndpoint> {
     FailureOr<StaticStorageView> view = getStaticStorageView(expression);
     if (failed(view) || !view->identity || view->offset != 0 ||
         view->packedOffset != 0 || !view->indices.empty() ||
-        view->rootType != view->viewType ||
-        portAliases.collapsedAliasPaths.contains(view->path))
+        view->rootType != view->viewType)
       return std::nullopt;
     auto found = descriptors.find(view->path);
     if (found == descriptors.end())
@@ -2759,17 +2867,26 @@ materializeDesignDescriptors(ModuleOp module,
         !descriptor.viewIndices.empty() ||
         descriptor.type != descriptor.rootType)
       return std::nullopt;
-    sim::VPIObjectRefKind referenceKind =
-        descriptor.kind == DescriptorInfo::Kind::Net
-            ? sim::VPIObjectRefKind::Net
-            : sim::VPIObjectRefKind::Storage;
-    uint32_t vpiKind = descriptor.kind == DescriptorInfo::Kind::Net
-                           ? sim::vpiKindForNet(descriptor.vpiType)
-                           : sim::vpiKindForStorage(descriptor.vpiType);
-    return DirectEndpoint{
-        sim::VPIObjectRefAttr::get(builder.getContext(), referenceKind,
-                                   builder.getI64IntegerAttr(descriptor.id)),
-        &descriptor, vpiKind};
+    sim::VPIObjectRefAttr reference;
+    uint64_t scopeId = descriptor.scopeId;
+    Type endpointType = descriptor.type;
+    uint32_t vpiKind = 0;
+    if (descriptor.kind == DescriptorInfo::Kind::Net) {
+      auto declared = declaredNets.find(view->path);
+      if (declared == declaredNets.end())
+        return std::nullopt;
+      reference = declared->second.reference;
+      scopeId = declared->second.scopeId;
+      endpointType = declared->second.type;
+      vpiKind = declared->second.vpiKind;
+    } else {
+      reference = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Storage,
+          builder.getI64IntegerAttr(descriptor.id));
+      vpiKind = sim::vpiKindForStorage(descriptor.vpiType);
+    }
+    return DirectEndpoint{reference, &descriptor, vpiKind, scopeId,
+                          endpointType};
   };
   auto statementReference = [&](uint64_t id) {
     return sim::VPIObjectRefAttr::get(builder.getContext(),
@@ -2799,6 +2916,22 @@ materializeDesignDescriptors(ModuleOp module,
                                 statementReference(target.statementId),
                                 getSemanticLocation(target.source)});
   };
+  auto forPhysicalNetSpelling = [&](const DirectEndpoint &source,
+                                    auto &&callback) {
+    if (source.descriptor->kind != DescriptorInfo::Kind::Net) {
+      callback(source);
+      return;
+    }
+    auto aliases = declaredNetsByBacking.find(source.descriptor->id);
+    if (aliases == declaredNetsByBacking.end()) {
+      callback(source);
+      return;
+    }
+    for (const DeclaredNetObject &declared : aliases->second)
+      callback(DirectEndpoint{declared.reference, source.descriptor,
+                              declared.vpiKind, declared.scopeId,
+                              declared.type});
+  };
   llvm::DenseMap<uint64_t, sim::SimScopeDeclOp> scopeDeclarationsById;
   for (sim::SimScopeDeclOp scope : scopes.declarations)
     scopeDeclarationsById[scope.getId()] = scope;
@@ -2824,14 +2957,18 @@ materializeDesignDescriptors(ModuleOp module,
 
   for (const ScopeOwnedStatementPlan &plan : scopeOwnedStatementPlans) {
     SmallVector<Operation *> lhsRhs;
-    SmallVector<Operation *> children = getChildren(plan.source);
-    if (children.size() != 1)
-      continue;
-    auto assignment =
-        dyn_cast<semantic::SVAssignmentExpressionOp>(children.front());
-    if (!assignment)
-      continue;
-    lhsRhs = getChildren(assignment);
+    if (plan.kind == VPIKind::AliasStmt) {
+      lhsRhs = {plan.lhs, plan.rhs};
+    } else {
+      SmallVector<Operation *> children = getChildren(plan.source);
+      if (children.size() != 1)
+        continue;
+      auto assignment =
+          dyn_cast<semantic::SVAssignmentExpressionOp>(children.front());
+      if (!assignment)
+        continue;
+      lhsRhs = getChildren(assignment);
+    }
     if (lhsRhs.size() != 2)
       continue;
 
@@ -2857,45 +2994,53 @@ materializeDesignDescriptors(ModuleOp module,
     emitForward(lhs, reflection::VPIRelationKind::LhsRel);
     emitForward(rhs, reflection::VPIRelationKind::RhsRel);
 
+    if (plan.kind == VPIKind::AliasStmt)
+      continue;
+
     // IEEE 1800-2023 37.46 and 37.58 define the continuous-assignment
-    // connectivity relations below. Alias statements need distinct declared-
-    // net identities despite sharing physical state and are emitted by the
-    // dedicated alias-identity inventory chunk.
+    // connectivity relations below.
     std::optional<uint64_t> statementModule = moduleInstanceScope(plan.scopeId);
     if (lhs) {
-      addReverse(*lhs, selectorValue(reflection::VPIRelationKind::DriverRel),
-                 plan);
+      forPhysicalNetSpelling(*lhs, [&](const DirectEndpoint &spelling) {
+        addReverse(spelling,
+                   selectorValue(reflection::VPIRelationKind::DriverRel), plan);
+        std::optional<uint64_t> objectModule =
+            moduleInstanceScope(spelling.scopeId);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            statementModule && objectModule &&
+            *statementModule == *objectModule)
+          addReverse(spelling,
+                     selectorValue(reflection::VPIRelationKind::LocalDriverRel),
+                     plan);
+        std::optional<uint64_t> width = sim::getPackedWidth(spelling.type);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net && width &&
+            *width == 1)
+          addReverse(spelling, static_cast<uint32_t>(VPIKind::ContAssign),
+                     plan);
+      });
       addReverse(*lhs, selectorValue(reflection::VPIRelationKind::UseRel),
                  plan);
-      std::optional<uint64_t> objectModule =
-          moduleInstanceScope(lhs->descriptor->scopeId);
-      if (lhs->descriptor->kind == DescriptorInfo::Kind::Net &&
-          statementModule && objectModule && *statementModule == *objectModule)
-        addReverse(*lhs,
-                   selectorValue(reflection::VPIRelationKind::LocalDriverRel),
-                   plan);
-      std::optional<uint64_t> width =
-          sim::getPackedWidth(lhs->descriptor->type);
       // IEEE 1800-2023 37.16 restricts vpiContAssign iteration from a net to
       // scalar nets and bit-selects. Variables have their own driver model in
       // 37.17 and 37.21 and expose whole-variable continuous assignments.
-      if (lhs->descriptor->kind == DescriptorInfo::Kind::Storage ||
-          (lhs->descriptor->kind == DescriptorInfo::Kind::Net && width &&
-           *width == 1))
+      if (lhs->descriptor->kind == DescriptorInfo::Kind::Storage)
         addReverse(*lhs, static_cast<uint32_t>(VPIKind::ContAssign), plan);
     }
     if (rhs) {
-      addReverse(*rhs, selectorValue(reflection::VPIRelationKind::LoadRel),
-                 plan);
+      forPhysicalNetSpelling(*rhs, [&](const DirectEndpoint &spelling) {
+        addReverse(spelling,
+                   selectorValue(reflection::VPIRelationKind::LoadRel), plan);
+        std::optional<uint64_t> objectModule =
+            moduleInstanceScope(spelling.scopeId);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            statementModule && objectModule &&
+            *statementModule == *objectModule)
+          addReverse(spelling,
+                     selectorValue(reflection::VPIRelationKind::LocalLoadRel),
+                     plan);
+      });
       addReverse(*rhs, selectorValue(reflection::VPIRelationKind::UseRel),
                  plan);
-      std::optional<uint64_t> objectModule =
-          moduleInstanceScope(rhs->descriptor->scopeId);
-      if (rhs->descriptor->kind == DescriptorInfo::Kind::Net &&
-          statementModule && objectModule && *statementModule == *objectModule)
-        addReverse(*rhs,
-                   selectorValue(reflection::VPIRelationKind::LocalLoadRel),
-                   plan);
     }
   }
   llvm::sort(reverseRelations, [](const ReverseRelation &left,

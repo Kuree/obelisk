@@ -360,6 +360,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(operation)) {
       if (includeStatements)
         generalRelationDeclarations.push_back(relation);
+    } else if (auto identity =
+                   dyn_cast<sim::SimVPINetIdentityDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      if (identity.getId() > UINT64_MAX - netSources.size()) {
+        identity.emitOpError("stable VPI net identity ID cannot be encoded");
+        return {};
+      }
+      uint64_t stableID = netSources.size() + identity.getId();
+      uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
+      objects.push_back(
+          {OBELISK_RT_DESIGN_RECORD_NET,
+           sim::vpiKindForNet(identity.getVpiTypeAttr()), caps, stableID,
+           identity.getScopeId(), identity.getHierarchicalName().str(),
+           identity.getType(), netOffsets.lookup(identity.getBackingNetId()),
+           sourceFor(identity), true, identity});
     } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -616,7 +632,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       statementIndices, statementKinds;
   DenseMap<Operation *, uint32_t> objectIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
-      canonicalNetTargetIndices;
+      canonicalNetTargetIndices, physicalNetObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
   for (auto [index, object] : llvm::enumerate(objects)) {
@@ -625,6 +641,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
         object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
+    if (isa_and_present<sim::SimNetDeclOp>(object.identity))
+      physicalNetObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
         wholeStoragePortSources.contains(object.id))
       canonicalStorageTargetIndices.try_emplace(object.id,
@@ -633,6 +651,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
         wholeNetPortSources.contains(object.id))
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
+  }
+  for (const Record &object : objects) {
+    auto identity =
+        dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(object.identity);
+    if (!identity)
+      continue;
+    if (!physicalNetObjectIndices.contains(identity.getBackingNetId())) {
+      identity.emitOpError("backing net was not serialized");
+      return {};
+    }
   }
   for (auto [index, statement] : llvm::enumerate(statements)) {
     statementIndices[statement.declaration.getId()] =
@@ -771,15 +799,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   }
 
-  DenseMap<uint64_t, ImageObjectRef> storageRefs, netRefs;
+  DenseMap<uint64_t, ImageObjectRef> storageRefs, netRefs, netIdentityRefs;
   if (includeStatements) {
     for (auto [index, object] : llvm::enumerate(objects)) {
       ImageObjectRef reference{TableKind::Object, static_cast<uint32_t>(index),
                                object.vpiKind};
       if (object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE)
         storageRefs.try_emplace(object.id, reference);
-      else if (object.kind == OBELISK_RT_DESIGN_RECORD_NET)
-        netRefs.try_emplace(object.id, reference);
+      else if (object.kind == OBELISK_RT_DESIGN_RECORD_NET) {
+        if (auto identity = dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
+                object.identity))
+          netIdentityRefs.try_emplace(identity.getId(), reference);
+        else
+          netRefs.try_emplace(object.id, reference);
+      }
     }
   }
 
@@ -1147,6 +1180,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       else if (auto net =
                    dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
         semantic = net.getVpiTypeAttr();
+      else if (auto identity =
+                   dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
+                       object.identity))
+        semantic = identity.getVpiTypeAttr();
       else if (auto port =
                    dyn_cast_if_present<sim::SimPortDeclOp>(object.identity))
         semantic = port.getVpiTypeAttr();
@@ -1300,6 +1337,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       case sim::VPIObjectRefKind::Net: {
         auto found = netRefs.find(id);
         if (found != netRefs.end())
+          resolved = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::NetIdentity: {
+        auto found = netIdentityRefs.find(id);
+        if (found != netIdentityRefs.end())
           resolved = found->second;
         break;
       }
@@ -1737,6 +1780,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return storage.getVpiTypeAttr();
     if (auto net = dyn_cast<sim::SimNetDeclOp>(object.identity))
       return net.getVpiTypeAttr();
+    if (auto identity = dyn_cast<sim::SimVPINetIdentityDeclOp>(object.identity))
+      return identity.getVpiTypeAttr();
     if (auto port = dyn_cast<sim::SimPortDeclOp>(object.identity))
       return port.getVpiTypeAttr();
     if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(object.identity))
@@ -2287,6 +2332,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
         appendNetDelayRun(static_cast<uint32_t>(objectIndex), bit, 1, delays);
       }
     }
+
+    // Collapsed declared-net identities intentionally do not duplicate these
+    // per-bit runs. Cold VPI queries follow their generated vpiSimNet edge to
+    // the canonical physical net, keeping image size linear in the physical
+    // design rather than in the number of declared alias spellings.
+    llvm::sort(netDelayRuns, [](const NetDelayRunRecord &left,
+                                const NetDelayRunRecord &right) {
+      return std::tie(left.objectIndex, left.firstBit) <
+             std::tie(right.objectIndex, right.firstBit);
+    });
   }
 
   SmallVector<uint8_t> strings(1, 0);

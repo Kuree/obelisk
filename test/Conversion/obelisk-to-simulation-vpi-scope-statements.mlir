@@ -89,8 +89,8 @@ module attributes {
                 referenced_symbol = @root::@top_i::@top_b::@direct_lhs,
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
             obelisk.sv.expression.named_value attributes {is_signed = false,
-                node_id = 61 : i64, referenced_path = "top.source",
-                referenced_symbol = @root::@top_i::@top_b::@source,
+                node_id = 61 : i64, referenced_path = "top.d",
+                referenced_symbol = @root::@top_i::@top_b::@d,
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         } loc("scope_owned.sv":10:3)
@@ -321,11 +321,28 @@ module attributes {
 // IR: obelisk_sim.net.decl [[VECTOR_RHS:[0-9]+]] {{.*}} hierarchy "top.vector_rhs"
 // IR: obelisk_sim.storage.decl [[VARIABLE_LHS:[0-9]+]] {{.*}} hierarchy "top.variable_lhs"
 // IR: obelisk_sim.storage.decl [[VARIABLE_RHS:[0-9]+]] {{.*}} hierarchy "top.variable_rhs"
+// IR: obelisk_sim.net.decl [[GENERATED_A:[0-9]+]] {{.*}} hierarchy "top.g.a"
+// IR: obelisk_sim.vpi_net_identity.decl [[B_ID:[0-9]+]] backed_by [[A:[0-9]+]] in 1 {{.*}} hierarchy "top.b"
+// IR: obelisk_sim.vpi_net_identity.decl [[C_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.c"
+// IR: obelisk_sim.vpi_net_identity.decl [[D_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.d"
+// IR: obelisk_sim.vpi_net_identity.decl [[GENERATED_B_ID:[0-9]+]] backed_by [[GENERATED_A]] in 1 {{.*}} hierarchy "top.g.b"
+// IR-NOT: obelisk_sim.vpi_relation.decl <kind = net, id = [[A]] : i64> selector 126
+// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[B_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[C_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[D_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[DIRECT_LHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[SOURCE]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[VECTOR_LHS]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[VECTOR_RHS]] : i64>
-// IR-NOT: obelisk_sim.vpi_relation.decl <kind = statement, id = 6 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 3 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 3 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 4 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[B_ID]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 4 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 5 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[C_ID]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 5 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 6 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 7 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 7 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[GENERATED_B_ID]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 77 handle ordinal 0 to <kind = storage, id = [[VARIABLE_LHS]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 82 handle ordinal 0 to <kind = storage, id = [[VARIABLE_RHS]] : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 8 : i64>
@@ -333,9 +350,6 @@ module attributes {
 // IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 8 : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 123 iterate ordinal 0 to <kind = statement, id = 1 : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 1 : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 1 : i64>
 // IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>

@@ -3424,9 +3424,126 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return makeIndexedPrefix(handle, 0);
     return makeIndexedPrefix(handle, indexedParentPrefixCount(handle));
   }
+  auto makeSimulatedNetHandle = [&](obelisk_rt_design_cursor_v1 target,
+                                    uint32_t targetType) -> vpiHandle {
+    if (handle->form == VPIObjectForm::Design)
+      return makeHandle(
+          handle->owner, target, targetType, false,
+          obelisk::runtime::hasClassDefinitionValueOrigin(
+              sourceType, handle->classDefinitionOrigin, targetType));
+    if (handle->form != VPIObjectForm::Indexed ||
+        handle->selectionSteps.empty())
+      return nullptr;
+    if (target.offset == handle->cursor.offset)
+      return makeIndexedPrefix(handle, handle->selectionSteps.size());
+    OBELISK_RT_TRY {
+      __vpiHandle source;
+      source.owner = handle->owner;
+      source.form = VPIObjectForm::Indexed;
+      source.cursor = target;
+      source.exactVpiType = targetType;
+      source.protectedObject = handle->protectedObject;
+      source.allocationScheme = handle->allocationScheme;
+      source.classDefinitionOrigin = handle->classDefinitionOrigin;
+      source.selectionRootType = targetType;
+      const auto *access =
+          obelisk::reflection::findVPIIndexedAccess(targetType);
+      if (!access)
+        return nullptr;
+      source.selectionAccessKind = access->accessKind;
+      if (!fixedProtectionFor(handle->owner, target, source.protectedObject))
+        return nullptr;
+
+      obelisk_rt_design_info_v1 selectedInfo{};
+      if (!infoFor(handle, selectedInfo) || selectedInfo.bit_width == 0)
+        return nullptr;
+      const uint64_t desiredOffset = handle->selectionBitOffset;
+      const uint64_t desiredWidth = selectedInfo.bit_width;
+      std::vector<VPISelectionStep> steps;
+      steps.reserve(handle->selectionSteps.size());
+      uint64_t containingOffset = 0;
+      while (true) {
+        obelisk_rt_design_info_v1 rootInfo{};
+        if (obelisk_rt_cached_design_info(handle->owner->context, target,
+                                          &rootInfo) != OBELISK_RT_OK ||
+            rootInfo.type_offset == 0)
+          return nullptr;
+        obelisk_rt_design_cursor_v1 physical{
+            steps.empty() ? rootInfo.type_offset
+                          : steps.back().physicalType.offset};
+        obelisk_rt_design_type_info_v1 typeInfo{};
+        if (obelisk_rt_cached_design_type_info(handle->owner->context, physical,
+                                               &typeInfo) != OBELISK_RT_OK)
+          return nullptr;
+        bool isArray = typeInfo.kind == OBELISK_RT_DESIGN_TYPE_ARRAY;
+        bool packed = (typeInfo.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+        uint64_t childWidth = 1;
+        if (isArray) {
+          obelisk_rt_design_type_info_v1 element{};
+          if (typeInfo.element_type.offset == 0 ||
+              obelisk_rt_cached_design_type_info(handle->owner->context,
+                                                 typeInfo.element_type,
+                                                 &element) != OBELISK_RT_OK ||
+              element.bit_width == 0)
+            return nullptr;
+          childWidth = element.bit_width;
+        } else if (!packed || typeInfo.bit_width <= 1) {
+          return nullptr;
+        }
+        uint64_t distance =
+            typeInfo.range_left >= typeInfo.range_right
+                ? static_cast<uint64_t>(typeInfo.range_left) -
+                      static_cast<uint64_t>(typeInfo.range_right)
+                : static_cast<uint64_t>(typeInfo.range_right) -
+                      static_cast<uint64_t>(typeInfo.range_left);
+        if (distance == UINT64_MAX)
+          return nullptr;
+        uint64_t extent = distance + 1;
+        if (desiredOffset < containingOffset ||
+            desiredWidth > typeInfo.bit_width ||
+            desiredOffset - containingOffset >
+                typeInfo.bit_width - desiredWidth)
+          return nullptr;
+        uint64_t localOffset = desiredOffset - containingOffset;
+        uint64_t storageOrdinal = localOffset / childWidth;
+        if (storageOrdinal >= extent)
+          return nullptr;
+        uint64_t ordinal =
+            packed ? extent - 1 - storageOrdinal : storageOrdinal;
+        __int128 index =
+            typeInfo.range_left <= typeInfo.range_right
+                ? static_cast<__int128>(typeInfo.range_left) + ordinal
+                : static_cast<__int128>(typeInfo.range_left) - ordinal;
+        if (index < std::numeric_limits<int64_t>::min() ||
+            index > std::numeric_limits<int64_t>::max() ||
+            !appendIndexedSelection(&source, access->accessKind,
+                                    static_cast<int64_t>(index), steps))
+          return nullptr;
+        containingOffset = steps.back().bitOffset;
+        if (containingOffset == desiredOffset &&
+            steps.back().bitWidth == desiredWidth)
+          break;
+        if (steps.back().bitWidth < desiredWidth ||
+            desiredOffset < containingOffset ||
+            desiredOffset - containingOffset >
+                steps.back().bitWidth - desiredWidth)
+          return nullptr;
+      }
+      source.selectionBitOffset = desiredOffset;
+      return makeIndexedHandle(&source, targetType, access->accessKind,
+                               std::move(steps));
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "could not copy simulated-net selection",
+               vpiSystem);
+      return nullptr;
+    }
+  };
   VPIRelationRange range{};
+  bool indexedSimNet =
+      handle->form == VPIObjectForm::Indexed && type == vpiSimNet;
   obelisk_rt_status relationStatus =
-      handle->form == VPIObjectForm::Design
+      (handle->form == VPIObjectForm::Design || indexedSimNet)
           ? obelisk_rt_cached_vpi_relation_range(
                 handle->owner->context, handle->cursor,
                 static_cast<uint32_t>(type), false, &range)
@@ -3439,6 +3556,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
             handle->owner->context, range.first, &target, &targetType,
             &targetIsStatement) != OBELISK_RT_OK)
       return nullptr;
+    if (indexedSimNet) {
+      if (targetIsStatement)
+        return nullptr;
+      return makeSimulatedNetHandle(target, targetType);
+    }
     return makeHandle(
         handle->owner, target, targetType, targetIsStatement,
         obelisk::runtime::hasClassDefinitionValueOrigin(
@@ -3446,6 +3568,17 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (relationStatus != OBELISK_RT_EOF)
     return nullptr;
+  if (type == vpiSimNet &&
+      (handle->form == VPIObjectForm::Design || indexedSimNet)) {
+    uint32_t rootType = 0;
+    const auto *edge = obelisk::reflection::findVPITraversal(
+        sourceType, vpiSimNet, obelisk::reflection::VPITraversalMode::Handle);
+    if (edge &&
+        obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                   &rootType) == OBELISK_RT_OK &&
+        obelisk::reflection::vpiObjectSetContains(edge->targets, rootType))
+      return makeSimulatedNetHandle(handle->cursor, rootType);
+  }
   if ((type == vpiLeftRange || type == vpiRightRange) &&
       (handle->form == VPIObjectForm::Design ||
        handle->form == VPIObjectForm::Indexed)) {

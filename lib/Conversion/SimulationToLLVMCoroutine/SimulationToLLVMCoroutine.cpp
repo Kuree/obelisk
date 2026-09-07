@@ -3804,13 +3804,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
               sim::SimStatementDeclOp, sim::SimStatementSiteDeclOp,
               sim::SimVPIStatementRelationDeclOp, sim::SimVPIRelationDeclOp,
-              sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
-              sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
-              sim::SimPassSwitchDeclOp, sim::SimClassDeclOp,
-              sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
-              sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
-              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-              sim::SimRandomConstraintTemplateOp>(operation)) {
+              sim::SimVPINetIdentityDeclOp, sim::SimStorageDeclOp,
+              sim::SimNetDeclOp, sim::SimDriverDeclOp, sim::SimPortDeclOp,
+              sim::SimNetConnectDeclOp, sim::SimPassSwitchDeclOp,
+              sim::SimClassDeclOp, sim::SimCovergroupDeclOp,
+              sim::SimVPIObjectAnchorOp, sim::SimVPITypespecDeclOp,
+              sim::SimVPIEnumConstDeclOp, sim::SimClassFieldDeclOp,
+              sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
+              operation)) {
         operation->erase();
         continue;
       }

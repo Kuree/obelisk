@@ -201,6 +201,28 @@ def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPINetIdentityDeclOp : SimOp<"vpi_net_identity.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "declared net identity sharing a collapsed physical net";
+  let description = [{
+    Preserves a distinct source-declared net after executable topology has
+    collapsed it onto `backing_net_id`. The reflection object retains its own
+    name, scope, source type, and fixed properties while value access shares
+    the backing net's state offset. This metadata is immutable and never
+    participates in scheduling or executable lowering.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$backing_net_id,
+                       I64Attr:$scope_id, TypeAttr:$type,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type);
+  let assemblyFormat = [{
+    $id `backed_by` $backing_net_id `in` $scope_id `:` $type
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

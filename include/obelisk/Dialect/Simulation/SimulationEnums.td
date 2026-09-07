@@ -54,9 +54,12 @@ def SimVPIStatementSourceKind : I32EnumAttr<
 def SimVPIObjectRefStatement : I32EnumAttrCase<"Statement", 0, "statement">;
 def SimVPIObjectRefStorage : I32EnumAttrCase<"Storage", 1, "storage">;
 def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
+def SimVPIObjectRefNetIdentity
+    : I32EnumAttrCase<"NetIdentity", 3, "net_identity">;
 def SimVPIObjectRefKind : I32EnumAttr<
     "VPIObjectRefKind", "stable VPI relation endpoint identity", [
-      SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet
+      SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet,
+      SimVPIObjectRefNetIdentity
     ]> {
   let cppNamespace = "::obelisk::sim";
 }

@@ -36,6 +36,119 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @unknown_net_identity_reference {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.n" debug "n"
+    // expected-error @below {{references an unknown source net_identity ID 0}}
+    obelisk_sim.vpi_relation.decl <kind = net_identity, id = 0 : i64>
+        selector 126 handle ordinal 0 to <kind = net, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_net_identity_backing {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    // expected-error @below {{references an unknown backing net ID}}
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 99 in 0
+        : !obelisk_sim.logic<1> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @net_identity_type_mismatch {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.n" debug "n"
+    // expected-error @below {{net identity width does not match its backing net}}
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 0
+        : !obelisk_sim.logic<2> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [1, 0], children = [], childNames = []>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_net_identity_hierarchy {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.n" debug "n"
+    // expected-error @below {{duplicates declared net hierarchy}}
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 0
+        : !obelisk_sim.logic<1> hierarchy "top.n" debug "n" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @missing_net_identity_sim_net {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.n" debug "n"
+    // expected-error @below {{requires one vpiSimNet relation to its backing net}}
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 0
+        : !obelisk_sim.logic<1> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @wrong_net_identity_sim_net {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.a" debug "a"
+    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.b" debug "b"
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 0
+        : !obelisk_sim.logic<1> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+    // expected-error @below {{vpiSimNet target does not match the net identity's backing net}}
+    obelisk_sim.vpi_relation.decl <kind = net_identity, id = 0 : i64>
+        selector 126 handle ordinal 0 to <kind = net, id = 1 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_net_identity_scope {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
+        hierarchy "top.n" debug "n"
+    // expected-error @below {{references an unknown scope ID}}
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 99
+        : !obelisk_sim.logic<1> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_relation.decl <kind = net_identity, id = 0 : i64>
+        selector 126 handle ordinal 0 to <kind = net, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @illegal_edge {
     obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
     obelisk_sim.statement.decl 1 scope 0 type 8

@@ -788,6 +788,41 @@ bool relationMatches(const obelisk::reflection::RelationView &relation,
              relation.getSourceKindAndTable()) == iterate;
 }
 
+// Resolve the immutable physical net behind a declared net spelling. The
+// common case has no stored vpiSimNet edge and therefore remains the source
+// object itself. Only collapsed aliases pay one relation-table binary search
+// on this cold VPI/debugger path.
+obelisk_rt_status simulatedNetObjectIndex(const Database &database,
+                                          uint32_t sourceIndex,
+                                          uint32_t &targetIndex) {
+  if (sourceIndex >= database.objectCount)
+    return OBELISK_RT_INVALID_HANDLE;
+  targetIndex = sourceIndex;
+  constexpr uint16_t selector =
+      static_cast<uint16_t>(obelisk::reflection::VPIRelationKind::SimNetRel);
+  uint64_t index =
+      lowerBoundRelation(database, obelisk::reflection::TableKind::Object,
+                         sourceIndex, selector, false);
+  if (index == database.relationCount)
+    return OBELISK_RT_OK;
+  auto relation = relationAt(database, index);
+  if (!relationMatches(relation, obelisk::reflection::TableKind::Object,
+                       sourceIndex, selector, false))
+    return OBELISK_RT_OK;
+  uint32_t packedTarget = relation.getTargetIndexAndTable();
+  if (obelisk::reflection::unpackTableIndexKind(packedTarget) !=
+      obelisk::reflection::TableKind::Object)
+    return OBELISK_RT_INVALID_DESIGN;
+  uint32_t candidate = obelisk::reflection::unpackTableIndex(packedTarget);
+  if (candidate >= database.objectCount ||
+      recordKind(database.data + database.objects +
+                 uint64_t{candidate} * kObjectSize) !=
+          OBELISK_RT_DESIGN_RECORD_NET)
+    return OBELISK_RT_INVALID_DESIGN;
+  targetIndex = candidate;
+  return OBELISK_RT_OK;
+}
+
 bool getRecord(const Database &database, uint64_t offset,
                const uint8_t *&record, uint32_t &kind) {
   if (!isScopeOffset(database, offset) && !isObjectOffset(database, offset) &&
@@ -3287,6 +3322,15 @@ obelisk_rt_status designVPIResolvedNetType(
   if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET ||
       bitOffset > width || bitWidth > width - bitOffset)
     return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_status simulated =
+      simulatedNetObjectIndex(database, objectIndex, objectIndex);
+  if (simulated != OBELISK_RT_OK)
+    return simulated;
+  object =
+      database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
+  uint64_t simulatedWidth = read64(object + 56);
+  if (bitOffset > simulatedWidth || bitWidth > simulatedWidth - bitOffset)
+    return OBELISK_RT_INVALID_DESIGN;
 
   // Find the last run whose start is not after the selected first bit.
   uint64_t low = 0;
@@ -3342,6 +3386,15 @@ obelisk_rt_status designVPINetDelay(const Database &database,
   if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || bitOffset > width ||
       bitWidth > width - bitOffset)
     return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_status simulated =
+      simulatedNetObjectIndex(database, objectIndex, objectIndex);
+  if (simulated != OBELISK_RT_OK)
+    return simulated;
+  object =
+      database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
+  uint64_t simulatedWidth = read64(object + 56);
+  if (bitOffset > simulatedWidth || bitWidth > simulatedWidth - bitOffset)
+    return OBELISK_RT_INVALID_DESIGN;
 
   uint64_t low = 0;
   uint64_t high = database.netDelayRunCount;

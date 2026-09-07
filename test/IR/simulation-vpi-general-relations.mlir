@@ -19,6 +19,11 @@ module {
       vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
           isFourState = true, range = [0, 0], children = [], childNames = []>
     }
+    obelisk_sim.vpi_net_identity.decl 0 backed_by 0 in 0
+        : !obelisk_sim.logic<1> hierarchy "top.alias" debug "alias" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
         hierarchy "top.variable" debug "variable"
     obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64>
@@ -37,6 +42,8 @@ module {
         selector 93 iterate ordinal 0 to <kind = statement, id = 2 : i64>
     obelisk_sim.vpi_relation.decl <kind = storage, id = 0 : i64>
         selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+    obelisk_sim.vpi_relation.decl <kind = net_identity, id = 0 : i64>
+        selector 126 handle ordinal 0 to <kind = net, id = 0 : i64>
   }
 }
 
@@ -49,3 +56,4 @@ module {
 // CHECK: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 82 handle ordinal 0 to <kind = storage, id = 0 : i64>
 // CHECK: obelisk_sim.vpi_relation.decl <kind = storage, id = 0 : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 2 : i64>
 // CHECK: obelisk_sim.vpi_relation.decl <kind = storage, id = 0 : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// CHECK: obelisk_sim.vpi_relation.decl <kind = net_identity, id = 0 : i64> selector 126 handle ordinal 0 to <kind = net, id = 0 : i64>
