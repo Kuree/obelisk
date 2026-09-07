@@ -737,7 +737,89 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_get(vpiType, directAssignment), vpiContAssign);
   EXPECT_STREQ(vpi_get_str(vpiFile, directAssignment), "scope_owned.sv");
   EXPECT_EQ(vpi_get(vpiLineNo, directAssignment), 10);
+  vpiHandle vectorAssignment = vpi_scan(topAssignments);
+  ASSERT_NE(vectorAssignment, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, vectorAssignment), vpiContAssign);
+  EXPECT_EQ(vpi_get(vpiLineNo, vectorAssignment), 12);
+  vpiHandle variableAssignment = vpi_scan(topAssignments);
+  ASSERT_NE(variableAssignment, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, variableAssignment), vpiContAssign);
+  EXPECT_EQ(vpi_get(vpiLineNo, variableAssignment), 13);
   EXPECT_EQ(vpi_scan(topAssignments), nullptr);
+
+  PLI_BYTE8 lhsName[] = "top.direct_lhs";
+  PLI_BYTE8 rhsName[] = "top.source";
+  vpiHandle expectedLhs = vpi_handle_by_name(lhsName, nullptr);
+  vpiHandle expectedRhs = vpi_handle_by_name(rhsName, nullptr);
+  vpiHandle assignmentLhs = vpi_handle(vpiLhs, directAssignment);
+  vpiHandle assignmentRhs = vpi_handle(vpiRhs, directAssignment);
+  ASSERT_NE(expectedLhs, nullptr);
+  ASSERT_NE(expectedRhs, nullptr);
+  ASSERT_NE(assignmentLhs, nullptr);
+  ASSERT_NE(assignmentRhs, nullptr);
+  EXPECT_EQ(vpi_compare_objects(expectedLhs, assignmentLhs), 1);
+  EXPECT_EQ(vpi_compare_objects(expectedRhs, assignmentRhs), 1);
+
+  auto expectOnlyAssignment = [&](PLI_INT32 relation, vpiHandle source,
+                                  vpiHandle expected) {
+    vpiHandle iterator = vpi_iterate(relation, source);
+    ASSERT_NE(iterator, nullptr) << "missing relation " << relation;
+    vpiHandle target = vpi_scan(iterator);
+    ASSERT_NE(target, nullptr) << "empty relation " << relation;
+    EXPECT_EQ(vpi_compare_objects(expected, target), 1);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_release_handle(target), 1);
+  };
+  expectOnlyAssignment(vpiContAssign, assignmentLhs, directAssignment);
+  expectOnlyAssignment(vpiDriver, assignmentLhs, directAssignment);
+  expectOnlyAssignment(vpiLocalDriver, assignmentLhs, directAssignment);
+  expectOnlyAssignment(vpiUse, assignmentLhs, directAssignment);
+  expectOnlyAssignment(vpiLoad, assignmentRhs, directAssignment);
+  expectOnlyAssignment(vpiLocalLoad, assignmentRhs, directAssignment);
+  expectOnlyAssignment(vpiUse, assignmentRhs, directAssignment);
+
+  PLI_BYTE8 vectorLhsName[] = "top.vector_lhs";
+  PLI_BYTE8 vectorRhsName[] = "top.vector_rhs";
+  vpiHandle expectedVectorLhs = vpi_handle_by_name(vectorLhsName, nullptr);
+  vpiHandle expectedVectorRhs = vpi_handle_by_name(vectorRhsName, nullptr);
+  vpiHandle vectorLhs = vpi_handle(vpiLhs, vectorAssignment);
+  vpiHandle vectorRhs = vpi_handle(vpiRhs, vectorAssignment);
+  ASSERT_NE(expectedVectorLhs, nullptr);
+  ASSERT_NE(expectedVectorRhs, nullptr);
+  ASSERT_NE(vectorLhs, nullptr);
+  ASSERT_NE(vectorRhs, nullptr);
+  EXPECT_EQ(vpi_compare_objects(expectedVectorLhs, vectorLhs), 1);
+  EXPECT_EQ(vpi_compare_objects(expectedVectorRhs, vectorRhs), 1);
+  // IEEE 1800-2023 37.16 limits vpiContAssign iteration to scalar nets and
+  // bit-selects, while whole-vector driver/load iteration returns the driving
+  // or loading assignment exactly once.
+  EXPECT_EQ(vpi_iterate(vpiContAssign, vectorLhs), nullptr);
+  expectOnlyAssignment(vpiDriver, vectorLhs, vectorAssignment);
+  expectOnlyAssignment(vpiLocalDriver, vectorLhs, vectorAssignment);
+  expectOnlyAssignment(vpiUse, vectorLhs, vectorAssignment);
+  expectOnlyAssignment(vpiLoad, vectorRhs, vectorAssignment);
+  expectOnlyAssignment(vpiLocalLoad, vectorRhs, vectorAssignment);
+  expectOnlyAssignment(vpiUse, vectorRhs, vectorAssignment);
+
+  PLI_BYTE8 variableLhsName[] = "top.variable_lhs";
+  PLI_BYTE8 variableRhsName[] = "top.variable_rhs";
+  vpiHandle expectedVariableLhs = vpi_handle_by_name(variableLhsName, nullptr);
+  vpiHandle expectedVariableRhs = vpi_handle_by_name(variableRhsName, nullptr);
+  vpiHandle variableLhs = vpi_handle(vpiLhs, variableAssignment);
+  vpiHandle variableRhs = vpi_handle(vpiRhs, variableAssignment);
+  ASSERT_NE(expectedVariableLhs, nullptr);
+  ASSERT_NE(expectedVariableRhs, nullptr);
+  ASSERT_NE(variableLhs, nullptr);
+  ASSERT_NE(variableRhs, nullptr);
+  EXPECT_EQ(vpi_compare_objects(expectedVariableLhs, variableLhs), 1);
+  EXPECT_EQ(vpi_compare_objects(expectedVariableRhs, variableRhs), 1);
+  expectOnlyAssignment(vpiContAssign, variableLhs, variableAssignment);
+  expectOnlyAssignment(vpiDriver, variableLhs, variableAssignment);
+  EXPECT_EQ(vpi_iterate(vpiLocalDriver, variableLhs), nullptr);
+  expectOnlyAssignment(vpiUse, variableLhs, variableAssignment);
+  expectOnlyAssignment(vpiLoad, variableRhs, variableAssignment);
+  EXPECT_EQ(vpi_iterate(vpiLocalLoad, variableRhs), nullptr);
+  expectOnlyAssignment(vpiUse, variableRhs, variableAssignment);
 
   vpiHandle topAliases = vpi_iterate(vpiAliasStmt, top);
   ASSERT_NE(topAliases, nullptr);
@@ -758,6 +840,10 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_get(vpiType, generatedAssignment), vpiContAssign);
   EXPECT_EQ(vpi_get(vpiLineNo, generatedAssignment), 20);
   EXPECT_EQ(vpi_scan(generatedAssignments), nullptr);
+  // The assignment names a net whose physical descriptor is collapsed by an
+  // alias statement. Until alias identities are serialized separately, do
+  // not return the wrong declared net as the assignment endpoint.
+  EXPECT_EQ(vpi_handle(vpiLhs, generatedAssignment), nullptr);
 
   vpiHandle generatedAliases = vpi_iterate(vpiAliasStmt, generated);
   ASSERT_NE(generatedAliases, nullptr);
@@ -815,6 +901,20 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_release_handle(generatedAssignment), 1);
   for (vpiHandle alias : directAliases)
     EXPECT_EQ(vpi_release_handle(alias), 1);
+  EXPECT_EQ(vpi_release_handle(vectorRhs), 1);
+  EXPECT_EQ(vpi_release_handle(vectorLhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedVectorRhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedVectorLhs), 1);
+  EXPECT_EQ(vpi_release_handle(vectorAssignment), 1);
+  EXPECT_EQ(vpi_release_handle(variableRhs), 1);
+  EXPECT_EQ(vpi_release_handle(variableLhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedVariableRhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedVariableLhs), 1);
+  EXPECT_EQ(vpi_release_handle(variableAssignment), 1);
+  EXPECT_EQ(vpi_release_handle(assignmentRhs), 1);
+  EXPECT_EQ(vpi_release_handle(assignmentLhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedRhs), 1);
+  EXPECT_EQ(vpi_release_handle(expectedLhs), 1);
   EXPECT_EQ(vpi_release_handle(directAssignment), 1);
   EXPECT_EQ(vpi_release_handle(generated), 1);
   EXPECT_EQ(vpi_release_handle(program), 1);

@@ -47,6 +47,29 @@ def SimVPIStatementSourceKind : I32EnumAttr<
   let cppNamespace = "::obelisk::sim";
 }
 
+// Stable logical identities used by explicit direct-object VPI relations.
+// These are resolved to compact image-table indices only during design-
+// database serialization. Add endpoint categories only with a producer and a
+// collision policy for relations synthesized by the serializer.
+def SimVPIObjectRefStatement : I32EnumAttrCase<"Statement", 0, "statement">;
+def SimVPIObjectRefStorage : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
+def SimVPIObjectRefKind : I32EnumAttr<
+    "VPIObjectRefKind", "stable VPI relation endpoint identity", [
+      SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimVPIRelationHandle : I32EnumAttrCase<"Handle", 0, "handle">;
+def SimVPIRelationIterate : I32EnumAttrCase<"Iterate", 1, "iterate">;
+def SimVPIRelationMode : I32EnumAttr<
+    "VPIRelationMode", "VPI relation access mode", [
+      SimVPIRelationHandle, SimVPIRelationIterate
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // A source VPI identity may alias an executable descriptor that already has
 // a compact runtime representation.  Keeping the backing category explicit
 // lets serialization reuse that object instead of creating a duplicate

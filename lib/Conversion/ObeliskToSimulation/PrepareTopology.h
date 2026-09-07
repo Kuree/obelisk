@@ -53,6 +53,11 @@ struct StaticStorageView {
 
 struct PreparedPortAliases {
   llvm::StringMap<std::string> aliases;
+  /// Every source spelling whose descriptor was collapsed with another
+  /// source object. Until reflection carries distinct logical identities for
+  /// these names, direct-object relations must not expose the shared backing
+  /// descriptor as though it were the named source object.
+  llvm::StringSet<> collapsedAliasPaths;
   llvm::StringMap<StaticStorageView> refViews;
   llvm::StringMap<std::string> interfaceAliases;
   llvm::StringMap<StaticStorageView> interfaceViews;

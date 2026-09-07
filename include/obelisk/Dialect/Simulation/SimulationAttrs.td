@@ -29,6 +29,20 @@ def SimVPIPropertySetAttr : SimAttr<"VPIPropertySet", "vpi_properties"> {
   let genVerifyDecl = 1;
 }
 
+def SimVPIObjectRefAttr : SimAttr<"VPIObjectRef", "vpi_ref"> {
+  let summary = "stable logical reference to a VPI-visible design object";
+  let description = [{
+    Identifies an existing immutable design-inventory declaration without
+    exposing its eventual reflection-image table index. Each reference kind
+    has its own stable ID namespace. The serializer resolves references only
+    after physical object records have been sorted.
+  }];
+  let parameters = (ins EnumParameter<SimVPIObjectRefKind>:$kind,
+      "::mlir::IntegerAttr":$id);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimVPIObjectBackingAttr
     : SimAttr<"VPIObjectBacking", "vpi_backing"> {
   let summary = "physical executable descriptor backing a source VPI object";

@@ -8,6 +8,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -359,6 +360,19 @@ LogicalResult SimVPIStatementRelationDeclOp::verify() {
   const auto *source = reflection::findVPIObjectKind(getSourceVpiKind());
   if (!source || source->role != reflection::VPIObjectRole::Concrete)
     return emitOpError("source VPI kind is not a concrete object");
+  return success();
+}
+
+LogicalResult SimVPIRelationDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getSelectorAttr(), "VPI selector")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "ordinal")))
+    return failure();
+  if (getSelector() > UINT16_MAX)
+    return emitOpError("VPI selector exceeds the reflection encoding");
+  if (getOrdinal() > UINT32_MAX)
+    return emitOpError("ordinal exceeds the reflection encoding");
+  if (getMode() == VPIRelationMode::Handle && getOrdinal() != 0)
+    return emitOpError("vpi_handle relation must use ordinal zero");
   return success();
 }
 
@@ -1950,9 +1964,11 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
   llvm::DenseMap<uint64_t, SimVPIObjectAnchorOp> vpiAnchorsById;
+  llvm::DenseMap<uint64_t, SimStorageDeclOp> storagesById;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
+  SmallVector<SimVPIRelationDeclOp> vpiRelations;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPITypespecDeclOp> typespecs;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
@@ -1997,6 +2013,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementSites.push_back(site);
     } else if (auto relation = dyn_cast<SimVPIStatementRelationDeclOp>(op)) {
       statementRelations.push_back(relation);
+    } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
+      vpiRelations.push_back(relation);
     } else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op)) {
       if (failed(addId(anchor.getInventoryIdAttr(), vpiAnchorIds,
                        "VPI object anchor")))
@@ -2017,6 +2035,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       storageTypes[storage.getId()] = storage.getType();
       storages.push_back(storage);
+      storagesById[storage.getId()] = storage;
     } else if (auto net = dyn_cast<SimNetDeclOp>(op)) {
       if (failed(addId(net.getIdAttr(), netIds, "net")))
         return failure();
@@ -2635,6 +2654,136 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (!incomingRelations.count(statement.getId()))
         return statement.emitOpError(
             "is missing its semantic VPI statement-containment relation");
+  }
+
+  // General relations describe immutable, non-containment graph edges. Their
+  // exact endpoint kinds are derived from inventory declarations so stale or
+  // hand-authored metadata cannot smuggle a mismatched kind into the image.
+  struct GeneralRelation {
+    uint32_t sourceTag;
+    uint64_t sourceId;
+    uint32_t selector;
+    uint32_t mode;
+    uint64_t ordinal;
+    uint32_t targetTag;
+    uint64_t targetId;
+    SimVPIRelationDeclOp relation;
+  };
+  SmallVector<GeneralRelation> generalRelations;
+  generalRelations.reserve(vpiRelations.size());
+  for (SimVPIRelationDeclOp relation : vpiRelations) {
+    auto resolveKind = [&](VPIObjectRefAttr reference,
+                           StringRef endpoint) -> FailureOr<uint32_t> {
+      uint64_t id = reference.getId().getValue().getZExtValue();
+      auto missing = [&]() -> FailureOr<uint32_t> {
+        relation.emitOpError()
+            << "references an unknown " << endpoint << " "
+            << stringifyVPIObjectRefKind(reference.getKind()) << " ID " << id;
+        return failure();
+      };
+      uint32_t kind = 0;
+      switch (reference.getKind()) {
+      case VPIObjectRefKind::Statement: {
+        auto found = statements.find(id);
+        if (found == statements.end())
+          return missing();
+        kind = found->second.getVpiKind();
+        break;
+      }
+      case VPIObjectRefKind::Storage: {
+        auto found = storagesById.find(id);
+        if (found == storagesById.end())
+          return missing();
+        kind = vpiKindForStorage(found->second.getVpiTypeAttr());
+        break;
+      }
+      case VPIObjectRefKind::Net: {
+        auto found = nets.find(id);
+        if (found == nets.end())
+          return missing();
+        kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        break;
+      }
+      }
+      const auto *object = reflection::findVPIObjectKind(kind);
+      if (!kind || !object ||
+          object->role != reflection::VPIObjectRole::Concrete) {
+        relation.emitOpError()
+            << endpoint << " " << stringifyVPIObjectRefKind(reference.getKind())
+            << " ID " << id << " is not VPI-visible";
+        return failure();
+      }
+      return kind;
+    };
+
+    FailureOr<uint32_t> sourceKind =
+        resolveKind(relation.getSource(), "source");
+    if (failed(sourceKind))
+      return failure();
+    FailureOr<uint32_t> targetKind =
+        resolveKind(relation.getTarget(), "target");
+    if (failed(targetKind))
+      return failure();
+    auto mode = static_cast<reflection::VPITraversalMode>(
+        static_cast<uint32_t>(relation.getMode()));
+    const auto *edge =
+        reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
+    if (!edge || edge->statementContainment ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        !reflection::vpiObjectSetContains(edge->targets, *targetKind))
+      return relation.emitOpError(
+          "is not a legal non-containment traversal in the generated VPI "
+          "model");
+
+    uint64_t sourceId = relation.getSource().getId().getValue().getZExtValue();
+    uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    generalRelations.push_back(
+        {static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
+         static_cast<uint32_t>(relation.getSelector()),
+         static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
+         static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
+         relation});
+  }
+  llvm::sort(generalRelations, [](const GeneralRelation &left,
+                                  const GeneralRelation &right) {
+    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode,
+                    left.ordinal, left.targetTag, left.targetId) <
+           std::tie(right.sourceTag, right.sourceId, right.selector, right.mode,
+                    right.ordinal, right.targetTag, right.targetId);
+  });
+  auto sameGeneralGroup = [](const GeneralRelation &left,
+                             const GeneralRelation &right) {
+    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode) ==
+           std::tie(right.sourceTag, right.sourceId, right.selector,
+                    right.mode);
+  };
+  for (size_t begin = 0; begin != generalRelations.size();) {
+    size_t end = begin + 1;
+    while (end != generalRelations.size() &&
+           sameGeneralGroup(generalRelations[begin], generalRelations[end]))
+      ++end;
+    if (generalRelations[begin].mode ==
+            static_cast<uint32_t>(VPIRelationMode::Handle) &&
+        end - begin > 1)
+      return generalRelations[end - 1].relation.emitOpError(
+          "vpi_handle relation may expose at most one target");
+    llvm::DenseSet<std::pair<uint32_t, uint64_t>> targets;
+    for (size_t index = begin; index != end; ++index) {
+      GeneralRelation &entry = generalRelations[index];
+      if (!targets.insert({entry.targetTag, entry.targetId}).second)
+        return entry.relation.emitOpError(
+            "duplicates a target in the same source, selector, and access "
+            "mode");
+      uint64_t expectedOrdinal = index - begin;
+      if (entry.ordinal != expectedOrdinal)
+        return entry.relation.emitOpError(
+            entry.ordinal < expectedOrdinal
+                ? "overlaps another target at the same source, selector, "
+                  "mode, and ordinal"
+                : "ordinals must be dense from zero for each source, "
+                  "selector, and access mode");
+    }
+    begin = end;
   }
 
   struct ElementShape {

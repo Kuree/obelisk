@@ -9,6 +9,7 @@
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -116,310 +117,6 @@ constexpr bool relationSourcePackingIsStable() {
 }
 static_assert(relationSourcePackingIsStable());
 
-bool isVPIVisibleCodeUnit(sim::SimCodeUnitDeclOp codeUnit) {
-  // A DPI import declaration is represented by a source-inventory anchor.
-  // Its code unit is only the executable ABI thunk and must not become a
-  // second VPI function/task with the same hierarchical name.
-  return !codeUnit.getInternalAttr() &&
-         !codeUnit->hasAttr("obelisk_sim.dpi_import") &&
-         sim::isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
-}
-
-uint32_t vpiKindForCodeUnit(sim::SimCodeUnitDeclOp codeUnit) {
-  if (!isVPIVisibleCodeUnit(codeUnit))
-    return 0;
-  using VPIKind = VPIObjectKind;
-  switch (codeUnit.getCodeUnitKind()) {
-  case sim::EntryKind::Initial:
-    return static_cast<uint16_t>(VPIKind::Initial);
-  case sim::EntryKind::Final:
-    return static_cast<uint16_t>(VPIKind::Final);
-  case sim::EntryKind::Always:
-  case sim::EntryKind::AlwaysComb:
-  case sim::EntryKind::AlwaysFF:
-  case sim::EntryKind::AlwaysLatch:
-    return static_cast<uint16_t>(VPIKind::Always);
-  case sim::EntryKind::Function:
-    return static_cast<uint16_t>(VPIKind::Function);
-  case sim::EntryKind::Task:
-    return static_cast<uint16_t>(VPIKind::Task);
-  default:
-    return 0;
-  }
-}
-
-uint32_t vpiKindForScope(sim::SimScopeDeclOp scope) {
-  return scope.getVpiKind().value_or(
-      scope.getInterfaceType()
-          ? static_cast<uint16_t>(VPIObjectKind::Interface)
-          : (scope.getId() == 0
-                 ? 0
-                 : static_cast<uint16_t>(VPIObjectKind::Module)));
-}
-
-sim::VPITypeSemanticsAttr packedArrayElement(sim::VPITypeSemanticsAttr type) {
-  while (type && type.getKind() == sim::VPITypeKind::PackedArray) {
-    if (type.getChildren().size() != 1)
-      return {};
-    type = dyn_cast<sim::VPITypeSemanticsAttr>(type.getChildren()[0]);
-  }
-  return type;
-}
-
-uint32_t vpiKindForStorage(sim::VPITypeSemanticsAttr type) {
-  using Kind = sim::VPITypeKind;
-  using VPIKind = VPIObjectKind;
-  if (!type)
-    return static_cast<uint16_t>(VPIKind::Reg);
-  switch (type.getKind()) {
-  case Kind::Unknown:
-    return static_cast<uint16_t>(VPIKind::Reg);
-  case Kind::GenericIntegral:
-    return static_cast<uint16_t>(type.getIsFourState() ? VPIKind::LogicVar
-                                                       : VPIKind::BitVar);
-  case Kind::Bit:
-    return static_cast<uint16_t>(VPIKind::BitVar);
-  case Kind::Logic:
-    return static_cast<uint16_t>(VPIKind::LogicVar);
-  case Kind::Reg:
-    return static_cast<uint16_t>(VPIKind::Reg);
-  case Kind::Byte:
-    return static_cast<uint16_t>(VPIKind::ByteVar);
-  case Kind::ShortInt:
-    return static_cast<uint16_t>(VPIKind::ShortIntVar);
-  case Kind::Int:
-    return static_cast<uint16_t>(VPIKind::IntVar);
-  case Kind::LongInt:
-    return static_cast<uint16_t>(VPIKind::LongIntVar);
-  case Kind::Integer:
-    return static_cast<uint16_t>(VPIKind::IntegerVar);
-  case Kind::Enum:
-    return static_cast<uint16_t>(VPIKind::EnumVar);
-  case Kind::Time:
-    return static_cast<uint16_t>(VPIKind::TimeVar);
-  case Kind::ShortReal:
-    return static_cast<uint16_t>(VPIKind::ShortRealVar);
-  case Kind::Real:
-  case Kind::Realtime:
-    return static_cast<uint16_t>(VPIKind::RealVar);
-  case Kind::String:
-    return static_cast<uint16_t>(VPIKind::StringVar);
-  case Kind::Chandle:
-    return static_cast<uint16_t>(VPIKind::ChandleVar);
-  case Kind::PackedArray: {
-    sim::VPITypeSemanticsAttr element = packedArrayElement(type);
-    if (!element)
-      return static_cast<uint16_t>(VPIKind::Reg);
-    switch (element.getKind()) {
-    case Kind::Enum:
-    case Kind::PackedStruct:
-    case Kind::PackedUnion:
-      return static_cast<uint16_t>(VPIKind::PackedArrayVar);
-    default:
-      return vpiKindForStorage(element);
-    }
-  }
-  case Kind::UnpackedArray:
-  case Kind::DynamicArray:
-  case Kind::Queue:
-  case Kind::AssocArray:
-  case Kind::PackedOpenArray:
-  case Kind::UnpackedOpenArray:
-    return static_cast<uint16_t>(VPIKind::ArrayVar);
-  case Kind::PackedStruct:
-  case Kind::UnpackedStruct:
-    return static_cast<uint16_t>(VPIKind::StructVar);
-  case Kind::PackedUnion:
-  case Kind::UnpackedUnion:
-    return static_cast<uint16_t>(VPIKind::UnionVar);
-  case Kind::Class:
-  case Kind::Process:
-  case Kind::Covergroup:
-  case Kind::Mailbox:
-  case Kind::Semaphore:
-    return static_cast<uint16_t>(VPIKind::ClassVar);
-  case Kind::VirtualInterface:
-    return static_cast<uint16_t>(VPIKind::VirtualInterfaceVar);
-  case Kind::Event:
-    return static_cast<uint16_t>(VPIKind::NamedEvent);
-  case Kind::Void:
-  case Kind::Untyped:
-  case Kind::Sequence:
-  case Kind::Property:
-    return static_cast<uint16_t>(VPIKind::Reg);
-  }
-  llvm_unreachable("unhandled VPI semantic type kind");
-}
-
-uint32_t vpiKindForNet(sim::VPITypeSemanticsAttr type) {
-  using Kind = sim::VPITypeKind;
-  using VPIKind = VPIObjectKind;
-  if (!type)
-    return static_cast<uint16_t>(VPIKind::Net);
-  switch (type.getKind()) {
-  case Kind::GenericIntegral:
-    return static_cast<uint16_t>(type.getIsFourState() ? VPIKind::LogicNet
-                                                       : VPIKind::BitNet);
-  case Kind::Bit:
-    return static_cast<uint16_t>(VPIKind::BitNet);
-  case Kind::Logic:
-  case Kind::Reg:
-    return static_cast<uint16_t>(VPIKind::LogicNet);
-  case Kind::Byte:
-    return static_cast<uint16_t>(VPIKind::ByteNet);
-  case Kind::ShortInt:
-    return static_cast<uint16_t>(VPIKind::ShortIntNet);
-  case Kind::Int:
-    return static_cast<uint16_t>(VPIKind::IntNet);
-  case Kind::LongInt:
-    return static_cast<uint16_t>(VPIKind::LongIntNet);
-  case Kind::Integer:
-    return static_cast<uint16_t>(VPIKind::IntegerNet);
-  case Kind::Enum:
-    return static_cast<uint16_t>(VPIKind::EnumNet);
-  case Kind::Time:
-    return static_cast<uint16_t>(VPIKind::TimeNet);
-  case Kind::ShortReal:
-    return static_cast<uint16_t>(VPIKind::ShortRealNet);
-  case Kind::Real:
-  case Kind::Realtime:
-    return static_cast<uint16_t>(VPIKind::RealNet);
-  case Kind::PackedArray: {
-    sim::VPITypeSemanticsAttr element = packedArrayElement(type);
-    if (!element)
-      return static_cast<uint16_t>(VPIKind::Net);
-    switch (element.getKind()) {
-    case Kind::Enum:
-    case Kind::PackedStruct:
-      return static_cast<uint16_t>(VPIKind::PackedArrayNet);
-    default:
-      return vpiKindForNet(element);
-    }
-  }
-  case Kind::UnpackedArray:
-  case Kind::DynamicArray:
-  case Kind::Queue:
-  case Kind::AssocArray:
-  case Kind::PackedOpenArray:
-  case Kind::UnpackedOpenArray:
-    return static_cast<uint16_t>(VPIKind::ArrayNet);
-  case Kind::PackedStruct:
-  case Kind::UnpackedStruct:
-    return static_cast<uint16_t>(VPIKind::StructNet);
-  case Kind::PackedUnion:
-  case Kind::UnpackedUnion:
-    return static_cast<uint16_t>(VPIKind::UnionNet);
-  case Kind::Unknown:
-  case Kind::String:
-  case Kind::Chandle:
-  case Kind::Class:
-  case Kind::VirtualInterface:
-  case Kind::Event:
-  case Kind::Process:
-  case Kind::Covergroup:
-  case Kind::Mailbox:
-  case Kind::Semaphore:
-  case Kind::Void:
-  case Kind::Untyped:
-  case Kind::Sequence:
-  case Kind::Property:
-    return static_cast<uint16_t>(VPIKind::Net);
-  }
-  llvm_unreachable("unhandled VPI semantic type kind");
-}
-
-std::optional<uint32_t> vpiKindForTypespec(sim::VPITypeSemanticsAttr type) {
-  using Kind = sim::VPITypeKind;
-  using VPIKind = VPIObjectKind;
-  switch (type.getKind()) {
-  case Kind::LongInt:
-    return static_cast<uint16_t>(VPIKind::LongIntTypespec);
-  case Kind::ShortReal:
-    return static_cast<uint16_t>(VPIKind::ShortRealTypespec);
-  case Kind::Byte:
-    return static_cast<uint16_t>(VPIKind::ByteTypespec);
-  case Kind::ShortInt:
-    return static_cast<uint16_t>(VPIKind::ShortIntTypespec);
-  case Kind::Int:
-    return static_cast<uint16_t>(VPIKind::IntTypespec);
-  case Kind::Class:
-  case Kind::Process:
-  case Kind::Mailbox:
-  case Kind::Semaphore:
-    return static_cast<uint16_t>(VPIKind::ClassTypespec);
-  case Kind::String:
-    return static_cast<uint16_t>(VPIKind::StringTypespec);
-  case Kind::Chandle:
-    return static_cast<uint16_t>(VPIKind::ChandleTypespec);
-  case Kind::Enum:
-    return static_cast<uint16_t>(VPIKind::EnumTypespec);
-  case Kind::Integer:
-    return static_cast<uint16_t>(VPIKind::IntegerTypespec);
-  case Kind::Time:
-    return static_cast<uint16_t>(VPIKind::TimeTypespec);
-  case Kind::Real:
-  case Kind::Realtime:
-    return static_cast<uint16_t>(VPIKind::RealTypespec);
-  case Kind::PackedStruct:
-  case Kind::UnpackedStruct:
-    return static_cast<uint16_t>(VPIKind::StructTypespec);
-  case Kind::PackedUnion:
-  case Kind::UnpackedUnion:
-    return static_cast<uint16_t>(VPIKind::UnionTypespec);
-  case Kind::Bit:
-    return static_cast<uint16_t>(VPIKind::BitTypespec);
-  case Kind::GenericIntegral:
-    return static_cast<uint16_t>(type.getIsFourState() ? VPIKind::LogicTypespec
-                                                       : VPIKind::BitTypespec);
-  case Kind::Logic:
-  case Kind::Reg:
-    return static_cast<uint16_t>(VPIKind::LogicTypespec);
-  case Kind::UnpackedArray:
-  case Kind::DynamicArray:
-  case Kind::Queue:
-  case Kind::AssocArray:
-  case Kind::UnpackedOpenArray:
-    return static_cast<uint16_t>(VPIKind::ArrayTypespec);
-  case Kind::PackedArray: {
-    sim::VPITypeSemanticsAttr element = packedArrayElement(type);
-    if (!element)
-      return std::nullopt;
-    if (element.getKind() == Kind::Enum ||
-        element.getKind() == Kind::PackedStruct ||
-        element.getKind() == Kind::PackedUnion)
-      return static_cast<uint16_t>(VPIKind::PackedArrayTypespec);
-    return vpiKindForTypespec(element);
-  }
-  case Kind::PackedOpenArray: {
-    if (type.getChildren().size() != 1)
-      return std::nullopt;
-    auto element = dyn_cast<sim::VPITypeSemanticsAttr>(type.getChildren()[0]);
-    if (!element)
-      return std::nullopt;
-    if (element.getKind() == Kind::Enum ||
-        element.getKind() == Kind::PackedStruct ||
-        element.getKind() == Kind::PackedUnion)
-      return static_cast<uint16_t>(VPIKind::PackedArrayTypespec);
-    return vpiKindForTypespec(element);
-  }
-  case Kind::Void:
-    return static_cast<uint16_t>(VPIKind::VoidTypespec);
-  case Kind::Sequence:
-    return static_cast<uint16_t>(VPIKind::SequenceTypespec);
-  case Kind::Property:
-    return static_cast<uint16_t>(VPIKind::PropertyTypespec);
-  case Kind::Event:
-    return static_cast<uint16_t>(VPIKind::EventTypespec);
-  case Kind::VirtualInterface:
-    return static_cast<uint16_t>(VPIKind::InterfaceTypespec);
-  case Kind::Unknown:
-  case Kind::Covergroup:
-  case Kind::Untyped:
-    return std::nullopt;
-  }
-  llvm_unreachable("unhandled VPI semantic typespec kind");
-}
-
 } // namespace
 
 SmallVector<uint8_t> serializeDesignDatabase(
@@ -505,6 +202,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<StatementRecord> statements;
   SmallVector<StatementSiteRecord> statementSites;
   SmallVector<sim::SimVPIStatementRelationDeclOp> relationDeclarations;
+  SmallVector<sim::SimVPIRelationDeclOp> generalRelationDeclarations;
   SmallVector<sim::SimVPIObjectAnchorOp> anchors;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
@@ -659,6 +357,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                    dyn_cast<sim::SimVPIStatementRelationDeclOp>(operation)) {
       if (includeStatements)
         relationDeclarations.push_back(relation);
+    } else if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(operation)) {
+      if (includeStatements)
+        generalRelationDeclarations.push_back(relation);
     } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -683,7 +384,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto id = staticInventoryID(typespec, typespec.getId(), 1);
       if (!id)
         return {};
-      auto vpiKind = vpiKindForTypespec(typespec.getTargetType());
+      auto vpiKind = sim::vpiKindForTypespec(typespec.getTargetType());
       if (!vpiKind) {
         typespec.emitOpError(
             "source type has no concrete IEEE VPI typespec object");
@@ -762,8 +463,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({2, vpiKindForStorage(storage.getVpiTypeAttr()), caps,
-                         storage.getId(), storage.getScopeId(),
+      objects.push_back({2, sim::vpiKindForStorage(storage.getVpiTypeAttr()),
+                         caps, storage.getId(), storage.getScopeId(),
                          storage.getHierarchicalName()
                              .value_or(storage.getDebugName().value_or(
                                  fallbackName("storage", storage.getId())))
@@ -784,7 +485,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directNetPorts.lookup(net.getId()))
         caps = addPortMetadata(port, caps);
-      objects.push_back({3, vpiKindForNet(net.getVpiTypeAttr()), caps,
+      objects.push_back({3, sim::vpiKindForNet(net.getVpiTypeAttr()), caps,
                          net.getId(), net.getScopeId(),
                          net.getHierarchicalName()
                              .value_or(net.getDebugName().value_or(
@@ -834,13 +535,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          sourceOffset + port.getSourceLow(), sourceFor(port),
                          direct != port, port});
     } else if (auto codeUnit = dyn_cast<sim::SimCodeUnitDeclOp>(operation)) {
-      bool internal = !isVPIVisibleCodeUnit(codeUnit);
+      bool internal = !sim::isVPIVisibleCodeUnit(codeUnit);
       objects.push_back(
           {(codeUnit.getCodeUnitKind() == sim::EntryKind::Function ||
             codeUnit.getCodeUnitKind() == sim::EntryKind::Observer)
                ? 7u
                : 5u,
-           vpiKindForCodeUnit(codeUnit),
+           sim::vpiKindForCodeUnit(codeUnit),
            internal ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_INTERNAL) : 0,
            codeUnit.getId(), codeUnit.getScopeId(),
            codeUnit.getHierarchicalName().str(), Type{}, 0, sourceFor(codeUnit),
@@ -912,7 +613,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
 
   DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
-      statementIndices;
+      statementIndices, statementKinds;
   DenseMap<Operation *, uint32_t> objectIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
       canonicalNetTargetIndices;
@@ -933,9 +634,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
   }
-  for (auto [index, statement] : llvm::enumerate(statements))
+  for (auto [index, statement] : llvm::enumerate(statements)) {
     statementIndices[statement.declaration.getId()] =
         static_cast<uint32_t>(index);
+    statementKinds[statement.declaration.getId()] =
+        statement.declaration.getVpiKind();
+  }
 
   DenseMap<uint64_t, uint32_t> automaticOrdinals;
   DenseSet<std::pair<uint64_t, uint32_t>> relationIdentities;
@@ -1051,7 +755,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
         uint64_t id = backing.getId().getValue().getZExtValue();
         uint32_t index = scopeIndices.lookup(id);
         anchorRefs[anchor] = {TableKind::Scope, index,
-                              vpiKindForScope(scopes[index])};
+                              sim::vpiKindForScope(scopes[index])};
         continue;
       }
       uint64_t id = backing.getId().getValue().getZExtValue();
@@ -1064,6 +768,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t index = objectIndices.lookup(typespec);
       typespecRefs[typespec] = {TableKind::Object, index,
                                 objects[index].vpiKind};
+    }
+  }
+
+  DenseMap<uint64_t, ImageObjectRef> storageRefs, netRefs;
+  if (includeStatements) {
+    for (auto [index, object] : llvm::enumerate(objects)) {
+      ImageObjectRef reference{TableKind::Object, static_cast<uint32_t>(index),
+                               object.vpiKind};
+      if (object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE)
+        storageRefs.try_emplace(object.id, reference);
+      else if (object.kind == OBELISK_RT_DESIGN_RECORD_NET)
+        netRefs.try_emplace(object.id, reference);
     }
   }
 
@@ -1102,13 +818,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t ownerIndex = scopeIndices.lookup(*scope.getParent());
       sim::SimScopeDeclOp owner = scopes[ownerIndex];
       if (failed(addAutomaticRelation(
-              TableKind::Scope, ownerIndex, vpiKindForScope(owner),
+              TableKind::Scope, ownerIndex, sim::vpiKindForScope(owner),
               TableKind::Scope, static_cast<uint32_t>(targetIndex),
-              vpiKindForScope(scope), VPIAutomaticRelation::DirectChild)) ||
+              sim::vpiKindForScope(scope),
+              VPIAutomaticRelation::DirectChild)) ||
           failed(addAutomaticRelation(
               TableKind::Scope, static_cast<uint32_t>(targetIndex),
-              vpiKindForScope(scope), TableKind::Scope, ownerIndex,
-              vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
+              sim::vpiKindForScope(scope), TableKind::Scope, ownerIndex,
+              sim::vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
         return {};
     }
     for (auto [targetIndex, object] : llvm::enumerate(objects)) {
@@ -1122,20 +839,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t ownerIndex = scopeIndices.lookup(object.scope);
       sim::SimScopeDeclOp owner = scopes[ownerIndex];
       if (failed(addAutomaticRelation(
-              TableKind::Scope, ownerIndex, vpiKindForScope(owner),
+              TableKind::Scope, ownerIndex, sim::vpiKindForScope(owner),
               TableKind::Object, static_cast<uint32_t>(targetIndex),
               object.vpiKind, VPIAutomaticRelation::DirectChild)) ||
           failed(addAutomaticRelation(
               TableKind::Object, static_cast<uint32_t>(targetIndex),
               object.vpiKind, TableKind::Scope, ownerIndex,
-              vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
+              sim::vpiKindForScope(owner), VPIAutomaticRelation::ParentScope)))
         return {};
     }
     for (auto [sourceIndex, entry] : llvm::enumerate(statements)) {
       sim::SimStatementDeclOp statement = entry.declaration;
       TableKind targetTable = TableKind::Scope;
       uint32_t targetIndex = scopeIndices.lookup(statement.getScopeId());
-      uint32_t targetKind = vpiKindForScope(scopes[targetIndex]);
+      uint32_t targetKind = sim::vpiKindForScope(scopes[targetIndex]);
 
       for (std::optional<uint64_t> parentID = statement.getParentId();
            parentID;) {
@@ -1559,6 +1276,53 @@ SmallVector<uint8_t> serializeDesignDatabase(
            static_cast<uint32_t>(relation.getOrdinal()),
            static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
     }
+  }
+  for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
+    auto resolveReference =
+        [&](sim::VPIObjectRefAttr reference,
+            StringRef endpoint) -> std::optional<ImageObjectRef> {
+      uint64_t id = reference.getId().getValue().getZExtValue();
+      std::optional<ImageObjectRef> resolved;
+      switch (reference.getKind()) {
+      case sim::VPIObjectRefKind::Statement: {
+        auto found = statementIndices.find(id);
+        if (found != statementIndices.end())
+          resolved = ImageObjectRef{TableKind::Statement, found->second,
+                                    statementKinds.lookup(id)};
+        break;
+      }
+      case sim::VPIObjectRefKind::Storage: {
+        auto found = storageRefs.find(id);
+        if (found != storageRefs.end())
+          resolved = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::Net: {
+        auto found = netRefs.find(id);
+        if (found != netRefs.end())
+          resolved = found->second;
+        break;
+      }
+      }
+      if (!resolved)
+        relation.emitOpError() << endpoint << " VPI reference "
+                               << stringifyVPIObjectRefKind(reference.getKind())
+                               << " ID " << id << " was not serialized";
+      return resolved;
+    };
+    std::optional<ImageObjectRef> source =
+        resolveReference(relation.getSource(), "source");
+    std::optional<ImageObjectRef> target =
+        resolveReference(relation.getTarget(), "target");
+    if (!source || !target)
+      return {};
+    auto mode = static_cast<VPITraversalMode>(
+        static_cast<uint32_t>(relation.getMode()));
+    if (failed(addRelation(relation, source->table, source->index,
+                           source->vpiKind, relation.getSelector(), mode,
+                           target->table, target->index, target->vpiKind,
+                           static_cast<uint32_t>(relation.getOrdinal()))))
+      return {};
   }
   if (relations.size() > UINT32_MAX) {
     design.emitOpError("reflection relation table exceeds 32-bit indices");
@@ -2110,7 +1874,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (semantic.getKind() == Kind::Untyped) {
       semanticTypes[index].publicVPIKind = 0;
     } else {
-      std::optional<uint32_t> publicKind = vpiKindForTypespec(semantic);
+      std::optional<uint32_t> publicKind = sim::vpiKindForTypespec(semantic);
       if (!publicKind) {
         semanticTypeError = true;
         return std::nullopt;
@@ -2165,7 +1929,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (auto [index, scope] : llvm::enumerate(scopes))
       if (failed(rememberPropertySource(TableKind::Scope,
                                         static_cast<uint32_t>(index),
-                                        vpiKindForScope(scope), scope)))
+                                        sim::vpiKindForScope(scope), scope)))
         return {};
     for (auto [index, object] : llvm::enumerate(objects))
       if (object.identity &&
@@ -2644,7 +2408,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t self = scopeOffsets.lookup(scope.getId());
     ScopeWriter writer(output.data() + self);
     uint32_t packedKind = 0;
-    uint32_t vpiKind = vpiKindForScope(scope);
+    uint32_t vpiKind = sim::vpiKindForScope(scope);
     if (!tryPackRecordKindPayload(RecordKind::Scope, vpiKind, packedKind)) {
       scope.emitOpError("scope record or VPI kind cannot be packed");
       return {};

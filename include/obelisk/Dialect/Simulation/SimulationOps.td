@@ -180,6 +180,27 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let hasVerifier = 1;
 }
 
+def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable general VPI object relation";
+  let description = [{
+    Records one non-containment VPI graph edge between stable logical object
+    identities. Exact endpoint VPI kinds and traversal legality are derived
+    from the referenced declarations and the generated IEEE object model.
+    Each declaration represents one access mode so singular handle edges and
+    dense iterator ordering remain explicit. This metadata never participates
+    in scheduling or executable lowering.
+  }];
+  let arguments = (ins SimVPIObjectRefAttr:$source, I32Attr:$selector,
+                       SimVPIRelationMode:$mode, I64Attr:$ordinal,
+                       SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    $source `selector` $selector $mode `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

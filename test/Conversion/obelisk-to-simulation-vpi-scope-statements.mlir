@@ -47,6 +47,36 @@ module attributes {
             node_id = 32 : i64,
             semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
             sym_name = "d"} {}
+        obelisk.sv.symbol.net attributes {hierarchical_name = "top.source",
+            is_implicit = false, name = "source", net_kind = 1 : i32,
+            node_id = 60 : i64,
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
+            sym_name = "source"} {}
+        obelisk.sv.symbol.net attributes {hierarchical_name = "top.direct_lhs",
+            is_implicit = false, name = "direct_lhs", net_kind = 1 : i32,
+            node_id = 68 : i64,
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
+            sym_name = "direct_lhs"} {}
+        obelisk.sv.symbol.net attributes {hierarchical_name = "top.vector_lhs",
+            is_implicit = false, name = "vector_lhs", net_kind = 1 : i32,
+            node_id = 62 : i64,
+            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
+            sym_name = "vector_lhs"} {}
+        obelisk.sv.symbol.net attributes {hierarchical_name = "top.vector_rhs",
+            is_implicit = false, name = "vector_rhs", net_kind = 1 : i32,
+            node_id = 63 : i64,
+            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
+            sym_name = "vector_rhs"} {}
+        obelisk.sv.symbol.variable attributes {
+            hierarchical_name = "top.variable_lhs", lifetime = 1 : i32,
+            name = "variable_lhs", node_id = 69 : i64,
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
+            sym_name = "variable_lhs"} {}
+        obelisk.sv.symbol.variable attributes {
+            hierarchical_name = "top.variable_rhs", lifetime = 1 : i32,
+            name = "variable_rhs", node_id = 70 : i64,
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
+            sym_name = "variable_rhs"} {}
         obelisk.sv.symbol.continuous_assign attributes {
             hierarchical_name = "top", node_id = 6 : i64,
             sym_name = "direct_assign", time_precision_fs = 1 : i64,
@@ -55,14 +85,32 @@ module attributes {
               is_signed = false, node_id = 7 : i64,
               semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false,
-                node_id = 8 : i64, referenced_path = "top.a",
-                referenced_symbol = @root::@top_i::@top_b::@a,
+                node_id = 8 : i64, referenced_path = "top.direct_lhs",
+                referenced_symbol = @root::@top_i::@top_b::@direct_lhs,
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
-            obelisk.sv.expression.integer_literal attributes {
-                constant_value = "1'b1", is_signed = false, node_id = 9 : i64,
+            obelisk.sv.expression.named_value attributes {is_signed = false,
+                node_id = 61 : i64, referenced_path = "top.source",
+                referenced_symbol = @root::@top_i::@top_b::@source,
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         } loc("scope_owned.sv":10:3)
+        obelisk.sv.symbol.continuous_assign attributes {
+            hierarchical_name = "top", node_id = 64 : i64,
+            sym_name = "vector_assign", time_precision_fs = 1 : i64,
+            time_unit_fs = 1 : i64} {
+          obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
+              is_signed = false, node_id = 65 : i64,
+              semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
+            obelisk.sv.expression.named_value attributes {is_signed = false,
+                node_id = 66 : i64, referenced_path = "top.vector_lhs",
+                referenced_symbol = @root::@top_i::@top_b::@vector_lhs,
+                semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {}
+            obelisk.sv.expression.named_value attributes {is_signed = false,
+                node_id = 67 : i64, referenced_path = "top.vector_rhs",
+                referenced_symbol = @root::@top_i::@top_b::@vector_rhs,
+                semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {}
+          }
+        } loc("scope_owned.sv":12:3)
         obelisk.sv.symbol.net_alias attributes {hierarchical_name = "top",
             node_id = 10 : i64, sym_name = "direct_alias"} {
           obelisk.sv.expression.named_value attributes {is_signed = false,
@@ -124,6 +172,23 @@ module attributes {
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           } loc("scope_owned.sv":21:5)
         }
+        obelisk.sv.symbol.continuous_assign attributes {
+            hierarchical_name = "top", node_id = 71 : i64,
+            sym_name = "variable_assign", time_precision_fs = 1 : i64,
+            time_unit_fs = 1 : i64} {
+          obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
+              is_signed = false, node_id = 72 : i64,
+              semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            obelisk.sv.expression.named_value attributes {is_signed = false,
+                node_id = 73 : i64, referenced_path = "top.variable_lhs",
+                referenced_symbol = @root::@top_i::@top_b::@variable_lhs,
+                semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+            obelisk.sv.expression.named_value attributes {is_signed = false,
+                node_id = 74 : i64, referenced_path = "top.variable_rhs",
+                referenced_symbol = @root::@top_i::@top_b::@variable_rhs,
+                semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+          }
+        } loc("scope_owned.sv":13:3)
         obelisk.sv.symbol.generate_block attributes {
             hierarchical_name = "top.dead", is_uninstantiated = true,
             node_id = 23 : i64, sym_name = "uninstantiated"} {
@@ -231,19 +296,55 @@ module attributes {
 // IR: obelisk_sim.vpi_object.anchor @[[PROG:[^ ]+]] id [[PROG_ID:[0-9]+]] type 602
 // IR: obelisk_sim.statement.decl 1 scope 1 type 8
 // IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 0 modes 2 to 1
-// IR: obelisk_sim.statement.decl 2 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 0 modes 2 to 2
+// IR: obelisk_sim.statement.decl 2 scope 1 type 8
+// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 1 modes 2 to 2
 // IR: obelisk_sim.statement.decl 3 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 1 modes 2 to 3
+// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 0 modes 2 to 3
 // IR: obelisk_sim.statement.decl 4 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 2 modes 2 to 4
-// IR: obelisk_sim.statement.decl 5 scope 1 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 8 ordinal 0 modes 2 to 5
-// IR: obelisk_sim.statement.decl 6 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 646 ordinal 0 modes 2 to 6
-// IR: obelisk_sim.statement.decl 7 scope 2 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 2 type 601 selector 8 ordinal 0 modes 2 to 7
-// IR: obelisk_sim.statement.decl 8 scope 3 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 3 type 602 selector 8 ordinal 0 modes 2 to 8
-// IR-NOT: obelisk_sim.statement.decl 9
+// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 1 modes 2 to 4
+// IR: obelisk_sim.statement.decl 5 scope 1 type 646
+// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 2 modes 2 to 5
+// IR: obelisk_sim.statement.decl 6 scope 1 type 8
+// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 8 ordinal 0 modes 2 to 6
+// IR: obelisk_sim.statement.decl 7 scope 1 type 646
+// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 646 ordinal 0 modes 2 to 7
+// IR: obelisk_sim.statement.decl 8 scope 1 type 8
+// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 2 modes 2 to 8
+// IR: obelisk_sim.statement.decl 9 scope 2 type 8
+// IR: obelisk_sim.vpi_statement_relation.decl scope 2 type 601 selector 8 ordinal 0 modes 2 to 9
+// IR: obelisk_sim.statement.decl 10 scope 3 type 8
+// IR: obelisk_sim.vpi_statement_relation.decl scope 3 type 602 selector 8 ordinal 0 modes 2 to 10
+// IR-NOT: obelisk_sim.statement.decl 11
+// IR: obelisk_sim.net.decl [[SOURCE:[0-9]+]] {{.*}} hierarchy "top.source"
+// IR: obelisk_sim.net.decl [[DIRECT_LHS:[0-9]+]] {{.*}} hierarchy "top.direct_lhs"
+// IR: obelisk_sim.net.decl [[VECTOR_LHS:[0-9]+]] {{.*}} hierarchy "top.vector_lhs"
+// IR: obelisk_sim.net.decl [[VECTOR_RHS:[0-9]+]] {{.*}} hierarchy "top.vector_rhs"
+// IR: obelisk_sim.storage.decl [[VARIABLE_LHS:[0-9]+]] {{.*}} hierarchy "top.variable_lhs"
+// IR: obelisk_sim.storage.decl [[VARIABLE_RHS:[0-9]+]] {{.*}} hierarchy "top.variable_rhs"
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[DIRECT_LHS]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[SOURCE]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[VECTOR_LHS]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[VECTOR_RHS]] : i64>
+// IR-NOT: obelisk_sim.vpi_relation.decl <kind = statement, id = 6 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 77 handle ordinal 0 to <kind = storage, id = [[VARIABLE_LHS]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 82 handle ordinal 0 to <kind = storage, id = [[VARIABLE_RHS]] : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[SOURCE]] : i64> selector 123 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR-NOT: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 8
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 123 iterate ordinal 0 to <kind = statement, id = 2 : i64>
 // IR-NOT: obelisk.sv.

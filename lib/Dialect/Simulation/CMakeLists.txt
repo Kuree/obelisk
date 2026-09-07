@@ -7,6 +7,7 @@ add_mlir_library(ObeliskSimulationIR
   SimulationProcessOps.cpp
   SimulationTimingOps.cpp
   SimulationTypes.cpp
+  SimulationVPI.cpp
   SimulationOpDefs0.cpp
   SimulationOpDefs1.cpp
   SimulationOpDefs2.cpp

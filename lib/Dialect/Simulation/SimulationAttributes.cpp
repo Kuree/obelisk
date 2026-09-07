@@ -112,6 +112,17 @@ VPIPropertySetAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+VPIObjectRefAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                         VPIObjectRefKind kind, IntegerAttr id) {
+  (void)kind;
+  if (!id || !id.getType().isSignlessInteger(64))
+    return emitError() << "VPI object reference ID must be a signless i64";
+  if (id.getValue().isNegative())
+    return emitError() << "VPI object reference ID must be nonnegative";
+  return success();
+}
+
+LogicalResult
 VPIObjectBackingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                              VPIObjectBackingKind kind, IntegerAttr id,
                              FlatSymbolRefAttr symbol) {

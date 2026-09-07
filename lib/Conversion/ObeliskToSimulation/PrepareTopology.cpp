@@ -9,6 +9,7 @@
 
 #include "Detail.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/APInt.h"
@@ -601,6 +602,12 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     if (path != canonical)
       result.aliases[path] = canonical.str();
   }
+  llvm::StringMap<unsigned> aliasGroupSizes;
+  for (const auto &entry : netAliasParents)
+    ++aliasGroupSizes[findNetAlias(entry.getKey())];
+  for (const auto &entry : netAliasParents)
+    if (aliasGroupSizes.lookup(findNetAlias(entry.getKey())) > 1)
+      result.collapsedAliasPaths.insert(entry.getKey());
   semanticRoot->walk([&](semantic::SVModportPortSymbolOp port) {
     if (isCompileTimeOnlyInstanceMember(port))
       return;
@@ -1383,6 +1390,13 @@ materializeDesignDescriptors(ModuleOp module,
   // that executable representation. The generated traversal model decides
   // whether the exact lexical scope may expose each statement kind.
   uint64_t nextStatementId = 1;
+  struct ScopeOwnedStatementPlan {
+    Operation *source;
+    uint64_t statementId;
+    uint64_t scopeId;
+    VPIKind kind;
+  };
+  SmallVector<ScopeOwnedStatementPlan> scopeOwnedStatementPlans;
   llvm::DenseMap<Operation *, llvm::DenseMap<uint32_t, uint64_t>>
       nextStatementOrdinal;
   auto isInUninstantiatedGenerate = [](Operation *operation) {
@@ -1445,7 +1459,7 @@ materializeDesignDescriptors(ModuleOp module,
         sim::VPIObjectBackingAttr backing = ownerAnchor.getBackingAttr();
         bool physicalScope =
             backing && backing.getKind() == sim::VPIObjectBackingKind::Scope;
-        // IEEE 1800-2017 37.74 defines an N-net alias declaration as N-1
+        // IEEE 1800-2023 37.76 defines an N-net alias declaration as N-1
         // alias objects, each relating one of the first N-1 nets to the final
         // net. A continuous-assignment declaration always contributes one.
         size_t statementCount = 1;
@@ -1460,6 +1474,9 @@ materializeDesignDescriptors(ModuleOp module,
               builder, location, statementId, IntegerAttr{},
               scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
               UnitAttr{}, UnitAttr{});
+          if (statementKind == VPIKind::ContAssign)
+            scopeOwnedStatementPlans.push_back(
+                {source, statementId, scopes.lookup(source), statementKind});
           sim::SimVPIStatementRelationDeclOp::create(
               builder, location,
               physicalScope ? sim::VPIStatementSourceKind::Scope
@@ -2713,6 +2730,207 @@ materializeDesignDescriptors(ModuleOp module,
             : StringAttr{},
         *formalVPIType);
     retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
+  }
+
+  // Preserve direct whole-object operands of scope-owned statements as cold
+  // immutable relation inventory. Selects and computed expressions require a
+  // distinct occurrence identity and are intentionally left for the compact
+  // expression table instead of being misrepresented as their root storage.
+  struct DirectEndpoint {
+    sim::VPIObjectRefAttr reference;
+    const DescriptorInfo *descriptor;
+    uint32_t vpiKind;
+  };
+  auto directEndpoint =
+      [&](Operation *expression) -> std::optional<DirectEndpoint> {
+    FailureOr<StaticStorageView> view = getStaticStorageView(expression);
+    if (failed(view) || !view->identity || view->offset != 0 ||
+        view->packedOffset != 0 || !view->indices.empty() ||
+        view->rootType != view->viewType ||
+        portAliases.collapsedAliasPaths.contains(view->path))
+      return std::nullopt;
+    auto found = descriptors.find(view->path);
+    if (found == descriptors.end())
+      return std::nullopt;
+    const DescriptorInfo &descriptor = found->second;
+    if ((descriptor.kind != DescriptorInfo::Kind::Storage &&
+         descriptor.kind != DescriptorInfo::Kind::Net) ||
+        descriptor.viewOffset != 0 || descriptor.packedViewOffset != 0 ||
+        !descriptor.viewIndices.empty() ||
+        descriptor.type != descriptor.rootType)
+      return std::nullopt;
+    sim::VPIObjectRefKind referenceKind =
+        descriptor.kind == DescriptorInfo::Kind::Net
+            ? sim::VPIObjectRefKind::Net
+            : sim::VPIObjectRefKind::Storage;
+    uint32_t vpiKind = descriptor.kind == DescriptorInfo::Kind::Net
+                           ? sim::vpiKindForNet(descriptor.vpiType)
+                           : sim::vpiKindForStorage(descriptor.vpiType);
+    return DirectEndpoint{
+        sim::VPIObjectRefAttr::get(builder.getContext(), referenceKind,
+                                   builder.getI64IntegerAttr(descriptor.id)),
+        &descriptor, vpiKind};
+  };
+  auto statementReference = [&](uint64_t id) {
+    return sim::VPIObjectRefAttr::get(builder.getContext(),
+                                      sim::VPIObjectRefKind::Statement,
+                                      builder.getI64IntegerAttr(id));
+  };
+  auto selectorValue = [](reflection::VPIRelationKind relation) {
+    return static_cast<uint32_t>(relation);
+  };
+  struct ReverseRelation {
+    sim::VPIObjectRefAttr source;
+    uint32_t selector;
+    sim::VPIObjectRefAttr target;
+    Location location;
+  };
+  SmallVector<ReverseRelation> reverseRelations;
+  auto addReverse = [&](const DirectEndpoint &source, uint32_t selector,
+                        const ScopeOwnedStatementPlan &target) {
+    const auto *edge = reflection::findVPITraversal(
+        source.vpiKind, selector, reflection::VPITraversalMode::Iterate);
+    if (!edge || edge->statementContainment ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        !reflection::vpiObjectSetContains(edge->targets,
+                                          static_cast<uint32_t>(target.kind)))
+      return;
+    reverseRelations.push_back({source.reference, selector,
+                                statementReference(target.statementId),
+                                getSemanticLocation(target.source)});
+  };
+  llvm::DenseMap<uint64_t, sim::SimScopeDeclOp> scopeDeclarationsById;
+  for (sim::SimScopeDeclOp scope : scopes.declarations)
+    scopeDeclarationsById[scope.getId()] = scope;
+  llvm::DenseMap<uint64_t, std::optional<uint64_t>> moduleScopeCache;
+  std::function<std::optional<uint64_t>(uint64_t)> moduleInstanceScope =
+      [&](uint64_t id) -> std::optional<uint64_t> {
+    if (auto cached = moduleScopeCache.find(id);
+        cached != moduleScopeCache.end())
+      return cached->second;
+    auto found = scopeDeclarationsById.find(id);
+    if (found == scopeDeclarationsById.end())
+      return moduleScopeCache[id] = std::nullopt;
+    uint32_t kind = sim::vpiKindForScope(found->second);
+    if (kind == static_cast<uint32_t>(VPIKind::Module) ||
+        kind == static_cast<uint32_t>(VPIKind::Interface) ||
+        kind == static_cast<uint32_t>(VPIKind::Program))
+      return moduleScopeCache[id] = id;
+    if (!found->second.getParent())
+      return moduleScopeCache[id] = std::nullopt;
+    return moduleScopeCache[id] =
+               moduleInstanceScope(*found->second.getParent());
+  };
+
+  for (const ScopeOwnedStatementPlan &plan : scopeOwnedStatementPlans) {
+    SmallVector<Operation *> lhsRhs;
+    SmallVector<Operation *> children = getChildren(plan.source);
+    if (children.size() != 1)
+      continue;
+    auto assignment =
+        dyn_cast<semantic::SVAssignmentExpressionOp>(children.front());
+    if (!assignment)
+      continue;
+    lhsRhs = getChildren(assignment);
+    if (lhsRhs.size() != 2)
+      continue;
+
+    std::optional<DirectEndpoint> lhs = directEndpoint(lhsRhs[0]);
+    std::optional<DirectEndpoint> rhs = directEndpoint(lhsRhs[1]);
+    sim::VPIObjectRefAttr statement = statementReference(plan.statementId);
+    auto emitForward = [&](std::optional<DirectEndpoint> target,
+                           reflection::VPIRelationKind selector) {
+      if (!target)
+        return;
+      uint32_t selectorNumber = selectorValue(selector);
+      const auto *edge = reflection::findVPITraversal(
+          static_cast<uint32_t>(plan.kind), selectorNumber,
+          reflection::VPITraversalMode::Handle);
+      if (!edge || edge->statementContainment ||
+          edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+          !reflection::vpiObjectSetContains(edge->targets, target->vpiKind))
+        return;
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(plan.source), statement, selectorNumber,
+          sim::VPIRelationMode::Handle, 0, target->reference);
+    };
+    emitForward(lhs, reflection::VPIRelationKind::LhsRel);
+    emitForward(rhs, reflection::VPIRelationKind::RhsRel);
+
+    // IEEE 1800-2023 37.46 and 37.58 define the continuous-assignment
+    // connectivity relations below. Alias statements need distinct declared-
+    // net identities despite sharing physical state and are emitted by the
+    // dedicated alias-identity inventory chunk.
+    std::optional<uint64_t> statementModule = moduleInstanceScope(plan.scopeId);
+    if (lhs) {
+      addReverse(*lhs, selectorValue(reflection::VPIRelationKind::DriverRel),
+                 plan);
+      addReverse(*lhs, selectorValue(reflection::VPIRelationKind::UseRel),
+                 plan);
+      std::optional<uint64_t> objectModule =
+          moduleInstanceScope(lhs->descriptor->scopeId);
+      if (lhs->descriptor->kind == DescriptorInfo::Kind::Net &&
+          statementModule && objectModule && *statementModule == *objectModule)
+        addReverse(*lhs,
+                   selectorValue(reflection::VPIRelationKind::LocalDriverRel),
+                   plan);
+      std::optional<uint64_t> width =
+          sim::getPackedWidth(lhs->descriptor->type);
+      // IEEE 1800-2023 37.16 restricts vpiContAssign iteration from a net to
+      // scalar nets and bit-selects. Variables have their own driver model in
+      // 37.17 and 37.21 and expose whole-variable continuous assignments.
+      if (lhs->descriptor->kind == DescriptorInfo::Kind::Storage ||
+          (lhs->descriptor->kind == DescriptorInfo::Kind::Net && width &&
+           *width == 1))
+        addReverse(*lhs, static_cast<uint32_t>(VPIKind::ContAssign), plan);
+    }
+    if (rhs) {
+      addReverse(*rhs, selectorValue(reflection::VPIRelationKind::LoadRel),
+                 plan);
+      addReverse(*rhs, selectorValue(reflection::VPIRelationKind::UseRel),
+                 plan);
+      std::optional<uint64_t> objectModule =
+          moduleInstanceScope(rhs->descriptor->scopeId);
+      if (rhs->descriptor->kind == DescriptorInfo::Kind::Net &&
+          statementModule && objectModule && *statementModule == *objectModule)
+        addReverse(*rhs,
+                   selectorValue(reflection::VPIRelationKind::LocalLoadRel),
+                   plan);
+    }
+  }
+  llvm::sort(reverseRelations, [](const ReverseRelation &left,
+                                  const ReverseRelation &right) {
+    uint64_t leftSource = left.source.getId().getValue().getZExtValue();
+    uint64_t rightSource = right.source.getId().getValue().getZExtValue();
+    uint64_t leftTarget = left.target.getId().getValue().getZExtValue();
+    uint64_t rightTarget = right.target.getId().getValue().getZExtValue();
+    return std::make_tuple(left.source.getKind(), leftSource, left.selector,
+                           leftTarget) <
+           std::make_tuple(right.source.getKind(), rightSource, right.selector,
+                           rightTarget);
+  });
+  reverseRelations.erase(std::unique(reverseRelations.begin(),
+                                     reverseRelations.end(),
+                                     [](const ReverseRelation &left,
+                                        const ReverseRelation &right) {
+                                       return left.source == right.source &&
+                                              left.selector == right.selector &&
+                                              left.target == right.target;
+                                     }),
+                         reverseRelations.end());
+  sim::VPIObjectRefAttr previousSource;
+  uint32_t previousSelector = 0;
+  uint64_t ordinal = 0;
+  for (const ReverseRelation &relation : reverseRelations) {
+    if (relation.source != previousSource ||
+        relation.selector != previousSelector) {
+      previousSource = relation.source;
+      previousSelector = relation.selector;
+      ordinal = 0;
+    }
+    sim::SimVPIRelationDeclOp::create(
+        builder, relation.location, relation.source, relation.selector,
+        sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
   if (invalid)
     return failure();
