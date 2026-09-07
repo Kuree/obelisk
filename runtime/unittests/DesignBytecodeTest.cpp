@@ -5585,6 +5585,27 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   ASSERT_EQ(
       obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
       OBELISK_RT_OK);
+  SchedulePlanState scheduleState;
+  std::vector<uint8_t> planValue((fixture.execution.state_bit_count + 7) / 8,
+                                 0);
+  std::vector<uint8_t> planUnknown(planValue.size(), 0);
+  uint32_t specializationFast = 0;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.size = sizeof(plan);
+  plan.graph_layout_checksum = fixture.execution.checksum;
+  plan.mutable_state = &scheduleState;
+  plan.mutable_state_size = sizeof(scheduleState);
+  plan.actor_capacity = scheduleState.actors.size();
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+               OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION;
+  plan.state_value = planValue.data();
+  plan.state_unknown = planUnknown.data();
+  plan.state_bit_count = fixture.execution.state_bit_count;
+  plan.specialization_fast = &specializationFast;
+  plan.bind = planBind;
+  plan.run = planRun;
+  plan.fallback_snapshot = planSnapshot;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
@@ -5603,7 +5624,15 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   ASSERT_EQ(probe.reasons, std::vector<int>({cbEndOfCompile}));
   ASSERT_NE(probe.start.self, nullptr);
   ASSERT_NE(probe.end.self, nullptr);
-  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  context->nativeScheduleRunning = true;
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    refreshNativeStaticSpecializationFastUnlocked(context);
+  }
+  EXPECT_EQ(specializationFast, 1u);
+  context->nativeScheduleRunning = false;
+  specializationFast = 0;
   ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
   EXPECT_EQ(probe.start.calls, 1);
   EXPECT_EQ(probe.start.lastReason, cbStartOfSimulation);
@@ -5818,7 +5847,7 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(VPI, ObservationDemandTracksFirstAndLastRunningCallback) {
+TEST(VPI, EndOfSimulationCallbacksRemainColdUntilRemoved) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(
@@ -5838,11 +5867,11 @@ TEST(VPI, ObservationDemandTracksFirstAndLastRunningCallback) {
   vpiHandle second = vpi_register_cb(&callback);
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
-  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
 
   EXPECT_EQ(vpi_remove_cb(first), 1);
-  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_EQ(vpi_remove_cb(second), 1);
   EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);

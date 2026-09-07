@@ -635,10 +635,10 @@ bool isLifecycleReason(PLI_INT32 reason) {
 }
 
 bool observesRunningState(PLI_INT32 reason) {
-  // End-of-simulation is currently the only accepted reason in this set. Keep
-  // the complete running-state classification here so enabling statement,
-  // value, or synchronization registration cannot accidentally bypass the
-  // Tier-1 lease. Startup/end-compile inspection remains metadata-only.
+  // Keep the complete live-observation classification here so enabling
+  // statement, value, or synchronization registration cannot accidentally
+  // bypass the Tier-1 lease. Lifecycle callbacks run only at cold phase
+  // boundaries and never observe an executing scheduler.
   switch (reason) {
   case cbValueChange:
   case cbStmt:
@@ -649,7 +649,6 @@ bool observesRunningState(PLI_INT32 reason) {
   case cbAtStartOfSimTime:
   case cbNBASynch:
   case cbAtEndOfSimTime:
-  case cbEndOfSimulation:
     return true;
   default:
     return false;
