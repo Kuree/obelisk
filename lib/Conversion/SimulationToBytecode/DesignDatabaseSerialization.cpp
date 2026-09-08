@@ -37,14 +37,15 @@ static_assert(RelationLayout.size == 16);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
+static_assert(static_cast<uint8_t>(TableKind::StaticObject) == 3);
 static_assert(tableKindPackedWidth == 2);
 static_assert(tableKindPayloadMask == 0x3fff);
 static_assert(canPackTableKindPayload(tableKindPayloadMask));
 static_assert(!canPackTableKindPayload(tableKindPayloadMask + 1));
 
 constexpr bool tableKindPackingIsStable() {
-  for (TableKind table :
-       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+  for (TableKind table : {TableKind::Scope, TableKind::Object,
+                          TableKind::Statement, TableKind::StaticObject}) {
     uint16_t packed = 0;
     if (!tryPackTableKindPayload(table, tableKindPayloadMask, packed) ||
         unpackTableKind(packed) != table ||
@@ -52,7 +53,7 @@ constexpr bool tableKindPackingIsStable() {
       return false;
   }
   uint16_t rejected = 0;
-  return !tryPackTableKindPayload(static_cast<TableKind>(3), 0, rejected) &&
+  return !tryPackTableKindPayload(static_cast<TableKind>(4), 0, rejected) &&
          !tryPackTableKindPayload(TableKind::Scope, tableKindPayloadMask + 1,
                                   rejected);
 }
@@ -64,8 +65,8 @@ static_assert(canPackTableIndex(tableIndexPayloadMask));
 static_assert(!canPackTableIndex(tableIndexPayloadMask + 1));
 
 constexpr bool tableIndexPackingIsStable() {
-  for (TableKind table :
-       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+  for (TableKind table : {TableKind::Scope, TableKind::Object,
+                          TableKind::Statement, TableKind::StaticObject}) {
     uint32_t packed = 0;
     if (!tryPackTableIndex(table, tableIndexPayloadMask, packed) ||
         unpackTableIndexKind(packed) != table ||
@@ -73,7 +74,7 @@ constexpr bool tableIndexPackingIsStable() {
       return false;
   }
   uint32_t rejected = 0;
-  return !tryPackTableIndex(static_cast<TableKind>(3), 0, rejected) &&
+  return !tryPackTableIndex(static_cast<TableKind>(4), 0, rejected) &&
          !tryPackTableIndex(TableKind::Scope, tableIndexPayloadMask + 1,
                             rejected);
 }
@@ -97,8 +98,8 @@ bool declaredIndexOrdinal(int64_t left, int64_t right, int64_t index,
 
 static_assert(relationSourceKindMask == 0x1fff);
 constexpr bool relationSourcePackingIsStable() {
-  for (TableKind table :
-       {TableKind::Scope, TableKind::Object, TableKind::Statement}) {
+  for (TableKind table : {TableKind::Scope, TableKind::Object,
+                          TableKind::Statement, TableKind::StaticObject}) {
     for (bool iterate : {false, true}) {
       uint16_t packed = 0;
       if (!tryPackRelationSource(table, relationSourceKindMask, iterate,
@@ -110,7 +111,7 @@ constexpr bool relationSourcePackingIsStable() {
     }
   }
   uint16_t rejected = 0;
-  return !tryPackRelationSource(static_cast<TableKind>(3), 0, false,
+  return !tryPackRelationSource(static_cast<TableKind>(4), 0, false,
                                 rejected) &&
          !tryPackRelationSource(TableKind::Scope, relationSourceKindMask + 1,
                                 false, rejected);

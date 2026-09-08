@@ -31,6 +31,8 @@ constexpr uint64_t kObjectSize = 96;
 constexpr uint64_t kTypeSize = 80;
 constexpr uint64_t kIndexSize = 24;
 constexpr uint64_t kStatementSize = 40;
+constexpr uint64_t kStaticObjectSize =
+    obelisk::reflection::StaticObjectLayout.size;
 constexpr uint64_t kStatementSiteSize = 16;
 constexpr uint64_t kRelationSize = obelisk::reflection::RelationLayout.size;
 constexpr uint64_t kSemanticTypeSize =
@@ -185,6 +187,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t fixedPropertyOffset = 0, fixedPropertyCount = 0;
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
   uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
+  uint64_t staticObjectOffset = 0, staticObjectCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -211,6 +214,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     resolvedNetRunCount = read64(directory + 136);
     netDelayRunOffset = read64(directory + 144);
     netDelayRunCount = read64(directory + 152);
+    staticObjectOffset = read64(directory + 160);
+    staticObjectCount = read64(directory + 168);
   }
   database = {data,
               execution->design_database_size,
@@ -252,6 +257,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               resolvedNetRunCount,
               netDelayRunOffset,
               netDelayRunCount,
+              staticObjectOffset,
+              staticObjectCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -287,6 +294,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.resolvedNetRuns, database.resolvedNetRunCount,
          kResolvedNetRunSize},
         {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
+        {database.staticObjects, database.staticObjectCount, kStaticObjectSize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -317,7 +325,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
         database.fixedPropertyCount != 0 || database.resolvedNetRunCount != 0 ||
-        database.netDelayRunCount != 0)) ||
+        database.netDelayRunCount != 0 || database.staticObjectCount != 0)) ||
       (semanticDirectory != 0 &&
        database.objectSemanticRootCount != database.objectCount) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
@@ -358,6 +366,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kResolvedNetRunSize, database.size) ||
       !validRange(database.netDelayRuns, database.netDelayRunCount,
                   kNetDelayRunSize, database.size) ||
+      !validRange(database.staticObjects, database.staticObjectCount,
+                  kStaticObjectSize, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -383,6 +393,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.resolvedNetRuns < kHeaderSize) ||
       ((database.netDelayRunCount != 0 || database.netDelayRuns != 0) &&
        database.netDelayRuns < kHeaderSize) ||
+      ((database.staticObjectCount != 0 || database.staticObjects != 0) &&
+       database.staticObjects < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.stringSize == 0 || database.scopeCount > UINT32_MAX ||
       database.objectCount > UINT32_MAX ||
@@ -398,7 +410,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.fixedPropertyCount > UINT32_MAX ||
       database.resolvedNetRunCount > UINT32_MAX ||
       database.netDelayRunCount > UINT32_MAX ||
-      database.indexCount > database.scopeCount + database.objectCount ||
+      database.staticObjectCount > UINT32_MAX ||
+      database.indexCount > database.scopeCount + database.objectCount +
+                                database.staticObjectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
                       database.objects, database.objectCount, kObjectSize) ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
@@ -592,6 +606,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.resolvedNetRuns, database.resolvedNetRunCount,
        kResolvedNetRunSize},
       {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
+      {database.staticObjects, database.staticObjectCount, kStaticObjectSize},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -625,6 +640,13 @@ bool isStatementOffset(const Database &database, uint64_t offset) {
          offset - database.statements <
              database.statementCount * kStatementSize &&
          (offset - database.statements) % kStatementSize == 0;
+}
+
+bool isStaticObjectOffset(const Database &database, uint64_t offset) {
+  return offset >= database.staticObjects &&
+         offset - database.staticObjects <
+             database.staticObjectCount * kStaticObjectSize &&
+         (offset - database.staticObjects) % kStaticObjectSize == 0;
 }
 
 bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
@@ -682,6 +704,8 @@ uint64_t tableOffset(const Database &database,
     return database.objects + uint64_t{index} * kObjectSize;
   case obelisk::reflection::TableKind::Statement:
     return database.statements + uint64_t{index} * kStatementSize;
+  case obelisk::reflection::TableKind::StaticObject:
+    return database.staticObjects + uint64_t{index} * kStaticObjectSize;
   }
   return 0;
 }
@@ -703,6 +727,12 @@ bool relationSourceForCursor(const Database &database, uint64_t offset,
     table = obelisk::reflection::TableKind::Statement;
     index =
         static_cast<uint32_t>((offset - database.statements) / kStatementSize);
+    return true;
+  }
+  if (isStaticObjectOffset(database, offset)) {
+    table = obelisk::reflection::TableKind::StaticObject;
+    index = static_cast<uint32_t>((offset - database.staticObjects) /
+                                  kStaticObjectSize);
     return true;
   }
   return false;
@@ -1129,6 +1159,12 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       exactKind = read16(database.data + database.statements +
                          uint64_t{sourceIndex} * kStatementSize + 36);
+      break;
+    case obelisk::reflection::TableKind::StaticObject:
+      if (sourceIndex >= database.staticObjectCount)
+        return false;
+      exactKind = read16(database.data + database.staticObjects +
+                         uint64_t{sourceIndex} * kStaticObjectSize + 28);
       break;
     }
     const auto *descriptor =
@@ -2028,6 +2064,40 @@ bool validateDatabaseImpl(const Database &database) {
     if (parentState[index] != 2 && !validateParent(index))
       return false;
 
+  uint64_t previousStaticObjectID = 0;
+  for (uint64_t index = 0; index != database.staticObjectCount; ++index) {
+    const uint8_t *object =
+        database.data + database.staticObjects + index * kStaticObjectSize;
+    uint64_t id = read64(object);
+    uint32_t scopeIndex = read32(object + 8);
+    uint32_t sourceFile = read32(object + 12);
+    uint32_t name = read32(object + 16);
+    uint32_t line = read32(object + 20);
+    uint32_t column = read32(object + 24);
+    uint16_t vpiKind = read16(object + 28);
+    uint16_t flags = read16(object + 30);
+    if (id == 0 || (index != 0 && id <= previousStaticObjectID) ||
+        (scopeIndex != UINT32_MAX && scopeIndex >= database.scopeCount) ||
+        flags != 0 || (sourceFile == 0 && (line != 0 || column != 0)) ||
+        (sourceFile != 0 && (line == 0 || column == 0)))
+      return false;
+    previousStaticObjectID = id;
+    const auto *kind = obelisk::reflection::findVPIObjectKind(vpiKind);
+    if (!kind ||
+        !obelisk::reflection::hasVPIObjectRepresentation(
+            vpiKind,
+            obelisk::reflection::VPIObjectRepresentation::StaticImage) ||
+        // Value-bearing objects require a type and either an immutable value
+        // snapshot or an evaluation binding. Keep them in the full object
+        // representation until the compact value side table is present.
+        obelisk::reflection::findVPIValuePolicy(vpiKind))
+      return false;
+    std::string_view text;
+    if ((sourceFile != 0 && !getRelativeString(sourceFile, text)) ||
+        (name != 0 && !getRelativeString(name, text)))
+      return false;
+  }
+
   uint64_t previousSiteID = 0;
   for (uint64_t index = 0; index != database.statementSiteCount; ++index) {
     const uint8_t *site =
@@ -2120,6 +2190,11 @@ bool validateDatabaseImpl(const Database &database) {
   uint64_t automaticChildCursor = 0;
   std::unordered_set<uint64_t> staticLexicalChildren;
   std::unordered_set<uint64_t> staticLexicalParents;
+  std::vector<uint32_t> firstStaticSuccessor(database.staticObjectCount,
+                                             UINT32_MAX);
+  std::vector<uint32_t> staticSuccessorCount(database.staticObjectCount, 0);
+  std::vector<uint32_t> staticSuccessors;
+  std::vector<bool> reachableStatic(database.staticObjectCount, false);
   auto relationEndpoint = [](obelisk::reflection::TableKind table,
                              uint32_t index) {
     return (static_cast<uint32_t>(table) << 30) | index;
@@ -2237,8 +2312,17 @@ bool validateDatabaseImpl(const Database &database) {
       if (read16(sourceRecord + 36) != sourceKind)
         return false;
       break;
+    case obelisk::reflection::TableKind::StaticObject:
+      if (rootSource || sourceIndex >= database.staticObjectCount)
+        return false;
+      sourceRecord = database.data + database.staticObjects +
+                     uint64_t{sourceIndex} * kStaticObjectSize;
+      if (read16(sourceRecord + 28) != sourceKind)
+        return false;
+      break;
     }
-    if (sourceTable != obelisk::reflection::TableKind::Statement) {
+    if (sourceTable != obelisk::reflection::TableKind::Statement &&
+        sourceTable != obelisk::reflection::TableKind::StaticObject) {
       uint32_t intrinsicKind = recordVPIKind(sourceRecord);
       if (intrinsicKind != sourceKind)
         return false;
@@ -2268,6 +2352,13 @@ bool validateDatabaseImpl(const Database &database) {
                uint64_t{targetIndex} * kStatementSize;
       targetKind = read16(target + 36);
       break;
+    case obelisk::reflection::TableKind::StaticObject:
+      if (targetIndex >= database.staticObjectCount)
+        return false;
+      target = database.data + database.staticObjects +
+               uint64_t{targetIndex} * kStaticObjectSize;
+      targetKind = read16(target + 28);
+      break;
     }
     auto mode = iterate ? obelisk::reflection::VPITraversalMode::Iterate
                         : obelisk::reflection::VPITraversalMode::Handle;
@@ -2278,6 +2369,17 @@ bool validateDatabaseImpl(const Database &database) {
         ordinal != expectedOrdinal || (!iterate && ordinal != 0))
       return false;
     ++expectedOrdinal;
+    if (targetTable == obelisk::reflection::TableKind::StaticObject) {
+      if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
+        if (firstStaticSuccessor[sourceIndex] == UINT32_MAX)
+          firstStaticSuccessor[sourceIndex] =
+              static_cast<uint32_t>(staticSuccessors.size());
+        ++staticSuccessorCount[sourceIndex];
+        staticSuccessors.push_back(targetIndex);
+      } else {
+        reachableStatic[targetIndex] = true;
+      }
+    }
 
     auto relationBacked = [](const uint8_t *record) {
       uint32_t kind = recordKind(record);
@@ -2285,8 +2387,9 @@ bool validateDatabaseImpl(const Database &database) {
              (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
     };
     bool relationBackedTarget =
-        targetTable == obelisk::reflection::TableKind::Object &&
-        relationBacked(target);
+        targetTable == obelisk::reflection::TableKind::StaticObject ||
+        (targetTable == obelisk::reflection::TableKind::Object &&
+         relationBacked(target));
     bool lexicalForward =
         selector == targetKind ||
         edge->automaticRelation ==
@@ -2355,6 +2458,9 @@ bool validateDatabaseImpl(const Database &database) {
         // The relation itself is the canonical lexical owner. The physical
         // scope field only keeps this immutable record reachable and may name
         // a different container (for example a package or enclosing class).
+        staticLexicalParents.insert(lexicalPair(
+            packedTarget, relationEndpoint(sourceTable, sourceIndex)));
+      } else if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
         staticLexicalParents.insert(lexicalPair(
             packedTarget, relationEndpoint(sourceTable, sourceIndex)));
       } else if (targetTable != obelisk::reflection::TableKind::Scope ||
@@ -2434,6 +2540,13 @@ bool validateDatabaseImpl(const Database &database) {
           targetScope != read32(sourceRecord + 12))
         return false;
       break;
+    case obelisk::reflection::TableKind::StaticObject: {
+      uint32_t sourceScope = read32(sourceRecord + 8);
+      if (sourceScope >= database.scopeCount || targetOwner != UINT32_MAX ||
+          targetParent != UINT32_MAX || targetScope != sourceScope)
+        return false;
+      break;
+    }
     }
   }
   if (!automaticGroupComplete())
@@ -2706,15 +2819,26 @@ bool validateDatabaseImpl(const Database &database) {
     if (!getString(database, read64(entry + 8), name))
       return false;
     const uint8_t *record;
-    uint32_t kind;
     uint64_t recordOffset = read64(entry + 16);
-    if (!getRecord(database, recordOffset, record, kind) ||
-        kind == OBELISK_RT_DESIGN_RECORD_TYPE ||
-        hash != nameHash(reinterpret_cast<const uint8_t *>(name.data()),
+    uint64_t recordName = 0;
+    if (isStaticObjectOffset(database, recordOffset)) {
+      record = database.data + recordOffset;
+      uint32_t relativeName = read32(record + 16);
+      if (relativeName == 0 || relativeName >= database.stringSize)
+        return false;
+      recordName = database.strings + relativeName;
+    } else {
+      uint32_t kind = 0;
+      if (!getRecord(database, recordOffset, record, kind) ||
+          kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+        return false;
+      recordName = read64(record + 40);
+    }
+    if (hash != nameHash(reinterpret_cast<const uint8_t *>(name.data()),
                          name.size()) ||
         !indexedRecords.insert(recordOffset).second ||
         !indexedNames.emplace(read64(entry + 8), recordOffset).second ||
-        read64(record + 40) != read64(entry + 8) ||
+        recordName != read64(entry + 8) ||
         (index != 0 && (hash < previousHash ||
                         (hash == previousHash && name <= previousName))))
       return false;
@@ -2725,6 +2849,40 @@ bool validateDatabaseImpl(const Database &database) {
     if (indexedRecords.find(database.scopes + index * kScopeSize) ==
         indexedRecords.end())
       return false;
+  for (uint64_t index = 0; index != database.staticObjectCount; ++index) {
+    uint64_t offset = database.staticObjects + index * kStaticObjectSize;
+    uint32_t name = read32(database.data + offset + 16);
+    bool indexed = indexedRecords.find(offset) != indexedRecords.end();
+    if ((name != 0) != indexed)
+      return false;
+    if (indexed)
+      reachableStatic[index] = true;
+  }
+  // Compact identities are not part of the physical child chain. Every one
+  // must therefore be discoverable either by name or by following relations
+  // from another discoverable record; an unreachable relation cycle does not
+  // make its members queryable.
+  std::vector<uint32_t> pendingStatic;
+  for (uint32_t index = 0; index != database.staticObjectCount; ++index)
+    if (reachableStatic[index])
+      pendingStatic.push_back(index);
+  while (!pendingStatic.empty()) {
+    uint32_t source = pendingStatic.back();
+    pendingStatic.pop_back();
+    uint32_t first = firstStaticSuccessor[source];
+    if (first == UINT32_MAX)
+      continue;
+    for (uint32_t edge = 0; edge != staticSuccessorCount[source]; ++edge) {
+      uint32_t target = staticSuccessors[first + edge];
+      if (!reachableStatic[target]) {
+        reachableStatic[target] = true;
+        pendingStatic.push_back(target);
+      }
+    }
+  }
+  if (std::find(reachableStatic.begin(), reachableStatic.end(), false) !=
+      reachableStatic.end())
+    return false;
   const obelisk::reflection::VPITraversalDescriptor *portConnectionEdge =
       nullptr;
   for (const auto &edge : obelisk::reflection::vpiTraversals) {
@@ -2909,6 +3067,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.resolvedNetRunCount == right.resolvedNetRunCount &&
          left.netDelayRuns == right.netDelayRuns &&
          left.netDelayRunCount == right.netDelayRunCount &&
+         left.staticObjects == right.staticObjects &&
+         left.staticObjectCount == right.staticObjectCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -2962,6 +3122,15 @@ obelisk_rt_status designRoot(const Database &database,
 obelisk_rt_status designParent(const Database &database,
                                obelisk_rt_design_cursor_v1 cursor,
                                obelisk_rt_design_cursor_v1 *outCursor) {
+  if (isStaticObjectOffset(database, cursor.offset)) {
+    uint32_t scope = read32(database.data + cursor.offset + 8);
+    if (scope == UINT32_MAX) {
+      *outCursor = {};
+      return OBELISK_RT_EOF;
+    }
+    outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
+    return OBELISK_RT_OK;
+  }
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
@@ -3052,6 +3221,20 @@ obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
 obelisk_rt_status designInfo(const Database &database,
                              obelisk_rt_design_cursor_v1 cursor,
                              obelisk_rt_design_info_v1 *outInfo) {
+  if (isStaticObjectOffset(database, cursor.offset)) {
+    const uint8_t *record = database.data + cursor.offset;
+    *outInfo = {};
+    outInfo->kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    uint16_t exactKind = read16(record + 28);
+    const auto *descriptor = obelisk::reflection::findVPIObjectKind(exactKind);
+    if (read32(record + 16) != 0 && descriptor &&
+        (descriptor->families &
+         obelisk::reflection::vpiFamilyMask(
+             obelisk::reflection::VPIObjectFamily::Typespec)) != 0)
+      outInfo->capabilities = OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC;
+    outInfo->handle = {OBELISK_RT_DESCRIPTOR_INVALID, 0, read64(record)};
+    return OBELISK_RT_OK;
+  }
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
@@ -3246,6 +3429,20 @@ obelisk_rt_status designName(const Database &database,
     *outSize = name.size();
     return OBELISK_RT_OK;
   }
+  if (isStaticObjectOffset(database, cursor.offset)) {
+    uint32_t relative = read32(database.data + cursor.offset + 16);
+    if (relative == 0) {
+      *outData = nullptr;
+      *outSize = 0;
+      return OBELISK_RT_OK;
+    }
+    std::string_view name;
+    if (!getString(database, database.strings + relative, name))
+      return OBELISK_RT_INVALID_HANDLE;
+    *outData = reinterpret_cast<const uint8_t *>(name.data());
+    *outSize = name.size();
+    return OBELISK_RT_OK;
+  }
   const uint8_t *record;
   uint32_t kind;
   std::string_view name;
@@ -3265,6 +3462,10 @@ obelisk_rt_status designVPIType(const Database &database,
                                 uint32_t *outType) {
   if (isStatementOffset(database, cursor.offset)) {
     *outType = read16(database.data + cursor.offset + 36);
+    return OBELISK_RT_OK;
+  }
+  if (isStaticObjectOffset(database, cursor.offset)) {
+    *outType = read16(database.data + cursor.offset + 28);
     return OBELISK_RT_OK;
   }
   if (!isScopeOffset(database, cursor.offset) &&
@@ -3674,6 +3875,13 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
     *outType = read16(database.data + outCursor->offset + 36);
     *outStatement = true;
     return OBELISK_RT_OK;
+  case obelisk::reflection::TableKind::StaticObject:
+    if (target >= database.staticObjectCount)
+      return OBELISK_RT_INVALID_DESIGN;
+    outCursor->offset =
+        database.staticObjects + uint64_t{target} * kStaticObjectSize;
+    *outType = read16(database.data + outCursor->offset + 28);
+    return OBELISK_RT_OK;
   }
   // The database validator rejects reserved table tags before publication.
   return OBELISK_RT_INVALID_DESIGN;
@@ -3971,6 +4179,12 @@ obelisk_rt_status obelisk_rt_cached_design_source(
     fileOffset = relative == 0 ? 0 : database->strings + relative;
     line = read32(record + 28);
     column = read32(record + 32);
+  } else if (isStaticObjectOffset(*database, cursor.offset)) {
+    record = database->data + cursor.offset;
+    uint32_t relative = read32(record + 12);
+    fileOffset = relative == 0 ? 0 : database->strings + relative;
+    line = read32(record + 20);
+    column = read32(record + 24);
   } else {
     if (!getRecord(*database, cursor.offset, record, kind) ||
         kind == OBELISK_RT_DESIGN_RECORD_TYPE)

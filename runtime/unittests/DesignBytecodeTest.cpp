@@ -1951,6 +1951,77 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   return bytes;
 }
 
+std::vector<uint8_t> makeCompactStaticObjectDatabase() {
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t stringOffset = 416;
+  constexpr uint64_t indexOffset = 448;
+  constexpr uint64_t directoryOffset = 520;
+  constexpr uint64_t semanticRootOffset =
+      directoryOffset + kSemanticDirectorySize;
+  constexpr uint64_t staticObjectOffset = semanticRootOffset + 4;
+  constexpr uint64_t relationOffset = staticObjectOffset + 2 * 32;
+  std::vector<uint8_t> bytes = makeDatabase(false);
+  bytes.resize(relationOffset + 16, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 120, 3);
+  put64(bytes, 160, relationOffset);
+  put64(bytes, 168, 1);
+
+  put64(bytes, directoryOffset + 32, semanticRootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 160, staticObjectOffset);
+  put64(bytes, directoryOffset + 168, 2);
+  put32(bytes, semanticRootOffset, UINT32_MAX);
+
+  // A named enum typespec and its anonymous integral base typespec share the
+  // physical module scope but are connected only by the relation table.
+  put64(bytes, staticObjectOffset, 10);
+  put32(bytes, staticObjectOffset + 8, 0);
+  put32(bytes, staticObjectOffset + 12, 20);
+  put32(bytes, staticObjectOffset + 16, 14);
+  put32(bytes, staticObjectOffset + 20, 11);
+  put32(bytes, staticObjectOffset + 24, 3);
+  put16(bytes, staticObjectOffset + 28, vpiEnumTypespec);
+
+  put64(bytes, staticObjectOffset + 32, 11);
+  put32(bytes, staticObjectOffset + 32 + 8, 0);
+  put32(bytes, staticObjectOffset + 32 + 12, 20);
+  put32(bytes, staticObjectOffset + 32 + 20, 12);
+  put32(bytes, staticObjectOffset + 32 + 24, 4);
+  put16(bytes, staticObjectOffset + 32 + 28, vpiIntTypespec);
+
+  put32(bytes, relationOffset, 0);
+  put32(bytes, relationOffset + 4, (uint32_t{3} << 30) | 1);
+  put32(bytes, relationOffset + 8, 0);
+  put16(bytes, relationOffset + 12, vpiBaseTypespec);
+  put16(bytes, relationOffset + 14, designRelationSource(3, vpiEnumTypespec));
+
+  struct Entry {
+    uint64_t hash;
+    uint64_t name;
+    uint64_t record;
+  };
+  std::array<Entry, 3> index{{
+      {nameHash("top"), stringOffset, scopeOffset},
+      {nameHash("top.value"), stringOffset + 4, objectOffset},
+      {nameHash("logic"), stringOffset + 14, staticObjectOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeFixedPropertyDatabase(bool protectObject = true) {
   std::vector<uint8_t> bytes = makeDatabase();
   constexpr uint64_t stringOffset = 416;
@@ -13388,6 +13459,169 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
   put64(malformed, 32, imageChecksum(malformed));
   EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
             OBELISK_RT_INVALID_DESIGN);
+}
+
+TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
+  Fixture fixture;
+  fixture.database = makeCompactStaticObjectDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  constexpr std::string_view typespecName = "logic";
+  obelisk_rt_design_cursor_v1 enumTypespec{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                &fixture.execution,
+                reinterpret_cast<const uint8_t *>(typespecName.data()),
+                typespecName.size(), &enumTypespec),
+            OBELISK_RT_OK);
+
+  obelisk_rt_design_info_v1 info{};
+  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, enumTypespec, &info),
+            OBELISK_RT_OK);
+  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
+  EXPECT_EQ(info.capabilities, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_INVALID);
+  EXPECT_EQ(info.handle.id, 10u);
+  EXPECT_EQ(info.type_offset, 0u);
+  EXPECT_EQ(info.bit_width, 0u);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  uint32_t exactType = 0;
+  ASSERT_EQ(obelisk_rt_cached_vpi_type(context, enumTypespec, &exactType),
+            OBELISK_RT_OK);
+  EXPECT_EQ(exactType, vpiEnumTypespec);
+
+  const uint8_t *name = nullptr;
+  uint64_t nameSize = 0;
+  ASSERT_EQ(
+      obelisk_rt_cached_design_name(context, enumTypespec, &name, &nameSize),
+      OBELISK_RT_OK);
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(name), nameSize),
+            typespecName);
+
+  const uint8_t *file = nullptr;
+  uint64_t fileSize = 0;
+  uint32_t line = 0, column = 0;
+  ASSERT_EQ(obelisk_rt_cached_design_source(context, enumTypespec, &file,
+                                            &fileSize, &line, &column),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(file), fileSize),
+            "test.sv");
+  EXPECT_EQ(line, 11u);
+  EXPECT_EQ(column, 3u);
+
+  obelisk_rt_design_cursor_v1 parent{};
+  ASSERT_EQ(obelisk_rt_cached_design_parent(context, enumTypespec, &parent),
+            OBELISK_RT_OK);
+  EXPECT_EQ(parent.offset, 176u);
+
+  VPIRelationRange range{};
+  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(
+                context, enumTypespec, vpiBaseTypespec, false, &range),
+            OBELISK_RT_OK);
+  ASSERT_EQ(range.count, 1u);
+  obelisk_rt_design_cursor_v1 baseTypespec{};
+  bool statement = true;
+  ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(
+                context, range.first, &baseTypespec, &exactType, &statement),
+            OBELISK_RT_OK);
+  EXPECT_EQ(exactType, vpiIntTypespec);
+  EXPECT_FALSE(statement);
+  ASSERT_EQ(
+      obelisk_rt_cached_design_name(context, baseTypespec, &name, &nameSize),
+      OBELISK_RT_OK);
+  EXPECT_EQ(name, nullptr);
+  EXPECT_EQ(nameSize, 0u);
+
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char mutableName[] = "logic";
+  vpiHandle enumTypespecHandle = vpi_handle_by_name(mutableName, nullptr);
+  ASSERT_NE(enumTypespecHandle, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, enumTypespecHandle), vpiEnumTypespec);
+  EXPECT_STREQ(vpi_get_str(vpiName, enumTypespecHandle), "logic");
+  vpiHandle baseTypespecHandle =
+      vpi_handle(vpiBaseTypespec, enumTypespecHandle);
+  ASSERT_NE(baseTypespecHandle, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, baseTypespecHandle), vpiIntTypespec);
+  EXPECT_EQ(vpi_get_str(vpiName, baseTypespecHandle), nullptr);
+  EXPECT_EQ(vpi_release_handle(baseTypespecHandle), 1);
+  EXPECT_EQ(vpi_release_handle(enumTypespecHandle), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
+  Fixture fixture;
+  constexpr uint64_t directoryOffset = 520;
+  constexpr uint64_t staticObjectOffset =
+      directoryOffset + kSemanticDirectorySize + 4;
+  constexpr uint64_t relationOffset = staticObjectOffset + 2 * 32;
+  auto reject = [&](std::vector<uint8_t> malformed) {
+    put64(malformed, 32, imageChecksum(malformed));
+    fixture.execution.design_database = malformed.data();
+    fixture.execution.design_database_size = malformed.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  std::vector<uint8_t> malformed = makeCompactStaticObjectDatabase();
+  put16(malformed, staticObjectOffset + 28, vpiCallback);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  // Compact value-bearing records require the forthcoming immutable-value
+  // side table and must not silently expose a broken vpi_get_value handle.
+  put16(malformed, staticObjectOffset + 28, vpiParameter);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put16(malformed, staticObjectOffset + 30, 1);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, staticObjectOffset + 8, 1);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, staticObjectOffset + 12, 0);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, staticObjectOffset + 16, 28);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put64(malformed, staticObjectOffset, 0);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put64(malformed, staticObjectOffset + 32, 10);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put16(malformed, relationOffset + 14, designRelationSource(3, vpiSpecParam));
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, relationOffset + 4, (uint32_t{3} << 30) | 2);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  // A named compact record must have exactly one matching name-index entry.
+  put32(malformed, staticObjectOffset + 16, 0);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  // Anonymous compact identities are only useful when a query can reach them.
+  put64(malformed, 160, 0);
+  put64(malformed, 168, 0);
+  reject(std::move(malformed));
 }
 
 TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {

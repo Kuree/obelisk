@@ -42,6 +42,7 @@ class ReflectionTableKind<string cppName_, int value_, int packedWidth_ = 2> {
 def ScopeTable : ReflectionTableKind<"Scope", 0>;
 def ObjectTable : ReflectionTableKind<"Object", 1>;
 def StatementTable : ReflectionTableKind<"Statement", 2>;
+def StaticObjectTable : ReflectionTableKind<"StaticObject", 3>;
 
 def HeaderMagic : ReflectionField<"Magic", 0, Bytes8>;
 def HeaderVersion : ReflectionField<"Version", 8, U32LE>;
@@ -156,6 +157,24 @@ def Statement : ReflectionLayout<"Statement", 40,
    StatementParentIndex, StatementSourceFile, StatementName,
    StatementSourceLine, StatementSourceColumn, StatementVPIKind,
    StatementFlags]>;
+
+// Compact immutable source/semantic identities that have no executable
+// storage. UINT32_MAX denotes an absent scope; zero denotes an absent source
+// file or name, matching the existing relative-string convention. All
+// object relationships and immutable non-universal properties remain in the
+// shared relation/fixed-property tables, avoiding per-record pointer fields.
+def StaticObjectID : ReflectionField<"ID", 0, U64LE>;
+def StaticObjectScopeIndex : ReflectionField<"ScopeIndex", 8, U32LE>;
+def StaticObjectSourceFile : ReflectionField<"SourceFile", 12, U32LE>;
+def StaticObjectName : ReflectionField<"Name", 16, U32LE>;
+def StaticObjectSourceLine : ReflectionField<"SourceLine", 20, U32LE>;
+def StaticObjectSourceColumn : ReflectionField<"SourceColumn", 24, U32LE>;
+def StaticObjectVPIKind : ReflectionField<"VPIKind", 28, U16LE>;
+def StaticObjectFlags : ReflectionField<"Flags", 30, U16LE>;
+def StaticObject : ReflectionLayout<"StaticObject", 32,
+  [StaticObjectID, StaticObjectScopeIndex, StaticObjectSourceFile,
+   StaticObjectName, StaticObjectSourceLine, StaticObjectSourceColumn,
+   StaticObjectVPIKind, StaticObjectFlags]>;
 
 def StatementSiteID : ReflectionField<"ID", 0, U64LE>;
 def StatementSiteStatementIndex
@@ -345,7 +364,11 @@ def SemanticDirectoryNetDelayRunOffset
     : ReflectionField<"NetDelayRunOffset", 144, U64LE>;
 def SemanticDirectoryNetDelayRunCount
     : ReflectionField<"NetDelayRunCount", 152, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 160,
+def SemanticDirectoryStaticObjectOffset
+    : ReflectionField<"StaticObjectOffset", 160, U64LE>;
+def SemanticDirectoryStaticObjectCount
+    : ReflectionField<"StaticObjectCount", 168, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 176,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -362,7 +385,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 160,
    SemanticDirectoryResolvedNetRunOffset,
    SemanticDirectoryResolvedNetRunCount,
    SemanticDirectoryNetDelayRunOffset,
-   SemanticDirectoryNetDelayRunCount]>;
+   SemanticDirectoryNetDelayRunCount,
+   SemanticDirectoryStaticObjectOffset,
+   SemanticDirectoryStaticObjectCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;
