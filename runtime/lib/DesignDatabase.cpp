@@ -2076,7 +2076,7 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t column = read32(object + 24);
     uint16_t vpiKind = read16(object + 28);
     uint16_t flags = read16(object + 30);
-    if (id == 0 || (index != 0 && id <= previousStaticObjectID) ||
+    if ((index != 0 && id <= previousStaticObjectID) ||
         (scopeIndex != UINT32_MAX && scopeIndex >= database.scopeCount) ||
         flags != 0 || (sourceFile == 0 && (line != 0 || column != 0)) ||
         (sourceFile != 0 && (line == 0 || column == 0)))

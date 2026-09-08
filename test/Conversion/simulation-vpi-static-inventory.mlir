@@ -197,21 +197,20 @@ module attributes {
 
 // Static-only source anchors and typespec inventory use kind 9 and retain
 // their exact generated VPI object kinds.
-// CHECK: object name=pkg:: kind=9 vpi_kind=600 caps=0x0 id=3
-// CHECK: object name=pkg::C kind=9 vpi_kind=652 caps=0x0 id=6
+// CHECK: object name=pkg::C kind=9 vpi_kind=652 caps=0x0 id=8
 // CHECK: object name=pkg::C::method kind=7 vpi_kind=20 caps=0x80
-// CHECK: object name=@iface kind=9 vpi_kind=906 caps=0x0 id=13
-// CHECK: object name=@iface kind=9 vpi_kind=906 caps=0x0 id=16
+// CHECK: object name=@iface kind=9 vpi_kind=906 caps=0x0 id=17
+// CHECK: object name=@iface kind=9 vpi_kind=906 caps=0x0 id=21
 // The anonymous typespec deliberately shares its physical scope's name. It is
 // relation-only, so it must not make the immutable name index ambiguous.
-// CHECK: object name=top kind=9 vpi_kind=633 caps=0x0 id=19
-// CHECK: object name=top.alias_t kind=9 vpi_kind=640 caps=0x80 id=4
+// CHECK: object name=top kind=9 vpi_kind=633 caps=0x0 id=25
+// CHECK: object name=top.alias_t kind=9 vpi_kind=640 caps=0x80 id=5
 // CHECK: object name=top.always kind=5 vpi_kind=1 caps=0x0 id=3
 // CHECK: object name=top.always_comb kind=5 vpi_kind=1 caps=0x0 id=4
 // CHECK: object name=top.always_ff kind=5 vpi_kind=1 caps=0x0 id=5
 // CHECK: object name=top.always_latch kind=5 vpi_kind=1 caps=0x0 id=6
 // CHECK: object name=top.base_t kind=9 vpi_kind=640 caps=0x80 id=1
-// CHECK: object name=top.enum_array_t kind=9 vpi_kind=692 caps=0x80 id=10
+// CHECK: object name=top.enum_array_t kind=9 vpi_kind=692 caps=0x80 id=13
 // The physical image keeps the unpacked source-order range and the nested
 // packed range used by vpi_handle_by_multi_index offset calculation.
 // CHECK: object name=top.indexed_value kind=2 vpi_kind=116 {{.*}} width=8 range=[0:1] {{.*}} type_kind=2 type_flags=0x1 {{.*}} element_kind=2 element_flags=0x5 element_width=4 element_range=[7:4] child_kind=1 child_flags=0x5 child_width=1
@@ -220,9 +219,11 @@ module attributes {
 // CHECK: object name=top.initial kind=5 vpi_kind=24 caps=0x0 id=1
 // CHECK: object name=top.internal_always kind=5 vpi_kind=0 caps=0x20 id=7
 // CHECK: object name=top.record_t kind=9 vpi_kind=638 caps=0x80
-// CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=7
+// CHECK: object name=top.state_t kind=9 vpi_kind=633 caps=0x0 id=9
 // CHECK: object name=top.state_t::IDLE kind=9 vpi_kind=634 caps=0x0 id=2
-// CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=5
+// CHECK: object name=top.state_t::RUN kind=9 vpi_kind=634 caps=0x0 id=6
+// Eligible shape-free source anchors use the compact static-object table.
+// CHECK: static_object name=pkg:: vpi_kind=600 id=4 scope=$root
 // Backed-anchor metadata is serialized on the aliased physical scope record.
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
 // CHECK-DAG: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def

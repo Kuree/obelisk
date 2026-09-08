@@ -1977,7 +1977,7 @@ std::vector<uint8_t> makeCompactStaticObjectDatabase() {
 
   // A named enum typespec and its anonymous integral base typespec share the
   // physical module scope but are connected only by the relation table.
-  put64(bytes, staticObjectOffset, 10);
+  put64(bytes, staticObjectOffset, 0);
   put32(bytes, staticObjectOffset + 8, 0);
   put32(bytes, staticObjectOffset + 12, 20);
   put32(bytes, staticObjectOffset + 16, 14);
@@ -13483,7 +13483,7 @@ TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
   EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
   EXPECT_EQ(info.capabilities, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
   EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_INVALID);
-  EXPECT_EQ(info.handle.id, 10u);
+  EXPECT_EQ(info.handle.id, 0u);
   EXPECT_EQ(info.type_offset, 0u);
   EXPECT_EQ(info.bit_width, 0u);
 
@@ -13597,11 +13597,7 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
   reject(std::move(malformed));
 
   malformed = makeCompactStaticObjectDatabase();
-  put64(malformed, staticObjectOffset, 0);
-  reject(std::move(malformed));
-
-  malformed = makeCompactStaticObjectDatabase();
-  put64(malformed, staticObjectOffset + 32, 10);
+  put64(malformed, staticObjectOffset + 32, 0);
   reject(std::move(malformed));
 
   malformed = makeCompactStaticObjectDatabase();

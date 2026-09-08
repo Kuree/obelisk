@@ -153,6 +153,7 @@ TEST(GeneratedDesignDatabase, Dump) {
   uint64_t fixedPropertyOffset = 0, fixedPropertyCount = 0;
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
   uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
+  uint64_t staticObjectOffset = 0, staticObjectCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -178,6 +179,8 @@ TEST(GeneratedDesignDatabase, Dump) {
     resolvedNetRunCount = directory.getResolvedNetRunCount();
     netDelayRunOffset = directory.getNetDelayRunOffset();
     netDelayRunCount = directory.getNetDelayRunCount();
+    staticObjectOffset = directory.getStaticObjectOffset();
+    staticObjectCount = directory.getStaticObjectCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -203,6 +206,8 @@ TEST(GeneratedDesignDatabase, Dump) {
   ASSERT_SECTION_RANGE(resolvedNetRunOffset, resolvedNetRunCount,
                        ResolvedNetRunLayout);
   ASSERT_SECTION_RANGE(netDelayRunOffset, netDelayRunCount, NetDelayRunLayout);
+  ASSERT_SECTION_RANGE(staticObjectOffset, staticObjectCount,
+                       StaticObjectLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;
@@ -287,6 +292,25 @@ TEST(GeneratedDesignDatabase, Dump) {
               << elementLeft << ':' << elementRight
               << "] child_kind=" << childKind << " child_flags=0x"
               << hex(childFlags) << " child_width=" << childWidth << '\n';
+  }
+
+  std::vector<std::string> staticObjectIndexNames;
+  for (uint64_t index = 0; index != staticObjectCount; ++index) {
+    const StaticObjectView object(image + staticObjectOffset +
+                                  index * StaticObjectLayout.size);
+    std::string name;
+    if (object.getName() != 0) {
+      ASSERT_TRUE(relativeStringAt(image, header.getStringOffset(),
+                                   header.getStringSize(), object.getName(),
+                                   name));
+    } else {
+      name = "static#" + std::to_string(object.getID());
+    }
+    staticObjectIndexNames.push_back(name);
+    ASSERT_LT(object.getScopeIndex(), scopeIndexNames.size());
+    output << "static_object name=" << name
+           << " vpi_kind=" << object.getVPIKind() << " id=" << object.getID()
+           << " scope=" << scopeIndexNames[object.getScopeIndex()] << '\n';
   }
 
   constexpr uint32_t semanticFlagsMask =
@@ -474,8 +498,9 @@ TEST(GeneratedDesignDatabase, Dump) {
               << hex(site.getFlags()) << '\n';
   }
 
-  const std::array<const std::vector<std::string> *, 3> tableNames{
-      &scopeIndexNames, &objectIndexNames, &statementIndexNames};
+  const std::array<const std::vector<std::string> *, 4> tableNames{
+      &scopeIndexNames, &objectIndexNames, &statementIndexNames,
+      &staticObjectIndexNames};
   for (uint64_t index = 0; index != header.getRelationCount(); ++index) {
     const RelationView relation(image + header.getRelationOffset() +
                                 index * RelationLayout.size);
@@ -504,6 +529,125 @@ TEST(GeneratedDesignDatabase, Dump) {
   }
   output.close();
   ASSERT_TRUE(output) << "failed to write " << outputPath;
+}
+
+TEST(GeneratedDesignDatabase, CompactStaticQueries) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module) << "failed to parse " << inputPath;
+  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  module->walk(
+      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+  ASSERT_EQ(designs.size(), 1u);
+
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
+      obelisk::encodeSimulationDesign(designs.front(), options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  ASSERT_GE(encoded->bytecode.size(), 40u);
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  PLI_BYTE8 packageName[] = "pkg";
+  PLI_BYTE8 topName[] = "top";
+  PLI_BYTE8 clockingName[] = "cb";
+  PLI_BYTE8 propertyName[] = "prop";
+  PLI_BYTE8 sequenceName[] = "seq";
+  PLI_BYTE8 generateName[] = "g";
+  PLI_BYTE8 gateName[] = "gate";
+  vpiHandle package = vpi_handle_by_name(packageName, nullptr);
+  vpiHandle top = vpi_handle_by_name(topName, nullptr);
+  ASSERT_NE(package, nullptr);
+  ASSERT_NE(top, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, package), vpiPackage);
+  EXPECT_STREQ(vpi_get_str(vpiName, package), "pkg");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, package), "pkg::");
+  EXPECT_STREQ(vpi_get_str(vpiFile, package), "compact_static.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, package), 3);
+
+  vpiHandle clocking = vpi_handle_by_name(clockingName, top);
+  vpiHandle generated = vpi_handle_by_name(generateName, top);
+  vpiHandle gate = vpi_handle_by_name(gateName, top);
+  ASSERT_NE(clocking, nullptr);
+  ASSERT_NE(generated, nullptr);
+  ASSERT_NE(gate, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, clocking), vpiClockingBlock);
+  EXPECT_EQ(vpi_get(vpiType, generated), vpiGenScope);
+  EXPECT_EQ(vpi_get(vpiIsProtected, generated), 1);
+  EXPECT_EQ(vpi_get(vpiType, gate), vpiGate);
+  EXPECT_EQ(vpi_get(vpiSize, gate), 2);
+  vpiHandle property = vpi_handle_by_name(propertyName, clocking);
+  vpiHandle sequence = vpi_handle_by_name(sequenceName, clocking);
+  ASSERT_NE(property, nullptr);
+  ASSERT_NE(sequence, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, property), vpiPropertyDecl);
+  EXPECT_EQ(vpi_get(vpiType, sequence), vpiSequenceDecl);
+
+  vpiHandle properties = vpi_iterate(vpiPropertyDecl, clocking);
+  vpiHandle sequences = vpi_iterate(vpiSequenceDecl, clocking);
+  ASSERT_NE(properties, nullptr);
+  ASSERT_NE(sequences, nullptr);
+  vpiHandle traversedProperty = vpi_scan(properties);
+  vpiHandle traversedSequence = vpi_scan(sequences);
+  ASSERT_NE(traversedProperty, nullptr);
+  ASSERT_NE(traversedSequence, nullptr);
+  EXPECT_EQ(vpi_compare_objects(property, traversedProperty), 1);
+  EXPECT_EQ(vpi_compare_objects(sequence, traversedSequence), 1);
+  EXPECT_EQ(vpi_scan(properties), nullptr);
+  EXPECT_EQ(vpi_scan(sequences), nullptr);
+
+  vpiHandle propertyScope = vpi_handle(vpiScope, property);
+  vpiHandle sequenceScope = vpi_handle(vpiScope, sequence);
+  vpiHandle clockingScope = vpi_handle(vpiScope, clocking);
+  vpiHandle generatedScope = vpi_handle(vpiScope, generated);
+  ASSERT_NE(propertyScope, nullptr);
+  ASSERT_NE(sequenceScope, nullptr);
+  ASSERT_NE(clockingScope, nullptr);
+  EXPECT_EQ(generatedScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(clocking, propertyScope), 1);
+  EXPECT_EQ(vpi_compare_objects(clocking, sequenceScope), 1);
+  EXPECT_EQ(vpi_compare_objects(top, clockingScope), 1);
+
+  EXPECT_EQ(vpi_release_handle(clockingScope), 1);
+  EXPECT_EQ(vpi_release_handle(sequenceScope), 1);
+  EXPECT_EQ(vpi_release_handle(propertyScope), 1);
+  EXPECT_EQ(vpi_release_handle(traversedSequence), 1);
+  EXPECT_EQ(vpi_release_handle(traversedProperty), 1);
+  EXPECT_EQ(vpi_release_handle(sequence), 1);
+  EXPECT_EQ(vpi_release_handle(property), 1);
+  EXPECT_EQ(vpi_release_handle(gate), 1);
+  EXPECT_EQ(vpi_release_handle(generated), 1);
+  EXPECT_EQ(vpi_release_handle(clocking), 1);
+  EXPECT_EQ(vpi_release_handle(top), 1);
+  EXPECT_EQ(vpi_release_handle(package), 1);
+  obelisk_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, InterModPathQueries) {

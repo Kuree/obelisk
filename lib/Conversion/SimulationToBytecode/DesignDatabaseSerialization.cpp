@@ -163,6 +163,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
     bool indexName = true;
     Operation *identity = nullptr;
   };
+  struct StaticObjectRecord {
+    uint64_t id = 0;
+    uint64_t scope = 0;
+    std::string name;
+    uint32_t vpiKind = 0;
+    Source source;
+    Operation *identity = nullptr;
+  };
   struct StatementRecord {
     sim::SimStatementDeclOp declaration;
     Source source;
@@ -200,6 +208,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
   SmallVector<sim::SimScopeDeclOp> scopes;
   SmallVector<Record> objects;
+  SmallVector<StaticObjectRecord> staticObjects;
   SmallVector<StatementRecord> statements;
   SmallVector<StatementSiteRecord> statementSites;
   SmallVector<sim::SimVPIStatementRelationDeclOp> relationDeclarations;
@@ -398,10 +407,28 @@ SmallVector<uint8_t> serializeDesignDatabase(
               static_cast<uint32_t>(VPIObjectKind::Package) &&
           !StringRef(name).ends_with("::"))
         name.append("::");
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
-                         anchor.getVpiKind(), 0, *id,
-                         anchor.getEnclosingScopeId(), std::move(name), Type{},
-                         0, sourceFor(anchor), true, anchor});
+      const auto *indexed = findVPIIndexedAccess(anchor.getVpiKind());
+      bool hasSemanticShape =
+          anchor.getVpiKind() ==
+              static_cast<uint32_t>(VPIObjectKind::NamedEvent) ||
+          anchor.getIndexRangesAttr() || anchor.getSparseIndicesAttr() ||
+          anchor.getMemberIndicesAttr() || anchor.getPrimitiveInputCountAttr();
+      bool semanticIdentity = anchor.getVpiKind() ==
+                              static_cast<uint32_t>(VPIObjectKind::ClassDefn);
+      bool compact =
+          hasVPIObjectRepresentation(anchor.getVpiKind(),
+                                     VPIObjectRepresentation::StaticImage) &&
+          !findVPIValuePolicy(anchor.getVpiKind()) && !indexed &&
+          !hasSemanticShape && !semanticIdentity;
+      if (compact)
+        staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
+                                 std::move(name), anchor.getVpiKind(),
+                                 sourceFor(anchor), anchor});
+      else
+        objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                           anchor.getVpiKind(), 0, *id,
+                           anchor.getEnclosingScopeId(), std::move(name),
+                           Type{}, 0, sourceFor(anchor), true, anchor});
     } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -585,6 +612,29 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   if (scopes.empty())
     return {};
+  // The compact format uses Name != 0 as its global-lookup root. Preserve
+  // ambiguous static names in the full object table, where the existing
+  // relation-only representation can retain a display name without indexing
+  // it.
+  llvm::StringMap<uint32_t> staticNameCounts;
+  for (const Record &object : objects)
+    if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+      ++staticNameCounts[object.name];
+  for (const StaticObjectRecord &object : staticObjects)
+    ++staticNameCounts[object.name];
+  SmallVector<StaticObjectRecord> uniqueStaticObjects;
+  uniqueStaticObjects.reserve(staticObjects.size());
+  for (StaticObjectRecord &object : staticObjects) {
+    if (staticNameCounts.lookup(object.name) == 1) {
+      uniqueStaticObjects.push_back(std::move(object));
+      continue;
+    }
+    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, object.vpiKind,
+                       0, object.id, object.scope, std::move(object.name),
+                       Type{}, 0, std::move(object.source), true,
+                       object.identity});
+  }
+  staticObjects = std::move(uniqueStaticObjects);
   llvm::sort(scopes, [](auto left, auto right) {
     return left.getId() < right.getId();
   });
@@ -592,6 +642,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return std::tie(left.scope, left.name, left.kind, left.id) <
            std::tie(right.scope, right.name, right.kind, right.id);
   });
+  llvm::sort(staticObjects, [](const StaticObjectRecord &left,
+                               const StaticObjectRecord &right) {
+    return left.id < right.id;
+  });
+  for (size_t index = 1; index < staticObjects.size(); ++index)
+    if (staticObjects[index - 1].id == staticObjects[index].id) {
+      staticObjects[index].identity->emitError(
+          "duplicate compact VPI static object ID");
+      return {};
+    }
   llvm::StringMap<uint32_t> firstStaticName;
   for (auto [index, object] : llvm::enumerate(objects)) {
     if (object.kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
@@ -612,7 +672,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
                return left.declaration.getId() < right.declaration.getId();
              });
   if (scopes.size() > UINT32_MAX || objects.size() > UINT32_MAX ||
-      statements.size() > UINT32_MAX || statementSites.size() > UINT32_MAX) {
+      staticObjects.size() > UINT32_MAX || statements.size() > UINT32_MAX ||
+      statementSites.size() > UINT32_MAX) {
     design.emitOpError("reflection table exceeds 32-bit compact indices");
     return {};
   }
@@ -646,10 +707,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
       design.emitOpError("reflection object references an unknown scope");
       return {};
     }
+  for (const StaticObjectRecord &object : staticObjects)
+    if (!scopeIDs.contains(object.scope)) {
+      object.identity->emitError(
+          "compact VPI object references an unknown scope");
+      return {};
+    }
 
   DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
       statementIndices, statementKinds;
-  DenseMap<Operation *, uint32_t> objectIndices;
+  DenseMap<Operation *, uint32_t> objectIndices, staticObjectIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
       canonicalNetTargetIndices, physicalNetObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
@@ -671,6 +738,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
   }
+  for (auto [index, object] : llvm::enumerate(staticObjects))
+    staticObjectIndices[object.identity] = static_cast<uint32_t>(index);
   for (const Record &object : objects) {
     auto identity =
         dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(object.identity);
@@ -794,8 +863,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (sim::SimVPIObjectAnchorOp anchor : anchors) {
       sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
       if (!backing || backing.getKind() == sim::VPIObjectBackingKind::Class) {
-        uint32_t index = objectIndices.lookup(anchor);
-        anchorRefs[anchor] = {TableKind::Object, index, anchor.getVpiKind()};
+        auto compact = staticObjectIndices.find(anchor);
+        if (compact != staticObjectIndices.end())
+          anchorRefs[anchor] = {TableKind::StaticObject, compact->second,
+                                anchor.getVpiKind()};
+        else
+          anchorRefs[anchor] = {TableKind::Object, objectIndices.lookup(anchor),
+                                anchor.getVpiKind()};
         continue;
       }
       if (backing.getKind() == sim::VPIObjectBackingKind::Scope) {
@@ -2101,6 +2175,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                         static_cast<uint32_t>(index),
                                         object.vpiKind, object.identity)))
         return {};
+    for (auto [index, object] : llvm::enumerate(staticObjects))
+      if (failed(rememberPropertySource(TableKind::StaticObject,
+                                        static_cast<uint32_t>(index),
+                                        object.vpiKind, object.identity)))
+        return {};
     for (auto [index, statement] : llvm::enumerate(statements))
       if (failed(rememberPropertySource(
               TableKind::Statement, static_cast<uint32_t>(index),
@@ -2482,6 +2561,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (!object.source.file.empty())
       intern(object.source.file);
   }
+  for (const StaticObjectRecord &object : staticObjects) {
+    intern(object.name);
+    if (!object.source.file.empty())
+      intern(object.source.file);
+  }
   for (StatementRecord statement : statements) {
     if (!statement.source.file.empty())
       intern(statement.source.file);
@@ -2503,7 +2587,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (property.kindAndFlags ==
         static_cast<uint16_t>(VPIPropertyValueKind::String))
       intern(property.stringPayload);
-  if (!semanticTypes.empty() && strings.size() > UINT32_MAX) {
+  if ((!semanticTypes.empty() || !staticObjects.empty()) &&
+      strings.size() > UINT32_MAX) {
     design.emitOpError(
         "semantic reflection string table exceeds 32-bit offsets");
     return {};
@@ -2555,8 +2640,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       fixedPropertyOffset + fixedProperties.size() * FixedPropertyLayout.size;
   uint64_t netDelayRunOffset =
       resolvedNetRunOffset + resolvedNetRuns.size() * ResolvedNetRunLayout.size;
-  uint64_t stringOffset =
+  uint64_t staticObjectOffset =
       netDelayRunOffset + netDelayRuns.size() * NetDelayRunLayout.size;
+  uint64_t stringOffset =
+      staticObjectOffset + staticObjects.size() * StaticObjectLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -2672,6 +2759,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setRight(right);
     writer.setStateOffset(object.stateOffset);
     writer.setSourceLineColumn(object.source.lineColumn);
+  }
+  for (auto [index, object] : llvm::enumerate(staticObjects)) {
+    if (object.vpiKind > UINT16_MAX) {
+      object.identity->emitError("compact VPI object kind exceeds 16 bits");
+      return {};
+    }
+    StaticObjectWriter writer(output.data() + staticObjectOffset +
+                              index * StaticObjectLayout.size);
+    writer.setID(object.id);
+    writer.setScopeIndex(scopeIndices.lookup(object.scope));
+    writer.setSourceFile(
+        object.source.file.empty()
+            ? 0
+            : static_cast<uint32_t>(intern(object.source.file)));
+    writer.setName(static_cast<uint32_t>(intern(object.name)));
+    writer.setSourceLine(static_cast<uint32_t>(object.source.lineColumn >> 32));
+    writer.setSourceColumn(static_cast<uint32_t>(object.source.lineColumn));
+    writer.setVPIKind(static_cast<uint16_t>(object.vpiKind));
+    writer.setFlags(0);
   }
   for (auto [index, entry] : llvm::enumerate(types)) {
     TypeWriter writer(output.data() + typeOffset + index * TypeLayout.size);
@@ -2796,6 +2902,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setResolvedNetRunCount(resolvedNetRuns.size());
     writer.setNetDelayRunOffset(netDelayRunOffset);
     writer.setNetDelayRunCount(netDelayRuns.size());
+    writer.setStaticObjectOffset(staticObjectOffset);
+    writer.setStaticObjectCount(staticObjects.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -2958,6 +3066,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       names.push_back({stableHash(object.name),
                        stringOffset + intern(object.name),
                        objectOffset + index * ObjectLayout.size, object.name});
+  for (auto [index, object] : llvm::enumerate(staticObjects))
+    names.push_back(
+        {stableHash(object.name), stringOffset + intern(object.name),
+         staticObjectOffset + index * StaticObjectLayout.size, object.name});
   llvm::sort(names, [](const Index &left, const Index &right) {
     return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
   });

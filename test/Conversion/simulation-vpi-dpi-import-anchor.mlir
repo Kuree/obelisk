@@ -33,5 +33,5 @@ module attributes {
 }
 
 // CHECK: object name=top.dpi_import kind=7 vpi_kind=0 caps=0x20
-// CHECK: object name=top.dpi_import kind=9 vpi_kind=20 caps=0x0
+// CHECK: static_object name=top.dpi_import vpi_kind=20 id=4 scope=top
 // CHECK: relation {{.*}} source_type=32 mode=iterate selector={{[0-9]+}} ordinal=0 {{.*}} source_name=top target_name=top.dpi_import
