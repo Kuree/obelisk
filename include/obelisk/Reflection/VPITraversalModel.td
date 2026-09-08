@@ -25,6 +25,34 @@ class VPIObjectSet<string cppName_,
   bit allowEmpty = allowEmpty_;
 }
 
+// How a concrete VPI object identity may be materialized.  These are carrier
+// capabilities, not implementation-status flags: a kind may have more than
+// one representation when the LRM identity can arise in more than one way
+// (for example a source task may be an executable code unit or an immutable
+// declaration anchor).  Every canonical concrete kind is required to occur
+// in at least one representation specification below.
+class VPIObjectRepresentation<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+
+def PhysicalScopeRepresentation
+    : VPIObjectRepresentation<"PhysicalScope", 0>;
+def PhysicalObjectRepresentation
+    : VPIObjectRepresentation<"PhysicalObject", 1>;
+def CodeUnitRepresentation : VPIObjectRepresentation<"CodeUnit", 2>;
+def StatementRepresentation : VPIObjectRepresentation<"Statement", 3>;
+def StaticImageRepresentation : VPIObjectRepresentation<"StaticImage", 4>;
+def SemanticSyntheticRepresentation
+    : VPIObjectRepresentation<"SemanticSynthetic", 5>;
+def RuntimeRepresentation : VPIObjectRepresentation<"Runtime", 6>;
+
+class VPIObjectRepresentationSpec<VPIObjectRepresentation representation_,
+                                  VPIObjectSet objects_> {
+  VPIObjectRepresentation representation = representation_;
+  VPIObjectSet objects = objects_;
+}
+
 class VPITraversalMode<string cppName_, int value_> {
   string cppName = cppName_;
   int value = value_;
@@ -310,6 +338,67 @@ def AllConcreteObjects : VPIObjectSet<"AllConcreteObjects", [],
    ExpressionFamily, VariableFamily, NetFamily, ArrayFamily, TypespecFamily,
    PrimitiveFamily, TimingFamily, AssertionFamily, TransientFamily,
    RuntimeFamily, OtherFamily]>;
+
+// Exact carrier classification for the complete canonical object inventory.
+// Keep these independent from property realization: a vpiName may be derived
+// while the object identity itself lives in a static record, for example.
+def PhysicalScopeRepresentationObjects
+    : VPIObjectSet<"PhysicalScopeRepresentationObjects",
+                   [Module, Interface, Program]>;
+def PhysicalObjectRepresentationObjects
+    : VPIObjectSet<"PhysicalObjectRepresentationObjects", [Port],
+                   [VariableFamily, NetFamily],
+                   [Parameter, SpecParam, NamedEvent, NamedEventArray,
+                    NetBit, RegBit, InterconnectArray]>;
+def CodeUnitRepresentationObjects
+    : VPIObjectSet<"CodeUnitRepresentationObjects",
+                   [Always, Initial, Final, Task, Function]>;
+def StatementRepresentationObjects
+    : VPIObjectSet<"StatementRepresentationObjects", [], [StatementFamily]>;
+def StaticImageRepresentationObjects
+    : VPIObjectSet<"StaticImageRepresentationObjects",
+                   [Package, ClockingBlock, GenScope, ModuleArray,
+                    InterfaceArray, ProgramArray, GenScopeArray, NamedEvent,
+                    NamedEventArray, InterconnectArray],
+                   [DeclarationFamily, ExpressionFamily, TypespecFamily,
+                    PrimitiveFamily, TimingFamily, AssertionFamily],
+                   [Port, InterModPath, ImmediateAssert, ImmediateAssume,
+                    ImmediateCover, ExpectStmt]>;
+def SemanticSyntheticRepresentationObjects
+    : VPIObjectSet<"SemanticSyntheticRepresentationObjects",
+                   [Range, Port, PortBit, Constant, EnumConst, ModuleArray,
+                    InterfaceArray, ProgramArray, GateArray, SwitchArray,
+                    UdpArray, GenScopeArray, InterModPath],
+                   [VariableFamily, NetFamily, TypespecFamily],
+                   [Parameter, SpecParam, NamedEvent]>;
+def RuntimeRepresentationObjects
+    : VPIObjectSet<"RuntimeRepresentationObjects",
+                   [Callback, Iterator, SchedEvent, TimeQueue, UserSystf,
+                    Frame, Thread, ClassObj, InterModPath, Fsm, FsmHandle,
+                    Task, Function, Constraint],
+                   [ExpressionFamily, VariableFamily, NetFamily]>;
+
+def PhysicalScopeRepresentationSpec
+    : VPIObjectRepresentationSpec<PhysicalScopeRepresentation,
+                                  PhysicalScopeRepresentationObjects>;
+def PhysicalObjectRepresentationSpec
+    : VPIObjectRepresentationSpec<PhysicalObjectRepresentation,
+                                  PhysicalObjectRepresentationObjects>;
+def CodeUnitRepresentationSpec
+    : VPIObjectRepresentationSpec<CodeUnitRepresentation,
+                                  CodeUnitRepresentationObjects>;
+def StatementRepresentationSpec
+    : VPIObjectRepresentationSpec<StatementRepresentation,
+                                  StatementRepresentationObjects>;
+def StaticImageRepresentationSpec
+    : VPIObjectRepresentationSpec<StaticImageRepresentation,
+                                  StaticImageRepresentationObjects>;
+def SemanticSyntheticRepresentationSpec
+    : VPIObjectRepresentationSpec<SemanticSyntheticRepresentation,
+                                  SemanticSyntheticRepresentationObjects>;
+def RuntimeRepresentationSpec
+    : VPIObjectRepresentationSpec<RuntimeRepresentation,
+                                  RuntimeRepresentationObjects>;
 def SourceLocatedObjects : VPIObjectSet<"SourceLocatedObjects", [],
   [ScopeFamily, DeclarationFamily, ProcessFamily, StatementFamily,
    ExpressionFamily, VariableFamily, NetFamily, ArrayFamily, TypespecFamily,

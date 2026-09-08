@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +34,7 @@ using PropertyKind = VPIPropertyValueKind;
 using PropertyStability = VPIPropertyStability;
 using ProtectedAccess = VPIPropertyProtectedAccess;
 using PropertyRealization = VPIPropertyRealization;
+using Representation = VPIObjectRepresentation;
 using ValueDefault = VPIValueDefaultFormat;
 using ValueRead = VPIValueReadSemantics;
 using ArrayValueFormat = VPIArrayValueFormat;
@@ -1595,6 +1597,180 @@ TEST(VPIObjectModel, RuntimeExportsCanonicalImmutableModelImage) {
 #endif
 }
 
+TEST(VPIObjectModel, ObjectRepresentationsExhaustivelyMatchIndependentOracle) {
+  auto bit = [](Representation representation) {
+    return vpiRepresentationMask(representation);
+  };
+  auto listed = [](uint32_t value, std::initializer_list<uint32_t> values) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+  };
+  auto expected = [&](const VPIObjectKindDescriptor &object) {
+    if (object.aliasOf || object.role != VPIObjectRole::Concrete)
+      return uint8_t{0};
+    uint8_t result = 0;
+    const uint32_t value = object.value;
+    const uint64_t families = object.families;
+    auto family = [&](VPIObjectFamily family) {
+      return (families & vpiFamilyMask(family)) != 0;
+    };
+    if (listed(value, {vpiModule, vpiInterface, vpiProgram}))
+      result |= bit(Representation::PhysicalScope);
+    if (listed(value, {vpiAlways, vpiInitial, vpiFinal, vpiTask, vpiFunction}))
+      result |= bit(Representation::CodeUnit);
+    if (family(VPIObjectFamily::Statement))
+      result |= bit(Representation::Statement);
+    if ((family(VPIObjectFamily::Variable) || family(VPIObjectFamily::Net) ||
+         value == vpiPort) &&
+        !listed(value,
+                {vpiParameter, vpiSpecParam, vpiNamedEvent, vpiNamedEventArray,
+                 vpiNetBit, vpiRegBit, vpiInterconnectArray}))
+      result |= bit(Representation::PhysicalObject);
+    if ((family(VPIObjectFamily::Declaration) ||
+         family(VPIObjectFamily::Expression) ||
+         family(VPIObjectFamily::Typespec) ||
+         family(VPIObjectFamily::Primitive) ||
+         family(VPIObjectFamily::Timing) ||
+         family(VPIObjectFamily::Assertion) ||
+         listed(value,
+                {vpiPackage, vpiClockingBlock, vpiGenScope, vpiModuleArray,
+                 vpiInterfaceArray, vpiProgramArray, vpiGenScopeArray,
+                 vpiNamedEvent, vpiNamedEventArray, vpiInterconnectArray})) &&
+        !listed(value, {vpiPort, vpiInterModPath, vpiImmediateAssert,
+                        vpiImmediateAssume, vpiImmediateCover, vpiExpectStmt}))
+      result |= bit(Representation::StaticImage);
+    if (family(VPIObjectFamily::Typespec) ||
+        ((family(VPIObjectFamily::Variable) || family(VPIObjectFamily::Net)) &&
+         !listed(value, {vpiParameter, vpiSpecParam, vpiNamedEvent})) ||
+        listed(value, {vpiRange, vpiPort, vpiPortBit, vpiConstant, vpiEnumConst,
+                       vpiModuleArray, vpiInterfaceArray, vpiProgramArray,
+                       vpiGateArray, vpiSwitchArray, vpiUdpArray,
+                       vpiGenScopeArray, vpiInterModPath}))
+      result |= bit(Representation::SemanticSynthetic);
+    if (family(VPIObjectFamily::Expression) ||
+        family(VPIObjectFamily::Variable) || family(VPIObjectFamily::Net) ||
+        listed(value,
+               {vpiCallback, vpiIterator, vpiSchedEvent, vpiTimeQueue,
+                vpiUserSystf, vpiFrame, vpiThread, vpiClassObj, vpiInterModPath,
+                vpiFsm, vpiFsmHandle, vpiTask, vpiFunction, vpiConstraint}))
+      result |= bit(Representation::Runtime);
+    return result;
+  };
+
+  for (const auto &object : vpiObjectKinds) {
+    const auto *canonical = findVPIObjectSelector(object.value);
+    ASSERT_NE(canonical, nullptr) << object.apiName;
+    if (object.aliasOf) {
+      EXPECT_EQ(object.representations, canonical->representations)
+          << object.apiName;
+      continue;
+    }
+    const uint8_t wanted = expected(object);
+    EXPECT_EQ(object.representations, wanted) << object.apiName;
+    EXPECT_EQ(object.representations != 0,
+              object.role == VPIObjectRole::Concrete)
+        << object.apiName;
+    for (Representation representation :
+         {Representation::PhysicalScope, Representation::PhysicalObject,
+          Representation::CodeUnit, Representation::Statement,
+          Representation::StaticImage, Representation::SemanticSynthetic,
+          Representation::Runtime})
+      EXPECT_EQ(hasVPIObjectRepresentation(object.value, representation),
+                (wanted & bit(representation)) != 0)
+          << object.apiName;
+    uint8_t imageRepresentations = 0;
+    ASSERT_TRUE(findVPIObjectModelImageRepresentations(
+        vpiObjectModelImage, object.value, imageRepresentations))
+        << object.apiName;
+    EXPECT_EQ(imageRepresentations, object.representations) << object.apiName;
+  }
+
+  auto expectSynthetic = [&](uint32_t value) {
+    EXPECT_TRUE(
+        hasVPIObjectRepresentation(value, Representation::SemanticSynthetic))
+        << objectName(value);
+  };
+  for (const auto &access : vpiIndexedAccesses) {
+    expectSynthetic(access.unpackedFallback);
+    if (access.accessKind == VPIIndexedAccessKind::RelationElement)
+      continue;
+    expectSynthetic(access.terminalResult);
+    expectSynthetic(access.packedFallback);
+    for (const auto &object : vpiObjectKinds)
+      if (!object.aliasOf && vpiObjectSetContains(access.targets, object.value))
+        expectSynthetic(object.value);
+  }
+  for (const auto &mapping : vpiIndexedTypeResults)
+    expectSynthetic(mapping.resultType);
+
+  const KindSet transientTargets{
+      vpiShortRealVar,
+      vpiRealVar,
+      vpiByteVar,
+      vpiShortIntVar,
+      vpiIntVar,
+      vpiLongIntVar,
+      vpiIntegerVar,
+      vpiTimeVar,
+      vpiRegArray,
+      vpiPackedArrayVar,
+      vpiBitVar,
+      vpiReg,
+      vpiStructVar,
+      vpiUnionVar,
+      vpiEnumVar,
+      vpiStringVar,
+      vpiChandleVar,
+      vpiClassVar,
+      vpiVirtualInterfaceVar,
+      vpiRegBit,
+      vpiNamedEvent,
+      vpiNamedEventArray,
+      vpiTask,
+      vpiFunction,
+      vpiRefObj,
+      vpiConstraint,
+      vpiConstant,
+  };
+  for (uint32_t value : transientTargets)
+    EXPECT_TRUE(hasVPIObjectRepresentation(value, Representation::Runtime))
+        << objectName(value);
+
+  for (const auto &[source, selector] : {
+           std::pair<uint32_t, uint32_t>{vpiFrame, vpiAutomatics},
+           {vpiClassObj, vpiVariables},
+           {vpiClassObj, vpiMethods},
+           {vpiClassObj, vpiNamedEvent},
+           {vpiClassObj, vpiNamedEventArray},
+           {vpiClassObj, vpiVirtualInterfaceVar},
+           {vpiClassObj, vpiConstraint},
+           {vpiClassObj, vpiMessages},
+       }) {
+    const auto &edge = requireTraversal(source, selector, Mode::Iterate);
+    for (uint32_t target : expandedTargets(edge.targets))
+      EXPECT_TRUE(hasVPIObjectRepresentation(target, Representation::Runtime))
+          << keyName(source, selector, Mode::Iterate) << ": "
+          << objectName(target);
+  }
+}
+
+TEST(VPIObjectModel, ObjectRepresentationImageRejectsInvalidMasks) {
+  const uint32_t objectOffset =
+      readVPIObjectModelImage32(vpiObjectModelImage, 24);
+  const uint32_t objectCount =
+      readVPIObjectModelImage32(vpiObjectModelImage, 28);
+  ASSERT_NE(objectCount, 0u);
+  std::vector<uint8_t> corrupted(std::begin(vpiObjectModelImage),
+                                 std::end(vpiObjectModelImage));
+  uint8_t *first = corrupted.data() + objectOffset;
+  ASSERT_EQ(first[2], static_cast<uint8_t>(VPIObjectRole::Concrete));
+  first[3] = 0;
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(corrupted.data(), corrupted.size()));
+  first[3] = 0x80;
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(corrupted.data(), corrupted.size()));
+}
+
 TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
   struct ExpectedPolicy {
     uint16_t formats;
@@ -2087,7 +2263,7 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
     EXPECT_EQ(readVPIObjectModelImage16(record, 0), object.value)
         << object.apiName;
     EXPECT_EQ(record[2], static_cast<uint8_t>(object.role)) << object.apiName;
-    EXPECT_EQ(record[3], 0) << object.apiName;
+    EXPECT_EQ(record[3], object.representations) << object.apiName;
     EXPECT_EQ(readVPIObjectModelImage64(record, 4), object.families)
         << object.apiName;
     ++imageObject;
@@ -2831,7 +3007,7 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   // A structurally valid but different model is rejected by the generated
   // canonical fingerprint, keeping compiler and runtime schemas in lockstep.
   reset();
-  damaged[objectOffset + 4] ^= 0x80;
+  damaged[relationOffset + 2] = (damaged[relationOffset + 2] + 1) % 3;
   refreshImageChecksum(damaged);
   EXPECT_TRUE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));

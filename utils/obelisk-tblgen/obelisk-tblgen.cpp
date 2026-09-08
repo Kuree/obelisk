@@ -583,6 +583,10 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto objects = records.getAllDerivedDefinitions("VPIObjectKind");
   auto relations = records.getAllDerivedDefinitions("VPIRelation");
   auto objectSets = records.getAllDerivedDefinitions("VPIObjectSet");
+  auto objectRepresentations =
+      records.getAllDerivedDefinitions("VPIObjectRepresentation");
+  auto objectRepresentationSpecs =
+      records.getAllDerivedDefinitions("VPIObjectRepresentationSpec");
   auto propertyValueKinds =
       records.getAllDerivedDefinitions("VPIPropertyValueKind");
   auto propertyStabilities =
@@ -623,10 +627,11 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   auto callbackSpecs =
       records.getAllDerivedDefinitions("VPIStatementCallbackSpec");
   if (families.empty() || roles.empty() || objects.empty() ||
-      relations.empty() || objectSets.empty() || propertyValueKinds.empty() ||
-      propertyStabilities.empty() || propertyProtectedAccesses.empty() ||
-      propertyRealizations.empty() || properties.empty() ||
-      valueFormats.empty() || valueDefaults.empty() ||
+      relations.empty() || objectSets.empty() ||
+      objectRepresentations.empty() || objectRepresentationSpecs.empty() ||
+      propertyValueKinds.empty() || propertyStabilities.empty() ||
+      propertyProtectedAccesses.empty() || propertyRealizations.empty() ||
+      properties.empty() || valueFormats.empty() || valueDefaults.empty() ||
       valueReadSemantics.empty() || valueRequirements.empty() ||
       valuePolicies.empty() || arrayValueFormats.empty() ||
       arrayValuePolicies.empty() || traversalModes.empty() ||
@@ -636,7 +641,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       callbackPhases.empty() || callbackPolicies.empty() ||
       callbackSpecs.empty()) {
     PrintError("VPI object model needs families, roles, objects, relations, "
-               "object sets, properties, value policies, traversal modes, "
+               "object sets, object representations, properties, value "
+               "policies, traversal modes, "
                "orders, automatic relations, edges, indexed-access policies, "
                "and statement callback policies");
     return false;
@@ -899,6 +905,10 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   const std::pair<StringRef, uint32_t> supportedPropertyRealizations[] = {
       {"Derived", 0}, {"FixedImage", 1}, {"Runtime", 2},
       {"IndexedImage", 3}};
+  const std::pair<StringRef, uint32_t> supportedObjectRepresentations[] = {
+      {"PhysicalScope", 0}, {"PhysicalObject", 1}, {"CodeUnit", 2},
+      {"Statement", 3},     {"StaticImage", 4},    {"SemanticSynthetic", 5},
+      {"Runtime", 6}};
   const std::pair<StringRef, uint32_t> supportedValueFormats[] = {
       {"BinStr", 1}, {"OctStr", 2},    {"DecStr", 3}, {"HexStr", 4},
       {"Scalar", 5}, {"Int", 6},       {"Real", 7},   {"String", 8},
@@ -932,6 +942,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                     "VPI protected property access") ||
       !validateEnum(propertyRealizations, supportedPropertyRealizations,
                     "VPI property realization") ||
+      !validateEnum(objectRepresentations, supportedObjectRepresentations,
+                    "VPI object representation") ||
       !validateEnum(valueFormats, supportedValueFormats, "VPI value format") ||
       !validateEnum(valueDefaults, supportedValueDefaults,
                     "VPI value default format") ||
@@ -1077,6 +1089,45 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
     if (expanded.empty()) {
       PrintError(iterateSourcesSet->getLoc(),
                  "derived iterator-source set expands to no concrete kinds");
+      return false;
+    }
+  }
+
+  DenseMap<const Record *, uint8_t> representationMasks;
+  DenseSet<const Record *> specifiedRepresentations;
+  for (const Record *spec : objectRepresentationSpecs) {
+    const Record *representation = spec->getValueAsDef("representation");
+    const Record *set = spec->getValueAsDef("objects");
+    if (!specifiedRepresentations.insert(representation).second) {
+      PrintError(spec->getLoc(),
+                 "duplicate VPI object representation specification");
+      return false;
+    }
+    if (set->getValueAsBit("nullRoot") ||
+        set->getValueAsBit("iterateSources") ||
+        set->getValueAsBit("allowEmpty")) {
+      PrintError(spec->getLoc(),
+                 "VPI object representation requires an exact non-root "
+                 "object set");
+      return false;
+    }
+    uint32_t bit =
+        static_cast<uint32_t>(representation->getValueAsInt("value"));
+    for (const Record *object : expandedSets.lookup(set))
+      representationMasks[object] |= uint8_t{1} << bit;
+  }
+  if (specifiedRepresentations.size() != objectRepresentations.size()) {
+    PrintError("every VPI object representation requires one specification");
+    return false;
+  }
+  for (const Record *object : objects) {
+    if (!isConcrete(object))
+      continue;
+    if (representationMasks.lookup(object) == 0) {
+      PrintError(
+          object->getLoc(),
+          Twine("canonical concrete VPI object has no representation: ") +
+              object->getValueAsString("apiName"));
       return false;
     }
   }
@@ -1429,6 +1480,94 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
     }
   }
 
+  const Record *semanticSyntheticRepresentation = nullptr;
+  for (const Record *representation : objectRepresentations)
+    if (representation->getValueAsString("cppName") == "SemanticSynthetic") {
+      semanticSyntheticRepresentation = representation;
+      break;
+    }
+  assert(semanticSyntheticRepresentation &&
+         "validated representation enumeration is incomplete");
+  const uint8_t semanticSyntheticMask =
+      uint8_t{1} << semanticSyntheticRepresentation->getValueAsInt("value");
+  auto requireSemanticSynthetic = [&](const Record *object,
+                                      const Record *source) {
+    if ((representationMasks.lookup(object) & semanticSyntheticMask) != 0)
+      return true;
+    PrintError(source->getLoc(),
+               Twine("VPI indexed result requires SemanticSynthetic "
+                     "representation: ") +
+                   object->getValueAsString("apiName"));
+    return false;
+  };
+  for (const Record *access : indexedAccesses) {
+    const bool relationBacked =
+        access->getValueAsDef("accessKind")->getValueAsString("cppName") ==
+        "RelationElement";
+    if (!requireSemanticSynthetic(access->getValueAsDef("unpackedFallback"),
+                                  access))
+      return false;
+    if (relationBacked)
+      continue;
+    if (!requireSemanticSynthetic(access->getValueAsDef("terminalResult"),
+                                  access) ||
+        !requireSemanticSynthetic(access->getValueAsDef("packedFallback"),
+                                  access))
+      return false;
+    for (const Record *target :
+         expandedSets.lookup(access->getValueAsDef("targets")))
+      if (!requireSemanticSynthetic(target, access))
+        return false;
+  }
+  for (const Record *mapping : indexedTypeResults)
+    if (!requireSemanticSynthetic(mapping->getValueAsDef("result"), mapping))
+      return false;
+
+  const Record *runtimeRepresentation = nullptr;
+  for (const Record *representation : objectRepresentations)
+    if (representation->getValueAsString("cppName") == "Runtime") {
+      runtimeRepresentation = representation;
+      break;
+    }
+  assert(runtimeRepresentation &&
+         "validated representation enumeration is incomplete");
+  const uint8_t runtimeMask = uint8_t{1}
+                              << runtimeRepresentation->getValueAsInt("value");
+  const Record *frameObject = objectApiNames.lookup("vpiFrame");
+  const Record *classObject = objectApiNames.lookup("vpiClassObj");
+  assert(frameObject && classObject &&
+         "validated object inventory is incomplete");
+  auto sourceContains = [&](const Record *edge, const Record *object) {
+    return llvm::is_contained(
+        expandedSets.lookup(edge->getValueAsDef("sources")), object);
+  };
+  auto requiresTransientTargets = [&](const Record *edge) {
+    StringRef selector =
+        edge->getValueAsDef("selector")->getValueAsString("apiName");
+    if (sourceContains(edge, frameObject))
+      return selector == "vpiAutomatics";
+    if (!sourceContains(edge, classObject))
+      return false;
+    return selector == "vpiVariables" || selector == "vpiMethods" ||
+           selector == "vpiNamedEvent" || selector == "vpiNamedEventArray" ||
+           selector == "vpiVirtualInterfaceVar" ||
+           selector == "vpiConstraint" || selector == "vpiMessages";
+  };
+  for (const Record *edge : traversalEdges) {
+    if (!requiresTransientTargets(edge))
+      continue;
+    for (const Record *target :
+         expandedSets.lookup(edge->getValueAsDef("targets"))) {
+      if ((representationMasks.lookup(target) & runtimeMask) != 0)
+        continue;
+      PrintError(edge->getLoc(),
+                 Twine("VPI transient traversal target requires Runtime "
+                       "representation: ") +
+                     target->getValueAsString("apiName"));
+      return false;
+    }
+  }
+
   StringMap<const Record *> edgeKeys;
   for (const Record *edge : traversalEdges) {
     const Record *sources = edge->getValueAsDef("sources");
@@ -1649,6 +1788,53 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
                                     right->getValueAsString("apiName"));
     return leftKey < rightKey;
   });
+
+  auto representationRecords =
+      records.getAllDerivedDefinitions("VPIObjectRepresentation");
+  SmallVector<const Record *> representations(representationRecords.begin(),
+                                              representationRecords.end());
+  llvm::sort(representations, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  DenseMap<uint32_t, uint8_t> representationMasks;
+  for (const Record *spec :
+       records.getAllDerivedDefinitions("VPIObjectRepresentationSpec")) {
+    const Record *representation = spec->getValueAsDef("representation");
+    const Record *set = spec->getValueAsDef("objects");
+    uint8_t bit = uint8_t{1} << representation->getValueAsInt("value");
+    DenseSet<const Record *> requestedFamilies;
+    for (const Record *family : set->getValueAsListOfDefs("families"))
+      requestedFamilies.insert(family);
+    DenseSet<const Record *> explicitObjects;
+    for (const Record *object : set->getValueAsListOfDefs("objects"))
+      explicitObjects.insert(object);
+    DenseSet<const Record *> exclusions;
+    for (const Record *object : set->getValueAsListOfDefs("exclude"))
+      exclusions.insert(object);
+    for (const Record *object : objects) {
+      if (!object->getValueAsString("aliasOf").empty() ||
+          !object->getValueAsDef("role")->getValueAsBit("concrete") ||
+          exclusions.contains(object))
+        continue;
+      bool selected = explicitObjects.contains(object);
+      for (const Record *family : object->getValueAsListOfDefs("families"))
+        selected |= requestedFamilies.contains(family);
+      if (selected)
+        representationMasks[static_cast<uint32_t>(
+            object->getValueAsInt("value"))] |= bit;
+    }
+  }
+
+  os << "enum class VPIObjectRepresentation : uint8_t {\n";
+  for (const Record *representation : representations)
+    os << formatv("  {0} = {1},\n", representation->getValueAsString("cppName"),
+                  representation->getValueAsInt("value"));
+  os << "};\n\n"
+        "constexpr uint8_t vpiRepresentationMask(\n"
+        "    VPIObjectRepresentation representation) {\n"
+        "  return uint8_t{1} << static_cast<unsigned>(representation);\n"
+        "}\n\n";
+
   os << "enum class VPIObjectKind : uint16_t {\n";
   for (const Record *object : objects)
     os << formatv("  {0} = {1},\n", object->getName(),
@@ -1658,6 +1844,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  const char *apiName;\n"
         "  uint32_t value;\n"
         "  uint64_t families;\n"
+        "  uint8_t representations;\n"
         "  VPIObjectRole role;\n"
         "  const char *aliasOf;\n"
         "};\n\n";
@@ -1668,9 +1855,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       mask |= uint64_t{1} << familyBits.lookup(family);
     StringRef aliasOf = object->getValueAsString("aliasOf");
     os << formatv(
-        "  {{\"{0}\", {1}, UINT64_C({2}), VPIObjectRole::{3}, ",
+        "  {{\"{0}\", {1}, UINT64_C({2}), {3}, VPIObjectRole::{4}, ",
         object->getValueAsString("apiName"), object->getValueAsInt("value"),
         mask,
+        representationMasks.lookup(
+            static_cast<uint32_t>(object->getValueAsInt("value"))),
         aliasOf.empty()
             ? object->getValueAsDef("role")->getValueAsString("cppName")
             : StringRef("Alias"));
@@ -1775,6 +1964,13 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  const auto *kind = findVPIObjectSelector(value);\n"
         "  return kind && kind->role == VPIObjectRole::Concrete ? kind\n"
         "                                                        : nullptr;\n"
+        "}\n\n"
+        "inline constexpr bool hasVPIObjectRepresentation(\n"
+        "    uint32_t value, VPIObjectRepresentation representation) {\n"
+        "  const auto *kind = findVPIObjectKind(value);\n"
+        "  return kind &&\n"
+        "         (kind->representations &\n"
+        "          vpiRepresentationMask(representation)) != 0;\n"
         "}\n\n";
 
   os << "enum class VPIRelationCardinality : uint8_t {\n"
@@ -2787,7 +2983,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     append16(static_cast<uint16_t>(object->getValueAsInt("value")));
     image.push_back(static_cast<uint8_t>(
         object->getValueAsDef("role")->getValueAsInt("value")));
-    image.push_back(0);
+    image.push_back(representationMasks.lookup(
+        static_cast<uint32_t>(object->getValueAsInt("value"))));
     append64(mask);
     ++objectCount;
   }
@@ -3138,8 +3335,19 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
         data + objectOffset + index * vpiObjectModelImageObjectSize;
     uint16_t value = readVPIObjectModelImage16(record, 0);
     uint64_t families = readVPIObjectModelImage64(record, 4);
-    if ((index != 0 && value <= previousValue) || record[2] > 3 ||
-        record[3] != 0 || families == 0)
+    const auto *descriptor = findVPIObjectSelector(value);
+    bool concrete =
+        record[2] == static_cast<uint8_t>(VPIObjectRole::Concrete);
+    constexpr uint8_t representationMask =
+        (uint8_t{1} << (static_cast<uint8_t>(VPIObjectRepresentation::Runtime) +
+                       1)) -
+        1;
+    if ((index != 0 && value <= previousValue) || !descriptor ||
+        record[2] != static_cast<uint8_t>(descriptor->role) ||
+        record[3] != descriptor->representations ||
+        (record[3] & ~representationMask) != 0 ||
+        (concrete ? record[3] == 0 : record[3] != 0) ||
+        families != descriptor->families || families == 0)
       return false;
     previousValue = value;
   }
@@ -3530,6 +3738,32 @@ inline constexpr bool validateVPIObjectModelImage(const uint8_t *data,
   return validateVPIObjectModelImageStructure(data, size) &&
          readVPIObjectModelImage64(data, 16) ==
              vpiObjectModelImageFingerprint;
+}
+
+inline constexpr bool findVPIObjectModelImageRepresentations(
+    const uint8_t *data, uint32_t objectType, uint8_t &representations) {
+  if (objectType > UINT16_MAX)
+    return false;
+  uint32_t offset = readVPIObjectModelImage32(data, 24);
+  uint32_t low = 0;
+  uint32_t high = readVPIObjectModelImage32(data, 28);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *record =
+        data + offset + middle * vpiObjectModelImageObjectSize;
+    if (readVPIObjectModelImage16(record, 0) < objectType)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == readVPIObjectModelImage32(data, 28))
+    return false;
+  const uint8_t *record =
+      data + offset + low * vpiObjectModelImageObjectSize;
+  if (readVPIObjectModelImage16(record, 0) != objectType)
+    return false;
+  representations = record[3];
+  return true;
 }
 
 struct VPIObjectModelImageTraversal {
