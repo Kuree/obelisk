@@ -39,8 +39,8 @@ constexpr uint64_t kSemanticTypeSize =
     obelisk::reflection::SemanticTypeLayout.size;
 constexpr uint64_t kSemanticTypeEdgeSize =
     obelisk::reflection::SemanticTypeEdgeLayout.size;
-constexpr uint64_t kObjectSemanticRootSize =
-    obelisk::reflection::ObjectSemanticRootLayout.size;
+constexpr uint64_t kSemanticRootBindingSize =
+    obelisk::reflection::SemanticRootBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
     obelisk::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
@@ -179,7 +179,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       read32(data + offsetof(DatabaseHeader, reserved));
   uint64_t semanticTypeOffset = 0, semanticTypeCount = 0;
   uint64_t semanticTypeEdgeOffset = 0, semanticTypeEdgeCount = 0;
-  uint64_t objectSemanticRootOffset = 0, objectSemanticRootCount = 0;
+  uint64_t semanticRootBindingOffset = 0, semanticRootBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -198,8 +198,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     semanticTypeCount = read64(directory + 8);
     semanticTypeEdgeOffset = read64(directory + 16);
     semanticTypeEdgeCount = read64(directory + 24);
-    objectSemanticRootOffset = read64(directory + 32);
-    objectSemanticRootCount = read64(directory + 40);
+    semanticRootBindingOffset = read64(directory + 32);
+    semanticRootBindingCount = read64(directory + 40);
     relationIndexOffset = read64(directory + 48);
     relationIndexCount = read64(directory + 56);
     relationIndexDimensionOffset = read64(directory + 64);
@@ -241,8 +241,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               semanticTypeCount,
               semanticTypeEdgeOffset,
               semanticTypeEdgeCount,
-              objectSemanticRootOffset,
-              objectSemanticRootCount,
+              semanticRootBindingOffset,
+              semanticRootBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -279,8 +279,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.semanticTypes, database.semanticTypeCount, kSemanticTypeSize},
         {database.semanticTypeEdges, database.semanticTypeEdgeCount,
          kSemanticTypeEdgeSize},
-        {database.objectSemanticRoots, database.objectSemanticRootCount,
-         kObjectSemanticRootSize},
+        {database.semanticRootBindings, database.semanticRootBindingCount,
+         kSemanticRootBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -319,15 +319,13 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.statementSiteCount != 0 || database.relationCount != 0 ||
         database.semanticTypeCount != 0 ||
         database.semanticTypeEdgeCount != 0 ||
-        database.objectSemanticRootCount != 0 ||
+        database.semanticRootBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
         database.fixedPropertyCount != 0 || database.resolvedNetRunCount != 0 ||
         database.netDelayRunCount != 0 || database.staticObjectCount != 0)) ||
-      (semanticDirectory != 0 &&
-       database.objectSemanticRootCount != database.objectCount) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -347,8 +345,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kSemanticTypeSize, database.size) ||
       !validRange(database.semanticTypeEdges, database.semanticTypeEdgeCount,
                   kSemanticTypeEdgeSize, database.size) ||
-      !validRange(database.objectSemanticRoots,
-                  database.objectSemanticRootCount, kObjectSemanticRootSize,
+      !validRange(database.semanticRootBindings,
+                  database.semanticRootBindingCount, kSemanticRootBindingSize,
                   database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
@@ -377,8 +375,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.semanticTypes < kHeaderSize) ||
       (database.semanticTypeEdgeCount != 0 &&
        database.semanticTypeEdges < kHeaderSize) ||
-      (database.objectSemanticRootCount != 0 &&
-       database.objectSemanticRoots < kHeaderSize) ||
+      (database.semanticRootBindingCount != 0 &&
+       database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
        database.relationIndices < kHeaderSize) ||
       (database.relationIndexDimensionCount != 0 &&
@@ -403,6 +401,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.relationCount > UINT32_MAX ||
       database.semanticTypeCount > UINT32_MAX ||
       database.semanticTypeEdgeCount > UINT32_MAX ||
+      database.semanticRootBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -537,41 +536,45 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !rangesDisjoint(database.semanticTypeEdges,
                       database.semanticTypeEdgeCount, kSemanticTypeEdgeSize,
                       database.index, database.indexCount, kIndexSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.semanticTypes, database.semanticTypeCount,
-                      kSemanticTypeSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.semanticTypeEdges,
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.semanticTypes,
+                      database.semanticTypeCount, kSemanticTypeSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.semanticTypeEdges,
                       database.semanticTypeEdgeCount, kSemanticTypeEdgeSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.scopes, database.scopeCount, kScopeSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.objects, database.objectCount, kObjectSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.types, database.typeCount, kTypeSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.statements, database.statementCount,
-                      kStatementSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.statementSites, database.statementSiteCount,
-                      kStatementSiteSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.relations, database.relationCount,
-                      kRelationSize) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.strings, database.stringSize, 1) ||
-      !rangesDisjoint(database.objectSemanticRoots,
-                      database.objectSemanticRootCount, kObjectSemanticRootSize,
-                      database.index, database.indexCount, kIndexSize))
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.scopes,
+                      database.scopeCount, kScopeSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.objects,
+                      database.objectCount, kObjectSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.types,
+                      database.typeCount, kTypeSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.statements,
+                      database.statementCount, kStatementSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.statementSites,
+                      database.statementSiteCount, kStatementSiteSize) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.relations,
+                      database.relationCount, kRelationSize) ||
+      !rangesDisjoint(
+          database.semanticRootBindings, database.semanticRootBindingCount,
+          kSemanticRootBindingSize, database.strings, database.stringSize, 1) ||
+      !rangesDisjoint(database.semanticRootBindings,
+                      database.semanticRootBindingCount,
+                      kSemanticRootBindingSize, database.index,
+                      database.indexCount, kIndexSize))
     return false;
   struct Section {
     uint64_t offset;
@@ -591,8 +594,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.semanticTypes, database.semanticTypeCount, kSemanticTypeSize},
       {database.semanticTypeEdges, database.semanticTypeEdgeCount,
        kSemanticTypeEdgeSize},
-      {database.objectSemanticRoots, database.objectSemanticRootCount,
-       kObjectSemanticRootSize},
+      {database.semanticRootBindings, database.semanticRootBindingCount,
+       kSemanticRootBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -736,6 +739,71 @@ bool relationSourceForCursor(const Database &database, uint64_t offset,
     return true;
   }
   return false;
+}
+
+bool packedObjectReferenceOffset(const Database &database, uint32_t packed,
+                                 uint64_t &offset) {
+  using obelisk::reflection::TableKind;
+  const TableKind table = obelisk::reflection::unpackTableIndexKind(packed);
+  const uint32_t index = obelisk::reflection::unpackTableIndex(packed);
+  switch (table) {
+  case TableKind::Object:
+    if (index >= database.objectCount)
+      return false;
+    offset = database.objects + uint64_t{index} * kObjectSize;
+    return true;
+  case TableKind::StaticObject:
+    if (index >= database.staticObjectCount)
+      return false;
+    offset = database.staticObjects + uint64_t{index} * kStaticObjectSize;
+    return true;
+  case TableKind::Scope:
+  case TableKind::Statement:
+    return false;
+  }
+  return false;
+}
+
+bool packedObjectReferenceForCursor(const Database &database, uint64_t offset,
+                                    uint32_t &packed) {
+  obelisk::reflection::TableKind table;
+  uint32_t index = 0;
+  if (!relationSourceForCursor(database, offset, table, index) ||
+      (table != obelisk::reflection::TableKind::Object &&
+       table != obelisk::reflection::TableKind::StaticObject) ||
+      !obelisk::reflection::tryPackTableIndex(table, index, packed) ||
+      packed == UINT32_MAX)
+    return false;
+  return true;
+}
+
+uint32_t objectReferenceVPIKind(const Database &database, uint64_t offset) {
+  if (isStaticObjectOffset(database, offset))
+    return read16(database.data + offset + 28);
+  return recordVPIKind(database.data + offset);
+}
+
+bool findSemanticRootBinding(const Database &database, uint32_t packedObject,
+                             uint32_t &semanticType) {
+  uint64_t low = 0;
+  uint64_t high = database.semanticRootBindingCount;
+  while (low != high) {
+    uint64_t middle = low + (high - low) / 2;
+    const uint8_t *binding = database.data + database.semanticRootBindings +
+                             middle * kSemanticRootBindingSize;
+    if (read32(binding) < packedObject)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.semanticRootBindingCount)
+    return false;
+  const uint8_t *binding = database.data + database.semanticRootBindings +
+                           low * kSemanticRootBindingSize;
+  if (read32(binding) != packedObject)
+    return false;
+  semanticType = read32(binding + 4);
+  return true;
 }
 
 obelisk::reflection::RelationView relationAt(const Database &database,
@@ -1231,8 +1299,8 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t previousResolvedType = 0;
   uint64_t previousResolvedEnd = 0;
   for (uint64_t index = 0; index != database.resolvedNetRunCount; ++index) {
-    const uint8_t *run = database.data + database.resolvedNetRuns +
-                         index * kResolvedNetRunSize;
+    const uint8_t *run =
+        database.data + database.resolvedNetRuns + index * kResolvedNetRunSize;
     uint32_t objectIndex = read32(run);
     uint32_t netType = read32(run + 4);
     uint64_t firstBit = read64(run + 8);
@@ -1245,8 +1313,7 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t exactKind = recordVPIKind(object);
     const auto *descriptor =
         obelisk::reflection::findVPIProperty(exactKind, 61);
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET ||
-        !descriptor ||
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || !descriptor ||
         descriptor->realization !=
             obelisk::reflection::VPIPropertyRealization::IndexedImage ||
         firstBit > width || bitCount > width - firstBit ||
@@ -1531,6 +1598,32 @@ bool validateDatabaseImpl(const Database &database) {
            getString(database, database.strings + relative, result);
   };
 
+  uint32_t previousSemanticRootSource = 0;
+  std::vector<bool> objectSemanticRoots(database.objectCount, false);
+  std::vector<bool> staticObjectSemanticRoots(database.staticObjectCount,
+                                              false);
+  for (uint64_t index = 0; index != database.semanticRootBindingCount;
+       ++index) {
+    const uint8_t *binding = database.data + database.semanticRootBindings +
+                             index * kSemanticRootBindingSize;
+    const uint32_t packedSource = read32(binding);
+    const uint32_t semanticType = read32(binding + 4);
+    uint64_t sourceOffset = 0;
+    if (packedSource == UINT32_MAX ||
+        (index != 0 && packedSource <= previousSemanticRootSource) ||
+        !packedObjectReferenceOffset(database, packedSource, sourceOffset) ||
+        semanticType >= database.semanticTypeCount)
+      return false;
+    previousSemanticRootSource = packedSource;
+    const auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
+    const uint32_t sourceIndex =
+        obelisk::reflection::unpackTableIndex(packedSource);
+    if (table == obelisk::reflection::TableKind::Object)
+      objectSemanticRoots[sourceIndex] = true;
+    else
+      staticObjectSemanticRoots[sourceIndex] = true;
+  }
+
   const uint32_t semanticFlagMask = OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
                                     OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
                                     OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
@@ -1590,25 +1683,24 @@ bool validateDatabaseImpl(const Database &database) {
         (modport != 0 && !getRelativeStringAllowEmpty(modport, semanticText)))
       return false;
     if (identityTarget != UINT32_MAX) {
-      if (identityTarget >= database.objectCount ||
+      uint64_t targetOffset = 0;
+      if (!packedObjectReferenceOffset(database, identityTarget,
+                                       targetOffset) ||
           (kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
            kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
         return false;
-      const uint8_t *target = database.data + database.objects +
-                              uint64_t{identityTarget} * kObjectSize;
       uint32_t expectedTarget =
           kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS
               ? static_cast<uint32_t>(
                     obelisk::reflection::VPIObjectKind::ClassDefn)
               : static_cast<uint32_t>(
                     obelisk::reflection::VPIObjectKind::InterfaceTypespec);
-      if (recordVPIKind(target) != expectedTarget)
+      if (objectReferenceVPIKind(database, targetOffset) != expectedTarget)
         return false;
       if (kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
-        uint32_t targetRoot =
-            read32(database.data + database.objectSemanticRoots +
-                   uint64_t{identityTarget} * kObjectSemanticRootSize);
-        if (targetRoot >= database.semanticTypeCount)
+        uint32_t targetRoot = UINT32_MAX;
+        if (!findSemanticRootBinding(database, identityTarget, targetRoot) ||
+            targetRoot >= database.semanticTypeCount)
           return false;
         const uint8_t *canonical = database.data + database.semanticTypes +
                                    uint64_t{targetRoot} * kSemanticTypeSize;
@@ -1650,15 +1742,21 @@ bool validateDatabaseImpl(const Database &database) {
         kind != OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
       return false;
     if (aliasObject != UINT32_MAX) {
-      if (aliasObject >= database.objectCount)
+      uint64_t aliasOffset = 0;
+      if (!packedObjectReferenceOffset(database, aliasObject, aliasOffset))
         return false;
-      const uint8_t *alias = database.data + database.objects +
-                             uint64_t{aliasObject} * kObjectSize;
-      const auto *aliasKind =
-          obelisk::reflection::findVPIObjectKind(recordVPIKind(alias));
-      if (recordKind(alias) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-          (read32(alias + 4) & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0 ||
-          recordVPIKind(alias) != publicVPIKind || !aliasKind ||
+      const uint8_t *alias = database.data + aliasOffset;
+      const auto *aliasKind = obelisk::reflection::findVPIObjectKind(
+          objectReferenceVPIKind(database, aliasOffset));
+      bool namedTypespec =
+          isStaticObjectOffset(database, aliasOffset)
+              ? read32(alias + 16) != 0
+              : recordKind(alias) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+                    (read32(alias + 4) &
+                     OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0;
+      if (!namedTypespec ||
+          objectReferenceVPIKind(database, aliasOffset) != publicVPIKind ||
+          !aliasKind ||
           (aliasKind->families &
            obelisk::reflection::vpiFamilyMask(
                obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
@@ -1779,11 +1877,7 @@ bool validateDatabaseImpl(const Database &database) {
       break;
     }
   }
-  for (uint32_t index = 0; index != database.objectSemanticRootCount; ++index) {
-    uint32_t root = read32(database.data + database.objectSemanticRoots +
-                           uint64_t{index} * kObjectSemanticRootSize);
-    if (root != UINT32_MAX && root >= database.semanticTypeCount)
-      return false;
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
     const auto *kind =
@@ -1792,7 +1886,19 @@ bool validateDatabaseImpl(const Database &database) {
         kind && (kind->families &
                  obelisk::reflection::vpiFamilyMask(
                      obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
-    if (database.objectSemanticRootCount != 0 && typespec && root == UINT32_MAX)
+    if (typespec && !objectSemanticRoots[index])
+      return false;
+  }
+  for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
+    const uint8_t *object = database.data + database.staticObjects +
+                            uint64_t{index} * kStaticObjectSize;
+    const auto *kind =
+        obelisk::reflection::findVPIObjectKind(read16(object + 28));
+    bool typespec =
+        kind && (kind->families &
+                 obelisk::reflection::vpiFamilyMask(
+                     obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
+    if (typespec && !staticObjectSemanticRoots[index])
       return false;
   }
   struct SemanticWorkItem {
@@ -1932,15 +2038,16 @@ bool validateDatabaseImpl(const Database &database) {
       }
     }
   }
-  for (uint32_t index = 0; index != database.objectSemanticRootCount; ++index) {
-    uint32_t root = read32(database.data + database.objectSemanticRoots +
-                           uint64_t{index} * kObjectSemanticRootSize);
-    if (root == UINT32_MAX)
-      continue;
-    const uint8_t *object =
-        database.data + database.objects + uint64_t{index} * kObjectSize;
-    const auto *kind =
-        obelisk::reflection::findVPIObjectKind(recordVPIKind(object));
+  for (uint32_t index = 0; index != database.semanticRootBindingCount;
+       ++index) {
+    const uint8_t *binding = database.data + database.semanticRootBindings +
+                             uint64_t{index} * kSemanticRootBindingSize;
+    uint64_t objectOffset = 0;
+    if (!packedObjectReferenceOffset(database, read32(binding), objectOffset))
+      return false;
+    uint32_t root = read32(binding + 4);
+    const auto *kind = obelisk::reflection::findVPIObjectKind(
+        objectReferenceVPIKind(database, objectOffset));
     if (!kind || (kind->families &
                   obelisk::reflection::vpiFamilyMask(
                       obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
@@ -1949,7 +2056,7 @@ bool validateDatabaseImpl(const Database &database) {
                                 uint64_t{root} * kSemanticTypeSize) &
                          OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
                         OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
-    if (rootKind != recordVPIKind(object))
+    if (rootKind != objectReferenceVPIKind(database, objectOffset))
       return false;
   }
   std::vector<uint8_t> parentState(database.statementCount, 0);
@@ -3305,13 +3412,11 @@ obelisk_rt_status designTypeChild(const Database &database,
 obelisk_rt_status designSemanticRoot(const Database &database,
                                      obelisk_rt_design_cursor_v1 object,
                                      obelisk_rt_design_cursor_v1 *outCursor) {
-  if (!isObjectOffset(database, object.offset) ||
-      database.objectSemanticRootCount != database.objectCount)
+  uint32_t packedObject = 0;
+  if (!packedObjectReferenceForCursor(database, object.offset, packedObject))
     return OBELISK_RT_INVALID_HANDLE;
-  uint64_t objectIndex = (object.offset - database.objects) / kObjectSize;
-  uint32_t root = read32(database.data + database.objectSemanticRoots +
-                         objectIndex * kObjectSemanticRootSize);
-  if (root == UINT32_MAX) {
+  uint32_t root = UINT32_MAX;
+  if (!findSemanticRootBinding(database, packedObject, root)) {
     outCursor->offset = 0;
     return OBELISK_RT_EOF;
   }
@@ -3345,14 +3450,17 @@ designSemanticTypeInfo(const Database &database,
   outInfo->edge_count = read32(record + 8);
   uint32_t aliasObject = read32(record + 12);
   uint32_t identityTarget = read32(record + 16);
-  outInfo->alias_object.offset =
-      aliasObject == UINT32_MAX
-          ? 0
-          : database.objects + uint64_t{aliasObject} * kObjectSize;
-  outInfo->identity_target.offset =
-      identityTarget == UINT32_MAX
-          ? 0
-          : database.objects + uint64_t{identityTarget} * kObjectSize;
+  auto setObjectReference = [&](uint32_t packed,
+                                obelisk_rt_design_cursor_v1 &result) {
+    if (packed == UINT32_MAX) {
+      result.offset = 0;
+      return true;
+    }
+    return packedObjectReferenceOffset(database, packed, result.offset);
+  };
+  if (!setObjectReference(aliasObject, outInfo->alias_object) ||
+      !setObjectReference(identityTarget, outInfo->identity_target))
+    return OBELISK_RT_INVALID_DESIGN;
   auto setString = [&](uint32_t relative, const uint8_t *&data,
                        uint64_t &size) {
     if (relative == 0) {
@@ -3523,17 +3631,19 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status designVPIResolvedNetType(
-    const Database &database, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) {
+obelisk_rt_status designVPIResolvedNetType(const Database &database,
+                                           obelisk_rt_design_cursor_v1 cursor,
+                                           uint64_t bitOffset,
+                                           uint64_t bitWidth,
+                                           uint32_t *outType) {
   if (!isObjectOffset(database, cursor.offset) || bitWidth == 0)
     return OBELISK_RT_INVALID_HANDLE;
   uint32_t objectIndex =
       static_cast<uint32_t>((cursor.offset - database.objects) / kObjectSize);
   const uint8_t *object = database.data + cursor.offset;
   uint64_t width = read64(object + 56);
-  if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET ||
-      bitOffset > width || bitWidth > width - bitOffset)
+  if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || bitOffset > width ||
+      bitWidth > width - bitOffset)
     return OBELISK_RT_INVALID_HANDLE;
   obelisk_rt_status simulated =
       simulatedNetObjectIndex(database, objectIndex, objectIndex);

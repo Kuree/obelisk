@@ -34,6 +34,7 @@ namespace {
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
+static_assert(SemanticRootBindingLayout.size == 8);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
@@ -1879,14 +1880,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
   if (typeError)
     return {};
 
-  llvm::StringMap<uint32_t> semanticIdentityObjects;
+  llvm::StringMap<ImageObjectRef> semanticIdentityObjects;
   for (sim::SimVPIObjectAnchorOp anchor : anchors) {
     sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
     if (!backing || backing.getKind() != sim::VPIObjectBackingKind::Class ||
         !backing.getSymbol())
       continue;
-    semanticIdentityObjects[backing.getSymbol().getValue()] =
-        objectIndices.lookup(anchor);
+    auto reference = anchorRefs.find(anchor);
+    if (reference == anchorRefs.end()) {
+      anchor.emitOpError("canonical VPI semantic identity was not serialized");
+      return {};
+    }
+    semanticIdentityObjects[backing.getSymbol().getValue()] = reference->second;
   }
   for (sim::SimVPITypespecDeclOp typespec : typespecs) {
     sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
@@ -1895,8 +1900,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
         typespec.getOrigin() != sim::VPITypespecOrigin::Interface)
       continue;
     StringRef identity = semantic.getSymbol().getRootReference().getValue();
-    if (!semanticIdentityObjects
-             .try_emplace(identity, objectIndices.lookup(typespec))
+    auto reference = typespecRefs.find(typespec);
+    if (reference == typespecRefs.end()) {
+      typespec.emitOpError(
+          "canonical VPI interface identity was not serialized");
+      return {};
+    }
+    if (!semanticIdentityObjects.try_emplace(identity, reference->second)
              .second) {
       typespec.emitOpError("duplicates a canonical VPI semantic identity for ")
           << identity;
@@ -1920,11 +1930,27 @@ SmallVector<uint8_t> serializeDesignDatabase(
     std::string name;
     uint64_t packedOffset = 0;
   };
+  struct SemanticRootBindingRecord {
+    uint32_t objectIndexAndTable = 0;
+    uint32_t semanticType = 0;
+  };
   SmallVector<SemanticTypeRecord> semanticTypes;
   SmallVector<SemanticTypeEdgeRecord> semanticTypeEdges;
-  SmallVector<uint32_t> objectSemanticRoots;
-  DenseMap<Attribute, uint32_t> semanticTypeIndices;
+  SmallVector<SemanticRootBindingRecord> semanticRootBindings;
+  DenseMap<std::tuple<Attribute, uint32_t, uint32_t>, uint32_t>
+      semanticTypeIndices;
   bool semanticTypeError = false;
+  auto packSemanticObject = [&](ImageObjectRef reference,
+                                uint32_t &packed) -> bool {
+    if ((reference.table != TableKind::Object &&
+         reference.table != TableKind::StaticObject) ||
+        !tryPackTableIndex(reference.table, reference.index, packed) ||
+        packed == UINT32_MAX) {
+      semanticTypeError = true;
+      return false;
+    }
+    return true;
+  };
   auto semanticArrayShape = [&](sim::SimVPIObjectAnchorOp anchor) {
     DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
     DenseI64ArrayAttr dimensionFlags = anchor.getIndexDimensionFlagsAttr();
@@ -1964,20 +1990,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return current;
   };
   auto semanticForObject =
-      [&](const Record &object) -> sim::VPITypeSemanticsAttr {
-    if (!object.identity)
+      [&](Operation *identity) -> sim::VPITypeSemanticsAttr {
+    if (!identity)
       return {};
-    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(object.identity))
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(identity))
       return storage.getVpiTypeAttr();
-    if (auto net = dyn_cast<sim::SimNetDeclOp>(object.identity))
+    if (auto net = dyn_cast<sim::SimNetDeclOp>(identity))
       return net.getVpiTypeAttr();
-    if (auto identity = dyn_cast<sim::SimVPINetIdentityDeclOp>(object.identity))
-      return identity.getVpiTypeAttr();
-    if (auto port = dyn_cast<sim::SimPortDeclOp>(object.identity))
+    if (auto netIdentity = dyn_cast<sim::SimVPINetIdentityDeclOp>(identity))
+      return netIdentity.getVpiTypeAttr();
+    if (auto port = dyn_cast<sim::SimPortDeclOp>(identity))
       return port.getVpiTypeAttr();
-    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(object.identity))
+    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(identity))
       return semanticArrayShape(anchor);
-    if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(object.identity)) {
+    if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity)) {
       sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
       ArrayAttr aliases = semantic.getTypedefAliases();
       if (!aliases || aliases.empty())
@@ -2006,7 +2032,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           semantic.getChildPackedOffsets(), semantic.getChildRandTypes(),
           remaining);
     }
-    if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(object.identity))
+    if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(identity))
       return nettype.getTargetType();
     return {};
   };
@@ -2015,24 +2041,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           [&](sim::VPITypeSemanticsAttr semantic) -> std::optional<uint32_t> {
     if (!semantic)
       return std::nullopt;
-    if (auto found = semanticTypeIndices.find(semantic);
-        found != semanticTypeIndices.end())
-      return found->second;
-    if (semanticTypes.size() == UINT32_MAX ||
-        semanticTypeEdges.size() > UINT32_MAX - semantic.getChildren().size()) {
-      semanticTypeError = true;
-      return std::nullopt;
-    }
-    uint32_t index = static_cast<uint32_t>(semanticTypes.size());
-    semanticTypeIndices[semantic] = index;
-    semanticTypes.push_back({semantic});
-    const uint32_t firstEdge = static_cast<uint32_t>(semanticTypeEdges.size());
-    const uint32_t edgeCount =
-        static_cast<uint32_t>(semantic.getChildren().size());
-    semanticTypes[index].firstEdge = firstEdge;
-    semanticTypes[index].edgeCount = edgeCount;
-    semanticTypeEdges.resize(semanticTypeEdges.size() + edgeCount);
-
+    uint32_t aliasObject = UINT32_MAX;
+    uint32_t identityTarget = UINT32_MAX;
     if (ArrayAttr aliases = semantic.getTypedefAliases();
         aliases && !aliases.empty()) {
       auto alias = cast<SymbolRefAttr>(aliases[0]);
@@ -2041,19 +2051,42 @@ SmallVector<uint8_t> serializeDesignDatabase(
         semanticTypeError = true;
         return std::nullopt;
       }
-      semanticTypes[index].aliasObject = objectIndices.lookup(target->second);
+      auto reference = typespecRefs.find(target->second);
+      if (reference == typespecRefs.end() ||
+          !packSemanticObject(reference->second, aliasObject))
+        return std::nullopt;
     }
     if (SymbolRefAttr identity = semantic.getSymbol()) {
       auto target =
           semanticIdentityObjects.find(identity.getRootReference().getValue());
       if (target != semanticIdentityObjects.end()) {
-        semanticTypes[index].identityTarget = target->second;
+        if (!packSemanticObject(target->second, identityTarget))
+          return std::nullopt;
       } else if (semantic.getKind() == sim::VPITypeKind::Class ||
                  semantic.getKind() == sim::VPITypeKind::VirtualInterface) {
         semanticTypeError = true;
         return std::nullopt;
       }
     }
+    auto key =
+        std::make_tuple(Attribute(semantic), aliasObject, identityTarget);
+    if (auto found = semanticTypeIndices.find(key);
+        found != semanticTypeIndices.end())
+      return found->second;
+    if (semanticTypes.size() == UINT32_MAX ||
+        semanticTypeEdges.size() > UINT32_MAX - semantic.getChildren().size()) {
+      semanticTypeError = true;
+      return std::nullopt;
+    }
+    uint32_t index = static_cast<uint32_t>(semanticTypes.size());
+    semanticTypeIndices[key] = index;
+    semanticTypes.push_back({semantic, 0, 0, 0, aliasObject, identityTarget});
+    const uint32_t firstEdge = static_cast<uint32_t>(semanticTypeEdges.size());
+    const uint32_t edgeCount =
+        static_cast<uint32_t>(semantic.getChildren().size());
+    semanticTypes[index].firstEdge = firstEdge;
+    semanticTypes[index].edgeCount = edgeCount;
+    semanticTypeEdges.resize(semanticTypeEdges.size() + edgeCount);
 
     using Kind = sim::VPITypeKind;
     for (auto [ordinal, childAttr] : llvm::enumerate(semantic.getChildren())) {
@@ -2122,9 +2155,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return index;
   };
   if (includeStatements) {
-    objectSemanticRoots.assign(objects.size(), UINT32_MAX);
     for (auto [index, object] : llvm::enumerate(objects)) {
-      sim::VPITypeSemanticsAttr semantic = semanticForObject(object);
+      sim::VPITypeSemanticsAttr semantic = semanticForObject(object.identity);
       if (!semantic)
         continue;
       auto rootIndex = addSemanticType(semantic);
@@ -2134,7 +2166,43 @@ SmallVector<uint8_t> serializeDesignDatabase(
               "could not serialize exact VPI semantic type graph");
         return {};
       }
-      objectSemanticRoots[index] = *rootIndex;
+      uint32_t packed = 0;
+      if (!packSemanticObject(
+              {TableKind::Object, static_cast<uint32_t>(index), object.vpiKind},
+              packed))
+        return {};
+      semanticRootBindings.push_back({packed, *rootIndex});
+    }
+    for (auto [index, object] : llvm::enumerate(staticObjects)) {
+      sim::VPITypeSemanticsAttr semantic = semanticForObject(object.identity);
+      if (!semantic)
+        continue;
+      auto rootIndex = addSemanticType(semantic);
+      if (!rootIndex) {
+        object.identity->emitError(
+            "could not serialize exact VPI semantic type graph");
+        return {};
+      }
+      uint32_t packed = 0;
+      if (!packSemanticObject({TableKind::StaticObject,
+                               static_cast<uint32_t>(index), object.vpiKind},
+                              packed))
+        return {};
+      semanticRootBindings.push_back({packed, *rootIndex});
+    }
+    llvm::sort(semanticRootBindings,
+               [](const SemanticRootBindingRecord &left,
+                  const SemanticRootBindingRecord &right) {
+                 return left.objectIndexAndTable < right.objectIndexAndTable;
+               });
+    if (std::adjacent_find(
+            semanticRootBindings.begin(), semanticRootBindings.end(),
+            [](const SemanticRootBindingRecord &left,
+               const SemanticRootBindingRecord &right) {
+              return left.objectIndexAndTable == right.objectIndexAndTable;
+            }) != semanticRootBindings.end()) {
+      design.emitOpError("duplicate VPI semantic root binding");
+      return {};
     }
     if (semanticTypeError)
       return {};
@@ -2619,12 +2687,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       (includeStatements ? SemanticDirectoryLayout.size : 0);
   uint64_t semanticTypeEdgeOffset =
       semanticTypeOffset + semanticTypes.size() * SemanticTypeLayout.size;
-  uint64_t objectSemanticRootOffset =
+  uint64_t semanticRootBindingOffset =
       semanticTypeEdgeOffset +
       semanticTypeEdges.size() * SemanticTypeEdgeLayout.size;
   uint64_t relationIndexOffset =
-      objectSemanticRootOffset +
-      objectSemanticRoots.size() * ObjectSemanticRootLayout.size;
+      semanticRootBindingOffset +
+      semanticRootBindings.size() * SemanticRootBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -2886,8 +2954,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSemanticTypeCount(semanticTypes.size());
     writer.setSemanticTypeEdgeOffset(semanticTypeEdgeOffset);
     writer.setSemanticTypeEdgeCount(semanticTypeEdges.size());
-    writer.setObjectSemanticRootOffset(objectSemanticRootOffset);
-    writer.setObjectSemanticRootCount(objectSemanticRoots.size());
+    writer.setSemanticRootBindingOffset(semanticRootBindingOffset);
+    writer.setSemanticRootBindingCount(semanticRootBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -2944,8 +3012,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setKindAndFlags(flags);
     writer.setFirstEdge(entry.firstEdge);
     writer.setEdgeCount(entry.edgeCount);
-    writer.setAliasObject(entry.aliasObject);
-    writer.setIdentityTarget(entry.identityTarget);
+    writer.setAliasObjectIndexAndTable(entry.aliasObject);
+    writer.setIdentityTargetIndexAndTable(entry.identityTarget);
     writer.setName(
         entry.semantic.getName()
             ? static_cast<uint32_t>(intern(entry.semantic.getName().getValue()))
@@ -2981,10 +3049,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         entry.name.empty() ? 0 : static_cast<uint32_t>(intern(entry.name)));
     writer.setPackedOffset(entry.packedOffset);
   }
-  for (auto [index, semanticRoot] : llvm::enumerate(objectSemanticRoots)) {
-    ObjectSemanticRootWriter writer(output.data() + objectSemanticRootOffset +
-                                    index * ObjectSemanticRootLayout.size);
-    writer.setSemanticType(semanticRoot);
+  for (auto [index, binding] : llvm::enumerate(semanticRootBindings)) {
+    SemanticRootBindingWriter writer(output.data() + semanticRootBindingOffset +
+                                     index * SemanticRootBindingLayout.size);
+    writer.setObjectIndexAndTable(binding.objectIndexAndTable);
+    writer.setSemanticType(binding.semanticType);
   }
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +

@@ -145,7 +145,7 @@ TEST(GeneratedDesignDatabase, Dump) {
 
   uint64_t semanticTypeOffset = 0, semanticTypeCount = 0;
   uint64_t semanticEdgeOffset = 0, semanticEdgeCount = 0;
-  uint64_t semanticRootOffset = 0, semanticRootCount = 0;
+  uint64_t semanticRootBindingOffset = 0, semanticRootBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -163,8 +163,8 @@ TEST(GeneratedDesignDatabase, Dump) {
     semanticTypeCount = directory.getSemanticTypeCount();
     semanticEdgeOffset = directory.getSemanticTypeEdgeOffset();
     semanticEdgeCount = directory.getSemanticTypeEdgeCount();
-    semanticRootOffset = directory.getObjectSemanticRootOffset();
-    semanticRootCount = directory.getObjectSemanticRootCount();
+    semanticRootBindingOffset = directory.getSemanticRootBindingOffset();
+    semanticRootBindingCount = directory.getSemanticRootBindingCount();
     relationIndexOffset = directory.getRelationIndexOffset();
     relationIndexCount = directory.getRelationIndexCount();
     relationIndexDimensionOffset = directory.getRelationIndexDimensionOffset();
@@ -190,8 +190,8 @@ TEST(GeneratedDesignDatabase, Dump) {
                        SemanticTypeLayout);
   ASSERT_SECTION_RANGE(semanticEdgeOffset, semanticEdgeCount,
                        SemanticTypeEdgeLayout);
-  ASSERT_SECTION_RANGE(semanticRootOffset, semanticRootCount,
-                       ObjectSemanticRootLayout);
+  ASSERT_SECTION_RANGE(semanticRootBindingOffset, semanticRootBindingCount,
+                       SemanticRootBindingLayout);
   ASSERT_SECTION_RANGE(relationIndexOffset, relationIndexCount,
                        RelationIndexLayout);
   ASSERT_SECTION_RANGE(relationIndexDimensionOffset,
@@ -221,12 +221,10 @@ TEST(GeneratedDesignDatabase, Dump) {
     scopeNames.emplace(offset, name);
     scopeIndexNames.push_back(name);
     output << "scope name=" << name << " kind="
-              << static_cast<uint32_t>(
-                     unpackRecordKind(scope.getKindAndVPIKind()))
-              << " vpi_kind="
-              << unpackRecordKindPayload(scope.getKindAndVPIKind())
-              << " caps=0x" << hex(scope.getCaps()) << " id=" << scope.getID()
-              << '\n';
+           << static_cast<uint32_t>(unpackRecordKind(scope.getKindAndVPIKind()))
+           << " vpi_kind=" << unpackRecordKindPayload(scope.getKindAndVPIKind())
+           << " caps=0x" << hex(scope.getCaps()) << " id=" << scope.getID()
+           << '\n';
   }
 
   std::vector<std::string> objectIndexNames;
@@ -277,21 +275,20 @@ TEST(GeneratedDesignDatabase, Dump) {
         (object.getCaps() & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
         OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
     output << "object name=" << name << " kind="
-              << static_cast<uint32_t>(
-                     unpackRecordKind(object.getKindAndVPIKind()))
-              << " vpi_kind="
-              << unpackRecordKindPayload(object.getKindAndVPIKind())
-              << " caps=0x" << hex(object.getCaps()) << " id=" << object.getID()
-              << " scope=" << ownerName << " width=" << object.getWidth()
-              << " range=[" << object.getLeft() << ':' << object.getRight()
-              << "] state=" << object.getStateOffset()
-              << " type_kind=" << typeKind << " type_flags=0x" << hex(typeFlags)
-              << " port_ordinal=" << ordinal << " element_kind=" << elementKind
-              << " element_flags=0x" << hex(elementFlags)
-              << " element_width=" << elementWidth << " element_range=["
-              << elementLeft << ':' << elementRight
-              << "] child_kind=" << childKind << " child_flags=0x"
-              << hex(childFlags) << " child_width=" << childWidth << '\n';
+           << static_cast<uint32_t>(
+                  unpackRecordKind(object.getKindAndVPIKind()))
+           << " vpi_kind="
+           << unpackRecordKindPayload(object.getKindAndVPIKind()) << " caps=0x"
+           << hex(object.getCaps()) << " id=" << object.getID()
+           << " scope=" << ownerName << " width=" << object.getWidth()
+           << " range=[" << object.getLeft() << ':' << object.getRight()
+           << "] state=" << object.getStateOffset() << " type_kind=" << typeKind
+           << " type_flags=0x" << hex(typeFlags) << " port_ordinal=" << ordinal
+           << " element_kind=" << elementKind << " element_flags=0x"
+           << hex(elementFlags) << " element_width=" << elementWidth
+           << " element_range=[" << elementLeft << ':' << elementRight
+           << "] child_kind=" << childKind << " child_flags=0x"
+           << hex(childFlags) << " child_width=" << childWidth << '\n';
   }
 
   std::vector<std::string> staticObjectIndexNames;
@@ -334,21 +331,21 @@ TEST(GeneratedDesignDatabase, Dump) {
                                    modport));
     }
     output << "semantic_type index=" << index
-              << " kind=" << (type.getKindAndFlags() & UINT32_C(0xff))
-              << " flags=0x" << hex(type.getKindAndFlags() & semanticFlagsMask)
-              << " public_vpi_kind="
-              << ((type.getKindAndFlags() &
-                   OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-                  OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT)
-              << " first_edge=" << type.getFirstEdge()
-              << " edge_count=" << type.getEdgeCount()
-              << " alias=" << type.getAliasObject()
-              << " identity=" << type.getIdentityTarget() << " name=" << name
-              << " modport=" << modport
-              << " queue_bound=" << type.getQueueBound() << " range=["
-              << type.getLeft() << ':' << type.getRight()
-              << "] bit_width=" << type.getBitWidth()
-              << " tag_bits=" << type.getTagBits() << '\n';
+           << " kind=" << (type.getKindAndFlags() & UINT32_C(0xff))
+           << " flags=0x" << hex(type.getKindAndFlags() & semanticFlagsMask)
+           << " public_vpi_kind="
+           << ((type.getKindAndFlags() &
+                OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+               OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT)
+           << " first_edge=" << type.getFirstEdge()
+           << " edge_count=" << type.getEdgeCount()
+           << " alias=" << type.getAliasObjectIndexAndTable()
+           << " identity=" << type.getIdentityTargetIndexAndTable()
+           << " name=" << name << " modport=" << modport
+           << " queue_bound=" << type.getQueueBound() << " range=["
+           << type.getLeft() << ':' << type.getRight()
+           << "] bit_width=" << type.getBitWidth()
+           << " tag_bits=" << type.getTagBits() << '\n';
   }
 
   for (uint64_t index = 0; index != semanticEdgeCount; ++index) {
@@ -361,19 +358,28 @@ TEST(GeneratedDesignDatabase, Dump) {
                                    name));
     }
     output << "semantic_edge index=" << index << " child=" << edge.getChild()
-              << " role=" << (edge.getRoleAndFlags() & UINT32_C(0xff))
-              << " flags=0x" << hex(edge.getRoleAndFlags() >> 8)
-              << " ordinal=" << edge.getOrdinal() << " name=" << name
-              << " packed_offset=" << edge.getPackedOffset() << '\n';
+           << " role=" << (edge.getRoleAndFlags() & UINT32_C(0xff))
+           << " flags=0x" << hex(edge.getRoleAndFlags() >> 8)
+           << " ordinal=" << edge.getOrdinal() << " name=" << name
+           << " packed_offset=" << edge.getPackedOffset() << '\n';
   }
 
-  for (uint64_t index = 0; index != semanticRootCount; ++index) {
-    ASSERT_LT(index, objectIndexNames.size());
-    const ObjectSemanticRootView root(image + semanticRootOffset +
-                                      index * ObjectSemanticRootLayout.size);
-    output << "semantic_root object=" << index
-              << " object_name=" << objectIndexNames[index]
-              << " semantic_type=" << root.getSemanticType() << '\n';
+  for (uint64_t index = 0; index != semanticRootBindingCount; ++index) {
+    const SemanticRootBindingView root(image + semanticRootBindingOffset +
+                                       index * SemanticRootBindingLayout.size);
+    const uint32_t packed = root.getObjectIndexAndTable();
+    const size_t table = static_cast<size_t>(unpackTableIndexKind(packed));
+    const uint32_t object = unpackTableIndex(packed);
+    ASSERT_TRUE(table == static_cast<size_t>(TableKind::Object) ||
+                table == static_cast<size_t>(TableKind::StaticObject));
+    const std::vector<std::string> &names =
+        table == static_cast<size_t>(TableKind::Object)
+            ? objectIndexNames
+            : staticObjectIndexNames;
+    ASSERT_LT(object, names.size());
+    output << "semantic_root source_table=" << table << " object=" << object
+           << " object_name=" << names[object]
+           << " semantic_type=" << root.getSemanticType() << '\n';
   }
 
   for (uint64_t index = 0; index != relationIndexCount; ++index) {
@@ -381,14 +387,14 @@ TEST(GeneratedDesignDatabase, Dump) {
                                           index * RelationIndexLayout.size);
     ASSERT_LT(relationIndex.getObjectIndex(), objectIndexNames.size());
     output << "relation_index index=" << index
-              << " object=" << relationIndex.getObjectIndex() << " object_name="
-              << objectIndexNames[relationIndex.getObjectIndex()]
-              << " first_dimension=" << relationIndex.getFirstDimension()
-              << " dimension_count=" << relationIndex.getDimensionCount()
-              << " flags=0x" << hex(relationIndex.getFlags())
-              << " first_key=" << relationIndex.getFirstKey()
-              << " first_ordinal_key=" << relationIndex.getFirstOrdinalKey()
-              << '\n';
+           << " object=" << relationIndex.getObjectIndex() << " object_name="
+           << objectIndexNames[relationIndex.getObjectIndex()]
+           << " first_dimension=" << relationIndex.getFirstDimension()
+           << " dimension_count=" << relationIndex.getDimensionCount()
+           << " flags=0x" << hex(relationIndex.getFlags())
+           << " first_key=" << relationIndex.getFirstKey()
+           << " first_ordinal_key=" << relationIndex.getFirstOrdinalKey()
+           << '\n';
   }
 
   for (uint64_t index = 0; index != relationIndexDimensionCount; ++index) {
@@ -396,15 +402,15 @@ TEST(GeneratedDesignDatabase, Dump) {
         image + relationIndexDimensionOffset +
         index * RelationIndexDimensionLayout.size);
     output << "relation_index_dimension index=" << index << " range=["
-              << dimension.getLeft() << ':' << dimension.getRight() << "]\n";
+           << dimension.getLeft() << ':' << dimension.getRight() << "]\n";
   }
 
   for (uint64_t index = 0; index != relationIndexKeyCount; ++index) {
     const RelationIndexKeyView key(image + relationIndexKeyOffset +
                                    index * RelationIndexKeyLayout.size);
     output << "relation_index_key index=" << index
-              << " value=" << key.getIndex() << " ordinal=" << key.getOrdinal()
-              << '\n';
+           << " value=" << key.getIndex() << " ordinal=" << key.getOrdinal()
+           << '\n';
   }
 
   for (uint64_t index = 0; index != relationIndexMemberCount; ++index) {
@@ -412,11 +418,11 @@ TEST(GeneratedDesignDatabase, Dump) {
                                          index *
                                              RelationIndexMemberLayout.size);
     output << "relation_index_member index=" << index << " target_table="
-              << static_cast<uint32_t>(
-                     unpackTableIndexKind(member.getTargetIndexAndTable()))
-              << " target=" << unpackTableIndex(member.getTargetIndexAndTable())
-              << " relation_index=" << member.getRelationIndex()
-              << " ordinal=" << member.getOrdinal() << '\n';
+           << static_cast<uint32_t>(
+                  unpackTableIndexKind(member.getTargetIndexAndTable()))
+           << " target=" << unpackTableIndex(member.getTargetIndexAndTable())
+           << " relation_index=" << member.getRelationIndex()
+           << " ordinal=" << member.getOrdinal() << '\n';
   }
 
   std::vector<std::string> statementIndexNames;
@@ -437,13 +443,13 @@ TEST(GeneratedDesignDatabase, Dump) {
     statementIndexNames.push_back(
         name.empty() ? "statement#" + std::to_string(statement.getID()) : name);
     output << "statement id=" << statement.getID()
-              << " owner=" << statement.getOwnerObjectIndex()
-              << " scope=" << statement.getScopeIndex()
-              << " parent=" << statement.getParentIndex()
-              << " type=" << statement.getVPIKind() << " flags=0x"
-              << hex(statement.getFlags()) << " source=" << source << ':'
-              << statement.getSourceLine() << ':' << statement.getSourceColumn()
-              << " name=" << name << '\n';
+           << " owner=" << statement.getOwnerObjectIndex()
+           << " scope=" << statement.getScopeIndex()
+           << " parent=" << statement.getParentIndex()
+           << " type=" << statement.getVPIKind() << " flags=0x"
+           << hex(statement.getFlags()) << " source=" << source << ':'
+           << statement.getSourceLine() << ':' << statement.getSourceColumn()
+           << " name=" << name << '\n';
   }
 
   for (uint64_t index = 0; index != fixedPropertyCount; ++index) {
@@ -468,13 +474,12 @@ TEST(GeneratedDesignDatabase, Dump) {
       break;
     }
     output << "fixed_property source_table="
-              << static_cast<uint32_t>(
-                     unpackTableIndexKind(property.getSourceIndexAndTable()))
-              << " source="
-              << unpackTableIndex(property.getSourceIndexAndTable())
-              << " selector=" << property.getSelector()
-              << " kind=" << property.getKindAndFlags() << " value=" << value
-              << '\n';
+           << static_cast<uint32_t>(
+                  unpackTableIndexKind(property.getSourceIndexAndTable()))
+           << " source=" << unpackTableIndex(property.getSourceIndexAndTable())
+           << " selector=" << property.getSelector()
+           << " kind=" << property.getKindAndFlags() << " value=" << value
+           << '\n';
   }
 
   for (uint64_t index = 0; index != netDelayRunCount; ++index) {
@@ -493,9 +498,9 @@ TEST(GeneratedDesignDatabase, Dump) {
     const StatementSiteView site(image + header.getStatementSiteOffset() +
                                  index * StatementSiteLayout.size);
     output << "statement_site id=" << site.getID()
-              << " statement=" << site.getStatementIndex()
-              << " phase=" << site.getPhase() << " flags=0x"
-              << hex(site.getFlags()) << '\n';
+           << " statement=" << site.getStatementIndex()
+           << " phase=" << site.getPhase() << " flags=0x"
+           << hex(site.getFlags()) << '\n';
   }
 
   const std::array<const std::vector<std::string> *, 4> tableNames{
@@ -514,18 +519,18 @@ TEST(GeneratedDesignDatabase, Dump) {
     const uint32_t target = unpackTableIndex(relation.getTargetIndexAndTable());
     ASSERT_LT(target, tableNames[targetTable]->size());
     output << "relation source_table=" << sourceTable
-              << " source=" << relation.getSourceIndex() << " source_type="
-              << unpackRelationSourceKind(relation.getSourceKindAndTable())
-              << " mode="
-              << (relationSourceIsIterate(relation.getSourceKindAndTable())
-                      ? "iterate"
-                      : "handle")
-              << " selector=" << relation.getSelector()
-              << " ordinal=" << relation.getOrdinal()
-              << " target_table=" << targetTable << " target=" << target
-              << " source_name="
-              << (*tableNames[sourceTable])[relation.getSourceIndex()]
-              << " target_name=" << (*tableNames[targetTable])[target] << '\n';
+           << " source=" << relation.getSourceIndex() << " source_type="
+           << unpackRelationSourceKind(relation.getSourceKindAndTable())
+           << " mode="
+           << (relationSourceIsIterate(relation.getSourceKindAndTable())
+                   ? "iterate"
+                   : "handle")
+           << " selector=" << relation.getSelector()
+           << " ordinal=" << relation.getOrdinal()
+           << " target_table=" << targetTable << " target=" << target
+           << " source_name="
+           << (*tableNames[sourceTable])[relation.getSourceIndex()]
+           << " target_name=" << (*tableNames[targetTable])[target] << '\n';
   }
   output.close();
   ASSERT_TRUE(output) << "failed to write " << outputPath;

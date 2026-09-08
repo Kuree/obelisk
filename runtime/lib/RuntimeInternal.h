@@ -1411,8 +1411,8 @@ struct DesignDatabaseCache {
   uint64_t semanticTypeCount = 0;
   uint64_t semanticTypeEdges = 0;
   uint64_t semanticTypeEdgeCount = 0;
-  uint64_t objectSemanticRoots = 0;
-  uint64_t objectSemanticRootCount = 0;
+  uint64_t semanticRootBindings = 0;
+  uint64_t semanticRootBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;

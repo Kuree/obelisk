@@ -301,6 +301,6 @@ module attributes {
 // CHECK-DAG: semantic_edge {{.*}} role=4 flags=0x2 ordinal=0 name=flag packed_offset=1
 // CHECK-DAG: semantic_edge {{.*}} role=4 flags=0x3 ordinal=1 name=state packed_offset=0
 // CHECK-DAG: semantic_edge {{.*}} role=1 {{.*}} ordinal=0 name= packed_offset=0
-// CHECK-DAG: semantic_root {{.*}} object_name=top.record_t semantic_type={{[0-9]+}}
+// CHECK-DAG: semantic_root source_table=1 {{.*}} object_name=top.record_t semantic_type={{[0-9]+}}
 // CHECK-DAG: semantic_type {{.*}} kind=18 flags=0x600 public_vpi_kind=642 {{.*}} range=[0:1]
 // CHECK-DAG: semantic_type {{.*}} kind=17 flags=0x600 public_vpi_kind=641 {{.*}} range=[7:4]

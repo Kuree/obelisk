@@ -208,9 +208,10 @@ def Relation : ReflectionLayout<"Relation", 16,
 def SemanticTypeKindAndFlags : ReflectionField<"KindAndFlags", 0, U32LE>;
 def SemanticTypeFirstEdge : ReflectionField<"FirstEdge", 4, U32LE>;
 def SemanticTypeEdgeCount : ReflectionField<"EdgeCount", 8, U32LE>;
-def SemanticTypeAliasObject : ReflectionField<"AliasObject", 12, U32LE>;
+def SemanticTypeAliasObject
+    : ReflectionField<"AliasObjectIndexAndTable", 12, U32LE>;
 def SemanticTypeIdentityTarget
-    : ReflectionField<"IdentityTarget", 16, U32LE>;
+    : ReflectionField<"IdentityTargetIndexAndTable", 16, U32LE>;
 def SemanticTypeName : ReflectionField<"Name", 20, U32LE>;
 def SemanticTypeModport : ReflectionField<"Modport", 24, U32LE>;
 def SemanticTypeQueueBound : ReflectionField<"QueueBound", 28, U32LE>;
@@ -236,9 +237,14 @@ def SemanticTypeEdge : ReflectionLayout<"SemanticTypeEdge", 24,
    SemanticTypeEdgeOrdinal, SemanticTypeEdgeName,
    SemanticTypeEdgePackedOffset]>;
 
-def ObjectSemanticRootType : ReflectionField<"SemanticType", 0, U32LE>;
-def ObjectSemanticRoot : ReflectionLayout<"ObjectSemanticRoot", 4,
-  [ObjectSemanticRootType]>;
+// Sparse bindings avoid a four-byte null slot on every physical or compact
+// object that has no semantic type. ObjectIndexAndTable uses the same packed
+// table/index representation as relation targets and is sorted for lookup.
+def SemanticRootBindingObjectIndexAndTable
+    : ReflectionField<"ObjectIndexAndTable", 0, U32LE>;
+def SemanticRootBindingType : ReflectionField<"SemanticType", 4, U32LE>;
+def SemanticRootBinding : ReflectionLayout<"SemanticRootBinding", 8,
+  [SemanticRootBindingObjectIndexAndTable, SemanticRootBindingType]>;
 
 // Immutable indexing geometry for relation-backed static arrays.  Records are
 // sorted by object-table index; dense arrays reference declared ranges in
@@ -333,9 +339,9 @@ def SemanticDirectoryEdgeOffset
 def SemanticDirectoryEdgeCount
     : ReflectionField<"SemanticTypeEdgeCount", 24, U64LE>;
 def SemanticDirectoryRootOffset
-    : ReflectionField<"ObjectSemanticRootOffset", 32, U64LE>;
+    : ReflectionField<"SemanticRootBindingOffset", 32, U64LE>;
 def SemanticDirectoryRootCount
-    : ReflectionField<"ObjectSemanticRootCount", 40, U64LE>;
+    : ReflectionField<"SemanticRootBindingCount", 40, U64LE>;
 def SemanticDirectoryRelationIndexOffset
     : ReflectionField<"RelationIndexOffset", 48, U64LE>;
 def SemanticDirectoryRelationIndexCount

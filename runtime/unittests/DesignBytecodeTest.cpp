@@ -1957,9 +1957,11 @@ std::vector<uint8_t> makeCompactStaticObjectDatabase() {
   constexpr uint64_t stringOffset = 416;
   constexpr uint64_t indexOffset = 448;
   constexpr uint64_t directoryOffset = 520;
-  constexpr uint64_t semanticRootOffset =
+  constexpr uint64_t semanticTypeOffset =
       directoryOffset + kSemanticDirectorySize;
-  constexpr uint64_t staticObjectOffset = semanticRootOffset + 4;
+  constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 2 * 64;
+  constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 24;
+  constexpr uint64_t staticObjectOffset = semanticRootOffset + 2 * 8;
   constexpr uint64_t relationOffset = staticObjectOffset + 2 * 32;
   std::vector<uint8_t> bytes = makeDatabase(false);
   bytes.resize(relationOffset + 16, 0);
@@ -1969,11 +1971,37 @@ std::vector<uint8_t> makeCompactStaticObjectDatabase() {
   put64(bytes, 160, relationOffset);
   put64(bytes, 168, 1);
 
+  put64(bytes, directoryOffset, semanticTypeOffset);
+  put64(bytes, directoryOffset + 8, 2);
+  put64(bytes, directoryOffset + 16, semanticEdgeOffset);
+  put64(bytes, directoryOffset + 24, 1);
   put64(bytes, directoryOffset + 32, semanticRootOffset);
-  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 40, 2);
   put64(bytes, directoryOffset + 160, staticObjectOffset);
   put64(bytes, directoryOffset + 168, 2);
-  put32(bytes, semanticRootOffset, UINT32_MAX);
+
+  put32(bytes, semanticTypeOffset,
+        OBELISK_RT_DESIGN_SEMANTIC_ENUM | OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
+            (vpiEnumTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put32(bytes, semanticTypeOffset + 4, 0);
+  put32(bytes, semanticTypeOffset + 8, 1);
+  put32(bytes, semanticTypeOffset + 12, UINT32_MAX);
+  put32(bytes, semanticTypeOffset + 16, UINT32_MAX);
+  put32(bytes, semanticTypeOffset + 20, 14);
+  put32(
+      bytes, semanticTypeOffset + 64,
+      OBELISK_RT_DESIGN_SEMANTIC_INT | OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
+          (vpiIntTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put32(bytes, semanticTypeOffset + 64 + 12, UINT32_MAX);
+  put32(bytes, semanticTypeOffset + 64 + 16, UINT32_MAX);
+  put32(bytes, semanticEdgeOffset, 1);
+  put32(bytes, semanticEdgeOffset + 4,
+        OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
+  put32(bytes, semanticRootOffset, (uint32_t{3} << 30) | 0);
+  put32(bytes, semanticRootOffset + 4, 0);
+  put32(bytes, semanticRootOffset + 8, (uint32_t{3} << 30) | 1);
+  put32(bytes, semanticRootOffset + 12, 1);
 
   // A named enum typespec and its anonymous integral base typespec share the
   // physical module scope but are connected only by the relation table.
@@ -2033,7 +2061,7 @@ std::vector<uint8_t> makeFixedPropertyDatabase(bool protectObject = true) {
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 32, semanticRootOffset);
-  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 40, 0);
   put64(bytes, directoryOffset + 112, propertyOffset);
   put64(bytes, directoryOffset + 120, propertyCount);
   put32(bytes, semanticRootOffset, UINT32_MAX);
@@ -2140,7 +2168,7 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
   const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t edgeOffset = typeOffset + uint64_t{typeCount} * 64;
   const uint64_t rootOffset = edgeOffset + uint64_t{edgeCount} * 24;
-  bytes.resize(rootOffset + 4, 0);
+  bytes.resize(rootOffset + 8, 0);
 
   // HeaderReserved points at the optional semantic extension directory.
   put32(bytes, 12, directoryOffset);
@@ -2253,7 +2281,8 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
        OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC);
   edge(8, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE, 0);
   edge(9, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
-  put32(bytes, rootOffset, 0);
+  put32(bytes, rootOffset, uint32_t{1} << 30);
+  put32(bytes, rootOffset + 4, 0);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2274,7 +2303,7 @@ std::vector<uint8_t> makeNamedSemanticTypespecDatabase() {
   // A primary named aggregate has no typedef alias. Its semantic name proves
   // that this declaration defines the type rather than aliasing a built-in.
   put32(bytes, semanticTypeOffset + 6 * 64 + 20, 14);
-  put32(bytes, semanticRootOffset, 6);
+  put32(bytes, semanticRootOffset + 4, 6);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2289,7 +2318,7 @@ std::vector<uint8_t> makeBuiltinAliasTypespecDatabase() {
                          vpiLogicTypespec));
   put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
   put64(bytes, objectOffset + 80, 0);
-  put32(bytes, semanticRootOffset, 7);
+  put32(bytes, semanticRootOffset + 4, 7);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2308,7 +2337,7 @@ std::vector<uint8_t> makeDirectIntegralVectorDatabase() {
              << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put64(bytes, logic + 32, static_cast<uint64_t>(-2));
   put64(bytes, logic + 40, 5);
-  put32(bytes, semanticRootOffset, 7);
+  put32(bytes, semanticRootOffset + 4, 7);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2317,7 +2346,102 @@ std::vector<uint8_t> makeMailboxSemanticDatabase() {
   std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
   constexpr uint64_t semanticRootOffset =
       496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
-  put32(bytes, semanticRootOffset, 10);
+  put32(bytes, semanticRootOffset + 4, 10);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+std::vector<uint8_t> makeStaticSemanticEndpointDatabase(bool classIdentity) {
+  std::vector<uint8_t> bytes = makeSemanticTraversalDatabase();
+  constexpr uint64_t scopeOffset = 176;
+  constexpr uint64_t objectOffset = 240;
+  constexpr uint64_t stringOffset = 416;
+  constexpr uint64_t directoryOffset = 496;
+  constexpr uint64_t semanticTypeOffset =
+      directoryOffset + kSemanticDirectorySize;
+  constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
+  constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 10 * 24;
+  const uint64_t semanticRootCount = classIdentity ? 1 : 2;
+  const uint64_t staticObjectOffset =
+      semanticRootOffset + semanticRootCount * 8;
+  const uint64_t indexOffset = staticObjectOffset + 32;
+  bytes.resize(indexOffset + 3 * 24, 0);
+
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 112, indexOffset);
+  put64(bytes, 120, 3);
+  put64(bytes, directoryOffset + 40, semanticRootCount);
+  put64(bytes, directoryOffset + 160, staticObjectOffset);
+  put64(bytes, directoryOffset + 168, 1);
+
+  const uint32_t sourceKind =
+      classIdentity ? vpiClassTypespec : vpiEnumTypespec;
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, sourceKind));
+  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+
+  const uint64_t sourceSemantic =
+      semanticTypeOffset + (classIdentity ? 10 : 8) * 64;
+  put32(bytes, semanticRootOffset + 4, classIdentity ? 10 : 8);
+  if (classIdentity) {
+    put32(bytes, sourceSemantic,
+          OBELISK_RT_DESIGN_SEMANTIC_CLASS |
+              (vpiClassTypespec
+               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+    put32(bytes, sourceSemantic + 4, 0);
+    put32(bytes, sourceSemantic + 8, 0);
+    put32(bytes, sourceSemantic + 12, UINT32_MAX);
+    put32(bytes, sourceSemantic + 16, uint32_t{3} << 30);
+    put32(bytes, sourceSemantic + 20, 14);
+    put32(bytes, sourceSemantic + 28, 0);
+  } else {
+    put32(bytes, sourceSemantic + 12, uint32_t{3} << 30);
+    const uint64_t targetSemantic = semanticTypeOffset + 10 * 64;
+    put32(bytes, targetSemantic,
+          OBELISK_RT_DESIGN_SEMANTIC_ENUM |
+              (vpiEnumTypespec
+               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+    put32(bytes, targetSemantic + 4, 9);
+    put32(bytes, targetSemantic + 8, 1);
+    put32(bytes, targetSemantic + 12, UINT32_MAX);
+    put32(bytes, targetSemantic + 16, UINT32_MAX);
+    put32(bytes, targetSemantic + 20, 14);
+    put32(bytes, targetSemantic + 28, 0);
+    put32(bytes, semanticEdgeOffset + 9 * 24 + 4,
+          OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
+    put32(bytes, semanticRootOffset + 8, uint32_t{3} << 30);
+    put32(bytes, semanticRootOffset + 12, 10);
+  }
+
+  put64(bytes, staticObjectOffset, 99);
+  put32(bytes, staticObjectOffset + 8, 0);
+  put32(bytes, staticObjectOffset + 12, 20);
+  put32(bytes, staticObjectOffset + 16, 14);
+  put32(bytes, staticObjectOffset + 20, 13);
+  put32(bytes, staticObjectOffset + 24, 2);
+  put16(bytes, staticObjectOffset + 28,
+        classIdentity ? vpiClassDefn : vpiEnumTypespec);
+
+  struct Entry {
+    uint64_t hash;
+    uint64_t name;
+    uint64_t record;
+  };
+  std::array<Entry, 3> index{{
+      {nameHash("top"), stringOffset, scopeOffset},
+      {nameHash("top.value"), stringOffset + 4, objectOffset},
+      {nameHash("logic"), stringOffset + 14, staticObjectOffset},
+  }};
+  std::sort(index.begin(), index.end(),
+            [](const Entry &left, const Entry &right) {
+              return std::tie(left.hash, left.name) <
+                     std::tie(right.hash, right.name);
+            });
+  for (size_t entry = 0; entry != index.size(); ++entry) {
+    put64(bytes, indexOffset + entry * 24, index[entry].hash);
+    put64(bytes, indexOffset + entry * 24 + 8, index[entry].name);
+    put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
+  }
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -2691,7 +2815,7 @@ std::vector<uint8_t> makeAlwaysTypeDatabase(uint32_t alwaysType,
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 32, semanticRootOffset);
-  put64(bytes, directoryOffset + 40, 2);
+  put64(bytes, directoryOffset + 40, 0);
   put64(bytes, directoryOffset + 112, propertyOffset);
   put64(bytes, directoryOffset + 120, properties.size());
   put32(bytes, semanticRootOffset, UINT32_MAX);
@@ -3262,10 +3386,9 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
   const uint64_t directoryOffset = bytes.size();
   const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t propertyOffset = semanticRootOffset + 4;
-  std::vector<ResolvedNetRunSpec> runs =
-      resolvedRuns.value_or(netType ? std::vector<ResolvedNetRunSpec>{
-                                         {*netType, 0, 8}}
-                                   : std::vector<ResolvedNetRunSpec>{});
+  std::vector<ResolvedNetRunSpec> runs = resolvedRuns.value_or(
+      netType ? std::vector<ResolvedNetRunSpec>{{*netType, 0, 8}}
+              : std::vector<ResolvedNetRunSpec>{});
   const uint64_t resolvedRunOffset = propertyOffset + properties.size() * 16;
   const std::vector<NetDelayRunSpec> delays =
       delayRuns.value_or(std::vector<NetDelayRunSpec>{});
@@ -3274,7 +3397,7 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 32, semanticRootOffset);
-  put64(bytes, directoryOffset + 40, 1);
+  put64(bytes, directoryOffset + 40, 0);
   put64(bytes, directoryOffset + 112, propertyOffset);
   put64(bytes, directoryOffset + 120, properties.size());
   put64(bytes, directoryOffset + 128, resolvedRunOffset);
@@ -3326,7 +3449,7 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
   const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t edgeOffset = typeOffset + 2 * 64;
   const uint64_t rootOffset = edgeOffset + 24;
-  bytes.resize(rootOffset + 4, 0);
+  bytes.resize(rootOffset + 8, 0);
 
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
@@ -3360,7 +3483,8 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
 
   put32(bytes, edgeOffset, 1);
   put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
-  put32(bytes, rootOffset, 0);
+  put32(bytes, rootOffset, uint32_t{1} << 30);
+  put32(bytes, rootOffset + 4, 0);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -6196,8 +6320,8 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
 TEST(VPI, ReadsResolvedNetTypeAtExactIndexedSelectionGranularity) {
   Fixture fixture;
   fixture.database = makeVPINetPropertyDatabase(
-      vpiWire, false, false, false, false, 0, false, vpiNetArray,
-      std::nullopt, std::nullopt,
+      vpiWire, false, false, false, false, 0, false, vpiNetArray, std::nullopt,
+      std::nullopt,
       std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4}, {vpiWand, 4, 4}});
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
@@ -6351,9 +6475,9 @@ TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
     SCOPED_TRACE(strength0);
     SCOPED_TRACE(strength1);
     Fixture fixture;
-    fixture.database = makeVPINetPropertyDatabase(
-        vpiWire, false, false, false, true, 0, false, vpiNetArray,
-        strength0, strength1);
+    fixture.database =
+        makeVPINetPropertyDatabase(vpiWire, false, false, false, true, 0, false,
+                                   vpiNetArray, strength0, strength1);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
     obelisk_rt_context *context = nullptr;
@@ -6449,9 +6573,9 @@ TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
         std::pair<uint16_t, uint64_t>{vpiStrength1, 3}}) {
     SCOPED_TRACE(selector);
     Fixture fixture;
-    fixture.database = makeVPINetPropertyDatabase(
-        vpiWire, false, false, false,
-        selector == vpiStrength0 || selector == vpiStrength1);
+    fixture.database = makeVPINetPropertyDatabase(vpiWire, false, false, false,
+                                                  selector == vpiStrength0 ||
+                                                      selector == vpiStrength1);
     const uint32_t directoryOffset =
         static_cast<uint32_t>(fixture.database[12]) |
         (static_cast<uint32_t>(fixture.database[13]) << 8) |
@@ -6539,16 +6663,13 @@ TEST(DesignDatabase, RejectsMalformedResolvedNetRunImages) {
     expectInvalid(std::move(database));
   }
   for (const std::vector<ResolvedNetRunSpec> &runs : {
-           std::vector<ResolvedNetRunSpec>{{vpiWire, 2, 4},
-                                           {vpiWand, 0, 2}},
-           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 5},
-                                           {vpiWand, 4, 4}},
-           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4},
-                                           {vpiWire, 4, 4}},
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 2, 4}, {vpiWand, 0, 2}},
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 5}, {vpiWand, 4, 4}},
+           std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4}, {vpiWire, 4, 4}},
        }) {
-    expectInvalid(makeVPINetPropertyDatabase(
-        vpiWire, false, false, false, false, 0, false, vpiNetArray,
-        std::nullopt, std::nullopt, runs));
+    expectInvalid(makeVPINetPropertyDatabase(vpiWire, false, false, false,
+                                             false, 0, false, vpiNetArray,
+                                             std::nullopt, std::nullopt, runs));
   }
   {
     auto database = makeVPINetPropertyDatabase(vpiWire);
@@ -7523,7 +7644,7 @@ TEST(DesignDatabase, RejectsProtectedStatementWithoutFixedProperty) {
   put32(fixture.database, 12, directoryOffset);
   put64(fixture.database, 24, fixture.database.size());
   put64(fixture.database, directoryOffset + 32, semanticRootOffset);
-  put64(fixture.database, directoryOffset + 40, 1);
+  put64(fixture.database, directoryOffset + 40, 0);
   put64(fixture.database, directoryOffset + 112, propertyOffset);
   put32(fixture.database, semanticRootOffset, UINT32_MAX);
   put64(fixture.database, 32, imageChecksum(fixture.database));
@@ -9467,7 +9588,7 @@ TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
     put32(fixture.database, semanticTypeOffset + 4, 0);
     put32(fixture.database, semanticTypeOffset + 8, 0);
     put64(fixture.database, semanticTypeOffset + 48, 0);
-    put32(fixture.database, semanticRootOffset, 10);
+    put32(fixture.database, semanticRootOffset + 4, 10);
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
@@ -10674,11 +10795,11 @@ TEST(VPI, FileNameQueriesCoverMCDAndFDDescriptors) {
   const std::string fdPath = base.string() + ".fd";
   uint32_t mcd = 0;
   uint32_t fd = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_open_mcd(context, mcdPath.data(),
-                                        mcdPath.size(), &mcd),
+  ASSERT_EQ(obelisk_rt_v1_file_open_mcd(context, mcdPath.data(), mcdPath.size(),
+                                        &mcd),
             OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_file_open(context, fdPath.data(), fdPath.size(),
-                                    "w+", 2, &fd),
+  ASSERT_EQ(obelisk_rt_v1_file_open(context, fdPath.data(), fdPath.size(), "w+",
+                                    2, &fd),
             OBELISK_RT_OK);
 
   EXPECT_STREQ(vpi_mcd_name(mcd), mcdPath.c_str());
@@ -13556,11 +13677,67 @@ TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
+  for (bool classIdentity : {false, true}) {
+    SCOPED_TRACE(classIdentity);
+    Fixture fixture;
+    fixture.database = makeStaticSemanticEndpointDatabase(classIdentity);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+    char sourceName[] = "top.value";
+    vpiHandle source = vpi_handle_by_name(sourceName, nullptr);
+    ASSERT_NE(source, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, source),
+              classIdentity ? vpiClassTypespec : vpiEnumTypespec);
+    vpiHandle endpoint =
+        vpi_handle(classIdentity ? vpiClassDefn : vpiTypedefAlias, source);
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, endpoint),
+              classIdentity ? vpiClassDefn : vpiEnumTypespec);
+    EXPECT_STREQ(vpi_get_str(vpiName, endpoint), "logic");
+    EXPECT_EQ(vpi_compare_objects(source, endpoint), 0);
+    EXPECT_EQ(vpi_release_handle(endpoint), 1);
+    EXPECT_EQ(vpi_release_handle(source), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(DesignDatabase, RejectsOutOfBoundsCompactStaticSemanticEndpoints) {
+  Fixture fixture;
+  constexpr uint64_t semanticTypeOffset = 496 + kSemanticDirectorySize;
+  for (bool classIdentity : {false, true}) {
+    std::vector<uint8_t> malformed =
+        makeStaticSemanticEndpointDatabase(classIdentity);
+    const uint64_t semantic =
+        semanticTypeOffset + uint64_t{classIdentity ? 10u : 8u} * 64;
+    put32(malformed, semantic + (classIdentity ? 16 : 12),
+          (uint32_t{3} << 30) | 1);
+    put64(malformed, 32, imageChecksum(malformed));
+    fixture.execution.design_database = malformed.data();
+    fixture.execution.design_database_size = malformed.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  }
+}
+
 TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
   Fixture fixture;
   constexpr uint64_t directoryOffset = 520;
-  constexpr uint64_t staticObjectOffset =
-      directoryOffset + kSemanticDirectorySize + 4;
+  constexpr uint64_t semanticTypeOffset =
+      directoryOffset + kSemanticDirectorySize;
+  constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 2 * 64;
+  constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 24;
+  constexpr uint64_t staticObjectOffset = semanticRootOffset + 2 * 8;
   constexpr uint64_t relationOffset = staticObjectOffset + 2 * 32;
   auto reject = [&](std::vector<uint8_t> malformed) {
     put64(malformed, 32, imageChecksum(malformed));
@@ -13571,6 +13748,31 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
   };
 
   std::vector<uint8_t> malformed = makeCompactStaticObjectDatabase();
+  put64(malformed, directoryOffset + 40, 1);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, semanticRootOffset + 8, uint32_t{3} << 30);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, semanticRootOffset, (uint32_t{3} << 30) | 1);
+  put32(malformed, semanticRootOffset + 8, uint32_t{3} << 30);
+  reject(std::move(malformed));
+
+  for (uint32_t invalidSource :
+       {uint32_t{0}, uint32_t{2} << 30, (uint32_t{1} << 30) | 1,
+        (uint32_t{3} << 30) | 2, UINT32_MAX}) {
+    malformed = makeCompactStaticObjectDatabase();
+    put32(malformed, semanticRootOffset, invalidSource);
+    reject(std::move(malformed));
+  }
+
+  malformed = makeCompactStaticObjectDatabase();
+  put32(malformed, semanticRootOffset + 4, 2);
+  reject(std::move(malformed));
+
+  malformed = makeCompactStaticObjectDatabase();
   put16(malformed, staticObjectOffset + 28, vpiCallback);
   reject(std::move(malformed));
 
@@ -13622,7 +13824,7 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
 
 TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
   Fixture fixture;
-  fixture.database = makeDatabase(false);
+  fixture.database = makeSemanticTraversalDatabase();
   constexpr uint64_t objectOffset = 240;
   put32(fixture.database, objectOffset,
         designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
@@ -13634,6 +13836,9 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
   constexpr uint64_t typeOffset = 336;
   put64(fixture.database, typeOffset + 8, 130);
   put64(fixture.database, typeOffset + 16, 129);
+  constexpr uint64_t semanticRootOffset =
+      496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
+  put32(fixture.database, semanticRootOffset + 4, 8);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
@@ -13714,6 +13919,7 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
   constexpr uint64_t semanticTypeOffset =
       directoryOffset + kSemanticDirectorySize;
   constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
+  constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 10 * 24;
   auto reject = [&](std::vector<uint8_t> malformed) {
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
@@ -13736,7 +13942,7 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
   reject(std::move(malformed));
 
   malformed = fixture.database;
-  put64(malformed, directoryOffset + 40, 0);
+  put32(malformed, semanticRootOffset, 0);
   reject(std::move(malformed));
 
   malformed = fixture.database;
