@@ -2250,11 +2250,16 @@ vpiHandle handleRelationByIndices(
 }
 
 vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
-                          const PLI_INT32 *indices) {
+                          const PLI_INT32 *indices,
+                          bool directNameLookup = false) {
   __vpiHandle *source = validate(opaque, VPIHandleKind::Object);
   if (!source)
     return nullptr;
-  if (!allowProtectedSource(source, "indexed access"))
+  // A direct hierarchical name may identify a protected object; the returned
+  // handle retains that protection and gates subsequent access.  In contrast,
+  // vpi_handle_by_index is an operation on an existing protected handle and is
+  // denied by IEEE 1800's protected-object rules.
+  if (!directNameLookup && !allowProtectedSource(source, "indexed access"))
     return nullptr;
   if (count <= 0 || !indices) {
     setError(source->owner, "VPI indexed access requires at least one index");
@@ -2414,7 +2419,8 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
           state->handles.erase(source->token);
           return nullptr;
         }
-        next = handleByIndices(current, 1, &index);
+        next = handleByIndices(current, 1, &index,
+                               /*directNameLookup=*/true);
         position = close + 1;
       } else if (name[position] == '.') {
         size_t end = name.find_first_of(".[", position + 1);

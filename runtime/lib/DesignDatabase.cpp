@@ -1047,6 +1047,7 @@ bool validateDatabaseImpl(const Database &database) {
                   ~(OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
                     OBELISK_RT_DESIGN_CAP_PORT_INPUT |
                     OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+                    OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
                     OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
                     OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK)) != 0 ||
                  !isTypeOffset(database, typeOffset) ||
