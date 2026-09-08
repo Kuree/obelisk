@@ -156,6 +156,12 @@ obelisk_add_generated_process_object(
   Inputs/generated-vpi-nettypes.mlir
   VPI read
 )
+obelisk_add_generated_process_object(
+  _generated_vpi_interconnects_object
+  GeneratedVPIInterconnects
+  Inputs/generated-vpi-interconnects.mlir
+  VPI read
+)
 add_executable(ObeliskGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
   "${_generated_process_object}"
@@ -187,6 +193,26 @@ add_executable(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests
 add_executable(ObeliskGeneratedVPINettypesRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPINettypesTest.cpp"
   "${_generated_vpi_nettypes_object}"
+)
+add_executable(ObeliskGeneratedVPIInterconnectsRuntimeTests
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIInterconnectsTest.cpp"
+  "${_generated_vpi_interconnects_object}"
+)
+target_link_libraries(ObeliskGeneratedVPIInterconnectsRuntimeTests PRIVATE
+  obelisk_rt
+  GTest::gtest_main
+)
+target_include_directories(ObeliskGeneratedVPIInterconnectsRuntimeTests SYSTEM BEFORE PRIVATE
+  "${PROJECT_BINARY_DIR}/lib/obelisk/include"
+)
+target_include_directories(ObeliskGeneratedVPIInterconnectsRuntimeTests SYSTEM PRIVATE
+  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
+target_compile_features(ObeliskGeneratedVPIInterconnectsRuntimeTests PRIVATE
+  cxx_std_17
+)
+set_target_properties(ObeliskGeneratedVPIInterconnectsRuntimeTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 target_link_libraries(ObeliskGeneratedVPINettypesRuntimeTests PRIVATE
   obelisk_rt
@@ -293,6 +319,7 @@ set(OBELISK_RUNTIME_UNIT_TARGETS
   ObeliskGeneratedClassBitstreamBytecode
   ObeliskGeneratedClassBitstreamNative
   ObeliskGeneratedProcessRuntimeTests
+  ObeliskGeneratedVPIInterconnectsRuntimeTests
   ObeliskGeneratedVPINettypesRuntimeTests
   ObeliskGeneratedVPIStaticArraysRuntimeTests
   ObeliskGeneratedVPIResolvedNetTypesRuntimeTests

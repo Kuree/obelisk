@@ -804,6 +804,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
                               sim::vpiKindForScope(scopes[index])};
         continue;
       }
+      if (backing.getKind() == sim::VPIObjectBackingKind::Net) {
+        uint64_t id = backing.getId().getValue().getZExtValue();
+        auto found = physicalNetObjectIndices.find(id);
+        if (found == physicalNetObjectIndices.end()) {
+          anchor.emitOpError("backing net was not serialized");
+          return {};
+        }
+        uint32_t index = found->second;
+        objects[index].vpiKind = anchor.getVpiKind();
+        objects[index].caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+        anchorRefs[anchor] = {TableKind::Object, index, anchor.getVpiKind()};
+        lexicallyAnchoredObjectIndices.insert(index);
+        continue;
+      }
       uint64_t id = backing.getId().getValue().getZExtValue();
       uint32_t index = codeUnitObjectIndices.lookup(id);
       anchorRefs[anchor] = {TableKind::Object, index, objects[index].vpiKind};
@@ -1838,6 +1852,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   bool semanticTypeError = false;
   auto semanticArrayShape = [&](sim::SimVPIObjectAnchorOp anchor) {
     DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
+    DenseI64ArrayAttr dimensionFlags = anchor.getIndexDimensionFlagsAttr();
     const bool namedEvent =
         anchor.getVpiKind() == static_cast<uint32_t>(VPIObjectKind::NamedEvent);
     const bool namedEventArray =
@@ -1865,7 +1880,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     ArrayRef<int64_t> values = ranges.asArrayRef();
     for (size_t offset = values.size(); offset != 0; offset -= 2) {
       Attribute child = current;
-      current = make(sim::VPITypeKind::UnpackedArray,
+      bool packed =
+          dimensionFlags && dimensionFlags.asArrayRef()[offset / 2 - 1] != 0;
+      current = make(packed ? sim::VPITypeKind::PackedArray
+                            : sim::VPITypeKind::UnpackedArray,
                      values.slice(offset - 2, 2), {child});
     }
     return current;

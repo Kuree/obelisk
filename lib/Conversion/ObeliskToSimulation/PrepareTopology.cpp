@@ -1371,7 +1371,7 @@ materializeDesignDescriptors(ModuleOp module,
         builder.getStringAttr(getDebugName(source)),
         isa<semantic::SVCompilationUnitSymbolOp>(source) ? builder.getUnitAttr()
                                                          : UnitAttr{},
-        backing, indexRanges, sparseIndices,
+        backing, indexRanges, DenseI64ArrayAttr{}, sparseIndices,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount);
@@ -1546,7 +1546,8 @@ materializeDesignDescriptors(ModuleOp module,
           builder.getStringAttr(hierarchy),
           builder.getStringAttr(getDebugName(source)), UnitAttr{},
           sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
-          builder.getDenseI64ArrayAttr(indices), IntegerAttr{});
+          DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
+          IntegerAttr{});
     }
   }
   auto ownerAnchorFor = [&](Operation *member) -> FlatSymbolRefAttr {
@@ -1773,6 +1774,52 @@ materializeDesignDescriptors(ModuleOp module,
       return {};
     }
     return *layers;
+  };
+  std::function<FailureOr<sim::VPITypeSemanticsAttr>(Operation *,
+                                                     sim::VPITypeSemanticsAttr)>
+      remapVPITypeAliases;
+  remapVPITypeAliases = [&](Operation *owner, sim::VPITypeSemanticsAttr current)
+      -> FailureOr<sim::VPITypeSemanticsAttr> {
+    SmallVector<Attribute> children;
+    children.reserve(current.getChildren().size());
+    for (Attribute childAttr : current.getChildren()) {
+      FailureOr<sim::VPITypeSemanticsAttr> child = remapVPITypeAliases(
+          owner, cast<sim::VPITypeSemanticsAttr>(childAttr));
+      if (failed(child))
+        return failure();
+      children.push_back(*child);
+    }
+    ArrayAttr aliases;
+    if (ArrayAttr sourceAliases = current.getTypedefAliases()) {
+      SmallVector<Attribute> mappedAliases;
+      mappedAliases.reserve(sourceAliases.size());
+      for (Attribute rawAlias : sourceAliases) {
+        auto sourceReference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto sourceAlias = sourceReference
+                               ? resolveAlias(owner, sourceReference)
+                               : semantic::SVTypeAliasTypeOp{};
+        auto mapped =
+            sourceAlias ? aliasSymbols.find(sourceAlias) : aliasSymbols.end();
+        if (mapped == aliasSymbols.end()) {
+          emitError(getSemanticLocation(owner))
+              << "inferred interconnect VPI type cannot resolve its typedef "
+                 "alias";
+          return failure();
+        }
+        mappedAliases.push_back(mapped->second);
+      }
+      aliases = builder.getArrayAttr(mappedAliases);
+    }
+    return sim::VPITypeSemanticsAttr::get(
+        builder.getContext(), current.getKind(), current.getIsSigned(),
+        current.getIsFourState(), current.getName(), current.getSymbol(),
+        current.getModport(), current.getRange(),
+        builder.getArrayAttr(children), current.getChildNames(),
+        current.getIsTagged(), current.getIsSoft(), current.getBitWidth(),
+        current.getSelectableWidth(), current.getBitstreamWidth(),
+        current.getTagBits(), current.getQueueBound(),
+        current.getWildcardIndex(), current.getChildOrdinals(),
+        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases);
   };
   uint64_t nextNettypeId = 0;
   for (semantic::SVNetTypeOp nettype : sourceNettypes) {
@@ -2116,24 +2163,27 @@ materializeDesignDescriptors(ModuleOp module,
         inventory.constant.getValue());
   }
 
-  auto retainVPITypeForPersistentOwner = [&](Operation *owner,
-                                             sim::VPITypeSemanticsAttr type) {
-    // Statement-backed source ownership is emitted in the next chunk.
-    // Runtime storage must still exist now, but it must not retain a
-    // typedef or interface-typespec symbol whose local declaration was
-    // deliberately deferred with that owner.
-    if (!ownerAnchorFor(owner))
-      return sim::VPITypeSemanticsAttr{};
-    // Anonymous enum reflection is only sound when the frontend supplied the
-    // exact declaration identity used to join the value to its typespec.
-    // Legacy and hand-authored semantic IR may carry an enum-shaped value
-    // without that identity; keep lowering its executable storage, but do not
-    // retain an unresolvable VPI type on the persistent declaration.
-    if (type.getKind() == sim::VPITypeKind::Enum && !type.getTypedefAliases() &&
-        !owner->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
-      return sim::VPITypeSemanticsAttr{};
-    return type;
-  };
+  auto retainVPITypeForPersistentOwner =
+      [&](Operation *owner, sim::VPITypeSemanticsAttr type,
+          IntegerAttr propagatedTypeIdentity = {}) {
+        // Statement-backed source ownership is emitted in the next chunk.
+        // Runtime storage must still exist now, but it must not retain a
+        // typedef or interface-typespec symbol whose local declaration was
+        // deliberately deferred with that owner.
+        if (!ownerAnchorFor(owner))
+          return sim::VPITypeSemanticsAttr{};
+        // Anonymous enum reflection is only sound when the frontend supplied
+        // the exact declaration identity used to join the value to its
+        // typespec. Legacy and hand-authored semantic IR may carry an
+        // enum-shaped value without that identity; keep lowering its executable
+        // storage, but do not retain an unresolvable VPI type on the persistent
+        // declaration.
+        if (type.getKind() == sim::VPITypeKind::Enum &&
+            !type.getTypedefAliases() && !propagatedTypeIdentity &&
+            !owner->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+          return sim::VPITypeSemanticsAttr{};
+        return type;
+      };
   auto retainVPISourceTypeIdentity =
       [&](Operation *source, Operation *declaration,
           sim::VPITypeSemanticsAttr retainedType) {
@@ -2214,23 +2264,105 @@ materializeDesignDescriptors(ModuleOp module,
     if (!storage) {
       if (auto leafDefinitions =
               op->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)) {
+        SmallVector<int64_t> boundsStorage;
+        SmallVector<int64_t> packedStorage;
+        auto sourceType = op->getAttrOfType<TypeAttr>("semantic_type");
+        Type shape = sourceType ? sourceType.getValue() : Type{};
+        while (shape) {
+          if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(shape)) {
+            boundsStorage.push_back(array.getLeft());
+            boundsStorage.push_back(array.getRight());
+            packedStorage.push_back(false);
+            shape = array.getElementType();
+            continue;
+          }
+          if (auto array = dyn_cast<semantic::RangedPackedArrayType>(shape)) {
+            boundsStorage.push_back(array.getLeft());
+            boundsStorage.push_back(array.getRight());
+            packedStorage.push_back(true);
+            shape = array.getElementType();
+            continue;
+          }
+          break;
+        }
+        ArrayRef<int64_t> bounds = boundsStorage;
+        ArrayRef<int64_t> packed = packedStorage;
+        if (bounds.empty() || !isa<semantic::UntypedType>(shape)) {
+          emitError(getSemanticLocation(op))
+              << "interconnect has malformed typeless array shape";
+          invalid = true;
+          return;
+        }
+        Operation *lexicalOwner = op->getParentOp();
+        while (lexicalOwner && !anchorSymbols.count(lexicalOwner))
+          lexicalOwner = lexicalOwner->getParentOp();
+        FlatSymbolRefAttr lexicalOwnerSymbol =
+            anchorSymbols.lookup(lexicalOwner);
+        if (!lexicalOwnerSymbol) {
+          emitError(getSemanticLocation(op))
+              << "interconnect array has no persistent lexical owner";
+          invalid = true;
+          return;
+        }
+        auto makeSymbol = [&] {
+          return "__obelisk_vpi_anchor_" +
+                 std::to_string(nextSyntheticInventoryId);
+        };
+        auto makeArrayAnchor = [&]() {
+          std::string symbolName = makeSymbol();
+          sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
+              builder, getSemanticLocation(op), symbolName,
+              nextSyntheticInventoryId++,
+              static_cast<uint32_t>(VPIKind::InterconnectArray), scopeId,
+              lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++,
+              builder.getStringAttr(path),
+              builder.getStringAttr(getDebugName(op)), UnitAttr{},
+              sim::VPIObjectBackingAttr{}, builder.getDenseI64ArrayAttr(bounds),
+              builder.getDenseI64ArrayAttr(packed), DenseI64ArrayAttr{},
+              DenseI64ArrayAttr{}, IntegerAttr{});
+          anchor->setAttr("vpi_properties",
+                          netProperties(cast<semantic::SVNetSymbolOp>(op)));
+          return anchor;
+        };
+        sim::SimVPIObjectAnchorOp root = makeArrayAnchor();
         for (Attribute attribute : leafDefinitions) {
           auto definition = dyn_cast<DictionaryAttr>(attribute);
           auto leafPath =
               definition ? definition.getAs<StringAttr>("path") : StringAttr{};
           auto semanticType =
               definition ? definition.getAs<TypeAttr>("type") : TypeAttr{};
-          if (!leafPath || !semanticType) {
+          auto semanticVPIType =
+              definition
+                  ? definition.getAs<sim::VPITypeSemanticsAttr>("vpi_type")
+                  : sim::VPITypeSemanticsAttr{};
+          auto sourceNettypeReference =
+              definition ? definition.getAs<SymbolRefAttr>("nettype")
+                         : SymbolRefAttr{};
+          auto sourceTypeIdentity =
+              definition ? definition.getAs<IntegerAttr>("type_identity")
+                         : IntegerAttr{};
+          auto indicesAttr =
+              definition ? definition.getAs<DenseI64ArrayAttr>("indices")
+                         : DenseI64ArrayAttr{};
+          ArrayRef<int64_t> indices =
+              indicesAttr ? indicesAttr.asArrayRef() : ArrayRef<int64_t>{};
+          if (!leafPath || !semanticType || !semanticVPIType ||
+              indices.size() * 2 != bounds.size()) {
             emitError(getSemanticLocation(op))
                 << "interconnect has malformed typed-leaf metadata";
             invalid = true;
             continue;
           }
+          FailureOr<sim::VPITypeSemanticsAttr> mappedVPIType =
+              remapVPITypeAliases(op, semanticVPIType);
+          if (failed(mappedVPIType)) {
+            invalid = true;
+            continue;
+          }
+          semanticVPIType = *mappedVPIType;
           FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
                                                        getSemanticLocation(op));
-          FailureOr<sim::VPITypeSemanticsAttr> vpiType = makeVPITypeSemantics(
-              semanticType.getValue(), getSemanticLocation(op), {}, op);
-          if (failed(type) || failed(vpiType)) {
+          if (failed(type)) {
             invalid = true;
             continue;
           }
@@ -2240,30 +2372,68 @@ materializeDesignDescriptors(ModuleOp module,
                                               sim::NetResolutionKind::Wire};
           descriptors[leafPath.getValue()].rootType = *type;
           sim::VPITypeSemanticsAttr retainedVPIType =
-              retainVPITypeForPersistentOwner(op, *vpiType);
+              retainVPITypeForPersistentOwner(op, semanticVPIType,
+                                              sourceTypeIdentity);
           descriptors[leafPath.getValue()].vpiType = retainedVPIType;
+          FlatSymbolRefAttr sourceNettype;
+          if (sourceNettypeReference) {
+            sourceNettype = nettypeSymbols.lookup(
+                resolveSourceNettype(sourceNettypeReference));
+            if (!sourceNettype) {
+              emitError(getSemanticLocation(op))
+                  << "interconnect leaf's VPI nettype declaration was not "
+                     "preserved";
+              invalid = true;
+              continue;
+            }
+          }
           auto declaration = sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
               DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
-              retainedVPIType, FlatSymbolRefAttr{});
+              retainedVPIType, sourceNettype);
           declaration->setAttr(
               "vpi_properties",
               netProperties(cast<semantic::SVNetSymbolOp>(op)));
-          retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+          if (sourceTypeIdentity)
+            declaration->setAttr(sim::metadata::vpiSourceTypeIdentity,
+                                 sourceTypeIdentity);
+          else
+            retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+          std::string leafSymbolName = makeSymbol();
+          sim::VPIObjectBackingAttr backing = sim::VPIObjectBackingAttr::get(
+              builder.getContext(), sim::VPIObjectBackingKind::Net,
+              builder.getI64IntegerAttr(id), FlatSymbolRefAttr{});
+          sim::SimVPIObjectAnchorOp::create(
+              builder, getSemanticLocation(op), leafSymbolName,
+              nextSyntheticInventoryId++,
+              static_cast<uint32_t>(VPIKind::InterconnectNet), scopeId,
+              FlatSymbolRefAttr::get(root.getSymNameAttr()),
+              nextAnchorOrdinal[root.getOperation()]++, leafPath,
+              builder.getStringAttr(getDebugName(op)), UnitAttr{}, backing,
+              DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+              builder.getDenseI64ArrayAttr(indices), IntegerAttr{});
         }
         return;
       }
     }
     FailureOr<Type> type = getNormalizedSemanticType(op);
     auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    sim::VPITypeSemanticsAttr inferredInterconnectVPIType =
+        op->getAttrOfType<sim::VPITypeSemanticsAttr>(
+            interconnectVPITypeAttrName);
+    FailureOr<sim::VPITypeSemanticsAttr> inferredMappedVPIType =
+        inferredInterconnectVPIType
+            ? remapVPITypeAliases(op, inferredInterconnectVPIType)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
     FailureOr<sim::VPITypeSemanticsAttr> vpiType =
-        semanticType ? makeVPITypeSemantics(semanticType.getValue(),
-                                            getSemanticLocation(op),
-                                            typedefLayersFor(op), op)
-                     : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+        inferredInterconnectVPIType ? inferredMappedVPIType
+        : semanticType ? makeVPITypeSemantics(semanticType.getValue(),
+                                              getSemanticLocation(op),
+                                              typedefLayersFor(op), op)
+                       : FailureOr<sim::VPITypeSemanticsAttr>(failure());
     if (failed(type) || failed(vpiType)) {
       if (!semanticType)
         emitError(getSemanticLocation(op))
@@ -2429,8 +2599,13 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[path].vpiType = retainedVPIType;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
     FlatSymbolRefAttr sourceNettype;
-    if (SymbolRefAttr reference = net.getNettypeSymbolAttr()) {
-      sourceNettype = nettypeSymbols.lookup(resolveSourceNettype(reference));
+    SymbolRefAttr nettypeReference = net.getNettypeSymbolAttr();
+    if (!nettypeReference)
+      nettypeReference =
+          op->getAttrOfType<SymbolRefAttr>(interconnectNettypeAttrName);
+    if (nettypeReference) {
+      sourceNettype =
+          nettypeSymbols.lookup(resolveSourceNettype(nettypeReference));
       if (!sourceNettype) {
         emitError(getSemanticLocation(net))
             << "user-defined net's VPI nettype declaration was not preserved";
@@ -2452,6 +2627,31 @@ materializeDesignDescriptors(ModuleOp module,
         UnitAttr{}, retainedVPIType, sourceNettype);
     declaration->setAttr("vpi_properties", netProperties(net));
     retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+    if (net.getNetKind() == semantic::SVNetKind::Interconnect) {
+      Operation *lexicalOwner = op->getParentOp();
+      while (lexicalOwner && !anchorSymbols.count(lexicalOwner))
+        lexicalOwner = lexicalOwner->getParentOp();
+      FlatSymbolRefAttr lexicalOwnerSymbol = anchorSymbols.lookup(lexicalOwner);
+      if (!lexicalOwnerSymbol) {
+        emitError(getSemanticLocation(op))
+            << "interconnect net has no persistent lexical owner";
+        invalid = true;
+        return;
+      }
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      sim::VPIObjectBackingAttr backing = sim::VPIObjectBackingAttr::get(
+          builder.getContext(), sim::VPIObjectBackingKind::Net,
+          builder.getI64IntegerAttr(id), FlatSymbolRefAttr{});
+      sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(op), symbolName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::InterconnectNet), scopeId,
+          lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++, hierarchy,
+          debug, UnitAttr{}, backing, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{});
+      anchor->setAttr("vpi_properties", netProperties(net));
+    }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",

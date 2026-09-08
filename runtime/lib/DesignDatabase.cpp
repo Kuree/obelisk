@@ -927,9 +927,13 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t caps = read32(record + 4);
     uint32_t intrinsicKind = recordVPIKind(record);
     bool internal = (caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0;
-    bool lexicalAnchor = (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
-                         (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-                          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION);
+    using VPIKind = obelisk::reflection::VPIObjectKind;
+    bool lexicalAnchor =
+        (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
+        (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+         (kind == OBELISK_RT_DESIGN_RECORD_NET &&
+          intrinsicKind == static_cast<uint32_t>(VPIKind::InterconnectNet)));
     bool mayOmitIntrinsic =
         (kind == OBELISK_RT_DESIGN_RECORD_SCOPE && offset == database.root) ||
         kind == OBELISK_RT_DESIGN_RECORD_DRIVER ||
@@ -945,6 +949,7 @@ bool validateDatabaseImpl(const Database &database) {
         OBELISK_RT_DESIGN_CAP_PORT_OUTPUT | OBELISK_RT_DESIGN_CAP_INTERNAL |
         OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
         OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
+        OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
         OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
@@ -1038,7 +1043,12 @@ bool validateDatabaseImpl(const Database &database) {
             read64(record + 72) != 0 || read64(record + 80) != 0)
           return false;
       } else if (internal || (caps & OBELISK_RT_DESIGN_CAP_READ) == 0 ||
-                 (caps & OBELISK_RT_DESIGN_CAP_ITERATE) != 0 ||
+                 (caps &
+                  ~(OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
+                    OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                    OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+                    OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
+                    OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK)) != 0 ||
                  !isTypeOffset(database, typeOffset) ||
                  read64(record + 56) == 0 ||
                  read64(database.data + typeOffset + 8) !=
@@ -1522,10 +1532,13 @@ bool validateDatabaseImpl(const Database &database) {
                      kind <= OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
     const auto *publicKind =
         obelisk::reflection::findVPIObjectKind(publicVPIKind);
-    bool internalUntyped =
-        kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED && publicVPIKind == 0;
+    bool internalUntypedShape =
+        publicVPIKind == 0 &&
+        (kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED ||
+         kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
     if (kind > OBELISK_RT_DESIGN_SEMANTIC_PROPERTY ||
-        (!internalUntyped &&
+        (!internalUntypedShape &&
          (!publicKind ||
           publicKind->role != obelisk::reflection::VPIObjectRole::Concrete ||
           (publicKind->families &
@@ -2268,9 +2281,7 @@ bool validateDatabaseImpl(const Database &database) {
     auto relationBacked = [](const uint8_t *record) {
       uint32_t kind = recordKind(record);
       return kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-             ((kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-               kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) &&
-              (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0);
+             (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
     };
     bool relationBackedTarget =
         targetTable == obelisk::reflection::TableKind::Object &&

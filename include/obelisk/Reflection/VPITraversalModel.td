@@ -969,7 +969,8 @@ def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
   [Package, ClassDefn, Task, Function, ClockingBlock, GenScope, PropertyDecl,
    SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
    ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
-   GenScopeArray, LongIntTypespec, ShortRealTypespec, ByteTypespec,
+   GenScopeArray, InterconnectArray, LongIntTypespec, ShortRealTypespec,
+   ByteTypespec,
    ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
    ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
    RealTypespec, StructTypespec, UnionTypespec, BitTypespec, LogicTypespec,
@@ -1321,9 +1322,9 @@ def IndexedPort : VPIIndexedAccess<IndexedPortSource, PortElementAccess,
   "37.14; 38.19; 38.20">;
 def IndexedNet : VPIIndexedAccess<IndexedNetSources, NetElementAccess,
   IndexedNetResults, NetBit, NetArray, Net, 1, "37.16; 38.19; 38.20">;
-def IndexedInterconnectArray : VPIIndexedAccess<
-  IndexedInterconnectArraySource, NetElementAccess, VPIEarlyNets, NetBit,
-  InterconnectArray, InterconnectNet, 0, "37.16; 38.19; 38.20">;
+def IndexedInterconnectArray : VPIRelationIndexedAccess<
+  VPIEarlyInterconnectArrayElements, VPIEarlyInterconnectArrayElementTargets,
+  InterconnectArray, InterconnectNet, "37.16; 37.24; 38.19; 38.20">;
 def IndexedVariable : VPIIndexedAccess<IndexedVariableSources,
   VariableElementAccess, VPIEarlyVariables, RegBit, RegArray, Reg, 1,
   "37.17; 37.20; 38.19; 38.20">;

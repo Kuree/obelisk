@@ -2175,8 +2175,7 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
       vpiByteNet, vpiShortIntNet,     vpiIntNet,       vpiLongIntNet,
       vpiBitNet,  vpiInterconnectNet, vpiStructNet,    vpiPackedArrayNet};
   const std::map<uint32_t, IndexedKind> exactKinds{
-      {vpiPort, IndexedKind::PortElement},
-      {vpiInterconnectArray, IndexedKind::NetElement}};
+      {vpiPort, IndexedKind::PortElement}};
   struct RelationPolicy {
     uint32_t partial;
     uint32_t terminal;
@@ -2191,13 +2190,13 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
       {vpiUdpArray, {vpiUdpArray, vpiUdp, vpiPrimitive}},
       {vpiNamedEventArray, {vpiNamedEventArray, vpiNamedEvent, vpiNamedEvent}},
       {vpiGenScopeArray, {vpiGenScopeArray, vpiGenScope, vpiGenScope}},
+      {vpiInterconnectArray,
+       {vpiInterconnectArray, vpiInterconnectNet, vpiElement}},
   };
   KindSet variableTargets = variableSources;
   variableTargets.insert(vpiRegBit);
   KindSet netTargets = netSources;
   netTargets.insert(vpiNetBit);
-  KindSet interconnectTargets = netTargets;
-  interconnectTargets.insert(vpiInterconnectArray);
   const KindSet portTargets{vpiPort, vpiPortBit};
 
   size_t seen = 0;
@@ -2230,11 +2229,6 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
       EXPECT_EQ(access.unpackedFallback, vpiPort);
       EXPECT_EQ(access.packedFallback, vpiPort);
       EXPECT_FALSE(access.mapSemanticType);
-    } else if (access.sourceType == vpiInterconnectArray) {
-      EXPECT_EQ(access.terminalResult, vpiNetBit);
-      EXPECT_EQ(access.unpackedFallback, vpiInterconnectArray);
-      EXPECT_EQ(access.packedFallback, vpiInterconnectNet);
-      EXPECT_FALSE(access.mapSemanticType);
     } else if (netSources.count(access.sourceType)) {
       EXPECT_EQ(access.terminalResult, vpiNetBit);
       EXPECT_EQ(access.unpackedFallback, vpiNetArray);
@@ -2250,8 +2244,7 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
     if (relation != relationPolicies.end())
       relationTargets = {relation->second.partial, relation->second.terminal};
     const KindSet &expectedTargets =
-        access.sourceType == vpiInterconnectArray       ? interconnectTargets
-        : relation != relationPolicies.end()            ? relationTargets
+        relation != relationPolicies.end()              ? relationTargets
         : access.accessKind == IndexedKind::PortElement ? portTargets
         : access.accessKind == IndexedKind::NetElement  ? netTargets
                                                         : variableTargets;

@@ -1763,15 +1763,25 @@ void ObeliskSimPreparePass::runOnOperation() {
       SmallVector<int64_t> indices;
       std::string path;
       Type candidate;
+      sim::VPITypeSemanticsAttr candidateVPIType;
+      SymbolRefAttr candidateNettype;
+      IntegerAttr candidateTypeIdentity;
       std::optional<Location> candidateLocation;
     };
     SmallVector<InterconnectLeaf> leaves;
     llvm::StringMap<SmallVector<unsigned>> leavesByRoot;
     llvm::StringMap<semantic::SVNetSymbolOp> interconnects;
+    llvm::StringMap<semantic::SVNetSymbolOp> netsByPath;
 
     auto containsUntyped = [&](Type type) {
-      while (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
-        type = array.getElementType();
+      while (true) {
+        if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
+          type = array.getElementType();
+        else if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
+          type = array.getElementType();
+        else
+          break;
+      }
       return isa<semantic::UntypedType>(type);
     };
     auto leafPath = [](StringRef root, ArrayRef<int64_t> indices) {
@@ -1806,6 +1816,27 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         return success();
       }
+      if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+        int64_t index = array.getLeft();
+        while (true) {
+          indices.push_back(index);
+          if (failed(enumerateLeaves(net, array.getElementType(), indices)))
+            return failure();
+          indices.pop_back();
+          if (index == array.getRight())
+            break;
+          if (array.getLeft() < array.getRight()) {
+            if (index == std::numeric_limits<int64_t>::max())
+              return failure();
+            ++index;
+          } else {
+            if (index == std::numeric_limits<int64_t>::min())
+              return failure();
+            --index;
+          }
+        }
+        return success();
+      }
       if (!isa<semantic::UntypedType>(type))
         return failure();
       StringRef root = getHierarchyName(net);
@@ -1820,6 +1851,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     };
 
     semanticRoot->walk([&](semantic::SVNetSymbolOp net) {
+      netsByPath[getHierarchyName(net)] = net;
       std::optional<Type> semanticType = net.getSemanticType();
       if (net.getNetKind() == semantic::SVNetKind::Interconnect &&
           semanticType && containsUntyped(*semanticType)) {
@@ -1912,24 +1944,45 @@ void ObeliskSimPreparePass::runOnOperation() {
           result.push_back(id);
       return result;
     };
-    std::function<void(Type, SmallVectorImpl<Type> &)> flattenFormalType;
-    flattenFormalType = [&](Type type, SmallVectorImpl<Type> &result) {
+    std::function<void(Type, size_t, SmallVectorImpl<Type> &)>
+        flattenFormalType;
+    flattenFormalType = [&](Type type, size_t dimensions,
+                            SmallVectorImpl<Type> &result) {
+      if (dimensions == 0) {
+        result.push_back(type);
+        return;
+      }
       if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type)) {
         uint64_t count =
             array.getLeft() >= array.getRight()
                 ? uint64_t(array.getLeft()) - uint64_t(array.getRight()) + 1
                 : uint64_t(array.getRight()) - uint64_t(array.getLeft()) + 1;
         for (uint64_t index = 0; index != count; ++index)
-          flattenFormalType(array.getElementType(), result);
+          flattenFormalType(array.getElementType(), dimensions - 1, result);
         return;
       }
-      result.push_back(type);
+      if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+        uint64_t count =
+            array.getLeft() >= array.getRight()
+                ? uint64_t(array.getLeft()) - uint64_t(array.getRight()) + 1
+                : uint64_t(array.getRight()) - uint64_t(array.getLeft()) + 1;
+        for (uint64_t index = 0; index != count; ++index)
+          flattenFormalType(array.getElementType(), dimensions - 1, result);
+        return;
+      }
     };
-    auto assignCandidate = [&](unsigned id, Type candidate, Location location) {
+    auto assignCandidate = [&](unsigned id, Type candidate,
+                               sim::VPITypeSemanticsAttr candidateVPIType,
+                               SymbolRefAttr candidateNettype,
+                               IntegerAttr candidateTypeIdentity,
+                               Location location) {
       if (containsUntyped(candidate))
         return;
       if (!leaves[id].candidate) {
         leaves[id].candidate = candidate;
+        leaves[id].candidateVPIType = candidateVPIType;
+        leaves[id].candidateNettype = candidateNettype;
+        leaves[id].candidateTypeIdentity = candidateTypeIdentity;
         leaves[id].candidateLocation = location;
         return;
       }
@@ -1940,7 +1993,31 @@ void ObeliskSimPreparePass::runOnOperation() {
         emitError(location) << "interconnect leaf '" << leaves[id].path
                             << "' has incompatible connected net-port types";
         invalid = true;
+        return;
       }
+      auto conflict = [&](Attribute previous, Attribute next,
+                          StringRef description) {
+        if (previous && next && previous != next) {
+          emitError(location) << "interconnect leaf '" << leaves[id].path
+                              << "' has incompatible connected " << description;
+          invalid = true;
+          return true;
+        }
+        return false;
+      };
+      if (conflict(leaves[id].candidateVPIType, candidateVPIType,
+                   "VPI types") ||
+          conflict(leaves[id].candidateNettype, candidateNettype,
+                   "nettype declarations") ||
+          conflict(leaves[id].candidateTypeIdentity, candidateTypeIdentity,
+                   "source type identities"))
+        return;
+      if (!leaves[id].candidateVPIType)
+        leaves[id].candidateVPIType = candidateVPIType;
+      if (!leaves[id].candidateNettype)
+        leaves[id].candidateNettype = candidateNettype;
+      if (!leaves[id].candidateTypeIdentity)
+        leaves[id].candidateTypeIdentity = candidateTypeIdentity;
     };
 
     for (semantic::SVPortConnectionOp connection : portConnections) {
@@ -1969,9 +2046,66 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
 
       if (!actualLeaves.empty()) {
+        std::optional<InterconnectReference> actualReference =
+            getInterconnectReference(actual);
+        size_t dimensionsToPeel = 0;
+        if (actualReference && !actualLeaves.empty() &&
+            actualReference->indices.size() <=
+                leaves[actualLeaves.front()].indices.size())
+          dimensionsToPeel = leaves[actualLeaves.front()].indices.size() -
+                             actualReference->indices.size();
         SmallVector<Type> formalLeaves;
-        flattenFormalType(connection.getFormalType(), formalLeaves);
+        flattenFormalType(connection.getFormalType(), dimensionsToPeel,
+                          formalLeaves);
         if (!llvm::any_of(formalLeaves, containsUntyped)) {
+          FailureOr<sim::VPITypeSemanticsAttr> formalVPIType =
+              makeVPITypeSemantics(connection.getFormalType(),
+                                   getSemanticLocation(connection),
+                                   connection->getAttrOfType<ArrayAttr>(
+                                       vpiTypedefLayersAttrName),
+                                   connection);
+          if (failed(formalVPIType)) {
+            invalid = true;
+            continue;
+          }
+          sim::VPITypeSemanticsAttr leafVPIType = *formalVPIType;
+          Type leafType = connection.getFormalType();
+          bool malformedFormal = false;
+          for (size_t dimension = 0; dimension != dimensionsToPeel;
+               ++dimension) {
+            if (!isa<semantic::RangedUnpackedArrayType,
+                     semantic::RangedPackedArrayType>(leafType)) {
+              malformedFormal = true;
+              break;
+            }
+            if (leafVPIType.getChildren().size() != 1) {
+              emitError(getSemanticLocation(connection))
+                  << "interconnect formal has malformed VPI array semantics";
+              invalid = true;
+              malformedFormal = true;
+              break;
+            }
+            leafVPIType =
+                cast<sim::VPITypeSemanticsAttr>(leafVPIType.getChildren()[0]);
+            if (auto array =
+                    dyn_cast<semantic::RangedUnpackedArrayType>(leafType))
+              leafType = array.getElementType();
+            else
+              leafType = cast<semantic::RangedPackedArrayType>(leafType)
+                             .getElementType();
+          }
+          if (malformedFormal)
+            continue;
+          SymbolRefAttr formalNettype;
+          IntegerAttr formalTypeIdentity;
+          if (auto internalPath = connection.getInternalPath()) {
+            auto found = netsByPath.find(*internalPath);
+            if (found != netsByPath.end()) {
+              formalNettype = found->second.getNettypeSymbolAttr();
+              formalTypeIdentity = found->second->getAttrOfType<IntegerAttr>(
+                  vpiSourceTypeIdentityAttrName);
+            }
+          }
           if (formalLeaves.size() != actualLeaves.size()) {
             emitError(getSemanticLocation(connection))
                 << "interconnect port association has incompatible typed "
@@ -1980,7 +2114,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           } else {
             for (auto [actualLeaf, type] :
                  llvm::zip(actualLeaves, formalLeaves))
-              assignCandidate(actualLeaf, type,
+              assignCandidate(actualLeaf, type, leafVPIType, formalNettype,
+                              formalTypeIdentity,
                               getSemanticLocation(connection));
           }
         }
@@ -1994,7 +2129,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       unsigned root = find(id);
       if (id == root || !leaves[id].candidate)
         continue;
-      assignCandidate(root, leaves[id].candidate,
+      assignCandidate(root, leaves[id].candidate, leaves[id].candidateVPIType,
+                      leaves[id].candidateNettype,
+                      leaves[id].candidateTypeIdentity,
                       *leaves[id].candidateLocation);
     }
     for (unsigned id = 0; id != leaves.size(); ++id) {
@@ -2007,6 +2144,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       }
       leaves[id].candidate = leaves[root].candidate;
+      leaves[id].candidateVPIType = leaves[root].candidateVPIType;
+      leaves[id].candidateNettype = leaves[root].candidateNettype;
+      leaves[id].candidateTypeIdentity = leaves[root].candidateTypeIdentity;
       leaves[id].candidateLocation = leaves[root].candidateLocation;
     }
 
@@ -2022,18 +2162,31 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (ids.size() == 1 && leaves[ids.front()].indices.empty()) {
         net->setAttr("semantic_type",
                      TypeAttr::get(leaves[ids.front()].candidate));
+        net->setAttr(interconnectVPITypeAttrName,
+                     leaves[ids.front()].candidateVPIType);
+        if (leaves[ids.front()].candidateNettype)
+          net->setAttr(interconnectNettypeAttrName,
+                       leaves[ids.front()].candidateNettype);
+        if (leaves[ids.front()].candidateTypeIdentity)
+          net->setAttr(vpiSourceTypeIdentityAttrName,
+                       leaves[ids.front()].candidateTypeIdentity);
         continue;
       }
       SmallVector<Attribute> definitions;
       definitions.reserve(ids.size());
-      for (unsigned id : ids)
-        definitions.push_back(builder.getDictionaryAttr(
-            {builder.getNamedAttr("path",
-                                  builder.getStringAttr(leaves[id].path)),
-             builder.getNamedAttr(
-                 "indices", builder.getDenseI64ArrayAttr(leaves[id].indices)),
-             builder.getNamedAttr("type",
-                                  TypeAttr::get(leaves[id].candidate))}));
+      for (unsigned id : ids) {
+        NamedAttrList definition;
+        definition.set("path", builder.getStringAttr(leaves[id].path));
+        definition.set("indices",
+                       builder.getDenseI64ArrayAttr(leaves[id].indices));
+        definition.set("type", TypeAttr::get(leaves[id].candidate));
+        definition.set("vpi_type", leaves[id].candidateVPIType);
+        if (leaves[id].candidateNettype)
+          definition.set("nettype", leaves[id].candidateNettype);
+        if (leaves[id].candidateTypeIdentity)
+          definition.set("type_identity", leaves[id].candidateTypeIdentity);
+        definitions.push_back(builder.getDictionaryAttr(definition));
+      }
       net->setAttr(interconnectLeavesAttrName,
                    builder.getArrayAttr(definitions));
     }

@@ -464,3 +464,150 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_missing_dimension_flags {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{interconnect-array requires index dimension flags}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_ranges = array<i64: 1, 0, -1, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>
+      ]>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @dimension_flags_on_module_array {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{index_dimension_flags is only valid on an interconnect-array anchor}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 112 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.instances" debug "instances" {
+      index_dimension_flags = array<i64: 0>, index_ranges = array<i64: 0, 0>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @wrong_child_under_interconnect_array {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64: 0>, index_ranges = array<i64: 0, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>
+      ]>
+    }
+    // expected-error @+1 {{has an illegal lexical parent kind}}
+    obelisk_sim.vpi_object.anchor @child id 2 type 21 in 0 parent @array
+        ordinal 0 hierarchy "pkg.bus[0]" debug "child" {
+      member_indices = array<i64: 0>, primitive_input_count = 0 : i64
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_dimension_flag_rank {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{index_dimension_flags must have one entry per index range}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64>, index_ranges = array<i64: 0, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>
+      ]>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_dimension_flag_value {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{index dimension flags must be zero or one}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64: 2>, index_ranges = array<i64: 0, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>
+      ]>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_leaf_unknown_net {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64: 0>, index_ranges = array<i64: 0, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>
+      ]>
+    }
+    // expected-error @+1 {{references an unknown backing net ID}}
+    obelisk_sim.vpi_object.anchor @leaf id 2 type 533 in 0 parent @array
+        ordinal 0 hierarchy "pkg.bus[0]" debug "bus" {
+      backing = #obelisk_sim.vpi_backing<kind = net, id = 99 : i64>,
+      member_indices = array<i64: 0>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_array_missing_subtype {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{interconnect-array requires vpiInterconnect subtype}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64: 0>, index_ranges = array<i64: 0, 0>
+    }
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interconnect_array_wrong_subtype {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.vpi_object.anchor @owner id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    // expected-error @+1 {{interconnect-array requires vpiInterconnect subtype}}
+    obelisk_sim.vpi_object.anchor @array id 1 type 534 in 0 parent @owner
+        ordinal 0 hierarchy "pkg.bus" debug "bus" {
+      index_dimension_flags = array<i64: 0>, index_ranges = array<i64: 0, 0>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>
+      ]>
+    }
+  }
+}

@@ -179,7 +179,7 @@ module {
       target_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
           isFourState = true, range = [0, 0], children = [], childNames = []>
     }
-    // expected-error @+1 {{user-defined nettype reference requires vpiNettypeNet subtype}}
+    // expected-error @+1 {{user-defined nettype reference requires vpiNettypeNet or vpiInterconnect subtype}}
     obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<1> design {
       nettype = @nt,
       vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,

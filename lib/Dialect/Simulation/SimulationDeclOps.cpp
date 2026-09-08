@@ -162,6 +162,20 @@ static LocationAttr reflectionDefinitionLoc(Operation *operation) {
   return operation->getAttrOfType<LocationAttr>("definition_loc");
 }
 
+static bool hasNetSubtype(Operation *operation, int64_t expected) {
+  VPIPropertySetAttr properties = reflectionProperties(operation);
+  if (!properties)
+    return false;
+  for (Attribute attribute : properties.getProperties()) {
+    auto property = cast<VPIPropertyAttr>(attribute);
+    if (property.getSelector().getValue().getZExtValue() != 22)
+      continue;
+    auto value = dyn_cast<IntegerAttr>(property.getValue());
+    return value && value.getValue().getSExtValue() == expected;
+  }
+  return false;
+}
+
 static bool isEntirelyFourState(Type type) {
   if (isa<LogicType>(type))
     return true;
@@ -413,6 +427,10 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("VPI kind is not a concrete object");
   using Kind = reflection::VPIObjectKind;
   Kind anchorKind = static_cast<Kind>(getVpiKind());
+  if (failed(verifyFixedReflection(*this, getVpiKind(),
+                                   reflectionProperties(*this),
+                                   reflectionDefinitionLoc(*this))))
+    return failure();
   switch (anchorKind) {
   case Kind::Module:
   case Kind::Interface:
@@ -433,6 +451,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::UdpArray:
   case Kind::NamedEventArray:
   case Kind::GenScopeArray:
+  case Kind::InterconnectArray:
+  case Kind::InterconnectNet:
   case Kind::Gate:
   case Kind::Switch:
   case Kind::Udp:
@@ -474,6 +494,10 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
         return emitOpError(
             "code-unit backing requires a task or function anchor");
       break;
+    case VPIObjectBackingKind::Net:
+      if (anchorKind != Kind::InterconnectNet)
+        return emitOpError("net backing requires an interconnect-net anchor");
+      break;
     }
   } else {
     if (anchorKind == Kind::Module || anchorKind == Kind::Interface ||
@@ -481,7 +505,14 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       return emitOpError(
           "module, interface, and program anchors require scope backing");
   }
+  if (anchorKind == Kind::InterconnectNet &&
+      (!getBackingAttr() ||
+       getBackingAttr().getKind() != VPIObjectBackingKind::Net))
+    return emitOpError("interconnect-net anchor requires a net backing");
+  if (anchorKind == Kind::InterconnectArray && !hasNetSubtype(*this, 16))
+    return emitOpError("interconnect-array requires vpiInterconnect subtype");
   DenseI64ArrayAttr rangesAttr = getIndexRangesAttr();
+  DenseI64ArrayAttr dimensionFlagsAttr = getIndexDimensionFlagsAttr();
   DenseI64ArrayAttr sparseAttr = getSparseIndicesAttr();
   ArrayRef<int64_t> ranges =
       rangesAttr ? rangesAttr.asArrayRef() : ArrayRef<int64_t>{};
@@ -491,7 +522,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       anchorKind == Kind::ModuleArray || anchorKind == Kind::InterfaceArray ||
       anchorKind == Kind::ProgramArray || anchorKind == Kind::GateArray ||
       anchorKind == Kind::SwitchArray || anchorKind == Kind::UdpArray ||
-      anchorKind == Kind::NamedEventArray;
+      anchorKind == Kind::NamedEventArray ||
+      anchorKind == Kind::InterconnectArray;
   if (rangesAttr && sparseAttr)
     return emitOpError("VPI array cannot be both fixed and sparse");
   if (rangesAttr && !fixedArray)
@@ -501,6 +533,22 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
         "index_ranges requires left/right pairs on a fixed array anchor");
   if (fixedArray && (!rangesAttr || ranges.empty()))
     return emitOpError("fixed VPI array requires nonempty index_ranges");
+  if (anchorKind == Kind::InterconnectArray && !dimensionFlagsAttr)
+    return emitOpError("interconnect-array requires index dimension flags");
+  if (anchorKind != Kind::InterconnectArray && dimensionFlagsAttr)
+    return emitOpError(
+        "index_dimension_flags is only valid on an interconnect-array anchor");
+  if (dimensionFlagsAttr) {
+    ArrayRef<int64_t> flags = dimensionFlagsAttr.asArrayRef();
+    if (!rangesAttr || flags.size() * 2 != ranges.size())
+      return emitOpError(
+          "index_dimension_flags must have one entry per index range");
+    if (llvm::any_of(flags,
+                     [](int64_t flag) { return flag != 0 && flag != 1; }))
+      return emitOpError("index dimension flags must be zero or one");
+  }
+  if (sparseAttr && dimensionFlagsAttr)
+    return emitOpError("sparse VPI arrays cannot carry fixed-dimension flags");
   if (sparseAttr && anchorKind != Kind::GenScopeArray)
     return emitOpError(
         "sparse_indices is only valid on a generate-scope array anchor");
@@ -527,7 +575,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     if (!sparseSet.insert(index).second)
       return emitOpError("sparse_indices contains a duplicate index");
   if (getMemberIndicesAttr() &&
-      (fixedArray || anchorKind == Kind::GenScopeArray))
+      ((fixedArray && anchorKind != Kind::InterconnectArray) ||
+       anchorKind == Kind::GenScopeArray))
     return emitOpError("array aggregates cannot carry member_indices");
   return success();
 }
@@ -547,7 +596,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
         parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
         parentKind == Kind::SwitchArray || parentKind == Kind::UdpArray ||
-        parentKind == Kind::NamedEventArray;
+        parentKind == Kind::NamedEventArray ||
+        parentKind == Kind::InterconnectArray;
     DenseI64ArrayAttr memberAttr = getMemberIndicesAttr();
     ArrayRef<int64_t> member =
         memberAttr ? memberAttr.asArrayRef() : ArrayRef<int64_t>{};
@@ -556,7 +606,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       if (!rangesAttr)
         return emitOpError("fixed-array parent has no index_ranges");
       ArrayRef<int64_t> ranges = rangesAttr.asArrayRef();
-      if (member.size() * 2 != ranges.size())
+      size_t expectedRank = ranges.size() / 2;
+      if (member.size() != expectedRank)
         return emitOpError(
             "fixed-array child member_indices rank does not match parent");
       for (size_t dimension = 0; dimension != member.size(); ++dimension) {
@@ -627,6 +678,10 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       legal =
           parentKind == Kind::NamedEventArray || isDeclarationScope(parentKind);
       break;
+    case Kind::InterconnectNet:
+      legal = parentKind == Kind::InterconnectArray ||
+              isDeclarationScope(parentKind);
+      break;
     case Kind::ModuleArray:
     case Kind::InterfaceArray:
     case Kind::ProgramArray:
@@ -636,6 +691,10 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     case Kind::NamedEventArray:
     case Kind::GenScopeArray:
       legal = isDeclarationScope(parentKind);
+      break;
+    case Kind::InterconnectArray:
+      legal = isDeclarationScope(parentKind) ||
+              parentKind == Kind::InterconnectArray;
       break;
     case Kind::Package:
       // Compilation units use the vpiPackage kind internally so that they
@@ -761,17 +820,7 @@ SimVPINettypeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 static bool hasUserDefinedNetSubtype(Operation *operation) {
-  VPIPropertySetAttr properties = reflectionProperties(operation);
-  if (!properties)
-    return false;
-  for (Attribute attribute : properties.getProperties()) {
-    auto property = cast<VPIPropertyAttr>(attribute);
-    if (property.getSelector().getValue().getZExtValue() != 22)
-      continue;
-    auto value = dyn_cast<IntegerAttr>(property.getValue());
-    return value && value.getValue().getSExtValue() == 14; // vpiNettypeNet
-  }
-  return false;
+  return hasNetSubtype(operation, 14); // vpiNettypeNet
 }
 
 static bool matchesDeclaredNettype(VPITypeSemanticsAttr declaration,
@@ -941,9 +990,11 @@ SimNetDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!matchesDeclaredNettype(getVpiTypeAttr(), target.getTargetType()))
     return emitOpError(
         "VPI type semantics do not match the referenced nettype");
-  if (!hasUserDefinedNetSubtype(*this))
+  if (!hasUserDefinedNetSubtype(*this) &&
+      !hasNetSubtype(*this, 16)) // vpiInterconnect
     return emitOpError(
-        "user-defined nettype reference requires vpiNettypeNet subtype");
+        "user-defined nettype reference requires vpiNettypeNet or "
+        "vpiInterconnect subtype");
   return success();
 }
 
@@ -3153,6 +3204,27 @@ LogicalResult SimDesignOp::verifyRegions() {
       break;
     case VPIObjectBackingKind::Class:
       break;
+    case VPIObjectBackingKind::Net: {
+      uint64_t id = backing.getId().getValue().getZExtValue();
+      auto found = nets.find(id);
+      if (found == nets.end())
+        return anchor.emitOpError("references an unknown backing net ID");
+      SimNetDeclOp net = found->second;
+      if (anchor.getEnclosingScopeId() != net.getScopeId())
+        return anchor.emitOpError(
+            "backing net scope must equal the anchor's enclosing scope");
+      if (!net.getHierarchicalName() ||
+          *net.getHierarchicalName() != anchor.getHierarchicalName())
+        return anchor.emitOpError(
+            "backing net hierarchy must equal the anchor hierarchy");
+      if (!net.getVpiTypeAttr())
+        return anchor.emitOpError(
+            "backing interconnect net requires VPI type semantics");
+      if (!hasNetSubtype(net, 16)) // vpiInterconnect
+        return anchor.emitOpError(
+            "backing interconnect net requires vpiInterconnect subtype");
+      break;
+    }
     case VPIObjectBackingKind::CodeUnit: {
       if (!codeUnitIds.count(backing.getId().getValue().getZExtValue()))
         return anchor.emitOpError("references an unknown backing code-unit ID");

@@ -8065,8 +8065,7 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     uint32_t rootType;
     uint32_t elementType;
   };
-  constexpr NetCase netCases[]{{vpiNetArray, vpiNet},
-                               {vpiInterconnectArray, vpiInterconnectNet}};
+  constexpr NetCase netCases[]{{vpiNetArray, vpiNet}};
   for (const NetCase &testCase : netCases) {
     Fixture fixture;
     fixture.database = makeVPIIndexedDatabase(0, 1, 7, 4, testCase.rootType,

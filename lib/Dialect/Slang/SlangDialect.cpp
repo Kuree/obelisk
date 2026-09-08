@@ -44,6 +44,14 @@ bool isPackedType(Type type) {
   return false;
 }
 
+bool isPackedInterconnectShape(Type type) {
+  if (isa<UntypedType>(type))
+    return true;
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return isPackedInterconnectShape(array.getElementType());
+  return false;
+}
+
 LogicalResult
 verifySourceRange(llvm::function_ref<InFlightDiagnostic()> emitError,
                   StringAttr startFile, uint32_t startLine,
@@ -97,7 +105,9 @@ PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         Type elementType, int64_t left, int64_t right) {
   if (!getInclusiveRangeWidth(left, right))
     return emitError() << "packed array range width exceeds uint64_t";
-  if (!isPackedType(elementType))
+  // Generic interconnect leaves are unresolved, but their packed source
+  // dimensions must survive import for VPI reflection.
+  if (!isPackedType(elementType) && !isPackedInterconnectShape(elementType))
     return emitError() << "packed array element must be packed, got "
                        << elementType;
   return success();

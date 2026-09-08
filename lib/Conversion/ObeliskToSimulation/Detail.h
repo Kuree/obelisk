@@ -182,6 +182,10 @@ inline constexpr ::mlir::StringLiteral interconnectLeafPathAttrName =
     "obelisk_sim.interconnect_leaf_path";
 inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
     "obelisk_sim.interconnect_leaves";
+inline constexpr ::mlir::StringLiteral interconnectVPITypeAttrName =
+    "obelisk_sim.interconnect_vpi_type";
+inline constexpr ::mlir::StringLiteral interconnectNettypeAttrName =
+    "obelisk_sim.interconnect_nettype";
 /// Identity a type reference shares with every reference to a matching type
 /// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
 /// fixed there as well.

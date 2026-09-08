@@ -48,9 +48,9 @@ def SimVPIObjectBackingAttr
   let summary = "physical executable descriptor backing a source VPI object";
   let description = [{
     Maps one immutable source-object anchor to an already materialized scope,
-    class, or code-unit descriptor.  Scope and code-unit backings use `id`;
-    class backings use `symbol`.  An anchor without this attribute is itself
-    serialized as a static-only reflection object.
+    class, code-unit, or net descriptor. Scope, code-unit, and net backings use
+    `id`; class backings use `symbol`. An anchor without this attribute is
+    itself serialized as a static-only reflection object.
   }];
   let parameters = (ins EnumParameter<SimVPIObjectBackingKind>:$kind,
       OptionalParameter<"::mlir::IntegerAttr">:$id,

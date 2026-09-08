@@ -1499,30 +1499,34 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       }
       if (automaticName == "IndexedContainer") {
         const Record *arrayFamily = familyNames.lookup("Array");
-        for (const Record *target : expandedSets.lookup(targets)) {
-          if (!llvm::is_contained(target->getValueAsListOfDefs("families"),
-                                  arrayFamily)) {
-            PrintError(edge->getLoc(),
-                       "automatic indexed-container target is not an array");
-            return false;
-          }
-          const Record *access = indexedAccessSources.lookup(
-              static_cast<uint32_t>(target->getValueAsInt("value")));
-          if (!access ||
-              access->getValueAsDef("accessKind")
-                      ->getValueAsString("cppName") != "RelationElement") {
-            PrintError(edge->getLoc(),
-                       "automatic indexed-container target has no "
-                       "relation-backed indexed access");
-            return false;
-          }
-          for (const Record *source : expandedSets.lookup(sources))
-            if (access->getValueAsDef("terminalResult") != source) {
-              PrintError(edge->getLoc(),
-                         "automatic indexed-container source is not the "
-                         "array access terminal result");
-              return false;
+        for (const Record *source : expandedSets.lookup(sources)) {
+          bool hasIndexedContainer = false;
+          for (const Record *access : indexedAccesses) {
+            if (access->getValueAsDef("accessKind")
+                        ->getValueAsString("cppName") != "RelationElement" ||
+                (source != access->getValueAsDef("terminalResult") &&
+                 source != access->getValueAsDef("unpackedFallback")))
+              continue;
+
+            bool acceptsEveryContainer = true;
+            for (const Record *container :
+                 expandedSets.lookup(access->getValueAsDef("sources"))) {
+              acceptsEveryContainer &=
+                  llvm::is_contained(expandedSets.lookup(targets), container);
+              acceptsEveryContainer &= llvm::is_contained(
+                  container->getValueAsListOfDefs("families"), arrayFamily);
             }
+            if (acceptsEveryContainer) {
+              hasIndexedContainer = true;
+              break;
+            }
+          }
+          if (!hasIndexedContainer) {
+            PrintError(edge->getLoc(),
+                       "automatic indexed-container source has no "
+                       "relation-backed array container in its target set");
+            return false;
+          }
         }
       }
       if (automaticName == "DirectPortConnection") {
@@ -3193,7 +3197,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
       if (readVPIObjectModelImage16(access, 0) == array &&
           access[4] == static_cast<uint8_t>(
                            VPIIndexedAccessKind::RelationElement) &&
-          readVPIObjectModelImage16(access, 6) == member)
+          (readVPIObjectModelImage16(access, 6) == member ||
+           readVPIObjectModelImage16(access, 8) == member))
         return true;
     }
     return false;
@@ -3223,13 +3228,13 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
             data + setOffset + targets * vpiObjectModelImageSetSize;
         uint16_t first = readVPIObjectModelImage16(set, 0);
         uint16_t count = readVPIObjectModelImage16(set, 2);
+        automaticTargetsValid = false;
         for (uint32_t targetIndex = 0; targetIndex != count; ++targetIndex) {
           uint16_t kind = readVPIObjectModelImage16(
               data, kindOffset + (uint32_t{first} + targetIndex) * 2);
-          if (!objectHasFamily(kind,
-                               vpiFamilyMask(VPIObjectFamily::Array)) ||
-              !hasRelationIndexedAccess(kind, source)) {
-            automaticTargetsValid = false;
+          if (objectHasFamily(kind, vpiFamilyMask(VPIObjectFamily::Array)) &&
+              hasRelationIndexedAccess(kind, source)) {
+            automaticTargetsValid = true;
             break;
           }
         }

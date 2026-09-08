@@ -5,6 +5,8 @@
 
 //--- topology.mlir
 
+!anon_state = !obelisk.enum<"anon_state_t", !obelisk.integral<2, false, true, 1 : 0, logic>>
+
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
       hierarchical_name = "net_properties", name = "net_properties",
@@ -12,7 +14,24 @@ module {
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
       name = "$root", node_id = 1 : i64, sym_name = "root"} {
     obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit",
-        node_id = 2 : i64, sym_name = "cu"} {}
+        node_id = 2 : i64, sym_name = "cu"} {
+      obelisk.sv.type.type_alias attributes {
+          hierarchical_name = "$unit::word_t", name = "word_t",
+          node_id = 34 : i64,
+          semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+          sym_name = "word_t", vpi_typedef_layers = [{aliases = [
+            @root::@cu::@word_t], path = array<i64>}]} {}
+      obelisk.sv.type.net_type attributes {
+          data_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+          hierarchical_name = "$unit::word_nt", is_builtin = false,
+          name = "word_nt", net_kind = 14 : i32, node_id = 35 : i64,
+          semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+          sym_name = "word_nt"} {}
+      obelisk.sv.symbol.enum_value attributes {constant_value = "2'b00",
+          hierarchical_name = "$unit::anon_state_t.IDLE", name = "IDLE",
+          node_id = 42 : i64, semantic_type = !anon_state,
+          sym_name = "anon_idle", vpi_source_type_identity = 77 : i64} {}
+    }
     obelisk.sv.symbol.instance attributes {
         hierarchical_name = "net_properties", is_uninstantiated = false,
         name = "net_properties", node_id = 3 : i64,
@@ -25,7 +44,7 @@ module {
           direction = 2 : i32, formal_name = "typed", formal_ordinal = 0 : i64,
           formal_path = "net_properties.typed",
           formal_symbol = @root::@instance::@body::@typed_port,
-          formal_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
+          formal_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.integral<8, false, true, 7 : 0, logic>>>,
           internal_path = "net_properties.typed_internal",
           internal_symbol = @root::@instance::@body::@typed_internal,
           is_ansi = true, is_net = true, node_id = 23 : i64,
@@ -33,12 +52,73 @@ module {
         obelisk.sv.expression.named_value attributes {node_id = 24 : i64,
             referenced_path = "net_properties.typed_internal",
             referenced_symbol = @root::@instance::@body::@typed_internal,
-            semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {}
+            semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.integral<8, false, true, 7 : 0, logic>>>} {}
       } {
         obelisk.sv.expression.named_value attributes {node_id = 25 : i64,
             referenced_path = "net_properties.interconnect",
             referenced_symbol = @root::@instance::@body::@interconnect,
-            semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.untyped>} {}
+            semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.untyped>>} {}
+      }
+      obelisk.sv.port.connection attributes {actual_is_constant = false,
+          direction = 2 : i32, formal_name = "scalar_typed",
+          formal_ordinal = 1 : i64,
+          formal_path = "net_properties.scalar_typed",
+          formal_symbol = @root::@instance::@body::@scalar_port,
+          formal_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+          internal_path = "net_properties.scalar_internal",
+          internal_symbol = @root::@instance::@body::@scalar_internal,
+          is_ansi = true, is_net = true, node_id = 28 : i64,
+          provenance = 0 : i32} {
+        obelisk.sv.expression.named_value attributes {node_id = 29 : i64,
+            referenced_path = "net_properties.scalar_internal",
+            referenced_symbol = @root::@instance::@body::@scalar_internal,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>} {}
+      } {
+        obelisk.sv.expression.named_value attributes {node_id = 30 : i64,
+            referenced_path = "net_properties.scalar_interconnect",
+            referenced_symbol = @root::@instance::@body::@scalar_interconnect,
+            semantic_type = !obelisk.untyped} {}
+      }
+      obelisk.sv.port.connection attributes {actual_is_constant = false,
+          direction = 2 : i32, formal_name = "enum_typed",
+          formal_ordinal = 3 : i64,
+          formal_path = "net_properties.enum_typed",
+          formal_symbol = @root::@instance::@body::@enum_port,
+          formal_type = !anon_state,
+          internal_path = "net_properties.enum_internal",
+          internal_symbol = @root::@instance::@body::@enum_internal,
+          is_ansi = true, is_net = true, node_id = 43 : i64,
+          provenance = 0 : i32, vpi_source_type_identity = 77 : i64} {
+        obelisk.sv.expression.named_value attributes {node_id = 44 : i64,
+            referenced_path = "net_properties.enum_internal",
+            referenced_symbol = @root::@instance::@body::@enum_internal,
+            semantic_type = !anon_state} {}
+      } {
+        obelisk.sv.expression.named_value attributes {node_id = 45 : i64,
+            referenced_path = "net_properties.enum_interconnect",
+            referenced_symbol = @root::@instance::@body::@enum_interconnect,
+            semantic_type = !obelisk.untyped} {}
+      }
+      obelisk.sv.port.connection attributes {actual_is_constant = false,
+          direction = 2 : i32, formal_name = "alias_typed",
+          formal_ordinal = 2 : i64,
+          formal_path = "net_properties.alias_typed",
+          formal_symbol = @root::@instance::@body::@alias_port,
+          formal_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+          internal_path = "net_properties.alias_internal",
+          internal_symbol = @root::@instance::@body::@alias_internal,
+          is_ansi = true, is_net = true, node_id = 36 : i64,
+          provenance = 0 : i32, vpi_typedef_layers = [{aliases = [
+            @root::@cu::@word_t], path = array<i64>}]} {
+        obelisk.sv.expression.named_value attributes {node_id = 37 : i64,
+            referenced_path = "net_properties.alias_internal",
+            referenced_symbol = @root::@instance::@body::@alias_internal,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>} {}
+      } {
+        obelisk.sv.expression.named_value attributes {node_id = 38 : i64,
+            referenced_path = "net_properties.alias_interconnect",
+            referenced_symbol = @root::@instance::@body::@alias_interconnect,
+            semantic_type = !obelisk.untyped} {}
       }
       obelisk.sv.symbol.instance_body attributes {
           hierarchical_name = "net_properties", name = "net_properties",
@@ -122,20 +202,73 @@ module {
         obelisk.sv.symbol.port attributes {direction = 2 : i32,
             hierarchical_name = "net_properties.typed", name = "typed",
             node_id = 26 : i64,
-            semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
+            semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.integral<8, false, true, 7 : 0, logic>>>,
             sym_name = "typed_port"} {}
         obelisk.sv.symbol.net attributes {
             hierarchical_name = "net_properties.typed_internal",
             is_implicit = false, name = "typed_internal", net_kind = 1 : i32,
             node_id = 27 : i64,
-            semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
+            semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.integral<8, false, true, 7 : 0, logic>>>,
             sym_name = "typed_internal"} {}
         obelisk.sv.symbol.net attributes {
             hierarchical_name = "net_properties.interconnect",
             is_implicit = false, name = "interconnect", net_kind = 13 : i32,
             node_id = 20 : i64,
-            semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.untyped>,
+            semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<-1 : 0 x !obelisk.untyped>>,
             sym_name = "interconnect"} {}
+        obelisk.sv.symbol.port attributes {direction = 2 : i32,
+            hierarchical_name = "net_properties.scalar_typed",
+            name = "scalar_typed", node_id = 31 : i64,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+            sym_name = "scalar_port"} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.scalar_internal",
+            is_implicit = false, name = "scalar_internal", net_kind = 14 : i32,
+            nettype_path = "$unit::word_nt",
+            nettype_symbol = @root::@cu::@word_nt,
+            node_id = 32 : i64,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+            sym_name = "scalar_internal"} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.scalar_interconnect",
+            is_implicit = false, name = "scalar_interconnect",
+            net_kind = 13 : i32, node_id = 33 : i64,
+            semantic_type = !obelisk.untyped,
+            sym_name = "scalar_interconnect"} {}
+        obelisk.sv.symbol.port attributes {direction = 2 : i32,
+            hierarchical_name = "net_properties.alias_typed",
+            name = "alias_typed", node_id = 39 : i64,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+            sym_name = "alias_port"} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.alias_internal",
+            is_implicit = false, name = "alias_internal", net_kind = 1 : i32,
+            node_id = 40 : i64,
+            semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
+            sym_name = "alias_internal"} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.alias_interconnect",
+            is_implicit = false, name = "alias_interconnect",
+            net_kind = 13 : i32, node_id = 41 : i64,
+            semantic_type = !obelisk.untyped,
+            sym_name = "alias_interconnect"} {}
+        obelisk.sv.symbol.port attributes {direction = 2 : i32,
+            hierarchical_name = "net_properties.enum_typed",
+            name = "enum_typed", node_id = 46 : i64,
+            semantic_type = !anon_state, sym_name = "enum_port",
+            vpi_source_type_identity = 77 : i64} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.enum_internal",
+            is_implicit = false, name = "enum_internal", net_kind = 1 : i32,
+            node_id = 47 : i64, semantic_type = !anon_state,
+            sym_name = "enum_internal",
+            vpi_source_type_identity = 77 : i64} {}
+        obelisk.sv.symbol.net attributes {
+            hierarchical_name = "net_properties.enum_interconnect",
+            is_implicit = false, name = "enum_interconnect",
+            net_kind = 13 : i32, node_id = 48 : i64,
+            semantic_type = !obelisk.untyped,
+            sym_name = "enum_interconnect"} {}
       }
     }
   }
@@ -157,8 +290,22 @@ module {
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.uwire" {{.*}}selector = 22 : i32, value = 13 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 23 : i32, value = true>, #obelisk_sim.vpi_property<selector = 25 : i32, value = true>, #obelisk_sim.vpi_property<selector = 26 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>, #obelisk_sim.vpi_property<selector = 31 : i32, value = 32 : i32>, #obelisk_sim.vpi_property<selector = 32 : i32, value = 8 : i32>, #obelisk_sim.vpi_property<selector = 43 : i32, value = true>]>
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.vectored" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 24 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[INTERCONNECT:[^ ]+]] {{.*}} type 534 {{.*}} hierarchy "net_properties.interconnect" {{.*}}index_dimension_flags = array<i64: 0, 1>, index_ranges = array<i64: 1, 0, -1, 0>
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}range = [7, 0]
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net{{.*}}member_indices = array<i64: 1, -1>
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1][0]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0][-1]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net{{.*}}member_indices = array<i64: 0, 0>
+// CHECK-DAG: obelisk_sim.vpi_nettype.decl @[[WORDNT:[^ ]+]] {{.*}} hierarchy "$unit::word_nt"
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[WORDT:[^ ]+]] {{.*}} hierarchy "$unit::word_t"
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}nettype = @[[WORDNT]]{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}range = [3, 0]
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}typedefAliases = [@[[WORDT]]]
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
+// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[ANON:[^ ]+]] {{.*}} hierarchy "$unit::anon_state_t" {{.*}}source_type_identity = 77 : i64
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}obelisk_sim.vpi_source_type_identity = 77 : i64{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = enum{{.*}}name = "anon_state_t"
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
 
 //--- slang.mlir
 

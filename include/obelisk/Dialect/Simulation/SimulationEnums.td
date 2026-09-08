@@ -83,10 +83,12 @@ def SimVPIObjectBackingClass
     : I32EnumAttrCase<"Class", 1, "class">;
 def SimVPIObjectBackingCodeUnit
     : I32EnumAttrCase<"CodeUnit", 2, "code_unit">;
+def SimVPIObjectBackingNet
+    : I32EnumAttrCase<"Net", 3, "net">;
 def SimVPIObjectBackingKind : I32EnumAttr<
     "VPIObjectBackingKind", "physical descriptor backing a VPI anchor", [
       SimVPIObjectBackingScope, SimVPIObjectBackingClass,
-      SimVPIObjectBackingCodeUnit
+      SimVPIObjectBackingCodeUnit, SimVPIObjectBackingNet
     ]> {
   let cppNamespace = "::obelisk::sim";
 }

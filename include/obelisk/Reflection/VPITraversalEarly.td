@@ -400,8 +400,15 @@ def VPIEarlyArrayNetModule : VPITraversalEdge<NetArrayObjects, Module,
   HandleMode, ModuleTarget, NoOrder, "37.16">;
 def VPIEarlyArrayNetRanges : VPITraversalEdge<NetArrayObjects, Range,
   IterateMode, RangeObjects, IndexOrder, "37.16; 37.24">;
-def VPIEarlyNetParent : VPITraversalEdge<NetObjects, ParentRel, HandleMode,
-  VPIEarlyNets, NoOrder, "37.16">;
+def VPIEarlyOrdinaryNetParentSources : VPIObjectSet<
+  "EarlyOrdinaryNetParentSources", [], [NetFamily],
+  [InterconnectArray, InterconnectNet]>;
+def VPIEarlyNetParent : VPITraversalEdge<VPIEarlyOrdinaryNetParentSources,
+  ParentRel, HandleMode, VPIEarlyNets, NoOrder, "37.16">;
+def VPIEarlyInterconnectParent : VPITraversalEdge<
+  VPIEarlyInterconnectArrayElementTargets, ParentRel, HandleMode,
+  VPIEarlyNets, NoOrder, "37.16", 0,
+  AutomaticIndexedContainer>;
 def VPIEarlyNetDrivers : VPITraversalEdge<NetObjects, DriverRel, IterateMode,
   VPIEarlyNetDriverTargets, NoOrder, "37.16; 37.46">;
 def VPIEarlyNetLoads : VPITraversalEdge<NetObjects, LoadRel, IterateMode,
