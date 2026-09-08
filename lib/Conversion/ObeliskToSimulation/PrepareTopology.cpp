@@ -1168,9 +1168,9 @@ materializeDesignDescriptors(ModuleOp module,
           builder.getI32IntegerAttr(value)));
     };
 
-    // IEEE 1800-2017 defines no vpiNetType subtype constants for typed
-    // interconnect or user-defined nets. Leave selector 22 unavailable for
-    // those declarations instead of reporting an invented wire subtype.
+    // IEEE 1800-2023 37.16 adds exact declaration subtypes for user-defined
+    // nettypes and interconnects. A selected part is reported as
+    // vpiNettypeNetSelect by the query layer because it is handle-specific.
     std::optional<int32_t> netType;
     switch (net.getNetKind()) {
     case semantic::SVNetKind::Wire:
@@ -1209,9 +1209,13 @@ materializeDesignDescriptors(ModuleOp module,
     case semantic::SVNetKind::UWire:
       netType = 13; // vpiUwire
       break;
-    case semantic::SVNetKind::Unknown:
     case semantic::SVNetKind::Interconnect:
+      netType = 16; // vpiInterconnect
+      break;
     case semantic::SVNetKind::UserDefined:
+      netType = 14; // vpiNettypeNet
+      break;
+    case semantic::SVNetKind::Unknown:
       break;
     }
     if (netType)
@@ -1396,7 +1400,8 @@ materializeDesignDescriptors(ModuleOp module,
   llvm::DenseMap<Operation *, llvm::DenseMap<uint32_t, uint64_t>>
       nextStatementOrdinal;
   auto isInUninstantiatedGenerate = [](Operation *operation) {
-    for (Operation *cursor = operation; cursor; cursor = cursor->getParentOp()) {
+    for (Operation *cursor = operation; cursor;
+         cursor = cursor->getParentOp()) {
       auto generate = dyn_cast<semantic::SVGenerateBlockSymbolOp>(cursor);
       if (!generate)
         continue;
@@ -1468,10 +1473,10 @@ materializeDesignDescriptors(ModuleOp module,
         for (size_t statement = 0; statement != statementCount; ++statement) {
           uint64_t statementId = nextStatementId++;
           uint64_t ordinal = nextStatementOrdinal[owner][selector]++;
-          sim::SimStatementDeclOp::create(
-              builder, location, statementId, IntegerAttr{},
-              scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
-              UnitAttr{}, UnitAttr{});
+          sim::SimStatementDeclOp::create(builder, location, statementId,
+                                          IntegerAttr{}, scopes.lookup(source),
+                                          selector, IntegerAttr{}, StringAttr{},
+                                          UnitAttr{}, UnitAttr{});
           if (statementKind == VPIKind::ContAssign)
             scopeOwnedStatementPlans.push_back(
                 {source, statementId, scopes.lookup(source), statementKind});
@@ -1611,6 +1616,43 @@ materializeDesignDescriptors(ModuleOp module,
       nested.push_back(FlatSymbolRefAttr::get(name));
     return SymbolRefAttr::get(names.front(), nested);
   };
+  SmallVector<semantic::SVNetTypeOp> sourceNettypes;
+  llvm::DenseMap<Attribute, semantic::SVNetTypeOp> nettypesByReference;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> nettypeSymbols;
+  module.walk([&](semantic::SVNetTypeOp nettype) {
+    if (nettype.getIsBuiltin())
+      return;
+    auto index = [&](SymbolRefAttr reference) {
+      auto [found, inserted] =
+          nettypesByReference.try_emplace(reference, nettype);
+      if (!inserted && found->second != nettype) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype identity collides with another declaration "
+            << reference;
+        invalid = true;
+      }
+    };
+    index(getSemanticSymbolReference(nettype, true));
+    index(getSemanticSymbolReference(nettype));
+    sourceNettypes.push_back(nettype);
+  });
+  for (auto [index, nettype] : llvm::enumerate(sourceNettypes)) {
+    std::string name = "__obelisk_vpi_nettype_" + std::to_string(index);
+    nettypeSymbols[nettype] =
+        FlatSymbolRefAttr::get(builder.getContext(), name);
+  }
+  llvm::DenseMap<Attribute, Operation *> anchorsBySemanticReference;
+  for (Operation *source : anchorSources) {
+    anchorsBySemanticReference.try_emplace(
+        getSemanticSymbolReference(source, true), source);
+    anchorsBySemanticReference.try_emplace(getSemanticSymbolReference(source),
+                                           source);
+  }
+  auto resolveSourceNettype = [&](SymbolRefAttr reference) {
+    auto found = nettypesByReference.find(reference);
+    return found == nettypesByReference.end() ? semantic::SVNetTypeOp{}
+                                              : found->second;
+  };
   llvm::DenseMap<Attribute, semantic::SVTypeAliasTypeOp>
       aliasesBySymbolReference;
   SmallVector<semantic::SVTypeAliasTypeOp> aliases;
@@ -1732,6 +1774,51 @@ materializeDesignDescriptors(ModuleOp module,
     }
     return *layers;
   };
+  uint64_t nextNettypeId = 0;
+  for (semantic::SVNetTypeOp nettype : sourceNettypes) {
+    FlatSymbolRefAttr owner = ownerAnchorFor(nettype);
+    if (!owner)
+      continue;
+    ArrayAttr layers = typedefLayersFor(nettype);
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        nettype.getDataType(), getSemanticLocation(nettype), layers, nettype);
+    StringRef hierarchy = getHierarchyName(nettype);
+    StringRef debug = getDebugName(nettype);
+    if (failed(target) || hierarchy.empty() || debug.empty()) {
+      if (hierarchy.empty() || debug.empty())
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype is missing a hierarchy or debug name";
+      invalid = true;
+      continue;
+    }
+    FlatSymbolRefAttr directAlias;
+    if (SymbolRefAttr reference = nettype.getAliasedNettypeSymbolAttr()) {
+      semantic::SVNetTypeOp targetNettype = resolveSourceNettype(reference);
+      directAlias = nettypeSymbols.lookup(targetNettype);
+      if (!directAlias) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype alias target was not preserved";
+        invalid = true;
+        continue;
+      }
+    }
+    FlatSymbolRefAttr resolutionFunction;
+    if (SymbolRefAttr reference = nettype.getResolutionFunctionSymbolAttr()) {
+      Operation *source = anchorsBySemanticReference.lookup(reference);
+      resolutionFunction = anchorSymbols.lookup(source);
+      if (!resolutionFunction) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype resolver anchor was not preserved";
+        invalid = true;
+        continue;
+      }
+    }
+    sim::SimVPINettypeDeclOp::create(builder, getSemanticLocation(nettype),
+                                     nettypeSymbols.lookup(nettype).getValue(),
+                                     nextNettypeId++, scopes.lookup(nettype),
+                                     owner.getValue(), hierarchy, debug,
+                                     *target, directAlias, resolutionFunction);
+  }
   uint64_t nextTypespecId = 0;
   llvm::DenseMap<Attribute, FlatSymbolRefAttr> enumTypespecsByIdentity;
   auto getEnumIdentity = [&](Operation *operation,
@@ -2161,7 +2248,7 @@ materializeDesignDescriptors(ModuleOp module,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
               DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
-              retainedVPIType);
+              retainedVPIType, FlatSymbolRefAttr{});
           declaration->setAttr(
               "vpi_properties",
               netProperties(cast<semantic::SVNetSymbolOp>(op)));
@@ -2341,6 +2428,16 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[path].rootType = *type;
     descriptors[path].vpiType = retainedVPIType;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
+    FlatSymbolRefAttr sourceNettype;
+    if (SymbolRefAttr reference = net.getNettypeSymbolAttr()) {
+      sourceNettype = nettypeSymbols.lookup(resolveSourceNettype(reference));
+      if (!sourceNettype) {
+        emitError(getSemanticLocation(net))
+            << "user-defined net's VPI nettype declaration was not preserved";
+        invalid = true;
+        return;
+      }
+    }
     auto declaration = sim::SimNetDeclOp::create(
         builder, getSemanticLocation(op), id, scopeId, *type,
         sim::Lifetime::Design, hierarchy, debug,
@@ -2352,7 +2449,7 @@ materializeDesignDescriptors(ModuleOp module,
                       ? lowerChargeStrength(*net.getChargeStrength())
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
-        UnitAttr{}, retainedVPIType);
+        UnitAttr{}, retainedVPIType, sourceNettype);
     declaration->setAttr("vpi_properties", netProperties(net));
     retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
@@ -2799,13 +2896,25 @@ materializeDesignDescriptors(ModuleOp module,
       invalid = true;
       continue;
     }
+    FlatSymbolRefAttr sourceNettype;
+    if (SymbolRefAttr reference = net.getNettypeSymbolAttr()) {
+      sourceNettype = nettypeSymbols.lookup(resolveSourceNettype(reference));
+      if (!sourceNettype) {
+        emitError(getSemanticLocation(net))
+            << "collapsed user-defined net's VPI nettype declaration was not "
+               "preserved";
+        invalid = true;
+        continue;
+      }
+    }
     uint64_t identityId = nextVPINetIdentityId++;
     sim::SimVPINetIdentityDeclOp identity =
         sim::SimVPINetIdentityDeclOp::create(
             builder, getSemanticLocation(operation), identityId,
             descriptor->second.id, scopeId, *sourceType,
             builder.getStringAttr(path),
-            builder.getStringAttr(getDebugName(operation)), retainedVPIType);
+            builder.getStringAttr(getDebugName(operation)), retainedVPIType,
+            sourceNettype);
     identity->setAttr("vpi_properties", netProperties(net));
     retainVPISourceTypeIdentity(operation, identity, retainedVPIType);
     sim::VPIObjectRefAttr reference = sim::VPIObjectRefAttr::get(

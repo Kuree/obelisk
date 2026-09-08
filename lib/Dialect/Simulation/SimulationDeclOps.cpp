@@ -704,6 +704,106 @@ LogicalResult SimVPITypespecDeclOp::verify() {
       reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPINettypeDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "nettype ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty source names");
+  std::optional<uint32_t> kind = vpiKindForTypespec(getTargetType());
+  if (!kind)
+    return emitOpError("declared data type has no concrete VPI typespec");
+  if (getDirectAliasAttr() == FlatSymbolRefAttr::get(getSymNameAttr()))
+    return emitOpError("cannot directly alias itself");
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::NettypeDecl),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult
+SimVPINettypeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimVPIObjectAnchorOp owner =
+      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                getOwnerAttr());
+  if (!owner)
+    return emitOpError("nettype must be owned by a VPI anchor");
+  if (owner.getEnclosingScopeId() != getScopeId())
+    return emitOpError("scope ID does not match the owner anchor");
+  if (!reflection::findVPITraversal(
+          owner.getVpiKind(),
+          static_cast<uint32_t>(reflection::VPIRelationKind::NetTypedefRel),
+          reflection::VPITraversalMode::Iterate))
+    return emitOpError("owner kind does not support vpiNetTypedef traversal");
+  if (FlatSymbolRefAttr alias = getDirectAliasAttr()) {
+    SimVPINettypeDeclOp target =
+        symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, alias);
+    if (!target)
+      return emitOpError("references an unknown direct nettype alias");
+    if (target.getTargetType() != getTargetType())
+      return emitOpError(
+          "direct nettype alias target has a different declared data type");
+    if (target.getResolutionFunctionAttr() != getResolutionFunctionAttr())
+      return emitOpError(
+          "direct nettype alias must preserve the effective resolution "
+          "function");
+  }
+  if (FlatSymbolRefAttr resolver = getResolutionFunctionAttr()) {
+    SimVPIObjectAnchorOp target =
+        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                  resolver);
+    if (!target ||
+        target.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::Function))
+      return emitOpError("resolution function must reference a function VPI "
+                         "anchor");
+  }
+  return success();
+}
+
+static bool hasUserDefinedNetSubtype(Operation *operation) {
+  VPIPropertySetAttr properties = reflectionProperties(operation);
+  if (!properties)
+    return false;
+  for (Attribute attribute : properties.getProperties()) {
+    auto property = cast<VPIPropertyAttr>(attribute);
+    if (property.getSelector().getValue().getZExtValue() != 22)
+      continue;
+    auto value = dyn_cast<IntegerAttr>(property.getValue());
+    return value && value.getValue().getSExtValue() == 14; // vpiNettypeNet
+  }
+  return false;
+}
+
+static bool matchesDeclaredNettype(VPITypeSemanticsAttr declaration,
+                                   VPITypeSemanticsAttr nettype) {
+  // IEEE 1800-2023 6.7.2 permits declaration-added unpacked dimensions on a
+  // user-defined nettype. Stop as soon as the remaining semantic subtree is
+  // the nettype's exact data type so a nettype whose data type is itself an
+  // unpacked array is not stripped accidentally.
+  while (declaration && declaration != nettype &&
+         declaration.getKind() == VPITypeKind::UnpackedArray)
+    declaration = cast<VPITypeSemanticsAttr>(declaration.getChildren()[0]);
+  return declaration == nettype;
+}
+
+LogicalResult
+SimVPINetIdentityDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr nettype = getNettypeAttr();
+  if (!nettype)
+    return success();
+  SimVPINettypeDeclOp target =
+      symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, nettype);
+  if (!target)
+    return emitOpError("references an unknown user-defined nettype");
+  if (!matchesDeclaredNettype(getVpiTypeAttr(), target.getTargetType()))
+    return emitOpError(
+        "VPI type semantics do not match the referenced nettype");
+  if (!hasUserDefinedNetSubtype(*this))
+    return emitOpError(
+        "user-defined nettype reference requires vpiNettypeNet subtype");
+  return success();
+}
+
 LogicalResult SimVPIEnumConstDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "enum-constant ID")) ||
       failed(verifyNonnegative(*this, getOrdinalAttr(), "enum ordinal")))
@@ -824,6 +924,27 @@ LogicalResult SimNetDeclOp::verify() {
   return verifyFixedReflection(
       *this, static_cast<uint16_t>(reflection::VPIObjectKind::Net),
       reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult
+SimNetDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr nettype = getNettypeAttr();
+  if (!nettype)
+    return success();
+  SimVPINettypeDeclOp target =
+      symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, nettype);
+  if (!target)
+    return emitOpError("references an unknown user-defined nettype");
+  if (!getVpiTypeAttr())
+    return emitOpError("user-defined nettype reference requires VPI type "
+                       "semantics");
+  if (!matchesDeclaredNettype(getVpiTypeAttr(), target.getTargetType()))
+    return emitOpError(
+        "VPI type semantics do not match the referenced nettype");
+  if (!hasUserDefinedNetSubtype(*this))
+    return emitOpError(
+        "user-defined nettype reference requires vpiNettypeNet subtype");
+  return success();
 }
 
 LogicalResult SimNetConnectDeclOp::verify() {
@@ -1981,7 +2102,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, statementIds,
       statementSiteIds, storageIds, netIds, driverIds, portIds, connectionIds,
       covergroupIds, classIds, vpiAnchorIds, vpiNetIdentityIds, typespecIds,
-      enumConstIds;
+      nettypeIds, enumConstIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
@@ -1994,6 +2115,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
   SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
+  SmallVector<SimVPINettypeDeclOp> nettypes;
   SmallVector<SimVPITypespecDeclOp> typespecs;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<SimStorageDeclOp> storages;
@@ -2055,6 +2177,10 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
         return failure();
       typespecs.push_back(typespec);
+    } else if (auto nettype = dyn_cast<SimVPINettypeDeclOp>(op)) {
+      if (failed(addId(nettype.getIdAttr(), nettypeIds, "VPI nettype")))
+        return failure();
+      nettypes.push_back(nettype);
     } else if (auto enumConstant = dyn_cast<SimVPIEnumConstDeclOp>(op)) {
       if (failed(addId(enumConstant.getIdAttr(), enumConstIds,
                        "VPI enum constant")))
@@ -2322,6 +2448,35 @@ LogicalResult SimDesignOp::verifyRegions() {
   };
   for (SimVPITypespecDeclOp typespec : typespecs)
     if (failed(verifyTypeReferences(typespec, typespec.getTargetType())))
+      return failure();
+  for (SimVPINettypeDeclOp nettype : nettypes)
+    if (failed(verifyTypeReferences(nettype, nettype.getTargetType())))
+      return failure();
+
+  // Validate the whole direct-alias forest once. Memoizing completed paths
+  // keeps a long legal alias chain linear rather than retraversing every
+  // suffix from every declaration.
+  llvm::DenseMap<Operation *, uint8_t> nettypeAliasState;
+  std::function<LogicalResult(SimVPINettypeDeclOp)> verifyNettypeAlias =
+      [&](SimVPINettypeDeclOp nettype) -> LogicalResult {
+    uint8_t &state = nettypeAliasState[nettype];
+    if (state == 2)
+      return success();
+    if (state == 1)
+      return nettype.emitOpError("direct nettype aliases contain a cycle");
+    state = 1;
+    if (FlatSymbolRefAttr alias = nettype.getDirectAliasAttr()) {
+      SimVPINettypeDeclOp target =
+          symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(nettype,
+                                                                   alias);
+      if (target && failed(verifyNettypeAlias(target)))
+        return failure();
+    }
+    state = 2;
+    return success();
+  };
+  for (SimVPINettypeDeclOp nettype : nettypes)
+    if (failed(verifyNettypeAlias(nettype)))
       return failure();
   for (Operation &op : getBody().front()) {
     VPITypeSemanticsAttr semantic;
@@ -2943,6 +3098,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   if (failed(verifyDense(scopeIds, "scope")) ||
       failed(verifyDense(vpiAnchorIds, "VPI object anchor")) ||
       failed(verifyDense(vpiNetIdentityIds, "VPI net identity")) ||
+      failed(verifyDense(nettypeIds, "VPI nettype")) ||
       failed(verifyDense(typespecIds, "VPI typespec")) ||
       failed(verifyDense(enumConstIds, "VPI enum constant")) ||
       failed(verifyDense(storageIds, "storage")) ||
@@ -3180,6 +3336,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (!scopeIds.count(typespec.getScopeId()))
         return typespec.emitOpError("references an unknown scope ID");
+    } else if (auto nettype = dyn_cast<SimVPINettypeDeclOp>(op)) {
+      if (!scopeIds.count(nettype.getScopeId()))
+        return nettype.emitOpError("references an unknown scope ID");
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (!scopeIds.count(storage.getScopeId()))
         return storage.emitOpError("references an unknown scope ID");

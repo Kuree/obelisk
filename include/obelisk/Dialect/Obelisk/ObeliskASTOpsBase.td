@@ -374,6 +374,8 @@ class ObeliskNetSymbolASTNodeOp<string mnemonic>
         BoolAttr:$is_implicit,
         DefaultValuedAttr<ObeliskSVNetExpansionHint,
           "::obelisk::ir::SVNetExpansionHint::None">:$expansion_hint,
+        OptionalAttr<SymbolRefAttr>:$nettype_symbol,
+        OptionalAttr<StrAttr>:$nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
@@ -403,6 +405,8 @@ class ObeliskNetTypeASTNodeOp<string mnemonic>
         ObeliskSVNetKind:$net_kind,
         TypeAttr:$data_type,
         BoolAttr:$is_builtin,
+        OptionalAttr<SymbolRefAttr>:$aliased_nettype_symbol,
+        OptionalAttr<StrAttr>:$aliased_nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path
       )>;

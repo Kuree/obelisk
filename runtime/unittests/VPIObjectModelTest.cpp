@@ -870,9 +870,9 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
       Automatic::DirectPortConnection);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
-  EXPECT_EQ(requireTraversal(vpiAliasStmt, vpiModule, Mode::Handle)
-                .automaticRelation,
-            Automatic::ParentScope);
+  EXPECT_EQ(
+      requireTraversal(vpiAliasStmt, vpiModule, Mode::Handle).automaticRelation,
+      Automatic::ParentScope);
   EXPECT_EQ(requireTraversal(vpiAliasStmt, vpiInstance, Mode::Handle)
                 .automaticRelation,
             Automatic::ParentScope);
@@ -1501,8 +1501,17 @@ TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
     ASSERT_NE(image.symbolicName, nullptr);
     EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
                  expected.name);
-    EXPECT_EQ(findVPIIntegerPropertyValue(vpiResolvedNetType, expected.value),
-              nullptr);
+    const auto *resolved =
+        findVPIIntegerPropertyValue(vpiResolvedNetType, expected.value);
+    ASSERT_NE(resolved, nullptr) << expected.value;
+    EXPECT_STREQ(resolved->symbolicName, expected.name);
+    VPIObjectModelImageIntegerPropertyValue resolvedImage{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiResolvedNetType, expected.value,
+        resolvedImage));
+    ASSERT_NE(resolvedImage.symbolicName, nullptr);
+    EXPECT_STREQ(reinterpret_cast<const char *>(resolvedImage.symbolicName),
+                 expected.name);
   }
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiNetType));
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiResolvedNetType));
@@ -1519,12 +1528,11 @@ TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
         vpiObjectModelImage, vpiChargeStrength, value, image));
     EXPECT_EQ(image.symbolicName, nullptr);
   }
-  for (uint32_t property : {uint32_t{vpiStrength0},
-                            uint32_t{vpiStrength1}}) {
+  for (uint32_t property : {uint32_t{vpiStrength0}, uint32_t{vpiStrength1}}) {
     EXPECT_TRUE(hasVPIIntegerPropertyDomain(property));
-    for (uint32_t value : {uint32_t{vpiHiZ}, uint32_t{vpiWeakDrive},
-                           uint32_t{vpiPullDrive}, uint32_t{vpiStrongDrive},
-                           uint32_t{vpiSupplyDrive}}) {
+    for (uint32_t value :
+         {uint32_t{vpiHiZ}, uint32_t{vpiWeakDrive}, uint32_t{vpiPullDrive},
+          uint32_t{vpiStrongDrive}, uint32_t{vpiSupplyDrive}}) {
       const auto *strength = findVPIIntegerPropertyValue(property, value);
       ASSERT_NE(strength, nullptr) << property << ": " << value;
       EXPECT_STREQ(strength->symbolicName, "");
@@ -2162,12 +2170,10 @@ TEST(VPIObjectModel, IndexedAccessPoliciesExactlyMatchLrmObjectDiagrams) {
       vpiStringVar,          vpiChandleVar, vpiClassVar,
       vpiVirtualInterfaceVar};
   const KindSet netSources{
-      vpiNet,          vpiNetArray,        vpiEnumNet,
-      vpiIntegerNet,   vpiTimeNet,         vpiUnionNet,
-      vpiShortRealNet, vpiRealNet,         vpiByteNet,
-      vpiShortIntNet,  vpiIntNet,          vpiLongIntNet,
-      vpiBitNet,       vpiInterconnectNet, vpiStructNet,
-      vpiPackedArrayNet};
+      vpiNet,     vpiNetArray,        vpiEnumNet,      vpiIntegerNet,
+      vpiTimeNet, vpiUnionNet,        vpiShortRealNet, vpiRealNet,
+      vpiByteNet, vpiShortIntNet,     vpiIntNet,       vpiLongIntNet,
+      vpiBitNet,  vpiInterconnectNet, vpiStructNet,    vpiPackedArrayNet};
   const std::map<uint32_t, IndexedKind> exactKinds{
       {vpiPort, IndexedKind::PortElement},
       {vpiInterconnectArray, IndexedKind::NetElement}};
@@ -3043,11 +3049,10 @@ TEST(VPIObjectModel, NettypesAndGenericInterconnectMatch2023Diagrams) {
                        {vpiNettypeDecl});
   expectContains(vpiNettypeDecl, vpiTypespec, Mode::Handle,
                  {vpiLogicTypespec, vpiStructTypespec}, {vpiNettypeDecl});
-  expectTargetsExactly(vpiNettypeDecl, vpiWith, Mode::Handle,
-                       {vpiFunction});
+  expectTargetsExactly(vpiNettypeDecl, vpiWith, Mode::Handle, {vpiFunction});
   EXPECT_NE(findVPIProperty(vpiNettypeDecl, vpiName), nullptr);
-  for (uint32_t source : {vpiModule, vpiPackage, vpiInterface, vpiProgram,
-                          vpiGenScope})
+  for (uint32_t source :
+       {vpiModule, vpiPackage, vpiInterface, vpiProgram, vpiGenScope})
     expectTargetsExactly(source, vpiNetTypedef, Mode::Iterate,
                          {vpiNettypeDecl});
 
@@ -3067,7 +3072,6 @@ TEST(VPIObjectModel, NettypesAndGenericInterconnectMatch2023Diagrams) {
   expectContains(vpiInterconnectNet, vpiMember, Mode::Iterate,
                  {vpiNet, vpiInterconnectNet, vpiStructNet});
   expectAbsent(vpiInterconnectArray, vpiTypespec, Mode::Handle);
-
 }
 
 // 37.14-37.17.  Connection relations have deliberately different target
@@ -3148,8 +3152,7 @@ TEST(VPIObjectModel, CallsFramesAssignmentsAndClockingKeepSpecificEdges) {
   EXPECT_STREQ(requireTraversal(vpiContAssign, vpiLhs, Mode::Handle).clause,
                "37.47");
   EXPECT_STREQ(
-      requireTraversal(vpiClockingBlock, vpiClockingEvent, Mode::Handle)
-          .clause,
+      requireTraversal(vpiClockingBlock, vpiClockingEvent, Mode::Handle).clause,
       "37.48");
   EXPECT_STREQ(requireTraversal(vpiAssert, vpiProperty, Mode::Handle).clause,
                "37.50");

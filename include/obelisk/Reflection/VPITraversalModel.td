@@ -838,6 +838,14 @@ def ResolvedNetTypeSupply0
     : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 11, "vpiSupply0">;
 def ResolvedNetTypeUwire
     : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 13, "vpiUwire">;
+def ResolvedNetTypeNettypeNet
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 14, "vpiNettypeNet">;
+def ResolvedNetTypeNettypeNetSelect
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 15,
+        "vpiNettypeNetSelect">;
+def ResolvedNetTypeInterconnect
+    : VPISymbolicPropertyValue<ResolvedNetTypeProperty, 16,
+        "vpiInterconnect">;
 def SaveRestartIDProperty : VPIProperty<"vpiSaveRestartID", 62,
   IntegerProperty, NullOnlyPropertyObjects, "38.9; 38.36.1",
   DynamicProperty, DeniedWhenProtected, 0, NoPropertyObjects,
@@ -966,7 +974,8 @@ def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
    ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
    RealTypespec, StructTypespec, UnionTypespec, BitTypespec, LogicTypespec,
    ArrayTypespec, VoidTypespec, PackedArrayTypespec, SequenceTypespec,
-   PropertyTypespec, EventTypespec, InterfaceTypespec, EnumConst]>;
+   PropertyTypespec, EventTypespec, InterfaceTypespec, EnumConst,
+   NettypeDecl]>;
 def RangeObjects : VPIObjectSet<"RangeObjects", [Range]>;
 def IndexExpressionObjects : VPIObjectSet<"IndexExpressionObjects", [],
   [ExpressionFamily]>;

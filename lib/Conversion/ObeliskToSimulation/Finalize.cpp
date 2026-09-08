@@ -111,9 +111,10 @@ void ObeliskSimFinalizePass::runOnOperation() {
   llvm::StringSet<> executableSymbols;
   module.walk([&](Operation *op) {
     if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
-             sim::SimVPITypespecDeclOp, sim::SimClassDeclOp,
-             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
+             sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
+             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
+             sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))

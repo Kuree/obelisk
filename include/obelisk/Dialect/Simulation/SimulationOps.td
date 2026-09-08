@@ -202,20 +202,23 @@ def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
 }
 
 def SimVPINetIdentityDeclOp : SimOp<"vpi_net_identity.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "declared net identity sharing a collapsed physical net";
   let description = [{
     Preserves a distinct source-declared net after executable topology has
     collapsed it onto `backing_net_id`. The reflection object retains its own
-    name, scope, source type, and fixed properties while value access shares
-    the backing net's state offset. This metadata is immutable and never
-    participates in scheduling or executable lowering.
+    name, scope, source type, optional user-defined nettype identity, and fixed
+    properties while value access shares the backing net's state offset. This
+    metadata is immutable and never participates in scheduling or executable
+    lowering.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$backing_net_id,
                        I64Attr:$scope_id, TypeAttr:$type,
                        StrAttr:$hierarchical_name, StrAttr:$debug_name,
-                       SimVPITypeSemanticsAttr:$vpi_type);
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
   let assemblyFormat = [{
     $id `backed_by` $backing_net_id `in` $scope_id `:` $type
     `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
@@ -255,6 +258,32 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     `in` $enclosing_scope_id (`parent` $parent^)?
     `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPINettypeDeclOp : SimOp<"vpi_nettype.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable user-defined nettype inventory";
+  let description = [{
+    Preserves one source `nettype` declaration after semantic IR is erased.
+    `owner` is its exact lexical VPI anchor, `target_type` is the declared data
+    type, `direct_alias` retains only the immediately named nettype declaration,
+    and `resolution_function` names the effective resolver's function anchor.
+    The declaration is cold reflection inventory and never participates in
+    scheduling or executable lowering.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$direct_alias,
+                       OptionalAttr<FlatSymbolRefAttr>:$resolution_function);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
   }];
   let hasVerifier = 1;
 }
@@ -328,7 +357,10 @@ def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInvento
   let hasVerifier = 1;
 }
 
-def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+def SimNetDeclOp : SimOp<"net.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
   let summary = "immutable resolved-net descriptor";
   let description = [{
     Declares the immutable metadata for a resolved net. `propagation_delays`
@@ -349,7 +381,8 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                        OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
                        OptionalAttr<SimStrength>:$charge_strength,
                        OptionalAttr<UnitAttr>:$internal,
-                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;

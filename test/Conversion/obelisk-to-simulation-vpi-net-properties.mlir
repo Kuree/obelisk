@@ -157,8 +157,8 @@ module {
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.uwire" {{.*}}selector = 22 : i32, value = 13 : i32
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 23 : i32, value = true>, #obelisk_sim.vpi_property<selector = 25 : i32, value = true>, #obelisk_sim.vpi_property<selector = 26 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>, #obelisk_sim.vpi_property<selector = 31 : i32, value = 32 : i32>, #obelisk_sim.vpi_property<selector = 32 : i32, value = 8 : i32>, #obelisk_sim.vpi_property<selector = 43 : i32, value = true>]>
 // CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.vectored" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 24 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
+// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1]" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 16 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
 
 //--- slang.mlir
 

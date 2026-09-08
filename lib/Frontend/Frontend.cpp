@@ -274,14 +274,11 @@ const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
   return *current;
 }
 
-/// Slang exposes the resolver written directly on a nettype declaration but
-/// currently returns null for the LRM alias form `nettype original alias;`.
-/// Resolve that named base explicitly so imported net symbols retain the
-/// original resolution function through arbitrarily long alias chains.
-const slang::ast::SubroutineSymbol *
-getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
-  if (const auto *function = netType.getResolutionFunction())
-    return function;
+/// Resolve the declaration named by the LRM alias form
+/// `nettype original alias;`. Slang exposes the canonical data type but not
+/// this direct VPI identity edge.
+const slang::ast::NetType *
+getDirectAliasedNetType(const slang::ast::NetType &netType) {
   const auto *syntax = netType.getSyntax();
   const auto *scope = netType.getParentScope();
   if (!syntax || !scope ||
@@ -302,8 +299,18 @@ getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
   if (!result.found || result.found == &netType ||
       result.found->kind != slang::ast::SymbolKind::NetType)
     return nullptr;
-  return getEffectiveResolutionFunction(
-      result.found->as<slang::ast::NetType>());
+  return &result.found->as<slang::ast::NetType>();
+}
+
+/// Slang exposes the resolver written directly on a nettype declaration but
+/// currently returns null for aliases. Follow the direct declaration chain so
+/// executable nets retain the effective resolution function.
+const slang::ast::SubroutineSymbol *
+getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
+  if (const auto *function = netType.getResolutionFunction())
+    return function;
+  const auto *aliased = getDirectAliasedNetType(netType);
+  return aliased ? getEffectiveResolutionFunction(*aliased) : nullptr;
 }
 
 // Slang's canonical PackedArrayType inherits signedness from its element type.
@@ -4047,6 +4054,10 @@ private:
         SET_OP_ATTR(ExpansionHint,
                     slangir::NetExpansionHintAttr::get(
                         builder.getContext(), convertEnum(node.expansionHint)));
+      if (node.netType.netKind == slang::ast::NetType::UserDefined)
+        setSymbolReference(attrs, node.netType,
+                           Op::getNettypeSymbolAttrName(operationName),
+                           Op::getNettypePathAttrName(operationName));
       if (const auto *resolutionFunction =
               getEffectiveResolutionFunction(node.netType))
         setSymbolReference(
@@ -4596,6 +4607,10 @@ private:
       SET_OP_ATTR(DataType,
                   TypeAttr::get(typeConverter.convert(node.getDataType())));
       SET_OP_ATTR(IsBuiltin, builder.getBoolAttr(node.isBuiltIn()));
+      if (const auto *aliased = getDirectAliasedNetType(node))
+        setSymbolReference(attrs, *aliased,
+                           Op::getAliasedNettypeSymbolAttrName(operationName),
+                           Op::getAliasedNettypePathAttrName(operationName));
       if (const auto *resolutionFunction = getEffectiveResolutionFunction(node))
         setSymbolReference(
             attrs, *resolutionFunction,

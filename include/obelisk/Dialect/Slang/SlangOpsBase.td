@@ -397,6 +397,8 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
         BoolAttr:$is_implicit,
         DefaultValuedAttr<SlangNetExpansionHint,
           "::obelisk::slangir::NetExpansionHint::None">:$expansion_hint,
+        OptionalAttr<SymbolRefAttr>:$nettype_symbol,
+        OptionalAttr<StrAttr>:$nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
@@ -428,6 +430,8 @@ class SlangNetTypeASTNodeOp<string mnemonic>
         SlangNetKind:$net_kind,
         TypeAttr:$data_type,
         BoolAttr:$is_builtin,
+        OptionalAttr<SymbolRefAttr>:$aliased_nettype_symbol,
+        OptionalAttr<StrAttr>:$aliased_nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path
       )>;

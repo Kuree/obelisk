@@ -424,8 +424,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                 sim::SimDriverDriveInertialPathOp,
                 sim::SimDriverDriveInertialStrengthPairOp,
                 sim::SimDriverDriveInertialPathStrengthPairOp,
-                sim::SimDriverDriveDelayedNetOp,
-                sim::SimDriverDriveChangedOp>(operation)) {
+                sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+                operation)) {
           runtimeFree = false;
           checkpointSafe = false;
         }
@@ -497,10 +497,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
             (void)selectRange(write.getNet(), provenance, inductiveRanges);
-          preserving &=
-              knownStateDomains->isTwoStateWithInductiveRoots(
-                  write.getValue()) &&
-              selectRange(write.getNet(), provenance, localRanges);
+          preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
+                            write.getValue()) &&
+                        selectRange(write.getNet(), provenance, localRanges);
           return;
         }
         if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
@@ -899,8 +898,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation)) {
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation)) {
         supported = false;
         return;
       }
@@ -1024,8 +1023,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation)) {
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation)) {
         probeSupported = false;
         return;
       }
@@ -1060,8 +1059,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     SmallVector<Operation *> publications;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimNBAEnqueueOp, sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation))
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation))
         publications.push_back(operation);
     });
     for (Operation *publication : publications)
@@ -1405,9 +1404,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // transition when it is lowered.  Transition materialization rewrites
       // that publication to Eval ingress, so keep shared coroutine helpers
       // out of the rewrite closure for all source kinds, not just variables.
-      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp,
-              sim::SimDriverDriveOp, sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation))
+      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation))
         privateHelperSet.insert(helper.getOperation());
     });
   bool addedPrivateAncestor;
@@ -3808,10 +3807,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               sim::SimNetDeclOp, sim::SimDriverDeclOp, sim::SimPortDeclOp,
               sim::SimNetConnectDeclOp, sim::SimPassSwitchDeclOp,
               sim::SimClassDeclOp, sim::SimCovergroupDeclOp,
-              sim::SimVPIObjectAnchorOp, sim::SimVPITypespecDeclOp,
-              sim::SimVPIEnumConstDeclOp, sim::SimClassFieldDeclOp,
-              sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
-              operation)) {
+              sim::SimVPIObjectAnchorOp, sim::SimVPINettypeDeclOp,
+              sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
+              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
+              sim::SimRandomConstraintTemplateOp>(operation)) {
         operation->erase();
         continue;
       }

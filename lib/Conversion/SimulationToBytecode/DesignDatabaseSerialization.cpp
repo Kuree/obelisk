@@ -204,10 +204,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPIStatementRelationDeclOp> relationDeclarations;
   SmallVector<sim::SimVPIRelationDeclOp> generalRelationDeclarations;
   SmallVector<sim::SimVPIObjectAnchorOp> anchors;
+  SmallVector<sim::SimVPINettypeDeclOp> nettypes;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
   llvm::StringMap<sim::SimVPIObjectAnchorOp> anchorsBySymbol;
   DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
+  llvm::StringMap<sim::SimVPINettypeDeclOp> nettypesBySymbol;
   llvm::StringMap<sim::SimVPITypespecDeclOp> typespecsBySymbol;
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
@@ -272,6 +274,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         anchorsBySymbol[anchor.getSymName()] = anchor;
         anchorsByInventoryId[anchor.getInventoryId()] = anchor;
       }
+    } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
+      if (includeStatements) {
+        nettypes.push_back(nettype);
+        nettypesBySymbol[nettype.getSymName()] = nettype;
+      }
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (includeStatements) {
         typespecs.push_back(typespec);
@@ -334,14 +341,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
     directPorts.try_emplace(port.getSourceId(), port);
   }
 
-  constexpr uint64_t maxStaticInventoryID = (UINT64_MAX - 2) / 3;
+  constexpr uint64_t maxStaticInventoryID = (UINT64_MAX - 3) / 4;
   auto staticInventoryID = [&](Operation *operation, uint64_t id,
                                uint64_t tag) -> std::optional<uint64_t> {
     if (id > maxStaticInventoryID) {
       operation->emitError("VPI static inventory ID cannot be encoded");
       return std::nullopt;
     }
-    return id * 3 + tag;
+    return id * 4 + tag;
   };
 
   for (Operation &operation : design.getBody().front()) {
@@ -394,6 +401,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          anchor.getVpiKind(), 0, *id,
                          anchor.getEnclosingScopeId(), std::move(name), Type{},
                          0, sourceFor(anchor), true, anchor});
+    } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto id = staticInventoryID(nettype, nettype.getId(), 3);
+      if (!id)
+        return {};
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         static_cast<uint16_t>(VPIObjectKind::NettypeDecl), 0,
+                         *id, nettype.getScopeId(),
+                         nettype.getHierarchicalName().str(), Type{}, 0,
+                         sourceFor(nettype), true, nettype});
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -769,7 +787,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t index;
     uint32_t vpiKind;
   };
-  DenseMap<Operation *, ImageObjectRef> anchorRefs, typespecRefs;
+  DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
   if (includeStatements) {
     for (sim::SimVPIObjectAnchorOp anchor : anchors) {
@@ -796,6 +814,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t index = objectIndices.lookup(typespec);
       typespecRefs[typespec] = {TableKind::Object, index,
                                 objects[index].vpiKind};
+    }
+    for (sim::SimVPINettypeDeclOp nettype : nettypes) {
+      uint32_t index = objectIndices.lookup(nettype);
+      nettypeRefs[nettype] = {TableKind::Object, index, objects[index].vpiKind};
     }
   }
 
@@ -1081,6 +1103,56 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return left.getId() < right.getId();
     });
     DenseMap<Operation *, uint32_t> typedefOrdinals, interfaceTypespecOrdinals;
+
+    llvm::sort(nettypes, [](sim::SimVPINettypeDeclOp left,
+                            sim::SimVPINettypeDeclOp right) {
+      return left.getId() < right.getId();
+    });
+    DenseMap<Operation *, uint32_t> nettypeOrdinals;
+    for (sim::SimVPINettypeDeclOp nettype : nettypes) {
+      auto owner = anchorsBySymbol.find(nettype.getOwnerAttr().getValue());
+      if (owner == anchorsBySymbol.end()) {
+        nettype.emitOpError("VPI nettype owner was not preserved");
+        return {};
+      }
+      ImageObjectRef ownerRef = anchorRefs.lookup(owner->second);
+      ImageObjectRef nettypeRef = nettypeRefs.lookup(nettype);
+      if (failed(addRelation(
+              owner->second, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+              static_cast<uint32_t>(VPIRelationKind::NetTypedefRel),
+              VPITraversalMode::Iterate, nettypeRef.table, nettypeRef.index,
+              nettypeRef.vpiKind, nettypeOrdinals[owner->second]++)))
+        return {};
+      if (FlatSymbolRefAttr alias = nettype.getDirectAliasAttr()) {
+        auto target = nettypesBySymbol.find(alias.getValue());
+        if (target == nettypesBySymbol.end()) {
+          nettype.emitOpError("VPI direct nettype alias was not serialized");
+          return {};
+        }
+        ImageObjectRef targetRef = nettypeRefs.lookup(target->second);
+        if (failed(addRelation(
+                nettype, nettypeRef.table, nettypeRef.index, nettypeRef.vpiKind,
+                static_cast<uint32_t>(VPIRelationKind::NetTypedefAliasRel),
+                VPITraversalMode::Handle, targetRef.table, targetRef.index,
+                targetRef.vpiKind)))
+          return {};
+      }
+      if (FlatSymbolRefAttr resolver = nettype.getResolutionFunctionAttr()) {
+        auto target = anchorsBySymbol.find(resolver.getValue());
+        if (target == anchorsBySymbol.end()) {
+          nettype.emitOpError("VPI nettype resolver was not serialized");
+          return {};
+        }
+        ImageObjectRef targetRef = anchorRefs.lookup(target->second);
+        if (failed(addRelation(nettype, nettypeRef.table, nettypeRef.index,
+                               nettypeRef.vpiKind,
+                               static_cast<uint32_t>(VPIRelationKind::WithRel),
+                               VPITraversalMode::Handle, targetRef.table,
+                               targetRef.index, targetRef.vpiKind)))
+          return {};
+      }
+    }
+
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
       auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
       if (owner == anchorsBySymbol.end()) {
@@ -1187,8 +1259,34 @@ SmallVector<uint8_t> serializeDesignDatabase(
       else if (auto port =
                    dyn_cast_if_present<sim::SimPortDeclOp>(object.identity))
         semantic = port.getVpiTypeAttr();
+      else if (auto nettype = dyn_cast_if_present<sim::SimVPINettypeDeclOp>(
+                   object.identity))
+        semantic = nettype.getTargetType();
       if (!semantic)
         continue;
+      FlatSymbolRefAttr declaredNettype;
+      if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+        declaredNettype = net.getNettypeAttr();
+      else if (auto identity =
+                   dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
+                       object.identity))
+        declaredNettype = identity.getNettypeAttr();
+      if (declaredNettype) {
+        auto target = nettypesBySymbol.find(declaredNettype.getValue());
+        if (target == nettypesBySymbol.end()) {
+          object.identity->emitError("VPI nettype target was not serialized");
+          return {};
+        }
+        ImageObjectRef targetRef = nettypeRefs.lookup(target->second);
+        if (failed(addRelation(object.identity, TableKind::Object,
+                               static_cast<uint32_t>(sourceIndex),
+                               object.vpiKind,
+                               static_cast<uint32_t>(VPIObjectKind::Typespec),
+                               VPITraversalMode::Handle, targetRef.table,
+                               targetRef.index, targetRef.vpiKind)))
+          return {};
+        continue;
+      }
       SymbolRefAttr reference;
       if (ArrayAttr aliases = semantic.getTypedefAliases();
           aliases && !aliases.empty())
@@ -1815,6 +1913,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           semantic.getChildPackedOffsets(), semantic.getChildRandTypes(),
           remaining);
     }
+    if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(object.identity))
+      return nettype.getTargetType();
     return {};
   };
   std::function<std::optional<uint32_t>(sim::VPITypeSemanticsAttr)>
@@ -2194,8 +2294,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (auto [objectIndex, object] : llvm::enumerate(objects))
       if (object.kind == OBELISK_RT_DESIGN_RECORD_NET)
         if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
-          netObjects[net.getId()] =
-              {net, static_cast<uint32_t>(objectIndex)};
+          netObjects[net.getId()] = {net, static_cast<uint32_t>(objectIndex)};
     auto declaredNetType = [&](uint64_t netID) -> std::optional<uint32_t> {
       auto found = netObjects.find(netID);
       if (found == netObjects.end())
@@ -2208,8 +2307,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           fixedProperties.begin(), fixedProperties.end(),
           std::pair{packedSource, uint16_t{22}},
           [](const FixedPropertyRecord &record, const auto &key) {
-            return std::pair{record.sourceIndexAndTable, record.selector} <
-                   key;
+            return std::pair{record.sourceIndexAndTable, record.selector} < key;
           });
       if (property == fixedProperties.end() ||
           property->sourceIndexAndTable != packedSource ||
@@ -2233,8 +2331,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           return;
         }
       }
-      resolvedNetRuns.push_back(
-          {objectIndex, *netType, firstBit, bitCount});
+      resolvedNetRuns.push_back({objectIndex, *netType, firstBit, bitCount});
     };
     ArrayRef<analysis::NetBit> connected = connectivity.getConnectedBits();
     for (const auto &[netID, entry] : netObjects) {
@@ -2244,8 +2341,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (!width)
         continue;
       std::optional<uint32_t> ownType = declaredNetType(netID);
-      auto bit = std::lower_bound(
-          connected.begin(), connected.end(), analysis::NetBit{netID, 0});
+      auto bit = std::lower_bound(connected.begin(), connected.end(),
+                                  analysis::NetBit{netID, 0});
       uint64_t position = 0;
       while (bit != connected.end() && bit->net == netID) {
         if (bit->offset >= *width) {
@@ -2263,8 +2360,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           ArrayRef<analysis::NetBit> dominators =
               connectivity.getDominatingBits(*bit);
           for (analysis::NetBit dominator : dominators) {
-            std::optional<uint32_t> candidate =
-                declaredNetType(dominator.net);
+            std::optional<uint32_t> candidate = declaredNetType(dominator.net);
             if (!candidate || (resolvedType && resolvedType != candidate)) {
               resolvedType.reset();
               break;
@@ -2278,12 +2374,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       appendResolvedRun(objectIndex, position, *width - position, ownType);
     }
-    llvm::sort(resolvedNetRuns,
-               [](const ResolvedNetRunRecord &left,
-                  const ResolvedNetRunRecord &right) {
-                 return std::tie(left.objectIndex, left.firstBit) <
-                        std::tie(right.objectIndex, right.firstBit);
-               });
+    llvm::sort(resolvedNetRuns, [](const ResolvedNetRunRecord &left,
+                                   const ResolvedNetRunRecord &right) {
+      return std::tie(left.objectIndex, left.firstBit) <
+             std::tie(right.objectIndex, right.firstBit);
+    });
 
     // Freeze the effective delay of every reflected net bit. Missing delay
     // metadata and the canonical all--1 per-bit marker both mean immediate

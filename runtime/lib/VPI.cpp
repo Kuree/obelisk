@@ -1041,8 +1041,17 @@ bool fixedPropertyFor(
     VPIFixedPropertyValue &value) {
   obelisk_rt_status status = obelisk_rt_cached_vpi_fixed_property(
       handle->owner->context, handle->cursor, descriptor.property, &value);
-  if (status == OBELISK_RT_OK)
+  if (status == OBELISK_RT_OK) {
+    // IEEE 1800-2023 37.16: the declaration is vpiNettypeNet, while every
+    // selected part of that declaration is vpiNettypeNetSelect. The immutable
+    // image stores the declaration fact once; selection provenance belongs to
+    // this cold query handle and must not be pushed into simulation state.
+    if (descriptor.property == vpiNetType &&
+        handle->form == VPIObjectForm::Indexed &&
+        value.payload == static_cast<uint64_t>(vpiNettypeNet))
+      value.payload = static_cast<uint64_t>(vpiNettypeNetSelect);
     return true;
+  }
   if (status == OBELISK_RT_EOF &&
       (descriptor.valueKind ==
            obelisk::reflection::VPIPropertyValueKind::Boolean ||
@@ -1073,9 +1082,8 @@ bool indexedImagePropertyFor(
   obelisk_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return false;
-  uint64_t bitOffset = handle->form == VPIObjectForm::Indexed
-                           ? handle->selectionBitOffset
-                           : 0;
+  uint64_t bitOffset =
+      handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
   obelisk_rt_status status = obelisk_rt_cached_vpi_resolved_net_type(
       handle->owner->context, handle->cursor, bitOffset, info.bit_width,
       &value);
