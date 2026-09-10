@@ -193,6 +193,24 @@ def SimPortDirection
   let cppNamespace = "::obelisk::sim";
 }
 
+// Exact IEEE 1800 VPI direction values. Keep this distinct from the physical
+// module-port direction above: an IO declaration may be a ref argument or may
+// deliberately have no direction for an interface/modport reference.
+def SimVPIIOUndefined : I32EnumAttrCase<"Undefined", 0, "undefined">;
+def SimVPIIOInput : I32EnumAttrCase<"Input", 1, "input">;
+def SimVPIIOOutput : I32EnumAttrCase<"Output", 2, "output">;
+def SimVPIIOInOut : I32EnumAttrCase<"InOut", 3, "inout">;
+def SimVPIIOMixed : I32EnumAttrCase<"Mixed", 4, "mixed">;
+def SimVPIIONone : I32EnumAttrCase<"None", 5, "none">;
+def SimVPIIORef : I32EnumAttrCase<"Ref", 6, "ref">;
+def SimVPIIODirection
+    : I32EnumAttr<"VPIIODirection", "source IO-declaration direction", [
+        SimVPIIOUndefined, SimVPIIOInput, SimVPIIOOutput, SimVPIIOInOut,
+        SimVPIIOMixed, SimVPIIONone, SimVPIIORef
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimManagedWatchField
     : I32EnumAttrCase<"Field", 1, "field">;
 def SimManagedWatchContainerSize

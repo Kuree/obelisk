@@ -95,6 +95,14 @@ def AutomaticDirectPortConnection :
 // module, while vpiModuleArray/vpiInstanceArray name the array itself.
 def AutomaticIndexedContainer :
     VPIAutomaticRelation<"IndexedContainer", 4>;
+// DefinitionMember materializes definition-owned declaration topology through
+// an elaborated instance's compact definition/specialization binding.  The
+// reverse relation retains that instance provenance on the synthetic member
+// cursor, so no per-instance declaration object is required in the image.
+def AutomaticDefinitionMember :
+    VPIAutomaticRelation<"DefinitionMember", 5>;
+def AutomaticDefinitionMemberParent :
+    VPIAutomaticRelation<"DefinitionMemberParent", 6>;
 
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other
@@ -1275,7 +1283,7 @@ def ModuleTchks : VPITraversalEdge<ModuleSource, Tchk, IterateMode,
 def ModuleDefParams : VPITraversalEdge<ModuleSource, DefParam, IterateMode,
   DefParamObjects, NoOrder, "37.5">;
 def ModuleIODecls : VPITraversalEdge<ModuleSource, IODecl, IterateMode,
-  IODeclObjects, NoOrder, "37.5">;
+  IODeclObjects, NoOrder, "37.5", 0, AutomaticDefinitionMember>;
 def ModuleAliasStmts : VPITraversalEdge<ModuleSource, AliasStmt, IterateMode,
   AliasStmtObjects, NoOrder, "37.5", 1>;
 def ModuleClockingBlocks : VPITraversalEdge<ModuleSource, ClockingBlock,

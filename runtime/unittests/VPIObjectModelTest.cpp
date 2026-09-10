@@ -831,9 +831,9 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
       continue;
     EXPECT_FALSE(edge.statementContainment)
         << keyName(edge.sourceType, edge.selector, edge.mode);
-    EXPECT_EQ(edge.mode, edge.automaticRelation == Automatic::DirectChild
-                             ? Mode::Iterate
-                             : Mode::Handle)
+    bool isIteration = edge.automaticRelation == Automatic::DirectChild ||
+                       edge.automaticRelation == Automatic::DefinitionMember;
+    EXPECT_EQ(edge.mode, isIteration ? Mode::Iterate : Mode::Handle)
         << keyName(edge.sourceType, edge.selector, edge.mode);
   }
 
@@ -870,6 +870,12 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(
       requireTraversal(vpiPort, vpiLowConn, Mode::Handle).automaticRelation,
       Automatic::DirectPortConnection);
+  EXPECT_EQ(
+      requireTraversal(vpiModule, vpiIODecl, Mode::Iterate).automaticRelation,
+      Automatic::DefinitionMember);
+  EXPECT_EQ(
+      requireTraversal(vpiIODecl, vpiInstance, Mode::Handle).automaticRelation,
+      Automatic::DefinitionMemberParent);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
   EXPECT_EQ(

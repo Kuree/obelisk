@@ -1387,6 +1387,120 @@ materializeDesignDescriptors(ModuleOp module,
     source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
   }
 
+  // IO declarations are source-definition members, not the per-instance
+  // vpiPort connection objects emitted below. Preserve their invariant
+  // identity once, then share effective type sets across all instances with
+  // the same elaborated specialization.
+  struct DefinitionMemberSignature {
+    std::string name;
+    Location location;
+    sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
+  };
+  struct DefinitionMemberPlan {
+    bool initialized = false;
+    SmallVector<DefinitionMemberSignature> signatures;
+    SmallVector<FlatSymbolRefAttr> memberSymbols;
+    llvm::DenseMap<Attribute, FlatSymbolRefAttr> specializations;
+  };
+  struct DefinitionInstancePlan {
+    semantic::SVInstanceBodySymbolOp body;
+    sim::SimScopeDeclOp scope;
+    FlatSymbolRefAttr definition;
+  };
+  llvm::StringMap<DefinitionMemberPlan> definitionMemberPlans;
+  SmallVector<DefinitionInstancePlan> definitionInstancePlans;
+  uint64_t nextDefinitionMemberId = 0;
+  uint64_t nextDefinitionSpecializationId = 0;
+  semanticRoot.walk<WalkOrder::PreOrder>(
+      [&](semantic::SVInstanceBodySymbolOp body) {
+        if (isCompileTimeOnlyInstanceMember(body))
+          return;
+        uint64_t scopeId = scopes.lookup(body);
+        if (scopeId >= scopes.declarations.size())
+          return;
+        sim::SimScopeDeclOp scope = scopes.declarations[scopeId];
+        FlatSymbolRefAttr definition = scope.getVpiDefinitionAttr();
+        if (!definition || sim::vpiKindForScope(scope) !=
+                               static_cast<uint32_t>(VPIKind::Module))
+          return;
+
+        SmallVector<DefinitionMemberSignature> signatures;
+        for (Operation &child : body.getBody().front()) {
+          sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
+          if (auto port = dyn_cast<semantic::SVPortSymbolOp>(child)) {
+            switch (port.getDirection()) {
+            case semantic::SVArgumentDirection::In:
+              direction = sim::VPIIODirection::Input;
+              break;
+            case semantic::SVArgumentDirection::Out:
+              direction = sim::VPIIODirection::Output;
+              break;
+            case semantic::SVArgumentDirection::InOut:
+              direction = sim::VPIIODirection::InOut;
+              break;
+            case semantic::SVArgumentDirection::Ref:
+              direction = sim::VPIIODirection::Ref;
+              break;
+            }
+          } else if (!isa<semantic::SVInterfacePortSymbolOp>(child)) {
+            // A multi-port is a vpiPort association. Its leaf declarations
+            // appear as ordinary SVPortSymbolOps and are the IODecl objects.
+            continue;
+          }
+          StringRef name = getDebugName(&child);
+          // Empty ordered-port slots are connectivity placeholders, not IO
+          // declarations in the source definition's VPI object graph.
+          if (name.empty())
+            continue;
+          signatures.push_back(
+              {name.str(), getSemanticLocation(&child), direction});
+        }
+
+        DefinitionMemberPlan &plan =
+            definitionMemberPlans[definition.getValue()];
+        if (!plan.initialized) {
+          plan.initialized = true;
+          plan.signatures = signatures;
+          for (auto [ordinal, signature] : llvm::enumerate(signatures)) {
+            std::string symbol = (Twine("__obelisk_vpi_definition_member_") +
+                                  Twine(nextDefinitionMemberId++))
+                                     .str();
+            auto declaration = sim::SimVPIDefinitionMemberDeclOp::create(
+                builder, signature.location, builder.getStringAttr(symbol),
+                definition,
+                builder.getI32IntegerAttr(
+                    static_cast<uint32_t>(VPIKind::IODecl)),
+                builder.getI32IntegerAttr(static_cast<uint32_t>(ordinal)),
+                builder.getStringAttr(signature.name),
+                sim::VPIIODirectionAttr::get(builder.getContext(),
+                                             signature.direction));
+            plan.memberSymbols.push_back(FlatSymbolRefAttr::get(declaration));
+          }
+        } else if (plan.signatures.size() != signatures.size()) {
+          emitError(getSemanticLocation(body))
+              << "instances of one definition disagree on IO declaration "
+                 "count";
+          invalid = true;
+          return;
+        } else {
+          for (auto [expected, actual] :
+               llvm::zip_equal(plan.signatures, signatures)) {
+            if (expected.name != actual.name ||
+                expected.direction != actual.direction) {
+              emitError(getSemanticLocation(body))
+                  << "instances of one definition disagree on IO declaration "
+                     "identity";
+              invalid = true;
+              return;
+            }
+          }
+        }
+        if (!signatures.empty())
+          definitionInstancePlans.push_back({body, scope, definition});
+      });
+  if (invalid)
+    return failure();
+
   // Continuous assignments and net aliases are scope-owned VPI statement
   // objects even though continuous assignments also have an internal
   // executable code unit. Preserve their source identity independently of
@@ -1780,6 +1894,97 @@ materializeDesignDescriptors(ModuleOp module,
     }
     return *layers;
   };
+
+  llvm::StringMap<semantic::SVPortConnectionOp> connectionsByFormalPath;
+  for (semantic::SVPortConnectionOp connection : portAliases.connections)
+    connectionsByFormalPath.try_emplace(connection.getFormalPath(), connection);
+
+  // Type identities can only be frozen after source typedef references have
+  // been remapped to persistent simulation symbols. Keep template discovery
+  // above independent of that ordering, then hash-cons the complete effective
+  // type vector here into one specialization shared by equivalent instances.
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    SmallVector<sim::VPITypeSemanticsAttr> effectiveTypes;
+    SmallVector<Operation *> memberSources;
+    effectiveTypes.reserve(definitionMemberPlans[instance.definition.getValue()]
+                               .signatures.size());
+    memberSources.reserve(definitionMemberPlans[instance.definition.getValue()]
+                              .signatures.size());
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      Operation *member = &child;
+      sim::VPITypeSemanticsAttr effectiveType;
+      if (auto semanticType =
+              member->getAttrOfType<TypeAttr>("semantic_type")) {
+        FailureOr<sim::VPITypeSemanticsAttr> converted = makeVPITypeSemantics(
+            semanticType.getValue(), getSemanticLocation(member),
+            typedefLayersFor(member), member);
+        if (failed(converted)) {
+          invalid = true;
+          break;
+        }
+        effectiveType = *converted;
+      } else if (isa<semantic::SVInterfacePortSymbolOp>(member)) {
+        auto connection =
+            connectionsByFormalPath.find(getHierarchyName(member));
+        if (connection != connectionsByFormalPath.end()) {
+          FailureOr<sim::VPITypeSemanticsAttr> converted = makeVPITypeSemantics(
+              connection->second.getFormalType(), getSemanticLocation(member),
+              typedefLayersFor(connection->second), connection->second);
+          if (failed(converted)) {
+            invalid = true;
+            break;
+          }
+          effectiveType = *converted;
+        }
+      }
+      if (!effectiveType) {
+        emitError(getSemanticLocation(member))
+            << "VPI IO declaration is missing semantic type metadata";
+        invalid = true;
+        break;
+      }
+      effectiveTypes.push_back(effectiveType);
+      memberSources.push_back(member);
+    }
+    if (invalid)
+      continue;
+
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    SmallVector<Attribute> keyElements;
+    keyElements.reserve(effectiveTypes.size());
+    for (sim::VPITypeSemanticsAttr type : effectiveTypes)
+      keyElements.push_back(type);
+    ArrayAttr key = builder.getArrayAttr(keyElements);
+    FlatSymbolRefAttr specialization = plan.specializations.lookup(key);
+    if (!specialization) {
+      std::string symbol = (Twine("__obelisk_vpi_definition_specialization_") +
+                            Twine(nextDefinitionSpecializationId++))
+                               .str();
+      auto declaration = sim::SimVPIDefinitionSpecializationDeclOp::create(
+          builder, getSemanticLocation(instance.body),
+          builder.getStringAttr(symbol), instance.definition);
+      specialization = FlatSymbolRefAttr::get(declaration);
+      plan.specializations.try_emplace(key, specialization);
+      for (auto [member, type, source] :
+           llvm::zip_equal(plan.memberSymbols, effectiveTypes, memberSources)) {
+        auto binding = sim::SimVPIDefinitionMemberSpecializationOp::create(
+            builder, getSemanticLocation(instance.body), specialization, member,
+            type);
+        if (auto identity = source->getAttrOfType<IntegerAttr>(
+                vpiSourceTypeIdentityAttrName))
+          binding->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+      }
+    }
+    instance.scope.setVpiSpecializationAttr(specialization);
+  }
+  if (invalid)
+    return failure();
+
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Operation *,
                                                      sim::VPITypeSemanticsAttr)>
       remapVPITypeAliases;

@@ -986,7 +986,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
       builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{},
-      IntegerAttr{}, FlatSymbolRefAttr{}));
+      IntegerAttr{}, FlatSymbolRefAttr{}, FlatSymbolRefAttr{}));
   llvm::DenseMap<Operation *, std::pair<FlatSymbolRefAttr, StringAttr>>
       definitionSymbols;
   llvm::StringMap<semantic::SVDefinitionSymbolOp> definitionsBySymbol;
@@ -1085,7 +1085,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         builder.getStringAttr(getHierarchyName(body)),
         builder.getStringAttr(getDebugName(body)), interfaceType,
         body->getAttrOfType<IntegerAttr>("vpi_scope_kind"),
-        materializeDefinition(body));
+        materializeDefinition(body), FlatSymbolRefAttr{});
     if (interfaceType) {
       auto instance =
           dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());

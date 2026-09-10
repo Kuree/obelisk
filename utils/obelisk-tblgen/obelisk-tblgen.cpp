@@ -890,7 +890,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"DirectChild", 1},
       {"ParentScope", 2},
       {"DirectPortConnection", 3},
-      {"IndexedContainer", 4}};
+      {"IndexedContainer", 4},
+      {"DefinitionMember", 5},
+      {"DefinitionMemberParent", 6}};
   const std::pair<StringRef, uint32_t> supportedIndexedAccessKinds[] = {
       {"PortElement", 0},
       {"NetElement", 1},
@@ -1620,7 +1622,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         return false;
       }
       StringRef requiredMode =
-          automaticName == "DirectChild" ? "Iterate" : "Handle";
+          automaticName == "DirectChild" || automaticName == "DefinitionMember"
+              ? "Iterate"
+              : "Handle";
       if (mode->getValueAsString("cppName") != requiredMode) {
         PrintError(edge->getLoc(),
                    "automatic design relation has incompatible traversal "
@@ -1693,6 +1697,52 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
           PrintError(edge->getLoc(),
                      "automatic direct-port connection selector is not "
                      "vpiLowConn");
+          return false;
+        }
+      }
+      if (automaticName == "DefinitionMember") {
+        for (const Record *source : expandedSets.lookup(sources))
+          if (source->getValueAsString("apiName") != "vpiModule") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member source is not a module");
+            return false;
+          }
+        for (const Record *target : expandedSets.lookup(targets))
+          if (target->getValueAsString("apiName") != "vpiIODecl") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member target is not an io "
+                       "declaration");
+            return false;
+          }
+        if (selector->getValueAsString("apiName") != "vpiIODecl") {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member selector is not "
+                     "vpiIODecl");
+          return false;
+        }
+      }
+      if (automaticName == "DefinitionMemberParent") {
+        for (const Record *source : expandedSets.lookup(sources))
+          if (source->getValueAsString("apiName") != "vpiIODecl") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member parent source is not an "
+                       "io declaration");
+            return false;
+          }
+        if (selector->getValueAsString("apiName") != "vpiInstance") {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member parent selector is not "
+                     "vpiInstance");
+          return false;
+        }
+        bool acceptsModule = llvm::any_of(
+            expandedSets.lookup(targets), [](const Record *target) {
+              return target->getValueAsString("apiName") == "vpiModule";
+            });
+        if (!acceptsModule) {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member parent target does not "
+                     "include vpiModule");
           return false;
         }
       }
@@ -3474,13 +3524,15 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
                      (previousSelector == selector && previousMode < mode)));
     if (!ordered || targets >= setCount || mode > 1 || order > 4 ||
         !automaticTargetsValid ||
-        automaticRelation >
-            static_cast<uint8_t>(VPIAutomaticRelation::IndexedContainer) ||
+        automaticRelation > static_cast<uint8_t>(
+                                VPIAutomaticRelation::DefinitionMemberParent) ||
         (automaticRelation !=
              static_cast<uint8_t>(VPIAutomaticRelation::None) &&
          ((flagsAndOrder & vpiObjectModelImageStatementContainment) != 0 ||
-          mode != (automaticRelation == static_cast<uint8_t>(
-                                            VPIAutomaticRelation::DirectChild)
+          mode != ((automaticRelation == static_cast<uint8_t>(
+                                             VPIAutomaticRelation::DirectChild) ||
+                    automaticRelation == static_cast<uint8_t>(
+                                             VPIAutomaticRelation::DefinitionMember))
                        ? 1
                        : 0))) ||
         (mode == 0 && order != 0))

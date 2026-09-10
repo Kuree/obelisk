@@ -2119,8 +2119,10 @@ std::vector<uint8_t> makeDefinitionPropertyDatabase() {
   std::vector<uint8_t> bytes = makeDatabase();
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
   const uint64_t definitionOffset = directoryOffset + kSemanticDirectorySize;
-  const uint64_t bindingOffset = definitionOffset + 16;
-  bytes.resize(bindingOffset + 8, 0);
+  const uint64_t bindingOffset =
+      definitionOffset + obelisk::reflection::DefinitionLayout.size;
+  bytes.resize(
+      bindingOffset + obelisk::reflection::DefinitionBindingLayout.size, 0);
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 176, definitionOffset);
@@ -2134,6 +2136,7 @@ std::vector<uint8_t> makeDefinitionPropertyDatabase() {
   put32(bytes, definitionOffset + 12, 29);
   put32(bytes, bindingOffset, 0); // The only scope record.
   put32(bytes, bindingOffset + 4, 0);
+  put32(bytes, bindingOffset + 8, UINT32_MAX); // No member specialization.
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
@@ -6346,10 +6349,14 @@ TEST(DesignDatabase, RejectsMalformedDefinitionBindings) {
     put64(bytes, directory + 200, 0); // Serialized definition is unbound.
   });
   rejected([](auto &bytes, uint32_t directory, uint64_t, uint64_t binding) {
-    bytes.resize(bytes.size() + 8, 0);
+    bytes.resize(
+        bytes.size() + obelisk::reflection::DefinitionBindingLayout.size, 0);
     put64(bytes, 24, bytes.size());
     put64(bytes, directory + 200, 2);
-    std::memcpy(bytes.data() + binding + 8, bytes.data() + binding, 8);
+    std::memcpy(bytes.data() + binding +
+                    obelisk::reflection::DefinitionBindingLayout.size,
+                bytes.data() + binding,
+                obelisk::reflection::DefinitionBindingLayout.size);
   });
 }
 

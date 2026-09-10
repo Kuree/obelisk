@@ -100,13 +100,19 @@ module {
 // array members.
 //--- frontend.sv
 `celldefine
-module cellmod;
+module cellmod(input logic [7:0] a, output logic z);
 endmodule
 `endcelldefine
+
+module param_cell #(parameter int W = 8) (input logic [W-1:0] p);
+endmodule
 
 module automatic top;
   cellmod u();
   cellmod v();
+  param_cell #(.W(8)) p8a();
+  param_cell #(.W(8)) p8b();
+  param_cell #(.W(4)) p4();
   iftop i();
 endmodule
 
@@ -126,7 +132,22 @@ endpackage
 // FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[PROGRAM:[^ ]+]] type 602 name "ptop"
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "ptop" {{.*}} vpi_kind 602 definition @[[PROGRAM]]
 // FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[CELL:[^ ]+]] type 32 name "cellmod"
-// FRONTEND-COUNT-2: obelisk_sim.scope.decl {{.*}} vpi_kind 32 definition @[[CELL]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.decl @[[CELL_A:[^ ]+]] of @[[CELL]] type 28 ordinal 0 name "a" direction input
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.decl @[[CELL_Z:[^ ]+]] of @[[CELL]] type 28 ordinal 1 name "z" direction output
+// FRONTEND-DAG: obelisk_sim.vpi_definition_specialization.decl @[[CELL_SPEC:[^ ]+]] of @[[CELL]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.specialize @[[CELL_SPEC]] member @[[CELL_A]] type
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.specialize @[[CELL_SPEC]] member @[[CELL_Z]] type
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.u" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.v" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[PARAM:[^ ]+]] type 32 name "param_cell"
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.decl @[[PARAM_P:[^ ]+]] of @[[PARAM]] type 28 ordinal 0 name "p" direction input
+// FRONTEND-DAG: obelisk_sim.vpi_definition_specialization.decl @[[PARAM_SPEC8:[^ ]+]] of @[[PARAM]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.specialize @[[PARAM_SPEC8]] member @[[PARAM_P]] type <kind = packed_array, {{.*}} range = [7, 0]
+// FRONTEND-DAG: obelisk_sim.vpi_definition_specialization.decl @[[PARAM_SPEC4:[^ ]+]] of @[[PARAM]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.specialize @[[PARAM_SPEC4]] member @[[PARAM_P]] type <kind = packed_array, {{.*}} range = [3, 0]
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p8a" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC8]]
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p8b" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC8]]
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p4" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC4]]
 // FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[INTERFACE:[^ ]+]] type 601 name "iftop"
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.i" {{.*}} vpi_kind 601 definition @[[INTERFACE]]
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>

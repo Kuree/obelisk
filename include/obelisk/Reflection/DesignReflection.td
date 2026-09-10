@@ -308,16 +308,80 @@ def DefinitionFlags : ReflectionField<"Flags", 2, U16LE>;
 def DefinitionName : ReflectionField<"Name", 4, U32LE>;
 def DefinitionFile : ReflectionField<"File", 8, U32LE>;
 def DefinitionLine : ReflectionField<"Line", 12, U32LE>;
-def Definition : ReflectionLayout<"Definition", 16,
+def DefinitionFirstMember : ReflectionField<"FirstMember", 16, U32LE>;
+def DefinitionMemberCount : ReflectionField<"MemberCount", 20, U32LE>;
+def DefinitionFirstMemberRelation
+    : ReflectionField<"FirstMemberRelation", 24, U32LE>;
+def DefinitionMemberRelationCount
+    : ReflectionField<"MemberRelationCount", 28, U32LE>;
+def Definition : ReflectionLayout<"Definition", 32,
   [DefinitionVPIKind, DefinitionFlags, DefinitionName, DefinitionFile,
-   DefinitionLine]>;
+   DefinitionLine, DefinitionFirstMember, DefinitionMemberCount,
+   DefinitionFirstMemberRelation, DefinitionMemberRelationCount]>;
 
 def DefinitionBindingSource
     : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
 def DefinitionBindingDefinition
     : ReflectionField<"Definition", 4, U32LE>;
-def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 8,
-  [DefinitionBindingSource, DefinitionBindingDefinition]>;
+def DefinitionBindingSpecialization
+    : ReflectionField<"Specialization", 8, U32LE>;
+def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 12,
+  [DefinitionBindingSource, DefinitionBindingDefinition,
+   DefinitionBindingSpecialization]>;
+
+// Definition-owned declarations are templates. A synthetic runtime cursor
+// combines one of these member indices with an elaborated instance scope.
+// Flags currently carry the exact low-byte vpiDirection value for IODecl.
+def DefinitionMemberName : ReflectionField<"Name", 0, U32LE>;
+def DefinitionMemberFile : ReflectionField<"File", 4, U32LE>;
+def DefinitionMemberLine : ReflectionField<"Line", 8, U32LE>;
+def DefinitionMemberColumn : ReflectionField<"Column", 12, U32LE>;
+def DefinitionMemberVPIKind : ReflectionField<"VPIKind", 16, U16LE>;
+def DefinitionMemberFlags : ReflectionField<"Flags", 18, U16LE>;
+def DefinitionMember : ReflectionLayout<"DefinitionMember", 20,
+  [DefinitionMemberName, DefinitionMemberFile, DefinitionMemberLine,
+   DefinitionMemberColumn, DefinitionMemberVPIKind, DefinitionMemberFlags]>;
+
+// One range per generated (definition, selector) adjacency group; the compact
+// target list is shared by every instance and its position is the ordinal.
+def DefinitionMemberRelationSelector
+    : ReflectionField<"Selector", 0, U16LE>;
+def DefinitionMemberRelationFlags
+    : ReflectionField<"Flags", 2, U16LE>;
+def DefinitionMemberRelationFirstTarget
+    : ReflectionField<"FirstTarget", 4, U32LE>;
+def DefinitionMemberRelationTargetCount
+    : ReflectionField<"TargetCount", 8, U32LE>;
+def DefinitionMemberRelation : ReflectionLayout<"DefinitionMemberRelation", 12,
+  [DefinitionMemberRelationSelector, DefinitionMemberRelationFlags,
+   DefinitionMemberRelationFirstTarget,
+   DefinitionMemberRelationTargetCount]>;
+def DefinitionMemberRelationTargetMember
+    : ReflectionField<"Member", 0, U32LE>;
+def DefinitionMemberRelationTarget
+    : ReflectionLayout<"DefinitionMemberRelationTarget", 4,
+      [DefinitionMemberRelationTargetMember]>;
+
+// Effective member types are hash-consed as complete definition
+// specializations. DefinitionBinding selects one specialization per instance.
+def DefinitionSpecializationDefinition
+    : ReflectionField<"Definition", 0, U32LE>;
+def DefinitionSpecializationFirstBinding
+    : ReflectionField<"FirstBinding", 4, U32LE>;
+def DefinitionSpecializationBindingCount
+    : ReflectionField<"BindingCount", 8, U32LE>;
+def DefinitionSpecialization : ReflectionLayout<"DefinitionSpecialization", 12,
+  [DefinitionSpecializationDefinition,
+   DefinitionSpecializationFirstBinding,
+   DefinitionSpecializationBindingCount]>;
+def DefinitionSpecializationBindingMember
+    : ReflectionField<"Member", 0, U32LE>;
+def DefinitionSpecializationBindingSemanticType
+    : ReflectionField<"SemanticType", 4, U32LE>;
+def DefinitionSpecializationBinding
+    : ReflectionLayout<"DefinitionSpecializationBinding", 8,
+      [DefinitionSpecializationBindingMember,
+       DefinitionSpecializationBindingSemanticType]>;
 
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
@@ -402,7 +466,27 @@ def SemanticDirectoryDefinitionBindingOffset
     : ReflectionField<"DefinitionBindingOffset", 192, U64LE>;
 def SemanticDirectoryDefinitionBindingCount
     : ReflectionField<"DefinitionBindingCount", 200, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 208,
+def SemanticDirectoryDefinitionMemberOffset
+    : ReflectionField<"DefinitionMemberOffset", 208, U64LE>;
+def SemanticDirectoryDefinitionMemberCount
+    : ReflectionField<"DefinitionMemberCount", 216, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationOffset
+    : ReflectionField<"DefinitionMemberRelationOffset", 224, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationCount
+    : ReflectionField<"DefinitionMemberRelationCount", 232, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationTargetOffset
+    : ReflectionField<"DefinitionMemberRelationTargetOffset", 240, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationTargetCount
+    : ReflectionField<"DefinitionMemberRelationTargetCount", 248, U64LE>;
+def SemanticDirectoryDefinitionSpecializationOffset
+    : ReflectionField<"DefinitionSpecializationOffset", 256, U64LE>;
+def SemanticDirectoryDefinitionSpecializationCount
+    : ReflectionField<"DefinitionSpecializationCount", 264, U64LE>;
+def SemanticDirectoryDefinitionSpecializationBindingOffset
+    : ReflectionField<"DefinitionSpecializationBindingOffset", 272, U64LE>;
+def SemanticDirectoryDefinitionSpecializationBindingCount
+    : ReflectionField<"DefinitionSpecializationBindingCount", 280, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 288,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -425,7 +509,17 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 208,
    SemanticDirectoryDefinitionOffset,
    SemanticDirectoryDefinitionCount,
    SemanticDirectoryDefinitionBindingOffset,
-   SemanticDirectoryDefinitionBindingCount]>;
+   SemanticDirectoryDefinitionBindingCount,
+   SemanticDirectoryDefinitionMemberOffset,
+   SemanticDirectoryDefinitionMemberCount,
+   SemanticDirectoryDefinitionMemberRelationOffset,
+   SemanticDirectoryDefinitionMemberRelationCount,
+   SemanticDirectoryDefinitionMemberRelationTargetOffset,
+   SemanticDirectoryDefinitionMemberRelationTargetCount,
+   SemanticDirectoryDefinitionSpecializationOffset,
+   SemanticDirectoryDefinitionSpecializationCount,
+   SemanticDirectoryDefinitionSpecializationBindingOffset,
+   SemanticDirectoryDefinitionSpecializationBindingCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

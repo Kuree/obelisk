@@ -334,7 +334,8 @@ def VPIEarlyContainersIODecls : VPITraversalEdge<
     Task, Function]>, IODecl, IterateMode, IODeclObjects, NoOrder,
   "37.13">;
 def VPIEarlyIODeclInstance : VPITraversalEdge<IODeclObjects, InstanceRel,
-  HandleMode, VPIEarlyInstances, NoOrder, "37.13">;
+  HandleMode, VPIEarlyInstances, NoOrder, "37.13", 0,
+  AutomaticDefinitionMemberParent>;
 def VPIEarlyIODeclUdpDefn : VPITraversalEdge<IODeclObjects, UdpDefn,
   HandleMode, VPIObjectSet<"EarlyUdpDefnTarget", [UdpDefn]>, NoOrder,
   "37.13; 37.36">;

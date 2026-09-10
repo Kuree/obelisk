@@ -98,6 +98,57 @@ def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source declaration owned by a VPI definition";
+  let description = [{
+    Stores definition-invariant declaration identity once. Elaborated scopes
+    reach the member through their definition binding; specialization-specific
+    type and value metadata is carried by separate compact bindings. These ops
+    are cold reflection inventory and never participate in scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition, I32Attr:$vpi_kind,
+                       I32Attr:$ordinal, StrAttr:$member_name,
+                       OptionalAttr<SimVPIIODirection>:$direction);
+  let assemblyFormat = [{
+    $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
+    `name` $member_name (`direction` $direction^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionSpecializationDeclOp
+    : SimOp<"vpi_definition_specialization.decl", [
+        Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "shared elaborated specialization of a VPI definition";
+  let description = [{
+    Names one unique ordered set of effective member types and immutable
+    values. Any number of elaborated scopes may reference the specialization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$sym_name `of` $definition attr-dict";
+}
+
+def SimVPIDefinitionMemberSpecializationOp
+    : SimOp<"vpi_definition_member.specialize", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "effective type of one member in a shared specialization";
+  let arguments = (ins FlatSymbolRefAttr:$specialization,
+                       FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$effective_type);
+  let assemblyFormat = [{
+    $specialization `member` $member `type` $effective_type attr-dict
+  }];
+}
+
 def SimScopeDeclOp : SimOp<"scope.decl", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
@@ -108,11 +159,13 @@ def SimScopeDeclOp : SimOp<"scope.decl", [
                        OptionalAttr<StrAttr>:$debug_name,
                        OptionalAttr<StrAttr>:$interface_type,
                        OptionalAttr<I32Attr>:$vpi_kind,
-                       OptionalAttr<FlatSymbolRefAttr>:$vpi_definition);
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_definition,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_specialization);
   let assemblyFormat = [{$id (`parent` $parent^)?
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
     (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)?
-    (`definition` $vpi_definition^)? attr-dict}];
+    (`definition` $vpi_definition^)?
+    (`specialization` $vpi_specialization^)? attr-dict}];
   let hasVerifier = 1;
 }
 

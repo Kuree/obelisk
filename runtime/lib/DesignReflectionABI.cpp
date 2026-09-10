@@ -78,22 +78,42 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 208);
+static_assert(SemanticDirectoryLayout.size == 288);
 static_assert(field::SemanticDirectoryStaticObjectOffset == 160);
 static_assert(field::SemanticDirectoryStaticObjectCount == 168);
 static_assert(field::SemanticDirectoryDefinitionOffset == 176);
 static_assert(field::SemanticDirectoryDefinitionCount == 184);
 static_assert(field::SemanticDirectoryDefinitionBindingOffset == 192);
 static_assert(field::SemanticDirectoryDefinitionBindingCount == 200);
-static_assert(DefinitionLayout.size == 16);
+static_assert(field::SemanticDirectoryDefinitionMemberOffset == 208);
+static_assert(field::SemanticDirectoryDefinitionMemberCount == 216);
+static_assert(field::SemanticDirectoryDefinitionMemberRelationOffset == 224);
+static_assert(field::SemanticDirectoryDefinitionMemberRelationCount == 232);
+static_assert(field::SemanticDirectoryDefinitionMemberRelationTargetOffset ==
+              240);
+static_assert(field::SemanticDirectoryDefinitionMemberRelationTargetCount ==
+              248);
+static_assert(field::SemanticDirectoryDefinitionSpecializationOffset == 256);
+static_assert(field::SemanticDirectoryDefinitionSpecializationCount == 264);
+static_assert(field::SemanticDirectoryDefinitionSpecializationBindingOffset ==
+              272);
+static_assert(field::SemanticDirectoryDefinitionSpecializationBindingCount ==
+              280);
+static_assert(DefinitionLayout.size == 32);
 static_assert(field::DefinitionVPIKind == 0);
 static_assert(field::DefinitionFlags == 2);
 static_assert(field::DefinitionName == 4);
 static_assert(field::DefinitionFile == 8);
 static_assert(field::DefinitionLine == 12);
-static_assert(DefinitionBindingLayout.size == 8);
+static_assert(DefinitionBindingLayout.size == 12);
 static_assert(field::DefinitionBindingSourceIndexAndTable == 0);
 static_assert(field::DefinitionBindingDefinition == 4);
+static_assert(field::DefinitionBindingSpecialization == 8);
+static_assert(DefinitionMemberLayout.size == 20);
+static_assert(DefinitionMemberRelationLayout.size == 12);
+static_assert(DefinitionMemberRelationTargetLayout.size == 4);
+static_assert(DefinitionSpecializationLayout.size == 12);
+static_assert(DefinitionSpecializationBindingLayout.size == 8);
 static_assert(FixedPropertyLayout.size == 16);
 static_assert(field::FixedPropertySourceIndexAndTable == 0);
 static_assert(field::FixedPropertySelector == 4);

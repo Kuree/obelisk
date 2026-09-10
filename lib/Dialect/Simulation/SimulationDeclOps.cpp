@@ -302,9 +302,63 @@ LogicalResult SimVPIDefinitionDeclOp::verify() {
   }
 }
 
+LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
+  if (getMemberName().empty())
+    return emitOpError("requires a nonempty member name");
+  if (getMemberName().contains('\0'))
+    return emitOpError("member name contains an embedded NUL");
+  if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "member ordinal")))
+    return failure();
+  using Kind = reflection::VPIObjectKind;
+  if (static_cast<Kind>(getVpiKind()) != Kind::IODecl)
+    return emitOpError("currently requires vpiIODecl member kind");
+  if (!getDirectionAttr())
+    return emitOpError("vpiIODecl member requires a direction");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!definition)
+    return emitOpError("references an unknown VPI definition");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionSpecializationDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+          *this, getDefinitionAttr()))
+    return emitOpError("references an unknown VPI definition");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto specialization =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionSpecializationDeclOp>(
+          *this, getSpecializationAttr());
+  auto member =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr());
+  if (!specialization)
+    return emitOpError("references an unknown VPI definition specialization");
+  if (!member)
+    return emitOpError("references an unknown VPI definition member");
+  if (specialization.getDefinitionAttr() != member.getDefinitionAttr())
+    return emitOpError(
+        "member and specialization reference different VPI definitions");
+  return success();
+}
+
 LogicalResult
 SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   FlatSymbolRefAttr reference = getVpiDefinitionAttr();
+  FlatSymbolRefAttr specializationRef = getVpiSpecializationAttr();
+  if (specializationRef && !reference)
+    return emitOpError("VPI specialization requires a VPI definition");
   if (!reference)
     return success();
   if (!getParentAttr())
@@ -315,6 +369,16 @@ SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("references an unknown VPI definition");
   if (definition.getVpiKind() != effectiveScopeVPIKind(*this))
     return emitOpError("VPI definition kind disagrees with the scope kind");
+  if (!specializationRef)
+    return success();
+  auto specialization =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionSpecializationDeclOp>(
+          *this, specializationRef);
+  if (!specialization)
+    return emitOpError("references an unknown VPI definition specialization");
+  if (specialization.getDefinitionAttr() != reference)
+    return emitOpError(
+        "VPI specialization and scope reference different definitions");
   return success();
 }
 
@@ -2207,6 +2271,10 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
+  SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
+  SmallVector<SimVPIDefinitionSpecializationDeclOp> definitionSpecializations;
+  SmallVector<SimVPIDefinitionMemberSpecializationOp>
+      definitionMemberSpecializations;
   llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
   SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
@@ -2256,6 +2324,14 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementRelations.push_back(relation);
     } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
       vpiRelations.push_back(relation);
+    } else if (auto member = dyn_cast<SimVPIDefinitionMemberDeclOp>(op)) {
+      definitionMembers.push_back(member);
+    } else if (auto specialization =
+                   dyn_cast<SimVPIDefinitionSpecializationDeclOp>(op)) {
+      definitionSpecializations.push_back(specialization);
+    } else if (auto binding =
+                   dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op)) {
+      definitionMemberSpecializations.push_back(binding);
     } else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op)) {
       if (failed(addId(identity.getIdAttr(), vpiNetIdentityIds,
                        "VPI net identity")))
@@ -2315,6 +2391,71 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto function = dyn_cast<SimFuncOp>(op)) {
       functions.push_back(function);
     }
+  }
+
+  llvm::DenseMap<Attribute,
+                 llvm::DenseMap<uint64_t, SimVPIDefinitionMemberDeclOp>>
+      definitionMemberOrdinals;
+  SmallVector<Attribute> definitionMemberOrder;
+  for (SimVPIDefinitionMemberDeclOp member : definitionMembers) {
+    auto [definitionEntry, newDefinition] =
+        definitionMemberOrdinals.try_emplace(member.getDefinitionAttr());
+    if (newDefinition)
+      definitionMemberOrder.push_back(member.getDefinitionAttr());
+    auto &ordinals = definitionEntry->second;
+    auto [sameOrdinal, inserted] =
+        ordinals.try_emplace(member.getOrdinal(), member);
+    if (!inserted)
+      return member.emitOpError()
+             << "duplicates member ordinal " << member.getOrdinal()
+             << " in the same VPI definition (first declared by "
+             << sameOrdinal->second.getSymName() << ")";
+  }
+  for (Attribute definition : definitionMemberOrder) {
+    const auto &ordinals = definitionMemberOrdinals.find(definition)->second;
+    for (uint64_t ordinal = 0; ordinal != ordinals.size(); ++ordinal)
+      if (!ordinals.contains(ordinal))
+        return emitOpError()
+               << "VPI definition " << definition
+               << " member ordinals must be dense declaration order";
+  }
+
+  llvm::DenseMap<Attribute, llvm::DenseSet<Attribute>> specializedMembers;
+  for (SimVPIDefinitionMemberSpecializationOp binding :
+       definitionMemberSpecializations) {
+    auto &members = specializedMembers[binding.getSpecializationAttr()];
+    if (!members.insert(binding.getMemberAttr()).second)
+      return binding.emitOpError(
+          "duplicates a member binding in the same VPI specialization");
+  }
+  for (SimVPIDefinitionSpecializationDeclOp specialization :
+       definitionSpecializations) {
+    size_t expectedMemberCount = 0;
+    if (auto definition =
+            definitionMemberOrdinals.find(specialization.getDefinitionAttr());
+        definition != definitionMemberOrdinals.end())
+      expectedMemberCount = definition->second.size();
+    size_t actualMemberCount = 0;
+    auto specializationMembers = specializedMembers.find(
+        FlatSymbolRefAttr::get(specialization.getSymNameAttr()));
+    if (specializationMembers != specializedMembers.end())
+      actualMemberCount = specializationMembers->second.size();
+    if (actualMemberCount != expectedMemberCount)
+      return specialization.emitOpError()
+             << "must bind every member in its VPI definition (expected "
+             << expectedMemberCount << ", got " << actualMemberCount << ")";
+  }
+  for (Operation &op : getBody().front()) {
+    auto scope = dyn_cast<SimScopeDeclOp>(op);
+    if (!scope || !scope.getVpiDefinitionAttr() ||
+        scope.getVpiSpecializationAttr())
+      continue;
+    auto definition =
+        definitionMemberOrdinals.find(scope.getVpiDefinitionAttr());
+    if (definition != definitionMemberOrdinals.end() &&
+        !definition->second.empty())
+      return scope.emitOpError(
+          "VPI definition with members requires a specialization");
   }
 
   llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
@@ -2583,6 +2724,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       semantic = identity.getVpiTypeAttr();
     else if (auto port = dyn_cast<SimPortDeclOp>(op))
       semantic = port.getVpiTypeAttr();
+    else if (auto specialization =
+                 dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op))
+      semantic = specialization.getEffectiveTypeAttr();
     if (!semantic)
       continue;
     if (failed(verifyTypeReferences(&op, semantic)))

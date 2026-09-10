@@ -3800,7 +3800,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation &operation : design.getBody().front())
       nested.push_back(&operation);
     for (Operation *operation : nested) {
-      if (isa<sim::SimVPIDefinitionDeclOp, sim::SimScopeDeclOp,
+      if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionMemberDeclOp,
+              sim::SimVPIDefinitionSpecializationDeclOp,
+              sim::SimVPIDefinitionMemberSpecializationOp, sim::SimScopeDeclOp,
               sim::SimCodeUnitDeclOp, sim::SimStatementDeclOp,
               sim::SimStatementSiteDeclOp, sim::SimVPIStatementRelationDeclOp,
               sim::SimVPIRelationDeclOp, sim::SimVPINetIdentityDeclOp,

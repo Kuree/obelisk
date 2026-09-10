@@ -35,8 +35,13 @@ constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
-static_assert(DefinitionLayout.size == 16);
-static_assert(DefinitionBindingLayout.size == 8);
+static_assert(DefinitionLayout.size == 32);
+static_assert(DefinitionBindingLayout.size == 12);
+static_assert(DefinitionMemberLayout.size == 20);
+static_assert(DefinitionMemberRelationLayout.size == 12);
+static_assert(DefinitionMemberRelationTargetLayout.size == 4);
+static_assert(DefinitionSpecializationLayout.size == 12);
+static_assert(DefinitionSpecializationBindingLayout.size == 8);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
@@ -205,10 +210,35 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionRecord {
     sim::SimVPIDefinitionDeclOp declaration;
     Source source;
+    uint32_t firstMember = 0;
+    uint32_t memberCount = 0;
+    uint32_t firstMemberRelation = 0;
+    uint32_t memberRelationCount = 0;
   };
   struct DefinitionBindingRecord {
     uint32_t sourceIndexAndTable = 0;
     uint32_t definition = 0;
+    uint32_t specialization = UINT32_MAX;
+  };
+  struct DefinitionMemberRecord {
+    sim::SimVPIDefinitionMemberDeclOp declaration;
+    Source source;
+    uint32_t definition = 0;
+  };
+  struct DefinitionMemberRelationRecord {
+    uint16_t selector = 0;
+    uint32_t firstTarget = 0;
+    uint32_t targetCount = 0;
+  };
+  struct DefinitionSpecializationRecord {
+    sim::SimVPIDefinitionSpecializationDeclOp declaration;
+    uint32_t definition = 0;
+    uint32_t firstBinding = 0;
+    uint32_t bindingCount = 0;
+  };
+  struct DefinitionSpecializationBindingRecord {
+    uint32_t member = 0;
+    uint32_t semanticType = 0;
   };
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
@@ -234,7 +264,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<sim::SimVPIDefinitionDeclOp> definitionDeclarations;
+  SmallVector<sim::SimVPIDefinitionMemberDeclOp> definitionMemberDeclarations;
+  SmallVector<sim::SimVPIDefinitionSpecializationDeclOp>
+      definitionSpecializationDeclarations;
+  SmallVector<sim::SimVPIDefinitionMemberSpecializationOp>
+      definitionMemberSpecializations;
   llvm::StringMap<sim::SimVPIDefinitionDeclOp> definitionsBySymbol;
+  llvm::StringMap<sim::SimVPIDefinitionMemberDeclOp> definitionMembersBySymbol;
+  llvm::StringMap<sim::SimVPIDefinitionSpecializationDeclOp>
+      definitionSpecializationsBySymbol;
   llvm::StringMap<sim::SimVPIObjectAnchorOp> anchorsBySymbol;
   DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
   llvm::StringMap<sim::SimVPINettypeDeclOp> nettypesBySymbol;
@@ -244,6 +282,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<FixedPropertyRecord> fixedProperties;
   SmallVector<DefinitionRecord> definitions;
   SmallVector<DefinitionBindingRecord> definitionBindings;
+  SmallVector<DefinitionMemberRecord> definitionMembers;
+  SmallVector<DefinitionMemberRelationRecord> definitionMemberRelations;
+  SmallVector<uint32_t> definitionMemberRelationTargets;
+  SmallVector<DefinitionSpecializationRecord> definitionSpecializations;
+  SmallVector<DefinitionSpecializationBindingRecord>
+      definitionSpecializationBindings;
   DenseMap<uint32_t, uint32_t> definitionForSource;
   SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
   SmallVector<NetDelayRunRecord> netDelayRuns;
@@ -304,6 +348,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionDeclarations.push_back(definition);
         definitionsBySymbol[definition.getSymName()] = definition;
       }
+    } else if (auto member =
+                   dyn_cast<sim::SimVPIDefinitionMemberDeclOp>(operation)) {
+      if (includeStatements) {
+        definitionMemberDeclarations.push_back(member);
+        definitionMembersBySymbol[member.getSymName()] = member;
+      }
+    } else if (auto specialization =
+                   dyn_cast<sim::SimVPIDefinitionSpecializationDeclOp>(
+                       operation)) {
+      if (includeStatements) {
+        definitionSpecializationDeclarations.push_back(specialization);
+        definitionSpecializationsBySymbol[specialization.getSymName()] =
+            specialization;
+      }
+    } else if (auto binding =
+                   dyn_cast<sim::SimVPIDefinitionMemberSpecializationOp>(
+                       operation)) {
+      if (includeStatements)
+        definitionMemberSpecializations.push_back(binding);
     } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (includeStatements) {
         anchors.push_back(anchor);
@@ -743,10 +806,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, uint32_t> scopeIndices, codeUnitObjectIndices,
       statementIndices, statementKinds;
   DenseMap<Operation *, uint32_t> objectIndices, staticObjectIndices;
+  DenseMap<Operation *, uint32_t> definitionIndices, definitionMemberIndices,
+      definitionSpecializationIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
       canonicalNetTargetIndices, physicalNetObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+
+  auto automaticEdges = [](uint32_t sourceKind) {
+    auto first = std::lower_bound(
+        std::begin(vpiTraversals), std::end(vpiTraversals), sourceKind,
+        [](const VPITraversalDescriptor &edge, uint32_t kind) {
+          return edge.sourceType < kind;
+        });
+    auto last = first;
+    while (last != std::end(vpiTraversals) && last->sourceType == sourceKind)
+      ++last;
+    return std::make_pair(first, last);
+  };
 
   if (includeStatements) {
     DenseSet<Operation *> referencedDefinitions;
@@ -765,7 +842,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
     llvm::sort(definitionDeclarations, [](auto left, auto right) {
       return left.getSymName() < right.getSymName();
     });
-    DenseMap<Operation *, uint32_t> definitionIndices;
     for (sim::SimVPIDefinitionDeclOp definition : definitionDeclarations) {
       if (!referencedDefinitions.contains(definition))
         continue;
@@ -795,7 +871,107 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       definitionIndices[definition] = static_cast<uint32_t>(definitions.size());
-      definitions.push_back({definition, std::move(source)});
+      definitions.push_back({definition, std::move(source), 0, 0, 0, 0});
+    }
+
+    llvm::sort(definitionMemberDeclarations, [&](auto left, auto right) {
+      auto leftDefinition =
+          definitionsBySymbol.find(left.getDefinitionAttr().getValue());
+      auto rightDefinition =
+          definitionsBySymbol.find(right.getDefinitionAttr().getValue());
+      uint32_t leftIndex =
+          leftDefinition == definitionsBySymbol.end()
+              ? UINT32_MAX
+              : definitionIndices.lookup(leftDefinition->second);
+      uint32_t rightIndex =
+          rightDefinition == definitionsBySymbol.end()
+              ? UINT32_MAX
+              : definitionIndices.lookup(rightDefinition->second);
+      return std::make_tuple(leftIndex, left.getOrdinal()) <
+             std::make_tuple(rightIndex, right.getOrdinal());
+    });
+    for (sim::SimVPIDefinitionMemberDeclOp member :
+         definitionMemberDeclarations) {
+      auto definition =
+          definitionsBySymbol.find(member.getDefinitionAttr().getValue());
+      if (definition == definitionsBySymbol.end() ||
+          !definitionIndices.count(definition->second) ||
+          definitionMembers.size() == UINT32_MAX) {
+        member.emitOpError("VPI definition member cannot be encoded");
+        return {};
+      }
+      uint32_t definitionIndex = definitionIndices.lookup(definition->second);
+      DefinitionRecord &owner = definitions[definitionIndex];
+      if (owner.memberCount == 0)
+        owner.firstMember = static_cast<uint32_t>(definitionMembers.size());
+      if (member.getOrdinal() != owner.memberCount) {
+        member.emitOpError(
+            "VPI definition member ordinals must be dense and unique");
+        return {};
+      }
+      Source source = sourceFor(member);
+      if (member.getMemberName().contains('\0') ||
+          StringRef(source.file).contains('\0') ||
+          (source.file.empty() && source.lineColumn != 0) ||
+          (source.lineColumn >> 32) > INT32_MAX) {
+        member.emitOpError("VPI definition member source cannot be encoded");
+        return {};
+      }
+      definitionMemberIndices[member] =
+          static_cast<uint32_t>(definitionMembers.size());
+      definitionMembers.push_back({member, std::move(source), definitionIndex});
+      ++owner.memberCount;
+    }
+
+    // Build one compact target range for each generated definition-member
+    // traversal. The ranges and target lists are shared by every instance.
+    for (auto [definitionIndex, definition] : llvm::enumerate(definitions)) {
+      definition.firstMemberRelation =
+          static_cast<uint32_t>(definitionMemberRelations.size());
+      auto [edgeFirst, edgeLast] = automaticEdges(
+          static_cast<uint32_t>(definition.declaration.getVpiKind()));
+      for (auto edge = edgeFirst; edge != edgeLast; ++edge) {
+        if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember)
+          continue;
+        uint32_t firstTarget =
+            static_cast<uint32_t>(definitionMemberRelationTargets.size());
+        for (uint32_t ordinal = 0; ordinal != definition.memberCount;
+             ++ordinal) {
+          uint32_t memberIndex = definition.firstMember + ordinal;
+          if (vpiObjectSetContains(
+                  edge->targets,
+                  definitionMembers[memberIndex].declaration.getVpiKind()))
+            definitionMemberRelationTargets.push_back(memberIndex);
+        }
+        uint32_t count =
+            static_cast<uint32_t>(definitionMemberRelationTargets.size()) -
+            firstTarget;
+        if (count == 0)
+          continue;
+        definitionMemberRelations.push_back(
+            {static_cast<uint16_t>(edge->selector), firstTarget, count});
+        ++definition.memberRelationCount;
+      }
+    }
+
+    llvm::sort(definitionSpecializationDeclarations, [](auto left, auto right) {
+      return left.getSymName() < right.getSymName();
+    });
+    for (sim::SimVPIDefinitionSpecializationDeclOp specialization :
+         definitionSpecializationDeclarations) {
+      auto definition = definitionsBySymbol.find(
+          specialization.getDefinitionAttr().getValue());
+      if (definition == definitionsBySymbol.end() ||
+          !definitionIndices.count(definition->second) ||
+          definitionSpecializations.size() == UINT32_MAX) {
+        specialization.emitOpError(
+            "VPI definition specialization cannot be encoded");
+        return {};
+      }
+      definitionSpecializationIndices[specialization] =
+          static_cast<uint32_t>(definitionSpecializations.size());
+      definitionSpecializations.push_back(
+          {specialization, definitionIndices.lookup(definition->second), 0, 0});
     }
     for (auto [scopeIndex, scope] : llvm::enumerate(scopes)) {
       FlatSymbolRefAttr reference = scope.getVpiDefinitionAttr();
@@ -809,8 +985,26 @@ SmallVector<uint8_t> serializeDesignDatabase(
         scope.emitOpError("VPI definition binding cannot be encoded");
         return {};
       }
-      definitionBindings.push_back(
-          {packedSource, definitionIndices.lookup(found->second)});
+      uint32_t specializationIndex = UINT32_MAX;
+      if (FlatSymbolRefAttr specialization = scope.getVpiSpecializationAttr()) {
+        auto specialized =
+            definitionSpecializationsBySymbol.find(specialization.getValue());
+        if (specialized == definitionSpecializationsBySymbol.end() ||
+            !definitionSpecializationIndices.count(specialized->second)) {
+          scope.emitOpError("VPI definition specialization cannot be encoded");
+          return {};
+        }
+        specializationIndex =
+            definitionSpecializationIndices.lookup(specialized->second);
+        if (definitionSpecializations[specializationIndex].definition !=
+            definitionIndices.lookup(found->second)) {
+          scope.emitOpError("VPI specialization belongs to another definition");
+          return {};
+        }
+      }
+      definitionBindings.push_back({packedSource,
+                                    definitionIndices.lookup(found->second),
+                                    specializationIndex});
       definitionForSource[packedSource] =
           definitionIndices.lookup(found->second);
     }
@@ -862,17 +1056,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t source = (uint64_t{sourceIndex} << 32) |
                       (uint64_t{selector} << 16) | packedSource;
     return std::pair(source, packedTarget);
-  };
-  auto automaticEdges = [](uint32_t sourceKind) {
-    auto first = std::lower_bound(
-        std::begin(vpiTraversals), std::end(vpiTraversals), sourceKind,
-        [](const VPITraversalDescriptor &edge, uint32_t kind) {
-          return edge.sourceType < kind;
-        });
-    auto last = first;
-    while (last != std::end(vpiTraversals) && last->sourceType == sourceKind)
-      ++last;
-    return std::make_pair(first, last);
   };
   auto addAutomaticRelation =
       [&](TableKind sourceTable, uint32_t sourceIndex, uint32_t sourceKind,
@@ -2287,6 +2470,58 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       semanticRootBindings.push_back({packed, *rootIndex});
     }
+    SmallVector<SmallVector<DefinitionSpecializationBindingRecord>>
+        bindingsBySpecialization(definitionSpecializations.size());
+    for (sim::SimVPIDefinitionMemberSpecializationOp binding :
+         definitionMemberSpecializations) {
+      auto specialization = definitionSpecializationsBySymbol.find(
+          binding.getSpecializationAttr().getValue());
+      auto member =
+          definitionMembersBySymbol.find(binding.getMemberAttr().getValue());
+      if (specialization == definitionSpecializationsBySymbol.end() ||
+          member == definitionMembersBySymbol.end() ||
+          !definitionSpecializationIndices.count(specialization->second) ||
+          !definitionMemberIndices.count(member->second)) {
+        binding.emitOpError(
+            "VPI member specialization references unserialized inventory");
+        return {};
+      }
+      uint32_t specializationIndex =
+          definitionSpecializationIndices.lookup(specialization->second);
+      uint32_t memberIndex = definitionMemberIndices.lookup(member->second);
+      if (definitionSpecializations[specializationIndex].definition !=
+          definitionMembers[memberIndex].definition) {
+        binding.emitOpError("VPI member belongs to another definition");
+        return {};
+      }
+      sim::VPITypeSemanticsAttr semantic = binding.getEffectiveTypeAttr();
+      std::optional<uint32_t> rootIndex = addSemanticType(semantic);
+      if (!rootIndex) {
+        binding.emitOpError("could not serialize effective VPI member type");
+        return {};
+      }
+      bindingsBySpecialization[specializationIndex].push_back(
+          {memberIndex, *rootIndex});
+    }
+    for (auto [index, bindings] : llvm::enumerate(bindingsBySpecialization)) {
+      llvm::sort(bindings, [](const auto &left, const auto &right) {
+        return left.member < right.member;
+      });
+      if (std::adjacent_find(bindings.begin(), bindings.end(),
+                             [](const auto &left, const auto &right) {
+                               return left.member == right.member;
+                             }) != bindings.end()) {
+        definitionSpecializations[index].declaration.emitOpError(
+            "duplicates an effective VPI definition member binding");
+        return {};
+      }
+      DefinitionSpecializationRecord &specialization =
+          definitionSpecializations[index];
+      specialization.firstBinding =
+          static_cast<uint32_t>(definitionSpecializationBindings.size());
+      specialization.bindingCount = static_cast<uint32_t>(bindings.size());
+      llvm::append_range(definitionSpecializationBindings, bindings);
+    }
     llvm::sort(semanticRootBindings,
                [](const SemanticRootBindingRecord &left,
                   const SemanticRootBindingRecord &right) {
@@ -2778,6 +3013,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (!definition.source.file.empty())
       intern(definition.source.file);
   }
+  for (DefinitionMemberRecord &member : definitionMembers) {
+    intern(member.declaration.getMemberName());
+    if (!member.source.file.empty())
+      intern(member.source.file);
+  }
   for (const FixedPropertyRecord &property : fixedProperties)
     if (property.kindAndFlags ==
         static_cast<uint16_t>(VPIPropertyValueKind::String))
@@ -2842,9 +3082,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
       staticObjectOffset + staticObjects.size() * StaticObjectLayout.size;
   uint64_t definitionBindingOffset =
       definitionOffset + definitions.size() * DefinitionLayout.size;
-  uint64_t stringOffset =
+  uint64_t definitionMemberOffset =
       definitionBindingOffset +
       definitionBindings.size() * DefinitionBindingLayout.size;
+  uint64_t definitionMemberRelationOffset =
+      definitionMemberOffset +
+      definitionMembers.size() * DefinitionMemberLayout.size;
+  uint64_t definitionMemberRelationTargetOffset =
+      definitionMemberRelationOffset +
+      definitionMemberRelations.size() * DefinitionMemberRelationLayout.size;
+  uint64_t definitionSpecializationOffset =
+      definitionMemberRelationTargetOffset +
+      definitionMemberRelationTargets.size() *
+          DefinitionMemberRelationTargetLayout.size;
+  uint64_t definitionSpecializationBindingOffset =
+      definitionSpecializationOffset +
+      definitionSpecializations.size() * DefinitionSpecializationLayout.size;
+  uint64_t stringOffset = definitionSpecializationBindingOffset +
+                          definitionSpecializationBindings.size() *
+                              DefinitionSpecializationBindingLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -3109,6 +3365,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setDefinitionCount(definitions.size());
     writer.setDefinitionBindingOffset(definitionBindingOffset);
     writer.setDefinitionBindingCount(definitionBindings.size());
+    writer.setDefinitionMemberOffset(definitionMemberOffset);
+    writer.setDefinitionMemberCount(definitionMembers.size());
+    writer.setDefinitionMemberRelationOffset(definitionMemberRelationOffset);
+    writer.setDefinitionMemberRelationCount(definitionMemberRelations.size());
+    writer.setDefinitionMemberRelationTargetOffset(
+        definitionMemberRelationTargetOffset);
+    writer.setDefinitionMemberRelationTargetCount(
+        definitionMemberRelationTargets.size());
+    writer.setDefinitionSpecializationOffset(definitionSpecializationOffset);
+    writer.setDefinitionSpecializationCount(definitionSpecializations.size());
+    writer.setDefinitionSpecializationBindingOffset(
+        definitionSpecializationBindingOffset);
+    writer.setDefinitionSpecializationBindingCount(
+        definitionSpecializationBindings.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -3204,12 +3474,66 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        ? 0
                        : static_cast<uint32_t>(intern(definition.source.file)));
     writer.setLine(static_cast<uint32_t>(definition.source.lineColumn >> 32));
+    writer.setFirstMember(definition.firstMember);
+    writer.setMemberCount(definition.memberCount);
+    writer.setFirstMemberRelation(definition.firstMemberRelation);
+    writer.setMemberRelationCount(definition.memberRelationCount);
   }
   for (auto [index, binding] : llvm::enumerate(definitionBindings)) {
     DefinitionBindingWriter writer(output.data() + definitionBindingOffset +
                                    index * DefinitionBindingLayout.size);
     writer.setSourceIndexAndTable(binding.sourceIndexAndTable);
     writer.setDefinition(binding.definition);
+    writer.setSpecialization(binding.specialization);
+  }
+  for (auto [index, member] : llvm::enumerate(definitionMembers)) {
+    DefinitionMemberWriter writer(output.data() + definitionMemberOffset +
+                                  index * DefinitionMemberLayout.size);
+    writer.setName(
+        static_cast<uint32_t>(intern(member.declaration.getMemberName())));
+    writer.setFile(member.source.file.empty()
+                       ? 0
+                       : static_cast<uint32_t>(intern(member.source.file)));
+    writer.setLine(static_cast<uint32_t>(member.source.lineColumn >> 32));
+    writer.setColumn(static_cast<uint32_t>(member.source.lineColumn));
+    writer.setVPIKind(static_cast<uint16_t>(member.declaration.getVpiKind()));
+    writer.setFlags(
+        member.declaration.getDirectionAttr()
+            ? static_cast<uint16_t>(member.declaration.getDirection().value())
+            : 0);
+  }
+  for (auto [index, relation] : llvm::enumerate(definitionMemberRelations)) {
+    DefinitionMemberRelationWriter writer(
+        output.data() + definitionMemberRelationOffset +
+        index * DefinitionMemberRelationLayout.size);
+    writer.setSelector(relation.selector);
+    writer.setFlags(0);
+    writer.setFirstTarget(relation.firstTarget);
+    writer.setTargetCount(relation.targetCount);
+  }
+  for (auto [index, member] :
+       llvm::enumerate(definitionMemberRelationTargets)) {
+    DefinitionMemberRelationTargetWriter writer(
+        output.data() + definitionMemberRelationTargetOffset +
+        index * DefinitionMemberRelationTargetLayout.size);
+    writer.setMember(member);
+  }
+  for (auto [index, specialization] :
+       llvm::enumerate(definitionSpecializations)) {
+    DefinitionSpecializationWriter writer(
+        output.data() + definitionSpecializationOffset +
+        index * DefinitionSpecializationLayout.size);
+    writer.setDefinition(specialization.definition);
+    writer.setFirstBinding(specialization.firstBinding);
+    writer.setBindingCount(specialization.bindingCount);
+  }
+  for (auto [index, binding] :
+       llvm::enumerate(definitionSpecializationBindings)) {
+    DefinitionSpecializationBindingWriter writer(
+        output.data() + definitionSpecializationBindingOffset +
+        index * DefinitionSpecializationBindingLayout.size);
+    writer.setMember(binding.member);
+    writer.setSemanticType(binding.semanticType);
   }
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +

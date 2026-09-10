@@ -1433,6 +1433,16 @@ struct DesignDatabaseCache {
   uint64_t definitionCount = 0;
   uint64_t definitionBindings = 0;
   uint64_t definitionBindingCount = 0;
+  uint64_t definitionMembers = 0;
+  uint64_t definitionMemberCount = 0;
+  uint64_t definitionMemberRelations = 0;
+  uint64_t definitionMemberRelationCount = 0;
+  uint64_t definitionMemberRelationTargets = 0;
+  uint64_t definitionMemberRelationTargetCount = 0;
+  uint64_t definitionSpecializations = 0;
+  uint64_t definitionSpecializationCount = 0;
+  uint64_t definitionSpecializationBindings = 0;
+  uint64_t definitionSpecializationBindingCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };

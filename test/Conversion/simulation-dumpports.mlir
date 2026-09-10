@@ -18,7 +18,39 @@ module attributes {
 } {
   obelisk_sim.design @dumpports {
     obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d"
+    obelisk_sim.vpi_definition.decl @d_def type 32 name "d"
+    obelisk_sim.vpi_definition_member.decl @d_a of @d_def type 28 ordinal 0
+        name "a" direction input loc("ports.sv":2:10)
+    obelisk_sim.vpi_definition_member.decl @d_io of @d_def type 28 ordinal 1
+        name "io" direction inout loc("ports.sv":2:31)
+    obelisk_sim.vpi_definition_member.decl @d_slice of @d_def type 28 ordinal 2
+        name "slice" direction output loc("ports.sv":2:49)
+    obelisk_sim.vpi_definition_member.decl @d_ref of @d_def type 28 ordinal 3
+        name "r" direction ref loc("ports.sv":2:67)
+    obelisk_sim.vpi_definition_member.decl @d_iface of @d_def type 28 ordinal 4
+        name "iface" direction undefined loc("ports.sv":2:78)
+    obelisk_sim.vpi_definition_specialization.decl @d_spec of @d_def
+    obelisk_sim.vpi_definition_member.specialize @d_spec member @d_a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [7, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @d_spec member @d_io type
+        #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @d_spec member @d_slice type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = true,
+          isFourState = false, range = [3, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @d_spec member @d_ref type
+        #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @d_spec member @d_iface type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d" vpi_kind 32
+        definition @d_def specialization @d_spec
+    // A second instance deliberately shares the definition and complete type
+    // specialization without cloning any of the five IO declaration records.
+    obelisk_sim.scope.decl 2 parent 0 hierarchy "top.e" vpi_kind 32
+        definition @d_def specialization @d_spec
     obelisk_sim.vpi_object.anchor @top_d id 0 type 32 in 1 ordinal 0
         hierarchy "top.d" debug "d" {
       backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>

@@ -2531,6 +2531,17 @@ bool isDimensionForTypespec(uint32_t publicType, uint32_t semanticKind,
 bool isDimensionForVPIObject(uint32_t publicType, uint32_t semanticKind,
                              uint32_t semanticFlags,
                              bool suppressDimension = false) {
+  if (publicType == vpiIODecl) {
+    if (suppressDimension)
+      return false;
+    if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+        isUnpackedDimension(semanticKind))
+      return true;
+    return (semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 &&
+           (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REG);
+  }
   if (isDimensionForTypespec(publicType, semanticKind, semanticFlags,
                              suppressDimension))
     return true;
@@ -3926,6 +3937,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         obelisk::reflection::VPITraversalMode::Handle);
     obelisk_rt_design_info_v1 info{};
     if (edge && infoFor(handle, info)) {
+      if (handle->form == VPIObjectForm::Design && sourceType == vpiIODecl) {
+        obelisk_rt_design_cursor_v1 semanticCursor{};
+        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        if (!semanticCursorFor(handle, semanticCursor) ||
+            !semanticTypeInfo(handle, semanticCursor, semanticInfo) ||
+            !isDimensionForVPIObject(sourceType, semanticInfo.kind,
+                                     semanticInfo.flags,
+                                     handle->suppressSemanticDimension))
+          return nullptr;
+      }
       int64_t value = type == vpiLeftRange ? info.range_left : info.range_right;
       return makeSemanticObjectHandle(
           handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
@@ -4692,10 +4713,14 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              handle->form == VPIObjectForm::Indexed;
     if (objectType == vpiNetBit || objectType == vpiRegBit)
       return 0;
-    if (handle->semanticCursor.offset != 0) {
+    obelisk_rt_design_cursor_v1 semanticCursor{};
+    bool usesSemanticSignedness = handle->form != VPIObjectForm::Design ||
+                                  objectType == vpiIODecl ||
+                                  isTypespecVPIKind(objectType);
+    if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
       obelisk_rt_design_semantic_type_info_v1 semantic{};
       if (obelisk_rt_cached_design_semantic_type_info(
-              handle->owner->context, handle->semanticCursor, &semantic) ==
+              handle->owner->context, semanticCursor, &semantic) ==
           OBELISK_RT_OK)
         return (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
     }
@@ -4916,6 +4941,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return vpiUndefined;
     const bool isPort = info.kind == OBELISK_RT_DESIGN_RECORD_PORT;
     if (property == vpiDirection) {
+      if (exactType == vpiIODecl) {
+        uint32_t direction =
+            (info.capabilities & OBELISK_RT_DESIGN_CAP_IO_DIRECTION_MASK) >>
+            OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT;
+        return direction == 0 ? vpiUndefined
+                              : static_cast<PLI_INT32>(direction);
+      }
       if (!isPort) {
         setError(handle->owner, "port property requested for non-port object",
                  vpiNotice);
@@ -5197,7 +5229,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       property == vpiName)
     return nullptr;
   if (property == vpiFullName &&
-      (isSemanticObjectForm(handle->form) || isTypespecVPIKind(objectType))) {
+      (objectType == vpiIODecl || isSemanticObjectForm(handle->form) ||
+       isTypespecVPIKind(objectType))) {
     propertyFor(handle, property);
     return nullptr;
   }

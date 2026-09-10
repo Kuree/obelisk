@@ -156,6 +156,15 @@ TEST(GeneratedDesignDatabase, Dump) {
   uint64_t staticObjectOffset = 0, staticObjectCount = 0;
   uint64_t definitionOffset = 0, definitionCount = 0;
   uint64_t definitionBindingOffset = 0, definitionBindingCount = 0;
+  uint64_t definitionMemberOffset = 0, definitionMemberCount = 0;
+  uint64_t definitionMemberRelationOffset = 0,
+           definitionMemberRelationCount = 0;
+  uint64_t definitionMemberRelationTargetOffset = 0,
+           definitionMemberRelationTargetCount = 0;
+  uint64_t definitionSpecializationOffset = 0,
+           definitionSpecializationCount = 0;
+  uint64_t definitionSpecializationBindingOffset = 0,
+           definitionSpecializationBindingCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -187,6 +196,24 @@ TEST(GeneratedDesignDatabase, Dump) {
     definitionCount = directory.getDefinitionCount();
     definitionBindingOffset = directory.getDefinitionBindingOffset();
     definitionBindingCount = directory.getDefinitionBindingCount();
+    definitionMemberOffset = directory.getDefinitionMemberOffset();
+    definitionMemberCount = directory.getDefinitionMemberCount();
+    definitionMemberRelationOffset =
+        directory.getDefinitionMemberRelationOffset();
+    definitionMemberRelationCount =
+        directory.getDefinitionMemberRelationCount();
+    definitionMemberRelationTargetOffset =
+        directory.getDefinitionMemberRelationTargetOffset();
+    definitionMemberRelationTargetCount =
+        directory.getDefinitionMemberRelationTargetCount();
+    definitionSpecializationOffset =
+        directory.getDefinitionSpecializationOffset();
+    definitionSpecializationCount =
+        directory.getDefinitionSpecializationCount();
+    definitionSpecializationBindingOffset =
+        directory.getDefinitionSpecializationBindingOffset();
+    definitionSpecializationBindingCount =
+        directory.getDefinitionSpecializationBindingCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -217,6 +244,20 @@ TEST(GeneratedDesignDatabase, Dump) {
   ASSERT_SECTION_RANGE(definitionOffset, definitionCount, DefinitionLayout);
   ASSERT_SECTION_RANGE(definitionBindingOffset, definitionBindingCount,
                        DefinitionBindingLayout);
+  ASSERT_SECTION_RANGE(definitionMemberOffset, definitionMemberCount,
+                       DefinitionMemberLayout);
+  ASSERT_SECTION_RANGE(definitionMemberRelationOffset,
+                       definitionMemberRelationCount,
+                       DefinitionMemberRelationLayout);
+  ASSERT_SECTION_RANGE(definitionMemberRelationTargetOffset,
+                       definitionMemberRelationTargetCount,
+                       DefinitionMemberRelationTargetLayout);
+  ASSERT_SECTION_RANGE(definitionSpecializationOffset,
+                       definitionSpecializationCount,
+                       DefinitionSpecializationLayout);
+  ASSERT_SECTION_RANGE(definitionSpecializationBindingOffset,
+                       definitionSpecializationBindingCount,
+                       DefinitionSpecializationBindingLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;
@@ -491,6 +532,12 @@ TEST(GeneratedDesignDatabase, Dump) {
            << '\n';
   }
 
+  std::vector<std::string> definitionNames;
+  std::vector<uint32_t> memberDefinitions(
+      static_cast<size_t>(definitionMemberCount), UINT32_MAX);
+  std::vector<uint32_t> memberRelationDefinitions(
+      static_cast<size_t>(definitionMemberRelationCount), UINT32_MAX);
+  definitionNames.reserve(static_cast<size_t>(definitionCount));
   for (uint64_t index = 0; index != definitionCount; ++index) {
     const DefinitionView definition(image + definitionOffset +
                                     index * DefinitionLayout.size);
@@ -503,18 +550,188 @@ TEST(GeneratedDesignDatabase, Dump) {
                                    header.getStringSize(), definition.getFile(),
                                    file));
     }
+    definitionNames.push_back(name);
+    ASSERT_LE(definition.getFirstMember(), definitionMemberCount);
+    ASSERT_LE(definition.getMemberCount(),
+              definitionMemberCount - definition.getFirstMember());
+    ASSERT_LE(definition.getFirstMemberRelation(),
+              definitionMemberRelationCount);
+    ASSERT_LE(definition.getMemberRelationCount(),
+              definitionMemberRelationCount -
+                  definition.getFirstMemberRelation());
+    for (uint32_t member = 0; member != definition.getMemberCount(); ++member) {
+      uint32_t absolute = definition.getFirstMember() + member;
+      ASSERT_EQ(memberDefinitions[absolute], UINT32_MAX);
+      memberDefinitions[absolute] = static_cast<uint32_t>(index);
+    }
+    for (uint32_t relation = 0; relation != definition.getMemberRelationCount();
+         ++relation) {
+      uint32_t absolute = definition.getFirstMemberRelation() + relation;
+      ASSERT_EQ(memberRelationDefinitions[absolute], UINT32_MAX);
+      memberRelationDefinitions[absolute] = static_cast<uint32_t>(index);
+    }
     output << "definition index=" << index
            << " vpi_kind=" << definition.getVPIKind() << " name=" << name
-           << " source=" << file << ':' << definition.getLine() << '\n';
+           << " source=" << file << ':' << definition.getLine() << " flags=0x"
+           << hex(definition.getFlags()) << " members=["
+           << definition.getFirstMember() << ':'
+           << definition.getFirstMember() + definition.getMemberCount()
+           << ") member_relations=[" << definition.getFirstMemberRelation()
+           << ':'
+           << definition.getFirstMemberRelation() +
+                  definition.getMemberRelationCount()
+           << ")\n";
   }
+
+  std::vector<std::string> definitionMemberNames;
+  definitionMemberNames.reserve(static_cast<size_t>(definitionMemberCount));
+  for (uint64_t index = 0; index != definitionMemberCount; ++index) {
+    const DefinitionMemberView member(image + definitionMemberOffset +
+                                      index * DefinitionMemberLayout.size);
+    std::string name, file;
+    ASSERT_TRUE(relativeStringAt(image, header.getStringOffset(),
+                                 header.getStringSize(), member.getName(),
+                                 name));
+    if (member.getFile() != 0) {
+      ASSERT_TRUE(relativeStringAt(image, header.getStringOffset(),
+                                   header.getStringSize(), member.getFile(),
+                                   file));
+    }
+    definitionMemberNames.push_back(name);
+    ASSERT_NE(memberDefinitions[index], UINT32_MAX);
+    const uint32_t definition = memberDefinitions[index];
+    ASSERT_LT(definition, definitionNames.size());
+    output << "definition_member index=" << index
+           << " definition=" << definition
+           << " definition_name=" << definitionNames[definition]
+           << " name=" << name << " vpi_kind=" << member.getVPIKind()
+           << " flags=0x" << hex(member.getFlags())
+           << " direction=" << (member.getFlags() & UINT16_C(0xff))
+           << " source=" << file << ':' << member.getLine() << ':'
+           << member.getColumn() << '\n';
+  }
+
+  std::vector<uint32_t> memberRelationTargetRelations(
+      static_cast<size_t>(definitionMemberRelationTargetCount), UINT32_MAX);
+  for (uint64_t index = 0; index != definitionMemberRelationCount; ++index) {
+    const DefinitionMemberRelationView relation(
+        image + definitionMemberRelationOffset +
+        index * DefinitionMemberRelationLayout.size);
+    ASSERT_NE(memberRelationDefinitions[index], UINT32_MAX);
+    const uint32_t definition = memberRelationDefinitions[index];
+    ASSERT_LT(definition, definitionNames.size());
+    ASSERT_LE(relation.getFirstTarget(), definitionMemberRelationTargetCount);
+    ASSERT_LE(relation.getTargetCount(),
+              definitionMemberRelationTargetCount - relation.getFirstTarget());
+    for (uint32_t target = 0; target != relation.getTargetCount(); ++target) {
+      uint32_t absolute = relation.getFirstTarget() + target;
+      ASSERT_EQ(memberRelationTargetRelations[absolute], UINT32_MAX);
+      memberRelationTargetRelations[absolute] = static_cast<uint32_t>(index);
+    }
+    output << "definition_member_relation index=" << index
+           << " definition=" << definition
+           << " definition_name=" << definitionNames[definition]
+           << " selector=" << relation.getSelector() << " flags=0x"
+           << hex(relation.getFlags()) << " targets=["
+           << relation.getFirstTarget() << ':'
+           << relation.getFirstTarget() + relation.getTargetCount() << ")\n";
+  }
+
+  for (uint64_t index = 0; index != definitionMemberRelationTargetCount;
+       ++index) {
+    const DefinitionMemberRelationTargetView target(
+        image + definitionMemberRelationTargetOffset +
+        index * DefinitionMemberRelationTargetLayout.size);
+    ASSERT_NE(memberRelationTargetRelations[index], UINT32_MAX);
+    const uint32_t relation = memberRelationTargetRelations[index];
+    const DefinitionMemberRelationView relationRecord(
+        image + definitionMemberRelationOffset +
+        uint64_t{relation} * DefinitionMemberRelationLayout.size);
+    ASSERT_LT(target.getMember(), definitionMemberNames.size());
+    ASSERT_EQ(memberDefinitions[target.getMember()],
+              memberRelationDefinitions[relation]);
+    output << "definition_member_relation_target index=" << index
+           << " relation=" << relation
+           << " selector=" << relationRecord.getSelector()
+           << " member=" << target.getMember()
+           << " member_name=" << definitionMemberNames[target.getMember()]
+           << '\n';
+  }
+
+  std::vector<uint32_t> specializationDefinitions;
+  std::vector<uint32_t> specializationBindingSpecializations(
+      static_cast<size_t>(definitionSpecializationBindingCount), UINT32_MAX);
+  specializationDefinitions.reserve(
+      static_cast<size_t>(definitionSpecializationCount));
+  for (uint64_t index = 0; index != definitionSpecializationCount; ++index) {
+    const DefinitionSpecializationView specialization(
+        image + definitionSpecializationOffset +
+        index * DefinitionSpecializationLayout.size);
+    ASSERT_LT(specialization.getDefinition(), definitionNames.size());
+    ASSERT_LE(specialization.getFirstBinding(),
+              definitionSpecializationBindingCount);
+    ASSERT_LE(specialization.getBindingCount(),
+              definitionSpecializationBindingCount -
+                  specialization.getFirstBinding());
+    specializationDefinitions.push_back(specialization.getDefinition());
+    for (uint32_t binding = 0; binding != specialization.getBindingCount();
+         ++binding) {
+      uint32_t absolute = specialization.getFirstBinding() + binding;
+      ASSERT_EQ(specializationBindingSpecializations[absolute], UINT32_MAX);
+      specializationBindingSpecializations[absolute] =
+          static_cast<uint32_t>(index);
+    }
+    output << "definition_specialization index=" << index
+           << " definition=" << specialization.getDefinition()
+           << " definition_name="
+           << definitionNames[specialization.getDefinition()] << " bindings=["
+           << specialization.getFirstBinding() << ':'
+           << specialization.getFirstBinding() +
+                  specialization.getBindingCount()
+           << ")\n";
+  }
+
+  for (uint64_t index = 0; index != definitionSpecializationBindingCount;
+       ++index) {
+    const DefinitionSpecializationBindingView binding(
+        image + definitionSpecializationBindingOffset +
+        index * DefinitionSpecializationBindingLayout.size);
+    ASSERT_NE(specializationBindingSpecializations[index], UINT32_MAX);
+    const uint32_t specialization = specializationBindingSpecializations[index];
+    ASSERT_LT(specialization, specializationDefinitions.size());
+    ASSERT_LT(binding.getMember(), definitionMemberNames.size());
+    ASSERT_LT(binding.getSemanticType(), semanticTypeCount);
+    const uint32_t definition = specializationDefinitions[specialization];
+    ASSERT_EQ(memberDefinitions[binding.getMember()], definition);
+    output << "definition_specialization_binding index=" << index
+           << " specialization=" << specialization
+           << " definition=" << definition << " member=" << binding.getMember()
+           << " member_name=" << definitionMemberNames[binding.getMember()]
+           << " semantic_type=" << binding.getSemanticType() << '\n';
+  }
+
   for (uint64_t index = 0; index != definitionBindingCount; ++index) {
     const DefinitionBindingView binding(image + definitionBindingOffset +
                                         index * DefinitionBindingLayout.size);
-    output << "definition_binding source_table="
-           << static_cast<uint32_t>(
-                  unpackTableIndexKind(binding.getSourceIndexAndTable()))
-           << " source=" << unpackTableIndex(binding.getSourceIndexAndTable())
-           << " definition=" << binding.getDefinition() << '\n';
+    const size_t sourceTable = static_cast<size_t>(
+        unpackTableIndexKind(binding.getSourceIndexAndTable()));
+    const uint32_t source = unpackTableIndex(binding.getSourceIndexAndTable());
+    ASSERT_EQ(sourceTable, static_cast<size_t>(TableKind::Scope));
+    ASSERT_LT(source, scopeIndexNames.size());
+    ASSERT_LT(binding.getDefinition(), definitionNames.size());
+    if (binding.getSpecialization() != UINT32_MAX) {
+      ASSERT_LT(binding.getSpecialization(), specializationDefinitions.size());
+      ASSERT_EQ(specializationDefinitions[binding.getSpecialization()],
+                binding.getDefinition());
+    }
+    output << "definition_binding source_table=" << sourceTable
+           << " source=" << source << " definition=" << binding.getDefinition()
+           << " specialization=";
+    if (binding.getSpecialization() == UINT32_MAX)
+      output << "none";
+    else
+      output << binding.getSpecialization();
+    output << " source_name=" << scopeIndexNames[source] << '\n';
   }
 
   for (uint64_t index = 0; index != netDelayRunCount; ++index) {

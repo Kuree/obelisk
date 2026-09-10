@@ -172,12 +172,36 @@ void ObeliskSimFinalizePass::runOnOperation() {
             reference.getNestedReferences().empty() &&
             executableSymbols.contains(reference.getRootReference());
         bool definitionReference =
-            isa<sim::SimScopeDeclOp>(op) &&
+            ((isa<sim::SimScopeDeclOp>(op) &&
+              named.getName() == sim::SimScopeDeclOp::getVpiDefinitionAttrName(
+                                     op->getName())) ||
+             (isa<sim::SimVPIDefinitionMemberDeclOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIDefinitionMemberDeclOp::getDefinitionAttrName(
+                      op->getName())) ||
+             (isa<sim::SimVPIDefinitionSpecializationDeclOp>(op) &&
+              named.getName() == sim::SimVPIDefinitionSpecializationDeclOp::
+                                     getDefinitionAttrName(op->getName()))) &&
+            reference.getNestedReferences().empty();
+        bool specializationReference =
+            ((isa<sim::SimScopeDeclOp>(op) &&
+              named.getName() ==
+                  sim::SimScopeDeclOp::getVpiSpecializationAttrName(
+                      op->getName())) ||
+             (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIDefinitionMemberSpecializationOp::
+                      getSpecializationAttrName(op->getName()))) &&
+            reference.getNestedReferences().empty();
+        bool definitionMemberReference =
+            isa<sim::SimVPIDefinitionMemberSpecializationOp>(op) &&
             named.getName() ==
-                sim::SimScopeDeclOp::getVpiDefinitionAttrName(op->getName()) &&
+                sim::SimVPIDefinitionMemberSpecializationOp::getMemberAttrName(
+                    op->getName()) &&
             reference.getNestedReferences().empty();
         bool allowed = callTarget || observerTarget || graphReference ||
-                       executableReference || definitionReference;
+                       executableReference || definitionReference ||
+                       specializationReference || definitionMemberReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;

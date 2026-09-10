@@ -1526,6 +1526,10 @@ enum {
   // relations instead of its physical executable scope. These kinds cannot be
   // typespec records.
   OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
+  // Definition-backed vpiIODecl views use these record-kind-specific bits
+  // for the exact IEEE direction, including vpiRef and undefined.
+  OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
+  OBELISK_RT_DESIGN_CAP_IO_DIRECTION_MASK = UINT32_C(7) << 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };

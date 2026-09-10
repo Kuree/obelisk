@@ -42,6 +42,11 @@ void write32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
     bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
 }
 
+void write16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
+  for (unsigned index = 0; index != 2; ++index)
+    bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
+}
+
 void write64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value) {
   for (unsigned index = 0; index != 8; ++index)
     bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
@@ -76,6 +81,13 @@ size_t findDirectPortAlias(const std::vector<uint8_t> &database) {
       return static_cast<size_t>(object);
   }
   return 0;
+}
+
+PLI_INT32 integerValue(vpiHandle handle) {
+  s_vpi_value value{};
+  value.format = vpiIntVal;
+  vpi_get_value(handle, &value);
+  return value.value.integer;
 }
 
 } // namespace
@@ -195,6 +207,207 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
 
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
+  ASSERT_NE(dumpDescriptor.execution, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
+            OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top.d";
+  char secondModuleName[] = "top.e";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle secondModule = vpi_handle_by_name(secondModuleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(secondModule, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiIODecl, module);
+  ASSERT_NE(iterator, nullptr);
+
+  constexpr std::array<const char *, 5> expectedNames{"a", "io", "slice", "r",
+                                                      "iface"};
+  constexpr std::array<PLI_INT32, 5> expectedDirections{
+      vpiInput, vpiInout, vpiOutput, vpiRef, vpiUndefined};
+  constexpr std::array<PLI_INT32, 5> expectedWidths{8, 1, 4, 32, 1};
+  constexpr std::array<PLI_INT32, 5> expectedSigned{0, 0, 1, 1, 0};
+  constexpr std::array<PLI_INT32, 5> expectedTypespecs{
+      vpiBitTypespec, vpiLogicTypespec, vpiBitTypespec, vpiIntTypespec,
+      vpiBitTypespec};
+  constexpr std::array<PLI_INT32, 5> expectedLeft{7, -1, 3, -1, -1};
+  constexpr std::array<PLI_INT32, 5> expectedRight{0, -1, 0, 0, -1};
+  std::array<vpiHandle, 5> declarations{};
+  for (size_t index = 0; index != declarations.size(); ++index) {
+    declarations[index] = vpi_scan(iterator);
+    ASSERT_NE(declarations[index], nullptr);
+    EXPECT_EQ(vpi_get(vpiType, declarations[index]), vpiIODecl);
+    EXPECT_STREQ(vpi_get_str(vpiName, declarations[index]),
+                 expectedNames[index]);
+    EXPECT_EQ(vpi_get_str(vpiFullName, declarations[index]), nullptr);
+    EXPECT_EQ(vpi_get(vpiDirection, declarations[index]),
+              expectedDirections[index]);
+    EXPECT_EQ(vpi_get(vpiSize, declarations[index]), expectedWidths[index]);
+    EXPECT_EQ(vpi_get(vpiScalar, declarations[index]),
+              expectedWidths[index] == 1);
+    EXPECT_EQ(vpi_get(vpiVector, declarations[index]),
+              expectedWidths[index] != 1);
+    EXPECT_EQ(vpi_get(vpiSigned, declarations[index]), expectedSigned[index]);
+    EXPECT_STREQ(vpi_get_str(vpiFile, declarations[index]), "ports.sv");
+    EXPECT_EQ(vpi_get(vpiLineNo, declarations[index]), 2);
+
+    vpiHandle instance = vpi_handle(vpiInstance, declarations[index]);
+    ASSERT_NE(instance, nullptr);
+    EXPECT_EQ(vpi_compare_objects(instance, module), 1);
+    EXPECT_EQ(vpi_release_handle(instance), 1);
+
+    vpiHandle typespec = vpi_handle(vpiTypespec, declarations[index]);
+    ASSERT_NE(typespec, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, typespec), expectedTypespecs[index]);
+    EXPECT_EQ(vpi_release_handle(typespec), 1);
+
+    vpiHandle left = vpi_handle(vpiLeftRange, declarations[index]);
+    vpiHandle right = vpi_handle(vpiRightRange, declarations[index]);
+    vpiHandle ranges = vpi_iterate(vpiRange, declarations[index]);
+    if (expectedLeft[index] < 0) {
+      EXPECT_EQ(left, nullptr);
+      EXPECT_EQ(right, nullptr);
+      EXPECT_EQ(ranges, nullptr);
+    } else {
+      ASSERT_NE(left, nullptr);
+      ASSERT_NE(right, nullptr);
+      ASSERT_NE(ranges, nullptr);
+      EXPECT_EQ(integerValue(left), expectedLeft[index]);
+      EXPECT_EQ(integerValue(right), expectedRight[index]);
+      vpiHandle range = vpi_scan(ranges);
+      ASSERT_NE(range, nullptr);
+      EXPECT_EQ(vpi_scan(ranges), nullptr);
+      EXPECT_EQ(vpi_release_handle(range), 1);
+      EXPECT_EQ(vpi_release_handle(left), 1);
+      EXPECT_EQ(vpi_release_handle(right), 1);
+    }
+  }
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_compare_objects(declarations[0], declarations[1]), 0);
+
+  // The synthetic member identity includes the elaborated scope. The member
+  // metadata and effective type vector remain physically shared in the image.
+  vpiHandle secondIterator = vpi_iterate(vpiIODecl, secondModule);
+  ASSERT_NE(secondIterator, nullptr);
+  for (size_t index = 0; index != declarations.size(); ++index) {
+    vpiHandle declaration = vpi_scan(secondIterator);
+    ASSERT_NE(declaration, nullptr);
+    EXPECT_STREQ(vpi_get_str(vpiName, declaration), expectedNames[index]);
+    EXPECT_EQ(vpi_get(vpiSize, declaration), expectedWidths[index]);
+    EXPECT_EQ(vpi_compare_objects(declaration, declarations[index]), 0);
+    vpiHandle instance = vpi_handle(vpiInstance, declaration);
+    ASSERT_NE(instance, nullptr);
+    EXPECT_EQ(vpi_compare_objects(instance, secondModule), 1);
+    EXPECT_EQ(vpi_release_handle(instance), 1);
+    EXPECT_EQ(vpi_release_handle(declaration), 1);
+  }
+  EXPECT_EQ(vpi_scan(secondIterator), nullptr);
+
+  std::vector<uint8_t> database(
+      dumpDescriptor.execution->design_database,
+      dumpDescriptor.execution->design_database +
+          dumpDescriptor.execution->design_database_size);
+  uint32_t directory = read32(database, 12);
+  EXPECT_EQ(read64(database, directory + 184), 1u); // definitions
+  EXPECT_EQ(read64(database, directory + 200), 2u); // instance bindings
+  EXPECT_EQ(read64(database, directory + 216), 5u); // member templates
+  EXPECT_EQ(read64(database, directory + 232), 1u); // relation ranges
+  EXPECT_EQ(read64(database, directory + 248), 5u); // relation targets
+  EXPECT_EQ(read64(database, directory + 264), 1u); // specializations
+  EXPECT_EQ(read64(database, directory + 280), 5u); // type bindings
+
+  for (vpiHandle declaration : declarations)
+    EXPECT_EQ(vpi_release_handle(declaration), 1);
+  EXPECT_EQ(vpi_release_handle(secondModule), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
+  const auto *execution = dumpDescriptor.execution;
+  ASSERT_NE(execution, nullptr);
+  std::vector<uint8_t> original(execution->design_database,
+                                execution->design_database +
+                                    execution->design_database_size);
+  uint32_t directory = read32(original, 12);
+  uint64_t definition = read64(original, directory + 176);
+  uint64_t instanceBinding = read64(original, directory + 192);
+  uint64_t member = read64(original, directory + 208);
+  uint64_t relation = read64(original, directory + 224);
+  uint64_t relationTarget = read64(original, directory + 240);
+  uint64_t specialization = read64(original, directory + 256);
+  uint64_t typeBinding = read64(original, directory + 272);
+  ASSERT_EQ(read64(original, directory + 184), 1u);
+  ASSERT_EQ(read64(original, directory + 200), 2u);
+  ASSERT_EQ(read64(original, directory + 216), 5u);
+  ASSERT_EQ(read64(original, directory + 232), 1u);
+  ASSERT_EQ(read64(original, directory + 248), 5u);
+  ASSERT_EQ(read64(original, directory + 264), 1u);
+  ASSERT_EQ(read64(original, directory + 280), 5u);
+
+  auto rejects = [&](std::vector<uint8_t> database) {
+    write64(database, 32, imageChecksum(database));
+    obelisk_rt_execution_descriptor_v1 mutated = *execution;
+    mutated.design_database = database.data();
+    mutated.design_database_size = database.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&mutated),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  std::vector<uint8_t> malformed = original;
+  write32(malformed, definition + 20, 6); // Member range exceeds section.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, member, 0); // Members require a nonempty name.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write16(malformed, member + 18, 7); // Invalid IO direction domain.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write16(malformed, relation, vpiPort); // Wrong automatic relation.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, relationTarget, 5); // Target outside the definition.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, specialization, 1); // Unknown definition.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, specialization + 8, 4); // Incomplete member types.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, typeBinding, 5); // Member outside the definition.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, typeBinding + 4, UINT32_MAX); // Unknown semantic type.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceBinding + 8, 1); // Unknown specialization.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceBinding + 8,
+          UINT32_MAX); // Member-bearing definitions require one.
+  rejects(std::move(malformed));
 }
 
 TEST(GeneratedVPITraversal, VirtualInterfaceTypedefKeepsRawCanonicalIdentity) {
