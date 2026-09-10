@@ -2434,12 +2434,18 @@ LogicalResult SimDesignOp::verifyRegions() {
   }
 
   llvm::DenseMap<Attribute, llvm::DenseSet<Attribute>> specializedMembers;
+  llvm::DenseMap<std::pair<Attribute, Attribute>, VPITypeSemanticsAttr>
+      specializedMemberTypes;
   for (SimVPIDefinitionMemberSpecializationOp binding :
        definitionMemberSpecializations) {
     auto &members = specializedMembers[binding.getSpecializationAttr()];
     if (!members.insert(binding.getMemberAttr()).second)
       return binding.emitOpError(
           "duplicates a member binding in the same VPI specialization");
+    specializedMemberTypes.try_emplace(
+        std::make_pair(Attribute(binding.getSpecializationAttr()),
+                       Attribute(binding.getMemberAttr())),
+        binding.getEffectiveType());
   }
   for (SimVPIDefinitionSpecializationDeclOp specialization :
        definitionSpecializations) {
@@ -2534,26 +2540,58 @@ LogicalResult SimDesignOp::verifyRegions() {
       return binding.emitOpError(
           "expression endpoint must be whole storage or a declared net");
     }
-    if (targetScope != binding.getScopeId())
+    VPIIODirection direction =
+        member.getDirection().value_or(VPIIODirection::Undefined);
+    if (direction == VPIIODirection::Ref) {
+      auto specialization = scope->second.getVpiSpecializationAttr();
+      auto effective = specialization
+                           ? specializedMemberTypes.find(std::make_pair(
+                                 Attribute(specialization),
+                                 Attribute(binding.getMemberAttr())))
+                           : specializedMemberTypes.end();
+      if (effective == specializedMemberTypes.end() ||
+          !areEquivalentVPIRefTypes(effective->second, targetType))
+        return binding.emitOpError(
+            "ref actual type does not match its specialized member type");
+    }
+    // An ordinary formal resolves inside its elaborated instance. A ref
+    // formal instead resolves to the caller's actual and is normally owned by
+    // another scope.
+    if (direction != VPIIODirection::Ref && targetScope != binding.getScopeId())
       return binding.emitOpError(
-          "expression endpoint belongs to a different scope");
+          "non-ref expression endpoint belongs to a different scope");
     const auto *exprEdge = reflection::findVPITraversal(
         static_cast<uint32_t>(reflection::VPIObjectKind::IODecl),
         static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
         reflection::VPITraversalMode::Handle);
-    if (!exprEdge ||
-        !reflection::vpiObjectSetContains(exprEdge->targets, targetKind))
+    const auto *actualEdge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::RefObj),
+        static_cast<uint32_t>(reflection::VPIRelationKind::ActualRel),
+        reflection::VPITraversalMode::Handle);
+    bool legalEndpoint =
+        direction == VPIIODirection::Ref
+            ? binding.getExprTarget().getKind() == VPIObjectRefKind::Storage &&
+                  exprEdge && actualEdge &&
+                  reflection::vpiObjectSetContains(
+                      exprEdge->targets,
+                      static_cast<uint32_t>(
+                          reflection::VPIObjectKind::RefObj)) &&
+                  reflection::vpiObjectSetContains(actualEdge->targets,
+                                                   targetKind)
+            : exprEdge && reflection::vpiObjectSetContains(exprEdge->targets,
+                                                           targetKind);
+    if (!legalEndpoint)
       return binding.emitOpError(
           "expression endpoint is not legal for a VPI IO declaration");
-    VPIIODirection direction =
-        member.getDirection().value_or(VPIIODirection::Undefined);
     bool virtualInterface =
         targetKind ==
         static_cast<uint32_t>(reflection::VPIObjectKind::VirtualInterfaceVar);
-    if (virtualInterface ? direction != VPIIODirection::Undefined
+    if (virtualInterface ? direction != VPIIODirection::Undefined &&
+                               direction != VPIIODirection::Ref
                          : direction != VPIIODirection::Input &&
                                direction != VPIIODirection::Output &&
-                               direction != VPIIODirection::InOut)
+                               direction != VPIIODirection::InOut &&
+                               direction != VPIIODirection::Ref)
       return binding.emitOpError(
           "expression endpoint is incompatible with the IO declaration "
           "direction");

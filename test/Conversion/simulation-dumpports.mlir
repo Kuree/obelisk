@@ -40,8 +40,8 @@ module attributes {
         #obelisk_sim.vpi_type<kind = bit, isSigned = true,
           isFourState = false, range = [3, 0], children = [], childNames = []>
     obelisk_sim.vpi_definition_member.specialize @d_spec member @d_ref type
-        #obelisk_sim.vpi_type<kind = int, isSigned = true,
-          isFourState = false, range = [31, 0], children = [], childNames = []>
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [7, 0], children = [], childNames = []>
     obelisk_sim.vpi_definition_member.specialize @d_spec member @d_iface type
         #obelisk_sim.vpi_type<kind = bit, isSigned = false,
           isFourState = false, range = [0, 0], children = [], childNames = []>
@@ -53,6 +53,12 @@ module attributes {
         <kind = storage, id = 3 : i64>
     obelisk_sim.vpi_definition_member.bind scope 2 member @d_io expr
         <kind = net, id = 1 : i64>
+    // RefObj identities are synthesized from the shared member plus the
+    // instance binding. Only the ultimate actual target word is per-instance.
+    obelisk_sim.vpi_definition_member.bind scope 1 member @d_ref expr
+        <kind = storage, id = 3 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 2 member @d_ref expr
+        <kind = storage, id = 0 : i64>
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d" vpi_kind 32
         definition @d_def specialization @d_spec
     // A second instance deliberately shares the definition and complete type

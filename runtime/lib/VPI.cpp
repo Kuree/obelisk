@@ -2589,6 +2589,21 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
   if ((handle->form == VPIObjectForm::Design ||
        handle->form == VPIObjectForm::Indexed) &&
       selector == vpiTypespec && !isTypespecVPIKind(sourceType)) {
+    if (sourceType == vpiRefObj) {
+      VPIRelationRange range{};
+      obelisk_rt_design_cursor_v1 actual{};
+      uint32_t actualType = 0;
+      bool actualStatement = false;
+      if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+                                               handle->cursor, vpiActual, false,
+                                               &range) != OBELISK_RT_OK ||
+          obelisk_rt_cached_vpi_relation_target(
+              handle->owner->context, range.first, &actual, &actualType,
+              &actualStatement) != OBELISK_RT_OK ||
+          actualStatement ||
+          !obelisk::runtime::hasRefObjectTypespecActual(actualType))
+        return nullptr;
+    }
     const auto *relation = obelisk::reflection::findVPITraversal(
         sourceType, vpiTypespec, obelisk::reflection::VPITraversalMode::Handle);
     if (!relation)
@@ -2981,6 +2996,34 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
   }
   if (handle->form == VPIObjectForm::IntegralConstant) {
     value[0] = static_cast<uint64_t>(handle->integralValue);
+    return true;
+  }
+  if (handle->form == VPIObjectForm::Design &&
+      vpiTypeForHandle(handle) == vpiRefObj) {
+    VPIRelationRange range{};
+    obelisk_rt_design_cursor_v1 actual{};
+    uint32_t actualType = 0;
+    bool actualStatement = false;
+    obelisk_rt_design_info_v1 actualInfo{};
+    if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+                                             handle->cursor, vpiActual, false,
+                                             &range) != OBELISK_RT_OK ||
+        obelisk_rt_cached_vpi_relation_target(
+            handle->owner->context, range.first, &actual, &actualType,
+            &actualStatement) != OBELISK_RT_OK ||
+        actualStatement ||
+        obelisk_rt_cached_design_info(handle->owner->context, actual,
+                                      &actualInfo) != OBELISK_RT_OK ||
+        actualInfo.bit_width != info.bit_width) {
+      setError(handle->owner, "VPI RefObj actual cannot be read", vpiInternal);
+      return false;
+    }
+    if (obelisk_rt_v1_design_read(handle->owner->context, actual, value.data(),
+                                  unknown.data(),
+                                  info.bit_width) != OBELISK_RT_OK) {
+      setError(handle->owner, "VPI RefObj actual read failed");
+      return false;
+    }
     return true;
   }
   if (handle->form == VPIObjectForm::Indexed) {
@@ -5233,6 +5276,47 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
        isTypespecVPIKind(objectType))) {
     propertyFor(handle, property);
     return nullptr;
+  }
+  if (property == vpiFullName && objectType == vpiRefObj &&
+      handle->form == VPIObjectForm::Design) {
+    const uint8_t *memberName = nullptr;
+    uint64_t memberNameSize = 0;
+    VPIRelationRange range{};
+    obelisk_rt_design_cursor_v1 instance{};
+    uint32_t instanceType = 0;
+    bool statement = false;
+    if (obelisk_rt_cached_design_name(handle->owner->context, handle->cursor,
+                                      &memberName,
+                                      &memberNameSize) != OBELISK_RT_OK ||
+        memberNameSize == 0 ||
+        obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+                                             handle->cursor, vpiInstance, false,
+                                             &range) != OBELISK_RT_OK ||
+        obelisk_rt_cached_vpi_relation_target(
+            handle->owner->context, range.first, &instance, &instanceType,
+            &statement) != OBELISK_RT_OK ||
+        statement)
+      return nullptr;
+    const uint8_t *instanceName = nullptr;
+    uint64_t instanceNameSize = 0;
+    if (obelisk_rt_cached_design_name(handle->owner->context, instance,
+                                      &instanceName,
+                                      &instanceNameSize) != OBELISK_RT_OK ||
+        instanceNameSize == 0)
+      return nullptr;
+    OBELISK_RT_TRY {
+      scratch.assign(reinterpret_cast<const char *>(instanceName),
+                     static_cast<size_t>(instanceNameSize));
+      scratch.push_back('.');
+      scratch.append(reinterpret_cast<const char *>(memberName),
+                     static_cast<size_t>(memberNameSize));
+      return scratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "could not materialize RefObj full name",
+               vpiSystem);
+      return nullptr;
+    }
   }
   if (isSemanticObjectForm(handle->form) && property == vpiName) {
     if (handle->form == VPIObjectForm::TypespecMember) {

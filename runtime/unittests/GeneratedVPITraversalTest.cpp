@@ -247,12 +247,12 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
                                                       "iface"};
   constexpr std::array<PLI_INT32, 5> expectedDirections{
       vpiInput, vpiInout, vpiOutput, vpiRef, vpiUndefined};
-  constexpr std::array<PLI_INT32, 5> expectedWidths{8, 1, 4, 32, 1};
-  constexpr std::array<PLI_INT32, 5> expectedSigned{0, 0, 1, 1, 0};
+  constexpr std::array<PLI_INT32, 5> expectedWidths{8, 1, 4, 8, 1};
+  constexpr std::array<PLI_INT32, 5> expectedSigned{0, 0, 1, 0, 0};
   constexpr std::array<PLI_INT32, 5> expectedTypespecs{
-      vpiBitTypespec, vpiLogicTypespec, vpiBitTypespec, vpiIntTypespec,
+      vpiBitTypespec, vpiLogicTypespec, vpiBitTypespec, vpiBitTypespec,
       vpiBitTypespec};
-  constexpr std::array<PLI_INT32, 5> expectedLeft{7, -1, 3, -1, -1};
+  constexpr std::array<PLI_INT32, 5> expectedLeft{7, -1, 3, 7, -1};
   constexpr std::array<PLI_INT32, 5> expectedRight{0, -1, 0, 0, -1};
   std::array<vpiHandle, 5> declarations{};
   for (size_t index = 0; index != declarations.size(); ++index) {
@@ -289,6 +289,30 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       EXPECT_EQ(vpi_compare_objects(expression,
                                     index == 0 ? directInput : directInout),
                 1);
+      EXPECT_EQ(vpi_release_handle(expression), 1);
+    } else if (index == 3) {
+      ASSERT_NE(expression, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, expression), vpiRefObj);
+      EXPECT_STREQ(vpi_get_str(vpiName, expression), "r");
+      EXPECT_STREQ(vpi_get_str(vpiFullName, expression), "top.d.r");
+      EXPECT_EQ(vpi_get(vpiSize, expression), 8);
+      EXPECT_EQ(vpi_get(vpiGeneric, expression), vpiUndefined);
+      EXPECT_EQ(vpi_get_str(vpiDefName, expression), nullptr);
+      EXPECT_EQ(vpi_handle(vpiParent, expression), nullptr);
+      vpiHandle refTypespec = vpi_handle(vpiTypespec, expression);
+      ASSERT_NE(refTypespec, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, refTypespec), vpiBitTypespec);
+      EXPECT_EQ(vpi_release_handle(refTypespec), 1);
+      vpiHandle refInstance = vpi_handle(vpiInstance, expression);
+      ASSERT_NE(refInstance, nullptr);
+      EXPECT_EQ(vpi_compare_objects(refInstance, module), 1);
+      EXPECT_EQ(vpi_release_handle(refInstance), 1);
+      vpiHandle actual = vpi_handle(vpiActual, expression);
+      ASSERT_NE(actual, nullptr);
+      EXPECT_EQ(vpi_compare_objects(actual, secondDirectInput), 1);
+      EXPECT_EQ(vpi_compare_objects(actual, expression), 0);
+      EXPECT_EQ(integerValue(expression), 0);
+      EXPECT_EQ(vpi_release_handle(actual), 1);
       EXPECT_EQ(vpi_release_handle(expression), 1);
     } else {
       EXPECT_EQ(expression, nullptr);
@@ -337,6 +361,20 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
                                     index == 0 ? directInput : directInout),
                 0);
       EXPECT_EQ(vpi_release_handle(expression), 1);
+    } else if (index == 3) {
+      ASSERT_NE(expression, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, expression), vpiRefObj);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, expression), "top.e.r");
+      vpiHandle firstExpression = vpi_handle(vpiExpr, declarations[3]);
+      ASSERT_NE(firstExpression, nullptr);
+      EXPECT_EQ(vpi_compare_objects(expression, firstExpression), 0);
+      EXPECT_EQ(vpi_release_handle(firstExpression), 1);
+      vpiHandle actual = vpi_handle(vpiActual, expression);
+      ASSERT_NE(actual, nullptr);
+      EXPECT_EQ(vpi_compare_objects(actual, directInput), 1);
+      EXPECT_EQ(vpi_compare_objects(actual, secondDirectInput), 0);
+      EXPECT_EQ(vpi_release_handle(actual), 1);
+      EXPECT_EQ(vpi_release_handle(expression), 1);
     } else {
       EXPECT_EQ(expression, nullptr);
     }
@@ -361,6 +399,12 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
   EXPECT_EQ(read64(database, directory + 264), 1u);  // specializations
   EXPECT_EQ(read64(database, directory + 280), 5u);  // type bindings
   EXPECT_EQ(read64(database, directory + 296), 10u); // instance endpoints
+  constexpr uint64_t objectSize = 96;
+  uint64_t objects = read64(database, 64);
+  uint64_t objectCount = read64(database, 72);
+  for (uint64_t index = 0; index != objectCount; ++index)
+    EXPECT_NE(read32(database, objects + index * objectSize) >> 16,
+              static_cast<uint32_t>(vpiRefObj));
 
   for (vpiHandle declaration : declarations)
     EXPECT_EQ(vpi_release_handle(declaration), 1);
@@ -452,8 +496,19 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   rejects(std::move(malformed));
 
   malformed = original;
+  write16(malformed, member + 3 * 20 + 18,
+          vpiInput); // Cross-scope actual requires ref direction.
+  rejects(std::move(malformed));
+
+  malformed = original;
   write32(malformed, endpoint + 3 * 4,
-          read32(original, endpoint)); // Ref requires a RefObj.
+          read32(original, endpoint + 1 * 4)); // Ref actual cannot be a net.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, typeBinding + 3 * 8 + 4,
+          read32(original,
+                 typeBinding + 1 * 8 + 4)); // Ref actual type mismatch.
   rejects(std::move(malformed));
 
   malformed = original;

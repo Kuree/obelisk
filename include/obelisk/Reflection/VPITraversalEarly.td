@@ -376,13 +376,15 @@ def VPIEarlyPortTypespec : VPITraversalEdge<PortObjects, Typespec, HandleMode,
 def VPIEarlyRefObjPortInsts : VPITraversalEdge<RefObjectObjects, PortInstRel,
   IterateMode, VPIEarlyPorts, NoOrder, "37.15">;
 def VPIEarlyRefObjInstance : VPITraversalEdge<RefObjectObjects, InstanceRel,
-  HandleMode, VPIEarlyInstances, NoOrder, "37.15">;
+  HandleMode, VPIEarlyInstances, NoOrder, "37.15", 0,
+  AutomaticDefinitionMemberParent>;
 def VPIEarlyRefObjParent : VPITraversalEdge<RefObjectObjects, ParentRel,
   HandleMode, RefObjectObjects, NoOrder, "37.15">;
 def VPIEarlyRefObjTypespec : VPITraversalEdge<RefObjectObjects, Typespec,
   HandleMode, VPIEarlyTypespecs, NoOrder, "37.15">;
 def VPIEarlyRefObjActual : VPITraversalEdge<RefObjectObjects, ActualRel,
-  HandleMode, VPIEarlyRefActuals, NoOrder, "37.15">;
+  HandleMode, VPIEarlyRefActuals, NoOrder, "37.15", 0,
+  AutomaticDefinitionMemberExpr>;
 def VPIEarlyRefObjTaskFunc : VPITraversalEdge<RefObjectObjects, TaskFuncRel,
   HandleMode, TaskFunctionDeclObjects, NoOrder, "37.15">;
 

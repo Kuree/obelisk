@@ -1242,9 +1242,32 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionBindingByScope[scopes[scopeIndex].getId()] =
             static_cast<uint32_t>(bindingIndex);
     }
+    DenseMap<std::pair<uint32_t, uint32_t>, sim::VPITypeSemanticsAttr>
+        effectiveMemberTypes;
+    for (sim::SimVPIDefinitionMemberSpecializationOp specialized :
+         definitionMemberSpecializations) {
+      auto specialization = definitionSpecializationsBySymbol.find(
+          specialized.getSpecializationAttr().getValue());
+      auto member = definitionMembersBySymbol.find(
+          specialized.getMemberAttr().getValue());
+      if (specialization == definitionSpecializationsBySymbol.end() ||
+          member == definitionMembersBySymbol.end() ||
+          !definitionSpecializationIndices.count(specialization->second) ||
+          !definitionMemberIndices.count(member->second))
+        continue;
+      effectiveMemberTypes.try_emplace(
+          std::make_pair(
+              definitionSpecializationIndices.lookup(specialization->second),
+              definitionMemberIndices.lookup(member->second)),
+          specialized.getEffectiveType());
+    }
     const VPITraversalDescriptor *exprEdge =
         findVPITraversal(static_cast<uint32_t>(VPIObjectKind::IODecl),
                          static_cast<uint32_t>(VPIRelationKind::ExprRel),
+                         VPITraversalMode::Handle);
+    const VPITraversalDescriptor *refActualEdge =
+        findVPITraversal(static_cast<uint32_t>(VPIObjectKind::RefObj),
+                         static_cast<uint32_t>(VPIRelationKind::ActualRel),
                          VPITraversalMode::Handle);
     for (sim::SimVPIDefinitionMemberInstanceBindingOp endpoint :
          definitionMemberInstanceBindings) {
@@ -1292,8 +1315,36 @@ SmallVector<uint8_t> serializeDesignDatabase(
       case sim::VPIObjectRefKind::Statement:
         break;
       }
-      if (!target || !exprEdge ||
-          !vpiObjectSetContains(exprEdge->targets, target->vpiKind)) {
+      bool ref =
+          member->second.getDirection().value_or(
+              sim::VPIIODirection::Undefined) == sim::VPIIODirection::Ref;
+      if (ref) {
+        auto effective = effectiveMemberTypes.find(
+            std::make_pair(binding.specialization, memberIndex));
+        auto storage = target && target->index < objects.size()
+                           ? dyn_cast_if_present<sim::SimStorageDeclOp>(
+                                 objects[target->index].identity)
+                           : sim::SimStorageDeclOp{};
+        if (effective == effectiveMemberTypes.end() || !storage ||
+            !sim::areEquivalentVPIRefTypes(effective->second,
+                                           storage.getVpiTypeAttr())) {
+          endpoint.emitOpError(
+              "ref actual type does not match its specialized member type");
+          return {};
+        }
+      }
+      bool legalTarget =
+          target && exprEdge &&
+          (ref ? endpoint.getExprTarget().getKind() ==
+                         sim::VPIObjectRefKind::Storage &&
+                     refActualEdge &&
+                     vpiObjectSetContains(
+                         exprEdge->targets,
+                         static_cast<uint32_t>(VPIObjectKind::RefObj)) &&
+                     vpiObjectSetContains(refActualEdge->targets,
+                                          target->vpiKind)
+               : vpiObjectSetContains(exprEdge->targets, target->vpiKind));
+      if (!legalTarget) {
         endpoint.emitOpError(
             "expression endpoint is not legal for a VPI IO declaration");
         return {};

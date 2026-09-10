@@ -3429,6 +3429,10 @@ materializeDesignDescriptors(ModuleOp module,
       static_cast<uint32_t>(VPIKind::IODecl),
       static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
       reflection::VPITraversalMode::Handle);
+  const auto *refActualEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::RefObj),
+      static_cast<uint32_t>(reflection::VPIRelationKind::ActualRel),
+      reflection::VPITraversalMode::Handle);
   for (DefinitionInstancePlan &instance : definitionInstancePlans) {
     DefinitionMemberPlan &plan =
         definitionMemberPlans[instance.definition.getValue()];
@@ -3453,30 +3457,49 @@ materializeDesignDescriptors(ModuleOp module,
         ++ordinal;
         continue;
       }
+      sim::VPIIODirection direction = plan.signatures[ordinal].direction;
+      // A ref declaration denotes the caller's ultimate actual object, not
+      // the scope-local formal alias.  Keeping that one instance-specific
+      // word beside the shared definition member lets the runtime synthesize
+      // the RefObj identity without materializing another object record.
       Operation *internalExpression =
-          getSingleRegionRoot(connection->second.getInternal());
+          getSingleRegionRoot(direction == sim::VPIIODirection::Ref
+                                  ? connection->second.getActual()
+                                  : connection->second.getInternal());
       std::optional<DirectEndpoint> endpoint;
       if (internalExpression) {
         endpoint = directEndpoint(internalExpression);
-      } else {
+      } else if (direction != sim::VPIIODirection::Ref) {
         StringRef internal = connection->second.getInternalPath().value_or(
             connection->second.getFormalPath());
         endpoint = directEndpointForPath(internal);
       }
-      sim::VPIIODirection direction = plan.signatures[ordinal].direction;
       bool virtualInterface =
           endpoint && endpoint->vpiKind ==
                           static_cast<uint32_t>(VPIKind::VirtualInterfaceVar);
       bool compatibleDirection =
-          virtualInterface ? direction == sim::VPIIODirection::Undefined
+          virtualInterface ? direction == sim::VPIIODirection::Undefined ||
+                                 direction == sim::VPIIODirection::Ref
                            : direction == sim::VPIIODirection::Input ||
                                  direction == sim::VPIIODirection::Output ||
-                                 direction == sim::VPIIODirection::InOut;
-      if (endpoint && endpoint->scopeId == instance.scope.getId() &&
-          memberExprEdge &&
-          reflection::vpiObjectSetContains(memberExprEdge->targets,
-                                           endpoint->vpiKind) &&
-          compatibleDirection)
+                                 direction == sim::VPIIODirection::InOut ||
+                                 direction == sim::VPIIODirection::Ref;
+      bool compatibleScope =
+          direction == sim::VPIIODirection::Ref ||
+          (endpoint && endpoint->scopeId == instance.scope.getId());
+      bool legalEndpoint =
+          endpoint && memberExprEdge &&
+          (direction == sim::VPIIODirection::Ref
+               ? endpoint->descriptor->kind == DescriptorInfo::Kind::Storage &&
+                     refActualEdge &&
+                     reflection::vpiObjectSetContains(
+                         memberExprEdge->targets,
+                         static_cast<uint32_t>(VPIKind::RefObj)) &&
+                     reflection::vpiObjectSetContains(refActualEdge->targets,
+                                                      endpoint->vpiKind)
+               : reflection::vpiObjectSetContains(memberExprEdge->targets,
+                                                  endpoint->vpiKind));
+      if (legalEndpoint && compatibleScope && compatibleDirection)
         sim::SimVPIDefinitionMemberInstanceBindingOp::create(
             builder, getSemanticLocation(&child), instance.scope.getIdAttr(),
             plan.memberSymbols[ordinal], endpoint->reference);

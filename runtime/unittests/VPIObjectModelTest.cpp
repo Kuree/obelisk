@@ -61,6 +61,21 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
   EXPECT_FALSE(hasClassDefinitionValueOrigin(vpiModule, false, vpiReg));
 }
 
+TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
+  using obelisk::runtime::hasRefObjectTypespecActual;
+  EXPECT_TRUE(hasRefObjectTypespecActual(vpiReg));
+  EXPECT_TRUE(hasRefObjectTypespecActual(vpiPackedArrayVar));
+  EXPECT_TRUE(hasRefObjectTypespecActual(vpiNet));
+  EXPECT_TRUE(hasRefObjectTypespecActual(vpiNetBit));
+  EXPECT_TRUE(hasRefObjectTypespecActual(vpiPartSelect));
+
+  EXPECT_FALSE(hasRefObjectTypespecActual(vpiNamedEvent));
+  EXPECT_FALSE(hasRefObjectTypespecActual(vpiNamedEventArray));
+  EXPECT_FALSE(hasRefObjectTypespecActual(vpiInterface));
+  EXPECT_FALSE(hasRefObjectTypespecActual(vpiModport));
+  EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
+}
+
 constexpr size_t kExpectedTraversalCount = 1893;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
@@ -879,6 +894,14 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(
       requireTraversal(vpiIODecl, vpiExpr, Mode::Handle).automaticRelation,
       Automatic::DefinitionMemberExpr);
+  EXPECT_EQ(
+      requireTraversal(vpiRefObj, vpiInstance, Mode::Handle).automaticRelation,
+      Automatic::DefinitionMemberParent);
+  EXPECT_EQ(
+      requireTraversal(vpiRefObj, vpiActual, Mode::Handle).automaticRelation,
+      Automatic::DefinitionMemberExpr);
+  EXPECT_TRUE(vpiObjectSetContains(
+      requireTraversal(vpiIODecl, vpiExpr, Mode::Handle).targets, vpiRefObj));
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
   EXPECT_EQ(

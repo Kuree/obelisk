@@ -23,6 +23,10 @@ uint32_t vpiKindForScope(SimScopeDeclOp scope);
 uint32_t vpiKindForStorage(VPITypeSemanticsAttr type);
 uint32_t vpiKindForNet(VPITypeSemanticsAttr type);
 std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type);
+/// Compare SystemVerilog ref-port type identity while ignoring typedef
+/// spelling layers retained only for VPI traversal.
+bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
+                              VPITypeSemanticsAttr right);
 
 } // namespace obelisk::sim
 

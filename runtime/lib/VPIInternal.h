@@ -17,9 +17,9 @@
 #define PLI_DLLESPEC
 #endif
 
-#include "vpi_user.h"
-#include "sv_vpi_user.h"
 #include "obelisk/vpi_user_compat.h"
+#include "sv_vpi_user.h"
+#include "vpi_user.h"
 
 #include "obelisk/Reflection/VPIObjectModel.h"
 
@@ -34,13 +34,32 @@ inline bool hasClassDefinitionValueOrigin(uint32_t sourceType,
                                           uint32_t targetType) {
   const auto *target = reflection::findVPIObjectKind(targetType);
   const bool targetIsVariable =
-      target &&
-      (target->families &
-       reflection::vpiFamilyMask(reflection::VPIObjectFamily::Variable));
+      target && (target->families & reflection::vpiFamilyMask(
+                                        reflection::VPIObjectFamily::Variable));
   return targetIsVariable &&
          (sourceRestricted ||
           sourceType ==
               static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn));
+}
+
+/// Whether IEEE 1800-2023 37.15 permits vpiTypespec for a RefObj actual.
+inline bool hasRefObjectTypespecActual(uint32_t actualType) {
+  const auto *actual = reflection::findVPIObjectKind(actualType);
+  if (!actual ||
+      actualType ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::NamedEvent) ||
+      actualType ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::NamedEventArray) ||
+      actualType ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) ||
+      actualType == static_cast<uint32_t>(reflection::VPIObjectKind::SpecParam))
+    return false;
+  constexpr uint64_t allowedFamilies =
+      reflection::vpiFamilyMask(reflection::VPIObjectFamily::Net) |
+      reflection::vpiFamilyMask(reflection::VPIObjectFamily::Variable);
+  return (actual->families & allowedFamilies) != 0 ||
+         actualType ==
+             static_cast<uint32_t>(reflection::VPIObjectKind::PartSelect);
 }
 
 } // namespace obelisk::runtime

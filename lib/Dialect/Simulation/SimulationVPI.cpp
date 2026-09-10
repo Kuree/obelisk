@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace obelisk::sim {
@@ -19,6 +20,36 @@ VPITypeSemanticsAttr packedArrayElement(VPITypeSemanticsAttr type) {
   return type;
 }
 
+bool equivalentRefType(VPITypeSemanticsAttr left, VPITypeSemanticsAttr right) {
+  if (!left || !right || left.getKind() != right.getKind() ||
+      left.getIsSigned() != right.getIsSigned() ||
+      left.getIsFourState() != right.getIsFourState() ||
+      left.getName() != right.getName() ||
+      left.getSymbol() != right.getSymbol() ||
+      left.getModport() != right.getModport() ||
+      left.getRange() != right.getRange() ||
+      left.getChildNames() != right.getChildNames() ||
+      left.getIsTagged() != right.getIsTagged() ||
+      left.getIsSoft() != right.getIsSoft() ||
+      left.getBitWidth() != right.getBitWidth() ||
+      left.getSelectableWidth() != right.getSelectableWidth() ||
+      left.getBitstreamWidth() != right.getBitstreamWidth() ||
+      left.getTagBits() != right.getTagBits() ||
+      left.getQueueBound() != right.getQueueBound() ||
+      left.getWildcardIndex() != right.getWildcardIndex() ||
+      left.getChildOrdinals() != right.getChildOrdinals() ||
+      left.getChildPackedOffsets() != right.getChildPackedOffsets() ||
+      left.getChildRandTypes() != right.getChildRandTypes() ||
+      left.getChildren().size() != right.getChildren().size())
+    return false;
+  for (auto [leftChild, rightChild] :
+       llvm::zip_equal(left.getChildren(), right.getChildren()))
+    if (!equivalentRefType(mlir::cast<VPITypeSemanticsAttr>(leftChild),
+                           mlir::cast<VPITypeSemanticsAttr>(rightChild)))
+      return false;
+  return true;
+}
+
 } // namespace
 
 bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
@@ -28,6 +59,11 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
   return !codeUnit.getInternalAttr() &&
          !codeUnit->hasAttr("obelisk_sim.dpi_import") &&
          isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
+}
+
+bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
+                              VPITypeSemanticsAttr right) {
+  return equivalentRefType(left, right);
 }
 
 uint32_t vpiKindForCodeUnit(SimCodeUnitDeclOp codeUnit) {

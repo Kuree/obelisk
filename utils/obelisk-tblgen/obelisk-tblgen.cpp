@@ -1723,42 +1723,64 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         }
       }
       if (automaticName == "DefinitionMemberParent") {
-        for (const Record *source : expandedSets.lookup(sources))
-          if (source->getValueAsString("apiName") != "vpiIODecl") {
+        StringRef selectorName = selector->getValueAsString("apiName");
+        for (const Record *source : expandedSets.lookup(sources)) {
+          StringRef sourceName = source->getValueAsString("apiName");
+          if (sourceName != "vpiIODecl" && sourceName != "vpiRefObj") {
             PrintError(edge->getLoc(),
                        "automatic definition-member parent source is not an "
-                       "io declaration");
+                       "io declaration or reference object");
             return false;
           }
-        if (selector->getValueAsString("apiName") != "vpiInstance") {
+        }
+        if (selectorName != "vpiInstance") {
           PrintError(edge->getLoc(),
                      "automatic definition-member parent selector is not "
                      "vpiInstance");
           return false;
         }
-        bool acceptsModule = llvm::any_of(
-            expandedSets.lookup(targets), [](const Record *target) {
-              return target->getValueAsString("apiName") == "vpiModule";
-            });
-        if (!acceptsModule) {
-          PrintError(edge->getLoc(),
-                     "automatic definition-member parent target does not "
-                     "include vpiModule");
-          return false;
+        for (StringRef required : {"vpiModule", "vpiInterface", "vpiProgram"}) {
+          bool accepted = llvm::any_of(
+              expandedSets.lookup(targets), [&](const Record *target) {
+                return target->getValueAsString("apiName") == required;
+              });
+          if (!accepted) {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member parent target does not "
+                       "include " +
+                           required);
+            return false;
+          }
         }
       }
       if (automaticName == "DefinitionMemberExpr") {
-        for (const Record *source : expandedSets.lookup(sources))
-          if (source->getValueAsString("apiName") != "vpiIODecl") {
+        StringRef selectorName = selector->getValueAsString("apiName");
+        bool ioExpression = false;
+        for (const Record *source : expandedSets.lookup(sources)) {
+          StringRef sourceName = source->getValueAsString("apiName");
+          if ((sourceName != "vpiIODecl" || selectorName != "vpiExpr") &&
+              (sourceName != "vpiRefObj" || selectorName != "vpiActual")) {
             PrintError(edge->getLoc(),
-                       "automatic definition-member expression source is "
-                       "not an io declaration");
+                       "automatic definition-member endpoint is not an io "
+                       "expression or reference actual");
             return false;
           }
-        if (selector->getValueAsString("apiName") != "vpiExpr") {
+          ioExpression |= sourceName == "vpiIODecl";
+        }
+        if (selectorName != "vpiExpr" && selectorName != "vpiActual") {
           PrintError(edge->getLoc(),
-                     "automatic definition-member expression selector is "
-                     "not vpiExpr");
+                     "automatic definition-member endpoint selector is not "
+                     "vpiExpr or vpiActual");
+          return false;
+        }
+        if (ioExpression &&
+            !llvm::any_of(
+                expandedSets.lookup(targets), [](const Record *target) {
+                  return target->getValueAsString("apiName") == "vpiRefObj";
+                })) {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member expression target does "
+                     "not include vpiRefObj");
           return false;
         }
       }
