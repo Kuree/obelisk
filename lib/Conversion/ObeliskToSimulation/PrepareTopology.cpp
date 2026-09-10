@@ -1376,6 +1376,11 @@ materializeDesignDescriptors(ModuleOp module,
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount);
     anchorDeclarations[source] = anchor;
+    if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
+            source))
+      if (auto definitionLoc =
+              getSemanticLocation(source)->findInstanceOf<FileLineColLoc>())
+        anchor->setAttr("definition_loc", definitionLoc);
     if (sim::VPIPropertySetAttr properties =
             identityProperties(source, sourceKind))
       anchor->setAttr("vpi_properties", properties);

@@ -2606,6 +2606,30 @@ std::vector<uint8_t> makeRootStaticRelationDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makePackageDefinitionLocationDatabase() {
+  std::vector<uint8_t> bytes = makeRootStaticRelationDatabase();
+  const uint64_t directoryOffset = bytes.size();
+  const uint64_t propertyOffset = directoryOffset + kSemanticDirectorySize;
+  bytes.resize(propertyOffset + 2 * 16, 0);
+  put32(bytes, 12, static_cast<uint32_t>(directoryOffset));
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 112, propertyOffset);
+  put64(bytes, directoryOffset + 120, 2);
+
+  const uint32_t packageSource = uint32_t{1} << 30; // Object table index 0.
+  const uint64_t existingString = get64(bytes, 96); // "$root" in the pool.
+  put32(bytes, propertyOffset, packageSource);
+  put16(bytes, propertyOffset + 4, vpiDefFile);
+  put16(bytes, propertyOffset + 6, 3); // String property.
+  put64(bytes, propertyOffset + 8, existingString);
+  put32(bytes, propertyOffset + 16, packageSource);
+  put16(bytes, propertyOffset + 20, vpiDefLineNo);
+  put16(bytes, propertyOffset + 22, 1); // Integer property.
+  put64(bytes, propertyOffset + 24, 7);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeClassMethodRelationDatabase() {
   constexpr uint64_t rootOffset = 176;
   constexpr uint64_t moduleOffset = 240;
@@ -14271,6 +14295,34 @@ TEST(VPI, TraversesExplicitStaticRelationsFromNullRoot) {
   EXPECT_EQ(vpi_release_handle(traversedClass), 1);
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(byName), 1);
+  EXPECT_EQ(vpi_release_handle(package), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsPackageDefinitionLocationFromFixedImage) {
+  Fixture fixture;
+  fixture.database = makePackageDefinitionLocationDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  vpiHandle iterator = vpi_iterate(vpiInstance, nullptr);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle package = vpi_scan(iterator);
+  ASSERT_NE(package, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, package), vpiPackage);
+  EXPECT_STREQ(vpi_get_str(vpiDefFile, package), "$root");
+  EXPECT_EQ(vpi_get(vpiDefLineNo, package), 7);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+
   EXPECT_EQ(vpi_release_handle(package), 1);
   obelisk_rt_v1_context_destroy(context);
 }

@@ -189,8 +189,8 @@ module {
 }
 
 // CHECK-NOT: obelisk_sim.vpi_object.anchor {{.*}}hierarchy "\\$root "
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_A:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 ordinal 0 hierarchy "$unit" debug "" {is_compilation_unit, {{.*}}}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_B:__obelisk_vpi_anchor_1]] id 1 type 600 in 0 ordinal 1 hierarchy "$unit" debug "" {is_compilation_unit, {{.*}}}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_A:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 ordinal 0 hierarchy "$unit" debug "" {{\{.*}}is_compilation_unit, {{.*}}}
+// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_B:__obelisk_vpi_anchor_1]] id 1 type 600 in 0 ordinal 1 hierarchy "$unit" debug "" {{\{.*}}is_compilation_unit, {{.*}}}
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[SEQ:__obelisk_vpi_anchor_2]] id 2 type 661 in 0 parent @[[CU_B]] ordinal 0 hierarchy "$unit::seq" debug "seq"
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[PROP:__obelisk_vpi_anchor_3]] id 3 type 655 in 0 parent @[[CU_B]] ordinal 1 hierarchy "$unit::prop" debug "prop"
 // CHECK-DAG: obelisk_sim.vpi_object.anchor @[[RAW_TOP:__obelisk_vpi_anchor_4]] id 4 type 32 in 1 ordinal 2 hierarchy "raw_top" debug "wrapper_t" {{.*}}
