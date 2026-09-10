@@ -103,6 +103,10 @@ def AutomaticDefinitionMember :
     VPIAutomaticRelation<"DefinitionMember", 5>;
 def AutomaticDefinitionMemberParent :
     VPIAutomaticRelation<"DefinitionMemberParent", 6>;
+// Resolve a definition-shared declaration's instance-specific expression
+// endpoint through the compact definition-binding endpoint slice.
+def AutomaticDefinitionMemberExpr :
+    VPIAutomaticRelation<"DefinitionMemberExpr", 7>;
 
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other

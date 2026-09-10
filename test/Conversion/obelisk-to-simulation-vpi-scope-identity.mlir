@@ -4,6 +4,7 @@
 // RUN: FileCheck %s --check-prefix=FRONTEND --input-file=%t/frontend.mlir
 // RUN: FileCheck %s --check-prefix=PACKAGE --input-file=%t/frontend.mlir
 // RUN: FileCheck %s --check-prefix=LOCATION --input-file=%t/frontend.mlir
+// RUN: FileCheck %s --check-prefix=SELECTED --input-file=%t/frontend.mlir
 
 // Nested module, interface, and program array members are not top instances.
 // Their definition names remain available from legacy referenced definitions
@@ -114,6 +115,13 @@ module automatic top;
   param_cell #(.W(8)) p8b();
   param_cell #(.W(4)) p4();
   iftop i();
+  selected_formals selected();
+endmodule
+
+module selected_formals(
+    .whole(whole), .slice(backing[0 +: 8]));
+  output logic whole;
+  output logic [7:0] backing;
 endmodule
 
 interface iftop;
@@ -148,6 +156,17 @@ endpackage
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p8a" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC8]]
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p8b" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC8]]
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.p4" {{.*}} definition @[[PARAM]] specialization @[[PARAM_SPEC4]]
+// Each elaborated instance stores only a compact endpoint for its shared
+// definition member. These seven bindings point at seven distinct physical
+// formal objects while the declaration and specialization records above stay
+// shared.
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[CELL_A]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[CELL_Z]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[CELL_A]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[CELL_Z]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[PARAM_P]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[PARAM_P]] expr <kind = storage, id = {{[0-9]+}} : i64>
+// FRONTEND-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[PARAM_P]] expr <kind = storage, id = {{[0-9]+}} : i64>
 // FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[INTERFACE:[^ ]+]] type 601 name "iftop"
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.i" {{.*}} vpi_kind 601 definition @[[INTERFACE]]
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
@@ -159,3 +178,7 @@ endpackage
 // PACKAGE-NOT: obelisk_sim.vpi_definition.decl {{.*}} type 600
 // LOCATION-DAG: #[[MAPPED_LOC:loc[0-9]*]] = loc("mapped_pkg.sv":700:1)
 // LOCATION-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 600 {{.*}} hierarchy "mapped_pkg" {{.*}}definition_loc = #[[MAPPED_LOC]]
+// A selected non-ANSI internal expression is not misrepresented by binding
+// its whole backing variable. The next chunk gives this member an exact view.
+// SELECTED: obelisk_sim.vpi_definition_member.decl @[[SELECTED_SLICE:[^ ]+]] {{.*}} name "slice"
+// SELECTED-NOT: obelisk_sim.vpi_definition_member.bind {{.*}} member @[[SELECTED_SLICE]]

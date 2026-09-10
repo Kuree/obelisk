@@ -121,7 +121,7 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   ASSERT_NE(input, nullptr);
   ASSERT_NE(inout, nullptr);
   ASSERT_NE(anonymousBacking, nullptr);
-  EXPECT_EQ(vpi_get(vpiType, input), vpiReg);
+  EXPECT_EQ(vpi_get(vpiType, input), vpiBitVar);
   EXPECT_EQ(vpi_get(vpiType, inout), vpiNet);
 
   vpiHandle iterator = vpi_iterate(vpiPort, module);
@@ -186,15 +186,15 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   // formal's same-scope lower connection.
   EXPECT_EQ(vpi_handle(vpiLowConn, ports[5]), nullptr);
 
-  vpiHandle registers = vpi_iterate(vpiReg, module);
-  ASSERT_NE(registers, nullptr);
-  vpiHandle canonicalInput = vpi_scan(registers);
+  vpiHandle variables = vpi_iterate(vpiVariables, module);
+  ASSERT_NE(variables, nullptr);
+  vpiHandle canonicalInput = vpi_scan(variables);
   ASSERT_NE(canonicalInput, nullptr);
   EXPECT_EQ(vpi_compare_objects(input, canonicalInput), 1);
-  vpiHandle anonymousRegister = vpi_scan(registers);
+  vpiHandle anonymousRegister = vpi_scan(variables);
   ASSERT_NE(anonymousRegister, nullptr);
   EXPECT_EQ(vpi_compare_objects(anonymousBacking, anonymousRegister), 1);
-  EXPECT_EQ(vpi_scan(registers), nullptr);
+  EXPECT_EQ(vpi_scan(variables), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   // Port-only properties are undefined on the distinct backing object.
@@ -230,6 +230,18 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
   ASSERT_NE(secondModule, nullptr);
   vpiHandle iterator = vpi_iterate(vpiIODecl, module);
   ASSERT_NE(iterator, nullptr);
+  char inputName[] = "top.d.a";
+  char inoutName[] = "top.d.io";
+  char secondInputName[] = "top.e.a";
+  char secondInoutName[] = "top.e.io";
+  vpiHandle directInput = vpi_handle_by_name(inputName, nullptr);
+  vpiHandle directInout = vpi_handle_by_name(inoutName, nullptr);
+  vpiHandle secondDirectInput = vpi_handle_by_name(secondInputName, nullptr);
+  vpiHandle secondDirectInout = vpi_handle_by_name(secondInoutName, nullptr);
+  ASSERT_NE(directInput, nullptr);
+  ASSERT_NE(directInout, nullptr);
+  ASSERT_NE(secondDirectInput, nullptr);
+  ASSERT_NE(secondDirectInout, nullptr);
 
   constexpr std::array<const char *, 5> expectedNames{"a", "io", "slice", "r",
                                                       "iface"};
@@ -271,6 +283,17 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
     EXPECT_EQ(vpi_get(vpiType, typespec), expectedTypespecs[index]);
     EXPECT_EQ(vpi_release_handle(typespec), 1);
 
+    vpiHandle expression = vpi_handle(vpiExpr, declarations[index]);
+    if (index < 2) {
+      ASSERT_NE(expression, nullptr);
+      EXPECT_EQ(vpi_compare_objects(expression,
+                                    index == 0 ? directInput : directInout),
+                1);
+      EXPECT_EQ(vpi_release_handle(expression), 1);
+    } else {
+      EXPECT_EQ(expression, nullptr);
+    }
+
     vpiHandle left = vpi_handle(vpiLeftRange, declarations[index]);
     vpiHandle right = vpi_handle(vpiRightRange, declarations[index]);
     vpiHandle ranges = vpi_iterate(vpiRange, declarations[index]);
@@ -305,6 +328,18 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
     EXPECT_STREQ(vpi_get_str(vpiName, declaration), expectedNames[index]);
     EXPECT_EQ(vpi_get(vpiSize, declaration), expectedWidths[index]);
     EXPECT_EQ(vpi_compare_objects(declaration, declarations[index]), 0);
+    vpiHandle expression = vpi_handle(vpiExpr, declaration);
+    if (index < 2) {
+      ASSERT_NE(expression, nullptr);
+      vpiHandle expected = index == 0 ? secondDirectInput : secondDirectInout;
+      EXPECT_EQ(vpi_compare_objects(expression, expected), 1);
+      EXPECT_EQ(vpi_compare_objects(expression,
+                                    index == 0 ? directInput : directInout),
+                0);
+      EXPECT_EQ(vpi_release_handle(expression), 1);
+    } else {
+      EXPECT_EQ(expression, nullptr);
+    }
     vpiHandle instance = vpi_handle(vpiInstance, declaration);
     ASSERT_NE(instance, nullptr);
     EXPECT_EQ(vpi_compare_objects(instance, secondModule), 1);
@@ -318,16 +353,21 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       dumpDescriptor.execution->design_database +
           dumpDescriptor.execution->design_database_size);
   uint32_t directory = read32(database, 12);
-  EXPECT_EQ(read64(database, directory + 184), 1u); // definitions
-  EXPECT_EQ(read64(database, directory + 200), 2u); // instance bindings
-  EXPECT_EQ(read64(database, directory + 216), 5u); // member templates
-  EXPECT_EQ(read64(database, directory + 232), 1u); // relation ranges
-  EXPECT_EQ(read64(database, directory + 248), 5u); // relation targets
-  EXPECT_EQ(read64(database, directory + 264), 1u); // specializations
-  EXPECT_EQ(read64(database, directory + 280), 5u); // type bindings
+  EXPECT_EQ(read64(database, directory + 184), 1u);  // definitions
+  EXPECT_EQ(read64(database, directory + 200), 2u);  // instance bindings
+  EXPECT_EQ(read64(database, directory + 216), 5u);  // member templates
+  EXPECT_EQ(read64(database, directory + 232), 1u);  // relation ranges
+  EXPECT_EQ(read64(database, directory + 248), 5u);  // relation targets
+  EXPECT_EQ(read64(database, directory + 264), 1u);  // specializations
+  EXPECT_EQ(read64(database, directory + 280), 5u);  // type bindings
+  EXPECT_EQ(read64(database, directory + 296), 10u); // instance endpoints
 
   for (vpiHandle declaration : declarations)
     EXPECT_EQ(vpi_release_handle(declaration), 1);
+  EXPECT_EQ(vpi_release_handle(secondDirectInout), 1);
+  EXPECT_EQ(vpi_release_handle(secondDirectInput), 1);
+  EXPECT_EQ(vpi_release_handle(directInout), 1);
+  EXPECT_EQ(vpi_release_handle(directInput), 1);
   EXPECT_EQ(vpi_release_handle(secondModule), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
   obelisk_rt_v1_context_destroy(context);
@@ -347,6 +387,7 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   uint64_t relationTarget = read64(original, directory + 240);
   uint64_t specialization = read64(original, directory + 256);
   uint64_t typeBinding = read64(original, directory + 272);
+  uint64_t endpoint = read64(original, directory + 288);
   ASSERT_EQ(read64(original, directory + 184), 1u);
   ASSERT_EQ(read64(original, directory + 200), 2u);
   ASSERT_EQ(read64(original, directory + 216), 5u);
@@ -354,6 +395,7 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   ASSERT_EQ(read64(original, directory + 248), 5u);
   ASSERT_EQ(read64(original, directory + 264), 1u);
   ASSERT_EQ(read64(original, directory + 280), 5u);
+  ASSERT_EQ(read64(original, directory + 296), 10u);
 
   auto rejects = [&](std::vector<uint8_t> database) {
     write64(database, 32, imageChecksum(database));
@@ -398,6 +440,25 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
 
   malformed = original;
   write32(malformed, typeBinding + 4, UINT32_MAX); // Unknown semantic type.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, endpoint, 0x3fffffff); // Endpoint is not an object.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, endpoint,
+          read32(original, endpoint + 5 * 4)); // Other instance's storage.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, endpoint + 3 * 4,
+          read32(original, endpoint)); // Ref requires a RefObj.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, endpoint + 4 * 4,
+          read32(original, endpoint)); // Interface IODecl is not direct.
   rejects(std::move(malformed));
 
   malformed = original;

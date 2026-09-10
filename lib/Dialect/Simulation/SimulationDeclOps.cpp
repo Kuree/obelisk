@@ -353,6 +353,14 @@ LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
   return success();
 }
 
+LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr()))
+    return emitOpError("references an unknown VPI definition member");
+  return success();
+}
+
 LogicalResult
 SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   FlatSymbolRefAttr reference = getVpiDefinitionAttr();
@@ -2275,6 +2283,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIDefinitionSpecializationDeclOp> definitionSpecializations;
   SmallVector<SimVPIDefinitionMemberSpecializationOp>
       definitionMemberSpecializations;
+  SmallVector<SimVPIDefinitionMemberInstanceBindingOp>
+      definitionMemberInstanceBindings;
   llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
   SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
@@ -2332,6 +2342,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto binding =
                    dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op)) {
       definitionMemberSpecializations.push_back(binding);
+    } else if (auto binding =
+                   dyn_cast<SimVPIDefinitionMemberInstanceBindingOp>(op)) {
+      definitionMemberInstanceBindings.push_back(binding);
     } else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op)) {
       if (failed(addId(identity.getIdAttr(), vpiNetIdentityIds,
                        "VPI net identity")))
@@ -2456,6 +2469,101 @@ LogicalResult SimDesignOp::verifyRegions() {
         !definition->second.empty())
       return scope.emitOpError(
           "VPI definition with members requires a specialization");
+  }
+  llvm::DenseMap<std::pair<uint64_t, Attribute>,
+                 SimVPIDefinitionMemberInstanceBindingOp>
+      instanceMemberBindings;
+  for (SimVPIDefinitionMemberInstanceBindingOp binding :
+       definitionMemberInstanceBindings) {
+    auto scope = scopes.find(binding.getScopeId());
+    if (scope == scopes.end())
+      return binding.emitOpError("references an unknown scope ID");
+    auto member =
+        symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+            binding, binding.getMemberAttr());
+    if (!member)
+      continue;
+    if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
+      return binding.emitOpError(
+          "member does not belong to the scope's VPI definition");
+    if (member.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl))
+      return binding.emitOpError(
+          "expression endpoint member is not a VPI IO declaration");
+
+    uint64_t targetId =
+        binding.getExprTarget().getId().getValue().getZExtValue();
+    uint64_t targetScope = 0;
+    uint32_t targetKind = 0;
+    VPITypeSemanticsAttr targetType;
+    auto missingTarget = [&]() -> LogicalResult {
+      return binding.emitOpError()
+             << "references an unknown expression "
+             << stringifyVPIObjectRefKind(binding.getExprTarget().getKind())
+             << " ID " << targetId;
+    };
+    switch (binding.getExprTarget().getKind()) {
+    case VPIObjectRefKind::Storage: {
+      auto found = storagesById.find(targetId);
+      if (found == storagesById.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForStorage(targetType);
+      break;
+    }
+    case VPIObjectRefKind::Net: {
+      auto found = nets.find(targetId);
+      if (found == nets.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForNet(targetType);
+      break;
+    }
+    case VPIObjectRefKind::NetIdentity: {
+      auto found = vpiNetIdentitiesById.find(targetId);
+      if (found == vpiNetIdentitiesById.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForNet(targetType);
+      break;
+    }
+    case VPIObjectRefKind::Statement:
+      return binding.emitOpError(
+          "expression endpoint must be whole storage or a declared net");
+    }
+    if (targetScope != binding.getScopeId())
+      return binding.emitOpError(
+          "expression endpoint belongs to a different scope");
+    const auto *exprEdge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl),
+        static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
+        reflection::VPITraversalMode::Handle);
+    if (!exprEdge ||
+        !reflection::vpiObjectSetContains(exprEdge->targets, targetKind))
+      return binding.emitOpError(
+          "expression endpoint is not legal for a VPI IO declaration");
+    VPIIODirection direction =
+        member.getDirection().value_or(VPIIODirection::Undefined);
+    bool virtualInterface =
+        targetKind ==
+        static_cast<uint32_t>(reflection::VPIObjectKind::VirtualInterfaceVar);
+    if (virtualInterface ? direction != VPIIODirection::Undefined
+                         : direction != VPIIODirection::Input &&
+                               direction != VPIIODirection::Output &&
+                               direction != VPIIODirection::InOut)
+      return binding.emitOpError(
+          "expression endpoint is incompatible with the IO declaration "
+          "direction");
+    auto [sameBinding, inserted] = instanceMemberBindings.try_emplace(
+        std::make_pair(binding.getScopeId(),
+                       Attribute(binding.getMemberAttr())),
+        binding);
+    if (!inserted)
+      return binding.emitOpError(
+          "duplicates an instance binding for the same VPI member");
   }
 
   llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;

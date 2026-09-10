@@ -1442,6 +1442,11 @@ materializeDesignDescriptors(ModuleOp module,
               direction = sim::VPIIODirection::Ref;
               break;
             }
+            // IEEE 1800-2023 37.13 defines virtual-interface IO declarations
+            // as directionless, irrespective of the source argument mode.
+            if (auto type = child.getAttrOfType<TypeAttr>("semantic_type");
+                type && isa<semantic::VirtualInterfaceType>(type.getValue()))
+              direction = sim::VPIIODirection::Undefined;
           } else if (!isa<semantic::SVInterfacePortSymbolOp>(child)) {
             // A multi-port is a vpiPort association. Its leaf declarations
             // appear as ordinary SVPortSymbolOps and are the IODecl objects.
@@ -1895,9 +1900,11 @@ materializeDesignDescriptors(ModuleOp module,
     return *layers;
   };
 
-  llvm::StringMap<semantic::SVPortConnectionOp> connectionsByFormalPath;
+  llvm::DenseMap<Attribute, semantic::SVPortConnectionOp>
+      connectionsByFormalSymbol;
   for (semantic::SVPortConnectionOp connection : portAliases.connections)
-    connectionsByFormalPath.try_emplace(connection.getFormalPath(), connection);
+    connectionsByFormalSymbol.try_emplace(connection.getFormalSymbolAttr(),
+                                          connection);
 
   // Type identities can only be frozen after source typedef references have
   // been remapped to persistent simulation symbols. Keep template discovery
@@ -1929,8 +1936,11 @@ materializeDesignDescriptors(ModuleOp module,
         effectiveType = *converted;
       } else if (isa<semantic::SVInterfacePortSymbolOp>(member)) {
         auto connection =
-            connectionsByFormalPath.find(getHierarchyName(member));
-        if (connection != connectionsByFormalPath.end()) {
+            connectionsByFormalSymbol.find(getSemanticSymbolReference(member));
+        if (connection == connectionsByFormalSymbol.end())
+          connection = connectionsByFormalSymbol.find(
+              getSemanticSymbolReference(member, true));
+        if (connection != connectionsByFormalSymbol.end()) {
           FailureOr<sim::VPITypeSemanticsAttr> converted = makeVPITypeSemantics(
               connection->second.getFormalType(), getSemanticLocation(member),
               typedefLayersFor(connection->second), connection->second);
@@ -3369,14 +3379,9 @@ materializeDesignDescriptors(ModuleOp module,
     uint64_t scopeId;
     Type type;
   };
-  auto directEndpoint =
-      [&](Operation *expression) -> std::optional<DirectEndpoint> {
-    FailureOr<StaticStorageView> view = getStaticStorageView(expression);
-    if (failed(view) || !view->identity || view->offset != 0 ||
-        view->packedOffset != 0 || !view->indices.empty() ||
-        view->rootType != view->viewType)
-      return std::nullopt;
-    auto found = descriptors.find(view->path);
+  auto directEndpointForPath =
+      [&](StringRef path) -> std::optional<DirectEndpoint> {
+    auto found = descriptors.find(path);
     if (found == descriptors.end())
       return std::nullopt;
     const DescriptorInfo &descriptor = found->second;
@@ -3391,7 +3396,7 @@ materializeDesignDescriptors(ModuleOp module,
     Type endpointType = descriptor.type;
     uint32_t vpiKind = 0;
     if (descriptor.kind == DescriptorInfo::Kind::Net) {
-      auto declared = declaredNets.find(view->path);
+      auto declared = declaredNets.find(path);
       if (declared == declaredNets.end())
         return std::nullopt;
       reference = declared->second.reference;
@@ -3407,6 +3412,79 @@ materializeDesignDescriptors(ModuleOp module,
     return DirectEndpoint{reference, &descriptor, vpiKind, scopeId,
                           endpointType};
   };
+  auto directEndpoint =
+      [&](Operation *expression) -> std::optional<DirectEndpoint> {
+    FailureOr<StaticStorageView> view = getStaticStorageView(expression);
+    if (failed(view) || !view->identity || view->offset != 0 ||
+        view->packedOffset != 0 || !view->indices.empty() ||
+        view->rootType != view->viewType)
+      return std::nullopt;
+    return directEndpointForPath(view->path);
+  };
+
+  // Emit only exact whole formal objects here. Ref/interface selections use
+  // the dedicated compact view/ref-object layer added in the following
+  // chunk; never collapse them onto an unrelated backing root.
+  const auto *memberExprEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::IODecl),
+      static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
+      reflection::VPITraversalMode::Handle);
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    uint32_t ordinal = 0;
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      if (ordinal >= plan.memberSymbols.size()) {
+        emitError(getSemanticLocation(&child))
+            << "VPI definition member endpoint ordinal is out of range";
+        invalid = true;
+        break;
+      }
+      auto connection =
+          connectionsByFormalSymbol.find(getSemanticSymbolReference(&child));
+      if (connection == connectionsByFormalSymbol.end())
+        connection = connectionsByFormalSymbol.find(
+            getSemanticSymbolReference(&child, true));
+      if (connection == connectionsByFormalSymbol.end()) {
+        ++ordinal;
+        continue;
+      }
+      Operation *internalExpression =
+          getSingleRegionRoot(connection->second.getInternal());
+      std::optional<DirectEndpoint> endpoint;
+      if (internalExpression) {
+        endpoint = directEndpoint(internalExpression);
+      } else {
+        StringRef internal = connection->second.getInternalPath().value_or(
+            connection->second.getFormalPath());
+        endpoint = directEndpointForPath(internal);
+      }
+      sim::VPIIODirection direction = plan.signatures[ordinal].direction;
+      bool virtualInterface =
+          endpoint && endpoint->vpiKind ==
+                          static_cast<uint32_t>(VPIKind::VirtualInterfaceVar);
+      bool compatibleDirection =
+          virtualInterface ? direction == sim::VPIIODirection::Undefined
+                           : direction == sim::VPIIODirection::Input ||
+                                 direction == sim::VPIIODirection::Output ||
+                                 direction == sim::VPIIODirection::InOut;
+      if (endpoint && endpoint->scopeId == instance.scope.getId() &&
+          memberExprEdge &&
+          reflection::vpiObjectSetContains(memberExprEdge->targets,
+                                           endpoint->vpiKind) &&
+          compatibleDirection)
+        sim::SimVPIDefinitionMemberInstanceBindingOp::create(
+            builder, getSemanticLocation(&child), instance.scope.getIdAttr(),
+            plan.memberSymbols[ordinal], endpoint->reference);
+      ++ordinal;
+    }
+  }
+  if (invalid)
+    return failure();
   auto statementReference = [&](uint64_t id) {
     return sim::VPIObjectRefAttr::get(builder.getContext(),
                                       sim::VPIObjectRefKind::Statement,

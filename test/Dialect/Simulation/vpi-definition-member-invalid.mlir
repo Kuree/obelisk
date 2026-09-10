@@ -121,3 +121,179 @@ module {
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32 definition @cell
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_binding_scope {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "a"
+    // expected-error @+1 {{references an unknown scope ID}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @binding_definition_mismatch {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @left type 32 name "left"
+    obelisk_sim.vpi_definition.decl @right type 32 name "right"
+    obelisk_sim.vpi_definition_member.decl @a of @right type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @left
+    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    // expected-error @+1 {{member does not belong to the scope's VPI definition}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @unknown_expression_target {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    // expected-error @+1 {{references an unknown expression storage ID 99}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 99 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @statement_expression_target {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    // expected-error @+1 {{expression endpoint must be whole storage or a declared net}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = statement, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @cross_scope_expression_target {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "left" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.scope.decl 2 parent 0 hierarchy "right" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 2 : i1 design hierarchy "right.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    // expected-error @+1 {{expression endpoint belongs to a different scope}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @expression_target_type_conversion {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.logic<1> design
+        hierarchy "top.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_requires_ref_object {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    // expected-error @+1 {{expression endpoint is incompatible with the IO declaration direction}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_instance_member_binding {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{duplicates an instance binding for the same VPI member}}
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+  }
+}

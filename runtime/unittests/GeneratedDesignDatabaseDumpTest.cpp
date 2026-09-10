@@ -165,6 +165,8 @@ TEST(GeneratedDesignDatabase, Dump) {
            definitionSpecializationCount = 0;
   uint64_t definitionSpecializationBindingOffset = 0,
            definitionSpecializationBindingCount = 0;
+  uint64_t definitionMemberEndpointOffset = 0,
+           definitionMemberEndpointCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -214,6 +216,10 @@ TEST(GeneratedDesignDatabase, Dump) {
         directory.getDefinitionSpecializationBindingOffset();
     definitionSpecializationBindingCount =
         directory.getDefinitionSpecializationBindingCount();
+    definitionMemberEndpointOffset =
+        directory.getDefinitionMemberEndpointOffset();
+    definitionMemberEndpointCount =
+        directory.getDefinitionMemberEndpointCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -258,6 +264,9 @@ TEST(GeneratedDesignDatabase, Dump) {
   ASSERT_SECTION_RANGE(definitionSpecializationBindingOffset,
                        definitionSpecializationBindingCount,
                        DefinitionSpecializationBindingLayout);
+  ASSERT_SECTION_RANGE(definitionMemberEndpointOffset,
+                       definitionMemberEndpointCount,
+                       DefinitionMemberEndpointLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;

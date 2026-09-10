@@ -149,6 +149,24 @@ def SimVPIDefinitionMemberSpecializationOp
   }];
 }
 
+def SimVPIDefinitionMemberInstanceBindingOp
+    : SimOp<"vpi_definition_member.bind", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific endpoint of a shared VPI member";
+  let description = [{
+    Associates a definition-owned member with its elaborated expression
+    endpoint in one numeric scope. The image stores these as a dense compact
+    slice per definition binding; no declaration or type metadata is cloned.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       SimVPIObjectRefAttr:$expr_target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `expr` $expr_target attr-dict
+  }];
+}
+
 def SimScopeDeclOp : SimOp<"scope.decl", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

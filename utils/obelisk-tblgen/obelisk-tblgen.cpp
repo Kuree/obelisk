@@ -892,7 +892,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"DirectPortConnection", 3},
       {"IndexedContainer", 4},
       {"DefinitionMember", 5},
-      {"DefinitionMemberParent", 6}};
+      {"DefinitionMemberParent", 6},
+      {"DefinitionMemberExpr", 7}};
   const std::pair<StringRef, uint32_t> supportedIndexedAccessKinds[] = {
       {"PortElement", 0},
       {"NetElement", 1},
@@ -1743,6 +1744,21 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
           PrintError(edge->getLoc(),
                      "automatic definition-member parent target does not "
                      "include vpiModule");
+          return false;
+        }
+      }
+      if (automaticName == "DefinitionMemberExpr") {
+        for (const Record *source : expandedSets.lookup(sources))
+          if (source->getValueAsString("apiName") != "vpiIODecl") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member expression source is "
+                       "not an io declaration");
+            return false;
+          }
+        if (selector->getValueAsString("apiName") != "vpiExpr") {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member expression selector is "
+                     "not vpiExpr");
           return false;
         }
       }
@@ -3525,7 +3541,7 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     if (!ordered || targets >= setCount || mode > 1 || order > 4 ||
         !automaticTargetsValid ||
         automaticRelation > static_cast<uint8_t>(
-                                VPIAutomaticRelation::DefinitionMemberParent) ||
+                                VPIAutomaticRelation::DefinitionMemberExpr) ||
         (automaticRelation !=
              static_cast<uint8_t>(VPIAutomaticRelation::None) &&
          ((flagsAndOrder & vpiObjectModelImageStatementContainment) != 0 ||

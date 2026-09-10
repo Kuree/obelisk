@@ -3802,7 +3802,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation *operation : nested) {
       if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionMemberDeclOp,
               sim::SimVPIDefinitionSpecializationDeclOp,
-              sim::SimVPIDefinitionMemberSpecializationOp, sim::SimScopeDeclOp,
+              sim::SimVPIDefinitionMemberSpecializationOp,
+              sim::SimVPIDefinitionMemberInstanceBindingOp, sim::SimScopeDeclOp,
               sim::SimCodeUnitDeclOp, sim::SimStatementDeclOp,
               sim::SimStatementSiteDeclOp, sim::SimVPIStatementRelationDeclOp,
               sim::SimVPIRelationDeclOp, sim::SimVPINetIdentityDeclOp,

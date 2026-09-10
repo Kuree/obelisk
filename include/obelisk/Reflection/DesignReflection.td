@@ -325,9 +325,11 @@ def DefinitionBindingDefinition
     : ReflectionField<"Definition", 4, U32LE>;
 def DefinitionBindingSpecialization
     : ReflectionField<"Specialization", 8, U32LE>;
-def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 12,
+def DefinitionBindingFirstMemberEndpoint
+    : ReflectionField<"FirstMemberEndpoint", 12, U32LE>;
+def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 16,
   [DefinitionBindingSource, DefinitionBindingDefinition,
-   DefinitionBindingSpecialization]>;
+   DefinitionBindingSpecialization, DefinitionBindingFirstMemberEndpoint]>;
 
 // Definition-owned declarations are templates. A synthetic runtime cursor
 // combines one of these member indices with an elaborated instance scope.
@@ -382,6 +384,14 @@ def DefinitionSpecializationBinding
     : ReflectionLayout<"DefinitionSpecializationBinding", 8,
       [DefinitionSpecializationBindingMember,
        DefinitionSpecializationBindingSemanticType]>;
+
+// One instance-specific expression endpoint per definition member. The row
+// ordinal is implicit in DefinitionBinding.FirstMemberEndpoint, so the common
+// direct case costs only one packed table/index word.
+def DefinitionMemberEndpointTarget
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def DefinitionMemberEndpoint : ReflectionLayout<"DefinitionMemberEndpoint", 4,
+  [DefinitionMemberEndpointTarget]>;
 
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
@@ -486,7 +496,11 @@ def SemanticDirectoryDefinitionSpecializationBindingOffset
     : ReflectionField<"DefinitionSpecializationBindingOffset", 272, U64LE>;
 def SemanticDirectoryDefinitionSpecializationBindingCount
     : ReflectionField<"DefinitionSpecializationBindingCount", 280, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 288,
+def SemanticDirectoryDefinitionMemberEndpointOffset
+    : ReflectionField<"DefinitionMemberEndpointOffset", 288, U64LE>;
+def SemanticDirectoryDefinitionMemberEndpointCount
+    : ReflectionField<"DefinitionMemberEndpointCount", 296, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 304,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -519,7 +533,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 288,
    SemanticDirectoryDefinitionSpecializationOffset,
    SemanticDirectoryDefinitionSpecializationCount,
    SemanticDirectoryDefinitionSpecializationBindingOffset,
-   SemanticDirectoryDefinitionSpecializationBindingCount]>;
+   SemanticDirectoryDefinitionSpecializationBindingCount,
+   SemanticDirectoryDefinitionMemberEndpointOffset,
+   SemanticDirectoryDefinitionMemberEndpointCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

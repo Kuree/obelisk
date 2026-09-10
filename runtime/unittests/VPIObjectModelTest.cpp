@@ -876,6 +876,9 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(
       requireTraversal(vpiIODecl, vpiInstance, Mode::Handle).automaticRelation,
       Automatic::DefinitionMemberParent);
+  EXPECT_EQ(
+      requireTraversal(vpiIODecl, vpiExpr, Mode::Handle).automaticRelation,
+      Automatic::DefinitionMemberExpr);
   EXPECT_EQ(requireTraversal(vpiReg, vpiModule, Mode::Handle).automaticRelation,
             Automatic::ParentScope);
   EXPECT_EQ(

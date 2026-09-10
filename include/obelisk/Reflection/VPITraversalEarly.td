@@ -340,7 +340,7 @@ def VPIEarlyIODeclUdpDefn : VPITraversalEdge<IODeclObjects, UdpDefn,
   HandleMode, VPIObjectSet<"EarlyUdpDefnTarget", [UdpDefn]>, NoOrder,
   "37.13; 37.36">;
 def VPIEarlyIODeclExpr : VPITraversalEdge<IODeclObjects, ExprRel, HandleMode,
-  VPIEarlyIOExprs, NoOrder, "37.13">;
+  VPIEarlyIOExprs, NoOrder, "37.13", 0, AutomaticDefinitionMemberExpr>;
 def VPIEarlyIODeclLeftRange : VPITraversalEdge<IODeclObjects, LeftRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.13">;
 def VPIEarlyIODeclRightRange : VPITraversalEdge<IODeclObjects, RightRangeRel,

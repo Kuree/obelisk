@@ -36,12 +36,13 @@ using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
 static_assert(DefinitionLayout.size == 32);
-static_assert(DefinitionBindingLayout.size == 12);
+static_assert(DefinitionBindingLayout.size == 16);
 static_assert(DefinitionMemberLayout.size == 20);
 static_assert(DefinitionMemberRelationLayout.size == 12);
 static_assert(DefinitionMemberRelationTargetLayout.size == 4);
 static_assert(DefinitionSpecializationLayout.size == 12);
 static_assert(DefinitionSpecializationBindingLayout.size == 8);
+static_assert(DefinitionMemberEndpointLayout.size == 4);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
@@ -219,6 +220,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t sourceIndexAndTable = 0;
     uint32_t definition = 0;
     uint32_t specialization = UINT32_MAX;
+    uint32_t firstMemberEndpoint = 0;
   };
   struct DefinitionMemberRecord {
     sim::SimVPIDefinitionMemberDeclOp declaration;
@@ -239,6 +241,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionSpecializationBindingRecord {
     uint32_t member = 0;
     uint32_t semanticType = 0;
+  };
+  struct DefinitionMemberEndpointRecord {
+    uint32_t targetIndexAndTable = UINT32_MAX;
   };
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
@@ -269,6 +274,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionSpecializationDeclarations;
   SmallVector<sim::SimVPIDefinitionMemberSpecializationOp>
       definitionMemberSpecializations;
+  SmallVector<sim::SimVPIDefinitionMemberInstanceBindingOp>
+      definitionMemberInstanceBindings;
   llvm::StringMap<sim::SimVPIDefinitionDeclOp> definitionsBySymbol;
   llvm::StringMap<sim::SimVPIDefinitionMemberDeclOp> definitionMembersBySymbol;
   llvm::StringMap<sim::SimVPIDefinitionSpecializationDeclOp>
@@ -288,6 +295,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<DefinitionSpecializationRecord> definitionSpecializations;
   SmallVector<DefinitionSpecializationBindingRecord>
       definitionSpecializationBindings;
+  SmallVector<DefinitionMemberEndpointRecord> definitionMemberEndpoints;
   DenseMap<uint32_t, uint32_t> definitionForSource;
   SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
   SmallVector<NetDelayRunRecord> netDelayRuns;
@@ -367,6 +375,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        operation)) {
       if (includeStatements)
         definitionMemberSpecializations.push_back(binding);
+    } else if (auto binding =
+                   dyn_cast<sim::SimVPIDefinitionMemberInstanceBindingOp>(
+                       operation)) {
+      if (includeStatements)
+        definitionMemberInstanceBindings.push_back(binding);
     } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (includeStatements) {
         anchors.push_back(anchor);
@@ -1004,7 +1017,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       definitionBindings.push_back({packedSource,
                                     definitionIndices.lookup(found->second),
-                                    specializationIndex});
+                                    specializationIndex, 0});
       definitionForSource[packedSource] =
           definitionIndices.lookup(found->second);
     }
@@ -1012,6 +1025,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                       const DefinitionBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
     });
+    for (DefinitionBindingRecord &binding : definitionBindings) {
+      const DefinitionRecord &definition = definitions[binding.definition];
+      if (definitionMemberEndpoints.size() >
+          UINT32_MAX - definition.memberCount) {
+        design.emitOpError("VPI definition-member endpoint table exceeds "
+                           "32-bit indices");
+        return {};
+      }
+      binding.firstMemberEndpoint =
+          static_cast<uint32_t>(definitionMemberEndpoints.size());
+      definitionMemberEndpoints.resize(definitionMemberEndpoints.size() +
+                                       definition.memberCount);
+    }
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
     if (object.identity)
@@ -1205,6 +1231,87 @@ SmallVector<uint8_t> serializeDesignDatabase(
         else
           netRefs.try_emplace(object.id, reference);
       }
+    }
+
+    DenseMap<uint64_t, uint32_t> definitionBindingByScope;
+    for (auto [bindingIndex, binding] : llvm::enumerate(definitionBindings)) {
+      if (unpackTableIndexKind(binding.sourceIndexAndTable) != TableKind::Scope)
+        continue;
+      uint32_t scopeIndex = unpackTableIndex(binding.sourceIndexAndTable);
+      if (scopeIndex < scopes.size())
+        definitionBindingByScope[scopes[scopeIndex].getId()] =
+            static_cast<uint32_t>(bindingIndex);
+    }
+    const VPITraversalDescriptor *exprEdge =
+        findVPITraversal(static_cast<uint32_t>(VPIObjectKind::IODecl),
+                         static_cast<uint32_t>(VPIRelationKind::ExprRel),
+                         VPITraversalMode::Handle);
+    for (sim::SimVPIDefinitionMemberInstanceBindingOp endpoint :
+         definitionMemberInstanceBindings) {
+      auto bindingIndex = definitionBindingByScope.find(endpoint.getScopeId());
+      auto member =
+          definitionMembersBySymbol.find(endpoint.getMemberAttr().getValue());
+      if (bindingIndex == definitionBindingByScope.end() ||
+          member == definitionMembersBySymbol.end() ||
+          !definitionMemberIndices.count(member->second)) {
+        endpoint.emitOpError(
+            "VPI definition-member endpoint cannot be encoded");
+        return {};
+      }
+      DefinitionBindingRecord &binding =
+          definitionBindings[bindingIndex->second];
+      uint32_t memberIndex = definitionMemberIndices.lookup(member->second);
+      const DefinitionRecord &definition = definitions[binding.definition];
+      if (memberIndex < definition.firstMember ||
+          memberIndex - definition.firstMember >= definition.memberCount) {
+        endpoint.emitOpError("VPI endpoint member belongs to another scope "
+                             "definition");
+        return {};
+      }
+      uint64_t id = endpoint.getExprTarget().getId().getValue().getZExtValue();
+      std::optional<ImageObjectRef> target;
+      switch (endpoint.getExprTarget().getKind()) {
+      case sim::VPIObjectRefKind::Storage: {
+        auto found = storageRefs.find(id);
+        if (found != storageRefs.end())
+          target = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::Net: {
+        auto found = netRefs.find(id);
+        if (found != netRefs.end())
+          target = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::NetIdentity: {
+        auto found = netIdentityRefs.find(id);
+        if (found != netIdentityRefs.end())
+          target = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::Statement:
+        break;
+      }
+      if (!target || !exprEdge ||
+          !vpiObjectSetContains(exprEdge->targets, target->vpiKind)) {
+        endpoint.emitOpError(
+            "expression endpoint is not legal for a VPI IO declaration");
+        return {};
+      }
+      uint32_t packedTarget = 0;
+      if (!tryPackTableIndex(target->table, target->index, packedTarget)) {
+        endpoint.emitOpError("VPI expression endpoint cannot be packed");
+        return {};
+      }
+      uint32_t slot =
+          binding.firstMemberEndpoint + (memberIndex - definition.firstMember);
+      if (slot >= definitionMemberEndpoints.size() ||
+          definitionMemberEndpoints[slot].targetIndexAndTable != UINT32_MAX) {
+        endpoint.emitOpError(
+            "duplicate VPI definition-member expression endpoint");
+        return {};
+      }
+      definitionMemberEndpoints[slot].targetIndexAndTable = packedTarget;
     }
   }
 
@@ -3098,9 +3205,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t definitionSpecializationBindingOffset =
       definitionSpecializationOffset +
       definitionSpecializations.size() * DefinitionSpecializationLayout.size;
-  uint64_t stringOffset = definitionSpecializationBindingOffset +
-                          definitionSpecializationBindings.size() *
-                              DefinitionSpecializationBindingLayout.size;
+  uint64_t definitionMemberEndpointOffset =
+      definitionSpecializationBindingOffset +
+      definitionSpecializationBindings.size() *
+          DefinitionSpecializationBindingLayout.size;
+  uint64_t stringOffset =
+      definitionMemberEndpointOffset +
+      definitionMemberEndpoints.size() * DefinitionMemberEndpointLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -3379,6 +3490,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionSpecializationBindingOffset);
     writer.setDefinitionSpecializationBindingCount(
         definitionSpecializationBindings.size());
+    writer.setDefinitionMemberEndpointOffset(definitionMemberEndpointOffset);
+    writer.setDefinitionMemberEndpointCount(definitionMemberEndpoints.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -3485,6 +3598,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSourceIndexAndTable(binding.sourceIndexAndTable);
     writer.setDefinition(binding.definition);
     writer.setSpecialization(binding.specialization);
+    writer.setFirstMemberEndpoint(binding.firstMemberEndpoint);
   }
   for (auto [index, member] : llvm::enumerate(definitionMembers)) {
     DefinitionMemberWriter writer(output.data() + definitionMemberOffset +
@@ -3534,6 +3648,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         index * DefinitionSpecializationBindingLayout.size);
     writer.setMember(binding.member);
     writer.setSemanticType(binding.semanticType);
+  }
+  for (auto [index, endpoint] : llvm::enumerate(definitionMemberEndpoints)) {
+    DefinitionMemberEndpointWriter writer(
+        output.data() + definitionMemberEndpointOffset +
+        index * DefinitionMemberEndpointLayout.size);
+    writer.setTargetIndexAndTable(endpoint.targetIndexAndTable);
   }
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +

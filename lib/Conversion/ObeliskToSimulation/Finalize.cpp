@@ -194,10 +194,14 @@ void ObeliskSimFinalizePass::runOnOperation() {
                       getSpecializationAttrName(op->getName()))) &&
             reference.getNestedReferences().empty();
         bool definitionMemberReference =
-            isa<sim::SimVPIDefinitionMemberSpecializationOp>(op) &&
+            isa<sim::SimVPIDefinitionMemberSpecializationOp,
+                sim::SimVPIDefinitionMemberInstanceBindingOp>(op) &&
             named.getName() ==
-                sim::SimVPIDefinitionMemberSpecializationOp::getMemberAttrName(
-                    op->getName()) &&
+                (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op)
+                     ? sim::SimVPIDefinitionMemberSpecializationOp::
+                           getMemberAttrName(op->getName())
+                     : sim::SimVPIDefinitionMemberInstanceBindingOp::
+                           getMemberAttrName(op->getName())) &&
             reference.getNestedReferences().empty();
         bool allowed = callTarget || observerTarget || graphReference ||
                        executableReference || definitionReference ||

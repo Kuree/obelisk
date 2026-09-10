@@ -45,6 +45,14 @@ module attributes {
     obelisk_sim.vpi_definition_member.specialize @d_spec member @d_iface type
         #obelisk_sim.vpi_type<kind = bit, isSigned = false,
           isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.bind scope 1 member @d_a expr
+        <kind = storage, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 1 member @d_io expr
+        <kind = net, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 2 member @d_a expr
+        <kind = storage, id = 3 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 2 member @d_io expr
+        <kind = net, id = 1 : i64>
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d" vpi_kind 32
         definition @d_def specialization @d_spec
     // A second instance deliberately shares the definition and complete type
@@ -84,10 +92,24 @@ module attributes {
           isFourState = false, range = [0, 0], children = [], childNames = [],
           typedefAliases = [@alias_t, @base_t]>
     }
-    obelisk_sim.storage.decl 0 in 1 : i8 design hierarchy "top.d.a"
+    obelisk_sim.storage.decl 0 in 1 : i8 design hierarchy "top.d.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [7, 0], children = [], childNames = []>
+    }
     obelisk_sim.storage.decl 1 in 0 : i16 design hierarchy "top.backing"
-    obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<1> design hierarchy "top.d.io"
+    obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<1> design hierarchy "top.d.io" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
     obelisk_sim.storage.decl 2 in 1 : i8 design debug "zzBacking"
+    obelisk_sim.storage.decl 3 in 2 : i8 design hierarchy "top.e.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [7, 0], children = [], childNames = []>
+    }
+    obelisk_sim.net.decl 1 in 2 : !obelisk_sim.logic<1> design hierarchy "top.e.io" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
     obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i8 input ordinal 0 hierarchy "top.d.a" debug "a"
     obelisk_sim.port.decl 1 in 1 source 0 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 1 hierarchy "top.d.io" debug "io"
     obelisk_sim.port.decl 2 in 1 source 1 net = false at 4 : i4 output ordinal 2 hierarchy "top.d.slice" debug "slice"
@@ -134,13 +156,15 @@ module attributes {
 // direction/order metadata. A sliced alias remains a distinct port record in
 // its declaring module scope and points at the canonical source bit range.
 // DATABASE: object name=top.backing kind=2 vpi_kind=48 caps=0x1 id=1 scope=top width=16 range=[15:0] state=8 type_kind=1 type_flags=0x4 port_ordinal=0
-// DATABASE: object name=top.d.a kind=2 vpi_kind=48 caps=0x9 id=0 scope=top.d width=8 range=[7:0] state=0 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE: object name=top.d.a kind=2 vpi_kind=620 caps=0x9 id=0 scope=top.d width=8 range=[7:0] state=0 type_kind=1 type_flags=0x4 port_ordinal=0
 // DATABASE-NEXT: object name=top.d.io kind=3 vpi_kind=36 caps=0x119 id=0 scope=top.d width=1 range=[0:0] state=24 type_kind=1 type_flags=0x5 port_ordinal=1
 // DATABASE-NEXT: object name=top.d.p kind=8 vpi_kind=44 caps=0x309 id=3 scope=top.d width=8 range=[7:0] state=0 type_kind=1 type_flags=0x4 port_ordinal=3
 // DATABASE-NEXT: object name=top.d.q kind=8 vpi_kind=44 caps=0x409 id=4 scope=top.d width=8 range=[7:0] state=32 type_kind=1 type_flags=0x4 port_ordinal=4
 // DATABASE-NEXT: object name=top.d.slice kind=8 vpi_kind=44 caps=0x211 id=2 scope=top.d width=4 range=[3:0] state=12 type_kind=1 type_flags=0x4 port_ordinal=2
 // DATABASE-NEXT: object name=top.d.zouter kind=8 vpi_kind=44 caps=0x509 id=5 scope=top.d width=16 range=[15:0] state=8 type_kind=1 type_flags=0x4 port_ordinal=5
 // DATABASE-NEXT: object name=zzBacking kind=2 vpi_kind=48 caps=0x1 id=2 scope=top.d width=8 range=[7:0] state=32 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE-NEXT: object name=top.e.a kind=2 vpi_kind=620 caps=0x1 id=3 scope=top.e width=8 range=[7:0] state=40 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE-NEXT: object name=top.e.io kind=3 vpi_kind=36 caps=0x1 id=1 scope=top.e width=1 range=[0:0] state=48 type_kind=1 type_flags=0x5 port_ordinal=0
 // DATABASE-NOT: relation
 
 // Static relation records are inferred from the existing scope ownership;
@@ -148,7 +172,7 @@ module attributes {
 // distinct vpiPort identity sharing its variable/net state, while name lookup
 // remains canonical on the storage or net record.
 // VPI: object name=iface_t kind=9 vpi_kind=906
-// VPI: object name=top.d.a kind=2 vpi_kind=48
+// VPI: object name=top.d.a kind=2 vpi_kind=620
 // VPI-NEXT: object name=top.d.a kind=8 vpi_kind=44
 // VPI-NEXT: object name=top.d.alias_t kind=9 vpi_kind=640
 // VPI-NEXT: object name=top.d.base_t kind=9 vpi_kind=640
@@ -160,6 +184,8 @@ module attributes {
 // VPI-NEXT: object name=top.d.slice kind=8 vpi_kind=44
 // VPI-NEXT: object name=top.d.zouter kind=8 vpi_kind=44
 // VPI-NEXT: object name=zzBacking kind=2 vpi_kind=48
+// VPI-NEXT: object name=top.e.a kind=2 vpi_kind=620
+// VPI-NEXT: object name=top.e.io kind=3 vpi_kind=36
 // VPI: relation source_table=0 source=1 source_type=32 mode=iterate selector=36 ordinal=0 target_table=1 target=8
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=0 target_table=1 target=4
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=1 target_table=1 target=9
@@ -167,18 +193,19 @@ module attributes {
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=3 target_table=1 target=11
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=4 target_table=1 target=12
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=44 ordinal=5 target_table=1 target=13
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=0 target_table=1 target=3
-// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=1 target_table=1 target=14
+// VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=48 ordinal=0 target_table=1 target=14
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=0 target_table=1 target=3
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=100 ordinal=1 target_table=1 target=14
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=605 ordinal=0 target_table=1 target=2
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=0 target_table=1 target=7
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=1 target_table=1 target=6
 // VPI-NEXT: relation source_table=0 source=1 source_type=32 mode=iterate selector=725 ordinal=2 target_table=1 target=5
+// VPI-NEXT: relation source_table=0 source=2 source_type=32 mode=iterate selector=36 ordinal=0 target_table=1 target=16
+// VPI-NEXT: relation source_table=0 source=2 source_type=32 mode=iterate selector=100 ordinal=0 target_table=1 target=15
 // VPI-NEXT: relation source_table=1 source=2 source_type=906 mode=handle selector=745 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=32 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=84 ordinal=0 target_table=0 target=1
-// VPI-NEXT: relation source_table=1 source=3 source_type=48 mode=handle selector=745 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=620 mode=handle selector=32 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=620 mode=handle selector=84 ordinal=0 target_table=0 target=1
+// VPI-NEXT: relation source_table=1 source=3 source_type=620 mode=handle selector=745 ordinal=0 target_table=0 target=1
 // VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=32 ordinal=0 target_table=0 target=1
 // VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=80 ordinal=0 target_table=1 target=3
 // VPI-NEXT: relation source_table=1 source=4 source_type=44 mode=handle selector=745 ordinal=0 target_table=0 target=1
