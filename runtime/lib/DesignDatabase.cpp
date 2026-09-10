@@ -3695,6 +3695,57 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
   uint32_t packedSource = 0;
   if (!obelisk::reflection::tryPackTableIndex(table, sourceIndex, packedSource))
     return OBELISK_RT_INVALID_HANDLE;
+
+  // Definition-backed properties are the common path for elaborated module,
+  // interface, and program instances. Validated images cannot also carry a
+  // fixed row for these selectors on a bound source, so avoid a guaranteed
+  // miss in the larger general property table.
+  if (selector == 9 || selector == 15 || selector == 16) {
+    uint32_t low = 0;
+    uint32_t high = static_cast<uint32_t>(database.definitionBindingCount);
+    while (low != high) {
+      uint32_t middle = low + (high - low) / 2;
+      const uint8_t *binding = database.data + database.definitionBindings +
+                               uint64_t{middle} * kDefinitionBindingSize;
+      if (read32(binding) < packedSource)
+        low = middle + 1;
+      else
+        high = middle;
+    }
+    if (low != database.definitionBindingCount) {
+      const uint8_t *binding = database.data + database.definitionBindings +
+                               uint64_t{low} * kDefinitionBindingSize;
+      if (read32(binding) == packedSource) {
+        uint32_t definitionIndex = read32(binding + 4);
+        if (definitionIndex >= database.definitionCount)
+          return OBELISK_RT_INVALID_DESIGN;
+        const uint8_t *definition = database.data + database.definitions +
+                                    uint64_t{definitionIndex} * kDefinitionSize;
+        if (selector == 16) {
+          uint32_t line = read32(definition + 12);
+          if (line == 0)
+            return OBELISK_RT_EOF;
+          outValue->kind = static_cast<uint8_t>(
+              obelisk::reflection::VPIPropertyValueKind::Integer);
+          outValue->payload = line;
+          return OBELISK_RT_OK;
+        }
+        uint32_t relative = read32(definition + (selector == 9 ? 4 : 8));
+        if (relative == 0)
+          return OBELISK_RT_EOF;
+        outValue->kind = static_cast<uint8_t>(
+            obelisk::reflection::VPIPropertyValueKind::String);
+        outValue->payload = database.strings + relative;
+        std::string_view value;
+        if (!getString(database, outValue->payload, value))
+          return OBELISK_RT_INVALID_DESIGN;
+        outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
+        outValue->stringSize = value.size();
+        return OBELISK_RT_OK;
+      }
+    }
+  }
+
   uint32_t low = 0;
   uint32_t high = static_cast<uint32_t>(database.fixedPropertyCount);
   uint16_t compactSelector = static_cast<uint16_t>(selector);
@@ -3730,51 +3781,7 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
     }
   }
 
-  if (selector != 9 && selector != 15 && selector != 16)
-    return OBELISK_RT_EOF;
-  low = 0;
-  high = static_cast<uint32_t>(database.definitionBindingCount);
-  while (low != high) {
-    uint32_t middle = low + (high - low) / 2;
-    const uint8_t *binding = database.data + database.definitionBindings +
-                             uint64_t{middle} * kDefinitionBindingSize;
-    if (read32(binding) < packedSource)
-      low = middle + 1;
-    else
-      high = middle;
-  }
-  if (low == database.definitionBindingCount)
-    return OBELISK_RT_EOF;
-  const uint8_t *binding = database.data + database.definitionBindings +
-                           uint64_t{low} * kDefinitionBindingSize;
-  if (read32(binding) != packedSource)
-    return OBELISK_RT_EOF;
-  uint32_t definitionIndex = read32(binding + 4);
-  if (definitionIndex >= database.definitionCount)
-    return OBELISK_RT_INVALID_DESIGN;
-  const uint8_t *definition = database.data + database.definitions +
-                              uint64_t{definitionIndex} * kDefinitionSize;
-  if (selector == 16) {
-    uint32_t line = read32(definition + 12);
-    if (line == 0)
-      return OBELISK_RT_EOF;
-    outValue->kind = static_cast<uint8_t>(
-        obelisk::reflection::VPIPropertyValueKind::Integer);
-    outValue->payload = line;
-    return OBELISK_RT_OK;
-  }
-  uint32_t relative = read32(definition + (selector == 9 ? 4 : 8));
-  if (relative == 0)
-    return OBELISK_RT_EOF;
-  outValue->kind =
-      static_cast<uint8_t>(obelisk::reflection::VPIPropertyValueKind::String);
-  outValue->payload = database.strings + relative;
-  std::string_view value;
-  if (!getString(database, outValue->payload, value))
-    return OBELISK_RT_INVALID_DESIGN;
-  outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
-  outValue->stringSize = value.size();
-  return OBELISK_RT_OK;
+  return OBELISK_RT_EOF;
 }
 
 obelisk_rt_status designVPIResolvedNetType(const Database &database,
