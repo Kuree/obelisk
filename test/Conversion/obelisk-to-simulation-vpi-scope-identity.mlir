@@ -2,6 +2,7 @@
 // RUN: obelisk-opt %t/topology.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s
 // RUN: obelisk --vpi=read -emit-sim %t/frontend.sv -o %t/frontend.mlir
 // RUN: FileCheck %s --check-prefix=FRONTEND --input-file=%t/frontend.mlir
+// RUN: FileCheck %s --check-prefix=PACKAGE --input-file=%t/frontend.mlir
 
 // Nested module, interface, and program array members are not top instances.
 // Their definition names remain available from legacy referenced definitions
@@ -100,6 +101,7 @@ endmodule
 
 module automatic top;
   cellmod u();
+  cellmod v();
   iftop i();
 endmodule
 
@@ -112,8 +114,16 @@ endprogram
 package automatic pkg;
 endpackage
 
+// FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[PROGRAM:[^ ]+]] type 602 name "ptop"
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "ptop" {{.*}} vpi_kind 602 definition @[[PROGRAM]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[CELL:[^ ]+]] type 32 name "cellmod"
+// FRONTEND-COUNT-2: obelisk_sim.scope.decl {{.*}} vpi_kind 32 definition @[[CELL]]
+// FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[INTERFACE:[^ ]+]] type 601 name "iftop"
+// FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.i" {{.*}} vpi_kind 601 definition @[[INTERFACE]]
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top.u" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "cellmod">]>
+// FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top.v" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "cellmod">]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 601 {{.*}} hierarchy "top.i" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 9 : i32, value = "iftop">]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 602 {{.*}} hierarchy "ptop" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 9 : i32, value = "ptop">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 600 {{.*}} hierarchy "pkg" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 9 : i32, value = "pkg">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
+// PACKAGE-NOT: obelisk_sim.vpi_definition.decl {{.*}} type 600

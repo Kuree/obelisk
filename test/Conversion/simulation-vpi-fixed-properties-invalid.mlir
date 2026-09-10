@@ -55,7 +55,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @nul_definition_file {
-    // expected-error @+1 {{fixed string VPI property contains an embedded NUL}}
+  // expected-error @+1 {{definition_loc filename contains an embedded NUL}}
     obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {
       definition_loc = loc("bad\00file.sv":7:1)
     }

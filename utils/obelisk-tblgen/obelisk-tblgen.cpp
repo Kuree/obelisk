@@ -903,8 +903,11 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   const std::pair<StringRef, uint32_t> supportedPropertyProtectedAccesses[] = {
       {"Denied", 0}, {"Allowed", 1}};
   const std::pair<StringRef, uint32_t> supportedPropertyRealizations[] = {
-      {"Derived", 0}, {"FixedImage", 1}, {"Runtime", 2},
-      {"IndexedImage", 3}};
+      {"Derived", 0},
+      {"FixedImage", 1},
+      {"Runtime", 2},
+      {"IndexedImage", 3},
+      {"DefinitionImage", 4}};
   const std::pair<StringRef, uint32_t> supportedObjectRepresentations[] = {
       {"PhysicalScope", 0}, {"PhysicalObject", 1}, {"CodeUnit", 2},
       {"Statement", 3},     {"StaticImage", 4},    {"SemanticSynthetic", 5},
@@ -1169,8 +1172,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       return false;
     }
     const auto &propertySources = expandedSets.lookup(sources);
-    for (StringRef field : {"dynamicSources", "protectedSources",
-                            "fixedImageSources", "runtimeSources"}) {
+    for (StringRef field :
+         {"dynamicSources", "protectedSources", "fixedImageSources",
+          "runtimeSources", "definitionImageSources"}) {
       const Record *overrides = property->getValueAsDef(field);
       if (overrides->getValueAsBit("nullRoot")) {
         PrintError(property->getLoc(), Twine("VPI property ") + field +
@@ -1189,8 +1193,17 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         expandedSets.lookup(property->getValueAsDef("fixedImageSources"));
     const auto &runtimeSources =
         expandedSets.lookup(property->getValueAsDef("runtimeSources"));
+    const auto &definitionSources =
+        expandedSets.lookup(property->getValueAsDef("definitionImageSources"));
     for (const Record *source : fixedSources)
-      if (llvm::is_contained(runtimeSources, source)) {
+      if (llvm::is_contained(runtimeSources, source) ||
+          llvm::is_contained(definitionSources, source)) {
+        PrintError(property->getLoc(),
+                   "VPI property realization override sets overlap");
+        return false;
+      }
+    for (const Record *source : runtimeSources)
+      if (llvm::is_contained(definitionSources, source)) {
         PrintError(property->getLoc(),
                    "VPI property realization override sets overlap");
         return false;
@@ -2314,15 +2327,19 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
       allowedWhenProtected = value;
   const Record *fixedImageProperty = nullptr;
   const Record *runtimeProperty = nullptr;
+  const Record *definitionImageProperty = nullptr;
   for (const Record *value :
        records.getAllDerivedDefinitions("VPIPropertyRealization")) {
     if (value->getValueAsString("cppName") == "FixedImage")
       fixedImageProperty = value;
     if (value->getValueAsString("cppName") == "Runtime")
       runtimeProperty = value;
+    if (value->getValueAsString("cppName") == "DefinitionImage")
+      definitionImageProperty = value;
   }
   assert(dynamicProperty && allowedWhenProtected && fixedImageProperty &&
-         runtimeProperty && "validated property policy enums must exist");
+         runtimeProperty && definitionImageProperty &&
+         "validated property policy enums must exist");
 
   struct EmittedProperty {
     uint32_t source;
@@ -2346,6 +2363,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         expandedSets.lookup(property->getValueAsDef("fixedImageSources"));
     const auto &runtimeSources =
         expandedSets.lookup(property->getValueAsDef("runtimeSources"));
+    const auto &definitionImageSources =
+        expandedSets.lookup(property->getValueAsDef("definitionImageSources"));
     for (uint32_t source :
          expandedSets.lookup(property->getValueAsDef("sources"))) {
       auto sourceSelected = [&](const auto &sources) {
@@ -2360,7 +2379,8 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
            sourceSelected(protectedSources)
                ? allowedWhenProtected
                : property->getValueAsDef("protectedAccess"),
-           sourceSelected(fixedImageSources) ? fixedImageProperty
+           sourceSelected(definitionImageSources) ? definitionImageProperty
+           : sourceSelected(fixedImageSources)    ? fixedImageProperty
            : sourceSelected(runtimeSources)
                ? runtimeProperty
                : property->getValueAsDef("realization"),
@@ -3482,15 +3502,15 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     if (!ordered || property == 0 || !descriptor ||
         record[4] > static_cast<uint8_t>(
                                     VPIPropertyValueKind::String) ||
-        ((record[5] >> 3) & 3) >
-            static_cast<uint8_t>(VPIPropertyRealization::IndexedImage) ||
-        (record[5] & ~UINT8_C(31)) != 0)
+        ((record[5] >> 3) & 7) >
+            static_cast<uint8_t>(VPIPropertyRealization::DefinitionImage) ||
+        (record[5] & ~UINT8_C(63)) != 0)
       return false;
     if (record[4] != static_cast<uint8_t>(descriptor->valueKind) ||
         (record[5] & 1) != static_cast<uint8_t>(descriptor->stability) ||
         ((record[5] >> 1) & 1) !=
             static_cast<uint8_t>(descriptor->protectedAccess) ||
-        ((record[5] >> 3) & 3) !=
+        ((record[5] >> 3) & 7) !=
             static_cast<uint8_t>(descriptor->realization) ||
         ((record[5] & 4) != 0) != descriptor->symbolicString)
       return false;
@@ -3859,7 +3879,7 @@ inline constexpr bool findVPIObjectModelImageProperty(
             static_cast<VPIPropertyValueKind>(record[4]),
             static_cast<VPIPropertyStability>(record[5] & 1),
             static_cast<VPIPropertyProtectedAccess>((record[5] >> 1) & 1),
-            static_cast<VPIPropertyRealization>((record[5] >> 3) & 3),
+            static_cast<VPIPropertyRealization>((record[5] >> 3) & 7),
             (record[5] & 4) != 0};
   return result.sourceType == sourceType && result.property == property;
 }

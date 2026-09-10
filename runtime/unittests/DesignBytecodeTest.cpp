@@ -2115,6 +2115,29 @@ std::vector<uint8_t> makeScopeIdentityPropertyDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makeDefinitionPropertyDatabase() {
+  std::vector<uint8_t> bytes = makeDatabase();
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
+  const uint64_t definitionOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t bindingOffset = definitionOffset + 16;
+  bytes.resize(bindingOffset + 8, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 176, definitionOffset);
+  put64(bytes, directoryOffset + 184, 1);
+  put64(bytes, directoryOffset + 192, bindingOffset);
+  put64(bytes, directoryOffset + 200, 1);
+
+  put16(bytes, definitionOffset, vpiModule);
+  put32(bytes, definitionOffset + 4, 4);  // "top.value"
+  put32(bytes, definitionOffset + 8, 20); // "test.sv"
+  put32(bytes, definitionOffset + 12, 29);
+  put32(bytes, bindingOffset, 0); // The only scope record.
+  put32(bytes, bindingOffset + 4, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeProtectedScopeDatabase() {
   std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes[12]) |
@@ -6217,6 +6240,93 @@ TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
 
   EXPECT_EQ(vpi_release_handle(module), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsDefinitionInvariantPropertiesThroughInstanceBinding) {
+  Fixture fixture;
+  fixture.database = makeDefinitionPropertyDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char name[] = "top";
+  vpiHandle module = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(module, nullptr);
+  EXPECT_STREQ(vpi_get_str(vpiDefName, module), "top.value");
+  EXPECT_STREQ(vpi_get_str(vpiDefFile, module), "test.sv");
+  EXPECT_EQ(vpi_get(vpiDefLineNo, module), 29);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignDatabase, RejectsMalformedDefinitionBindings) {
+  auto rejected = [](auto damage) {
+    Fixture fixture;
+    fixture.database = makeDefinitionPropertyDatabase();
+    const uint32_t directoryOffset = get32(fixture.database, 12);
+    const uint64_t definitionOffset =
+        get64(fixture.database, directoryOffset + 176);
+    const uint64_t bindingOffset =
+        get64(fixture.database, directoryOffset + 192);
+    damage(fixture.database, directoryOffset, definitionOffset, bindingOffset);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
+    put16(bytes, definition, vpiInterface); // Disagrees with bound scope.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t, uint64_t binding) {
+    put32(bytes, binding, uint32_t{1} << 30); // Object, not scope.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t, uint64_t binding) {
+    put32(bytes, binding, 1); // Scope index out of bounds.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t, uint64_t binding) {
+    put32(bytes, binding + 4, 1); // Definition index out of bounds.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
+    put32(bytes, definition + 4, 0); // Missing required definition name.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
+    put32(bytes, definition + 4, 99); // Definition name outside string pool.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
+    put32(bytes, definition + 8, 0); // A line requires a source file.
+  });
+  rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
+    put32(bytes, definition + 12, uint32_t{INT32_MAX} + 1);
+  });
+  rejected([](auto &bytes, uint32_t directory, uint64_t, uint64_t) {
+    const uint64_t property = bytes.size();
+    bytes.resize(bytes.size() + 16, 0);
+    put64(bytes, 24, bytes.size());
+    put64(bytes, directory + 112, property);
+    put64(bytes, directory + 120, 1);
+    put32(bytes, property, 0); // The bound scope source.
+    put16(bytes, property + 4, vpiDefLineNo);
+    put16(bytes, property + 6, 1); // Integer property.
+    put64(bytes, property + 8, 29);
+  });
+  rejected([](auto &bytes, uint32_t directory, uint64_t, uint64_t) {
+    put64(bytes, directory + 200, 0); // Serialized definition is unbound.
+  });
+  rejected([](auto &bytes, uint32_t directory, uint64_t, uint64_t binding) {
+    bytes.resize(bytes.size() + 8, 0);
+    put64(bytes, 24, bytes.size());
+    put64(bytes, directory + 200, 2);
+    std::memcpy(bytes.data() + binding + 8, bytes.data() + binding, 8);
+  });
 }
 
 TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {

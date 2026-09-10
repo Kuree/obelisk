@@ -171,8 +171,13 @@ void ObeliskSimFinalizePass::runOnOperation() {
         bool executableReference =
             reference.getNestedReferences().empty() &&
             executableSymbols.contains(reference.getRootReference());
+        bool definitionReference =
+            isa<sim::SimScopeDeclOp>(op) &&
+            named.getName() ==
+                sim::SimScopeDeclOp::getVpiDefinitionAttrName(op->getName()) &&
+            reference.getNestedReferences().empty();
         bool allowed = callTarget || observerTarget || graphReference ||
-                       executableReference;
+                       executableReference || definitionReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;

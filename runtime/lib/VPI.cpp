@@ -4596,7 +4596,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return vpiUndefined;
   }
   if (propertyDescriptor->realization ==
-      obelisk::reflection::VPIPropertyRealization::FixedImage) {
+          obelisk::reflection::VPIPropertyRealization::FixedImage ||
+      propertyDescriptor->realization ==
+          obelisk::reflection::VPIPropertyRealization::DefinitionImage) {
     // Runtime-created handles have no immutable physical source and are never
     // protected.  All source-code objects use the validated sparse image.
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
@@ -4988,7 +4990,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
     return vpiUndefined;
   }
   if (descriptor->realization ==
-      obelisk::reflection::VPIPropertyRealization::FixedImage) {
+          obelisk::reflection::VPIPropertyRealization::FixedImage ||
+      descriptor->realization ==
+          obelisk::reflection::VPIPropertyRealization::DefinitionImage) {
     VPIFixedPropertyValue value{};
     if (!fixedPropertyFor(handle, *descriptor, value) ||
         value.kind != static_cast<uint8_t>(descriptor->valueKind))
@@ -5113,8 +5117,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (propertyDescriptor &&
-      propertyDescriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::FixedImage) {
+      (propertyDescriptor->realization ==
+           obelisk::reflection::VPIPropertyRealization::FixedImage ||
+       propertyDescriptor->realization ==
+           obelisk::reflection::VPIPropertyRealization::DefinitionImage)) {
     if (propertyDescriptor->symbolicString &&
         propertyDescriptor->valueKind ==
             obelisk::reflection::VPIPropertyValueKind::Integer) {

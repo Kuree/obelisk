@@ -2059,13 +2059,22 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
          descriptor.property == vpiCellInstance) &&
         descriptor.sourceType == vpiModule)
       expected = PropertyRealization::FixedImage;
+    if (descriptor.property == vpiDefName &&
+        descriptor.sourceType == vpiPackage)
+      expected = PropertyRealization::FixedImage;
     const bool instance = descriptor.sourceType == vpiPackage ||
                           descriptor.sourceType == vpiModule ||
                           descriptor.sourceType == vpiInterface ||
                           descriptor.sourceType == vpiProgram;
+    const bool definitionInstance = descriptor.sourceType == vpiModule ||
+                                    descriptor.sourceType == vpiInterface ||
+                                    descriptor.sourceType == vpiProgram;
+    if (definitionInstance && (descriptor.property == vpiDefName ||
+                               descriptor.property == vpiDefFile ||
+                               descriptor.property == vpiDefLineNo))
+      expected = PropertyRealization::DefinitionImage;
     if (instance &&
-        (descriptor.property == vpiDefName ||
-         descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||
+        (descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||
          descriptor.property == vpiUnit))
       expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiNetType ||

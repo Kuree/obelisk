@@ -299,6 +299,26 @@ def FixedProperty : ReflectionLayout<"FixedProperty", 16,
   [FixedPropertySource, FixedPropertySelector, FixedPropertyKindAndFlags,
    FixedPropertyPayload]>;
 
+// Definition-invariant instance metadata is stored once per source design
+// unit. Instance bindings use the universal packed table/index source key and
+// are sorted by that key for allocation-free binary lookup. Relative string
+// offsets are 32-bit offsets into the canonical image string pool.
+def DefinitionVPIKind : ReflectionField<"VPIKind", 0, U16LE>;
+def DefinitionFlags : ReflectionField<"Flags", 2, U16LE>;
+def DefinitionName : ReflectionField<"Name", 4, U32LE>;
+def DefinitionFile : ReflectionField<"File", 8, U32LE>;
+def DefinitionLine : ReflectionField<"Line", 12, U32LE>;
+def Definition : ReflectionLayout<"Definition", 16,
+  [DefinitionVPIKind, DefinitionFlags, DefinitionName, DefinitionFile,
+   DefinitionLine]>;
+
+def DefinitionBindingSource
+    : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
+def DefinitionBindingDefinition
+    : ReflectionField<"Definition", 4, U32LE>;
+def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 8,
+  [DefinitionBindingSource, DefinitionBindingDefinition]>;
+
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
 // mean that the exact dominating subtype is unavailable.
@@ -374,7 +394,15 @@ def SemanticDirectoryStaticObjectOffset
     : ReflectionField<"StaticObjectOffset", 160, U64LE>;
 def SemanticDirectoryStaticObjectCount
     : ReflectionField<"StaticObjectCount", 168, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 176,
+def SemanticDirectoryDefinitionOffset
+    : ReflectionField<"DefinitionOffset", 176, U64LE>;
+def SemanticDirectoryDefinitionCount
+    : ReflectionField<"DefinitionCount", 184, U64LE>;
+def SemanticDirectoryDefinitionBindingOffset
+    : ReflectionField<"DefinitionBindingOffset", 192, U64LE>;
+def SemanticDirectoryDefinitionBindingCount
+    : ReflectionField<"DefinitionBindingCount", 200, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 208,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -393,7 +421,11 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 176,
    SemanticDirectoryNetDelayRunOffset,
    SemanticDirectoryNetDelayRunCount,
    SemanticDirectoryStaticObjectOffset,
-   SemanticDirectoryStaticObjectCount]>;
+   SemanticDirectoryStaticObjectCount,
+   SemanticDirectoryDefinitionOffset,
+   SemanticDirectoryDefinitionCount,
+   SemanticDirectoryDefinitionBindingOffset,
+   SemanticDirectoryDefinitionBindingCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

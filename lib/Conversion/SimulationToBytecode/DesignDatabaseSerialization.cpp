@@ -35,6 +35,8 @@ constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
 using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
+static_assert(DefinitionLayout.size == 16);
+static_assert(DefinitionBindingLayout.size == 8);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
@@ -130,18 +132,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
     std::string file;
     uint64_t lineColumn = 0;
   };
-  auto sourceFor = [](Operation *operation) {
+  auto sourceForLocation = [](LocationAttr sourceLocation) {
     Source source;
-    if (auto location = operation->getLoc()->findInstanceOf<FileLineColLoc>()) {
-      source.file = location.getFilename().getValue().str();
-      source.lineColumn =
-          uint64_t{location.getLine()} << 32 | uint64_t{location.getColumn()};
-    }
+    if (sourceLocation)
+      if (auto location = sourceLocation.findInstanceOf<FileLineColLoc>()) {
+        source.file = location.getFilename().getValue().str();
+        source.lineColumn =
+            uint64_t{location.getLine()} << 32 | uint64_t{location.getColumn()};
+      }
     return source;
+  };
+  auto sourceFor = [&](Operation *operation) {
+    return sourceForLocation(operation->getLoc());
   };
   auto hasFixedReflectionMetadata = [](Operation *operation) {
     return operation->hasAttr("is_protected") ||
-           operation->hasAttr("definition_loc") ||
+           (operation->hasAttr("definition_loc") &&
+            !isa<sim::SimVPIDefinitionDeclOp>(operation)) ||
            operation->hasAttr("vpi_properties");
   };
   auto sameFixedReflectionMetadata = [](Operation *left, Operation *right) {
@@ -195,6 +202,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t payload = 0;
     std::string stringPayload;
   };
+  struct DefinitionRecord {
+    sim::SimVPIDefinitionDeclOp declaration;
+    Source source;
+  };
+  struct DefinitionBindingRecord {
+    uint32_t sourceIndexAndTable = 0;
+    uint32_t definition = 0;
+  };
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
     uint32_t netType = 0;
@@ -218,6 +233,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPINettypeDeclOp> nettypes;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
+  SmallVector<sim::SimVPIDefinitionDeclOp> definitionDeclarations;
+  llvm::StringMap<sim::SimVPIDefinitionDeclOp> definitionsBySymbol;
   llvm::StringMap<sim::SimVPIObjectAnchorOp> anchorsBySymbol;
   DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
   llvm::StringMap<sim::SimVPINettypeDeclOp> nettypesBySymbol;
@@ -225,6 +242,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
   SmallVector<FixedPropertyRecord> fixedProperties;
+  SmallVector<DefinitionRecord> definitions;
+  SmallVector<DefinitionBindingRecord> definitionBindings;
+  DenseMap<uint32_t, uint32_t> definitionForSource;
   SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
   SmallVector<NetDelayRunRecord> netDelayRuns;
   auto fallbackName = [](StringRef kind, uint64_t id) {
@@ -279,7 +299,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   llvm::DenseMap<uint64_t, PortConnection> wholePortConnections;
   llvm::DenseSet<uint64_t> wholeStoragePortSources, wholeNetPortSources;
   for (Operation &operation : design.getBody().front()) {
-    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
+    if (auto definition = dyn_cast<sim::SimVPIDefinitionDeclOp>(operation)) {
+      if (includeStatements) {
+        definitionDeclarations.push_back(definition);
+        definitionsBySymbol[definition.getSymName()] = definition;
+      }
+    } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (includeStatements) {
         anchors.push_back(anchor);
         anchorsBySymbol[anchor.getSymName()] = anchor;
@@ -722,6 +747,78 @@ SmallVector<uint8_t> serializeDesignDatabase(
       canonicalNetTargetIndices, physicalNetObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+
+  if (includeStatements) {
+    DenseSet<Operation *> referencedDefinitions;
+    for (sim::SimScopeDeclOp scope : scopes) {
+      FlatSymbolRefAttr reference = scope.getVpiDefinitionAttr();
+      if (!reference)
+        continue;
+      auto found = definitionsBySymbol.find(reference.getValue());
+      if (found == definitionsBySymbol.end()) {
+        scope.emitOpError(
+            "references a VPI definition that was not serialized");
+        return {};
+      }
+      referencedDefinitions.insert(found->second);
+    }
+    llvm::sort(definitionDeclarations, [](auto left, auto right) {
+      return left.getSymName() < right.getSymName();
+    });
+    DenseMap<Operation *, uint32_t> definitionIndices;
+    for (sim::SimVPIDefinitionDeclOp definition : definitionDeclarations) {
+      if (!referencedDefinitions.contains(definition))
+        continue;
+      if (definitions.size() == UINT32_MAX) {
+        definition.emitOpError("VPI definition table exceeds 32-bit indices");
+        return {};
+      }
+      Source source = sourceForLocation(definition.getDefinitionLocAttr());
+      if (definition.getDefinitionName().contains('\0')) {
+        definition.emitOpError(
+            "source definition name contains an embedded NUL");
+        return {};
+      }
+      if (StringRef(source.file).contains('\0')) {
+        definition.emitOpError(
+            "source definition filename contains an embedded NUL");
+        return {};
+      }
+      if (source.file.empty() && source.lineColumn != 0) {
+        definition.emitOpError(
+            "source definition location requires a filename");
+        return {};
+      }
+      if ((source.lineColumn >> 32) > INT32_MAX) {
+        definition.emitOpError(
+            "definition line exceeds the VPI 32-bit integer range");
+        return {};
+      }
+      definitionIndices[definition] = static_cast<uint32_t>(definitions.size());
+      definitions.push_back({definition, std::move(source)});
+    }
+    for (auto [scopeIndex, scope] : llvm::enumerate(scopes)) {
+      FlatSymbolRefAttr reference = scope.getVpiDefinitionAttr();
+      if (!reference)
+        continue;
+      auto found = definitionsBySymbol.find(reference.getValue());
+      uint32_t packedSource = 0;
+      if (found == definitionsBySymbol.end() ||
+          !tryPackTableIndex(TableKind::Scope,
+                             static_cast<uint32_t>(scopeIndex), packedSource)) {
+        scope.emitOpError("VPI definition binding cannot be encoded");
+        return {};
+      }
+      definitionBindings.push_back(
+          {packedSource, definitionIndices.lookup(found->second)});
+      definitionForSource[packedSource] =
+          definitionIndices.lookup(found->second);
+    }
+    llvm::sort(definitionBindings, [](const DefinitionBindingRecord &left,
+                                      const DefinitionBindingRecord &right) {
+      return left.sourceIndexAndTable < right.sourceIndexAndTable;
+    });
+  }
   for (auto [index, object] : llvm::enumerate(objects)) {
     if (object.identity)
       objectIndices[object.identity] = static_cast<uint32_t>(index);
@@ -2298,11 +2395,36 @@ SmallVector<uint8_t> serializeDesignDatabase(
     const VPIPropertyDescriptor *descriptor =
         findVPIProperty(exactKind, selector);
     if (!descriptor ||
-        descriptor->realization != VPIPropertyRealization::FixedImage ||
+        (descriptor->realization != VPIPropertyRealization::FixedImage &&
+         descriptor->realization != VPIPropertyRealization::DefinitionImage) ||
         selector > UINT16_MAX)
       return operation->emitError(
-          "immutable property is not an encodable FixedImage property for "
+          "immutable property is not an encodable image property for "
           "its exact VPI kind");
+    if (descriptor->realization == VPIPropertyRealization::DefinitionImage) {
+      auto binding = definitionForSource.find(packedSource);
+      if (binding != definitionForSource.end()) {
+        DefinitionRecord &definition = definitions[binding->second];
+        bool agrees = false;
+        if (selector == 9) {
+          auto string = dyn_cast<StringAttr>(value);
+          agrees = string && string.getValue() ==
+                                 definition.declaration.getDefinitionName();
+        } else if (selector == 15) {
+          auto string = dyn_cast<StringAttr>(value);
+          agrees = string && !definition.source.file.empty() &&
+                   string.getValue() == definition.source.file;
+        } else if (selector == 16) {
+          auto integer = dyn_cast<IntegerAttr>(value);
+          agrees = integer && definition.source.lineColumn >> 32 ==
+                                  integer.getValue().getZExtValue();
+        }
+        if (!agrees)
+          return operation->emitError(
+              "instance property conflicts with its shared VPI definition");
+        return success();
+      }
+    }
     FixedPropertyRecord record;
     record.sourceIndexAndTable = packedSource;
     record.selector = static_cast<uint16_t>(selector);
@@ -2651,11 +2773,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (const SemanticTypeEdgeRecord &edge : semanticTypeEdges)
     if (!edge.name.empty())
       intern(edge.name);
+  for (DefinitionRecord &definition : definitions) {
+    intern(definition.declaration.getDefinitionName());
+    if (!definition.source.file.empty())
+      intern(definition.source.file);
+  }
   for (const FixedPropertyRecord &property : fixedProperties)
     if (property.kindAndFlags ==
         static_cast<uint16_t>(VPIPropertyValueKind::String))
       intern(property.stringPayload);
-  if ((!semanticTypes.empty() || !staticObjects.empty()) &&
+  if ((!semanticTypes.empty() || !staticObjects.empty() ||
+       !definitions.empty()) &&
       strings.size() > UINT32_MAX) {
     design.emitOpError(
         "semantic reflection string table exceeds 32-bit offsets");
@@ -2710,8 +2838,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
       resolvedNetRunOffset + resolvedNetRuns.size() * ResolvedNetRunLayout.size;
   uint64_t staticObjectOffset =
       netDelayRunOffset + netDelayRuns.size() * NetDelayRunLayout.size;
-  uint64_t stringOffset =
+  uint64_t definitionOffset =
       staticObjectOffset + staticObjects.size() * StaticObjectLayout.size;
+  uint64_t definitionBindingOffset =
+      definitionOffset + definitions.size() * DefinitionLayout.size;
+  uint64_t stringOffset =
+      definitionBindingOffset +
+      definitionBindings.size() * DefinitionBindingLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -2972,6 +3105,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setNetDelayRunCount(netDelayRuns.size());
     writer.setStaticObjectOffset(staticObjectOffset);
     writer.setStaticObjectCount(staticObjects.size());
+    writer.setDefinitionOffset(definitionOffset);
+    writer.setDefinitionCount(definitions.size());
+    writer.setDefinitionBindingOffset(definitionBindingOffset);
+    writer.setDefinitionBindingCount(definitionBindings.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -3054,6 +3191,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                      index * SemanticRootBindingLayout.size);
     writer.setObjectIndexAndTable(binding.objectIndexAndTable);
     writer.setSemanticType(binding.semanticType);
+  }
+  for (auto [index, definition] : llvm::enumerate(definitions)) {
+    DefinitionWriter writer(output.data() + definitionOffset +
+                            index * DefinitionLayout.size);
+    writer.setVPIKind(
+        static_cast<uint16_t>(definition.declaration.getVpiKind()));
+    writer.setFlags(0);
+    writer.setName(static_cast<uint32_t>(
+        intern(definition.declaration.getDefinitionName())));
+    writer.setFile(definition.source.file.empty()
+                       ? 0
+                       : static_cast<uint32_t>(intern(definition.source.file)));
+    writer.setLine(static_cast<uint32_t>(definition.source.lineColumn >> 32));
+  }
+  for (auto [index, binding] : llvm::enumerate(definitionBindings)) {
+    DefinitionBindingWriter writer(output.data() + definitionBindingOffset +
+                                   index * DefinitionBindingLayout.size);
+    writer.setSourceIndexAndTable(binding.sourceIndexAndTable);
+    writer.setDefinition(binding.definition);
   }
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +

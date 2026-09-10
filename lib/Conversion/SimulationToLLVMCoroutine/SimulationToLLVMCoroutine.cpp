@@ -3800,17 +3800,18 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (Operation &operation : design.getBody().front())
       nested.push_back(&operation);
     for (Operation *operation : nested) {
-      if (isa<sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
-              sim::SimStatementDeclOp, sim::SimStatementSiteDeclOp,
-              sim::SimVPIStatementRelationDeclOp, sim::SimVPIRelationDeclOp,
-              sim::SimVPINetIdentityDeclOp, sim::SimStorageDeclOp,
-              sim::SimNetDeclOp, sim::SimDriverDeclOp, sim::SimPortDeclOp,
-              sim::SimNetConnectDeclOp, sim::SimPassSwitchDeclOp,
-              sim::SimClassDeclOp, sim::SimCovergroupDeclOp,
-              sim::SimVPIObjectAnchorOp, sim::SimVPINettypeDeclOp,
-              sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
-              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-              sim::SimRandomConstraintTemplateOp>(operation)) {
+      if (isa<sim::SimVPIDefinitionDeclOp, sim::SimScopeDeclOp,
+              sim::SimCodeUnitDeclOp, sim::SimStatementDeclOp,
+              sim::SimStatementSiteDeclOp, sim::SimVPIStatementRelationDeclOp,
+              sim::SimVPIRelationDeclOp, sim::SimVPINetIdentityDeclOp,
+              sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
+              sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
+              sim::SimPassSwitchDeclOp, sim::SimClassDeclOp,
+              sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
+              sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
+              sim::SimVPIEnumConstDeclOp, sim::SimClassFieldDeclOp,
+              sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
+              operation)) {
         operation->erase();
         continue;
       }

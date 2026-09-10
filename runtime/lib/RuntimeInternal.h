@@ -1429,6 +1429,10 @@ struct DesignDatabaseCache {
   uint64_t netDelayRunCount = 0;
   uint64_t staticObjects = 0;
   uint64_t staticObjectCount = 0;
+  uint64_t definitions = 0;
+  uint64_t definitionCount = 0;
+  uint64_t definitionBindings = 0;
+  uint64_t definitionBindingCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };

@@ -197,11 +197,13 @@ module attributes {
 // IMAGE-NEXT: relation_index_dimension index={{[0-9]+}} range=[-1:0]
 // IMAGE-DAG: fixed_property {{.*}} selector=7 kind=0 value=true
 // IMAGE-DAG: fixed_property {{.*}} selector=8 kind=0 value=true
-// IMAGE-DAG: fixed_property {{.*}} selector=9 kind=3 value=top_def
 // IMAGE-DAG: fixed_property {{.*}} selector=50 kind=0 value=true
 // IMAGE-DAG: fixed_property {{.*}} selector=600 kind=0 value=true
 // IMAGE-DAG: fixed_property {{.*}} selector=602 kind=0 value=true
 // IMAGE-DAG: fixed_property {{.*}} selector=9 kind=3 value=$unit
+// IMAGE-DAG: definition index={{[0-9]+}} vpi_kind=32 name=top_def
+// IMAGE: definition index=[[LEAF:[0-9]+]] vpi_kind=32 name=leaf
+// IMAGE-COUNT-4: definition_binding {{.*}} definition=[[LEAF]]
 // IMAGE: relation {{.*}} source_name=top.cube target_name=top.cube[2][-1][7]
 // IMAGE-NEXT: relation {{.*}} source_name=top.cube target_name=top.cube[2][0][7]
 // IMAGE-NEXT: relation {{.*}} source_name=top.cube target_name=top.cube[1][-1][7]

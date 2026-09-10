@@ -78,16 +78,41 @@ def SimDesignOp : SimOp<"design", [
   let hasRegionVerifier = 1;
 }
 
-def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source definition identity for VPI instances";
+  let description = [{
+    Preserves one source module, interface, or program definition independently
+    of its elaborated instances. Definition-invariant VPI metadata can therefore
+    be serialized once and reached through compact instance bindings. This is
+    reflection inventory only and never participates in executable scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$vpi_kind,
+                       StrAttr:$definition_name,
+                       OptionalAttr<LocationAttr>:$definition_loc);
+  let assemblyFormat = [{
+    $sym_name `type` $vpi_kind `name` $definition_name
+    (`definition_loc` $definition_loc^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimScopeDeclOp : SimOp<"scope.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
   let summary = "immutable numeric hierarchy descriptor";
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
                        OptionalAttr<StrAttr>:$interface_type,
-                       OptionalAttr<I32Attr>:$vpi_kind);
+                       OptionalAttr<I32Attr>:$vpi_kind,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_definition);
   let assemblyFormat = [{$id (`parent` $parent^)?
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
-    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)? attr-dict}];
+    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)?
+    (`definition` $vpi_definition^)? attr-dict}];
   let hasVerifier = 1;
 }
 

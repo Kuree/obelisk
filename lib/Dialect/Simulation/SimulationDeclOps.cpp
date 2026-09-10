@@ -101,7 +101,9 @@ static LogicalResult verifyVPIProperties(Operation *operation,
              << "VPI property " << selector
              << " is not applicable to exact object kind " << exactKind;
     if (descriptor->realization !=
-        reflection::VPIPropertyRealization::FixedImage)
+            reflection::VPIPropertyRealization::FixedImage &&
+        descriptor->realization !=
+            reflection::VPIPropertyRealization::DefinitionImage)
       return operation->emitOpError()
              << "VPI property " << selector << " is not a FixedImage property";
     if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
@@ -125,6 +127,12 @@ static LogicalResult verifyDefinitionLocation(Operation *operation,
   if (!file || file.getFilename().empty() || file.getLine() == 0)
     return operation->emitOpError(
         "definition_loc requires a concrete source file and line");
+  if (file.getFilename().getValue().contains('\0'))
+    return operation->emitOpError(
+        "definition_loc filename contains an embedded NUL");
+  if (file.getLine() > INT32_MAX)
+    return operation->emitOpError(
+        "definition_loc line exceeds the VPI 32-bit integer range");
   return success();
 }
 
@@ -272,6 +280,42 @@ LogicalResult SimScopeDeclOp::verify() {
   return verifyFixedReflection(*this, effectiveScopeVPIKind(*this),
                                reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPIDefinitionDeclOp::verify() {
+  if (getDefinitionName().empty())
+    return emitOpError("requires a nonempty source definition name");
+  if (getDefinitionName().contains('\0'))
+    return emitOpError("source definition name contains an embedded NUL");
+  if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")))
+    return failure();
+  using Kind = reflection::VPIObjectKind;
+  switch (static_cast<Kind>(getVpiKind())) {
+  case Kind::Module:
+  case Kind::Interface:
+  case Kind::Program:
+    return verifyDefinitionLocation(*this, getVpiKind(),
+                                    getDefinitionLocAttr());
+  default:
+    return emitOpError(
+        "VPI definition kind must be a module, interface, or program");
+  }
+}
+
+LogicalResult
+SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr reference = getVpiDefinitionAttr();
+  if (!reference)
+    return success();
+  if (!getParentAttr())
+    return emitOpError("root scope cannot reference a VPI definition");
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, reference);
+  if (!definition)
+    return emitOpError("references an unknown VPI definition");
+  if (definition.getVpiKind() != effectiveScopeVPIKind(*this))
+    return emitOpError("VPI definition kind disagrees with the scope kind");
+  return success();
 }
 
 LogicalResult SimCodeUnitDeclOp::verify() {

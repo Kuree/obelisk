@@ -55,6 +55,9 @@ constexpr uint64_t kResolvedNetRunSize =
     obelisk::reflection::ResolvedNetRunLayout.size;
 constexpr uint64_t kNetDelayRunSize =
     obelisk::reflection::NetDelayRunLayout.size;
+constexpr uint64_t kDefinitionSize = obelisk::reflection::DefinitionLayout.size;
+constexpr uint64_t kDefinitionBindingSize =
+    obelisk::reflection::DefinitionBindingLayout.size;
 
 uint16_t read16(const uint8_t *data) {
   return uint16_t{data[0]} | (uint16_t{data[1]} << 8);
@@ -188,6 +191,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
   uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
   uint64_t staticObjectOffset = 0, staticObjectCount = 0;
+  uint64_t definitionOffset = 0, definitionCount = 0;
+  uint64_t definitionBindingOffset = 0, definitionBindingCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -216,6 +221,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     netDelayRunCount = read64(directory + 152);
     staticObjectOffset = read64(directory + 160);
     staticObjectCount = read64(directory + 168);
+    definitionOffset = read64(directory + 176);
+    definitionCount = read64(directory + 184);
+    definitionBindingOffset = read64(directory + 192);
+    definitionBindingCount = read64(directory + 200);
   }
   database = {data,
               execution->design_database_size,
@@ -259,6 +268,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               netDelayRunCount,
               staticObjectOffset,
               staticObjectCount,
+              definitionOffset,
+              definitionCount,
+              definitionBindingOffset,
+              definitionBindingCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -295,6 +308,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kResolvedNetRunSize},
         {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
         {database.staticObjects, database.staticObjectCount, kStaticObjectSize},
+        {database.definitions, database.definitionCount, kDefinitionSize},
+        {database.definitionBindings, database.definitionBindingCount,
+         kDefinitionBindingSize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -325,7 +341,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
         database.fixedPropertyCount != 0 || database.resolvedNetRunCount != 0 ||
-        database.netDelayRunCount != 0 || database.staticObjectCount != 0)) ||
+        database.netDelayRunCount != 0 || database.staticObjectCount != 0 ||
+        database.definitionCount != 0 ||
+        database.definitionBindingCount != 0)) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -366,6 +384,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kNetDelayRunSize, database.size) ||
       !validRange(database.staticObjects, database.staticObjectCount,
                   kStaticObjectSize, database.size) ||
+      !validRange(database.definitions, database.definitionCount,
+                  kDefinitionSize, database.size) ||
+      !validRange(database.definitionBindings, database.definitionBindingCount,
+                  kDefinitionBindingSize, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -393,6 +415,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.netDelayRuns < kHeaderSize) ||
       ((database.staticObjectCount != 0 || database.staticObjects != 0) &&
        database.staticObjects < kHeaderSize) ||
+      ((database.definitionCount != 0 || database.definitions != 0) &&
+       database.definitions < kHeaderSize) ||
+      ((database.definitionBindingCount != 0 ||
+        database.definitionBindings != 0) &&
+       database.definitionBindings < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.stringSize == 0 || database.scopeCount > UINT32_MAX ||
       database.objectCount > UINT32_MAX ||
@@ -410,6 +437,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.resolvedNetRunCount > UINT32_MAX ||
       database.netDelayRunCount > UINT32_MAX ||
       database.staticObjectCount > UINT32_MAX ||
+      database.definitionCount > UINT32_MAX ||
+      database.definitionBindingCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount +
                                 database.staticObjectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
@@ -610,6 +639,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kResolvedNetRunSize},
       {database.netDelayRuns, database.netDelayRunCount, kNetDelayRunSize},
       {database.staticObjects, database.staticObjectCount, kStaticObjectSize},
+      {database.definitions, database.definitionCount, kDefinitionSize},
+      {database.definitionBindings, database.definitionBindingCount,
+       kDefinitionBindingSize},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -1238,8 +1270,10 @@ bool validateDatabaseImpl(const Database &database) {
     const auto *descriptor =
         obelisk::reflection::findVPIProperty(exactKind, selector);
     if (!descriptor ||
-        descriptor->realization !=
-            obelisk::reflection::VPIPropertyRealization::FixedImage ||
+        (descriptor->realization !=
+             obelisk::reflection::VPIPropertyRealization::FixedImage &&
+         descriptor->realization !=
+             obelisk::reflection::VPIPropertyRealization::DefinitionImage) ||
         kindAndFlags != static_cast<uint16_t>(descriptor->valueKind))
       return false;
     using ValueKind = obelisk::reflection::VPIPropertyValueKind;
@@ -2204,6 +2238,70 @@ bool validateDatabaseImpl(const Database &database) {
         (name != 0 && !getRelativeString(name, text)))
       return false;
   }
+
+  std::vector<bool> boundDefinitions(database.definitionCount, false);
+  for (uint64_t index = 0; index != database.definitionCount; ++index) {
+    const uint8_t *definition =
+        database.data + database.definitions + index * kDefinitionSize;
+    uint16_t kind = read16(definition);
+    uint16_t flags = read16(definition + 2);
+    uint32_t name = read32(definition + 4);
+    uint32_t file = read32(definition + 8);
+    uint32_t line = read32(definition + 12);
+    using Kind = obelisk::reflection::VPIObjectKind;
+    if ((kind != static_cast<uint16_t>(Kind::Module) &&
+         kind != static_cast<uint16_t>(Kind::Interface) &&
+         kind != static_cast<uint16_t>(Kind::Program)) ||
+        flags != 0 || name == 0 || line > INT32_MAX ||
+        (file == 0) != (line == 0))
+      return false;
+    std::string_view text;
+    if (!getRelativeString(name, text) || text.empty() ||
+        (file != 0 && !getRelativeString(file, text)))
+      return false;
+  }
+  uint32_t previousDefinitionSource = 0;
+  uint64_t fixedPropertyIndex = 0;
+  for (uint64_t index = 0; index != database.definitionBindingCount; ++index) {
+    const uint8_t *binding = database.data + database.definitionBindings +
+                             index * kDefinitionBindingSize;
+    uint32_t packedSource = read32(binding);
+    uint32_t definitionIndex = read32(binding + 4);
+    auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
+    uint32_t sourceIndex = obelisk::reflection::unpackTableIndex(packedSource);
+    if ((index != 0 && packedSource <= previousDefinitionSource) ||
+        table != obelisk::reflection::TableKind::Scope ||
+        sourceIndex >= database.scopeCount ||
+        definitionIndex >= database.definitionCount)
+      return false;
+    previousDefinitionSource = packedSource;
+    const uint8_t *scope =
+        database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize;
+    const uint8_t *definition = database.data + database.definitions +
+                                uint64_t{definitionIndex} * kDefinitionSize;
+    if (recordVPIKind(scope) != read16(definition))
+      return false;
+    while (fixedPropertyIndex != database.fixedPropertyCount) {
+      const uint8_t *property = database.data + database.fixedProperties +
+                                fixedPropertyIndex * kFixedPropertySize;
+      uint32_t propertySource = read32(property);
+      if (propertySource < packedSource) {
+        ++fixedPropertyIndex;
+        continue;
+      }
+      if (propertySource != packedSource)
+        break;
+      uint16_t selector = read16(property + 4);
+      if (selector == 9 || selector == 15 || selector == 16)
+        return false;
+      ++fixedPropertyIndex;
+    }
+    boundDefinitions[definitionIndex] = true;
+  }
+  if (database.definitionCount != 0 &&
+      std::find(boundDefinitions.begin(), boundDefinitions.end(), false) !=
+          boundDefinitions.end())
+    return false;
 
   uint64_t previousSiteID = 0;
   for (uint64_t index = 0; index != database.statementSiteCount; ++index) {
@@ -3612,22 +3710,70 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
     else
       high = middle;
   }
-  if (low == database.fixedPropertyCount)
-    return OBELISK_RT_EOF;
-  const uint8_t *record = database.data + database.fixedProperties +
-                          uint64_t{low} * kFixedPropertySize;
-  if (read32(record) != packedSource || read16(record + 4) != compactSelector)
-    return OBELISK_RT_EOF;
-  outValue->kind = static_cast<uint8_t>(read16(record + 6));
-  outValue->payload = read64(record + 8);
-  if (outValue->kind ==
-      static_cast<uint8_t>(obelisk::reflection::VPIPropertyValueKind::String)) {
-    std::string_view value;
-    if (!getString(database, outValue->payload, value))
-      return OBELISK_RT_INVALID_DESIGN;
-    outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
-    outValue->stringSize = value.size();
+  if (low != database.fixedPropertyCount) {
+    const uint8_t *record = database.data + database.fixedProperties +
+                            uint64_t{low} * kFixedPropertySize;
+    if (read32(record) == packedSource &&
+        read16(record + 4) == compactSelector) {
+      outValue->kind = static_cast<uint8_t>(read16(record + 6));
+      outValue->payload = read64(record + 8);
+      if (outValue->kind ==
+          static_cast<uint8_t>(
+              obelisk::reflection::VPIPropertyValueKind::String)) {
+        std::string_view value;
+        if (!getString(database, outValue->payload, value))
+          return OBELISK_RT_INVALID_DESIGN;
+        outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
+        outValue->stringSize = value.size();
+      }
+      return OBELISK_RT_OK;
+    }
   }
+
+  if (selector != 9 && selector != 15 && selector != 16)
+    return OBELISK_RT_EOF;
+  low = 0;
+  high = static_cast<uint32_t>(database.definitionBindingCount);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *binding = database.data + database.definitionBindings +
+                             uint64_t{middle} * kDefinitionBindingSize;
+    if (read32(binding) < packedSource)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.definitionBindingCount)
+    return OBELISK_RT_EOF;
+  const uint8_t *binding = database.data + database.definitionBindings +
+                           uint64_t{low} * kDefinitionBindingSize;
+  if (read32(binding) != packedSource)
+    return OBELISK_RT_EOF;
+  uint32_t definitionIndex = read32(binding + 4);
+  if (definitionIndex >= database.definitionCount)
+    return OBELISK_RT_INVALID_DESIGN;
+  const uint8_t *definition = database.data + database.definitions +
+                              uint64_t{definitionIndex} * kDefinitionSize;
+  if (selector == 16) {
+    uint32_t line = read32(definition + 12);
+    if (line == 0)
+      return OBELISK_RT_EOF;
+    outValue->kind = static_cast<uint8_t>(
+        obelisk::reflection::VPIPropertyValueKind::Integer);
+    outValue->payload = line;
+    return OBELISK_RT_OK;
+  }
+  uint32_t relative = read32(definition + (selector == 9 ? 4 : 8));
+  if (relative == 0)
+    return OBELISK_RT_EOF;
+  outValue->kind =
+      static_cast<uint8_t>(obelisk::reflection::VPIPropertyValueKind::String);
+  outValue->payload = database.strings + relative;
+  std::string_view value;
+  if (!getString(database, outValue->payload, value))
+    return OBELISK_RT_INVALID_DESIGN;
+  outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
+  outValue->stringSize = value.size();
   return OBELISK_RT_OK;
 }
 

@@ -154,6 +154,8 @@ TEST(GeneratedDesignDatabase, Dump) {
   uint64_t resolvedNetRunOffset = 0, resolvedNetRunCount = 0;
   uint64_t netDelayRunOffset = 0, netDelayRunCount = 0;
   uint64_t staticObjectOffset = 0, staticObjectCount = 0;
+  uint64_t definitionOffset = 0, definitionCount = 0;
+  uint64_t definitionBindingOffset = 0, definitionBindingCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -181,6 +183,10 @@ TEST(GeneratedDesignDatabase, Dump) {
     netDelayRunCount = directory.getNetDelayRunCount();
     staticObjectOffset = directory.getStaticObjectOffset();
     staticObjectCount = directory.getStaticObjectCount();
+    definitionOffset = directory.getDefinitionOffset();
+    definitionCount = directory.getDefinitionCount();
+    definitionBindingOffset = directory.getDefinitionBindingOffset();
+    definitionBindingCount = directory.getDefinitionBindingCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -208,6 +214,9 @@ TEST(GeneratedDesignDatabase, Dump) {
   ASSERT_SECTION_RANGE(netDelayRunOffset, netDelayRunCount, NetDelayRunLayout);
   ASSERT_SECTION_RANGE(staticObjectOffset, staticObjectCount,
                        StaticObjectLayout);
+  ASSERT_SECTION_RANGE(definitionOffset, definitionCount, DefinitionLayout);
+  ASSERT_SECTION_RANGE(definitionBindingOffset, definitionBindingCount,
+                       DefinitionBindingLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;
@@ -480,6 +489,32 @@ TEST(GeneratedDesignDatabase, Dump) {
            << " selector=" << property.getSelector()
            << " kind=" << property.getKindAndFlags() << " value=" << value
            << '\n';
+  }
+
+  for (uint64_t index = 0; index != definitionCount; ++index) {
+    const DefinitionView definition(image + definitionOffset +
+                                    index * DefinitionLayout.size);
+    std::string name, file;
+    ASSERT_TRUE(relativeStringAt(image, header.getStringOffset(),
+                                 header.getStringSize(), definition.getName(),
+                                 name));
+    if (definition.getFile() != 0) {
+      ASSERT_TRUE(relativeStringAt(image, header.getStringOffset(),
+                                   header.getStringSize(), definition.getFile(),
+                                   file));
+    }
+    output << "definition index=" << index
+           << " vpi_kind=" << definition.getVPIKind() << " name=" << name
+           << " source=" << file << ':' << definition.getLine() << '\n';
+  }
+  for (uint64_t index = 0; index != definitionBindingCount; ++index) {
+    const DefinitionBindingView binding(image + definitionBindingOffset +
+                                        index * DefinitionBindingLayout.size);
+    output << "definition_binding source_table="
+           << static_cast<uint32_t>(
+                  unpackTableIndexKind(binding.getSourceIndexAndTable()))
+           << " source=" << unpackTableIndex(binding.getSourceIndexAndTable())
+           << " definition=" << binding.getDefinition() << '\n';
   }
 
   for (uint64_t index = 0; index != netDelayRunCount; ++index) {

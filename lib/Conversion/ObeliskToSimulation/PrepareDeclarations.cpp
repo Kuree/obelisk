@@ -9,6 +9,7 @@
 
 #include "Detail.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "mlir/IR/SymbolTable.h"
 
@@ -985,83 +986,154 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
       builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{},
-      IntegerAttr{}));
-  semanticRoot->walk<WalkOrder::PreOrder>(
-      [&](semantic::SVInstanceBodySymbolOp body) {
-        Operation *parent = body->getParentOp();
-        while (parent && !result.ids.count(parent))
-          parent = parent->getParentOp();
-        uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
-        if (isCompileTimeOnlyInstanceMember(body)) {
-          result.ids[body] = parentId;
-          return;
-        }
-        uint64_t id = nextScopeId++;
-        result.ids[body] = id;
-        StringAttr interfaceType;
-        if (auto identity = body->getAttrOfType<SymbolRefAttr>(
-                "virtual_interface_identity")) {
-          std::string key;
-          llvm::raw_string_ostream stream(key);
-          stream << identity;
-          interfaceType = builder.getStringAttr(key);
-        }
-        sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
-            builder, getSemanticLocation(body), id,
-            builder.getI64IntegerAttr(parentId),
-            builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body)), interfaceType,
-            body->getAttrOfType<IntegerAttr>("vpi_scope_kind"));
-        if (interfaceType) {
-          auto instance =
-              dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
-          auto parentBody =
-              instance
-                  ? instance
-                        ->getParentOfType<semantic::SVInstanceBodySymbolOp>()
-                  : semantic::SVInstanceBodySymbolOp{};
-          if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
-            declaration->setAttr(virtualInterfaceParentMemberAttrName,
-                                 builder.getStringAttr(getDebugName(instance)));
-        }
-        result.declarations.push_back(declaration);
-        auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
-        auto precisionAttr =
-            body->getAttrOfType<IntegerAttr>("time_precision_fs");
-        if (bool(unitAttr) != bool(precisionAttr)) {
-          emitError(getSemanticLocation(body))
-              << "elaborated scope time scale must specify both unit and "
-                 "precision";
-          invalid = true;
-          return;
-        }
-        if (!unitAttr)
-          return;
-        APInt unit = unitAttr.getValue();
-        APInt precision = precisionAttr.getValue();
-        if (unit.isNegative() || precision.isNegative() ||
-            unit.getActiveBits() > 64 || precision.getActiveBits() > 64) {
-          emitError(getSemanticLocation(body))
-              << "elaborated scope time scale does not fit an unsigned "
-                 "64-bit value";
-          invalid = true;
-          return;
-        }
-        uint64_t unitFs = unit.getZExtValue();
-        uint64_t precisionFs = precision.getZExtValue();
-        if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
-            unitFs % precisionFs != 0) {
-          emitError(getSemanticLocation(body))
-              << "invalid elaborated scope time scale " << unitFs << "fs/"
-              << precisionFs << "fs";
-          invalid = true;
-          return;
-        }
-        declaration->setAttr("dpi_unit_femtoseconds",
-                             builder.getI64IntegerAttr(unitFs));
-        declaration->setAttr("dpi_precision_femtoseconds",
-                             builder.getI64IntegerAttr(precisionFs));
-      });
+      IntegerAttr{}, FlatSymbolRefAttr{}));
+  llvm::DenseMap<Operation *, std::pair<FlatSymbolRefAttr, StringAttr>>
+      definitionSymbols;
+  llvm::StringMap<semantic::SVDefinitionSymbolOp> definitionsBySymbol;
+  if (ModuleOp module = semanticRoot->getParentOfType<ModuleOp>())
+    module.walk([&](semantic::SVDefinitionSymbolOp definition) {
+      definitionsBySymbol.try_emplace(definition.getSymName(), definition);
+    });
+  uint64_t nextDefinitionId = 0;
+  auto materializeDefinition =
+      [&](semantic::SVInstanceBodySymbolOp body) -> FlatSymbolRefAttr {
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
+    if (!instance)
+      return {};
+    SymbolRefAttr reference = instance.getReferencedSymbolAttr();
+    if (!reference)
+      return {};
+    semantic::SVDefinitionSymbolOp definition =
+        SymbolTable::lookupNearestSymbolFrom<semantic::SVDefinitionSymbolOp>(
+            instance, reference);
+    if (!definition) {
+      auto found = definitionsBySymbol.find(reference.getLeafReference());
+      if (found != definitionsBySymbol.end())
+        definition = found->second;
+    }
+    if (!definition)
+      return {};
+    StringAttr definitionName =
+        body->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+    if (!definitionName)
+      definitionName = definition->getAttrOfType<StringAttr>("name");
+    if (!definitionName)
+      definitionName = definition.getSymNameAttr();
+    auto existing = definitionSymbols.find(definition);
+    if (existing != definitionSymbols.end()) {
+      if (existing->second.second != definitionName) {
+        emitError(getSemanticLocation(body))
+            << "instances of one source definition disagree on the VPI "
+               "definition name";
+        invalid = true;
+      }
+      return existing->second.first;
+    }
+
+    uint32_t vpiKind = 0;
+    switch (definition.getDefinitionKind()) {
+    case semantic::SVDefinitionKind::Module:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Module);
+      break;
+    case semantic::SVDefinitionKind::Interface:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface);
+      break;
+    case semantic::SVDefinitionKind::Program:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Program);
+      break;
+    }
+    std::string symbol =
+        (Twine("__obelisk_vpi_definition_") + Twine(nextDefinitionId++)).str();
+    Location location = getSemanticLocation(definition);
+    LocationAttr definitionLoc;
+    if (auto file = location->findInstanceOf<FileLineColLoc>())
+      definitionLoc = file;
+    sim::SimVPIDefinitionDeclOp::create(builder, location, symbol, vpiKind,
+                                        definitionName.getValue(),
+                                        definitionLoc);
+    FlatSymbolRefAttr result =
+        FlatSymbolRefAttr::get(builder.getContext(), symbol);
+    definitionSymbols[definition] = {result, definitionName};
+    return result;
+  };
+  semanticRoot->walk<WalkOrder::PreOrder>([&](semantic::SVInstanceBodySymbolOp
+                                                  body) {
+    Operation *parent = body->getParentOp();
+    while (parent && !result.ids.count(parent))
+      parent = parent->getParentOp();
+    uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
+    if (isCompileTimeOnlyInstanceMember(body)) {
+      result.ids[body] = parentId;
+      return;
+    }
+    uint64_t id = nextScopeId++;
+    result.ids[body] = id;
+    StringAttr interfaceType;
+    if (auto identity =
+            body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")) {
+      std::string key;
+      llvm::raw_string_ostream stream(key);
+      stream << identity;
+      interfaceType = builder.getStringAttr(key);
+    }
+    sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
+        builder, getSemanticLocation(body), id,
+        builder.getI64IntegerAttr(parentId),
+        builder.getStringAttr(getHierarchyName(body)),
+        builder.getStringAttr(getDebugName(body)), interfaceType,
+        body->getAttrOfType<IntegerAttr>("vpi_scope_kind"),
+        materializeDefinition(body));
+    if (interfaceType) {
+      auto instance =
+          dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
+      auto parentBody =
+          instance
+              ? instance->getParentOfType<semantic::SVInstanceBodySymbolOp>()
+              : semantic::SVInstanceBodySymbolOp{};
+      if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
+        declaration->setAttr(virtualInterfaceParentMemberAttrName,
+                             builder.getStringAttr(getDebugName(instance)));
+    }
+    result.declarations.push_back(declaration);
+    auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
+    auto precisionAttr = body->getAttrOfType<IntegerAttr>("time_precision_fs");
+    if (bool(unitAttr) != bool(precisionAttr)) {
+      emitError(getSemanticLocation(body))
+          << "elaborated scope time scale must specify both unit and "
+             "precision";
+      invalid = true;
+      return;
+    }
+    if (!unitAttr)
+      return;
+    APInt unit = unitAttr.getValue();
+    APInt precision = precisionAttr.getValue();
+    if (unit.isNegative() || precision.isNegative() ||
+        unit.getActiveBits() > 64 || precision.getActiveBits() > 64) {
+      emitError(getSemanticLocation(body))
+          << "elaborated scope time scale does not fit an unsigned "
+             "64-bit value";
+      invalid = true;
+      return;
+    }
+    uint64_t unitFs = unit.getZExtValue();
+    uint64_t precisionFs = precision.getZExtValue();
+    if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+        unitFs % precisionFs != 0) {
+      emitError(getSemanticLocation(body))
+          << "invalid elaborated scope time scale " << unitFs << "fs/"
+          << precisionFs << "fs";
+      invalid = true;
+      return;
+    }
+    declaration->setAttr("dpi_unit_femtoseconds",
+                         builder.getI64IntegerAttr(unitFs));
+    declaration->setAttr("dpi_precision_femtoseconds",
+                         builder.getI64IntegerAttr(precisionFs));
+  });
 
   for (Operation *unit : units) {
     uint64_t scopeID = result.lookup(unit);

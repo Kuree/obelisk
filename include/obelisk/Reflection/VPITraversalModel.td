@@ -195,6 +195,7 @@ def AssertionObjects : VPIObjectSet<"AssertionObjects", [],
 
 def RootSource : VPIObjectSet<"Root", [], [], [], 1>;
 def ModuleSource : VPIObjectSet<"Module", [Module]>;
+def PackageSource : VPIObjectSet<"Package", [Package]>;
 def ScopeSource : VPIObjectSet<"Scope", [], [ScopeFamily]>;
 def ModuleTarget : VPIObjectSet<"ModuleTarget", [Module]>;
 
@@ -205,6 +206,11 @@ def RootModules : VPITraversalEdge<RootSource, Module, IterateMode,
 // Reusable exact unions from the Chapter 37 diagrams.
 def InstanceObjects : VPIObjectSet<"InstanceObjects",
   [Package, Module, Interface, Program]>;
+// Source design units with distinct elaborated instances. Packages are not
+// represented by SimVPIDefinitionDeclOp bindings and retain fixed-image
+// definition metadata.
+def DefinitionInstanceObjects : VPIObjectSet<"DefinitionInstanceObjects",
+  [Module, Interface, Program]>;
 def StaticProcessObjects : VPIObjectSet<"StaticProcessObjects",
   [Initial, Final, Always]>;
 def TaskFunctionDeclObjects : VPIObjectSet<"TaskFunctionDeclObjects",
@@ -289,6 +295,9 @@ def RuntimeProperty : VPIPropertyRealization<"Runtime", 2>;
 // The design image stores canonical bit runs and the query resolves a whole
 // handle or selection only when every selected bit has one exact value.
 def IndexedImageProperty : VPIPropertyRealization<"IndexedImage", 3>;
+// Immutable metadata stored once on a source definition and reached through
+// the elaborated instance's compact definition binding.
+def DefinitionImageProperty : VPIPropertyRealization<"DefinitionImage", 4>;
 
 class VPIProperty<string apiName_, int value_,
                   VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
@@ -301,7 +310,8 @@ class VPIProperty<string apiName_, int value_,
                   VPIObjectSet protectedSources_ = NoPropertyObjects,
                   VPIPropertyRealization realization_ = DerivedProperty,
                   VPIObjectSet fixedImageSources_ = NoPropertyObjects,
-                  VPIObjectSet runtimeSources_ = NoPropertyObjects> {
+                  VPIObjectSet runtimeSources_ = NoPropertyObjects,
+                  VPIObjectSet definitionImageSources_ = NoPropertyObjects> {
   string apiName = apiName_;
   int value = value_;
   VPIPropertyValueKind valueKind = valueKind_;
@@ -315,6 +325,7 @@ class VPIProperty<string apiName_, int value_,
   VPIPropertyRealization realization = realization_;
   VPIObjectSet fixedImageSources = fixedImageSources_;
   VPIObjectSet runtimeSources = runtimeSources_;
+  VPIObjectSet definitionImageSources = definitionImageSources_;
 }
 
 // Allowed domains for immutable integer properties. Symbolic rows additionally
@@ -745,7 +756,8 @@ def CellInstanceProperty : VPIProperty<"vpiCellInstance", 8,
 def DefNameProperty : VPIProperty<"vpiDefName", 9, StringProperty,
   DefinitionNameObjects, "37.10; 37.15; 37.30; 37.35; 37.36",
   StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects,
-  NoPropertyObjects, DerivedProperty, InstanceObjects>;
+  NoPropertyObjects, DerivedProperty, PackageSource, NoPropertyObjects,
+  DefinitionInstanceObjects>;
 def ProtectedProperty : VPIProperty<"vpiProtected", 10, BooleanProperty,
   ProtectedLegacyObjects, "37.10; 37.36; 37.85">;
 def DefNetTypeProperty : VPIProperty<"vpiDefNetType", 13, IntegerProperty,
@@ -755,11 +767,13 @@ def UnconnDriveProperty : VPIProperty<"vpiUnconnDrive", 14, IntegerProperty,
 def DefFileProperty : VPIProperty<"vpiDefFile", 15, StringProperty,
   DefinitionLocationObjects, "37.10; 37.83", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  FixedImageProperty>;
+  FixedImageProperty, NoPropertyObjects, NoPropertyObjects,
+  DefinitionInstanceObjects>;
 def DefLineNoProperty : VPIProperty<"vpiDefLineNo", 16, IntegerProperty,
   DefinitionLocationObjects, "37.10; 37.83", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  FixedImageProperty>;
+  FixedImageProperty, NoPropertyObjects, NoPropertyObjects,
+  DefinitionInstanceObjects>;
 def ExplicitNameProperty : VPIProperty<"vpiExplicitName", 19,
   BooleanProperty, PortObjects, "37.14">;
 def ConnByNameProperty : VPIProperty<"vpiConnByName", 21, BooleanProperty,
