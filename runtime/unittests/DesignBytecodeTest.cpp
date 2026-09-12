@@ -2883,6 +2883,49 @@ std::vector<uint8_t> makeAlwaysTypeDatabase(uint32_t alwaysType,
   return bytes;
 }
 
+std::vector<uint8_t> makeAutomaticCodeUnitDatabase(bool automaticTask,
+                                                   bool automaticFunction) {
+  std::vector<uint8_t> bytes = makeCodeUnitDatabase();
+  constexpr uint64_t processOffset = 240;
+  put32(bytes, processOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiTask));
+
+  struct Property {
+    uint32_t source;
+    uint16_t selector;
+    uint16_t kind;
+    uint64_t payload;
+  };
+  std::vector<Property> properties;
+  if (automaticTask)
+    properties.push_back({uint32_t{1} << 30, vpiAutomatic, 0, 1});
+  if (automaticFunction)
+    properties.push_back({(uint32_t{1} << 30) | 1, vpiAutomatic, 0, 1});
+
+  const uint64_t directoryOffset = bytes.size();
+  const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t propertyOffset = semanticRootOffset + 8;
+  bytes.resize(propertyOffset + properties.size() * 16, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 32, semanticRootOffset);
+  put64(bytes, directoryOffset + 40, 0);
+  put64(bytes, directoryOffset + 112, propertyOffset);
+  put64(bytes, directoryOffset + 120, properties.size());
+  put32(bytes, semanticRootOffset, UINT32_MAX);
+  put32(bytes, semanticRootOffset + 4, UINT32_MAX);
+  for (size_t index = 0; index != properties.size(); ++index) {
+    const Property &property = properties[index];
+    const uint64_t offset = propertyOffset + index * 16;
+    put32(bytes, offset, property.source);
+    put16(bytes, offset + 4, property.selector);
+    put16(bytes, offset + 6, property.kind);
+    put64(bytes, offset + 8, property.payload);
+  }
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeStatementDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t childScopeOffset = 240;
@@ -10200,6 +10243,45 @@ TEST(VPI, ReadsImmutableAlwaysTypeFromSparseImage) {
     EXPECT_FALSE(context->nativeScheduleDeoptimized);
     EXPECT_EQ(vpi_release_handle(function), 1);
     EXPECT_EQ(vpi_release_handle(process), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, ReadsImmutableCodeUnitAutomaticFromSparseImage) {
+  for (const auto &[automaticTask, automaticFunction] :
+       std::array<std::pair<bool, bool>, 3>{
+           {{true, false}, {false, true}, {false, false}}}) {
+    SCOPED_TRACE(testing::Message() << "task=" << automaticTask
+                                    << " function=" << automaticFunction);
+    Fixture fixture;
+    fixture.database =
+        makeAutomaticCodeUnitDatabase(automaticTask, automaticFunction);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
+                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              OBELISK_RT_EXECUTION_VPI_READ;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+    char taskName[] = "top.proc";
+    char functionName[] = "top.fn";
+    vpiHandle task = vpi_handle_by_name(taskName, nullptr);
+    vpiHandle function = vpi_handle_by_name(functionName, nullptr);
+    ASSERT_NE(task, nullptr);
+    ASSERT_NE(function, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, task), vpiTask);
+    EXPECT_EQ(vpi_get(vpiType, function), vpiFunction);
+    EXPECT_EQ(vpi_get(vpiAutomatic, task), automaticTask);
+    EXPECT_EQ(vpi_get(vpiAutomatic, function), automaticFunction);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_FALSE(context->nativeScheduleDeoptimized);
+    EXPECT_EQ(vpi_release_handle(function), 1);
+    EXPECT_EQ(vpi_release_handle(task), 1);
     obelisk_rt_v1_context_destroy(context);
   }
 }

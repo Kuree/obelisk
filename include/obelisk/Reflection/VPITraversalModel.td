@@ -237,6 +237,8 @@ def StaticProcessObjects : VPIObjectSet<"StaticProcessObjects",
   [Initial, Final, Always]>;
 def TaskFunctionDeclObjects : VPIObjectSet<"TaskFunctionDeclObjects",
   [Task, Function]>;
+def AutomaticImageObjects : VPIObjectSet<"AutomaticImageObjects",
+  [Package, Module, Interface, Program, Task, Function]>;
 def TaskFunctionCallObjects : VPIObjectSet<"TaskFunctionCallObjects",
   [FuncCall, TaskCall, SysFuncCall, SysTaskCall, MethodFuncCall,
    MethodTaskCall]>;
@@ -920,7 +922,8 @@ def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
 def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
   AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.27; 37.31; 37.32; "
   "37.34; 37.41", StaticProperty, DeniedWhenProtected, 0,
-  NoPropertyObjects, NoPropertyObjects, DerivedProperty, InstanceObjects>;
+  NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  AutomaticImageObjects>;
 def CellProperty : VPIProperty<"vpiCell", 51, StringProperty,
   InstanceObjects, "37.10">;
 def ConfigProperty : VPIProperty<"vpiConfig", 52, StringProperty,

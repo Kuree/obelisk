@@ -21,12 +21,20 @@ module attributes {
     // Exact kinds are intrinsic even when a code unit has no statement edge.
     obelisk_sim.code_unit.decl 20 in 0 always hierarchy "top.zalways"
     obelisk_sim.code_unit.decl 30 in 0 final hierarchy "top.zfinal"
-    obelisk_sim.code_unit.decl 40 in 0 function hierarchy "top.zfunction"
+    obelisk_sim.code_unit.decl 40 in 0 function hierarchy "top.zfunction" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>
+      ]>
+    }
     // Infrastructure kinds are intrinsically internal; no redundant marker is
     // needed for a valid kind-zero/cap-internal compact record.
     obelisk_sim.code_unit.decl 50 in 0 root_initializer hierarchy "top.zinternal"
     obelisk_sim.code_unit.decl 55 in 0 continuous hierarchy "top.zinternal_continuous"
-    obelisk_sim.code_unit.decl 60 in 0 task hierarchy "top.ztask"
+    obelisk_sim.code_unit.decl 60 in 0 task hierarchy "top.ztask" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 50 : i32, value = false>
+      ]>
+    }
 
     // Deliberately reverse declaration and site order. The wire inventory is
     // normalized by stable ID, not by mutable MLIR block order or source loc.
@@ -85,6 +93,7 @@ module attributes {
 // DATABASE: fixed_property source_table=0 source=0 selector=15 kind=3 value=definition.sv
 // DATABASE-NEXT: fixed_property source_table=0 source=0 selector=16 kind=1 value=27
 // DATABASE-NEXT: fixed_property source_table=1 source=1 selector=624 kind=1 value=1
+// DATABASE-NEXT: fixed_property source_table=1 source=3 selector=50 kind=0 value=true
 // DATABASE-NEXT: fixed_property source_table=2 source=1 selector=74 kind=0 value=true
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0

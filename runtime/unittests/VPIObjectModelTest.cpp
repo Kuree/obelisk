@@ -2116,6 +2116,10 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         (descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||
          descriptor.property == vpiUnit))
       expected = PropertyRealization::FixedImage;
+    if ((descriptor.sourceType == vpiTask ||
+         descriptor.sourceType == vpiFunction) &&
+        descriptor.property == vpiAutomatic)
+      expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiNetType ||
         descriptor.property == vpiExplicitScalared ||
         descriptor.property == vpiExplicitVectored ||
