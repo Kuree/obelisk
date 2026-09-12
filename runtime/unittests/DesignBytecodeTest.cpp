@@ -9871,6 +9871,12 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   char absoluteMemberName[] = "top.value";
   vpiHandle direct = vpi_handle_by_name(absoluteMemberName, nullptr);
   ASSERT_NE(direct, nullptr);
+  EXPECT_EQ(vpi_get(vpiHasActual, direct), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  vpiHandle directBit = vpi_handle_by_index(direct, 64);
+  ASSERT_NE(directBit, nullptr);
+  EXPECT_EQ(vpi_get(vpiHasActual, directBit), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value directValue{};
   directValue.format = vpiIntVal;
   directValue.value.integer = 73;
@@ -9884,9 +9890,20 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   vpiHandle classDefinition = vpi_handle_by_name(className, nullptr);
   ASSERT_NE(classDefinition, nullptr);
   EXPECT_EQ(vpi_get(vpiType, classDefinition), vpiClassDefn);
+  EXPECT_EQ(vpi_get(vpiHasActual, classDefinition), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  vpiHandle lexicalVariables = vpi_iterate(vpiVariables, classDefinition);
+  ASSERT_NE(lexicalVariables, nullptr);
+  vpiHandle iteratedMember = vpi_scan(lexicalVariables);
+  ASSERT_NE(iteratedMember, nullptr);
+  EXPECT_EQ(vpi_get(vpiHasActual, iteratedMember), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_scan(lexicalVariables), nullptr);
   char relativeMemberName[] = "value";
   vpiHandle derived = vpi_handle_by_name(relativeMemberName, classDefinition);
   ASSERT_NE(derived, nullptr);
+  EXPECT_EQ(vpi_get(vpiHasActual, derived), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value derivedValue{};
   derivedValue.format = vpiIntVal;
   derivedValue.value.integer = 91;
@@ -9900,6 +9917,8 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
 
   vpiHandle derivedBit = vpi_handle_by_index(derived, 64);
   ASSERT_NE(derivedBit, nullptr);
+  EXPECT_EQ(vpi_get(vpiHasActual, derivedBit), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value derivedBitValue{};
   derivedBitValue.format = vpiIntVal;
   derivedBitValue.value.integer = 92;
@@ -9912,7 +9931,9 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
 
   EXPECT_EQ(vpi_release_handle(derivedBit), 1);
   EXPECT_EQ(vpi_release_handle(derived), 1);
+  EXPECT_EQ(vpi_release_handle(iteratedMember), 1);
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
+  EXPECT_EQ(vpi_release_handle(directBit), 1);
   EXPECT_EQ(vpi_release_handle(direct), 1);
   obelisk_rt_v1_context_destroy(context);
 }

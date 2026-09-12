@@ -608,10 +608,14 @@ TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
     vpiHandle reference = vpi_handle(vpiExpr, declaration);
     ASSERT_NE(reference, nullptr);
     EXPECT_EQ(vpi_get(vpiType, reference), vpiRefObj);
+    EXPECT_EQ(vpi_get(vpiHasActual, reference), 1);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_get(vpiSigned, reference), index == 1 ? 1 : 0);
     vpiHandle actual = vpi_handle(vpiActual, reference);
     ASSERT_NE(actual, nullptr);
     EXPECT_EQ(vpi_get(vpiType, actual), actualTypes[index]);
+    EXPECT_EQ(vpi_get(vpiHasActual, actual), 1);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_STREQ(vpi_get_str(vpiFullName, actual), actualNames[index]);
     EXPECT_EQ(vpi_compare_objects(reference, actual), 0);
 
