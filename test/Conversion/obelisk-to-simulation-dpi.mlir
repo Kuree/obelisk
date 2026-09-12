@@ -74,6 +74,9 @@ module {
 }
 
 // CHECK-NOT: obelisk_sim.has_dpi_exports
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
 // CHECK: obelisk_sim.dpi.call "c_add" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: context
 // CHECK-SAME: kind = int

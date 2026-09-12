@@ -1128,6 +1128,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_cell_instance");
     BoolAttr automatic =
         source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_automatic");
+    bool isAutomatic = automatic && automatic.getValue();
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
+      isAutomatic = subroutine.getDefaultLifetime() ==
+                    semantic::SVVariableLifetime::Automatic;
     if (sourceKind == VPIKind::Module) {
       addBoolean(7, top);                     // vpiTopModule
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
@@ -1155,7 +1159,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     // lack of a value by omitting the record, and the runtime reports the
     // property as unavailable instead of inventing a definition name.
     addString(9, definitionName);                      // vpiDefName
-    addBoolean(50, automatic && automatic.getValue()); // vpiAutomatic
+    addBoolean(50, isAutomatic);                       // vpiAutomatic
     addBoolean(600, top);                              // vpiTop
     addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
 

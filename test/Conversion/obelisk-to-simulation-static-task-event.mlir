@@ -36,6 +36,8 @@ module {
   }
 }
 
+// CHECK: obelisk_sim.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "static_task_event.fire" {{.*}}{backing = #obelisk_sim.vpi_backing<kind = code_unit, id = {{[0-9]+}} : i64>}
+// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} task hierarchy "static_task_event.fire"
 // CHECK: obelisk_sim.func @__obelisk_root
 // CHECK: obelisk_sim.context.event %{{.*}}[0] : !obelisk_sim.event
 

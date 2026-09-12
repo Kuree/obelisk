@@ -16,7 +16,11 @@ module attributes {
       backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>
     }
     obelisk_sim.vpi_object.anchor @dpi_import id 1 type 20 in 1 parent @top
-        ordinal 0 hierarchy "top.dpi_import" debug "dpi_import"
+        ordinal 0 hierarchy "top.dpi_import" debug "dpi_import" {
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>
+      ]>
+    }
 
     // A source-level DPI import and its executable ABI thunk share a name.
     // The anchor is the VPI function; the thunk remains internal and unindexed.
@@ -34,4 +38,5 @@ module attributes {
 
 // CHECK: object name=top.dpi_import kind=7 vpi_kind=0 caps=0x20
 // CHECK: static_object name=top.dpi_import vpi_kind=20 id=4 scope=top
+// CHECK: fixed_property {{.*}} selector=50 kind=0 value=true
 // CHECK: relation {{.*}} source_type=32 mode=iterate selector={{[0-9]+}} ordinal=0 {{.*}} source_name=top target_name=top.dpi_import

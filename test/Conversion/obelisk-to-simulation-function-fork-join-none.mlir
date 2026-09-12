@@ -45,6 +45,7 @@ module {
 
 // The function remains a zero-time function; only its detached branch owns
 // the suspension.
+// CHECK: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "top.spawn" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "top.spawn"
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "top.spawn.$fork.6.0"
 // CHECK-LABEL: obelisk_sim.func private @unit_0.fork.6.0.0(%{{.*}}: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes
