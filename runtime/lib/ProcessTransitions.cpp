@@ -23,7 +23,6 @@
 #include <array>
 #include <atomic>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -31,6 +30,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 
 #if defined(__x86_64__) || defined(_M_X64)
@@ -235,12 +235,15 @@ class ClockConditionPublicationOverlay {
 public:
   ClockConditionPublicationOverlay(obelisk_rt_context *context,
                                    const ClockConditionPublicationView *sample)
-      : context(context), feature(context->clockOccurrences.get()),
+      : context(context),
         previousCanonicalPlane(context->observerForcesCanonicalPlane),
-        previousPublication(feature ? feature->conditionPublication : nullptr) {
+        previousPublication(context->conditionPublication) {
     context->observerForcesCanonicalPlane = true;
-    if (feature)
-      feature->conditionPublication = sample;
+    if (sample) {
+      publication = *sample;
+      publication.previous = context->conditionPublication;
+      context->conditionPublication = &publication;
+    }
   }
 
   ClockConditionPublicationOverlay(const ClockConditionPublicationOverlay &) =
@@ -249,16 +252,15 @@ public:
   operator=(const ClockConditionPublicationOverlay &) = delete;
 
   ~ClockConditionPublicationOverlay() {
-    if (feature)
-      feature->conditionPublication = previousPublication;
+    context->conditionPublication = previousPublication;
     context->observerForcesCanonicalPlane = previousCanonicalPlane;
   }
 
 private:
   obelisk_rt_context *context = nullptr;
-  ClockOccurrenceFeatureState *feature = nullptr;
   bool previousCanonicalPlane = false;
   const ClockConditionPublicationView *previousPublication = nullptr;
+  ClockConditionPublicationView publication;
 };
 
 bool readClockOccurrenceCondition(obelisk_rt_context *context,
@@ -349,6 +351,367 @@ bool readClockOccurrenceCondition(obelisk_rt_context *context,
   }
 }
 
+bool evaluateCovergroupClockEventsNowUnlocked(
+    obelisk_rt_context *context, uint64_t sequence, uint32_t dependencyKind,
+    uint32_t kind, uint32_t objectID, int64_t firstPage, int64_t lastPage,
+    uint64_t stableID, uint64_t bitWidth,
+    const ClockConditionPublicationView *sample) {
+  CovergroupClockEventFeatureState *feature =
+      context->covergroupClockEvents.get();
+  if (!feature)
+    return true;
+  struct Candidate {
+    uint64_t ownerLogicalToken = 0;
+    uint32_t clauseIndex = 0;
+  };
+  std::vector<Candidate> candidates;
+  std::vector<uint64_t> sampleOwners;
+  auto considerClause = [&](CovergroupClockEventClause *clause) {
+    if (!clause || clause->lastExaminedSequence == sequence)
+      return;
+    clause->lastExaminedSequence = sequence;
+    if (context->signalDiagnosticsEnabled)
+      ++context->signalDiagnostics.subscribersExamined;
+    if (!clause->registration)
+      return;
+    auto *plan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        clause->registration->eventPlan.data());
+    auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+        plan, plan->observers_offset, plan->observer_count);
+    auto *dependencies = computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+        plan, plan->dependencies_offset, plan->dependency_count);
+    if (!observers || !dependencies ||
+        clause->clauseIndex >= plan->clause_count)
+      return;
+    const auto &primary = observers[clause->clauseIndex];
+    bool affected = false;
+    for (uint32_t dependencyIndex = 0;
+         dependencyIndex != primary.dependency_count; ++dependencyIndex) {
+      const auto &dependency =
+          dependencies[primary.dependency_begin + dependencyIndex];
+      if (dependency.kind != dependencyKind)
+        continue;
+      affected |= dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL
+                      ? rangesOverlap(dependency.stable_id, dependency.width,
+                                      stableID, bitWidth)
+                      : dependency.stable_id == stableID;
+    }
+    if (affected)
+      candidates.push_back(
+          {clause->registration->ownerLogicalToken, clause->clauseIndex});
+  };
+  auto visitBucket = [&](int64_t page) {
+    SignalSubscriptionBucketKey key{kind, objectID, page};
+    auto bucket = feature->subscriptionBuckets.find(key);
+    if (bucket == feature->subscriptionBuckets.end())
+      return true;
+    for (const CovergroupClockEventBucketEntry &entry : bucket->second) {
+      considerClause(entry.clause);
+    }
+    return true;
+  };
+  OBELISK_RT_TRY {
+    if (dependencyKind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED) {
+      for (const auto &[owner, registration] : feature->registrations) {
+        (void)owner;
+        if (!registration)
+          continue;
+        for (const auto &clause : registration->clauses)
+          considerClause(clause.get());
+      }
+    } else {
+      __int128 pageCount = static_cast<__int128>(lastPage) - firstPage + 1;
+      if (pageCount <= kMaximumIndexedSignalPages) {
+        if (!visitBucket(kWideSignalSubscriptionPage))
+          return false;
+        for (int64_t page = firstPage;; ++page) {
+          if (!visitBucket(page))
+            return false;
+          if (page == lastPage)
+            break;
+        }
+      } else {
+        std::vector<int64_t> pages;
+        for (const auto &[key, bucket] : feature->subscriptionBuckets) {
+          (void)bucket;
+          if (key.kind == kind && key.id == objectID)
+            pages.push_back(key.page);
+        }
+        for (int64_t page : pages)
+          if (!visitBucket(page))
+            return false;
+      }
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return false;
+  }
+
+  auto evaluateObserver =
+      [&](CovergroupClockEventRegistration &registration,
+          uint32_t observerIndex, std::vector<uint64_t> &value,
+          std::vector<uint64_t> &unknown, uint32_t &resultWidth) -> bool {
+    auto *plan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        registration.eventPlan.data());
+    auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+        plan, plan->observers_offset, plan->observer_count);
+    auto *captures = computedWaitSpan<obelisk_rt_computed_capture_v1>(
+        plan, plan->captures_offset, plan->capture_count);
+    if (!observers || !captures || observerIndex >= plan->observer_count)
+      return false;
+    const obelisk_rt_computed_observer_v1 binding = observers[observerIndex];
+    const obelisk_rt_execution_descriptor_v1 *execution = context->execution;
+    uint64_t token = registration.ownerLogicalToken;
+    if (registration.native) {
+      token &= ~kNativeLogicalProcessTag;
+      ScheduledProcess *process = findScheduledProcess(context, token);
+      execution = process && process->instance && process->instance->descriptor
+                      ? process->instance->descriptor->execution
+                      : nullptr;
+    }
+    const obelisk_rt_observer_descriptor_v1 *descriptor =
+        findObserverDescriptor(execution, binding.code_unit_id);
+    if (!descriptor || binding.capture_begin > plan->capture_count ||
+        binding.capture_count > plan->capture_count - binding.capture_begin)
+      return false;
+    resultWidth = descriptor->result_width;
+    uint32_t limbs = static_cast<uint32_t>((uint64_t{resultWidth} + 63) / 64);
+    if (limbs == 0)
+      return false;
+    std::vector<obelisk_rt_computed_capture_v1> copiedCaptures;
+    OBELISK_RT_TRY {
+      copiedCaptures.assign(captures + binding.capture_begin,
+                            captures + binding.capture_begin +
+                                binding.capture_count);
+      value.assign(limbs, 0);
+      unknown.assign(limbs, 0);
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return false;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return false;
+    }
+    return registration.native
+               ? obelisk_rt_evaluate_native_bound_observer_unlocked(
+                     context, token, binding.code_unit_id,
+                     copiedCaptures.data(), copiedCaptures.size(), value.data(),
+                     unknown.data(), limbs)
+               : obelisk_rt_evaluate_design_bound_observer_unlocked(
+                     context, token, binding.code_unit_id,
+                     copiedCaptures.data(), copiedCaptures.size(), value.data(),
+                     unknown.data(), limbs);
+  };
+
+  for (const Candidate &candidate : candidates) {
+    // Evaluating a compiled observer can cross a callback boundary that
+    // temporarily releases the context mutex. Reentrant code may terminate an
+    // owner and erase its registration, so re-resolve by stable owner token
+    // and copy every field needed by the evaluator before calling it.
+    CovergroupClockEventFeatureState *currentFeature =
+        context->covergroupClockEvents.get();
+    if (!currentFeature)
+      break;
+    auto found =
+        currentFeature->registrations.find(candidate.ownerLogicalToken);
+    if (found == currentFeature->registrations.end() || !found->second)
+      continue;
+    CovergroupClockEventRegistration &registrationBeforeEvaluation =
+        *found->second;
+    auto *plan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        registrationBeforeEvaluation.eventPlan.data());
+    auto *clauses = computedWaitSpan<obelisk_rt_computed_clause_v1>(
+        plan, plan->clauses_offset, plan->clause_count);
+    auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+        plan, plan->observers_offset, plan->observer_count);
+    if (!clauses || !observers || candidate.clauseIndex >= plan->clause_count)
+      return false;
+    obelisk_rt_computed_clause_v1 clause = clauses[candidate.clauseIndex];
+    uint32_t resultWidth = 0;
+    std::vector<uint64_t> value;
+    std::vector<uint64_t> unknown;
+    ClockConditionPublicationOverlay overlay(context, sample);
+    if (!evaluateObserver(registrationBeforeEvaluation, clause.primary_observer,
+                          value, unknown, resultWidth))
+      return false;
+
+    // Observer evaluation can release the context lock. Re-resolve the
+    // registration before reading or updating its retained previous result.
+    currentFeature = context->covergroupClockEvents.get();
+    if (!currentFeature)
+      break;
+    found = currentFeature->registrations.find(candidate.ownerLogicalToken);
+    if (found == currentFeature->registrations.end() || !found->second)
+      continue;
+    CovergroupClockEventRegistration &current = *found->second;
+    plan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        current.eventPlan.data());
+    clauses = computedWaitSpan<obelisk_rt_computed_clause_v1>(
+        plan, plan->clauses_offset, plan->clause_count);
+    observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+        plan, plan->observers_offset, plan->observer_count);
+    if (!clauses || !observers || candidate.clauseIndex >= plan->clause_count)
+      return false;
+    clause = clauses[candidate.clauseIndex];
+    const auto &primary = observers[clause.primary_observer];
+    uint32_t limbs = static_cast<uint32_t>((uint64_t{resultWidth} + 63) / 64);
+    auto *previousValue = reinterpret_cast<uint64_t *>(
+        reinterpret_cast<uint8_t *>(plan) + primary.previous_offset);
+    auto *previousUnknown = previousValue + limbs;
+    bool changed = false;
+    for (uint32_t limb = 0; limb != limbs; ++limb)
+      changed |= previousValue[limb] != value[limb] ||
+                 previousUnknown[limb] != unknown[limb];
+    uint32_t observedEdges = transitionEdges(
+        (previousValue[0] & 1) != 0, (previousUnknown[0] & 1) != 0,
+        (value[0] & 1) != 0, (unknown[0] & 1) != 0);
+    for (uint32_t limb = 0; limb != limbs; ++limb) {
+      previousValue[limb] = value[limb];
+      previousUnknown[limb] = unknown[limb];
+    }
+    bool occurrence = clause.edge == OBELISK_RT_WAIT_EDGE_CHANGE
+                          ? changed
+                          : signalEdgeMatches(clause.edge, observedEdges);
+    if (!occurrence)
+      continue;
+    if (clause.condition_observer != OBELISK_RT_OBSERVER_CONDITION_NONE) {
+      // IEEE 1800-2023 9.4.2.3 evaluates iff only at the primary event
+      // instant. The publication overlay makes the just-published value
+      // visible even before its canonical storage commit.
+      if (!evaluateObserver(current, clause.condition_observer, value, unknown,
+                            resultWidth))
+        return false;
+      currentFeature = context->covergroupClockEvents.get();
+      if (!currentFeature)
+        break;
+      found = currentFeature->registrations.find(candidate.ownerLogicalToken);
+      if (found == currentFeature->registrations.end() || !found->second)
+        continue;
+      if (value.empty() || unknown.empty() || (unknown[0] & 1) != 0 ||
+          (value[0] & 1) == 0)
+        continue;
+    }
+    CovergroupClockEventRegistration &registration = *found->second;
+    if (registration.lastSampledSequence == sequence)
+      continue;
+    registration.lastSampledSequence = sequence;
+    if (registration.strobe) {
+      // IEEE 1800-2023 19.3 retains only one automatic sample per time slot
+      // when type_option.strobe is set. The event iff was evaluated above at
+      // the event instant; sample expressions and enabled state are observed
+      // later, when the scheduler enters the Postponed region.
+      if (registration.lastStrobeTimeValid &&
+          registration.lastStrobeTime == context->schedulerTime)
+        continue;
+      registration.lastStrobeTime = context->schedulerTime;
+      registration.lastStrobeTimeValid = true;
+      if (currentFeature->pendingStrobeCount == UINT64_MAX) {
+        context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+        return false;
+      }
+      registration.strobePending = true;
+      ++currentFeature->pendingStrobeCount;
+      continue;
+    }
+    OBELISK_RT_TRY { sampleOwners.push_back(registration.ownerLogicalToken); }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return false;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return false;
+    }
+  }
+
+  // Complete the event-instant phase for every affected clause before any
+  // user sample evaluator runs. This ensures an `or` event commits every
+  // primary's retained result even when the first matching clause coalesces
+  // the registration's sample. Sampler-triggered publications may now execute
+  // recursively because all history for this publication is stable.
+  context->covergroupClockEventEvaluationDepth = 0;
+  for (uint64_t ownerLogicalToken : sampleOwners) {
+    CovergroupClockEventFeatureState *currentFeature =
+        context->covergroupClockEvents.get();
+    if (!currentFeature)
+      break;
+    auto found = currentFeature->registrations.find(ownerLogicalToken);
+    if (found == currentFeature->registrations.end() || !found->second)
+      continue;
+    CovergroupClockEventRegistration &registration = *found->second;
+    uint32_t enabled = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_sample_enabled(
+        context, registration.covergroupHandle, &enabled);
+    if (status != OBELISK_RT_OK) {
+      context->schedulerStatus = status;
+      return false;
+    }
+    if (!enabled)
+      continue;
+    const bool native = registration.native;
+    const uint64_t sampleOwnerToken = registration.ownerLogicalToken;
+    const uint64_t observerCodeUnitID = registration.observerCodeUnitID;
+    std::vector<obelisk_rt_computed_capture_v1> captures;
+    OBELISK_RT_TRY { captures = registration.captures; }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return false;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return false;
+    }
+    uint64_t sampleValue = 0;
+    uint64_t sampleUnknown = 0;
+    uint64_t token = native ? sampleOwnerToken & ~kNativeLogicalProcessTag
+                            : sampleOwnerToken;
+    ClockConditionPublicationOverlay overlay(context, sample);
+    bool evaluated =
+        native ? obelisk_rt_evaluate_native_clock_condition_unlocked(
+                     context, token, observerCodeUnitID, captures.data(),
+                     captures.size(), sampleValue, sampleUnknown)
+               : obelisk_rt_evaluate_design_clock_condition_unlocked(
+                     context, token, observerCodeUnitID, captures.data(),
+                     captures.size(), sampleValue, sampleUnknown);
+    if (!evaluated)
+      return false;
+    if (sampleUnknown != 0 || sampleValue != 1) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return false;
+    }
+  }
+  return true;
+}
+
+bool evaluateCovergroupClockEventsUnlocked(
+    obelisk_rt_context *context, uint64_t sequence, uint32_t dependencyKind,
+    uint32_t kind, uint32_t objectID, int64_t firstPage, int64_t lastPage,
+    uint64_t stableID, uint64_t bitWidth,
+    const ClockConditionPublicationView *sample) {
+  if (!context)
+    return false;
+  if (context->covergroupClockEventEvaluationDepth != 0) {
+    // Compiler-generated primary and iff observers are required to be
+    // read-only, so they cannot publish recursively. Reject a malformed or
+    // foreign descriptor that violates that contract instead of deferring its
+    // iff evaluation past the IEEE 1800 event instant.
+    context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+    return false;
+  }
+
+  struct EvaluationGuard {
+    obelisk_rt_context *context;
+    ~EvaluationGuard() { context->covergroupClockEventEvaluationDepth = 0; }
+  } guard{context};
+  context->covergroupClockEventEvaluationDepth = 1;
+  return evaluateCovergroupClockEventsNowUnlocked(
+      context, sequence, dependencyKind, kind, objectID, firstPage, lastPage,
+      stableID, bitWidth, sample);
+}
+
 bool recordClockOccurrenceUnlocked(
     obelisk_rt_context *context, ClockOccurrenceSubscription &subscription,
     const ClockConditionPublicationView *sample) {
@@ -432,38 +795,172 @@ bool recordClockOccurrenceUnlocked(
 
 } // namespace
 
+bool obelisk_rt_evaluate_covergroup_managed_clock_events_unlocked(
+    obelisk_rt_context *context, uint64_t token) {
+  if (!context || !context->covergroupClockEvents)
+    return context != nullptr;
+  if (token == 0 || context->nextSchedulerSequence == 0) {
+    context->schedulerStatus =
+        token == 0 ? OBELISK_RT_INVALID_HANDLE : OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  uint64_t sequence = context->nextSchedulerSequence++;
+  if (context->signalDiagnosticsEnabled)
+    ++context->signalDiagnostics.publications;
+  return evaluateCovergroupClockEventsUnlocked(
+      context, sequence, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, 0, 0, 0, 0,
+      token, 1, nullptr);
+}
+
+bool obelisk_rt_covergroup_strobes_pending_unlocked(
+    const obelisk_rt_context *context) {
+  if (!context || !context->covergroupClockEvents)
+    return false;
+  return context->covergroupClockEvents->pendingStrobeCount != 0;
+}
+
+obelisk_rt_status
+obelisk_rt_drain_covergroup_strobes_unlocked(obelisk_rt_context *context) {
+  if (!context || !context->covergroupClockEvents)
+    return context ? OBELISK_RT_OK : OBELISK_RT_INVALID_ARGUMENT;
+
+  std::vector<uint64_t> owners;
+  OBELISK_RT_TRY {
+    owners.reserve(context->covergroupClockEvents->registrations.size());
+    for (const auto &[owner, registration] :
+         context->covergroupClockEvents->registrations)
+      if (registration && registration->strobePending)
+        owners.push_back(owner);
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    return context->schedulerStatus;
+  }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return context->schedulerStatus;
+  }
+
+  struct PostponedRegionGuard {
+    obelisk_rt_context *context;
+    uint32_t home;
+    uint32_t exec;
+
+    explicit PostponedRegionGuard(obelisk_rt_context *context)
+        : context(context), home(context->activeHomeRegion),
+          exec(context->activeExecRegion) {
+      context->activeHomeRegion = OBELISK_RT_REGION_POSTPONED;
+      context->activeExecRegion = OBELISK_RT_REGION_POSTPONED;
+    }
+    ~PostponedRegionGuard() {
+      context->activeHomeRegion = home;
+      context->activeExecRegion = exec;
+    }
+  } postponedRegion(context);
+
+  for (uint64_t owner : owners) {
+    // The observer evaluator releases the recursive context mutex around a
+    // native callback. Re-resolve every candidate by stable owner token and
+    // copy its evaluator state before crossing that boundary, just as the
+    // event-instant path does.
+    CovergroupClockEventFeatureState *feature =
+        context->covergroupClockEvents.get();
+    if (!feature)
+      break;
+    auto found = feature->registrations.find(owner);
+    if (found == feature->registrations.end() || !found->second ||
+        !found->second->strobePending)
+      continue;
+    CovergroupClockEventRegistration &registration = *found->second;
+    registration.strobePending = false;
+    if (feature->pendingStrobeCount == 0) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return context->schedulerStatus;
+    }
+    --feature->pendingStrobeCount;
+
+    uint32_t enabled = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_sample_enabled(
+        context, registration.covergroupHandle, &enabled);
+    if (status != OBELISK_RT_OK) {
+      context->schedulerStatus = status;
+      return status;
+    }
+    if (!enabled)
+      continue;
+
+    const bool native = registration.native;
+    const uint64_t observerCodeUnitID = registration.observerCodeUnitID;
+    const uint64_t token = native ? owner & ~kNativeLogicalProcessTag : owner;
+    std::vector<obelisk_rt_computed_capture_v1> captures;
+    OBELISK_RT_TRY { captures = registration.captures; }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      return context->schedulerStatus;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      return context->schedulerStatus;
+    }
+    uint64_t value = 0;
+    uint64_t unknown = 0;
+    bool evaluated =
+        native ? obelisk_rt_evaluate_native_clock_condition_unlocked(
+                     context, token, observerCodeUnitID, captures.data(),
+                     captures.size(), value, unknown)
+               : obelisk_rt_evaluate_design_clock_condition_unlocked(
+                     context, token, observerCodeUnitID, captures.data(),
+                     captures.size(), value, unknown);
+    if (!evaluated) {
+      if (context->schedulerStatus == OBELISK_RT_OK)
+        context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return context->schedulerStatus;
+    }
+    if (unknown != 0 || value != 1) {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      return context->schedulerStatus;
+    }
+  }
+  return OBELISK_RT_OK;
+}
+
 bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
     const obelisk_rt_context *context, uint64_t stableID, uint64_t bit,
     bool &value, bool &unknown) {
   if (!context || !context->observerForcesCanonicalPlane ||
-      !context->clockOccurrences || bit > uint64_t{INT64_MAX})
+      bit > uint64_t{INT64_MAX})
     return false;
-  const ClockConditionPublicationView *publication =
-      context->clockOccurrences->conditionPublication;
-  if (!publication || !publication->newValue || publication->bitWidth == 0)
-    return false;
-  obelisk_rt_stable_handle_v1 published;
   obelisk_rt_stable_handle_v1 loaded;
-  if (!obelisk_rt_stable_handle_decode(publication->stableID, &published) ||
-      !obelisk_rt_stable_handle_decode(stableID, &loaded) ||
-      published.offset < 0 || loaded.offset < 0 ||
-      (published.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
-       published.kind != OBELISK_RT_STABLE_HANDLE_STATIC) ||
-      published.kind != loaded.kind ||
-      (published.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-       published.id != loaded.id))
+  if (!obelisk_rt_stable_handle_decode(stableID, &loaded) || loaded.offset < 0)
     return false;
-  __int128 relative = static_cast<__int128>(loaded.offset) + bit -
-                      static_cast<__int128>(published.offset);
-  if (relative < 0 || relative >= publication->bitWidth ||
-      static_cast<uint64_t>(relative) >
-          UINT64_MAX - publication->planeBitOffset)
-    return false;
-  uint64_t source =
-      publication->planeBitOffset + static_cast<uint64_t>(relative);
-  value = byteBit(publication->newValue, source);
-  unknown = publication->newUnknown && byteBit(publication->newUnknown, source);
-  return true;
+  for (const ClockConditionPublicationView *publication =
+           context->conditionPublication;
+       publication; publication = publication->previous) {
+    if (!publication->newValue || publication->bitWidth == 0)
+      continue;
+    obelisk_rt_stable_handle_v1 published;
+    if (!obelisk_rt_stable_handle_decode(publication->stableID, &published) ||
+        published.offset < 0 ||
+        (published.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
+         published.kind != OBELISK_RT_STABLE_HANDLE_STATIC) ||
+        published.kind != loaded.kind ||
+        (published.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+         published.id != loaded.id))
+      continue;
+    __int128 relative = static_cast<__int128>(loaded.offset) + bit -
+                        static_cast<__int128>(published.offset);
+    if (relative < 0 || relative >= publication->bitWidth ||
+        static_cast<uint64_t>(relative) >
+            UINT64_MAX - publication->planeBitOffset)
+      continue;
+    uint64_t source =
+        publication->planeBitOffset + static_cast<uint64_t>(relative);
+    value = byteBit(publication->newValue, source);
+    unknown =
+        publication->newUnknown && byteBit(publication->newUnknown, source);
+    return true;
+  }
+  return false;
 }
 
 void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
@@ -660,6 +1157,11 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
   // Exact multi-clock coordination owns a separate lazy subscription index.
   // Ordinary publication performs only this cold null-pointer gate and keeps
   // its long-standing subscription representation and matching path intact.
+  if (!evaluateCovergroupClockEventsUnlocked(
+          context, sequence, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, kind,
+          objectID, firstPage, lastPage, stableID, bitWidth, sample))
+    return false;
+
   ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
   if (!feature)
     return true;
@@ -844,6 +1346,38 @@ static bool signalTransitionBatchMatches(const Subscription &subscription,
       return true;
   }
   return false;
+}
+
+static bool publishCovergroupClockTransitionUnlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
+    const uint8_t *newValue, const uint8_t *newUnknown) {
+  (void)changed;
+  (void)posedge;
+  (void)negedge;
+  if (!context->covergroupClockEvents)
+    return true;
+  if (context->nextSchedulerSequence == 0) {
+    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    return false;
+  }
+  uint32_t kind = 0;
+  uint32_t objectID = 0;
+  int64_t firstPage = 0;
+  int64_t lastPage = 0;
+  if (!signalSubscriptionBucketRange(stableID, bitWidth, kind, objectID,
+                                     firstPage, lastPage)) {
+    context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+    return false;
+  }
+  uint64_t sequence = context->nextSchedulerSequence++;
+  if (context->signalDiagnosticsEnabled)
+    ++context->signalDiagnostics.publications;
+  ClockConditionPublicationView sample{stableID, bitWidth, 0, newValue,
+                                       newUnknown};
+  return evaluateCovergroupClockEventsUnlocked(
+      context, sequence, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, kind, objectID,
+      firstPage, lastPage, stableID, bitWidth, &sample);
 }
 
 bool recordStaticClockingOutputOccurrencesUnlocked(
@@ -1163,8 +1697,11 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     uint64_t edgeBitOffset, uint64_t *outSequence, const uint8_t *oldValue,
     const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown) {
+  obelisk_rt_coverage_record_transition_unlocked(context, stableID, bitWidth,
+                                                 changed, newValue, newUnknown);
   ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
-  if ((!feature || feature->waits.empty()) && edgeBitOffset == 0) {
+  if ((!feature || feature->waits.empty()) && !context->covergroupClockEvents &&
+      edgeBitOffset == 0) {
     uint64_t sequence = 0;
     if (publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
                                                  changed, posedge, negedge,
@@ -1528,15 +2065,15 @@ extern "C" void obelisk_rt_v1_scheduler_signal_transition(
                             newValue, newUnknown, false);
 }
 
-// IEEE 1800-2017 10.6.2: a force or an assign procedural continuous assignment
-// takes over its target the moment it executes. That write is a value change
-// (9.4.2), so it publishes like any other — but the override masks are already
-// set by the time it does, and the ordinary path reads those masks as "a driver
-// changed behind an override" and drops the bits. Publish it exempt instead.
-void publishOverrideEstablishmentTransition(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
-    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
-    const uint8_t *newUnknown) {
+// IEEE 1800-2017 10.6.2: installing a force/assign and releasing a force back
+// to an active assign are value changes of the overridden target, not driver
+// changes behind an override. Their masks already describe the post-transition
+// ownership, so publish them exempt from ordinary override suppression.
+void publishOverrideTransition(obelisk_rt_context *context, uint64_t bitOffset,
+                               uint64_t bitWidth, const uint8_t *oldValue,
+                               const uint8_t *oldUnknown,
+                               const uint8_t *newValue,
+                               const uint8_t *newUnknown) {
   schedulerSignalTransition(context, bitOffset, bitWidth, oldValue, oldUnknown,
                             newValue, newUnknown, true);
 }
@@ -1576,14 +2113,16 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
     return;
   }
+  uint64_t handle = obelisk_rt_stable_handle_encode(
+      OBELISK_RT_STABLE_HANDLE_STATIC, staticState,
+      static_cast<int64_t>(lowBit));
+  obelisk_rt_coverage_record_transition_unlocked(
+      context, handle, bitWidth, reinterpret_cast<const uint8_t *>(&changed),
+      reinterpret_cast<const uint8_t *>(&newValue),
+      reinterpret_cast<const uint8_t *>(&newUnknown));
   uint8_t edgeKinds = 0;
   if (staticState < context->nativeScheduleStaticStateFanoutEdges.size()) {
     edgeKinds = context->nativeScheduleStaticStateFanoutEdges[staticState];
-    if (edgeKinds == 0) {
-      if (++context->schedulerEpoch == 0)
-        context->schedulerEpoch = 1;
-      return;
-    }
   }
   uint8_t posedgeKinds = (uint8_t{1} << OBELISK_RT_WAIT_EDGE_POSEDGE) |
                          (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
@@ -1591,15 +2130,39 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
                          (uint8_t{1} << OBELISK_RT_WAIT_EDGE_BOTH);
   uint64_t posedge = 0;
   uint64_t negedge = 0;
-  if ((edgeKinds & (posedgeKinds | negedgeKinds)) != 0) {
+  if (context->covergroupClockEvents ||
+      (edgeKinds & (posedgeKinds | negedgeKinds)) != 0) {
     uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
     uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
     uint64_t newZero = ~newUnknown & ~newValue & widthMask;
     uint64_t newOne = ~newUnknown & newValue & widthMask;
-    if ((edgeKinds & posedgeKinds) != 0)
+    if (context->covergroupClockEvents || (edgeKinds & posedgeKinds) != 0)
       posedge = ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
-    if ((edgeKinds & negedgeKinds) != 0)
+    if (context->covergroupClockEvents || (edgeKinds & negedgeKinds) != 0)
       negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
+  }
+  if (!publishCovergroupClockTransitionUnlocked(
+          context, handle, bitWidth,
+          reinterpret_cast<const uint8_t *>(&changed),
+          reinterpret_cast<const uint8_t *>(&posedge),
+          reinterpret_cast<const uint8_t *>(&negedge),
+          reinterpret_cast<const uint8_t *>(&newValue),
+          reinterpret_cast<const uint8_t *>(&newUnknown)))
+    return;
+  // Generated Eval bodies publish their statically indexed actor ingress
+  // locally. The retained v1 callback exists only for runtime-owned observers
+  // such as covergroup clock events; do not enqueue the same native fanout a
+  // second time through the runtime plan.
+  if ((context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0) {
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return;
+  }
+  if (edgeKinds == 0) {
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return;
   }
   uint64_t observedEdges = 0;
   if ((edgeKinds & (uint8_t{1} << OBELISK_RT_WAIT_EDGE_CHANGE)) != 0)

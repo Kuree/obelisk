@@ -627,7 +627,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
-       covergroupMethod == "stop" || covergroupMethod == "get_inst_coverage" ||
+       covergroupMethod == "stop" || covergroupMethod == "set_inst_name" ||
+       covergroupMethod == "get_inst_coverage" ||
        covergroupMethod == "get_coverage"))
     if (auto covergroup = findSemanticCovergroup(op))
       return lowerCovergroupCall(op, covergroup);
@@ -2667,7 +2668,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         results.push_back(result);
       }
       sim::SimReturnOp::create(builder, location, results);
-    } else if (failed(emitFunctionReturn(location, std::nullopt, false))) {
+    } else if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                         /*emitBlockEventEnd=*/false))) {
       return failure();
     }
     setCurrent(resume);

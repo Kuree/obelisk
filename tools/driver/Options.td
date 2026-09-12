@@ -83,6 +83,17 @@ def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Group<Compilation_Group>, MetaVarName<"<auto|off|on>">,
   Values<"auto,off,on">,
   HelpText<"Select direct static-state and narrow-NBA specialization">;
+def coverage : Flag<["--"], "coverage">, Group<Compilation_Group>,
+  HelpText<"Instrument line, toggle, and functional coverage">;
+def coverage_EQ : Joined<["--"], "coverage=">, Group<Compilation_Group>,
+  MetaVarName<"<line,toggle,functional>">,
+  HelpText<"Select coverage metric families to instrument">;
+def coverage_config_EQ : Joined<["--"], "coverage-config=">,
+  Group<Compilation_Group>, MetaVarName<"<file.json>">,
+  HelpText<"Apply ordered coverage include and exclusion rules">;
+def coverage_prefix_map_EQ : Joined<["--"], "coverage-prefix-map=">,
+  Group<Compilation_Group>, MetaVarName<"<from>=<to>">,
+  HelpText<"Rewrite source path prefixes in coverage schemas">;
 def pulse_reject_percent_EQ : Joined<["--"], "pulse-reject-percent=">,
   Group<Compilation_Group>, MetaVarName<"<0..100>">,
   HelpText<"Set the global Clause 30.7 path-pulse reject percentage">;

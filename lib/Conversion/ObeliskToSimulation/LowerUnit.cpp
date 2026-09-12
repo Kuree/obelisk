@@ -568,10 +568,15 @@ void UnitLowering::ensureCoverageInventory() {
         return isa<sim::SimCovergroupDeclOp>(operation);
       });
   ModuleOp module = function->getParentOfType<ModuleOp>();
+  for (sim::SimScopeDeclOp scope :
+       design.getBody().front().getOps<sim::SimScopeDeclOp>()) {
+    std::optional<StringRef> hierarchy = scope.getHierarchicalName();
+    std::optional<uint64_t> coverageID = scope.getCoverageId();
+    if (hierarchy && coverageID &&
+        (scope.getId() == 0 || scope.getDefinitionName()))
+      coverageInstanceIDs.try_emplace(*hierarchy, *coverageID);
+  }
   for (Operation &topLevel : module.getBody()->getOperations()) {
-    if (auto definition = dyn_cast<semantic::SVDefinitionSymbolOp>(topLevel))
-      if (auto name = definition.getName())
-        coverageDefinitionNames.insert(*name);
     if (!hasCovergroupDeclarations)
       continue;
     auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel);
@@ -918,8 +923,21 @@ void UnitLowering::emitBranch(Block *destination) {
 
 void UnitLowering::emitControlLeaves(size_t first, Location location) {
   for (const ControlScope &scope :
-       llvm::reverse(ArrayRef(controlScopes).drop_front(first)))
+       llvm::reverse(ArrayRef(controlScopes).drop_front(first))) {
+    if (scope.coverageBlockEventTargetID)
+      emitCovergroupBlockEvent(*scope.coverageBlockEventTargetID,
+                               /*eventKind=*/1, location);
     sim::SimControlLeaveOp::create(builder, location, scope.activation);
+  }
+}
+
+void UnitLowering::emitCovergroupBlockEvent(uint64_t targetID,
+                                            uint32_t eventKind,
+                                            Location location) {
+  sim::SimCovergroupBlockEventFireOp::create(
+      builder, location, function.getBody().front().getArgument(0), thisObject,
+      builder.getI64IntegerAttr(targetID),
+      builder.getI32IntegerAttr(eventKind));
 }
 
 InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
@@ -1055,8 +1073,8 @@ FailureOr<Value> UnitLowering::bindObserver(
       FailureOr<Value> value = resolve(path);
       if (failed(value))
         return failure();
-      if (!isa<sim::RefType, sim::NetType, sim::EventType>(
-              (*value).getType())) {
+      if (!isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
+               sim::EventType>((*value).getType())) {
         emitError(location) << "observer dependency is not a watchable handle: "
                             << (*value).getType();
         return failure();
@@ -1670,6 +1688,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
   if (isa<sim::ClassHandleType>(value.getType()) &&
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)
+        .getResult();
+  if (isa<sim::CovergroupHandleType>(value.getType()) &&
+      isa<sim::CovergroupHandleType>(targetType))
+    return sim::SimCovergroupCastOp::create(builder, location, targetType,
+                                            value)
         .getResult();
   if (isa<sim::VirtualInterfaceType>(value.getType()) &&
       isa<sim::VirtualInterfaceType>(targetType)) {
@@ -2304,13 +2327,20 @@ FailureOr<Value> UnitLowering::toLogic(Value value, Location location) {
       .getResult();
 }
 
-LogicalResult UnitLowering::emitFunctionReturn(
-    Location location, std::optional<Value> explicitResult, bool resultSigned) {
+LogicalResult
+UnitLowering::emitFunctionReturn(Location location,
+                                 std::optional<Value> explicitResult,
+                                 bool resultSigned, bool emitBlockEventEnd) {
+  auto blockEventTarget =
+      function->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName);
   if (function.getEntryKind() == sim::EntryKind::Task) {
     if (explicitResult) {
       emitError(location) << "task return cannot carry a value";
       return failure();
     }
+    if (emitBlockEventEnd && coverageBlockEventStarted && blockEventTarget)
+      emitCovergroupBlockEvent(blockEventTarget.getValue().getZExtValue(),
+                               /*eventKind=*/1, location);
     for (StringRef path : copyOutPaths) {
       Value storage = lvalues.lookup(path);
       Value destination = copyOutDestinations.lookup(path);
@@ -2337,6 +2367,9 @@ LogicalResult UnitLowering::emitFunctionReturn(
       emitError(location) << "non-function entry cannot return a value";
       return failure();
     }
+    if (emitBlockEventEnd && coverageBlockEventStarted && blockEventTarget)
+      emitCovergroupBlockEvent(blockEventTarget.getValue().getZExtValue(),
+                               /*eventKind=*/1, location);
     sim::SimReturnOp::create(builder, location, ValueRange{});
     return success();
   }
@@ -2406,6 +2439,9 @@ LogicalResult UnitLowering::emitFunctionReturn(
     }
     results.push_back(cloneSequentialValue(value, location));
   }
+  if (emitBlockEventEnd && coverageBlockEventStarted && blockEventTarget)
+    emitCovergroupBlockEvent(blockEventTarget.getValue().getZExtValue(),
+                             /*eventKind=*/1, location);
   sim::SimReturnOp::create(builder, location, results);
   return success();
 }
@@ -2681,8 +2717,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return failure();
     }
     if (isa<semantic::SVTimeLiteralOp>(op)) {
-      auto scaleAttr =
-          function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+      auto scaleAttr = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
       auto quantumAttr =
           function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
       if (!scaleAttr || !quantumAttr) {
@@ -3704,12 +3739,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     // exactly Z, so override the range with Z for that case. Direct polarity
     // enables avoid applying the conditional-operator Z/Z-to-X rule to the
     // bank that remains inactive under an uncertain control.
-    Value enabledControl =
-        activeHigh
-            ? controlValue
-            : Value(sim::SimLogicUnaryOp::create(
-                  builder, location, controlValue.getType(),
-                  sim::UnaryKind::BitNot, controlValue));
+    Value enabledControl = activeHigh
+                               ? controlValue
+                               : Value(sim::SimLogicUnaryOp::create(
+                                     builder, location, controlValue.getType(),
+                                     sim::UnaryKind::BitNot, controlValue));
     Value invertedDriven = sim::SimLogicUnaryOp::create(
         builder, location, logicType, sim::UnaryKind::BitNot, driven);
     Value lowEnable = sim::SimLogicBinaryOp::create(
@@ -3718,15 +3752,15 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value highEnable = sim::SimLogicBinaryOp::create(
         builder, location, logicType, sim::BinaryKind::And, driven,
         enabledControl);
-    Value lowRange = sim::SimLogicMuxOp::create(
-        builder, location, logicType, lowEnable, zero, disabled);
-    Value highRange = sim::SimLogicMuxOp::create(
-        builder, location, logicType, highEnable, one, disabled);
+    Value lowRange = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                                lowEnable, zero, disabled);
+    Value highRange = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                                 highEnable, one, disabled);
     Value dataIsZ = sim::SimLogicCompareOp::create(
         builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
         driven, disabled);
-    Value lowResult = arith::SelectOp::create(builder, location, dataIsZ,
-                                              disabled, lowRange);
+    Value lowResult =
+        arith::SelectOp::create(builder, location, dataIsZ, disabled, lowRange);
     Value highResult = arith::SelectOp::create(builder, location, dataIsZ,
                                                disabled, highRange);
     strengthResults = std::array<Value, 2>{lowResult, highResult};
@@ -3774,12 +3808,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     // L/H range required by 28.12.2. This also halves the number of expensive
     // four-state muxes in the hot primitive evaluator.
     bool activeHigh = name.ends_with("1");
-    Value enabledControl =
-        activeHigh
-            ? *control
-            : Value(sim::SimLogicUnaryOp::create(
-                  builder, location, control->getType(),
-                  sim::UnaryKind::BitNot, *control));
+    Value enabledControl = activeHigh
+                               ? *control
+                               : Value(sim::SimLogicUnaryOp::create(
+                                     builder, location, control->getType(),
+                                     sim::UnaryKind::BitNot, *control));
     Value invertedDriven = sim::SimLogicUnaryOp::create(
         builder, location, logicType, sim::UnaryKind::BitNot, driven);
     Value lowEnable = sim::SimLogicBinaryOp::create(
@@ -3788,10 +3821,10 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value highEnable = sim::SimLogicBinaryOp::create(
         builder, location, logicType, sim::BinaryKind::And, driven,
         enabledControl);
-    Value lowResult = sim::SimLogicMuxOp::create(
-        builder, location, logicType, lowEnable, zero, disabled);
-    Value highResult = sim::SimLogicMuxOp::create(
-        builder, location, logicType, highEnable, one, disabled);
+    Value lowResult = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                                 lowEnable, zero, disabled);
+    Value highResult = sim::SimLogicMuxOp::create(builder, location, logicType,
+                                                  highEnable, one, disabled);
     // Keep the ordinary four-state gate result alongside its two exact
     // strength ranges. IEEE 1800-2017 28.6 and 28.16 select propagation delay
     // from this logical transition: L and H use the x delay, not the delay of
@@ -4224,6 +4257,16 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   SmallVector<Operation *> children = getChildren(op);
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
+
+  if (auto point =
+          op->getAttrOfType<IntegerAttr>(sim::metadata::coverageLinePointIndex);
+      point && !isa<semantic::SVConcurrentAssertionStatementOp>(op)) {
+    Value context = function.getBody().front().getArgument(0);
+    Value enabled = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    sim::SimCoveragePointHitOp::create(builder, location, context, enabled,
+                                       point);
+  }
 
   // IEEE 1800-2017 8.7 places derived property initialization after an
   // explicit super.new and before the remaining constructor statements.
@@ -5020,6 +5063,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             targetID.getValue().getZExtValue();
     });
   setCurrent(&function.getBody().front());
+  auto functionCoveragePoint = function->getAttrOfType<IntegerAttr>(
+      sim::metadata::coverageLinePointIndex);
   if (function->hasAttr("obelisk_sim.timing_check_coordinator"))
     return lowerSystemTimingCheck(roots);
   if (function->hasAttr(sequenceEndpointMonitorAttrName))
@@ -5027,6 +5072,33 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (function->hasAttr(clockingEventMonitorAttrName))
     return lowerClockingEventMonitor(roots);
   sim::EntryKind entryKind = function.getEntryKind();
+  auto blockEventTargetID =
+      function->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName);
+  if (blockEventTargetID) {
+    if ((entryKind != sim::EntryKind::Task &&
+         entryKind != sim::EntryKind::Function) ||
+        !blockEventTargetID.getValue().isStrictlyPositive()) {
+      function.emitError(
+          "coverage block-event target must be a task or function with a "
+          "positive stable identity");
+      return failure();
+    }
+  }
+  bool loopsForever = entryKind == sim::EntryKind::Always ||
+                      entryKind == sim::EntryKind::AlwaysComb ||
+                      entryKind == sim::EntryKind::AlwaysFF ||
+                      entryKind == sim::EntryKind::AlwaysLatch ||
+                      entryKind == sim::EntryKind::Continuous ||
+                      entryKind == sim::EntryKind::PortInput ||
+                      entryKind == sim::EntryKind::PortOutput;
+  if (functionCoveragePoint && !loopsForever) {
+    Value context = function.getBody().front().getArgument(0);
+    Value enabled = arith::ConstantOp::create(builder, function.getLoc(),
+                                              builder.getI1Type(),
+                                              builder.getBoolAttr(true));
+    sim::SimCoveragePointHitOp::create(builder, function.getLoc(), context,
+                                       enabled, functionCoveragePoint);
+  }
   continuousStore = entryKind == sim::EntryKind::Continuous ||
                     entryKind == sim::EntryKind::AlwaysComb ||
                     entryKind == sim::EntryKind::AlwaysLatch ||
@@ -5439,14 +5511,6 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{*result});
     return success();
   }
-  bool loopsForever = entryKind == sim::EntryKind::Always ||
-                      entryKind == sim::EntryKind::AlwaysComb ||
-                      entryKind == sim::EntryKind::AlwaysFF ||
-                      entryKind == sim::EntryKind::AlwaysLatch ||
-                      entryKind == sim::EntryKind::Continuous ||
-                      entryKind == sim::EntryKind::PortInput ||
-                      entryKind == sim::EntryKind::PortOutput;
-
   struct TimingPathRuleState {
     struct Source {
       Value input;
@@ -5826,6 +5890,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       emitBranch(loopHeader);
     }
     setCurrent(loopHeader);
+    if (functionCoveragePoint) {
+      Value context = function.getBody().front().getArgument(0);
+      Value enabled = arith::ConstantOp::create(builder, function.getLoc(),
+                                                builder.getI1Type(),
+                                                builder.getBoolAttr(true));
+      sim::SimCoveragePointHitOp::create(builder, function.getLoc(), context,
+                                         enabled, functionCoveragePoint);
+    }
   }
   auto buildTimingPathPlan =
       [&](MutableArrayRef<TimingPathRuleState> timingPathRules,
@@ -6380,6 +6452,31 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (primitive) {
     lowered = lowerPrimitive(primitive.getValue(), roots, previousUdpInputs,
                              previousUdpInputs ? &nextUdpInputs : nullptr);
+  } else if (blockEventTargetID) {
+    SmallVector<Operation *> body(roots);
+    if (body.size() == 1 && isa<semantic::SVStatementListOp>(body.front()))
+      body = getChildren(body.front());
+
+    // A subroutine activation initializes its leading block-item
+    // declarations before executing its first statement. IEEE 1800-2017 and
+    // IEEE 1800-2023 19.3 place a block-event `begin` sample immediately
+    // before that first statement, so declaration initializers (including
+    // calls with visible side effects) must complete before the sample.
+    while (!body.empty() &&
+           isa<semantic::SVVariableDeclStatementOp>(body.front())) {
+      if (failed(lowerStatement(body.front()))) {
+        lowered = failure();
+        break;
+      }
+      body.erase(body.begin());
+    }
+    if (succeeded(lowered) && !body.empty()) {
+      emitCovergroupBlockEvent(blockEventTargetID.getValue().getZExtValue(),
+                               /*eventKind=*/0,
+                               getSemanticLocation(body.front()));
+      coverageBlockEventStarted = true;
+      lowered = lowerSequence(body);
+    }
   } else {
     lowered = lowerSequence(roots);
   }

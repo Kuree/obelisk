@@ -39,12 +39,10 @@ obelisk_rt_v1_dpi_export_task_bytecode_run(
   uintptr_t base = reinterpret_cast<uintptr_t>(&execution);
   if (execution.reserved > std::numeric_limits<uintptr_t>::max() - base)
     return OBELISK_RT_INVALID_DESIGN;
-  auto *extension = reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(
+  auto *extension = reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
       base + static_cast<uintptr_t>(execution.reserved));
-  bool validExtension =
-      extension->version == OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION ||
-      extension->version == OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION;
-  if (!validExtension || !extension->exports)
+  if (extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
+      extension->size != sizeof(*extension) || !extension->exports)
     return OBELISK_RT_INVALID_DESIGN;
   const obelisk_rt_export_descriptor_v1 *descriptor = nullptr;
   for (uint64_t index = 0; index != extension->export_count; ++index) {

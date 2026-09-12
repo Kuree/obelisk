@@ -872,8 +872,12 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
         dyn_cast<llvm::ConstantStruct>(executionInitializer->getOperand(0));
     auto *extension =
         dyn_cast<llvm::ConstantStruct>(executionInitializer->getOperand(1));
-    if (isExecutionDescriptor(nested) && extension &&
-        extension->getNumOperands() == 4)
+    // The extension is deliberately an evolving v1 record.  Its field count
+    // is not part of the storage-wrapper contract; the descriptor in element
+    // zero is sufficient to identify the generated aggregate.  Requiring a
+    // particular extension shape here made adding an in-place v1 field look
+    // like a malformed state descriptor.
+    if (isExecutionDescriptor(nested) && extension)
       executionInitializer = nested;
   }
   auto *stateBitCount =

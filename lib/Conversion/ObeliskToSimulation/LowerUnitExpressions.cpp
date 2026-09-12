@@ -500,16 +500,20 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     auto objectType = dyn_cast<sim::ClassHandleType>(object.getType());
     if (failed(elementType) || !objectType)
       return failure();
+    Type storageType = *elementType;
+    if (auto storage = op->getAttrOfType<TypeAttr>(
+            "obelisk_sim.covergroup_field_storage_type"))
+      storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
-        function.getContext(), *elementType, objectType.getClassName());
+        function.getContext(), storageType, objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
         builder, getSemanticLocation(op), referenceType, object, field);
     if (lvalue)
       return reference;
     recordManagedRead(reference, getSemanticLocation(op));
-    return sim::SimManagedLoadOp::create(builder, getSemanticLocation(op),
-                                         *elementType, reference)
-        .getResult();
+    Value loaded = sim::SimManagedLoadOp::create(
+        builder, getSemanticLocation(op), storageType, reference);
+    return convert(loaded, *elementType, false, getSemanticLocation(op));
   }
   return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
 }
@@ -3447,6 +3451,14 @@ FailureOr<Value>
 UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                           bool lvalue) {
   Location location = getSemanticLocation(op);
+  if (!lvalue) {
+    FailureOr<std::optional<Value>> option =
+        lowerCovergroupIntegerOptionRead(op);
+    if (failed(option))
+      return failure();
+    if (*option)
+      return **option;
+  }
   if (getConstantSpelling(op)) {
     if (lvalue) {
       emitError(location) << "constant member access is not an lvalue";
@@ -3485,13 +3497,19 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                           : sim::ClassHandleType{};
     if (failed(resultType) || failed(object) || !objectType)
       return failure();
+    Type storageType = *resultType;
+    if (auto storage = op->getAttrOfType<TypeAttr>(
+            "obelisk_sim.covergroup_field_storage_type"))
+      storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
-        function.getContext(), *resultType, objectType.getClassName());
+        function.getContext(), storageType, objectType.getClassName());
     Value reference = sim::SimClassFieldRefOp::create(
         builder, location, referenceType, *object, field);
     if (lvalue)
       return reference;
-    return loadReference(reference, location);
+    FailureOr<Value> loaded = loadReference(reference, location);
+    return succeeded(loaded) ? convert(*loaded, *resultType, false, location)
+                             : FailureOr<Value>(failure());
   }
   FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
   if (succeeded(receiverType) &&

@@ -43,12 +43,17 @@ Value managedObjectHandle(OpBuilder &builder, Location location, Value object) {
                                   object);
 }
 
-std::pair<Value, Value> managedContextAndLane(OpBuilder &builder,
-                                              Location location) {
+Value managedContext(OpBuilder &builder, Location location) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Value address = LLVM::AddressOfOp::create(builder, location, pointer,
                                             "__obelisk_current_context");
-  Value context = LLVM::LoadOp::create(builder, location, pointer, address, 8);
+  return LLVM::LoadOp::create(builder, location, pointer, address, 8);
+}
+
+std::pair<Value, Value> managedContextAndLane(OpBuilder &builder,
+                                              Location location) {
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Value context = managedContext(builder, location);
   Value lane =
       LLVM::CallOp::create(builder, location, TypeRange{pointer},
                            SymbolRefAttr::get(builder.getContext(),
@@ -904,7 +909,8 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
                WeakClearConversion, GCSafepointConversion>(converter, context);
   populateManagedContainerToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout);
-  populateManagedCoverageToLLVMConversionPatterns(patterns, converter);
+  populateManagedCoverageToLLVMConversionPatterns(patterns, converter,
+                                                  dataLayout);
   populateManagedReferenceToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout, stateBitCount);
   populateManagedStringToLLVMConversionPatterns(patterns, converter);

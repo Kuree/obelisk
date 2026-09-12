@@ -1697,6 +1697,8 @@ FailureOr<bool> makeNativeEvalPlan(
           *bitWidth > 64)
         return call.emitError("eval transition is not a fixed scalar range"),
                failure();
+      bool hasRuntimeOwnedObserver =
+          staticFanoutPlan.runtimeTransitionStates.contains(*staticState);
       OpBuilder transitionBuilder(call);
       Value oldValue = arguments[4];
       Value oldUnknown = arguments[5];
@@ -1776,7 +1778,8 @@ FailureOr<bool> makeNativeEvalPlan(
       if (needsActiveSelfCheck)
         continue;
       if (publications.empty()) {
-        call.erase();
+        if (!hasRuntimeOwnedObserver)
+          call.erase();
         continue;
       }
       Value widthMask = llvmConstant(transitionBuilder, call.getLoc(), i64,
@@ -1866,7 +1869,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                                    selected),
                               address, 8);
       }
-      call.erase();
+      if (!hasRuntimeOwnedObserver)
+        call.erase();
     }
 
     // Dynamic writes into a fixed packed root use a generated one-entry NBA
@@ -3015,7 +3019,13 @@ FailureOr<bool> makeNativeEvalPlan(
         llvm::all_of(clockMasks.front(),
                      [](const auto &masks) { return masks.second == 0; }) &&
         llvm::all_of(clockDirectMasks.front(),
-                     [](const auto &masks) { return masks.second == 0; });
+                     [](const auto &masks) { return masks.second == 0; }) &&
+        !staticFanoutPlan.runtimeTransitionStates.contains(
+            periodicClocks.front().staticState) &&
+        llvm::none_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
+          return staticFanoutPlan.runtimeTransitionStates.contains(
+              alias.targetStaticState);
+        });
     if (canCompressSilentFall) {
       silentFall = new Block;
       advanceSilentFall = new Block;
@@ -3146,6 +3156,34 @@ FailureOr<bool> makeNativeEvalPlan(
     Value directReady = llvmConstant(builder, location, i64, 0);
     Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
                                                  "__obelisk_state_value");
+    auto publishRuntimeClockBit = [&](uint32_t staticState,
+                                      uint64_t absoluteBit, Value oldSet,
+                                      Value newSet) -> LogicalResult {
+      if (!staticFanoutPlan.runtimeTransitionStates.contains(staticState))
+        return success();
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == staticState;
+          });
+      if (bound == stateLayout.bounds.end() || absoluteBit < bound->offset ||
+          absoluteBit - bound->offset >= bound->width)
+        return module.emitError(
+            "runtime-owned periodic observer has an invalid static root");
+      Value oldValue = arith::ExtUIOp::create(builder, location, i64, oldSet);
+      Value newValue = arith::ExtUIOp::create(builder, location, i64, newSet);
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_scheduler_static_transition"),
+          ValueRange{
+              runEntry->getArgument(1),
+              llvmConstant(builder, location, i32, staticState),
+              llvmConstant(builder, location, i64, absoluteBit - bound->offset),
+              llvmConstant(builder, location, i64, 1), oldValue,
+              llvmConstant(builder, location, i64, 0), newValue,
+              llvmConstant(builder, location, i64, 0)});
+      return success();
+    };
     for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks)) {
       Value edgeAddress = byteGEP(builder, location, nextEdges,
                                   uint64_t{clockIndex} * sizeof(uint64_t));
@@ -3192,6 +3230,15 @@ FailureOr<bool> makeNativeEvalPlan(
           builder, location,
           arith::SelectOp::create(builder, location, due, toggled, oldByte),
           byteAddress, 1);
+      Value newSet = arith::SelectOp::create(
+          builder, location, due,
+          arith::XOrIOp::create(
+              builder, location, oldSet,
+              llvmConstant(builder, location, builder.getI1Type(), 1)),
+          oldSet);
+      if (mlir::failed(publishRuntimeClockBit(clock.staticState,
+                                              clock.bitOffset, oldSet, newSet)))
+        return failure();
 
       for (const NativePeriodicAlias &alias : periodicAliases) {
         if (alias.sourceStaticState != clock.staticState ||
@@ -3217,10 +3264,28 @@ FailureOr<bool> makeNativeEvalPlan(
                                    llvmConstant(builder, location,
                                                 builder.getI8Type(),
                                                 aliasMask)));
-          LLVM::StoreOp::create(builder, location,
-                                arith::SelectOp::create(builder, location, due,
-                                                        aliasValue, aliasOld),
-                                aliasAddress, 1);
+          Value storedAlias = arith::SelectOp::create(builder, location, due,
+                                                      aliasValue, aliasOld);
+          LLVM::StoreOp::create(builder, location, storedAlias, aliasAddress,
+                                1);
+          Value aliasOldSet = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(builder, location, aliasOld,
+                                    llvmConstant(builder, location,
+                                                 builder.getI8Type(),
+                                                 aliasMask)),
+              llvmConstant(builder, location, builder.getI8Type(), 0));
+          Value aliasNewSet = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(builder, location, storedAlias,
+                                    llvmConstant(builder, location,
+                                                 builder.getI8Type(),
+                                                 aliasMask)),
+              llvmConstant(builder, location, builder.getI8Type(), 0));
+          if (mlir::failed(publishRuntimeClockBit(alias.targetStaticState,
+                                                  bitOffset, aliasOldSet,
+                                                  aliasNewSet)))
+            return failure();
         }
       }
 
@@ -3668,8 +3733,12 @@ FailureOr<bool> makeNativeEvalPlan(
         cf::BranchOp::create(builder, location, nextDirect);
         builder.setInsertionPointToStart(nextDirect);
       }
-    cf::CondBranchOp::create(builder, location, hasIngress, executeStep,
-                             ValueRange{}, loop, ValueRange{});
+    Block *completeStep = new Block;
+    completeStep->addArgument(i32, location);
+    run.getBody().push_back(completeStep);
+    cf::CondBranchOp::create(
+        builder, location, hasIngress, executeStep, ValueRange{}, completeStep,
+        ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)});
 
     builder.setInsertionPointToStart(executeStep);
     // The hybrid coordinator drains the transient four-state prefix and
@@ -3789,12 +3858,34 @@ FailureOr<bool> makeNativeEvalPlan(
                          ValueRange{trustedStatus});
     builder.setInsertionPointToStart(executeCoordinatorJoin);
     Value stepStatus = executeCoordinatorJoin->getArgument(0);
+    cf::BranchOp::create(builder, location, completeStep,
+                         ValueRange{stepStatus});
+
+    builder.setInsertionPointToStart(completeStep);
+    Value completedStatus = completeStep->getArgument(0);
     Value stepOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, stepStatus,
+        builder, location, arith::CmpIPredicate::eq, completedStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    cf::CondBranchOp::create(builder, location, stepOK,
+    Value handoffPending =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_scheduler_handoff_pending"),
+            ValueRange{runEntry->getArgument(1)})
+            .getResult();
+    Value noRuntimeHandoff = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, handoffPending,
+        llvmConstant(builder, location, i32, 0));
+    Value continueGenerated =
+        arith::AndIOp::create(builder, location, stepOK, noRuntimeHandoff);
+    Value runtimeHandoffStatus = arith::SelectOp::create(
+        builder, location, stepOK,
+        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE),
+        completedStatus);
+    cf::CondBranchOp::create(builder, location, continueGenerated,
                              canCompressSilentFall ? silentFall : loop,
-                             ValueRange{}, afterStep, ValueRange{stepStatus});
+                             ValueRange{}, afterStep,
+                             ValueRange{runtimeHandoffStatus});
 
     if (canCompressSilentFall) {
       // A falling phase with no physical fanout is not an event region. It may

@@ -4,6 +4,8 @@
 #define OBELISK_DIALECT_SLANG_SLANGENUMS_TD
 
 include "mlir/IR/EnumAttr.td"
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributes.td"
 
 def SlangAssignment_Blocking
     : I32EnumAttrCase<"Blocking", 0, "blocking">;
@@ -253,6 +255,202 @@ def SlangCoverageBinKind : I32EnumAttr<"CoverageBinKind",
     "coverage bin classification", [
   SlangCoverageBin_Bins, SlangCoverageBin_IllegalBins,
   SlangCoverageBin_IgnoreBins
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+// Direct children of a coverage-bin symbol are heterogeneous and several of
+// the optional expressions have the same operation type.  Preserve the AST
+// role explicitly instead of making downstream passes reconstruct Slang's
+// visitation order.
+def SlangCoverageBinChild_Iff
+    : I32EnumAttrCase<"Iff", 0, "iff">;
+def SlangCoverageBinChild_NumberOfBins
+    : I32EnumAttrCase<"NumberOfBins", 1, "number_of_bins">;
+def SlangCoverageBinChild_SetCoverage
+    : I32EnumAttrCase<"SetCoverage", 2, "set_coverage">;
+def SlangCoverageBinChild_With
+    : I32EnumAttrCase<"With", 3, "with">;
+def SlangCoverageBinChild_CrossSelect
+    : I32EnumAttrCase<"CrossSelect", 4, "cross_select">;
+def SlangCoverageBinChild_Value
+    : I32EnumAttrCase<"Value", 5, "value">;
+def SlangCoverageBinChild_TransitionItem
+    : I32EnumAttrCase<"TransitionItem", 6, "transition_item">;
+def SlangCoverageBinChild_TransitionRepeatFrom
+    : I32EnumAttrCase<"TransitionRepeatFrom", 7, "transition_repeat_from">;
+def SlangCoverageBinChild_TransitionRepeatTo
+    : I32EnumAttrCase<"TransitionRepeatTo", 8, "transition_repeat_to">;
+def SlangCoverageBinChildRole : I32EnumAttr<"CoverageBinChildRole",
+    "semantic role of a direct coverage-bin child", [
+  SlangCoverageBinChild_Iff, SlangCoverageBinChild_NumberOfBins,
+  SlangCoverageBinChild_SetCoverage, SlangCoverageBinChild_With,
+  SlangCoverageBinChild_CrossSelect, SlangCoverageBinChild_Value,
+  SlangCoverageBinChild_TransitionItem,
+  SlangCoverageBinChild_TransitionRepeatFrom,
+  SlangCoverageBinChild_TransitionRepeatTo
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageTransitionRepeat_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def SlangCoverageTransitionRepeat_Consecutive
+    : I32EnumAttrCase<"Consecutive", 1, "consecutive">;
+def SlangCoverageTransitionRepeat_Nonconsecutive
+    : I32EnumAttrCase<"Nonconsecutive", 2, "nonconsecutive">;
+def SlangCoverageTransitionRepeat_GoTo
+    : I32EnumAttrCase<"GoTo", 3, "goto">;
+def SlangCoverageTransitionRepeatKind
+    : I32EnumAttr<"CoverageTransitionRepeatKind",
+        "coverage transition repetition kind", [
+  SlangCoverageTransitionRepeat_None,
+  SlangCoverageTransitionRepeat_Consecutive,
+  SlangCoverageTransitionRepeat_Nonconsecutive,
+  SlangCoverageTransitionRepeat_GoTo
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+// Coverage declarations use typed semantic metadata rather than relying on
+// the order in which Slang happens to visit heterogeneous child expressions.
+def SlangCoverageEvent_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def SlangCoverageEvent_Clocking
+    : I32EnumAttrCase<"Clocking", 1, "clocking">;
+def SlangCoverageEvent_CustomSample
+    : I32EnumAttrCase<"CustomSample", 2, "custom_sample">;
+def SlangCoverageEvent_Block
+    : I32EnumAttrCase<"Block", 3, "block">;
+def SlangCoverageEvent_Inherited
+    : I32EnumAttrCase<"Inherited", 4, "inherited">;
+def SlangCoverageEventKind : I32EnumAttr<"CoverageEventKind",
+    "declared covergroup sampling form", [
+  SlangCoverageEvent_None, SlangCoverageEvent_Clocking,
+  SlangCoverageEvent_CustomSample, SlangCoverageEvent_Block,
+  SlangCoverageEvent_Inherited
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageOwner_Covergroup
+    : I32EnumAttrCase<"Covergroup", 0, "covergroup">;
+def SlangCoverageOwner_Coverpoint
+    : I32EnumAttrCase<"Coverpoint", 1, "coverpoint">;
+def SlangCoverageOwner_Cross
+    : I32EnumAttrCase<"Cross", 2, "cross">;
+def SlangCoverageOptionOwnerKind : I32EnumAttr<"CoverageOptionOwnerKind",
+    "coverage construct that owns a definition-time option setter", [
+  SlangCoverageOwner_Covergroup, SlangCoverageOwner_Coverpoint,
+  SlangCoverageOwner_Cross
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageOption_Instance
+    : I32EnumAttrCase<"Instance", 0, "instance">;
+def SlangCoverageOption_Type
+    : I32EnumAttrCase<"Type", 1, "type">;
+def SlangCoverageOptionScopeKind : I32EnumAttr<"CoverageOptionScopeKind",
+    "instance option or covergroup type option", [
+  SlangCoverageOption_Instance, SlangCoverageOption_Type
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageOption_Name
+    : I32EnumAttrCase<"Name", 0, "name">;
+def SlangCoverageOption_Weight
+    : I32EnumAttrCase<"Weight", 1, "weight">;
+def SlangCoverageOption_Goal
+    : I32EnumAttrCase<"Goal", 2, "goal">;
+def SlangCoverageOption_Comment
+    : I32EnumAttrCase<"Comment", 3, "comment">;
+def SlangCoverageOption_AtLeast
+    : I32EnumAttrCase<"AtLeast", 4, "at_least">;
+def SlangCoverageOption_AutoBinMax
+    : I32EnumAttrCase<"AutoBinMax", 5, "auto_bin_max">;
+def SlangCoverageOption_CrossNumPrintMissing
+    : I32EnumAttrCase<"CrossNumPrintMissing", 6,
+                      "cross_num_print_missing">;
+def SlangCoverageOption_CrossRetainAutoBins
+    : I32EnumAttrCase<"CrossRetainAutoBins", 7,
+                      "cross_retain_auto_bins">;
+def SlangCoverageOption_DetectOverlap
+    : I32EnumAttrCase<"DetectOverlap", 8, "detect_overlap">;
+def SlangCoverageOption_PerInstance
+    : I32EnumAttrCase<"PerInstance", 9, "per_instance">;
+def SlangCoverageOption_GetInstCoverage
+    : I32EnumAttrCase<"GetInstCoverage", 10, "get_inst_coverage">;
+def SlangCoverageOption_Strobe
+    : I32EnumAttrCase<"Strobe", 11, "strobe">;
+def SlangCoverageOption_MergeInstances
+    : I32EnumAttrCase<"MergeInstances", 12, "merge_instances">;
+def SlangCoverageOption_DistributeFirst
+    : I32EnumAttrCase<"DistributeFirst", 13, "distribute_first">;
+def SlangCoverageOption_RealInterval
+    : I32EnumAttrCase<"RealInterval", 14, "real_interval">;
+def SlangCoverageOptionKind : I32EnumAttr<"CoverageOptionKind",
+    "standard coverage option identity", [
+  SlangCoverageOption_Name, SlangCoverageOption_Weight,
+  SlangCoverageOption_Goal, SlangCoverageOption_Comment,
+  SlangCoverageOption_AtLeast, SlangCoverageOption_AutoBinMax,
+  SlangCoverageOption_CrossNumPrintMissing,
+  SlangCoverageOption_CrossRetainAutoBins,
+  SlangCoverageOption_DetectOverlap, SlangCoverageOption_PerInstance,
+  SlangCoverageOption_GetInstCoverage, SlangCoverageOption_Strobe,
+  SlangCoverageOption_MergeInstances, SlangCoverageOption_DistributeFirst,
+  SlangCoverageOption_RealInterval
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageExpression_Sample
+    : I32EnumAttrCase<"Sample", 0, "sample">;
+def SlangCoverageExpression_Iff
+    : I32EnumAttrCase<"Iff", 1, "iff">;
+def SlangCoverageExpressionRole : I32EnumAttr<"CoverageExpressionRole",
+    "semantic role of a coverpoint or cross expression child", [
+  SlangCoverageExpression_Sample, SlangCoverageExpression_Iff
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+def SlangCoverageExpressionRoleArrayAttr
+    : TypedArrayAttrBase<SlangCoverageExpressionRole,
+                         "coverage expression role array">;
+
+def SlangCoverageBlockEvent_Begin
+    : I32EnumAttrCase<"Begin", 0, "begin">;
+def SlangCoverageBlockEvent_End
+    : I32EnumAttrCase<"End", 1, "end">;
+def SlangCoverageBlockEventKind : I32EnumAttr<"CoverageBlockEventKind",
+    "begin or end block sampling event", [
+  SlangCoverageBlockEvent_Begin, SlangCoverageBlockEvent_End
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+def SlangCoverageBlockEventKindArrayAttr
+    : TypedArrayAttrBase<SlangCoverageBlockEventKind,
+                         "coverage block-event kind array">;
+
+def SlangCoverageSelectUnary_Negation
+    : I32EnumAttrCase<"Negation", 0, "negation">;
+def SlangCoverageSelectUnaryOperator
+    : I32EnumAttr<"CoverageSelectUnaryOperator",
+                  "unary coverage-bin selection operator", [
+  SlangCoverageSelectUnary_Negation
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
+def SlangCoverageSelectBinary_And
+    : I32EnumAttrCase<"And", 0, "and">;
+def SlangCoverageSelectBinary_Or
+    : I32EnumAttrCase<"Or", 1, "or">;
+def SlangCoverageSelectBinaryOperator
+    : I32EnumAttr<"CoverageSelectBinaryOperator",
+                  "binary coverage-bin selection operator", [
+  SlangCoverageSelectBinary_And, SlangCoverageSelectBinary_Or
 ]> {
   let cppNamespace = "::obelisk::slangir";
 }

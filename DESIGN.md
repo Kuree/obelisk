@@ -242,7 +242,7 @@ the same thread-safe runtime ABI and report null or invalid handles identically.
 Automatic bins, bin arrays, wildcard and transition bins, `ignore_bins`,
 `illegal_bins`, bin-level `iff`, crosses, coverage events, class-contained or
 inherited covergroups, coverage options, and coverpoint methods remain targeted
-compile-time errors. Reports, UCIS/database persistence, `set_inst_name`, and
+compile-time errors. Reports, database persistence, `set_inst_name`, and
 automatic end-of-run output are not part of this executable subset.
 
 ### Packed-value semantic contract

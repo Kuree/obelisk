@@ -247,16 +247,42 @@ bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,
                                       uint64_t value, uint64_t unknown) {
-  const obelisk_rt_native_schedule_plan *plan =
-      context ? context->nativeSchedulePlan : nullptr;
-  if (!plan || plan->state_bit_count == 0)
-    return true;
-  if (!plan->state_value || !plan->state_unknown || bitWidth == 0 ||
-      bitWidth > 64 || bitOffset > plan->state_bit_count ||
-      bitWidth > plan->state_bit_count - bitOffset)
+  if (!context || bitWidth == 0 || bitWidth > 64)
     return false;
-  storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
-  storePackedBytes(plan->state_unknown, bitOffset, bitWidth, unknown);
+  const obelisk_rt_native_schedule_plan *plan =
+      context->nativeSchedulePlan;
+  if (plan && plan->state_bit_count != 0) {
+    if (!plan->state_value || !plan->state_unknown ||
+        bitOffset > plan->state_bit_count ||
+        bitWidth > plan->state_bit_count - bitOffset)
+      return false;
+  }
+
+  // The generated coroutine plane can remain bound while bytecode owns the
+  // canonical state (or while another native tier owns the schedule plan).
+  // Keep that mirror coherent at every shared commit point so later sampled
+  // reads, coverage reference formals, and tier handoffs cannot observe an
+  // older value.
+  if (context->nativeStateValue || context->nativeStateUnknown ||
+      context->nativeStateBitCount != 0) {
+    if (!context->nativeStateValue || !context->nativeStateUnknown ||
+        bitOffset > context->nativeStateBitCount ||
+        bitWidth > context->nativeStateBitCount - bitOffset)
+      return false;
+  }
+
+  if (plan && plan->state_bit_count != 0) {
+    storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
+    storePackedBytes(plan->state_unknown, bitOffset, bitWidth, unknown);
+  }
+  if (context->nativeStateValue || context->nativeStateUnknown ||
+      context->nativeStateBitCount != 0) {
+    if (!plan || context->nativeStateValue != plan->state_value)
+      storePackedBytes(context->nativeStateValue, bitOffset, bitWidth, value);
+    if (!plan || context->nativeStateUnknown != plan->state_unknown)
+      storePackedBytes(context->nativeStateUnknown, bitOffset, bitWidth,
+                       unknown);
+  }
   return true;
 }
 
@@ -365,12 +391,18 @@ obelisk_rt_retire_override_owners(obelisk_rt_context *context,
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown,
-    bool indexedExternalDeposit) {
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown, bool indexedExternalDeposit,
+    bool establishesOverride) {
   uint64_t sequence = 0;
   if (indexedExternalDeposit && publishStaticAOTSignalTransitionUnlocked(
                                     context, stableID, bitWidth, changed,
                                     posedge, negedge, &sequence, true)) {
+    // The exact static-AOT deposit path returns before the ordinary native
+    // publisher. Keep coverage at the same semantic commit point as every
+    // other transition observer.
+    obelisk_rt_coverage_record_transition_unlocked(
+        context, stableID, bitWidth, changed, newValue, newUnknown);
     obelisk_rt_invalidate_signal_snapshots_unlocked(context, stableID,
                                                     bitWidth);
     if (++context->schedulerEpoch == 0)
@@ -378,8 +410,8 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
     return context->schedulerStatus == OBELISK_RT_OK;
   }
   return publishNativeSignalTransitionUnlocked(
-      context, stableID, bitWidth, changed, posedge, negedge, nullptr, nullptr,
-      newValue, newUnknown);
+      context, stableID, bitWidth, changed, posedge, negedge, oldValue,
+      oldUnknown, newValue, newUnknown, establishesOverride);
 }
 
 static obelisk_rt_status
@@ -541,9 +573,9 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
       obelisk_rt_aot_external_write_range_unlocked(context, absolute, bitWidth,
                                                    true);
     }
-    publishOverrideEstablishmentTransition(
-        context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
-        publishedValue.data(), publishedUnknown.data());
+    publishOverrideTransition(context, handle, bitWidth, oldValue.data(),
+                              oldUnknown.data(), publishedValue.data(),
+                              publishedUnknown.data());
     return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -666,9 +698,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
       obelisk_rt_aot_release_range_unlocked(context, absolute, bitWidth);
     }
     if (changed)
-      obelisk_rt_v1_scheduler_signal_transition(
-          context, handle, bitWidth, oldValue.data(), oldUnknown.data(),
-          publishedValue.data(), publishedUnknown.data());
+      publishOverrideTransition(context, handle, bitWidth, oldValue.data(),
+                                oldUnknown.data(), publishedValue.data(),
+                                publishedUnknown.data());
     return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -685,38 +717,12 @@ static void applyClockConditionPublicationView(obelisk_rt_context *context,
   // this publication's post-transition plane. This is constant-storage and
   // O(capture width), rather than copying a potentially huge primary vector
   // for every timing check; ordinary loads leave on the first branch above.
-  const ClockConditionPublicationView *publication =
-      context->clockOccurrences->conditionPublication;
-  obelisk_rt_stable_handle_v1 published;
-  obelisk_rt_stable_handle_v1 loaded;
-  if (!publication->newValue || publication->bitWidth == 0 ||
-      !obelisk_rt_stable_handle_decode(publication->stableID, &published) ||
-      !obelisk_rt_stable_handle_decode(handle, &loaded) ||
-      published.offset < 0 || loaded.offset < 0 ||
-      (published.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
-       published.kind != OBELISK_RT_STABLE_HANDLE_STATIC) ||
-      published.kind != loaded.kind ||
-      (published.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-       published.id != loaded.id))
-    return;
-  __int128 relativeBegin =
-      static_cast<__int128>(loaded.offset) - published.offset;
-  __int128 first = std::max<__int128>(0, -relativeBegin);
-  __int128 last =
-      std::min<__int128>(bitWidth, publication->bitWidth - relativeBegin);
-  if (first >= last)
-    return;
-  for (__int128 bit = first; bit != last; ++bit) {
-    __int128 relative = relativeBegin + bit;
-    if (relative < 0 || relative > UINT64_MAX - publication->planeBitOffset)
-      continue;
-    uint64_t source =
-        publication->planeBitOffset + static_cast<uint64_t>(relative);
-    bool value = byteBit(publication->newValue, source);
-    bool unknown =
-        publication->newUnknown && byteBit(publication->newUnknown, source);
-    setByteBit(outValue, static_cast<uint64_t>(bit),
-               unknownPlane ? unknown : value);
+  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+    bool value = false;
+    bool unknown = false;
+    if (obelisk_rt_read_clock_condition_publication_bit_unlocked(
+            context, handle, bit, value, unknown))
+      setByteBit(outValue, bit, unknownPlane ? unknown : value);
   }
 }
 
@@ -808,8 +814,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
                                         (globalValue & overrideMask);
       for (uint64_t byte = 0; byte != byteCount; ++byte)
         outValue[byte] = static_cast<uint8_t>(value >> (byte * 8));
-      if (context->observerForcesCanonicalPlane && context->clockOccurrences &&
-          context->clockOccurrences->conditionPublication)
+      if (context->observerForcesCanonicalPlane &&
+          context->conditionPublication)
         applyClockConditionPublicationView(context, handle, bitWidth,
                                            unknownPlane != 0, outValue);
       maskPadding();
@@ -836,8 +842,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
                 : (((*canonicalPlane)[source / 64] >> (source % 64)) & 1) != 0);
       }
     }
-    if (context->observerForcesCanonicalPlane && context->clockOccurrences &&
-        context->clockOccurrences->conditionPublication)
+    if (context->observerForcesCanonicalPlane && context->conditionPublication)
       applyClockConditionPublicationView(context, handle, bitWidth,
                                          unknownPlane != 0, outValue);
     maskPadding();

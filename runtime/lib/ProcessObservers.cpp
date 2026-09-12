@@ -72,16 +72,6 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
     copiedCaptures = spilledCaptures.data();
   }
   std::copy(captures, captures + captureCount, copiedCaptures);
-  std::array<uint64_t, kInlineCaptures> inlineNativeCaptures{};
-  std::vector<uint64_t> spilledNativeCaptures;
-  uint64_t *nativeCaptures = inlineNativeCaptures.data();
-  if (captureCount > kInlineCaptures) {
-    spilledNativeCaptures.resize(captureCount);
-    nativeCaptures = spilledNativeCaptures.data();
-  }
-  for (uint32_t index = 0; index != captureCount; ++index)
-    nativeCaptures[index] = copiedCaptures[index].stable_id;
-
   std::array<uint64_t, kInlineCaptures> inlineRetainedCaptures{};
   std::vector<uint64_t> spilledRetainedCaptures;
   uint64_t *retainedCaptures = inlineRetainedCaptures.data();
@@ -98,13 +88,19 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
   ++waiter->observer_pin_count;
   obelisk_rt_status status = OBELISK_RT_OK;
   for (uint32_t index = 0; index != captureCount; ++index) {
-    if (descriptor->capture_abi[index].kind !=
-        OBELISK_RT_OBSERVER_CAPTURE_STORAGE)
+    uint32_t kind = descriptor->capture_abi[index].kind;
+    uint64_t retained = 0;
+    if (kind == OBELISK_RT_OBSERVER_CAPTURE_STORAGE)
+      retained = copiedCaptures[index].stable_id;
+    else if (kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+             copiedCaptures[index].payload1 == 0)
+      retained = copiedCaptures[index].payload0;
+    else
       continue;
-    status = obelisk_rt_v1_native_state_retain(context, nativeCaptures[index]);
+    status = obelisk_rt_v1_native_state_retain(context, retained);
     if (status != OBELISK_RT_OK)
       break;
-    retainedCaptures[retainedCaptureCount++] = nativeCaptures[index];
+    retainedCaptures[retainedCaptureCount++] = retained;
   }
   if (status != OBELISK_RT_OK) {
     while (retainedCaptureCount != 0)
@@ -142,7 +138,8 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
             unknown, limbs);
       } else if (descriptor->native_evaluator) {
         status = descriptor->native_evaluator(
-            context, nativeCaptures, captureCount, value, unknown, limbs);
+            context, reinterpret_cast<const uint64_t *>(copiedCaptures),
+            captureCount, value, unknown, limbs);
       } else {
         status = OBELISK_RT_TIER_UNAVAILABLE;
       }
@@ -410,6 +407,15 @@ bool obelisk_rt_evaluate_native_clock_condition_unlocked(
   return true;
 }
 
+bool obelisk_rt_evaluate_native_bound_observer_unlocked(
+    obelisk_rt_context *context, uint64_t processToken, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCapacity) {
+  return evaluateNativeBoundObserver(context, processToken, codeUnitID,
+                                     captures, captureCount, value, unknown,
+                                     limbCapacity);
+}
+
 ScheduledProcess *findScheduledProcess(obelisk_rt_context *context,
                                        uint64_t token) {
   if (auto indexed = context->scheduledProcessIndices.find(token);
@@ -447,5 +453,7 @@ bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
   return evaluateNativeComputedWaiters(
              context, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, token, 1) &&
          obelisk_rt_evaluate_design_observers_unlocked(
-             context, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, token, 1);
+             context, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED, token, 1) &&
+         obelisk_rt_evaluate_covergroup_managed_clock_events_unlocked(context,
+                                                                      token);
 }

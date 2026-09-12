@@ -156,9 +156,11 @@ module {
     }
     slang.type.covergroup_type attributes {
       constructor_argument_count = 0 : i64,
+      constructor_formals = [],
+      coverage_event_kind = 0 : i32,
       has_coverage_event = false,
       node_id = 26 : i64,
-      sample_formal_count = 0 : i64,
+      sample_formal_count = 0 : i64, sample_formals = [],
       sym_name = "cg_t",
       semantic_type = !slang.covergroup_handle<@cg_t>
     } {
@@ -166,7 +168,8 @@ module {
         node_id = 260 : i64, option_count = 0 : i64, sym_name = "cg_body"
       } {
         slang.symbol.coverpoint attributes {
-          has_iff = false, node_id = 261 : i64, option_count = 0 : i64,
+          expression_roles = [0 : i32], has_iff = false,
+          node_id = 261 : i64, option_count = 0 : i64,
           semantic_type = !slang.integral<8, false, true, 7 : 0, generic>,
           sym_name = "cp"
         } {
@@ -176,12 +179,17 @@ module {
           } {
           }
           slang.symbol.coverage_bin attributes {
-            bins_kind = 0 : i32, has_iff = false,
+            bins_kind = 0 : i32, child_roles = array<i64: 5>, has_iff = false,
             has_number_of_bins = false, has_set_coverage = false,
             has_with = false, is_array = false, is_default = false,
             is_default_sequence = false, is_wildcard = false,
             node_id = 263 : i64, sym_name = "named_bin",
-            transition_set_count = 0 : i64, value_count = 1 : i64
+            transition_range_has_repeat_from = array<i64>,
+            transition_range_has_repeat_to = array<i64>,
+            transition_range_item_counts = array<i64>,
+            transition_range_repeat_kinds = array<i64>,
+            transition_set_count = 0 : i64,
+            transition_set_range_counts = array<i64>, value_count = 1 : i64
           } {
             slang.expression.integer_literal attributes {
               constant_value = "1", node_id = 264 : i64,
@@ -303,8 +311,6 @@ module {
       repetition_is_unbounded = false, semantic_type = !slang.sequence
     } {
     }
-    slang.bins.condition attributes {node_id = 36 : i64} {
-    }
     slang.pattern.constant attributes {node_id = 37 : i64} {
     }
     slang.rand_seq.item attributes {node_id = 38 : i64} {
@@ -376,12 +382,16 @@ module {
 // CHECK: !obelisk.virtual_interface<@bus, "master">
 // CHECK: obelisk.sv.type.covergroup_type
 // CHECK-SAME: constructor_argument_count = 0
+// CHECK-SAME: constructor_formals = []
+// CHECK-SAME: coverage_event_kind = 0 : i32
 // CHECK-SAME: has_coverage_event = false
 // CHECK-SAME: sample_formal_count = 0
+// CHECK-SAME: sample_formals = []
 // CHECK: !obelisk.covergroup_handle<@cg_t>
 // CHECK: obelisk.sv.symbol.covergroup_body
 // CHECK-SAME: option_count = 0
 // CHECK: obelisk.sv.symbol.coverpoint
+// CHECK-SAME: expression_roles = [0 : i32]
 // CHECK-SAME: has_iff = false
 // CHECK-SAME: option_count = 0
 // CHECK: obelisk.sv.symbol.coverage_bin
@@ -411,7 +421,6 @@ module {
 // CHECK: obelisk.sv.constraint.expression
 // CHECK: obelisk.sv.assertion.simple
 // CHECK-SAME: semantic_type = !obelisk.sequence
-// CHECK: obelisk.sv.bins.condition
 // CHECK: obelisk.sv.pattern.constant
 // CHECK: obelisk.sv.rand_seq.item
 // CHECK: tensor<1x!obelisk.integral<1, false, true, 0 : 0, logic>>

@@ -38,6 +38,9 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_handoff_pending",
+                           IntegerType::get(context, 32),
+                           {LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_real_transition",
       LLVM::LLVMVoidType::get(context),
@@ -618,28 +621,98 @@ void declareNativeRuntimeABI(ModuleOp module) {
        managedI64, managedPointer, managedI64, managedPointer, managedI64,
        managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_create", managedI32,
-      {managedPointer, managedI64, managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_set_enabled",
+      module, "obelisk_rt_v1_covergroup_set_enabled", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_set_name",
                            managedI32,
-                           {managedPointer, managedI64, managedI32});
+                           {managedPointer, managedI64, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_set_integer_option", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_get_integer_option", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_set_string_option", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_set_type_integer_option", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_set_type_string_option", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_sample_enabled",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_bin_hit", managedI32,
-      {managedPointer, managedI64, managedI32, managedI32});
+      module, "obelisk_rt_v1_covergroup_clock_event_register", managedI32,
+      {managedPointer, managedPointer, managedI64, managedI32, managedI64,
+       managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_block_event_register", managedI32,
+      {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
+       managedI32, managedPointer, managedPointer, managedI32});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_block_event_fire", managedI32,
+      {managedPointer, managedI64, managedI32, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_create", managedI32,
+      {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
+       managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_formal_read", managedI32,
+      {managedPointer, managedI64, managedI64, managedI32, managedI64,
+       managedI64, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_sample", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_instance_query",
                            managedI32,
-                           {managedPointer, managedI64, managedPointer,
-                            managedPointer, managedPointer});
+                           {managedPointer, managedI64, managedI64,
+                            managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_type_query",
+                           managedI32,
+                           {managedPointer, managedI64, managedI64,
+                            managedPointer, managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_point_hit",
+                           managedI32,
+                           {managedPointer, managedI64, managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_control_definition",
+                           managedI32,
+                           {managedPointer, managedI32, managedI32, managedI32,
+                            managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_control_instance",
+                           managedI32,
+                           {managedPointer, managedI32, managedI32, managedI32,
+                            managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_query_definition",
+                           managedI32,
+                           {managedPointer, managedI32, managedI32, managedI64,
+                            managedI32, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_query_instance",
+                           managedI32,
+                           {managedPointer, managedI32, managedI32, managedI64,
+                            managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_type_query", managedI32,
-      {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
-       managedPointer, managedPointer});
+      module, "obelisk_rt_v1_coverage_database_save", managedI32,
+      {managedPointer, managedI32, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_coverage_database_merge", managedI32,
+      {managedPointer, managedI32, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_functional_coverage_get",
+                           managedI32, {managedPointer, managedPointer});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_functional_coverage_set_db_name",
+                           managedI32, {managedPointer, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_functional_coverage_load_db",
+                           managedI32, {managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_coverage_finalize", managedI32,
+      {managedPointer, managedI64, managedI64, managedPointer, managedPointer,
+       managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_snapshot",
+                           managedI32,
+                           {managedPointer, managedI32, managedI64});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_container_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer});

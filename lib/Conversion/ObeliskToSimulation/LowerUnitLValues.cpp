@@ -174,6 +174,9 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
   if (failed(destinationType))
     return failure();
+  if (auto storage = destination->getAttrOfType<TypeAttr>(
+          "obelisk_sim.covergroup_field_storage_type"))
+    destinationType = storage.getValue();
   captured.type = *destinationType;
 
   if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
@@ -4274,6 +4277,12 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   }
   if (failed(rhs))
     return failure();
+  FailureOr<std::optional<Value>> coverageOption =
+      lowerCovergroupOptionAssignment(op, destination, source, *rhs);
+  if (failed(coverageOption))
+    return failure();
+  if (*coverageOption)
+    return **coverageOption;
   if (auto streaming = dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
           destination)) {
     if (compound || nonblocking || timed)

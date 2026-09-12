@@ -12,13 +12,13 @@
 
 #include "mlir/IR/SymbolTable.h"
 
-#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <functional>
-#include <iterator>
 
 using namespace mlir;
 
@@ -107,272 +107,6 @@ uint64_t getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
   return stableCodeUnitID(key);
 }
 
-struct CoverageInterval {
-  APInt lower;
-  APInt upper;
-};
-
-/// Strip the contextual casts the frontend places around a bins expression.
-/// Section 19.5.7 tests the original value for representability before the
-/// static cast to the coverpoint type, so using the outer folded value would
-/// incorrectly turn an out-of-domain value such as 15 into 3'b111.
-Operation *getCoverageSourceExpression(Operation *expression) {
-  while (auto conversion =
-             dyn_cast<semantic::SVConversionExpressionOp>(expression)) {
-    // Older hand-authored semantic IR lacks this attribute and only used
-    // conversion nodes for contextual casts. Frontend-imported IR records the
-    // distinction so an explicit cast remains part of the bins expression.
-    BoolAttr isImplicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
-    if (isImplicit && !isImplicit.getValue())
-      break;
-    SmallVector<Operation *> children = getChildren(expression);
-    if (children.size() != 1)
-      break;
-    expression = children.front();
-  }
-  return expression;
-}
-
-FailureOr<std::optional<APSInt>> getCoverageConstant(Operation *expression,
-                                                     unsigned effectiveWidth,
-                                                     bool effectiveSigned) {
-  Operation *source = getCoverageSourceExpression(expression);
-  std::optional<StringRef> spelling = getConstantSpelling(source);
-  if (!spelling) {
-    emitError(getSemanticLocation(source))
-        << "coverage bin constant has no elaborated value";
-    return failure();
-  }
-
-  // The unbased unsized values are context-filling tokens rather than
-  // mathematical singleton integers. Parse them directly in the effective
-  // type; X/Z is still excluded below by 19.5.7(b)(3).
-  if (isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source)) {
-    FailureOr<ParsedConstant> parsed =
-        parseSVInteger(*spelling, effectiveWidth, getSemanticLocation(source));
-    if (failed(parsed))
-      return failure();
-    if (!parsed->unknown.isZero())
-      return std::optional<APSInt>{};
-    return std::optional<APSInt>{
-        APSInt(std::move(parsed->value), !effectiveSigned)};
-  }
-
-  FailureOr<Type> normalized = getNormalizedSemanticType(source);
-  Type scalar =
-      succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
-  unsigned width = 0;
-  if (auto integer = dyn_cast<IntegerType>(scalar))
-    width = integer.getWidth();
-  else if (auto logic = dyn_cast<sim::LogicType>(scalar))
-    width = logic.getWidth();
-  if (!width) {
-    emitError(getSemanticLocation(source))
-        << "coverage bin constant has no packed integral type";
-    return failure();
-  }
-  auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
-  bool isSigned = sourceType && isSignedSemanticType(sourceType.getValue());
-  FailureOr<ParsedConstant> parsed =
-      parseSVInteger(*spelling, width, getSemanticLocation(source));
-  if (failed(parsed))
-    return failure();
-  if (!parsed->unknown.isZero())
-    return std::optional<APSInt>{};
-  return std::optional<APSInt>{APSInt(std::move(parsed->value), !isSigned)};
-}
-
-/// Resolve a state-bin inventory according to IEEE 1800-2017 19.5.7. Values
-/// outside the effective coverpoint domain do not participate. Ranges are
-/// intersected with that domain rather than wrapping their endpoints.
-FailureOr<SmallVector<CoverageInterval>>
-getCoverageIntervals(semantic::SVCoverageBinSymbolOp bin, unsigned width,
-                     bool isSigned) {
-  APSInt domainLower(isSigned ? APInt::getSignedMinValue(width)
-                              : APInt::getZero(width),
-                     /*isUnsigned=*/!isSigned);
-  APSInt domainUpper(isSigned ? APInt::getSignedMaxValue(width)
-                              : APInt::getAllOnes(width),
-                     /*isUnsigned=*/!isSigned);
-  auto orderKey = [&](const APSInt &value) {
-    APInt bits = value.extOrTrunc(width);
-    if (isSigned)
-      bits.flipBit(width - 1);
-    return bits;
-  };
-  auto outsideDomain = [&](const APSInt &value) {
-    return APSInt::compareValues(value, domainLower) < 0 ||
-           APSInt::compareValues(value, domainUpper) > 0;
-  };
-
-  SmallVector<CoverageInterval> intervals;
-  for (Operation *item : getChildren(bin)) {
-    if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
-      SmallVector<Operation *> endpoints = getChildren(range);
-      if (endpoints.size() != 2)
-        return failure();
-      FailureOr<std::optional<APSInt>> lower =
-          getCoverageConstant(endpoints[0], width, isSigned);
-      FailureOr<std::optional<APSInt>> upper =
-          getCoverageConstant(endpoints[1], width, isSigned);
-      if (failed(lower) || failed(upper))
-        return failure();
-      bool lowerWarns = !*lower || outsideDomain(**lower);
-      bool upperWarns = !*upper || outsideDomain(**upper);
-      if (lowerWarns || upperWarns)
-        emitWarning(getSemanticLocation(item))
-            << "coverage bin range is not fully representable in the "
-               "effective coverpoint type";
-      // An X/Z endpoint makes the entire range nonparticipating.
-      if (!*lower || !*upper || APSInt::compareValues(**lower, **upper) > 0)
-        continue;
-      APSInt clippedLower =
-          outsideDomain(**lower) &&
-                  APSInt::compareValues(**lower, domainLower) < 0
-              ? domainLower
-              : **lower;
-      APSInt clippedUpper =
-          outsideDomain(**upper) &&
-                  APSInt::compareValues(**upper, domainUpper) > 0
-              ? domainUpper
-              : **upper;
-      if (APSInt::compareValues(clippedLower, clippedUpper) <= 0)
-        intervals.push_back({orderKey(clippedLower), orderKey(clippedUpper)});
-      continue;
-    }
-    FailureOr<std::optional<APSInt>> value =
-        getCoverageConstant(item, width, isSigned);
-    if (failed(value))
-      return failure();
-    if (!*value || outsideDomain(**value)) {
-      emitWarning(getSemanticLocation(item))
-          << "coverage bin value is not representable in the effective "
-             "coverpoint type and does not participate";
-      continue;
-    }
-    APInt key = orderKey(**value);
-    intervals.push_back({key, std::move(key)});
-  }
-  return intervals;
-}
-
-void mergeCoverageIntervals(SmallVectorImpl<CoverageInterval> &intervals) {
-  llvm::sort(intervals,
-             [](const CoverageInterval &lhs, const CoverageInterval &rhs) {
-               return lhs.lower.ult(rhs.lower) ||
-                      (lhs.lower == rhs.lower && lhs.upper.ult(rhs.upper));
-             });
-  SmallVector<CoverageInterval> merged;
-  for (CoverageInterval &interval : intervals) {
-    if (merged.empty()) {
-      merged.push_back(std::move(interval));
-      continue;
-    }
-    CoverageInterval &last = merged.back();
-    bool adjacent = !last.upper.isAllOnes() && interval.lower == last.upper + 1;
-    if (interval.lower.ule(last.upper) || adjacent) {
-      if (last.upper.ult(interval.upper))
-        last.upper = std::move(interval.upper);
-      continue;
-    }
-    merged.push_back(std::move(interval));
-  }
-  intervals.assign(std::make_move_iterator(merged.begin()),
-                   std::make_move_iterator(merged.end()));
-}
-
-bool hasValueOutside(ArrayRef<CoverageInterval> values,
-                     ArrayRef<CoverageInterval> excluded) {
-  for (const CoverageInterval &value : values) {
-    APInt cursor = value.lower;
-    bool consumed = false;
-    for (const CoverageInterval &removal : excluded) {
-      if (removal.upper.ult(cursor))
-        continue;
-      if (value.upper.ult(removal.lower))
-        break;
-      if (cursor.ult(removal.lower))
-        return true;
-      if (removal.upper.uge(value.upper)) {
-        consumed = true;
-        break;
-      }
-      cursor = removal.upper + 1;
-    }
-    if (!consumed && cursor.ule(value.upper))
-      return true;
-  }
-  return false;
-}
-
-FailureOr<int64_t>
-markContributingCoverageBins(semantic::SVCoverpointSymbolOp coverpoint) {
-  FailureOr<Type> normalized = getNormalizedSemanticType(coverpoint);
-  Type scalar =
-      succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
-  unsigned width = 0;
-  if (auto integer = dyn_cast<IntegerType>(scalar))
-    width = integer.getWidth();
-  else if (auto logic = dyn_cast<sim::LogicType>(scalar))
-    width = logic.getWidth();
-  if (!width)
-    return failure();
-  SmallVector<Operation *> pointChildren = getChildren(coverpoint);
-  if (pointChildren.empty())
-    return failure();
-  auto sourceType =
-      pointChildren.front()->getAttrOfType<TypeAttr>("semantic_type");
-  bool isSigned = sourceType && isSignedSemanticType(sourceType.getValue());
-
-  struct ResolvedBin {
-    semantic::SVCoverageBinSymbolOp bin;
-    SmallVector<CoverageInterval> intervals;
-  };
-  SmallVector<ResolvedBin> resolvedBins;
-  SmallVector<CoverageInterval> excluded;
-  for (Operation *candidate : pointChildren) {
-    auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(candidate);
-    if (!bin || bin.getIsDefault())
-      continue;
-    FailureOr<SmallVector<CoverageInterval>> intervals =
-        getCoverageIntervals(bin, width, isSigned);
-    if (failed(intervals))
-      return failure();
-    mergeCoverageIntervals(*intervals);
-    SmallVector<Attribute> encoded;
-    encoded.reserve(intervals->size() * 2);
-    Type endpointType = IntegerType::get(coverpoint.getContext(), width);
-    for (const CoverageInterval &interval : *intervals) {
-      APInt lower = interval.lower;
-      APInt upper = interval.upper;
-      if (isSigned) {
-        lower.flipBit(width - 1);
-        upper.flipBit(width - 1);
-      }
-      encoded.push_back(IntegerAttr::get(endpointType, lower));
-      encoded.push_back(IntegerAttr::get(endpointType, upper));
-    }
-    bin->setAttr(coverageResolvedIntervalsAttrName,
-                 ArrayAttr::get(coverpoint.getContext(), encoded));
-    if (bin.getBinsKind() != semantic::SVCoverageBinKind::Bins)
-      llvm::append_range(excluded, *intervals);
-    resolvedBins.push_back({bin, std::move(*intervals)});
-  }
-  mergeCoverageIntervals(excluded);
-
-  int64_t count = 0;
-  for (ResolvedBin &resolved : resolvedBins) {
-    if (resolved.bin.getBinsKind() != semantic::SVCoverageBinKind::Bins)
-      continue;
-    if (!hasValueOutside(resolved.intervals, excluded))
-      continue;
-    resolved.bin->setAttr(coverageContributingAttrName,
-                          UnitAttr::get(coverpoint.getContext()));
-    ++count;
-  }
-  return count;
-}
-
 } // namespace
 
 semantic::SVSubroutineSymbolOp getClassMethod(Operation *member) {
@@ -383,6 +117,215 @@ semantic::SVSubroutineSymbolOp getClassMethod(Operation *member) {
       if (auto method = dyn_cast<semantic::SVSubroutineSymbolOp>(child))
         return method;
   return {};
+}
+
+LogicalResult
+materializeInheritedCovergroupPlans(semantic::SVRootSymbolOp semanticRoot,
+                                    OpBuilder &builder) {
+  llvm::StringMap<semantic::SVCovergroupTypeOp> groups;
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp group) {
+    auto handle =
+        dyn_cast<semantic::CovergroupHandleType>(group.getSemanticType());
+    if (handle)
+      groups[handle.getCovergroupName().getLeafReference()] = group;
+  });
+
+  auto getBase = [&](semantic::SVCovergroupTypeOp group) {
+    TypeAttr baseAttr = group.getBaseGroupAttr();
+    auto handle =
+        baseAttr ? dyn_cast<semantic::CovergroupHandleType>(baseAttr.getValue())
+                 : semantic::CovergroupHandleType{};
+    auto found =
+        handle ? groups.find(handle.getCovergroupName().getLeafReference())
+               : groups.end();
+    return found == groups.end() ? semantic::SVCovergroupTypeOp{}
+                                 : found->second;
+  };
+  auto getBody = [](semantic::SVCovergroupTypeOp group) {
+    for (Operation *child : getChildren(group))
+      if (auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(child))
+        return body;
+    return semantic::SVCovergroupBodySymbolOp{};
+  };
+  auto getSymbolReference = [](Operation *symbol) {
+    SmallVector<StringAttr> path;
+    for (Operation *current = symbol; current; current = current->getParentOp())
+      if (isa<SymbolOpInterface>(current))
+        path.push_back(SymbolTable::getSymbolName(current));
+    assert(!path.empty() && "semantic symbol has no symbolic ancestor");
+    std::reverse(path.begin(), path.end());
+    SmallVector<FlatSymbolRefAttr> nested;
+    nested.reserve(path.size() - 1);
+    for (StringAttr name : ArrayRef(path).drop_front())
+      nested.push_back(FlatSymbolRefAttr::get(name));
+    return SymbolRefAttr::get(path.front(), nested);
+  };
+
+  llvm::SmallPtrSet<Operation *, 16> done;
+  llvm::SmallPtrSet<Operation *, 16> active;
+  std::function<LogicalResult(semantic::SVCovergroupTypeOp)> materialize =
+      [&](semantic::SVCovergroupTypeOp derived) -> LogicalResult {
+    if (done.contains(derived))
+      return success();
+    if (!active.insert(derived).second)
+      return derived.emitError("covergroup inheritance contains a cycle");
+    semantic::SVCovergroupTypeOp base = getBase(derived);
+    if (!base) {
+      active.erase(derived);
+      done.insert(derived);
+      return success();
+    }
+    if (failed(materialize(base)))
+      return failure();
+    auto baseBody = getBody(base);
+    auto derivedBody = getBody(derived);
+    if (!baseBody || !derivedBody)
+      return derived.emitError("inherited covergroup has no effective body");
+
+    llvm::StringSet<> directFormals;
+    for (Operation *child : getChildren(derived))
+      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+        directFormals.insert(getDebugName(formal));
+    builder.setInsertionPoint(derivedBody);
+    for (Operation *child : getChildren(base))
+      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child))
+        if (!directFormals.contains(getDebugName(formal)))
+          builder.clone(*formal);
+    for (Operation *child : getChildren(base))
+      if (isa<semantic::SVSignalEventControlOp, semantic::SVEventListControlOp>(
+              child))
+        builder.clone(*child);
+
+    llvm::StringSet<> directPoints;
+    llvm::StringSet<> directPointSymbols;
+    llvm::StringSet<> directCrosses;
+    llvm::DenseSet<uint64_t> directOptions;
+    for (Operation *member : getChildren(derivedBody)) {
+      if (auto point = dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
+        directPoints.insert(getDebugName(point));
+        directPointSymbols.insert(point.getSymName());
+      } else if (auto cross = dyn_cast<semantic::SVCoverCrossSymbolOp>(member))
+        directCrosses.insert(getDebugName(cross));
+      else if (auto option = dyn_cast<semantic::SVCoverageOptionOp>(member))
+        directOptions.insert(
+            (uint64_t{static_cast<uint32_t>(option.getScopeKind())} << 32) |
+            static_cast<uint32_t>(option.getOptionKind()));
+    }
+
+    Operation *insertionPoint =
+        derivedBody->getRegion(0).front().empty()
+            ? nullptr
+            : &derivedBody->getRegion(0).front().front();
+    if (insertionPoint)
+      builder.setInsertionPoint(insertionPoint);
+    else
+      builder.setInsertionPointToEnd(&derivedBody->getRegion(0).front());
+    uint64_t inheritedOptions = 0;
+    llvm::StringMap<StringAttr> inheritedPointSymbols;
+    for (Operation *member : getChildren(baseBody)) {
+      if (auto option = dyn_cast<semantic::SVCoverageOptionOp>(member)) {
+        uint64_t key =
+            (uint64_t{static_cast<uint32_t>(option.getScopeKind())} << 32) |
+            static_cast<uint32_t>(option.getOptionKind());
+        if (!directOptions.contains(key)) {
+          Operation *clone = builder.clone(*member);
+          clone->setAttr("owner_symbol", getSymbolReference(derived));
+          ++inheritedOptions;
+        }
+        continue;
+      }
+      auto point = dyn_cast<semantic::SVCoverpointSymbolOp>(member);
+      if (!point)
+        continue;
+      Operation *clone = builder.clone(*member);
+      auto clonedPoint = cast<semantic::SVCoverpointSymbolOp>(clone);
+      if (directPoints.contains(getDebugName(point))) {
+        clone->setAttr("obelisk.coverage.inherited_overridden",
+                       builder.getUnitAttr());
+        if (!clone->hasAttr("obelisk.coverage.inherited_origin_type"))
+          clone->setAttr(
+              "obelisk.coverage.inherited_origin_type",
+              builder.getI64IntegerAttr(stableFunctionalTypeID(base)));
+      }
+      if (directPointSymbols.contains(point.getSymName())) {
+        auto origin = clone->getAttrOfType<IntegerAttr>(
+            "obelisk.coverage.inherited_origin_type");
+        std::string uniqueName =
+            (Twine(point.getSymName()) + "$inherited$" +
+             Twine(origin ? origin.getValue().getZExtValue()
+                          : stableFunctionalTypeID(base)))
+                .str();
+        clonedPoint.setSymName(builder.getStringAttr(uniqueName));
+      }
+      SymbolRefAttr clonedPointReference = getSymbolReference(clonedPoint);
+      clonedPoint->walk([&](semantic::SVCoverageOptionOp option) {
+        option->setAttr("owner_symbol", clonedPointReference);
+      });
+      inheritedPointSymbols[point.getSymName()] = clonedPoint.getSymNameAttr();
+    }
+    for (Operation *member : getChildren(baseBody)) {
+      auto cross = dyn_cast<semantic::SVCoverCrossSymbolOp>(member);
+      if (!cross || directCrosses.contains(getDebugName(cross)))
+        continue;
+      Operation *clone = builder.clone(*member);
+      auto clonedCross = cast<semantic::SVCoverCrossSymbolOp>(clone);
+      SymbolRefAttr clonedCrossReference = getSymbolReference(clonedCross);
+      clonedCross->walk([&](Operation *nested) {
+        if (isa<semantic::SVCoverageOptionOp>(nested))
+          nested->setAttr("owner_symbol", clonedCrossReference);
+        if (nested->hasTrait<OpTrait::CoverageSelectorNode>())
+          nested->setAttr("enclosing_cross_symbol", clonedCrossReference);
+      });
+      SmallVector<Attribute> effectiveTargets;
+      effectiveTargets.reserve(cross.getTargetSymbols().size());
+      ArrayAttr baseEffectiveTargets = cross->getAttrOfType<ArrayAttr>(
+          "obelisk.coverage.effective_target_symbols");
+      for (auto [ordinal, targetAttr] :
+           llvm::enumerate(cross.getTargetSymbols())) {
+        auto target = dyn_cast<SymbolRefAttr>(targetAttr);
+        StringRef sourceTarget =
+            target ? target.getLeafReference() : StringRef{};
+        if (baseEffectiveTargets && ordinal < baseEffectiveTargets.size())
+          if (auto inherited =
+                  dyn_cast<StringAttr>(baseEffectiveTargets[ordinal]))
+            sourceTarget = inherited.getValue();
+        auto effective = inheritedPointSymbols.find(sourceTarget);
+        effectiveTargets.push_back(effective == inheritedPointSymbols.end()
+                                       ? builder.getStringAttr(sourceTarget)
+                                       : Attribute(effective->second));
+      }
+      clone->setAttr("obelisk.coverage.effective_target_symbols",
+                     builder.getArrayAttr(effectiveTargets));
+      clone->walk([&](Operation *nested) {
+        auto target = nested->getAttrOfType<SymbolRefAttr>("target_symbol");
+        StringRef sourceTarget =
+            target ? target.getLeafReference() : StringRef{};
+        if (auto inherited = nested->getAttrOfType<StringAttr>(
+                "obelisk.coverage.effective_target_symbol"))
+          sourceTarget = inherited.getValue();
+        auto effective = inheritedPointSymbols.find(sourceTarget);
+        if (effective != inheritedPointSymbols.end())
+          nested->setAttr("obelisk.coverage.effective_target_symbol",
+                          effective->second);
+      });
+    }
+    derivedBody->setAttr("option_count",
+                         builder.getI64IntegerAttr(
+                             derivedBody.getOptionCount() + inheritedOptions));
+    derived->setAttr("obelisk.coverage.base_group", derived.getBaseGroupAttr());
+    derived->removeAttr("base_group");
+    derived->setAttr("coverage_event_kind",
+                     builder.getI32IntegerAttr(
+                         static_cast<uint32_t>(base.getCoverageEventKind())));
+    active.erase(derived);
+    done.insert(derived);
+    return success();
+  };
+
+  for (const auto &entry : groups)
+    if (failed(materialize(entry.second)))
+      return failure();
+  return success();
 }
 
 LogicalResult materializeCovergroupDeclarations(
@@ -400,7 +343,8 @@ LogicalResult materializeCovergroupDeclarations(
   });
 
   bool invalid = false;
-  for (auto [index, covergroup] : llvm::enumerate(covergroupSources)) {
+  llvm::DenseMap<uint64_t, Operation *> typeIDs;
+  for (semantic::SVCovergroupTypeOp covergroup : covergroupSources) {
     auto handle =
         dyn_cast<semantic::CovergroupHandleType>(covergroup.getSemanticType());
     if (!handle) {
@@ -409,37 +353,35 @@ LogicalResult materializeCovergroupDeclarations(
       invalid = true;
       continue;
     }
-    SmallVector<int64_t> coverpointBins;
-    for (Operation *child : getChildren(covergroup)) {
-      auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(child);
-      if (!body)
-        continue;
-      for (Operation *member : getChildren(body)) {
-        if (auto coverpoint =
-                dyn_cast<semantic::SVCoverpointSymbolOp>(member)) {
-          FailureOr<int64_t> bins = markContributingCoverageBins(coverpoint);
-          if (failed(bins)) {
-            emitError(getSemanticLocation(coverpoint))
-                << "cannot determine the coverpoint's contributing state "
-                   "bins";
-            invalid = true;
-            continue;
-          }
-          coverpointBins.push_back(*bins);
-        }
-      }
-    }
-    if (coverpointBins.empty()) {
+    const uint64_t typeID = stableFunctionalTypeID(covergroup);
+    auto [typeOwner, insertedType] =
+        typeIDs.try_emplace(typeID, covergroup.getOperation());
+    if (!insertedType) {
       emitError(getSemanticLocation(covergroup))
-          << "covergroup requires at least one coverpoint";
+          << "functional coverage type ID hash collision with "
+          << typeOwner->second->getLoc();
       invalid = true;
       continue;
     }
     StringAttr symbol =
         getSimulationCovergroupSymbol(handle.getCovergroupName());
+    FlatSymbolRefAttr base;
+    TypeAttr baseAttr =
+        covergroup->getAttrOfType<TypeAttr>("obelisk.coverage.base_group");
+    if (baseAttr) {
+      auto baseHandle =
+          dyn_cast<semantic::CovergroupHandleType>(baseAttr.getValue());
+      if (!baseHandle) {
+        emitError(getSemanticLocation(covergroup))
+            << "covergroup base is not a covergroup handle";
+        invalid = true;
+        continue;
+      }
+      base = FlatSymbolRefAttr::get(
+          getSimulationCovergroupSymbol(baseHandle.getCovergroupName()));
+    }
     auto declaration = sim::SimCovergroupDeclOp::create(
-        builder, getSemanticLocation(covergroup), symbol, index + 1,
-        builder.getDenseI64ArrayAttr(coverpointBins),
+        builder, getSemanticLocation(covergroup), symbol, typeID, base,
         builder.getStringAttr(getDebugName(covergroup)));
     SymbolTable::setSymbolVisibility(declaration,
                                      SymbolTable::Visibility::Public);
@@ -611,6 +553,52 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                         getSimulationClassSymbol(handle.getClassName()))
                   : FlatSymbolRefAttr{};
   };
+
+  llvm::DenseMap<Operation *, Operation *> inheritedCovergroupProperties;
+  llvm::StringMap<semantic::SVCovergroupTypeOp> covergroupsBySymbol;
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    auto handle =
+        dyn_cast<semantic::CovergroupHandleType>(covergroup.getSemanticType());
+    if (handle)
+      covergroupsBySymbol[handle.getCovergroupName().getLeafReference()] =
+          covergroup;
+  });
+  auto findCovergroupProperty = [](semantic::SVCovergroupTypeOp covergroup)
+      -> semantic::SVClassPropertySymbolOp {
+    auto owner = covergroup->getParentOfType<semantic::SVClassTypeOp>();
+    if (!owner)
+      return {};
+    for (Operation *child : getChildren(owner))
+      if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child))
+        if (property.getSemanticType() == covergroup.getSemanticType())
+          return property;
+    return {};
+  };
+  for (const auto &entry : covergroupsBySymbol) {
+    semantic::SVCovergroupTypeOp derived = entry.second;
+    TypeAttr baseAttr =
+        derived->getAttrOfType<TypeAttr>("obelisk.coverage.base_group");
+    if (!baseAttr)
+      continue;
+    auto baseHandle =
+        dyn_cast<semantic::CovergroupHandleType>(baseAttr.getValue());
+    auto base = baseHandle
+                    ? covergroupsBySymbol.find(
+                          baseHandle.getCovergroupName().getLeafReference())
+                    : covergroupsBySymbol.end();
+    auto derivedProperty = findCovergroupProperty(derived);
+    auto baseProperty = base == covergroupsBySymbol.end()
+                            ? semantic::SVClassPropertySymbolOp{}
+                            : findCovergroupProperty(base->second);
+    if (!derivedProperty || !baseProperty) {
+      emitError(getSemanticLocation(derived))
+          << "embedded covergroup inheritance has no corresponding class "
+             "property";
+      return failure();
+    }
+    inheritedCovergroupProperties[derivedProperty] = baseProperty;
+  }
+
   bool invalid = false;
   llvm::DenseMap<Operation *, sim::SimClassFieldDeclOp> fieldDeclarations;
   for (semantic::SVClassTypeOp classType : result.sources) {
@@ -696,6 +684,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     for (Operation *child : getChildren(classType)) {
       auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
       if (!property)
+        continue;
+      if (inheritedCovergroupProperties.contains(property))
         continue;
       if (std::optional<Type> type = property.getSemanticType();
           type && unusedEmbeddedCovergroupTypes.contains(*type))
@@ -809,6 +799,37 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                            addRandomField("__obelisk_constraint_mode",
                                           "__obelisk_constraint_mode"));
     }
+  }
+
+  for (const auto &[derived, directBase] : inheritedCovergroupProperties) {
+    Operation *storage = directBase;
+    llvm::SmallPtrSet<Operation *, 8> visited;
+    while (true) {
+      auto found = inheritedCovergroupProperties.find(storage);
+      if (found == inheritedCovergroupProperties.end())
+        break;
+      if (!visited.insert(storage).second) {
+        emitError(getSemanticLocation(derived))
+            << "embedded covergroup property inheritance contains a cycle";
+        invalid = true;
+        storage = nullptr;
+        break;
+      }
+      storage = found->second;
+    }
+    if (!storage || !result.fieldSymbols.count(storage)) {
+      emitError(getSemanticLocation(derived))
+          << "inherited covergroup property has no base storage field";
+      invalid = true;
+      continue;
+    }
+    FailureOr<Type> storageType = getNormalizedSemanticType(storage);
+    if (failed(storageType)) {
+      invalid = true;
+      continue;
+    }
+    result.fieldSymbols[derived] = result.fieldSymbols.lookup(storage);
+    result.covergroupFieldStorageTypes[derived] = *storageType;
   }
 
   // Freeze the effective base-to-derived packed random-variable inventory on
@@ -976,7 +997,8 @@ uint64_t PreparedScopeDeclarations::lookup(Operation *operation) const {
 
 FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     semantic::SVRootSymbolOp semanticRoot, ArrayRef<Operation *> units,
-    uint64_t designPrecisionFemtoseconds, OpBuilder &builder) {
+    uint64_t designPrecisionFemtoseconds, OpBuilder &builder,
+    const llvm::StringMap<Operation *> &semanticSymbols) {
   PreparedScopeDeclarations result;
   bool invalid = false;
   uint64_t nextScopeId = 0;
@@ -985,83 +1007,105 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
       builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{},
-      IntegerAttr{}));
-  semanticRoot->walk<WalkOrder::PreOrder>(
-      [&](semantic::SVInstanceBodySymbolOp body) {
-        Operation *parent = body->getParentOp();
-        while (parent && !result.ids.count(parent))
-          parent = parent->getParentOp();
-        uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
-        if (isCompileTimeOnlyInstanceMember(body)) {
-          result.ids[body] = parentId;
-          return;
-        }
-        uint64_t id = nextScopeId++;
-        result.ids[body] = id;
-        StringAttr interfaceType;
-        if (auto identity = body->getAttrOfType<SymbolRefAttr>(
-                "virtual_interface_identity")) {
-          std::string key;
-          llvm::raw_string_ostream stream(key);
-          stream << identity;
-          interfaceType = builder.getStringAttr(key);
-        }
-        sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
-            builder, getSemanticLocation(body), id,
-            builder.getI64IntegerAttr(parentId),
-            builder.getStringAttr(getHierarchyName(body)),
-            builder.getStringAttr(getDebugName(body)), interfaceType,
-            body->getAttrOfType<IntegerAttr>("vpi_scope_kind"));
-        if (interfaceType) {
-          auto instance =
-              dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
-          auto parentBody =
-              instance
-                  ? instance
-                        ->getParentOfType<semantic::SVInstanceBodySymbolOp>()
-                  : semantic::SVInstanceBodySymbolOp{};
-          if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
-            declaration->setAttr(virtualInterfaceParentMemberAttrName,
-                                 builder.getStringAttr(getDebugName(instance)));
-        }
-        result.declarations.push_back(declaration);
-        auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
-        auto precisionAttr =
-            body->getAttrOfType<IntegerAttr>("time_precision_fs");
-        if (bool(unitAttr) != bool(precisionAttr)) {
-          emitError(getSemanticLocation(body))
-              << "elaborated scope time scale must specify both unit and "
-                 "precision";
+      IntegerAttr{}, StringAttr{}, IntegerAttr{}));
+  semanticRoot->walk<WalkOrder::PreOrder>([&](semantic::SVInstanceBodySymbolOp
+                                                  body) {
+    Operation *parent = body->getParentOp();
+    while (parent && !result.ids.count(parent))
+      parent = parent->getParentOp();
+    uint64_t parentId = parent ? result.ids.lookup(parent) : 0;
+    if (isCompileTimeOnlyInstanceMember(body)) {
+      result.ids[body] = parentId;
+      return;
+    }
+    uint64_t id = nextScopeId++;
+    result.ids[body] = id;
+    StringAttr interfaceType;
+    if (auto identity =
+            body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")) {
+      std::string key;
+      llvm::raw_string_ostream stream(key);
+      stream << identity;
+      interfaceType = builder.getStringAttr(key);
+    }
+    StringAttr definitionName;
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
+    if (instance && instance.getReferencedSymbolAttr()) {
+      auto found = semanticSymbols.find(
+          instance.getReferencedSymbolAttr().getLeafReference());
+      auto definition =
+          found == semanticSymbols.end()
+              ? semantic::SVDefinitionSymbolOp{}
+              : dyn_cast<semantic::SVDefinitionSymbolOp>(found->second);
+      if (!definition) {
+        emitError(getSemanticLocation(instance))
+            << "elaborated instance references an unknown definition";
+        invalid = true;
+      } else if (definition.getDefinitionKind() ==
+                 semantic::SVDefinitionKind::Module) {
+        std::optional<StringRef> canonicalName = instance.getReferencedPath();
+        if (!canonicalName || canonicalName->empty()) {
+          emitError(getSemanticLocation(instance))
+              << "module instance has no canonical definition name";
           invalid = true;
-          return;
+        } else {
+          definitionName = builder.getStringAttr(*canonicalName);
         }
-        if (!unitAttr)
-          return;
-        APInt unit = unitAttr.getValue();
-        APInt precision = precisionAttr.getValue();
-        if (unit.isNegative() || precision.isNegative() ||
-            unit.getActiveBits() > 64 || precision.getActiveBits() > 64) {
-          emitError(getSemanticLocation(body))
-              << "elaborated scope time scale does not fit an unsigned "
-                 "64-bit value";
-          invalid = true;
-          return;
-        }
-        uint64_t unitFs = unit.getZExtValue();
-        uint64_t precisionFs = precision.getZExtValue();
-        if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
-            unitFs % precisionFs != 0) {
-          emitError(getSemanticLocation(body))
-              << "invalid elaborated scope time scale " << unitFs << "fs/"
-              << precisionFs << "fs";
-          invalid = true;
-          return;
-        }
-        declaration->setAttr("dpi_unit_femtoseconds",
-                             builder.getI64IntegerAttr(unitFs));
-        declaration->setAttr("dpi_precision_femtoseconds",
-                             builder.getI64IntegerAttr(precisionFs));
-      });
+      }
+    }
+    sim::SimScopeDeclOp declaration = sim::SimScopeDeclOp::create(
+        builder, getSemanticLocation(body), id,
+        builder.getI64IntegerAttr(parentId),
+        builder.getStringAttr(getHierarchyName(body)),
+        builder.getStringAttr(getDebugName(body)), definitionName,
+        IntegerAttr{}, interfaceType,
+        body->getAttrOfType<IntegerAttr>("vpi_scope_kind"));
+    if (interfaceType) {
+      auto parentBody =
+          instance
+              ? instance->getParentOfType<semantic::SVInstanceBodySymbolOp>()
+              : semantic::SVInstanceBodySymbolOp{};
+      if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
+        declaration->setAttr(virtualInterfaceParentMemberAttrName,
+                             builder.getStringAttr(getDebugName(instance)));
+    }
+    result.declarations.push_back(declaration);
+    auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");
+    auto precisionAttr = body->getAttrOfType<IntegerAttr>("time_precision_fs");
+    if (bool(unitAttr) != bool(precisionAttr)) {
+      emitError(getSemanticLocation(body))
+          << "elaborated scope time scale must specify both unit and "
+             "precision";
+      invalid = true;
+      return;
+    }
+    if (!unitAttr)
+      return;
+    APInt unit = unitAttr.getValue();
+    APInt precision = precisionAttr.getValue();
+    if (unit.isNegative() || precision.isNegative() ||
+        unit.getActiveBits() > 64 || precision.getActiveBits() > 64) {
+      emitError(getSemanticLocation(body))
+          << "elaborated scope time scale does not fit an unsigned "
+             "64-bit value";
+      invalid = true;
+      return;
+    }
+    uint64_t unitFs = unit.getZExtValue();
+    uint64_t precisionFs = precision.getZExtValue();
+    if (unitFs == 0 || precisionFs == 0 || unitFs < precisionFs ||
+        unitFs % precisionFs != 0) {
+      emitError(getSemanticLocation(body))
+          << "invalid elaborated scope time scale " << unitFs << "fs/"
+          << precisionFs << "fs";
+      invalid = true;
+      return;
+    }
+    declaration->setAttr("dpi_unit_femtoseconds",
+                         builder.getI64IntegerAttr(unitFs));
+    declaration->setAttr("dpi_precision_femtoseconds",
+                         builder.getI64IntegerAttr(precisionFs));
+  });
 
   for (Operation *unit : units) {
     uint64_t scopeID = result.lookup(unit);

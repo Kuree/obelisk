@@ -4,6 +4,8 @@
 #define OBELISK_DIALECT_OBELISK_OBELISKENUMS_TD
 
 include "mlir/IR/EnumAttr.td"
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributes.td"
 
 // IEEE 1800-2023 event regions, in scheduling order.  We keep every region
 // distinct even when an optimization later proves that adjacent queues may be
@@ -426,6 +428,204 @@ def ObeliskSVCoverageBinKind : I32EnumAttr<"SVCoverageBinKind",
     "coverage bin classification", [
   ObeliskSVCoverageBin_Bins, ObeliskSVCoverageBin_IllegalBins,
   ObeliskSVCoverageBin_IgnoreBins
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageBinChild_Iff
+    : I32EnumAttrCase<"Iff", 0, "iff">;
+def ObeliskSVCoverageBinChild_NumberOfBins
+    : I32EnumAttrCase<"NumberOfBins", 1, "number_of_bins">;
+def ObeliskSVCoverageBinChild_SetCoverage
+    : I32EnumAttrCase<"SetCoverage", 2, "set_coverage">;
+def ObeliskSVCoverageBinChild_With
+    : I32EnumAttrCase<"With", 3, "with">;
+def ObeliskSVCoverageBinChild_CrossSelect
+    : I32EnumAttrCase<"CrossSelect", 4, "cross_select">;
+def ObeliskSVCoverageBinChild_Value
+    : I32EnumAttrCase<"Value", 5, "value">;
+def ObeliskSVCoverageBinChild_TransitionItem
+    : I32EnumAttrCase<"TransitionItem", 6, "transition_item">;
+def ObeliskSVCoverageBinChild_TransitionRepeatFrom
+    : I32EnumAttrCase<"TransitionRepeatFrom", 7, "transition_repeat_from">;
+def ObeliskSVCoverageBinChild_TransitionRepeatTo
+    : I32EnumAttrCase<"TransitionRepeatTo", 8, "transition_repeat_to">;
+def ObeliskSVCoverageBinChildRole : I32EnumAttr<"SVCoverageBinChildRole",
+    "semantic role of a direct coverage-bin child", [
+  ObeliskSVCoverageBinChild_Iff,
+  ObeliskSVCoverageBinChild_NumberOfBins,
+  ObeliskSVCoverageBinChild_SetCoverage, ObeliskSVCoverageBinChild_With,
+  ObeliskSVCoverageBinChild_CrossSelect, ObeliskSVCoverageBinChild_Value,
+  ObeliskSVCoverageBinChild_TransitionItem,
+  ObeliskSVCoverageBinChild_TransitionRepeatFrom,
+  ObeliskSVCoverageBinChild_TransitionRepeatTo
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageTransitionRepeat_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def ObeliskSVCoverageTransitionRepeat_Consecutive
+    : I32EnumAttrCase<"Consecutive", 1, "consecutive">;
+def ObeliskSVCoverageTransitionRepeat_Nonconsecutive
+    : I32EnumAttrCase<"Nonconsecutive", 2, "nonconsecutive">;
+def ObeliskSVCoverageTransitionRepeat_GoTo
+    : I32EnumAttrCase<"GoTo", 3, "goto">;
+def ObeliskSVCoverageTransitionRepeatKind
+    : I32EnumAttr<"SVCoverageTransitionRepeatKind",
+        "coverage transition repetition kind", [
+  ObeliskSVCoverageTransitionRepeat_None,
+  ObeliskSVCoverageTransitionRepeat_Consecutive,
+  ObeliskSVCoverageTransitionRepeat_Nonconsecutive,
+  ObeliskSVCoverageTransitionRepeat_GoTo
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageEvent_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def ObeliskSVCoverageEvent_Clocking
+    : I32EnumAttrCase<"Clocking", 1, "clocking">;
+def ObeliskSVCoverageEvent_CustomSample
+    : I32EnumAttrCase<"CustomSample", 2, "custom_sample">;
+def ObeliskSVCoverageEvent_Block
+    : I32EnumAttrCase<"Block", 3, "block">;
+def ObeliskSVCoverageEvent_Inherited
+    : I32EnumAttrCase<"Inherited", 4, "inherited">;
+def ObeliskSVCoverageEventKind : I32EnumAttr<"SVCoverageEventKind",
+    "declared covergroup sampling form", [
+  ObeliskSVCoverageEvent_None, ObeliskSVCoverageEvent_Clocking,
+  ObeliskSVCoverageEvent_CustomSample, ObeliskSVCoverageEvent_Block,
+  ObeliskSVCoverageEvent_Inherited
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageOwner_Covergroup
+    : I32EnumAttrCase<"Covergroup", 0, "covergroup">;
+def ObeliskSVCoverageOwner_Coverpoint
+    : I32EnumAttrCase<"Coverpoint", 1, "coverpoint">;
+def ObeliskSVCoverageOwner_Cross
+    : I32EnumAttrCase<"Cross", 2, "cross">;
+def ObeliskSVCoverageOptionOwnerKind
+    : I32EnumAttr<"SVCoverageOptionOwnerKind",
+                  "coverage construct that owns a definition-time option setter", [
+  ObeliskSVCoverageOwner_Covergroup,
+  ObeliskSVCoverageOwner_Coverpoint,
+  ObeliskSVCoverageOwner_Cross
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageOption_Instance
+    : I32EnumAttrCase<"Instance", 0, "instance">;
+def ObeliskSVCoverageOption_Type
+    : I32EnumAttrCase<"Type", 1, "type">;
+def ObeliskSVCoverageOptionScopeKind
+    : I32EnumAttr<"SVCoverageOptionScopeKind",
+                  "instance option or covergroup type option", [
+  ObeliskSVCoverageOption_Instance, ObeliskSVCoverageOption_Type
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageOption_Name
+    : I32EnumAttrCase<"Name", 0, "name">;
+def ObeliskSVCoverageOption_Weight
+    : I32EnumAttrCase<"Weight", 1, "weight">;
+def ObeliskSVCoverageOption_Goal
+    : I32EnumAttrCase<"Goal", 2, "goal">;
+def ObeliskSVCoverageOption_Comment
+    : I32EnumAttrCase<"Comment", 3, "comment">;
+def ObeliskSVCoverageOption_AtLeast
+    : I32EnumAttrCase<"AtLeast", 4, "at_least">;
+def ObeliskSVCoverageOption_AutoBinMax
+    : I32EnumAttrCase<"AutoBinMax", 5, "auto_bin_max">;
+def ObeliskSVCoverageOption_CrossNumPrintMissing
+    : I32EnumAttrCase<"CrossNumPrintMissing", 6,
+                      "cross_num_print_missing">;
+def ObeliskSVCoverageOption_CrossRetainAutoBins
+    : I32EnumAttrCase<"CrossRetainAutoBins", 7,
+                      "cross_retain_auto_bins">;
+def ObeliskSVCoverageOption_DetectOverlap
+    : I32EnumAttrCase<"DetectOverlap", 8, "detect_overlap">;
+def ObeliskSVCoverageOption_PerInstance
+    : I32EnumAttrCase<"PerInstance", 9, "per_instance">;
+def ObeliskSVCoverageOption_GetInstCoverage
+    : I32EnumAttrCase<"GetInstCoverage", 10, "get_inst_coverage">;
+def ObeliskSVCoverageOption_Strobe
+    : I32EnumAttrCase<"Strobe", 11, "strobe">;
+def ObeliskSVCoverageOption_MergeInstances
+    : I32EnumAttrCase<"MergeInstances", 12, "merge_instances">;
+def ObeliskSVCoverageOption_DistributeFirst
+    : I32EnumAttrCase<"DistributeFirst", 13, "distribute_first">;
+def ObeliskSVCoverageOption_RealInterval
+    : I32EnumAttrCase<"RealInterval", 14, "real_interval">;
+def ObeliskSVCoverageOptionKind : I32EnumAttr<"SVCoverageOptionKind",
+    "standard coverage option identity", [
+  ObeliskSVCoverageOption_Name, ObeliskSVCoverageOption_Weight,
+  ObeliskSVCoverageOption_Goal, ObeliskSVCoverageOption_Comment,
+  ObeliskSVCoverageOption_AtLeast, ObeliskSVCoverageOption_AutoBinMax,
+  ObeliskSVCoverageOption_CrossNumPrintMissing,
+  ObeliskSVCoverageOption_CrossRetainAutoBins,
+  ObeliskSVCoverageOption_DetectOverlap,
+  ObeliskSVCoverageOption_PerInstance,
+  ObeliskSVCoverageOption_GetInstCoverage, ObeliskSVCoverageOption_Strobe,
+  ObeliskSVCoverageOption_MergeInstances,
+  ObeliskSVCoverageOption_DistributeFirst,
+  ObeliskSVCoverageOption_RealInterval
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageExpression_Sample
+    : I32EnumAttrCase<"Sample", 0, "sample">;
+def ObeliskSVCoverageExpression_Iff
+    : I32EnumAttrCase<"Iff", 1, "iff">;
+def ObeliskSVCoverageExpressionRole
+    : I32EnumAttr<"SVCoverageExpressionRole",
+                  "semantic role of a coverpoint or cross expression child", [
+  ObeliskSVCoverageExpression_Sample, ObeliskSVCoverageExpression_Iff
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+def ObeliskSVCoverageExpressionRoleArrayAttr
+    : TypedArrayAttrBase<ObeliskSVCoverageExpressionRole,
+                         "coverage expression role array">;
+
+def ObeliskSVCoverageBlockEvent_Begin
+    : I32EnumAttrCase<"Begin", 0, "begin">;
+def ObeliskSVCoverageBlockEvent_End
+    : I32EnumAttrCase<"End", 1, "end">;
+def ObeliskSVCoverageBlockEventKind
+    : I32EnumAttr<"SVCoverageBlockEventKind",
+                  "begin or end block sampling event", [
+  ObeliskSVCoverageBlockEvent_Begin, ObeliskSVCoverageBlockEvent_End
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+def ObeliskSVCoverageBlockEventKindArrayAttr
+    : TypedArrayAttrBase<ObeliskSVCoverageBlockEventKind,
+                         "coverage block-event kind array">;
+
+def ObeliskSVCoverageSelectUnary_Negation
+    : I32EnumAttrCase<"Negation", 0, "negation">;
+def ObeliskSVCoverageSelectUnaryOperator
+    : I32EnumAttr<"SVCoverageSelectUnaryOperator",
+                  "unary coverage-bin selection operator", [
+  ObeliskSVCoverageSelectUnary_Negation
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
+def ObeliskSVCoverageSelectBinary_And
+    : I32EnumAttrCase<"And", 0, "and">;
+def ObeliskSVCoverageSelectBinary_Or
+    : I32EnumAttrCase<"Or", 1, "or">;
+def ObeliskSVCoverageSelectBinaryOperator
+    : I32EnumAttr<"SVCoverageSelectBinaryOperator",
+                  "binary coverage-bin selection operator", [
+  ObeliskSVCoverageSelectBinary_And, ObeliskSVCoverageSelectBinary_Or
 ]> {
   let cppNamespace = "::obelisk::ir";
 }

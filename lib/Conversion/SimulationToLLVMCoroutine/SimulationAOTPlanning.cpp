@@ -3,6 +3,7 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -723,8 +724,7 @@ buildNativeStaticActorRootPlan(
 FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
     const DenseMap<Operation *, uint32_t> &actorSlots,
-    const DenseSet<Operation *> &runtimeOwnedFanoutActors,
-    const DenseSet<Operation *> &negativeTimingFanoutActors, bool enabled,
+    const DenseSet<Operation *> &runtimeOwnedFanoutActors, bool enabled,
     bool certifiedStaticIsland) {
   NativeStaticFanoutPlan plan;
   plan.exact = enabled;
@@ -808,6 +808,86 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     // omitting it would make the generated dependency table incomplete.
     if (actor == actorSlots.end() && certifiedStaticIsland &&
         runtimeOwnedFanoutActors.contains(function.getOperation())) {
+      if (function->hasAttr("obelisk_sim.covergroup_clocking_sampler")) {
+        // Computed covergroup primaries expose an abstract graph Watch: the
+        // runtime indexes their exact static dependencies from the serialized
+        // observer plan. Reconstruct those same roots from the bound observer
+        // operands so direct AOT publications retain the transition bridge
+        // without pretending that the cold actor owns a generated slot.
+        analysis::DescriptorProvenanceMap provenance =
+            analysis::deriveDescriptorProvenance(function);
+        auto registrations =
+            function.getOps<sim::SimCovergroupClockEventRegisterOp>();
+        auto registration =
+            llvm::find_if(registrations, [](auto) { return true; });
+        if (registration == registrations.end()) {
+          disableExactFanout("covergroup clock actor has no registration",
+                             function);
+          continue;
+        }
+        sim::SimCovergroupClockEventRegisterOp registrationOp = *registration;
+        // Only primary expressions subscribe to publications. An `iff`
+        // expression is evaluated when one of those primaries fires and reads
+        // its other inputs from canonical state; it must not make those inputs
+        // independent transition roots.
+        SmallVector<Value> observers(registrationOp.getPrimaries());
+        bool valid = true;
+        for (Value observer : observers) {
+          auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
+          if (!binding) {
+            valid = false;
+            break;
+          }
+          for (Value dependency : binding.getDependencies()) {
+            auto found = provenance.find(dependency);
+            if (found == provenance.end() || !found->second.descriptor ||
+                found->second.dynamic ||
+                (found->second.resource != sim::ComputeResourceKind::Storage &&
+                 found->second.resource != sim::ComputeResourceKind::Net)) {
+              valid = false;
+              break;
+            }
+            uint64_t width = found->second.width != 0 ? found->second.width
+                                                      : found->second.rootWidth;
+            if (width == 0 || found->second.low > found->second.rootWidth ||
+                width > found->second.rootWidth - found->second.low) {
+              valid = false;
+              break;
+            }
+            const auto &handles =
+                found->second.resource == sim::ComputeResourceKind::Storage
+                    ? stateLayout.storage
+                    : stateLayout.nets;
+            auto handle = handles.find(*found->second.descriptor);
+            obelisk_rt_stable_handle_v1 decoded{};
+            if (handle == handles.end() ||
+                !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+                decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                decoded.offset != 0) {
+              valid = false;
+              break;
+            }
+            auto bound =
+                llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+                  return candidate.handleID == decoded.id;
+                });
+            if (bound == stateLayout.bounds.end() ||
+                found->second.low > bound->width ||
+                width > bound->width - found->second.low) {
+              valid = false;
+              break;
+            }
+            plan.runtimeTransitionStates.insert(decoded.id);
+          }
+          if (!valid)
+            break;
+        }
+        if (!valid)
+          disableExactFanout(
+              "covergroup clock observer dependency is not statically bound",
+              function);
+        continue;
+      }
       // IEEE 1800-2017 31.7 and 31.9.1 keep these exact waits in the runtime,
       // but their watched roots must still publish transitions. They are not
       // generated fanout entries and therefore do not acquire an actor slot.
@@ -847,12 +927,11 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
           return block->getTerminator()->emitError(
                      "runtime-owned fanout range is out of bounds"),
                  failure();
-        // Clause 31.9.1's delayed-source monitor and its zero-delay Clause
-        // 31.7 mate form one occurrence cohort. The pre-rewrite structural
-        // snapshot names only actors in that negative component; unrelated
-        // timing coordinators retain their static publication plan.
-        if (negativeTimingFanoutActors.contains(function.getOperation()))
-          plan.runtimeTransitionStates.insert(decoded.id);
+        // A runtime-owned observer has no generated fanout entry or actor
+        // slot. Keep the watched root on the v1 transition bridge so direct
+        // static and periodic publications still reach that observer before
+        // the generated scheduler advances beyond this time slot.
+        plan.runtimeTransitionStates.insert(decoded.id);
       }
       continue;
     }

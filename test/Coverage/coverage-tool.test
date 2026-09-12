@@ -1,0 +1,248 @@
+# RUN: %coverage-fixture %t.a.obcov 1 alpha 1
+# RUN: %coverage-fixture %t.b.obcov 2 beta 0
+# RUN: %if node %{ %node --check %S/../../tools/obelisk-cov/CoverageReport.js %}
+# RUN: not obelisk-cov report --format=xml %t.a.obcov 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=BAD-FORMAT
+# RUN: obelisk-cov inspect %t.a.obcov | FileCheck %s --check-prefix=INSPECT
+# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: obelisk-cov report --format=text %t.merged.obcov | FileCheck %s --check-prefix=TEXT
+# RUN: obelisk-cov report --format=json --test=alpha %t.merged.obcov | FileCheck %s --check-prefix=JSON
+# RUN: obelisk-cov report --format=json %t.merged.obcov > %t.json
+# RUN: %python -c "import json,sys; json.loads(open(sys.argv[1]).read())" %t.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); g=d['functional_instance_groups'][0]; assert d['metrics']['functional']['percent'] == 100.0; assert len(g['sources']) == 2; assert g['items'][0]['id'] == 160; assert g['items'][0]['bins'][0]['id'] == 170; assert g['items'][0]['bins'][0]['template_bin'] == 70; assert g['items'][0]['bins'][0]['count'] == 1; assert [c['name'] for c in g['items'][0]['bins'][0]['contributors']] == ['alpha']; assert d['functional_counters'][0]['bin'] == 170; assert len(d['functional_configurations']) == 1; assert all('flags' in row for key in ('functional_types','functional_item_templates','resolved_functional_items') for row in d[key]); points={p['id']:p for p in d['line_points']}; assert points[30]['count'] == 1 and [c['name'] for c in points[30]['contributors']] == ['alpha']; assert points[31]['excluded'] and points[31]['exclusion_reason'] == 'generated'; bits=d['toggles'][0]['bits']; assert bits[0]['paths'] == ['data[0]'] and bits[0]['zero_to_one']['count'] == bits[0]['one_to_zero']['count'] == 1; assert bits[1]['paths'] == ['data[1]'] and bits[1]['zero_to_one']['count'] == bits[1]['one_to_zero']['count'] == 0" %t.json
+# RUN: obelisk-cov report --format=text --test=missing \
+# RUN:   --fail-under=functional=100 %t.merged.obcov | FileCheck %s --check-prefix=EMPTY
+# RUN: obelisk-cov report --format=lcov -o %t.lcov %t.merged.obcov
+# RUN: FileCheck %s --check-prefix=LCOV < %t.lcov
+# RUN: %if lcov %{ %lcov --summary %t.lcov 2>&1 | FileCheck %s --check-prefix=LCOV-TOOL %}
+# RUN: %python -c "import subprocess,sys; subprocess.check_call([sys.argv[1],sys.argv[2],'21','line\nSF:injected.sv','1'])" %coverage-fixture %t.lcov-escape.obcov
+# RUN: obelisk-cov report --format=lcov -o %t.escape.lcov %t.lcov-escape.obcov
+# RUN: %python -c "import sys; lines=open(sys.argv[1]).read().splitlines(); assert 'TN:line_SF_injected_sv' in lines; assert lines.count('SF:dut.sv') == 1; assert all(line != 'SF:injected.sv' for line in lines)" %t.escape.lcov
+# RUN: %coverage-fixture %t.toggle-tree.obcov 23 toggle-tree 1 toggle-tree
+# RUN: obelisk-cov report --format=json -o %t.toggle-tree.json %t.toggle-tree.obcov
+# RUN: %python -c "import json,sys; o={v['name']:v for v in json.load(open(sys.argv[1]))['toggles']}; b=o['data']['bits']; assert [v['paths'] for v in b] == [['data[2].alias[0]','data[2].raw[0]'],['data[2].alias[1]','data[2].raw[1]'],['data[3].alias[0]','data[3].raw[0]'],['data[3].alias[1]','data[3].raw[1]']]; assert b[0]['to_unknown']['count'] == 2 and b[0]['to_unknown']['overflow'] and b[0]['from_unknown']['count'] == 3; s=o['shape']['bits']; assert [v['paths'] for v in s] == [['shape[3].structs.ascending[1]','shape[3].unpacked.value[0]'],['shape[3].structs.ascending[0]','shape[3].unpacked.value[1]'],['shape[3].$tag'],['shape[2].structs.ascending[1]','shape[2].unpacked.value[0]'],['shape[2].structs.ascending[0]','shape[2].unpacked.value[1]'],['shape[2].$tag']]; assert {d['kind'] for v in o.values() for d in v['dimensions']} == {'root','scalar','enum','packed_array','unpacked_array','packed_struct','unpacked_struct','packed_union','unpacked_union','field','tag'}" %t.toggle-tree.json
+# RUN: %coverage-fixture %t.aggregate-max.obcov 24 aggregate-max 1 aggregate-overflow
+# RUN: %coverage-fixture %t.aggregate-one.obcov 25 aggregate-one 1 aggregate-overflow
+# RUN: obelisk-cov report --format=json -o %t.aggregate-overflow.json %t.aggregate-max.obcov %t.aggregate-one.obcov
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); p=d['line_points'][0]; b=d['toggles'][0]['bits'][0]; f=d['functional_instance_groups'][0]['items'][0]['bins'][0]; assert p['count'] == 18446744073709551615 and p['overflow']; assert b['zero_to_one']['count'] == 18446744073709551615 and b['zero_to_one']['overflow']; assert b['one_to_zero']['count'] == 18446744073709551615 and b['one_to_zero']['overflow']; assert f['count'] == 18446744073709551615 and f['overflow']" %t.aggregate-overflow.json
+# RUN: obelisk-cov report --format=html -o %t.aggregate-overflow.html %t.aggregate-max.obcov %t.aggregate-one.obcov
+# RUN: FileCheck %s --check-prefix=HTML-OVERFLOW < %t.aggregate-overflow.html
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); assert d['line_points'][0]['count'] == '18446744073709551615'; assert d['functional_instance_groups'][0]['items'][0]['bins'][0]['count'] == '18446744073709551615'" %t.aggregate-overflow.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.aggregate-overflow.html '18446744073709551615 (saturated)' %}
+# RUN: %coverage-fixture %t.transition.obcov 26 transition-report 1 transition
+# RUN: obelisk-cov report --format=json -o %t.transition.json %t.transition.obcov
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); b=next(b for i in d['functional_instance_groups'][0]['items'] for b in i['bins'] if b['name'] == 'five_then_nine'); assert b['kind'] == 2 and b['covered'] and [c['name'] for c in b['contributors']] == ['transition-report']; assert len(d['transition_programs']) == len(d['resolved_transition_alternatives']) == 1 and [s['value_set'] for s in d['resolved_transition_steps']] == [181,182]; assert [a['limbs'][0]['low_aval'] for s in d['resolved_functional_value_sets'] for a in s['atoms'] if s['id'] in (181,182)] == [5,9]" %t.transition.json
+# RUN: obelisk-cov report --format=html -o %t.transition.html %t.transition.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.transition.html 'five_then_nine = 0x5 => 0x9' %}
+# RUN: %coverage-fixture %t.explicit.obcov 28 explicit-report 1 cross-explicit
+# RUN: obelisk-cov report --format=json -o %t.explicit.json %t.explicit.obcov
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); i=next(i for i in d['functional_instance_groups'][0]['items'] if i['kind'] == 2); b=i['bins'][0]; assert [t['name'] for t in i['targets']] == ['cp','cp2'] and b['cross_selector'] == 92; assert len(d['cross_plans']) == 1 and len(d['cross_targets']) == 2 and len(d['cross_selector_nodes']) == 3 and len(d['resolved_cross_selector_bindings']) == 2; assert len(d['resolved_functional_tuple_sets']) == len(d['resolved_functional_tuples']) == 2 and len(d['resolved_functional_tuple_components']) == 4; nodes={(n['type'],n['configuration'],n['cross'],n['id']) for n in d['resolved_cross_automatic_nodes']}; assert all((p['type'],p['configuration'],p['cross'],p['root_node']) in nodes for p in d['resolved_cross_plans'] if p['root_node']); assert all((e['type'],e['configuration'],e['cross'],e['node']) in nodes and (e['child'] == 0 or (e['type'],e['configuration'],e['cross'],e['child']) in nodes) for e in d['resolved_cross_automatic_edges']); assert all(k[:6] != 'first_' for key in ('transition_programs','transition_alternatives','cross_plans','cross_selector_nodes','functional_tuple_sets','functional_tuples','resolved_transition_alternatives','resolved_transition_expansion_groups','resolved_functional_tuple_sets','resolved_functional_tuples') for row in d[key] for k in row)" %t.explicit.json
+# RUN: obelisk-cov report --format=html -o %t.explicit.html %t.explicit.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.explicit.html 'top.dut.cg.cp_x_cp2 targets cp, cp2' 'selected = (intersect {<0x1,0x2>} || intersect {<0x1,0xb>})' %}
+# RUN: %coverage-fixture %t.illegal.obcov 27 illegal-report 1 illegal
+# RUN: obelisk-cov report --format=text %t.illegal.obcov | FileCheck %s --check-prefix=ILLEGAL-TEXT
+# RUN: obelisk-cov report --format=html -o %t.illegal.html %t.illegal.obcov
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); b=next(b for b in d['functional_instance_groups'][0]['items'][0]['bins'] if int(b['flags']) & 8); x=d['illegal_bin_diagnostics'][0]; assert b['covered'] is False and b['count'] == '0' and b['contributors'] == []; assert x['test'] == 'illegal-report' and x['hierarchy'].endswith('.bad') and x['message'] == 'illegal fixture bin'" %t.illegal.html
+# RUN: %coverage-fixture %t.illegal-same-a.obcov 40 same-illegal 1 illegal
+# RUN: %coverage-fixture %t.illegal-same-b.obcov 41 same-illegal 1 illegal
+# RUN: obelisk-cov report --format=html -o %t.illegal-same.html %t.illegal-same-a.obcov %t.illegal-same-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.illegal-same.html 'row:same-illegal (00000000-0000-0000-0000-000000000028)|top.dut.cg.cp.bad|1|42|1|illegal fixture bin' 'row:same-illegal (00000000-0000-0000-0000-000000000029)|top.dut.cg.cp.bad|1|42|1|illegal fixture bin' %}
+# RUN: %coverage-fixture %t.exclusion.obcov 29 exclusion-report 1 exclusion
+# RUN: obelisk-cov report --format=text %t.exclusion.obcov | FileCheck %s --check-prefix=EXCLUSION-TEXT
+# RUN: obelisk-cov report --format=html -o %t.exclusion.html %t.exclusion.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.exclusion.html 'row:1|exclusion-report|1|2|0|3 unique' %}
+# RUN: obelisk-cov report --format=html --source-root=%S/Inputs --fail-under=line=90 -o %t.html %t.merged.obcov
+# RUN: FileCheck %s --check-prefix=HTML < %t.html
+# RUN: %python -c "import base64,hashlib,re,sys; h=open(sys.argv[1]).read(); policy=re.search(r'<meta[^>]*Content-Security-Policy[^>]*content=\"([^\"]*)\"',h).group(1); hashes=re.findall(r\"'sha256-([^']+)'\",policy); style=re.search(r'<style>(.*?)</style>',h,re.S).group(1); scripts=[m.group(1) for m in re.finditer(r'<script[^>]*>(.*?)</script>',h,re.S)]; bodies=[style,*scripts]; assert style==open(sys.argv[2]).read(); assert len(hashes)==len(bodies)==3 and hashes==[base64.b64encode(hashlib.sha256(v.encode()).digest()).decode() for v in bodies]" %t.html %S/../../tools/obelisk-cov/CoverageReport.css
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); m=d['metrics']['line']; assert m['threshold'] == 90.0 and m['threshold_pass'] is True" %t.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %S/../../tools/obelisk-cov/CoverageReport.js 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' %}
+# RUN: %if node %{ \
+# RUN:   %python -c "import re,sys; h=open(sys.argv[1]).read(); s=re.findall(r'<script(?![^>]*coverage-data)[^>]*>(.*?)</script>',h,re.S); assert len(s)==1; open(sys.argv[2],'w').write(s[0])" %t.html %t.js && \
+# RUN:   %node --check %t.js \
+# RUN: %}
+# RUN: not obelisk-cov report --format=json --test=beta --fail-under=line=1 -o %t.threshold-fail.json %t.merged.obcov
+# RUN: %python -c "import json,sys; m=json.load(open(sys.argv[1]))['metrics']['line']; assert m['threshold'] == 1.0 and m['threshold_pass'] is False" %t.threshold-fail.json
+# RUN: %coverage-fixture %t.split-a.obcov 32 split-a 1 100 1 1 1 shared 1 1 2 split
+# RUN: %coverage-fixture %t.split-b.obcov 33 split-b 1 100 1 1 1 shared 1 1 2 split
+# RUN: obelisk-cov report --format=html -o %t.split.html %t.split-a.obcov %t.split-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.split.html 'row:1|split-a|0|0|1|1 unique' 'row:2|split-b|0|0|1|1 unique' %}
+# RUN: %coverage-fixture %t.merge-split-a.obcov 36 merge-split-a 1 100 1 1 1 left 1 1 2 split
+# RUN: %coverage-fixture %t.merge-split-b.obcov 37 merge-split-b 1 100 1 1 1 right 1 1 2 split
+# RUN: obelisk-cov report --format=html -o %t.merge-split.html %t.merge-split-a.obcov %t.merge-split-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.merge-split.html 'row:1|merge-split-a|0|0|1|1 unique' 'row:2|merge-split-b|0|0|1|1 unique' %}
+# RUN: %coverage-fixture %t.auto-low.obcov 38 auto-low 1 cross-unmaterialized 1 1 0 low 1 1 1 shared-bin
+# RUN: %coverage-fixture %t.auto-high.obcov 39 auto-high 0 cross-unmaterialized 1 1 0 high 1 1 2 shared-bin
+# RUN: obelisk-cov report --format=html -o %t.auto-threshold.html %t.auto-low.obcov %t.auto-high.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.auto-threshold.html 'row:1|auto-low|1|2|0|3 unique' 'row:2|auto-high|0|0|0|0 unique' %}
+# RUN: %coverage-fixture %t.same-name-a.obcov 34 same-name 1
+# RUN: %coverage-fixture %t.same-name-b.obcov 35 same-name 1
+# RUN: obelisk-cov report --format=html -o %t.same-name.html %t.same-name-a.obcov %t.same-name-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.same-name.html 'same-name (00000000-0000-0000-0000-000000000022)' 'same-name (00000000-0000-0000-0000-000000000023)' 'same-name (00000000-0000-0000-0000-000000000022), same-name (00000000-0000-0000-0000-000000000023)' %}
+# RUN: %python -c "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(exist_ok=True); (p/'dut.sv').write_text('wrong source\n')" %t.bad-source-root
+# RUN: cd %S/Inputs && obelisk-cov report --format=html --source-root=%t.bad-source-root -o %t.fallback.html %t.a.obcov
+# RUN: FileCheck %s --check-prefix=HTML-SOURCE-FALLBACK < %t.fallback.html
+# RUN: %python -c "import pathlib,sys; pathlib.Path(sys.argv[1]).mkdir(exist_ok=True)" %t.empty-source-root
+# RUN: cd %t.empty-source-root && obelisk-cov report --format=html --source-root=%t.bad-source-root -o %t.mismatch.html %t.a.obcov
+# RUN: FileCheck %s --check-prefix=HTML-SOURCE-MISMATCH < %t.mismatch.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.mismatch.html 'dut.sv' %}
+# RUN: cd %t.empty-source-root && obelisk-cov report --format=html -o %t.missing.html %t.a.obcov
+# RUN: FileCheck %s --check-prefix=HTML-SOURCE-MISSING < %t.missing.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.missing.html 'dut.sv' %}
+# RUN: %coverage-fixture %t.html-escape.obcov 20 '</ScRiPt><script id=pwned>' 1
+# RUN: obelisk-cov report --format=html --source-root=%S/Inputs -o %t.escape.html %t.html-escape.obcov
+# RUN: %python -c "import json,sys; s=open(sys.argv[1]).read(); p=s.split('type=\"application/json\">',1)[1].split('</script>',1)[0]; d=json.loads(p); assert all(c != '<' for c in p); assert d['runs'][0]['name'] == '</ScRiPt><script id=pwned>'" %t.escape.html
+# RUN: not obelisk-cov report --test=beta --fail-under line=1 %t.merged.obcov 2>&1 | FileCheck %s --check-prefix=BAD-THRESHOLD
+# RUN: not obelisk-cov merge -o %t.duplicate.obcov %t.a.obcov %t.a.obcov 2>&1 | FileCheck %s --check-prefix=DUPLICATE
+# RUN: obelisk-cov merge --discard-test-detail -o %t.aggregate.obcov %t.a.obcov %t.b.obcov
+# RUN: obelisk-cov inspect %t.aggregate.obcov | FileCheck %s --check-prefix=AGGREGATE
+# RUN: obelisk-cov merge --discard-test-detail -o %t.single-aggregate.obcov %t.a.obcov
+# RUN: obelisk-cov report --format=json %t.single-aggregate.obcov > %t.single-aggregate.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); assert len(d['runs']) == 1; r=d['runs'][0]; assert r['name'] == 'aggregate' and r['status'] == 0 and r['simulation_time'] == 0 and r['seed'] == 0 and r['tags'] == {}; assert len(d['functional_instance_groups']) == 1 and len(d['functional_instance_groups'][0]['sources']) == 1" %t.single-aggregate.json
+# RUN: %coverage-fixture %t.c.obcov 3 gamma 1 100 1 1 1 named 1 1 1 shared
+# RUN: %coverage-fixture %t.d.obcov 4 delta 0 100 1 1 0 - 1 1 2 shared
+# RUN: %coverage-fixture %t.e.obcov 5 epsilon 1 100 1 1 0 other 1 1 1 other
+# RUN: obelisk-cov report --format=json %t.c.obcov %t.d.obcov %t.e.obcov > %t.config-forward.json
+# RUN: obelisk-cov report --format=json %t.e.obcov %t.d.obcov %t.c.obcov > %t.config-reverse.json
+# RUN: %python -c "import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); ta=a['functional_types'][0]; tb=b['functional_types'][0]; assert ta['percent'] == tb['percent'] == 0.0; assert ta['merge_instances'] is True and ta['weight'] == 1; assert len(a['functional_configurations']) == len(b['functional_configurations']) == 3; assert sorted((g['name'],g['per_instance']) for g in a['functional_instance_groups']) == [('',False),('named',True),('other',False)]" %t.config-forward.json %t.config-reverse.json
+# RUN: obelisk-cov report --format=json --test=gamma %t.c.obcov %t.d.obcov %t.e.obcov > %t.config-filtered.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); assert [r['name'] for r in d['runs']] == ['gamma']; assert [c['name'] for c in d['line_points'][0]['contributors']] == ['gamma']; assert [c['name'] for c in d['toggles'][0]['bits'][0]['zero_to_one']['contributors']] == ['gamma']; assert len(d['functional_types']) == len(d['functional_item_templates']) == len(d['functional_bin_templates']) == 1; assert len(d['resolved_instances']) == 1 and d['resolved_instances'][0]['name'] == 'named'; configs={(c['type'],c['configuration']) for c in d['functional_configurations']}; assert len(configs) == 1; assert d['resolved_functional_items'] and d['resolved_functional_bins']; keys=('resolved_functional_items','resolved_functional_bins','resolved_transition_alternatives','resolved_transition_expansion_groups','resolved_transition_steps','resolved_functional_value_sets','resolved_cross_selector_bindings','resolved_functional_tuple_sets','resolved_cross_plans'); assert all((v['type'],v['configuration']) in configs for key in keys for v in d[key])" %t.config-filtered.json
+# RUN: %coverage-fixture %t.type-zero.obcov 6 type-zero 0 100 0 0 0 named
+# RUN: %coverage-fixture %t.group-zero.obcov 7 group-zero 0 100 1 0 0 named 0
+# RUN: %coverage-fixture %t.item-zero.obcov 8 item-zero 0 100 1 0 0 named 1 0
+# RUN: obelisk-cov report --format=json %t.type-zero.obcov > %t.type-zero.json
+# RUN: obelisk-cov report --format=json %t.group-zero.obcov > %t.group-zero.json
+# RUN: obelisk-cov report --format=json %t.item-zero.obcov > %t.item-zero.json
+# RUN: %python -c "import json,sys; a,b,c=(json.load(open(p)) for p in sys.argv[1:]); assert a['functional_types'][0]['percent'] == 0.0 and a['metrics']['functional']['percent'] == 100.0; assert b['functional_instance_groups'][0]['percent'] == 0.0 and b['metrics']['functional']['percent'] == 100.0; assert c['functional_instance_groups'][0]['items'][0]['weight'] == 0 and c['metrics']['functional']['percent'] == 100.0" %t.type-zero.json %t.group-zero.json %t.item-zero.json
+# RUN: %coverage-fixture %t.cross-left.obcov 9 cross-left 1 cross 1 1 0 shared 1 1 1 left
+# RUN: %coverage-fixture %t.cross-right.obcov 10 cross-right 1 cross 1 1 0 shared 1 1 1 right
+# RUN: obelisk-cov report --format=text %t.cross-left.obcov | FileCheck %s --check-prefix=CROSS-TEXT
+# RUN: obelisk-cov report --format=json %t.cross-left.obcov %t.cross-right.obcov > %t.cross-union.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=d['functional_types'][0]; assert t['merge_instances'] is True and t['percent'] == 66.666667; groups=d['functional_instance_groups']; assert len(groups) == 2; crosses=[i for g in groups for i in g['items'] if i['name'] == 'cp_x_cp2']; assert sorted(i['automatic_bins'][0]['name'] for i in crosses) == ['<left,two>','<right,two>']; assert all(i['automatic_total'] == 1 and i['automatic_covered'] == 1 for i in crosses); assert sorted(c['name'] for i in crosses for c in i['automatic_bins'][0]['contributors']) == ['cross-left','cross-right']" %t.cross-union.json
+# RUN: obelisk-cov report --format=json --test=cross-left %t.cross-left.obcov %t.cross-right.obcov > %t.cross-filtered.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); configs={(c['type'],c['configuration']) for c in d['functional_configurations']}; assert len(configs) == 1 and d['resolved_cross_plans']; keys=('resolved_functional_items','resolved_functional_bins','resolved_transition_alternatives','resolved_transition_expansion_groups','resolved_transition_steps','resolved_functional_value_sets','resolved_cross_selector_bindings','resolved_functional_tuple_sets','resolved_cross_plans','resolved_cross_automatic_nodes','resolved_cross_automatic_edges'); assert all((v['type'],v['configuration']) in configs for key in keys for v in d[key]); tuple_sets={v['id'] for v in d['resolved_functional_tuple_sets']}; tuples={v['id'] for v in d['resolved_functional_tuples']}; assert all(v['tuple_set'] in tuple_sets for v in d['resolved_functional_tuples']); assert all(v['tuple'] in tuples for v in d['resolved_functional_tuple_components']); nodes={(n['type'],n['configuration'],n['cross'],n['id']) for n in d['resolved_cross_automatic_nodes']}; assert all((p['type'],p['configuration'],p['cross'],p['root_node']) in nodes for p in d['resolved_cross_plans'] if p['root_node']); assert all((e['type'],e['configuration'],e['cross'],e['node']) in nodes and (e['child'] == 0 or (e['type'],e['configuration'],e['cross'],e['child']) in nodes) for e in d['resolved_cross_automatic_edges'])" %t.cross-filtered.json
+# RUN: %coverage-fixture %t.cross-duplicate.obcov 30 duplicate-run 1 cross-duplicate-instance 1 1 0 shared
+# RUN: obelisk-cov report --format=json -o %t.cross-duplicate.json %t.cross-duplicate.obcov
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); g=d['functional_instance_groups'][0]; assert len(g['sources']) == 2; b=g['items'][0]['bins'][0]; a=next(i for i in g['items'] if i['kind'] == 2)['automatic_bins'][0]; assert b['count'] == 18446744073709551615 and b['overflow']; assert a['count'] == 2 and a['overflow'] is False; assert [(c['name'],c['count'],c['overflow']) for c in b['contributors']] == [('duplicate-run',18446744073709551615,True)]; assert [(c['name'],c['count'],c['overflow']) for c in a['contributors']] == [('duplicate-run',2,False)]" %t.cross-duplicate.json
+# RUN: %coverage-fixture %t.cross-wide.obcov 11 cross-wide 1 cross-wide
+# RUN: obelisk-cov report --format=json %t.cross-wide.obcov > %t.cross-wide.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['metrics']['functional']['covered'] == 2; assert d['metrics']['functional']['total'] == 18446744073709551744; x=next(i for i in d['functional_instance_groups'][0]['items'] if i['name'] == 'cp_x_cp2'); assert x['total'] == 18446744073709551616 and x['automatic_total'] == 18446744073709551616; assert len(x['automatic_bins'][0]['components']) == 64; p=d['resolved_cross_plans'][0]; assert p['root_node'] == 50000 and p['automatic_bin_count'] == 18446744073709551616" %t.cross-wide.json
+# RUN: %coverage-fixture %t.cross-deep.obcov 17 cross-deep 1 cross-deep 1 1
+# RUN: obelisk-cov report --format=text -o %t.cross-deep.txt %t.cross-deep.obcov
+# RUN: %coverage-fixture %t.cross-cap-left.obcov 21 cap-left 1 cross-cap 1 1 0 shared 1 1 1 left
+# RUN: %coverage-fixture %t.cross-cap-right.obcov 22 cap-right 1 cross-cap 1 1 0 shared 1 1 1 right
+# RUN: %coverage-fixture %t.cross-cap-zero.obcov 31 cap-zero 1 cross-cap 1 1 0 shared 1 1 0 left
+# RUN: obelisk-cov report --format=json -o %t.cross-cap-zero.json %t.cross-cap-zero.obcov
+# RUN: %python -c "import json,math,sys; d=json.load(open(sys.argv[1])); i=next(i for i in d['functional_instance_groups'][0]['items'] if i['kind'] == 2); assert i['covered'] == i['total'] and i['total'].bit_length() == 1024 and i['percent'] == 100.0 and math.isfinite(i['percent'])" %t.cross-cap-zero.json
+# RUN: obelisk-cov report --format=json --test=cap-left -o %t.cross-cap-filtered.json %t.cross-cap-left.obcov %t.cross-cap-right.obcov
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); assert [r['name'] for r in d['runs']] == ['cap-left'] and len(d['functional_configurations']) == 1 and d['resolved_cross_plans'][0]['automatic_bin_count'].bit_length() == 1024" %t.cross-cap-filtered.json
+# RUN: not obelisk-cov report --format=json %t.cross-cap-left.obcov %t.cross-cap-right.obcov 2>&1 | FileCheck %s --check-prefix=APINT-CAP
+# RUN: %coverage-fixture %t.merge-id-a.obcov 18 merge-id-a 1 100 1 1 0 shared 1 1 1 merge-bin
+# RUN: %coverage-fixture %t.merge-id-b.obcov 19 merge-id-b 0 100 1 1 0 shared 1 1 2 merge-bin
+# RUN: obelisk-cov report --format=json %t.merge-id-a.obcov %t.merge-id-b.obcov > %t.merge-id.json
+# RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=d['functional_types'][0]; assert t['merge_instances'] is True and t['percent'] == 0.0; gs=d['functional_instance_groups']; assert {b['id'] for g in gs for i in g['items'] for b in i['bins']} == {10018,10019}; assert {b['at_least'] for g in gs for i in g['items'] for b in i['bins']} == {1,2}" %t.merge-id.json
+# RUN: %coverage-fixture %t.type-conflict-a.obcov 12 conflict-a 1 90
+# RUN: %coverage-fixture %t.type-conflict-b.obcov 13 conflict-b 1 80
+# RUN: not obelisk-cov report --format=json %t.type-conflict-a.obcov %t.type-conflict-b.obcov 2>&1 | FileCheck %s --check-prefix=TYPE-CONFLICT
+
+# INSPECT: format: obcov
+# INSPECT: codec-version: 1
+# INSPECT: runs: 1
+# INSPECT: line-points: 3
+# INSPECT: toggle-objects: 1
+# INSPECT: functional-types: 1
+# INSPECT: functional-formals: 0
+# INSPECT: functional-item-templates: 1
+# INSPECT: functional-bin-templates: 1
+# INSPECT: functional-configurations: 1
+# INSPECT: resolved-functional-items: 1
+# INSPECT: resolved-functional-bins: 1
+# INSPECT: resolved-instances: 1
+
+# BAD-FORMAT: usage:
+# BAD-FORMAT-NOT: --format=xml
+
+# TEXT: tests: 2
+# TEXT: line: 100.00% (1/1), partial 0
+# TEXT: toggle: 50.00% (2/4)
+# TEXT: functional: 100.00% (1/1)
+# TEXT: type cg (50): 100.00%
+# TEXT: instance fixture: 100.00% (1/1)
+# TEXT: coverpoint cp: 1/1
+# TEXT: bin one: 1 [covered]
+# TEXT: exclusions:
+# TEXT: line 31: generated
+
+# JSON: "format":"obelisk-coverage-report-v1"
+# JSON: "runs":[{"uuid":"00000000-0000-0000-0000-000000000001","name":"alpha"
+# JSON: "functional_formals":[]
+
+# EMPTY: functional: 100.00% (0/0) [PASS >= 100.00%]
+
+# LCOV: TN:alpha
+# LCOV: SF:dut.sv
+# LCOV: VER:
+# LCOV: DA:1,1
+# LCOV: end_of_record
+# LCOV: TN:beta
+# LCOV: SF:dut.sv
+# LCOV-NOT: VER:
+# LCOV: DA:1,0
+# LCOV: end_of_record
+
+# LCOV-TOOL: Summary coverage rate:
+# LCOV-TOOL: lines......: 100.0% (1 of 1 line)
+
+# HTML: <!doctype html>
+# HTML: Content-Security-Policy
+# HTML: style-src 'sha256-
+# HTML: script-src 'sha256-
+# HTML-NOT: unsafe-inline
+# HTML-NOT: nonce=
+# HTML: Obelisk coverage
+# HTML: id="test-filter"
+# HTML: id="file-nav"
+# HTML: id="hierarchy-nav"
+# HTML: <h2 id="line-section">Line points</h2>
+# HTML: <h2 id="toggle-section">Toggle bits</h2>
+# HTML: <h2>Functional items</h2>
+# HTML: <h2>Functional bins and sparse tuples</h2>
+# HTML: <h2>Illegal-bin diagnostics</h2>
+# HTML: <h2 id="unique-section">Unique contributions</h2>
+# HTML: <h2>Exclusions</h2>
+# HTML: <section id="source-10" class="section"><h3>dut.sv</h3>
+# HTML: <span class="full"><span class="ln">1</span>line
+# HTML: point 30 @col 3: 1
+# HTML: point 31 @col 9: 0 <span class="excluded-point">[excluded: generated]</span>
+# HTML: <span class="excluded-line"><span class="ln">2</span>excluded
+# HTML: point 32 @col 1: 0 <span class="excluded-point">[excluded: entire generated line]</span>
+
+# HTML-OVERFLOW: const counterText =
+# HTML-OVERFLOW: c.overflow ? ' (saturated)' : ''
+# HTML-OVERFLOW: counterText(b.zero_to_one),
+# HTML-OVERFLOW: counterText(b.one_to_zero),
+
+# HTML-SOURCE-FALLBACK: <section id="source-10" class="section"><h3>dut.sv</h3>
+# HTML-SOURCE-FALLBACK: point 30 @col 3: 1
+
+# HTML-SOURCE-MISMATCH: <section id="source-10" class="section"><h3>dut.sv</h3><p class="muted">Source digest mismatch</p></section>
+# HTML-SOURCE-MISSING: <section id="source-10" class="section"><h3>dut.sv</h3><p class="muted">Source unavailable</p></section>
+
+
+# BAD-THRESHOLD: line: 0.00% (0/1), partial 0 [FAIL >= 1.00%]
+# DUPLICATE: duplicate run UUID
+# AGGREGATE: runs: 1
+
+# CROSS-TEXT: cross cp_x_cp2: 1/1
+# CROSS-TEXT: automatic: 1/1
+# CROSS-TEXT: auto bin <left,two>: 1 [covered, at_least 1]
+
+# ILLEGAL-TEXT: bin bad: 0 [excluded] {illegal}
+# ILLEGAL-TEXT: illegal-bin diagnostics:
+# ILLEGAL-TEXT: top.dut.cg.cp.bad instance 1 test "illegal-report": 1 at time 42 - "illegal fixture bin"
+
+# EXCLUSION-TEXT: bin one: 1 [excluded] {excluded: fixture waiver}
+
+
+
+# TYPE-CONFLICT: functional_configuration_option.type_consistency
+# APINT-CAP: automatic cross union exceeds traversal limits

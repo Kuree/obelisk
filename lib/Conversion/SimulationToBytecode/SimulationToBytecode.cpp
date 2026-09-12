@@ -1,6 +1,7 @@
 //===- SimulationToBytecode.cpp - Strict design-wide bytecode encoder -----===//
 
 #include "obelisk/Conversion/SimulationToBytecode.h"
+#include "obelisk/Conversion/FunctionalCoverageSchemaVerification.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
 
@@ -849,6 +850,8 @@ public:
           "bytecode encoding requires exactly one simulation design");
       return signalPassFailure();
     }
+    if (failed(verifyFunctionalCoverageSchemaBeforeBackend(module)))
+      return signalPassFailure();
     SimulationBytecodeOptions options;
     options.vpi = vpi;
     options.requireBytecode = requireBytecode;

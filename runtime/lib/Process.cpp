@@ -889,7 +889,11 @@ void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
 void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
                                           uint64_t logicalProcess,
                                           uint64_t programOwner) {
-  if (!context || !logicalProcess || !programOwner)
+  if (!context || !logicalProcess)
+    return;
+  obelisk_rt_unregister_covergroup_clock_events_unlocked(context,
+                                                         logicalProcess);
+  if (!programOwner)
     return;
   auto owner = context->programProcesses.find(programOwner);
   if (owner == context->programProcesses.end() ||
@@ -1094,6 +1098,17 @@ obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context) {
       return 1;
   context->prioritySignalPending = false;
   return 0;
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_scheduler_handoff_pending(obelisk_rt_context *context) {
+  if (!context)
+    return 1;
+  ContextMutexLock lock(context);
+  return context->schedulerStatus != OBELISK_RT_OK ||
+                 obelisk_rt_covergroup_strobes_pending_unlocked(context)
+             ? 1
+             : 0;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
@@ -2039,6 +2054,10 @@ extern "C" void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL {}
 }
 
+void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept {
+  context->schedulerFinishStatus = OBELISK_RT_FATAL;
+}
+
 static void requestExplicitFinishUnlocked(obelisk_rt_context *context,
                                           uint32_t verbosity,
                                           obelisk_rt_status status) {
@@ -2138,7 +2157,7 @@ obelisk_rt_v1_scheduler_error(obelisk_rt_context *context) {
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    context->schedulerFinishStatus = OBELISK_RT_FATAL;
+    latchSchedulerErrorUnlocked(context);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -2712,6 +2731,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
     uint64_t nativeScanSelectionGeneration = 0;
     uint64_t nativeScanInsertionSequence = 0;
     uint32_t barrierRegion = UINT32_MAX;
+    bool covergroupStrobePending = false;
     std::optional<CachedNativeReady> cachedNativeSelection;
     {
       ContextMutexLock lock(context);
@@ -2998,6 +3018,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         }
       }
       barrierRegion = nextDueNBABarrierRegionUnlocked(context);
+      covergroupStrobePending =
+          obelisk_rt_covergroup_strobes_pending_unlocked(context);
     }
     bool cachedCandidateExpected =
         cachedNativeSelection &&
@@ -3025,6 +3047,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       maximumRank = 0;
       maximumInsertionSequence = 0;
     }
+    const auto covergroupStrobeKey = std::tuple{
+        uint32_t{OBELISK_RT_REGION_POSTPONED}, uint32_t{0}, uint64_t{0}};
+    if (covergroupStrobePending &&
+        covergroupStrobeKey <
+            std::tuple{maximumRegion, maximumRank, maximumInsertionSequence}) {
+      maximumRegion = OBELISK_RT_REGION_POSTPONED;
+      maximumRank = 0;
+      maximumInsertionSequence = 0;
+    }
     bool designProgress = false;
     obelisk_rt_status designStatus = obelisk_rt_run_one_design_task(
         context, maximumRegion, maximumRank, maximumInsertionSequence,
@@ -3035,6 +3066,29 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (cachedNativeSelection && cachedNativeReadyValid) {
         pushCachedNativeReady(*cachedNativeSelection);
         cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
+      obelisk_rt_status status = recordSlotProgress();
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (context->nativeScheduleSingleStep)
+        return OBELISK_RT_OK;
+      continue;
+    }
+    if (covergroupStrobePending &&
+        covergroupStrobeKey <=
+            std::tuple{nativeRegion, nativeRank, nativeInsertionSequence} &&
+        covergroupStrobeKey <=
+            std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}) {
+      if (cachedNativeSelection && cachedNativeReadyValid) {
+        pushCachedNativeReady(*cachedNativeSelection);
+        cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
+      {
+        ContextMutexLock lock(context);
+        obelisk_rt_status status =
+            obelisk_rt_drain_covergroup_strobes_unlocked(context);
+        if (status != OBELISK_RT_OK)
+          return status;
       }
       obelisk_rt_status status = recordSlotProgress();
       if (status != OBELISK_RT_OK)
@@ -3699,10 +3753,20 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               return;
             }
             uint64_t sequence = 0;
+            const uint8_t *publishedValue =
+                update.inlinePacked
+                    ? reinterpret_cast<const uint8_t *>(&update.inlineValue)
+                    : update.value.data();
+            const uint8_t *publishedUnknown =
+                update.inlinePacked
+                    ? reinterpret_cast<const uint8_t *>(&update.inlineUnknown)
+                : update.unknown.empty() ? nullptr
+                                         : update.unknown.data();
             if (!obelisk_rt_publish_signal_transition_batch_unlocked(
                     context, update.bitOffset, update.bitWidth,
                     transitions.changed(), transitions.posedge(),
-                    transitions.negedge(), 0, &sequence))
+                    transitions.negedge(), 0, &sequence, nullptr, nullptr,
+                    publishedValue, publishedUnknown))
               return;
             obelisk_rt_invalidate_signal_snapshots_unlocked(
                 context, update.bitOffset, update.bitWidth);

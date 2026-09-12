@@ -18,6 +18,8 @@ set(_obelisk_runtime_common_sources
   lib/ManagedHeap.cpp
   lib/Containers.cpp
   lib/Coverage.cpp
+  lib/CoverageBlockEvents.cpp
+  lib/CoverageDatabase.cpp
   lib/Process.cpp
   lib/ProcessAllocation.cpp
   lib/ProcessAOT.cpp
@@ -63,6 +65,9 @@ add_library(obelisk_rt STATIC
 
 add_library(ObeliskRuntime ALIAS obelisk_rt)
 add_dependencies(obelisk_rt
+  ObeliskCoverageFormatDeclsIncGen
+  ObeliskCoverageFormatParserIncGen
+  ObeliskCoverageFormatSerializerIncGen
   ObeliskDesignReflectionIncGen
   ObeliskVPIObjectModelIncGen)
 
@@ -72,6 +77,10 @@ target_include_directories(obelisk_rt
 )
 target_include_directories(obelisk_rt SYSTEM PRIVATE
   ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+)
+target_include_directories(obelisk_rt PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+  "${PROJECT_BINARY_DIR}/include"
 )
 
 target_compile_features(obelisk_rt PUBLIC cxx_std_17)

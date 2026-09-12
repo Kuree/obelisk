@@ -12,6 +12,26 @@ include "mlir/IR/SymbolInterfaces.td"
 def ObeliskSemanticASTNode : NativeOpTrait<"SemanticASTNode">;
 def ObeliskSemanticDeclarativeNode
     : NativeOpTrait<"SemanticDeclarativeNode">;
+def ObeliskSemanticExpressionNode
+    : NativeOpTrait<"SemanticExpressionNode">;
+def ObeliskSemanticTimingNode : NativeOpTrait<"SemanticTimingNode">;
+def ObeliskSemanticReferenceRootNode
+    : NativeOpTrait<"SemanticReferenceRootNode">;
+def ObeliskPatternVariableNode : NativeOpTrait<"PatternVariableNode">;
+def ObeliskTaggedPatternNode : NativeOpTrait<"TaggedPatternNode">;
+def ObeliskPatternBindingNode : NativeOpTrait<"PatternBindingNode">;
+def ObeliskAggregateFieldNode : NativeOpTrait<"AggregateFieldNode">;
+def ObeliskFormalArgumentNode : NativeOpTrait<"FormalArgumentNode">;
+def ObeliskCoverageGroupNode : NativeOpTrait<"CoverageGroupNode">;
+def ObeliskCoveragePointNode : NativeOpTrait<"CoveragePointNode">;
+def ObeliskCoverageCrossNode : NativeOpTrait<"CoverageCrossNode">;
+def ObeliskCoverageBinNode : NativeOpTrait<"CoverageBinNode">;
+def ObeliskCoverageBlockEventNode
+    : NativeOpTrait<"CoverageBlockEventNode">;
+def ObeliskCoverageClockingEventNode
+    : NativeOpTrait<"CoverageClockingEventNode">;
+def ObeliskCoverageOptionNode : NativeOpTrait<"CoverageOptionNode">;
+def ObeliskCoverageSelectorNode : NativeOpTrait<"CoverageSelectorNode">;
 def ObeliskRejectInvalidSemanticNode
     : NativeOpTrait<"RejectInvalidSemanticNode">;
 def ObeliskVerifySemanticReferenceGraph
@@ -28,6 +48,32 @@ def ObeliskVerifyCheckerInstanceMetadata
     : NativeOpTrait<"VerifyCheckerInstanceMetadata">;
 def ObeliskVerifyProceduralCheckerMetadata
     : NativeOpTrait<"VerifyProceduralCheckerMetadata">;
+def ObeliskVerifyCovergroupTypeMetadata
+    : NativeOpTrait<"VerifyCovergroupTypeMetadata">;
+def ObeliskVerifyCoverageOptionContainerMetadata
+    : NativeOpTrait<"VerifyCoverageOptionContainerMetadata">;
+def ObeliskVerifyCoverpointMetadata
+    : NativeOpTrait<"VerifyCoverpointMetadata">;
+def ObeliskVerifyCoverCrossMetadata
+    : NativeOpTrait<"VerifyCoverCrossMetadata">;
+def ObeliskVerifyCoverageOptionMetadata
+    : NativeOpTrait<"VerifyCoverageOptionMetadata">;
+def ObeliskVerifyCoverageBinMetadata
+    : NativeOpTrait<"VerifyCoverageBinMetadata">;
+def ObeliskVerifyCoverageBlockEventMetadata
+    : NativeOpTrait<"VerifyCoverageBlockEventMetadata">;
+def ObeliskVerifyCoverageConditionSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageConditionSelectorMetadata">;
+def ObeliskVerifyCoverageUnarySelectorMetadata
+    : NativeOpTrait<"VerifyCoverageUnarySelectorMetadata">;
+def ObeliskVerifyCoverageBinarySelectorMetadata
+    : NativeOpTrait<"VerifyCoverageBinarySelectorMetadata">;
+def ObeliskVerifyCoverageSetSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageSetSelectorMetadata">;
+def ObeliskVerifyCoverageWithSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageWithSelectorMetadata">;
+def ObeliskVerifyCoverageCrossIdSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageCrossIdSelectorMetadata">;
 
 class ObeliskASTNodeOp<string mnemonic, list<Trait> traits = [],
                        dag semanticArgs = (ins)>
@@ -77,6 +123,7 @@ class ObeliskSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
 class ObeliskRootASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic,
         [SymbolTable, IsolatedFromAbove,
+         ObeliskSemanticReferenceRootNode,
          ObeliskVerifySemanticReferenceGraph]>;
 
 class ObeliskConstantSymbolASTNodeOp<string mnemonic>
@@ -169,8 +216,9 @@ class ObeliskMethodPrototypeASTNodeOp<string mnemonic>
       ), [ObeliskSemanticDeclarativeNode]>;
 
 class ObeliskVariableSymbolASTNodeOp<string mnemonic,
-                                     dag variableArgs = (ins)>
-    : ObeliskSymbolASTNodeOp<mnemonic, [], !con((ins
+                                      dag variableArgs = (ins),
+                                      list<Trait> traits = []>
+    : ObeliskSymbolASTNodeOp<mnemonic, traits, !con((ins
         DefaultValuedAttr<ObeliskSVVariableLifetime,
           "::obelisk::ir::SVVariableLifetime::Automatic">:$lifetime,
         DefaultValuedAttr<ObeliskSVRandMode,
@@ -193,7 +241,7 @@ class ObeliskFormalArgumentASTNodeOp<string mnemonic>
         ObeliskSVArgumentDirection:$direction,
         OptionalAttr<SymbolRefAttr>:$merged_variable_symbol,
         OptionalAttr<StrAttr>:$merged_variable_path
-      )>;
+      ), [ObeliskFormalArgumentNode]>;
 
 class ObeliskIteratorASTNodeOp<string mnemonic>
     : ObeliskVariableSymbolASTNodeOp<mnemonic, (ins
@@ -275,7 +323,11 @@ class ObeliskFieldASTNodeOp<string mnemonic>
     : ObeliskVariableSymbolASTNodeOp<mnemonic, (ins
         I64Attr:$bit_offset,
         I64Attr:$field_index
-      )>;
+      ), [ObeliskAggregateFieldNode]>;
+
+class ObeliskPatternVarASTNodeOp<string mnemonic>
+    : ObeliskVariableSymbolASTNodeOp<mnemonic, (ins),
+        [ObeliskPatternBindingNode]>;
 
 class ObeliskConstraintBlockASTNodeOp<string mnemonic>
     : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
@@ -417,21 +469,48 @@ class ObeliskCovergroupTypeASTNodeOp<string mnemonic>
     : ObeliskScopeTypeASTNodeOp<mnemonic,
         (ins OptionalAttr<TypeAttr>:$base_group,
              I64Attr:$constructor_argument_count,
+             SymbolRefArrayAttr:$constructor_formals,
              I64Attr:$sample_formal_count,
+             SymbolRefArrayAttr:$sample_formals,
+             ObeliskSVCoverageEventKind:$coverage_event_kind,
              BoolAttr:$has_coverage_event),
-        [ObeliskSemanticDeclarativeNode]>;
+        [ObeliskSemanticDeclarativeNode, ObeliskCoverageGroupNode,
+         ObeliskVerifyCovergroupTypeMetadata]>;
 
 class ObeliskCovergroupBodyASTNodeOp<string mnemonic>
-    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count)>;
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count),
+        [ObeliskVerifyCoverageOptionContainerMetadata]>;
 
 class ObeliskCoverpointASTNodeOp<string mnemonic>
     : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
         BoolAttr:$has_iff,
-        I64Attr:$option_count
-      )>;
+        DefaultValuedAttr<BoolAttr, "false">:$has_explicit_type,
+        I64Attr:$option_count,
+        ObeliskSVCoverageExpressionRoleArrayAttr:$expression_roles
+      ), [ObeliskCoveragePointNode, ObeliskVerifyCoverpointMetadata]>;
+
+class ObeliskCoverCrossASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$target_count,
+        SymbolRefArrayAttr:$target_symbols,
+        BoolAttr:$has_iff,
+        I64Attr:$option_count,
+        ObeliskSVCoverageExpressionRoleArrayAttr:$expression_roles
+      ), [ObeliskCoverageCrossNode, ObeliskVerifyCoverCrossMetadata]>;
+
+def SVCoverageOptionOp : ObeliskASTNodeOp<"sv.coverage.option",
+    [ObeliskSemanticDeclarativeNode, ObeliskCoverageOptionNode,
+     ObeliskVerifyCoverageOptionMetadata], (ins
+      ObeliskSVCoverageOptionOwnerKind:$owner_kind,
+      ObeliskSVCoverageOptionScopeKind:$scope_kind,
+      ObeliskSVCoverageOptionKind:$option_kind,
+      SymbolRefAttr:$owner_symbol
+    )>;
 
 class ObeliskCoverageBinASTNodeOp<string mnemonic>
-    : ObeliskSymbolASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode], (ins
+    : ObeliskSymbolASTNodeOp<mnemonic,
+        [ObeliskSemanticDeclarativeNode, ObeliskCoverageBinNode,
+         ObeliskVerifyCoverageBinMetadata], (ins
         ObeliskSVCoverageBinKind:$bins_kind,
         BoolAttr:$is_array,
         BoolAttr:$is_wildcard,
@@ -442,12 +521,19 @@ class ObeliskCoverageBinASTNodeOp<string mnemonic>
         BoolAttr:$has_set_coverage,
         BoolAttr:$has_with,
         I64Attr:$value_count,
-        I64Attr:$transition_set_count
+        I64Attr:$transition_set_count,
+        DenseI64ArrayAttr:$child_roles,
+        DenseI64ArrayAttr:$transition_set_range_counts,
+        DenseI64ArrayAttr:$transition_range_item_counts,
+        DenseI64ArrayAttr:$transition_range_repeat_kinds,
+        DenseI64ArrayAttr:$transition_range_has_repeat_from,
+        DenseI64ArrayAttr:$transition_range_has_repeat_to
       )>;
 
 class ObeliskExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins),
                                  list<Trait> traits = []>
-    : ObeliskASTNodeOp<mnemonic, traits,
+    : ObeliskASTNodeOp<mnemonic,
+        !listconcat([ObeliskSemanticExpressionNode], traits),
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
 
 class ObeliskAssertionInstanceExpressionASTNodeOp<string mnemonic>
@@ -546,7 +632,10 @@ class ObeliskNewClassExpressionASTNodeOp<string mnemonic>
       )>;
 
 class ObeliskNewCovergroupExpressionASTNodeOp<string mnemonic>
-    : ObeliskExpressionASTNodeOp<mnemonic, (ins I64Attr:$argument_count)>;
+    : ObeliskExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$argument_count,
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
+      )>;
 
 class ObeliskUnaryExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic,
@@ -720,22 +809,65 @@ class ObeliskProceduralAssignStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins BoolAttr:$is_force)>;
 class ObeliskProceduralDeassignStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins BoolAttr:$is_release)>;
-class ObeliskTimingASTNodeOp<string mnemonic> : ObeliskASTNodeOp<mnemonic>;
+class ObeliskTimingASTNodeOp<string mnemonic>
+    : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticTimingNode]>;
 
 class ObeliskDelay3TimingASTNodeOp<string mnemonic>
-    : ObeliskASTNodeOp<mnemonic, [], (ins I64Attr:$delay_count)>;
+    : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticTimingNode],
+        (ins I64Attr:$delay_count)>;
 
 class ObeliskSignalEventTimingASTNodeOp<string mnemonic>
-    : ObeliskASTNodeOp<mnemonic, [], (ins
+    : ObeliskASTNodeOp<mnemonic,
+        [ObeliskSemanticTimingNode, ObeliskCoverageClockingEventNode], (ins
         EdgeKind:$edge_kind,
         BoolAttr:$has_iff
       )>;
 
 class ObeliskEventListTimingASTNodeOp<string mnemonic>
-    : ObeliskASTNodeOp<mnemonic, [], (ins I64Attr:$event_count)>;
+    : ObeliskASTNodeOp<mnemonic,
+        [ObeliskSemanticTimingNode, ObeliskCoverageClockingEventNode],
+        (ins I64Attr:$event_count)>;
 
 class ObeliskBlockEventListTimingASTNodeOp<string mnemonic>
-    : ObeliskASTNodeOp<mnemonic, [], (ins ArrayAttr:$event_is_begin)>;
+    : ObeliskASTNodeOp<mnemonic,
+        [ObeliskSemanticTimingNode, ObeliskCoverageBlockEventNode,
+         ObeliskVerifyCoverageBlockEventMetadata],
+        (ins ObeliskSVCoverageBlockEventKindArrayAttr:$event_kinds)>;
+
+class ObeliskCoverageSelectASTNodeOp<string mnemonic, dag selectArgs = (ins),
+                                     list<Trait> traits = []>
+    : ObeliskASTNodeOp<mnemonic,
+        !listconcat([ObeliskSemanticDeclarativeNode,
+                     ObeliskCoverageSelectorNode], traits),
+        !con((ins SymbolRefAttr:$enclosing_cross_symbol), selectArgs)>;
+
+class ObeliskCoverageSelectConditionASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$target_symbol,
+        I64Attr:$intersect_count
+      ), [ObeliskVerifyCoverageConditionSelectorMetadata]>;
+
+class ObeliskCoverageSelectUnaryASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic,
+        (ins ObeliskSVCoverageSelectUnaryOperator:$operator_kind),
+        [ObeliskVerifyCoverageUnarySelectorMetadata]>;
+
+class ObeliskCoverageSelectBinaryASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic,
+        (ins ObeliskSVCoverageSelectBinaryOperator:$operator_kind),
+        [ObeliskVerifyCoverageBinarySelectorMetadata]>;
+
+class ObeliskCoverageSelectSetExprASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic, (ins BoolAttr:$has_matches),
+        [ObeliskVerifyCoverageSetSelectorMetadata]>;
+
+class ObeliskCoverageSelectWithASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic, (ins BoolAttr:$has_matches),
+        [ObeliskVerifyCoverageWithSelectorMetadata]>;
+
+class ObeliskCoverageSelectCrossIdASTNodeOp<string mnemonic>
+    : ObeliskCoverageSelectASTNodeOp<mnemonic, (ins),
+        [ObeliskVerifyCoverageCrossIdSelectorMetadata]>;
 class ObeliskConstraintASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [ObeliskSemanticDeclarativeNode]>;
 
@@ -829,8 +961,9 @@ class ObeliskCaseAssertionASTNodeOp<string mnemonic>
 class ObeliskPatternASTNodeOp<string mnemonic, dag patternArgs = (ins)>
     : ObeliskASTNodeOp<mnemonic, [], patternArgs>;
 
-class ObeliskReferencePatternASTNodeOp<string mnemonic>
-    : ObeliskASTNodeOp<mnemonic, [], (ins
+class ObeliskReferencePatternASTNodeOp<string mnemonic,
+                                        list<Trait> traits = []>
+    : ObeliskASTNodeOp<mnemonic, traits, (ins
         SymbolRefAttr:$referenced_symbol,
         StrAttr:$referenced_path,
         OptionalAttr<I64Attr>:$field_ordinal,
@@ -838,6 +971,14 @@ class ObeliskReferencePatternASTNodeOp<string mnemonic>
       )> {
   let hasVerifier = 1;
 }
+
+class ObeliskVariablePatternASTNodeOp<string mnemonic>
+    : ObeliskReferencePatternASTNodeOp<mnemonic,
+        [ObeliskPatternVariableNode]>;
+
+class ObeliskTaggedPatternASTNodeOp<string mnemonic>
+    : ObeliskReferencePatternASTNodeOp<mnemonic,
+        [ObeliskTaggedPatternNode]>;
 
 class ObeliskStructurePatternASTNodeOp<string mnemonic>
     : ObeliskPatternASTNodeOp<mnemonic,

@@ -19,6 +19,7 @@ struct PreparedLocal {
   bool automatic = false;
   bool patternVariable = false;
   bool net = false;
+  bool argumentRef = false;
 };
 
 struct PreparedConstant {
@@ -49,6 +50,9 @@ struct PreparedCaptures {
   llvm::DenseMap<mlir::Operation *, llvm::StringSet<>> observerReadLocals;
   llvm::DenseSet<mlir::Operation *> indirectRefTasks;
   llvm::DenseSet<mlir::Operation *> contextStorageSources;
+  // Transitive code-unit summary used where reentrant scheduler publication
+  // is semantically observable, such as covergroup event-instant evaluation.
+  llvm::DenseSet<mlir::Operation *> mayPublishSchedulerState;
 };
 
 /// Analyze explicit unit captures and close descriptor captures over direct

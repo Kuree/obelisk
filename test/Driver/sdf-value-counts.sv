@@ -69,7 +69,7 @@ endmodule
 // SLANG-DAG: timing_delay_fs = array<i64: 7000, 8000, 9000, 10000, 11000, 12000>
 // SLANG-DAG: timing_delay_count = 12 : i64
 // SLANG-DAG: timing_delay_fs = array<i64: 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 21000, 22000, 23000, 24000>
-// NO-SDF: module {
+// NO-SDF: module{{.*}} {
 // NO-SDF-NOT: slang.symbol.sdf
 // NO-SDF-NOT: obelisk.sdf.table
 // WARN: Inputs/sdf-value-counts.sdf:36:3: warning: SDF CELL did not match an elaborated instance

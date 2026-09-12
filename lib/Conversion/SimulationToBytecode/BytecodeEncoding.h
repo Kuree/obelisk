@@ -205,20 +205,58 @@ constexpr uint32_t kIntrinsicWeakGet = OBELISK_RT_INTRINSIC_V1_WEAK_GET;
 constexpr uint32_t kIntrinsicWeakClear = OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR;
 constexpr uint32_t kIntrinsicGCSafepoint = OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT;
 constexpr uint32_t kIntrinsicClassID = OBELISK_RT_INTRINSIC_V1_CLASS_ID;
-constexpr uint32_t kIntrinsicCovergroupCreate =
-    OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE;
 constexpr uint32_t kIntrinsicCovergroupSetEnabled =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED;
+constexpr uint32_t kIntrinsicCovergroupSetName =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_NAME;
+constexpr uint32_t kIntrinsicCovergroupSetIntegerOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION;
+constexpr uint32_t kIntrinsicCovergroupGetIntegerOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION;
+constexpr uint32_t kIntrinsicCovergroupSetStringOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION;
+constexpr uint32_t kIntrinsicCovergroupSetTypeIntegerOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION;
+constexpr uint32_t kIntrinsicCovergroupSetTypeStringOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION;
 constexpr uint32_t kIntrinsicCovergroupSampleEnabled =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED;
-constexpr uint32_t kIntrinsicCovergroupBinHit =
-    OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT;
+constexpr uint32_t kIntrinsicCovergroupCreate =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE;
+constexpr uint32_t kIntrinsicCovergroupFormalRead =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ;
 constexpr uint32_t kIntrinsicCovergroupSample =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE;
+constexpr uint32_t kIntrinsicCovergroupClockEventRegister =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER;
+constexpr uint32_t kIntrinsicCovergroupBlockEventRegister =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER;
+constexpr uint32_t kIntrinsicCovergroupBlockEventFire =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE;
 constexpr uint32_t kIntrinsicCovergroupInstanceQuery =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY;
 constexpr uint32_t kIntrinsicCovergroupTypeQuery =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY;
+constexpr uint32_t kIntrinsicCoveragePointHit =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT;
+constexpr uint32_t kIntrinsicFunctionalCoverageGet =
+    OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET;
+constexpr uint32_t kIntrinsicFunctionalCoverageSetDbName =
+    OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME;
+constexpr uint32_t kIntrinsicFunctionalCoverageLoadDb =
+    OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB;
+constexpr uint32_t kIntrinsicCoverageControlDefinition =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION;
+constexpr uint32_t kIntrinsicCoverageControlInstance =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE;
+constexpr uint32_t kIntrinsicCoverageQueryDefinition =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION;
+constexpr uint32_t kIntrinsicCoverageQueryInstance =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE;
+constexpr uint32_t kIntrinsicCoverageDatabaseSave =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE;
+constexpr uint32_t kIntrinsicCoverageDatabaseMerge =
+    OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE;
 constexpr uint32_t kIntrinsicArgumentRefFromRef =
     OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF;
 constexpr uint32_t kIntrinsicArgumentRefFromManaged =

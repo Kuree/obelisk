@@ -1,5 +1,6 @@
 //===- DesignBytecodeTest.cpp - Design bytecode/reflection tests ----------===//
 
+#include "../lib/DesignBytecodeExecution.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
@@ -5717,6 +5718,105 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ForceReleaseContinuouslyDrivenStorageRecordsCoveredPlanes) {
+  Fixture fixture;
+  // Narrow this fixture to the scalar <=64-bit reflection path. The general
+  // conversion test above retains the original 65-bit object coverage.
+  fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicScalar, vpiReg);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+
+  // Two source-visible obligations alias the same canonical storage bit. This
+  // test deliberately has no language waiter: coverage is a transition
+  // consumer in its own right, even when scheduler fanout is otherwise empty.
+  constexpr std::array<uint8_t, 1> zero{0};
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_finalize(
+          context, 0, 2, zero.data(), zero.data(),
+          OBELISK_RT_COVERAGE_PERSIST_ALL),
+      OBELISK_RT_OK);
+  uint64_t state = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(state, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, state),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 1, 1, state),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    size_t limbs = context->stateValue.size();
+    context->continuousMask.assign(limbs, 0);
+    context->continuousValue.assign(limbs, 0);
+    context->continuousUnknown.assign(limbs, 0);
+    context->continuousMask[0] = 1;
+    // The retained continuous assignment currently drives X.
+    context->continuousUnknown[0] = 1;
+  }
+
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char objectName[] = "top.value";
+  vpiHandle object = vpi_handle_by_name(objectName, nullptr);
+  ASSERT_NE(object, nullptr);
+
+  s_vpi_value value{};
+  value.format = vpiScalarVal;
+  value.value.scalar = vpiZ;
+  EXPECT_EQ(vpi_put_value(object, &value, nullptr, vpiForceFlag), nullptr);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+  EXPECT_EQ(vpi_put_value(object, nullptr, nullptr, vpiReleaseFlag), nullptr);
+  EXPECT_EQ(context->stateValue[0] & 1, 0u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+
+  // Force X to Z, change the retained driver behind the force, then release
+  // Z to one. These are diagnostic unknown-domain transitions only.
+  EXPECT_EQ(vpi_put_value(object, &value, nullptr, vpiForceFlag), nullptr);
+  {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    context->continuousValue[0] = 1;
+    context->continuousUnknown[0] = 0;
+  }
+  EXPECT_EQ(vpi_put_value(object, nullptr, nullptr, vpiReleaseFlag), nullptr);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+
+  // Complete the two denominator directions through the same force/release
+  // route: one to zero on force and zero to one on release.
+  value.value.scalar = vpi0;
+  EXPECT_EQ(vpi_put_value(object, &value, nullptr, vpiForceFlag), nullptr);
+  EXPECT_EQ(vpi_put_value(object, nullptr, nullptr, vpiReleaseFlag), nullptr);
+
+  ASSERT_NE(context->coverage, nullptr);
+  ASSERT_EQ(context->coverage->toggleCounters.size(), 8u);
+  for (uint64_t alias = 0; alias != 2; ++alias) {
+    uint64_t base = alias * 4;
+    EXPECT_EQ(context->coverage->toggleCounters[base], 1u);
+    EXPECT_EQ(context->coverage->toggleCounters[base + 1], 1u);
+    EXPECT_EQ(context->coverage->toggleCounters[base + 2], 3u);
+    EXPECT_EQ(context->coverage->toggleCounters[base + 3], 1u);
+  }
+  uint64_t covered = 0, total = 0;
+  double percentage = 0;
+  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+                                         &covered, &total, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 4u);
+  EXPECT_EQ(total, 4u);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+
+  EXPECT_EQ(vpi_release_handle(object), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   Fixture fixture;
   fixture.bytecode = makeVPIBytecode();
@@ -7629,6 +7729,46 @@ TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
     EXPECT_EQ(validate(std::move(scalarKind)), OBELISK_RT_INVALID_BYTECODE)
         << id;
   }
+}
+
+TEST(DesignBytecode, RejectsTruncatedCoverageClockEventOperandsAtExecution) {
+  using namespace obelisk::designbytecode;
+  constexpr uint32_t inputCount = 5;
+  constexpr size_t layoutOffset = 0;
+  constexpr size_t intrinsicOffset = inputCount * 40;
+  constexpr size_t siteOffset = intrinsicOffset + 16;
+  constexpr size_t operandOffset = siteOffset + 16;
+  std::vector<uint8_t> bytes(operandOffset + inputCount * 8, 0);
+  for (uint32_t index = 0; index != inputCount; ++index) {
+    size_t layout = layoutOffset + uint64_t{index} * 40;
+    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    put32(bytes, layout + 4, 64);
+    put64(bytes, layout + 8, uint64_t{index} * 8);
+    put64(bytes, layout + 16, 8);
+    put32(bytes, operandOffset + uint64_t{index} * 8 + 4, index);
+  }
+  put32(bytes, intrinsicOffset,
+        OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER);
+  put32(bytes, intrinsicOffset + 4, inputCount);
+  put32(bytes, siteOffset + 8, inputCount);
+
+  Image image{};
+  image.data = bytes.data();
+  image.size = bytes.size();
+  image.layouts = layoutOffset;
+  image.layoutCount = inputCount;
+  image.intrinsics = intrinsicOffset;
+  image.intrinsicCount = 1;
+  image.sites = siteOffset;
+  image.siteCount = 1;
+  image.operands = operandOffset;
+  image.operandCount = inputCount;
+  Function function{};
+  function.layoutCount = inputCount;
+  std::array<uint64_t, inputCount> data{{1, 0, 0, 1, 0}};
+  Frame frame{function, 0, reinterpret_cast<uint8_t *>(data.data()), 0};
+  EXPECT_EQ(invokeIntrinsic(image, frame, nullptr, 0),
+            OBELISK_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {

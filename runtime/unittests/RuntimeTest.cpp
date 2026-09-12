@@ -4497,12 +4497,93 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   EXPECT_EQ(found, 0u);
   EXPECT_TRUE(tail.empty());
 
-  const char *replacement[] = {"sim", "+NEW=value"};
+  const char *replacement[] = {"sim", "+NEW=value",
+                               "--coverage-output=kept.obcov",
+                               "--coverage-test=kept",
+                               "--coverage-tag=suite=kept"};
   ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(replacement)), replacement),
             OBELISK_RT_OK);
   query("A", tail, found);
   EXPECT_EQ(found, 0u);
+  query("NEW=", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "value");
+
+  ASSERT_NE(context->coverage, nullptr);
+  EXPECT_EQ(context->coverage->outputPath, "kept.obcov");
+  EXPECT_EQ(context->coverage->testName, "kept");
+  ASSERT_EQ(context->coverage->tags.size(), 1u);
+  EXPECT_EQ(context->coverage->tags.front(),
+            (std::pair<std::string, std::string>{"suite", "kept"}));
+
+  obelisk_rt_random_state_v1 randomBefore{};
+  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &randomBefore),
+            OBELISK_RT_OK);
+  const char *failedCoverageLoad[] = {
+      "sim", "+BROKEN", "--seed=19", "--coverage-load=missing.obcov"};
+  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(std::size(failedCoverageLoad)),
+                failedCoverageLoad),
+            OBELISK_RT_IO_ERROR);
+  obelisk_rt_random_state_v1 randomAfter{};
+  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &randomAfter),
+            OBELISK_RT_OK);
+  EXPECT_EQ(randomAfter.state, randomBefore.state);
+  EXPECT_EQ(randomAfter.increment, randomBefore.increment);
+  query("NEW=", tail, found);
+  EXPECT_EQ(found, 1u);
+  EXPECT_EQ(tail, "value");
+
+  // Parsing and merging all requested inputs is transactional as a group:
+  // the first valid database must not leak into live state if a later static
+  // schema is incompatible.
+  TempDirectory temporary;
+  obelisk::coverage::Database validDatabase;
+  obelisk::coverage::Run validRun;
+  validRun.uuid.back() = 1;
+  validRun.name = "staged";
+  validDatabase.runs.push_back(validRun);
+  std::filesystem::path validPath = temporary.file("valid.obcov");
+  ASSERT_EQ(obelisk::coverage::writeFileAtomically(validPath.string(),
+                                                   validDatabase),
+            obelisk::coverage::Status::Ok);
+  obelisk::coverage::Database mismatchedDatabase;
+  mismatchedDatabase.sourceFiles.push_back({1, "other.sv", {}});
+  mismatchedDatabase.scopes.push_back({2, 0, "top", 0, "top"});
+  mismatchedDatabase.linePoints.push_back(
+      {3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
+  std::filesystem::path mismatchedPath = temporary.file("mismatch.obcov");
+  ASSERT_EQ(obelisk::coverage::writeFileAtomically(mismatchedPath.string(),
+                                                   mismatchedDatabase),
+            obelisk::coverage::Status::Ok);
+  std::vector<std::string> stagedStorage{
+      "sim",
+      "+BROKEN",
+      "--seed=19",
+      "--coverage-output=broken.obcov",
+      "--coverage-test=broken",
+      "--coverage-tag=suite=broken",
+      "--coverage-load=" + validPath.string(),
+      "--coverage-load=" + mismatchedPath.string()};
+  std::vector<const char *> stagedArguments;
+  for (const std::string &argument : stagedStorage)
+    stagedArguments.push_back(argument.c_str());
+  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+                context, static_cast<int>(stagedArguments.size()),
+                stagedArguments.data()),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context->coverage->schema, nullptr);
+  EXPECT_EQ(context->coverage->outputPath, "kept.obcov");
+  EXPECT_EQ(context->coverage->testName, "kept");
+  ASSERT_EQ(context->coverage->tags.size(), 1u);
+  EXPECT_EQ(context->coverage->tags.front(),
+            (std::pair<std::string, std::string>{"suite", "kept"}));
+  obelisk_rt_random_state_v1 randomAfterStagedMerge{};
+  ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &randomAfterStagedMerge),
+            OBELISK_RT_OK);
+  EXPECT_EQ(randomAfterStagedMerge.state, randomBefore.state);
+  EXPECT_EQ(randomAfterStagedMerge.increment, randomBefore.increment);
   query("NEW=", tail, found);
   EXPECT_EQ(found, 1u);
   EXPECT_EQ(tail, "value");

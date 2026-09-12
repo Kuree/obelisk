@@ -41,6 +41,12 @@ bool isNegativeTimingDelayMonitor(sim::SimFuncOp function);
 /// occurrence-cohort wait must remain owned by the generic scheduler.
 bool isRuntimeClockCoordinator(sim::SimFuncOp function);
 
+/// Certify the compiler-generated covergroup clock-event registration actor.
+/// The actor installs one runtime-owned observer during bootstrap and then
+/// parks forever, so it is a cold hybrid boundary rather than a schedulable
+/// process body.
+bool isCovergroupClockingSamplerActor(sim::SimFuncOp function);
+
 /// Immutable native-scheduler eligibility facts for one module.
 ///
 /// `eligible` means at least one statically bound actor can use native AOT

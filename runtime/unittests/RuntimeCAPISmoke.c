@@ -164,31 +164,26 @@ _Static_assert(sizeof(obelisk_rt_sampled_range_v1) == 24,
                "sampled range size changed");
 _Static_assert(offsetof(obelisk_rt_sampled_range_v1, snapshot_byte_offset) == 8,
                "sampled snapshot offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 24,
+_Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 72,
                "execution extension size changed");
 _Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) == 8,
                "execution extension sampled ranges offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_extension_v3) == 56,
-               "execution extension v3 size changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, version) == 0,
-               "execution extension v3 version offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, size) == 4,
-               "execution extension v3 size offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, sampled_ranges) == 8,
-               "execution extension v3 sampled offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3,
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1,
                         sampled_range_count) == 16,
-               "execution extension v3 sampled count offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, exports) == 24,
-               "execution extension v3 exports offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, export_count) == 32,
-               "execution extension v3 export count offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3, class_bitstream) ==
+               "execution extension sampled count offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, exports) == 24,
+               "execution extension exports offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, export_count) == 32,
+               "execution extension export count offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, class_bitstream) ==
                    40,
-               "execution extension v3 class image offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v3,
+               "execution extension class image offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1,
                         class_bitstream_size) == 48,
-               "execution extension v3 class image size offset changed");
+               "execution extension class image size offset changed");
+_Static_assert(offsetof(obelisk_rt_execution_extension_v1, coverage_schema) ==
+                   56,
+               "execution extension coverage schema offset changed");
 _Static_assert(sizeof(obelisk_rt_class_bitstream_header_v1) == 128,
                "class bit-stream header size changed");
 _Static_assert(sizeof(obelisk_rt_class_bitstream_site_v1) == 40,
@@ -394,6 +389,36 @@ int obelisk_runtime_c_api_smoke(void) {
       obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
   svLogicVecVal logic[2] = {{0, 0}, {0, 0}};
   svLogicVecVal selected = {0, 0};
+
+  /* Keep every prototype in the C compilation surface even when this smoke
+     test does not have a meaningful schema with which to execute it. */
+  (void)&obelisk_rt_v1_coverage_finalize;
+  (void)&obelisk_rt_v1_coverage_point_hit;
+  (void)&obelisk_rt_v1_coverage_toggle_transition;
+  (void)&obelisk_rt_v1_coverage_toggle_bind;
+  (void)&obelisk_rt_v1_coverage_toggle_seal;
+  (void)&obelisk_rt_v1_coverage_reset;
+  (void)&obelisk_rt_v1_coverage_query;
+  (void)&obelisk_rt_v1_coverage_control_definition;
+  (void)&obelisk_rt_v1_coverage_control_instance;
+  (void)&obelisk_rt_v1_coverage_query_definition;
+  (void)&obelisk_rt_v1_coverage_query_instance;
+  (void)&obelisk_rt_v1_coverage_database_save;
+  (void)&obelisk_rt_v1_coverage_database_merge;
+  (void)&obelisk_rt_v1_coverage_load;
+  (void)&obelisk_rt_v1_coverage_save;
+  (void)&obelisk_rt_v1_coverage_snapshot;
+  (void)&obelisk_rt_v1_covergroup_create;
+  (void)&obelisk_rt_v1_covergroup_set_enabled;
+  (void)&obelisk_rt_v1_covergroup_set_name;
+  (void)&obelisk_rt_v1_covergroup_sample_enabled;
+  (void)&obelisk_rt_v1_covergroup_clock_event_register;
+  (void)&obelisk_rt_v1_covergroup_block_event_register;
+  (void)&obelisk_rt_v1_covergroup_block_event_fire;
+  (void)&obelisk_rt_v1_covergroup_formal_read;
+  (void)&obelisk_rt_v1_covergroup_sample;
+  (void)&obelisk_rt_v1_covergroup_instance_query;
+  (void)&obelisk_rt_v1_covergroup_type_query;
 
   if (OBELISK_RT_VERSION != 1u)
     return 1;

@@ -1120,6 +1120,63 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @empty_scope_definition {
+    // expected-error @+1 {{module definition name cannot be empty}}
+    obelisk_sim.scope.decl 0 definition ""
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @root_scope_definition {
+    // expected-error @+1 {{root scope cannot carry a module definition name}}
+    obelisk_sim.scope.decl 0 definition "top"
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @interface_scope_definition {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{only module scopes may carry a module definition name}}
+    obelisk_sim.scope.decl 1 parent 0 definition "I" vpi_kind 601
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @program_scope_definition {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{only module scopes may carry a module definition name}}
+    obelisk_sim.scope.decl 1 parent 0 definition "P" vpi_kind 602
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @zero_coverage_scope_id {
+    // expected-error @+1 {{coverage scope ID must be nonzero}}
+    obelisk_sim.scope.decl 0 coverage_id 0
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @duplicate_coverage_scope_id {
+    obelisk_sim.scope.decl 0 coverage_id 42
+    // expected-error @+1 {{duplicate coverage scope ID 42}}
+    obelisk_sim.scope.decl 1 parent 0 coverage_id 42
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @unknown_storage_scope {
     obelisk_sim.scope.decl 0
     // expected-error @+1 {{references an unknown scope ID}}
@@ -2135,7 +2192,7 @@ module {
     }
     obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %value = arith.constant 0 : i8
-      // expected-error @+1 {{dependencies must be storage, net, named-event, or managed-watch handles}}
+      // expected-error @+1 {{dependencies must be storage, argument-ref, net, named-event, or managed-watch handles}}
       %bound = obelisk_sim.observer.bind @evaluator values(%value : i8) captures 0 : !obelisk_sim.observer<i1>
       obelisk_sim.return
     }
@@ -2289,7 +2346,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %scalar = arith.constant 0 : i8
-      // expected-error @+1 {{captures must use storage, net, driver, named-event, or managed handles}}
+      // expected-error @+1 {{captures must use storage, net, driver, named-event, covergroup, or managed handles}}
       %bound = obelisk_sim.observer.bind @evaluator values(%scalar : i8) captures 1 : !obelisk_sim.observer<i1>
       obelisk_sim.return
     }

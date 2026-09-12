@@ -71,6 +71,7 @@ struct FrontendOptions {
   std::optional<uint32_t> errorLimit;
   std::optional<std::string> timeScale;
   std::optional<uint32_t> numThreads;
+  bool collectCoverageSourceFiles = false;
   std::shared_ptr<const ProtectedEnvelopeProvider> protectedEnvelopeProvider;
   uint32_t maxProtectedEnvelopeDepth = 64;
   uint64_t maxProtectedEnvelopeBytes = 64 * 1024 * 1024;

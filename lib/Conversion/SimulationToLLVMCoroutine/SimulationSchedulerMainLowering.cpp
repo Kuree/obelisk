@@ -2,13 +2,16 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 
 using namespace mlir;
 
@@ -76,11 +79,45 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                         outContext, 8);
   constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
   bool hasExecution = module.lookupSymbol(executionName) != nullptr;
+  bool hasCoverage = module->hasAttr(sim::metadata::coverageSchemaBlob);
+  // A functional schema is also required for covergroup methods used directly
+  // by the language.  Its presence therefore does not imply that the user
+  // requested persistent coverage output.  The preparation pipeline adds the
+  // metrics attribute for explicit --coverage selection and for coverage
+  // database system calls, which are the two opt-in persistence paths.
+  uint32_t coveragePersistenceMask = 0;
+  if (auto metrics =
+          module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics")) {
+    for (Attribute attribute : metrics) {
+      auto metric = dyn_cast<StringAttr>(attribute);
+      if (!metric)
+        continue;
+      coveragePersistenceMask |=
+          llvm::StringSwitch<uint32_t>(metric.getValue())
+              .Case("line", OBELISK_RT_COVERAGE_PERSIST_LINE)
+              .Case("toggle", OBELISK_RT_COVERAGE_PERSIST_TOGGLE)
+              .Case("functional", OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL)
+              .Default(0);
+    }
+  }
+  bool shouldDumpCoverage = hasCoverage && coveragePersistenceMask != 0;
   bool hasDesignBytecode = false;
   if (auto flags =
           module->getAttrOfType<IntegerAttr>("obelisk.execution.flags"))
     hasDesignBytecode = (flags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+  uint64_t linePointCount = 0;
+  uint64_t toggleBitCount = 0;
+  if (hasCoverage) {
+    if (auto count = module->getAttrOfType<IntegerAttr>(
+            sim::metadata::coverageLinePointCount))
+      linePointCount = count.getValue().getZExtValue();
+    if (auto count = module->getAttrOfType<IntegerAttr>(
+            sim::metadata::coverageToggleBitCount))
+      toggleBitCount = count.getValue().getZExtValue();
+  }
+  bool requiresNativeStateSync =
+      stateLayout.bitCount && (hasDesignBytecode || toggleBitCount != 0);
   if (hasExecution) {
     Value execution =
         LLVM::AddressOfOp::create(builder, location, pointer, executionName);
@@ -302,6 +339,156 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       }
     }
   }
+  if (requiresNativeStateSync) {
+    Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                 "__obelisk_state_value");
+    Value stateUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                   "__obelisk_state_unknown");
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_sync"),
+            ValueRange{
+                runtimeContext, stateValue, stateUnknown,
+                llvmConstant(builder, location, i64, stateLayout.bitCount)})
+            .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, status});
+  }
+  if (hasCoverage) {
+    struct ToggleBinding {
+      uint64_t firstBit;
+      uint64_t bitCount;
+      uint64_t stateHandle;
+    };
+    SmallVector<ToggleBinding> toggleBindings;
+    auto collectToggleBindings = [&](Operation *operation, uint64_t id,
+                                     const auto &handles) -> LogicalResult {
+      auto values = operation->getAttrOfType<ArrayAttr>(
+          sim::metadata::coverageToggleBindings);
+      if (!values)
+        return success();
+      auto handle = handles.find(id);
+      if (handle == handles.end())
+        return operation->emitError(
+            "covered declaration has no native state handle");
+      for (Attribute value : values) {
+        auto binding = dyn_cast<DictionaryAttr>(value);
+        auto first = binding ? binding.getAs<IntegerAttr>("base") : nullptr;
+        auto low = binding ? binding.getAs<IntegerAttr>("low") : nullptr;
+        auto width = binding ? binding.getAs<IntegerAttr>("width") : nullptr;
+        if (!first || !low || !width || first.getValue().isNegative() ||
+            low.getValue().isNegative() || width.getValue().isNegative() ||
+            first.getValue().getActiveBits() > 64 ||
+            low.getValue().getActiveBits() > 63 ||
+            width.getValue().getActiveBits() > 64 || width.getValue().isZero())
+          return operation->emitError("has invalid toggle coverage binding");
+        uint64_t firstBit = first.getValue().getZExtValue();
+        uint64_t bitCount = width.getValue().getZExtValue();
+        if (firstBit > toggleBitCount || bitCount > toggleBitCount - firstBit)
+          return operation->emitError(
+              "toggle coverage binding exceeds the prepared inventory");
+        uint64_t stateHandle = obelisk_rt_stable_handle_offset(
+            handle->second, low.getValue().getSExtValue());
+        if (stateHandle == UINT64_MAX)
+          return operation->emitError(
+              "toggle coverage binding cannot be represented by a stable "
+              "state handle");
+        toggleBindings.push_back({firstBit, bitCount, stateHandle});
+      }
+      return success();
+    };
+    WalkResult collected = module.walk([&](Operation *operation) -> WalkResult {
+      LogicalResult result = success();
+      if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation))
+        result = collectToggleBindings(operation, storage.getId(),
+                                       stateLayout.storage);
+      else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
+        result =
+            collectToggleBindings(operation, net.getId(), stateLayout.nets);
+      return mlir::failed(result) ? WalkResult::interrupt()
+                                  : WalkResult::advance();
+    });
+    if (collected.wasInterrupted())
+      return failure();
+    llvm::sort(toggleBindings,
+               [](const ToggleBinding &lhs, const ToggleBinding &rhs) {
+                 return lhs.firstBit < rhs.firstBit;
+               });
+    Value null = LLVM::ZeroOp::create(builder, location, pointer);
+    Value initialValue = null;
+    Value initialUnknown = null;
+    if (toggleBitCount) {
+      auto valueBytes = module->getAttrOfType<DenseI8ArrayAttr>(
+          sim::metadata::coverageToggleInitialValue);
+      auto unknownBytes = module->getAttrOfType<DenseI8ArrayAttr>(
+          sim::metadata::coverageToggleInitialUnknown);
+      const uint64_t expectedBytes = (toggleBitCount + 7) / 8;
+      if (!valueBytes || !unknownBytes ||
+          static_cast<uint64_t>(valueBytes.size()) != expectedBytes ||
+          static_cast<uint64_t>(unknownBytes.size()) != expectedBytes)
+        return module.emitError(
+            "toggle coverage inventory has invalid initial shadow planes");
+      auto asString = [](DenseI8ArrayAttr bytes) {
+        ArrayRef<int8_t> data = bytes.asArrayRef();
+        return StringRef(reinterpret_cast<const char *>(data.data()),
+                         data.size());
+      };
+      LLVM::GlobalOp valueGlobal = makeByteArrayGlobal(
+          module, location, "__obelisk_coverage_initial_value_v1",
+          asString(valueBytes));
+      LLVM::GlobalOp unknownGlobal = makeByteArrayGlobal(
+          module, location, "__obelisk_coverage_initial_unknown_v1",
+          asString(unknownBytes));
+      initialValue = LLVM::AddressOfOp::create(builder, location, pointer,
+                                               valueGlobal.getSymName());
+      initialUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                 unknownGlobal.getSymName());
+    }
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_finalize"),
+            ValueRange{runtimeContext,
+                       llvmConstant(builder, location, i64, linePointCount),
+                       llvmConstant(builder, location, i64, toggleBitCount),
+                       initialValue, initialUnknown,
+                       llvmConstant(builder, location, i32,
+                                    coveragePersistenceMask)})
+            .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, status});
+    for (const ToggleBinding &binding : toggleBindings) {
+      Value bindStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_toggle_bind"),
+              ValueRange{
+                  runtimeContext,
+                  llvmConstant(builder, location, i64, binding.firstBit),
+                  llvmConstant(builder, location, i64, binding.bitCount),
+                  llvmConstant(builder, location, i64, binding.stateHandle)})
+              .getResult();
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          ValueRange{runtimeContext, bindStatus});
+    }
+    Value sealStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_toggle_seal"),
+            ValueRange{runtimeContext})
+            .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, sealStatus});
+  }
   if (useAOT) {
     Value plan = LLVM::AddressOfOp::create(builder, location, pointer,
                                            "__obelisk_aot_schedule_plan_v1");
@@ -334,17 +521,37 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   LLVM::StoreOp::create(
       builder, location, finalTime.getResult(),
       LLVM::AddressOfOp::create(builder, location, pointer, kFinalTimeName));
-  // Nothing after this point can report: the context holding the diagnostic is
-  // destroyed on the next line and the process exits with the status.
+  // Report the simulation result before snapshot I/O can replace the
+  // thread-local diagnostic.  If both fail, the simulation remains the exit
+  // status and each failure is described by the operation that produced it.
   LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_report_status"),
       ValueRange{runtimeContext, run.getResult()});
+  Value finalStatus = run.getResult();
+  Value coverageStatus;
+  if (shouldDumpCoverage) {
+    coverageStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_snapshot"),
+            ValueRange{runtimeContext, run.getResult(), finalTime.getResult()})
+            .getResult();
+    Value runSucceeded = LLVM::ICmpOp::create(
+        builder, location, LLVM::ICmpPredicate::eq, run.getResult(),
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    finalStatus = LLVM::SelectOp::create(builder, location, runSucceeded,
+                                         coverageStatus, run.getResult());
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_report_status"),
+        ValueRange{runtimeContext, coverageStatus});
+  }
   LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
       runtimeContext);
-  LLVM::ReturnOp::create(builder, location, run.getResult());
+  LLVM::ReturnOp::create(builder, location, finalStatus);
 
   // Storage for the captured time, plus the two accessors a host calls after
   // main has returned. The precision is a compile-time constant, but it has to
@@ -385,6 +592,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            {pointer, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_register_static",
                            i32, {pointer, i32, i64, i64});
+  if (requiresNativeStateSync)
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_sync", i32,
+                             {pointer, pointer, pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,
@@ -406,6 +616,17 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_report_status",
                            voidType, {pointer, i32});
+  if (hasCoverage) {
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_finalize", i32,
+                             {pointer, i64, i64, pointer, pointer, i32});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_bind", i32,
+                             {pointer, i64, i64, i64});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_seal", i32,
+                             {pointer});
+  }
+  if (shouldDumpCoverage)
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_snapshot", i32,
+                             {pointer, i32, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_install_aot", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot", i32,

@@ -44,6 +44,7 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -73,6 +74,100 @@ static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
   WithColor::error(errs(), "obelisk") << message << '\n';
+}
+
+static bool validateCoverageConfiguration(StringRef path,
+                                          std::string &contents) {
+  auto buffer = MemoryBuffer::getFile(path);
+  if (!buffer) {
+    emitDriverError(Twine("cannot read coverage configuration '") + path +
+                    "': " + buffer.getError().message());
+    return false;
+  }
+  contents = (*buffer)->getBuffer().str();
+  Expected<json::Value> parsed = json::parse(contents);
+  if (!parsed) {
+    emitDriverError(Twine("invalid coverage configuration '") + path +
+                    "': " + toString(parsed.takeError()));
+    return false;
+  }
+  json::Object *root = parsed->getAsObject();
+  if (!root) {
+    emitDriverError("coverage configuration root must be an object");
+    return false;
+  }
+  for (const auto &field : *root)
+    if (field.first != "include" && field.first != "exclude") {
+      emitDriverError(Twine("unknown coverage configuration field '") +
+                      field.first.str() + "'");
+      return false;
+    }
+  for (StringRef group : {"include", "exclude"}) {
+    const json::Value *records = root->get(group);
+    if (!records)
+      continue;
+    const json::Array *array = records->getAsArray();
+    if (!array) {
+      emitDriverError(Twine("coverage '") + group + "' must be an array");
+      return false;
+    }
+    for (const json::Value &entry : *array) {
+      const json::Object *record = entry.getAsObject();
+      if (!record) {
+        emitDriverError(Twine("coverage '") + group +
+                        "' entries must be objects");
+        return false;
+      }
+      for (const auto &field : *record)
+        if (field.first != "metrics" && field.first != "file" &&
+            field.first != "hierarchy" && field.first != "reason") {
+          emitDriverError(Twine("unknown coverage rule field '") +
+                          field.first.str() + "'");
+          return false;
+        }
+      if (const json::Value *metrics = record->get("metrics")) {
+        const json::Array *list = metrics->getAsArray();
+        if (!list || list->empty()) {
+          emitDriverError("coverage rule metrics must be a nonempty array");
+          return false;
+        }
+        llvm::StringSet<> seen;
+        for (const json::Value &metricValue : *list) {
+          std::optional<StringRef> metric = metricValue.getAsString();
+          if (!metric ||
+              (*metric != "line" && *metric != "toggle" &&
+               *metric != "functional") ||
+              !seen.insert(*metric).second) {
+            emitDriverError(
+                "coverage rule metrics must contain unique line, toggle, or "
+                "functional names");
+            return false;
+          }
+        }
+      }
+      for (StringRef selector : {"file", "hierarchy", "reason"})
+        if (const json::Value *value = record->get(selector))
+          if (!value->getAsString()) {
+            emitDriverError(Twine("coverage rule '") + selector +
+                            "' must be a string");
+            return false;
+          }
+      if (group == "include" && record->get("reason")) {
+        emitDriverError("coverage include rules cannot carry a reason");
+        return false;
+      }
+      if (auto file = record->getString("file"); file && file->contains('\\')) {
+        emitDriverError("coverage file globs must use '/' separators");
+        return false;
+      }
+      if (auto hierarchy = record->getString("hierarchy");
+          hierarchy && hierarchy->contains('/')) {
+        emitDriverError("coverage hierarchy globs must use '.' separators");
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 static std::string resolveSVLibraryPath(StringRef root, StringRef path,
@@ -956,6 +1051,10 @@ static int executeCompilation(
     emitDriverError("--compile-threads must be greater than zero");
     valid = false;
   }
+  std::string coverageConfigContents;
+  if (StringRef path = args.getLastArgValue(OPT_coverage_config_EQ);
+      !path.empty())
+    valid &= validateCoverageConfiguration(path, coverageConfigContents);
 #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
   if (compilerThreads && *compilerThreads != 1) {
     emitDriverError(
@@ -1008,6 +1107,35 @@ static int executeCompilation(
                     staticSpecialization + "'; expected auto, off, or on");
     valid = false;
   }
+  if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
+    if (coverage->getOption().matches(OPT_coverage_EQ)) {
+      SmallVector<StringRef> metrics;
+      StringRef(coverage->getValue())
+          .split(metrics, ',', -1,
+                 /*KeepEmpty=*/true);
+      llvm::StringSet<> seen;
+      for (StringRef metric : metrics) {
+        if ((metric != "line" && metric != "toggle" &&
+             metric != "functional") ||
+            !seen.insert(metric).second) {
+          emitDriverError(Twine("invalid --coverage metric list '") +
+                          coverage->getValue() +
+                          "'; expected unique line,toggle,functional names");
+          valid = false;
+          break;
+        }
+      }
+    }
+  }
+  (void)args.getLastArgValue(OPT_coverage_config_EQ);
+  for (StringRef mapping : args.getAllArgValues(OPT_coverage_prefix_map_EQ)) {
+    size_t equal = mapping.find('=');
+    if (equal == StringRef::npos || equal == 0) {
+      emitDriverError(Twine("invalid --coverage-prefix-map '") + mapping +
+                      "'; expected <from>=<to>");
+      valid = false;
+    }
+  }
   std::optional<uint32_t> pulseRejectPercent;
   std::optional<uint32_t> pulseErrorPercent;
   valid &= parseUnsignedOption(args, OPT_pulse_reject_percent_EQ,
@@ -1048,6 +1176,8 @@ static int executeCompilation(
   uint32_t resolvedCompilerThreads = compilerThreads.value_or(
       std::max(1u, llvm::hardware_concurrency().compute_thread_count()));
   frontendOptions.numThreads = resolvedCompilerThreads;
+  frontendOptions.collectCoverageSourceFiles =
+      args.hasArg(OPT_coverage, OPT_coverage_EQ);
 
   const Arg *action = args.getLastArg(
       OPT_E, OPT_emit_slang, OPT_emit_bindings, OPT_emit_obelisk, OPT_emit_sim,
@@ -1196,6 +1326,29 @@ static int executeCompilation(
     (*module)->setAttr(
         "obelisk.pulse_show_cancelled",
         BoolAttr::get(&context, globalCancelledPulses == "show"));
+  if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
+    SmallVector<Attribute> metrics;
+    if (coverage->getOption().matches(OPT_coverage)) {
+      for (StringRef metric : {"line", "toggle", "functional"})
+        metrics.push_back(StringAttr::get(&context, metric));
+    } else {
+      SmallVector<StringRef> selected;
+      StringRef(coverage->getValue()).split(selected, ',');
+      for (StringRef metric : selected)
+        metrics.push_back(StringAttr::get(&context, metric));
+    }
+    (*module)->setAttr("obelisk.coverage.metrics",
+                       ArrayAttr::get(&context, metrics));
+  }
+  if (!coverageConfigContents.empty())
+    (*module)->setAttr("obelisk.coverage.config",
+                       StringAttr::get(&context, coverageConfigContents));
+  SmallVector<Attribute> prefixMaps;
+  for (StringRef mapping : args.getAllArgValues(OPT_coverage_prefix_map_EQ))
+    prefixMaps.push_back(StringAttr::get(&context, mapping));
+  if (!prefixMaps.empty())
+    (*module)->setAttr("obelisk.coverage.prefix_maps",
+                       ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
     obelisk::sim::NativeSchedulerMode pipelineScheduler =

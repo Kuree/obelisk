@@ -231,6 +231,7 @@ mlir::Value managedObjectPointer(mlir::OpBuilder &builder,
                                  mlir::Location location, mlir::Value handle);
 mlir::Value managedObjectHandle(mlir::OpBuilder &builder,
                                 mlir::Location location, mlir::Value object);
+mlir::Value managedContext(mlir::OpBuilder &builder, mlir::Location location);
 std::pair<mlir::Value, mlir::Value>
 managedContextAndLane(mlir::OpBuilder &builder, mlir::Location location);
 mlir::Value makeNativeAssocKey(mlir::OpBuilder &builder,
@@ -295,7 +296,8 @@ void populateManagedContainerToLLVMConversionPatterns(
 void populateManagedAssociativeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedCoverageToLLVMConversionPatterns(
-    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const llvm::DataLayout &dataLayout);
 void populateManagedReferenceToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount);
@@ -385,6 +387,12 @@ mlir::Operation::operand_range
 getConvertedObserverCaptures(mlir::Operation *binding);
 mlir::Operation::operand_range
 getConvertedObserverDependencies(mlir::Operation *binding);
+mlir::LogicalResult serializeComputedObserverRecord(
+    mlir::Operation *operation, llvm::ArrayRef<mlir::Operation *> bindings,
+    llvm::ArrayRef<mlir::ValueRange> initialPlanes,
+    llvm::ArrayRef<int32_t> edges, llvm::ArrayRef<int32_t> conditionIndices,
+    mlir::Value wait, uint64_t waitSize, mlir::OpBuilder &builder,
+    mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 mlir::LogicalResult serializeComputedObserverWait(
     mlir::Operation *operation, mlir::Value wait, uint64_t waitSize,
     mlir::OpBuilder &builder,

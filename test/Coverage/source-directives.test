@@ -1,0 +1,74 @@
+# RUN: %split-file %s %t
+# RUN: obelisk -fno-lto -O0 --coverage=line -I%t %t/top.sv -o %t/sim
+# RUN: %t/sim --coverage-output=%t/coverage.obcov
+# RUN: obelisk-cov report --format=text %t/coverage.obcov | \
+# RUN:   FileCheck %s --check-prefix=REPORT
+# RUN: obelisk-cov report --format=lcov %t/coverage.obcov -o %t/coverage.lcov
+# RUN: FileCheck %s --check-prefix=CONTROL < %t/coverage.lcov
+# RUN: not obelisk --coverage=toggle -emit-sim %t/unbalanced.sv \
+# RUN:   -o %t/unbalanced.mlir 2>&1 | FileCheck %s --check-prefix=UNBALANCED
+# RUN: not obelisk -fno-lto -O0 --coverage=line %t/unknown.sv \
+# RUN:   -o %t/unknown 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+# REPORT: line:
+# REPORT-DAG: outer generated region
+# REPORT-DAG: outer generated region
+# REPORT-DAG: nested generated region
+# REPORT-DAG: macro definition region
+# REPORT-DAG: macro expansion region
+# REPORT-DAG: nested control body
+
+# CONTROL: DA:13,1
+# CONTROL-NOT: DA:15,
+
+# UNBALANCED: unbalanced coverage 'off' directive
+# UNKNOWN: metrics must be unique line, toggle, or functional names
+
+#--- defs.svh
+// obelisk coverage off line reason="macro definition region"
+`define FROM_DISABLED_DEFINITION value = value + 1;
+// obelisk coverage on line
+
+`define FROM_ENABLED_DEFINITION value = value + 1;
+
+#--- top.sv
+`include "defs.svh"
+module top;
+  integer value;
+  initial begin
+    // obelisk coverage off line reason="outer generated region"
+    value = 1;
+    // obelisk coverage off line reason="nested generated region"
+    value = 2;
+    // obelisk coverage on line
+    value = 3;
+    // obelisk coverage on line
+    value = 4;
+    if (value) begin
+      // obelisk coverage off line reason="nested control body"
+      value = 5;
+      // obelisk coverage on line
+    end
+    `FROM_DISABLED_DEFINITION
+    // obelisk coverage off line reason="macro expansion region"
+    `FROM_ENABLED_DEFINITION
+    // obelisk coverage on line
+    $finish;
+  end
+endmodule
+
+#--- unbalanced.sv
+module unbalanced;
+  // No executable line candidates: directive validation is source-level.
+endmodule
+// obelisk coverage off line
+
+#--- unknown.sv
+module unknown;
+  integer value;
+  initial begin
+    // obelisk coverage off branch
+    value = 1;
+    // obelisk coverage on branch
+  end
+endmodule

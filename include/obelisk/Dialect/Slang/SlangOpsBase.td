@@ -12,6 +12,26 @@ include "mlir/IR/SymbolInterfaces.td"
 def SlangSemanticASTNode : NativeOpTrait<"SemanticASTNode">;
 def SlangSemanticDeclarativeNode
     : NativeOpTrait<"SemanticDeclarativeNode">;
+def SlangSemanticExpressionNode
+    : NativeOpTrait<"SemanticExpressionNode">;
+def SlangSemanticTimingNode : NativeOpTrait<"SemanticTimingNode">;
+def SlangSemanticReferenceRootNode
+    : NativeOpTrait<"SemanticReferenceRootNode">;
+def SlangPatternVariableNode : NativeOpTrait<"PatternVariableNode">;
+def SlangTaggedPatternNode : NativeOpTrait<"TaggedPatternNode">;
+def SlangPatternBindingNode : NativeOpTrait<"PatternBindingNode">;
+def SlangAggregateFieldNode : NativeOpTrait<"AggregateFieldNode">;
+def SlangFormalArgumentNode : NativeOpTrait<"FormalArgumentNode">;
+def SlangCoverageGroupNode : NativeOpTrait<"CoverageGroupNode">;
+def SlangCoveragePointNode : NativeOpTrait<"CoveragePointNode">;
+def SlangCoverageCrossNode : NativeOpTrait<"CoverageCrossNode">;
+def SlangCoverageBinNode : NativeOpTrait<"CoverageBinNode">;
+def SlangCoverageBlockEventNode
+    : NativeOpTrait<"CoverageBlockEventNode">;
+def SlangCoverageClockingEventNode
+    : NativeOpTrait<"CoverageClockingEventNode">;
+def SlangCoverageOptionNode : NativeOpTrait<"CoverageOptionNode">;
+def SlangCoverageSelectorNode : NativeOpTrait<"CoverageSelectorNode">;
 def RejectInvalidSemanticNode : NativeOpTrait<"RejectInvalidSemanticNode">;
 def SlangVerifySemanticReferenceGraph
     : NativeOpTrait<"VerifySemanticReferenceGraph">;
@@ -27,6 +47,32 @@ def SlangVerifyCheckerInstanceMetadata
     : NativeOpTrait<"VerifyCheckerInstanceMetadata">;
 def SlangVerifyProceduralCheckerMetadata
     : NativeOpTrait<"VerifyProceduralCheckerMetadata">;
+def SlangVerifyCovergroupTypeMetadata
+    : NativeOpTrait<"VerifyCovergroupTypeMetadata">;
+def SlangVerifyCoverageOptionContainerMetadata
+    : NativeOpTrait<"VerifyCoverageOptionContainerMetadata">;
+def SlangVerifyCoverpointMetadata
+    : NativeOpTrait<"VerifyCoverpointMetadata">;
+def SlangVerifyCoverCrossMetadata
+    : NativeOpTrait<"VerifyCoverCrossMetadata">;
+def SlangVerifyCoverageOptionMetadata
+    : NativeOpTrait<"VerifyCoverageOptionMetadata">;
+def SlangVerifyCoverageBinMetadata
+    : NativeOpTrait<"VerifyCoverageBinMetadata">;
+def SlangVerifyCoverageBlockEventMetadata
+    : NativeOpTrait<"VerifyCoverageBlockEventMetadata">;
+def SlangVerifyCoverageConditionSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageConditionSelectorMetadata">;
+def SlangVerifyCoverageUnarySelectorMetadata
+    : NativeOpTrait<"VerifyCoverageUnarySelectorMetadata">;
+def SlangVerifyCoverageBinarySelectorMetadata
+    : NativeOpTrait<"VerifyCoverageBinarySelectorMetadata">;
+def SlangVerifyCoverageSetSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageSetSelectorMetadata">;
+def SlangVerifyCoverageWithSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageWithSelectorMetadata">;
+def SlangVerifyCoverageCrossIdSelectorMetadata
+    : NativeOpTrait<"VerifyCoverageCrossIdSelectorMetadata">;
 
 // Only provenance is common to every semantic node. Category and kind data is
 // declared by the narrower schemas below so malformed operations are rejected
@@ -78,7 +124,8 @@ class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
 
 class SlangRootASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic,
-        [SymbolTable, IsolatedFromAbove, SlangVerifySemanticReferenceGraph]>;
+        [SymbolTable, IsolatedFromAbove, SlangSemanticReferenceRootNode,
+         SlangVerifySemanticReferenceGraph]>;
 
 class SlangConstantSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins StrAttr:$constant_value)>;
@@ -169,8 +216,9 @@ class SlangMethodPrototypeASTNodeOp<string mnemonic>
       ), [SlangSemanticDeclarativeNode]>;
 
 class SlangVariableSymbolASTNodeOp<string mnemonic,
-                                   dag variableArgs = (ins)>
-    : SlangSymbolASTNodeOp<mnemonic, [], !con((ins
+                                   dag variableArgs = (ins),
+                                   list<Trait> traits = []>
+    : SlangSymbolASTNodeOp<mnemonic, traits, !con((ins
         DefaultValuedAttr<SlangVariableLifetime,
           "::obelisk::slangir::VariableLifetime::Automatic">:$lifetime,
         DefaultValuedAttr<SlangRandMode,
@@ -193,7 +241,7 @@ class SlangFormalArgumentASTNodeOp<string mnemonic>
         SlangArgumentDirection:$direction,
         OptionalAttr<SymbolRefAttr>:$merged_variable_symbol,
         OptionalAttr<StrAttr>:$merged_variable_path
-      )>;
+      ), [SlangFormalArgumentNode]>;
 
 class SlangIteratorASTNodeOp<string mnemonic>
     : SlangVariableSymbolASTNodeOp<mnemonic, (ins
@@ -281,7 +329,11 @@ class SlangFieldASTNodeOp<string mnemonic>
     : SlangVariableSymbolASTNodeOp<mnemonic, (ins
         I64Attr:$bit_offset,
         I64Attr:$field_index
-      )>;
+      ), [SlangAggregateFieldNode]>;
+
+class SlangPatternVarASTNodeOp<string mnemonic>
+    : SlangVariableSymbolASTNodeOp<mnemonic, (ins),
+        [SlangPatternBindingNode]>;
 
 class SlangConstraintBlockASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
@@ -442,21 +494,48 @@ class SlangCovergroupTypeASTNodeOp<string mnemonic>
     : SlangScopeTypeASTNodeOp<mnemonic,
         (ins OptionalAttr<TypeAttr>:$base_group,
              I64Attr:$constructor_argument_count,
+             SymbolRefArrayAttr:$constructor_formals,
              I64Attr:$sample_formal_count,
+             SymbolRefArrayAttr:$sample_formals,
+             SlangCoverageEventKind:$coverage_event_kind,
              BoolAttr:$has_coverage_event),
-        [SlangSemanticDeclarativeNode]>;
+        [SlangSemanticDeclarativeNode, SlangCoverageGroupNode,
+         SlangVerifyCovergroupTypeMetadata]>;
 
 class SlangCovergroupBodyASTNodeOp<string mnemonic>
-    : SlangSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count)>;
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins I64Attr:$option_count),
+        [SlangVerifyCoverageOptionContainerMetadata]>;
 
 class SlangCoverpointASTNodeOp<string mnemonic>
     : SlangSymbolTableASTNodeOp<mnemonic, (ins
         BoolAttr:$has_iff,
-        I64Attr:$option_count
-      )>;
+        DefaultValuedAttr<BoolAttr, "false">:$has_explicit_type,
+        I64Attr:$option_count,
+        SlangCoverageExpressionRoleArrayAttr:$expression_roles
+      ), [SlangCoveragePointNode, SlangVerifyCoverpointMetadata]>;
+
+class SlangCoverCrossASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic, (ins
+        I64Attr:$target_count,
+        SymbolRefArrayAttr:$target_symbols,
+        BoolAttr:$has_iff,
+        I64Attr:$option_count,
+        SlangCoverageExpressionRoleArrayAttr:$expression_roles
+      ), [SlangCoverageCrossNode, SlangVerifyCoverCrossMetadata]>;
+
+def CoverageOptionOp : SlangASTNodeOp<"coverage.option",
+    [SlangSemanticDeclarativeNode, SlangCoverageOptionNode,
+     SlangVerifyCoverageOptionMetadata], (ins
+      SlangCoverageOptionOwnerKind:$owner_kind,
+      SlangCoverageOptionScopeKind:$scope_kind,
+      SlangCoverageOptionKind:$option_kind,
+      SymbolRefAttr:$owner_symbol
+    )>;
 
 class SlangCoverageBinASTNodeOp<string mnemonic>
-    : SlangSymbolASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode], (ins
+    : SlangSymbolASTNodeOp<mnemonic,
+        [SlangSemanticDeclarativeNode, SlangCoverageBinNode,
+         SlangVerifyCoverageBinMetadata], (ins
         SlangCoverageBinKind:$bins_kind,
         BoolAttr:$is_array,
         BoolAttr:$is_wildcard,
@@ -467,12 +546,19 @@ class SlangCoverageBinASTNodeOp<string mnemonic>
         BoolAttr:$has_set_coverage,
         BoolAttr:$has_with,
         I64Attr:$value_count,
-        I64Attr:$transition_set_count
+        I64Attr:$transition_set_count,
+        DenseI64ArrayAttr:$child_roles,
+        DenseI64ArrayAttr:$transition_set_range_counts,
+        DenseI64ArrayAttr:$transition_range_item_counts,
+        DenseI64ArrayAttr:$transition_range_repeat_kinds,
+        DenseI64ArrayAttr:$transition_range_has_repeat_from,
+        DenseI64ArrayAttr:$transition_range_has_repeat_to
       )>;
 
 class SlangExpressionASTNodeOp<string mnemonic, dag expressionArgs = (ins),
                                list<Trait> traits = []>
-    : SlangASTNodeOp<mnemonic, traits,
+    : SlangASTNodeOp<mnemonic,
+        !listconcat([SlangSemanticExpressionNode], traits),
         !con((ins TypeAttr:$semantic_type), expressionArgs)>;
 
 class SlangAssertionInstanceExpressionASTNodeOp<string mnemonic>
@@ -571,7 +657,10 @@ class SlangNewClassExpressionASTNodeOp<string mnemonic>
       )>;
 
 class SlangNewCovergroupExpressionASTNodeOp<string mnemonic>
-    : SlangExpressionASTNodeOp<mnemonic, (ins I64Attr:$argument_count)>;
+    : SlangExpressionASTNodeOp<mnemonic, (ins
+        I64Attr:$argument_count,
+        OptionalAttr<DenseI64ArrayAttr>:$defaulted_arguments
+      )>;
 
 class SlangUnaryExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic,
@@ -744,22 +833,65 @@ class SlangProceduralAssignStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$is_force)>;
 class SlangProceduralDeassignStatementASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [], (ins BoolAttr:$is_release)>;
-class SlangTimingASTNodeOp<string mnemonic> : SlangASTNodeOp<mnemonic>;
+class SlangTimingASTNodeOp<string mnemonic>
+    : SlangASTNodeOp<mnemonic, [SlangSemanticTimingNode]>;
 
 class SlangDelay3TimingASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins I64Attr:$delay_count)>;
+    : SlangASTNodeOp<mnemonic, [SlangSemanticTimingNode],
+        (ins I64Attr:$delay_count)>;
 
 class SlangSignalEventTimingASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins
+    : SlangASTNodeOp<mnemonic,
+        [SlangSemanticTimingNode, SlangCoverageClockingEventNode], (ins
         SlangEdgeKind:$edge_kind,
         BoolAttr:$has_iff
       )>;
 
 class SlangEventListTimingASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins I64Attr:$event_count)>;
+    : SlangASTNodeOp<mnemonic,
+        [SlangSemanticTimingNode, SlangCoverageClockingEventNode],
+        (ins I64Attr:$event_count)>;
 
 class SlangBlockEventListTimingASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins ArrayAttr:$event_is_begin)>;
+    : SlangASTNodeOp<mnemonic,
+        [SlangSemanticTimingNode, SlangCoverageBlockEventNode,
+         SlangVerifyCoverageBlockEventMetadata],
+        (ins SlangCoverageBlockEventKindArrayAttr:$event_kinds)>;
+
+class SlangCoverageSelectASTNodeOp<string mnemonic, dag selectArgs = (ins),
+                                    list<Trait> traits = []>
+    : SlangASTNodeOp<mnemonic,
+        !listconcat([SlangSemanticDeclarativeNode, SlangCoverageSelectorNode],
+                    traits),
+        !con((ins SymbolRefAttr:$enclosing_cross_symbol), selectArgs)>;
+
+class SlangCoverageSelectConditionASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic, (ins
+        SymbolRefAttr:$target_symbol,
+        I64Attr:$intersect_count
+      ), [SlangVerifyCoverageConditionSelectorMetadata]>;
+
+class SlangCoverageSelectUnaryASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic,
+        (ins SlangCoverageSelectUnaryOperator:$operator_kind),
+        [SlangVerifyCoverageUnarySelectorMetadata]>;
+
+class SlangCoverageSelectBinaryASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic,
+        (ins SlangCoverageSelectBinaryOperator:$operator_kind),
+        [SlangVerifyCoverageBinarySelectorMetadata]>;
+
+class SlangCoverageSelectSetExprASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic, (ins BoolAttr:$has_matches),
+        [SlangVerifyCoverageSetSelectorMetadata]>;
+
+class SlangCoverageSelectWithASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic, (ins BoolAttr:$has_matches),
+        [SlangVerifyCoverageWithSelectorMetadata]>;
+
+class SlangCoverageSelectCrossIdASTNodeOp<string mnemonic>
+    : SlangCoverageSelectASTNodeOp<mnemonic, (ins),
+        [SlangVerifyCoverageCrossIdSelectorMetadata]>;
 class SlangConstraintASTNodeOp<string mnemonic>
     : SlangASTNodeOp<mnemonic, [SlangSemanticDeclarativeNode]>;
 
@@ -853,8 +985,9 @@ class SlangCaseAssertionASTNodeOp<string mnemonic>
 class SlangPatternASTNodeOp<string mnemonic, dag patternArgs = (ins)>
     : SlangASTNodeOp<mnemonic, [], patternArgs>;
 
-class SlangReferencePatternASTNodeOp<string mnemonic>
-    : SlangASTNodeOp<mnemonic, [], (ins
+class SlangReferencePatternASTNodeOp<string mnemonic,
+                                     list<Trait> traits = []>
+    : SlangASTNodeOp<mnemonic, traits, (ins
         SymbolRefAttr:$referenced_symbol,
         StrAttr:$referenced_path,
         OptionalAttr<I64Attr>:$field_ordinal,
@@ -862,6 +995,14 @@ class SlangReferencePatternASTNodeOp<string mnemonic>
       )> {
   let hasVerifier = 1;
 }
+
+class SlangVariablePatternASTNodeOp<string mnemonic>
+    : SlangReferencePatternASTNodeOp<mnemonic,
+        [SlangPatternVariableNode]>;
+
+class SlangTaggedPatternASTNodeOp<string mnemonic>
+    : SlangReferencePatternASTNodeOp<mnemonic,
+        [SlangTaggedPatternNode]>;
 
 class SlangStructurePatternASTNodeOp<string mnemonic>
     : SlangPatternASTNodeOp<mnemonic,

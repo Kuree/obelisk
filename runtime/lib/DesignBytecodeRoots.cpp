@@ -131,6 +131,46 @@ void obelisk_rt_enumerate_design_managed_roots(
             visit(visitorEnvironment, &root);
       }
     }
+    if (context->coverage) {
+      for (auto &[handle, instance] : context->coverage->instances) {
+        (void)handle;
+        for (FunctionalCoverageValue &formal : instance.formals)
+          if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+              formal.argumentRefKind != 0 && formal.owner)
+            visit(visitorEnvironment, &formal.owner);
+      }
+      if (context->coverage->blockEvents)
+        for (auto &[id, registration] :
+             context->coverage->blockEvents->registrations) {
+          (void)id;
+          if (!registration)
+            continue;
+          if (registration->receiver)
+            visit(visitorEnvironment, &registration->receiver);
+          const obelisk_rt_observer_descriptor_v1 *descriptor =
+              obelisk::process::findObserverDescriptor(
+                  registration->execution, registration->observerCodeUnitID);
+          if (!descriptor ||
+              descriptor->capture_count != registration->captures.size())
+            continue;
+          for (uint32_t index = 0; index != descriptor->capture_count;
+               ++index) {
+            uint32_t kind = descriptor->capture_abi[index].kind;
+            obelisk_rt_computed_capture_v1 &capture =
+                registration->captures[index];
+            if (kind != OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
+                !(kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+                  capture.payload1 != 0))
+              continue;
+            obelisk_rt_object_v1 *object =
+                obelisk_rt_object_from_managed_word(capture.stable_id);
+            if (!object)
+              continue;
+            visit(visitorEnvironment, &object);
+            capture.stable_id = obelisk_rt_managed_word_from_object(object);
+          }
+        }
+    }
     for (obelisk_rt_process_instance_v1 *instance :
          context->managedRootProcesses) {
       if (!instance || !instance->descriptor ||
@@ -202,11 +242,13 @@ void obelisk_rt_enumerate_design_managed_roots(
           continue;
         for (uint32_t captureIndex = 0; captureIndex != observer.capture_count;
              ++captureIndex) {
-          if (descriptor->capture_abi[captureIndex].kind !=
-              OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
+          uint32_t kind = descriptor->capture_abi[captureIndex].kind;
+          const auto &capture = captures[observer.capture_begin + captureIndex];
+          if (kind != OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
+              !(kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+                (capture.payload1 == 1 || capture.payload1 == 2)))
             continue;
-          obelisk_rt_managed_word_v1 word =
-              captures[observer.capture_begin + captureIndex].stable_id;
+          obelisk_rt_managed_word_v1 word = capture.stable_id;
           obelisk_rt_object_v1 *object =
               obelisk_rt_object_from_managed_word(word);
           if (obelisk_rt_managed_word_from_object(object) != word)

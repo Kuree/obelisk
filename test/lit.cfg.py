@@ -34,6 +34,9 @@ config.substitutions.append(
     ("%host-c-runtime-test", config.obelisk_host_c_runtime_test_executable)
 )
 config.substitutions.append(
+    ("%coverage-fixture", config.obelisk_coverage_fixture_executable)
+)
+config.substitutions.append(
     ("%resource_dir", '"{}"'.format(config.obelisk_resource_dir))
 )
 config.substitutions.append(
@@ -53,6 +56,10 @@ node = shutil.which("node")
 if node:
     config.available_features.add("node")
     config.substitutions.append(("%node", node))
+lcov = shutil.which("lcov")
+if lcov:
+    config.available_features.add("lcov")
+    config.substitutions.append(("%lcov", lcov))
 split_file = next(
     (
         path
@@ -82,10 +89,11 @@ tool_dirs = [
     config.obelisk_filecheck_dir,
     config.obelisk_opt_dir,
     config.obelisk_translate_dir,
+    config.obelisk_cov_dir,
     config.llvm_tools_dir,
 ]
 llvm_config.add_tool_substitutions(
-    ["obelisk", "obelisk-opt", "obelisk-translate", "obelisk-sim-standard-api-test", "FileCheck",
+    ["obelisk", "obelisk-cov", "obelisk-opt", "obelisk-translate", "obelisk-sim-standard-api-test", "FileCheck",
      "llvm-readelf", "llvm-strings", "mlir-opt", "mlir-runner",
      "mlir-translate", "not", "opt"],
     tool_dirs,

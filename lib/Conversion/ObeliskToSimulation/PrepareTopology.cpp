@@ -688,6 +688,13 @@ materializeDesignDescriptors(ModuleOp module,
   uint64_t nextEventId = 0;
   bool invalid = false;
   SmallVector<Operation *> designObjects;
+  bool retainCoverageSourceTypes = false;
+  if (auto metrics = module->getAttrOfType<ArrayAttr>(
+          "obelisk.coverage.metrics"))
+    retainCoverageSourceTypes = llvm::any_of(metrics, [](Attribute metric) {
+      auto name = dyn_cast<StringAttr>(metric);
+      return name && name.getValue() == "toggle";
+    });
 
   const llvm::StringSet<> &eventCellPaths = portAliases.eventCellPaths;
 
@@ -795,12 +802,17 @@ materializeDesignDescriptors(ModuleOp module,
                                               scopeId, *type,
                                               sim::NetResolutionKind::Wire};
           descriptors[leafPath.getValue()].rootType = *type;
-          sim::SimNetDeclOp::create(
+          auto declaration = sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
               DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{});
+          declaration->setAttr(sim::metadata::coverageSourceAuthored,
+                               builder.getUnitAttr());
+          if (retainCoverageSourceTypes)
+            declaration->setAttr(sim::metadata::coverageSourceType,
+                                 semanticType);
         }
         return;
       }
@@ -833,6 +845,11 @@ materializeDesignDescriptors(ModuleOp module,
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+      declaration->setAttr(sim::metadata::coverageSourceAuthored,
+                           builder.getUnitAttr());
+      if (retainCoverageSourceTypes)
+        declaration->setAttr(sim::metadata::coverageSourceType,
+                             op->getAttr("semantic_type"));
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&
@@ -969,6 +986,11 @@ materializeDesignDescriptors(ModuleOp module,
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
         UnitAttr{});
+    declaration->setAttr(sim::metadata::coverageSourceAuthored,
+                         builder.getUnitAttr());
+    if (retainCoverageSourceTypes)
+      declaration->setAttr(sim::metadata::coverageSourceType,
+                           op->getAttr("semantic_type"));
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",
@@ -1306,7 +1328,7 @@ materializeDesignDescriptors(ModuleOp module,
     }
     std::string portHierarchy =
         (Twine(portScopeHierarchy) + "." + formalName).str();
-    sim::SimPortDeclOp::create(
+    auto port = sim::SimPortDeclOp::create(
         builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
         source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
         source->second.viewOffset, source->second.type, direction,
@@ -1314,6 +1336,11 @@ materializeDesignDescriptors(ModuleOp module,
         connection.getFormalName()
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{});
+    port->setAttr(sim::metadata::coverageSourceAuthored,
+                  builder.getUnitAttr());
+    if (retainCoverageSourceTypes)
+      port->setAttr(sim::metadata::coverageSourceType,
+                    TypeAttr::get(connection.getFormalType()));
   }
   if (invalid)
     return failure();

@@ -466,9 +466,13 @@ LogicalResult SimObserverBindOp::verify() {
   for (Value capture : getCaptures()) {
     Type type = capture.getType();
     Type element;
+    if (isa<CovergroupHandleType>(type))
+      continue;
     if (isManagedHandleType(type))
       continue;
-    if (auto reference = dyn_cast<RefType>(type))
+    if (auto reference = dyn_cast<ArgumentRefType>(type))
+      element = reference.getElementType();
+    else if (auto reference = dyn_cast<RefType>(type))
       element = reference.getElementType();
     else if (auto net = dyn_cast<NetType>(type))
       element = net.getElementType();
@@ -478,8 +482,8 @@ LogicalResult SimObserverBindOp::verify() {
       continue;
     else
       return emitOpError(
-          "captures must use storage, net, driver, named-event, or managed "
-          "handles");
+          "captures must use storage, net, driver, named-event, covergroup, "
+          "or managed handles");
     // IEEE 1800-2017 9.4.2 allows an event expression to select a member of an
     // aggregate as long as the expression itself reduces to a singular value,
     // so a capture may name the whole aggregate the evaluator indexes into.
@@ -492,11 +496,11 @@ LogicalResult SimObserverBindOp::verify() {
           "aggregate, virtual-interface, or managed values");
   }
   for (Value dependency : getDependencies())
-    if (!isa<RefType, NetType, EventType, ManagedWatchType>(
+    if (!isa<RefType, ArgumentRefType, NetType, EventType, ManagedWatchType>(
             dependency.getType()))
       return emitOpError(
-          "dependencies must be storage, net, named-event, or managed-watch "
-          "handles");
+          "dependencies must be storage, argument-ref, net, named-event, or "
+          "managed-watch handles");
   if ((*this)->hasAttr("obelisk_sim.event_primary")) {
     auto observer = cast<ObserverType>(getResult().getType());
     auto integer = dyn_cast<IntegerType>(observer.getResultType());

@@ -7,6 +7,7 @@
 #include "DesignBytecodeImage.h"
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
+#include "obelisk/Coverage/CoverageDatabase.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -207,6 +209,43 @@ struct OwnedElementTypeDescriptor {
 obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
                                                std::string &output,
                                                unsigned depth);
+
+struct CoverageTupleQueueSnapshot {
+  uint64_t count = 0;
+  uint64_t valueSize = 0;
+  bool fourState = false;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
+struct CoverageSetSnapshot {
+  uint64_t count = 0;
+  uint64_t valueSize = 0;
+  uint64_t bitWidth = 0;
+  uint32_t elementKind = 0;
+  bool fourState = false;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+};
+
+// Validate and copy one transient CrossQueueType before functional coverage
+// resolution. Container internals remain private; Coverage.cpp receives only
+// canonical logical-order planes and never retains the managed owner.
+obelisk_rt_status obelisk_rt_coverage_tuple_queue_snapshot(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *queue,
+    uint64_t expectedElementType, uint64_t expectedProvenanceSpan,
+    bool expectedFourState, uint64_t maximumElements,
+    CoverageTupleQueueSnapshot &output);
+
+// Validate and copy one transient state-bin set expression before functional
+// coverage resolution. Both dynamic arrays and queues are accepted and queue
+// storage is linearized in logical index order. Coverage.cpp receives only
+// canonical planes and never retains the managed owner.
+obelisk_rt_status obelisk_rt_coverage_set_snapshot(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *container,
+    uint64_t expectedBitWidth, uint32_t expectedElementKind,
+    bool expectedFourState, uint64_t maximumElements,
+    CoverageSetSnapshot &output);
 
 // Exact membership set optimized for monotonically allocated process tokens.
 // Completed tokens normally form long contiguous runs, so retaining their
@@ -1020,14 +1059,69 @@ struct ClockOccurrenceBucketEntry {
 
 // One stack-owned publication view exposed only while a compiled Clause 31.7
 // condition is evaluated. The lazy clock-occurrence feature retains the
-// pointer; observer loads merge overlapping bits without copying or walking
-// the publication. Ordinary state loads see a null pointer.
+// pointer; observer loads merge overlapping bits without copying publication
+// planes. Nested event evaluation walks this stack-only chain. Ordinary state
+// loads see a null pointer.
 struct ClockConditionPublicationView {
   uint64_t stableID = UINT64_MAX;
   uint64_t bitWidth = 0;
   uint64_t planeBitOffset = 0;
   const uint8_t *newValue = nullptr;
   const uint8_t *newUnknown = nullptr;
+  // Synchronous sampler evaluation may itself publish another signal before
+  // the outer publication commits canonical storage. Retain the enclosing
+  // views so nested evaluators observe every post-transition value at their
+  // exact event instant; the newest overlapping publication wins.
+  const ClockConditionPublicationView *previous = nullptr;
+};
+
+struct CovergroupClockEventRegistration;
+
+struct CovergroupClockEventClause {
+  CovergroupClockEventRegistration *registration = nullptr;
+  uint32_t clauseIndex = 0;
+  uint64_t lastExaminedSequence = 0;
+  std::vector<SignalSubscriptionBucketSlot> bucketSlots;
+};
+
+struct CovergroupClockEventRegistration {
+  uint64_t ownerLogicalToken = 0;
+  uint64_t observerCodeUnitID = 0;
+  uint64_t covergroupHandle = 0;
+  uint64_t lastSampledSequence = 0;
+  uint64_t lastStrobeTime = 0;
+  bool native = false;
+  bool strobe = false;
+  bool strobePending = false;
+  bool lastStrobeTimeValid = false;
+  // The codec is byte-addressed, but observers and clauses are read as their
+  // fixed-width v1 records. Own the image in aligned storage so those typed
+  // views remain well-defined on hosts with strict alignment requirements.
+  std::vector<uint64_t> eventPlan;
+  std::vector<obelisk_rt_computed_capture_v1> captures;
+  std::vector<std::unique_ptr<CovergroupClockEventClause>> clauses;
+};
+
+struct CovergroupClockEventBucketEntry {
+  CovergroupClockEventClause *clause = nullptr;
+  size_t slotIndex = 0;
+};
+
+// Cold, process-owned subscriptions for IEEE 1800 covergroup clock-event
+// sampling. A separate index keeps ordinary signal waits and assertion clock
+// cohorts unchanged; signal publication pays only one null pointer check when
+// no clocked covergroup exists. Non-strobe registrations sample at publication
+// time. Strobe registrations retain one pending bit until the scheduler enters
+// the Postponed region.
+struct CovergroupClockEventFeatureState {
+  std::unordered_map<uint64_t,
+                     std::unique_ptr<CovergroupClockEventRegistration>>
+      registrations;
+  std::unordered_map<SignalSubscriptionBucketKey,
+                     std::vector<CovergroupClockEventBucketEntry>,
+                     SignalSubscriptionBucketKeyHash>
+      subscriptionBuckets;
+  uint64_t pendingStrobeCount = 0;
 };
 
 using ReplaceableEventCalendar =
@@ -1112,7 +1206,6 @@ struct ClockOccurrenceFeatureState {
                      ClockingOutputOccurrenceKeyHash>
       clockingOutputs;
   uint64_t conditionalWaitCount = 0;
-  const ClockConditionPublicationView *conditionPublication = nullptr;
   // Timer-mode Clause 31.4.2/.3 checks are the only users of replaceable
   // named-event deadlines. Keep their indexed calendar behind the already
   // cold clock-occurrence feature and one further null pointer so ordinary
@@ -1122,14 +1215,15 @@ struct ClockOccurrenceFeatureState {
 
 static_assert(
     sizeof(ClockOccurrenceFeatureState) ==
-        sizeof(decltype(ClockOccurrenceFeatureState::waits)) +
-            sizeof(decltype(ClockOccurrenceFeatureState::subscriptionBuckets)) +
-            sizeof(decltype(ClockOccurrenceFeatureState::subscriptions)) +
-            sizeof(decltype(ClockOccurrenceFeatureState::clockingOutputs)) +
-            sizeof(uint64_t) +
-            sizeof(
-                decltype(ClockOccurrenceFeatureState::conditionPublication)) +
-            sizeof(decltype(ClockOccurrenceFeatureState::replaceableEvents)),
+        ((sizeof(decltype(ClockOccurrenceFeatureState::waits)) +
+          sizeof(decltype(ClockOccurrenceFeatureState::subscriptionBuckets)) +
+          sizeof(decltype(ClockOccurrenceFeatureState::subscriptions)) +
+          sizeof(decltype(ClockOccurrenceFeatureState::clockingOutputs)) +
+          sizeof(uint64_t) +
+          sizeof(decltype(ClockOccurrenceFeatureState::replaceableEvents)) +
+          alignof(ClockOccurrenceFeatureState) - 1) /
+         alignof(ClockOccurrenceFeatureState)) *
+            alignof(ClockOccurrenceFeatureState),
     "$nochange must not add storage to the ordinary clock feature");
 
 constexpr uint64_t kRecursiveWatchGroupBit = UINT64_C(1) << 63;
@@ -1412,16 +1506,253 @@ struct VPIRelationRange {
   uint64_t count = 0;
 };
 
-struct CoverageTypeState {
-  std::vector<uint32_t> coverpointBins;
-  std::vector<uint64_t> instances;
+struct FunctionalCoverageValue {
+  uint64_t id = 0;
+  uint64_t bitWidth = 0;
+  uint64_t valueSize = 0;
+  uint32_t kind = 0;
+  uint32_t argumentRefKind = 0;
+  std::vector<uint8_t> value;
+  std::vector<uint8_t> unknown;
+  obelisk_rt_object_v1 *owner = nullptr;
+  uint64_t payload = 0;
 };
 
-struct CoverageInstanceState {
-  uint64_t typeID = 0;
-  bool enabled = true;
-  std::vector<std::vector<uint64_t>> hits;
+struct FunctionalCoverageBinState {
+  uint64_t id = 0;
+  uint64_t templateBin = 0;
+  uint64_t item = 0;
+  uint64_t valueSet = 0;
+  uint64_t atLeast = 1;
+  obelisk::coverage::FunctionalBinKind kind =
+      obelisk::coverage::FunctionalBinKind::State;
+  uint32_t flags = 0;
+  uint64_t count = 0;
+  bool overflow = false;
+  bool excluded = false;
 };
+
+struct FunctionalCoverageCrossState {
+  struct TargetConstraint {
+    uint32_t targetOrdinal = 0;
+    std::vector<uint64_t> selectedTargetBins;
+  };
+
+  struct Rectangle {
+    std::vector<TargetConstraint> constraints;
+  };
+
+  struct ExplicitBin {
+    uint64_t bin = 0;
+    std::vector<Rectangle> alternatives;
+  };
+
+  uint64_t id = 0;
+  uint64_t templateItem = 0;
+  uint64_t atLeast = 1;
+  std::vector<uint64_t> targets;
+  std::vector<uint64_t> automaticBinCount;
+  uint64_t automaticRoot = 0;
+  std::vector<ExplicitBin> explicitBins;
+  bool excluded = false;
+};
+
+struct FunctionalCoverageCrossTupleState {
+  uint64_t count = 0;
+  bool overflow = false;
+};
+
+struct FunctionalCoverageTypeState {
+  obelisk::coverage::Digest configuration{};
+  uint32_t instanceGoal = 100;
+  uint32_t instanceWeight = 1;
+  uint32_t typeGoal = 100;
+  uint32_t typeWeight = 1;
+  bool mergeInstances = false;
+  bool getInstCoverage = false;
+  bool strobe = false;
+  uint64_t groupCrossNumPrintMissing = 0;
+  std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
+  std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
+  std::vector<uint64_t> items;
+  std::vector<uint8_t> itemAggregating;
+  std::vector<uint32_t> itemGoals;
+  std::vector<uint32_t> itemWeights;
+  std::vector<uint64_t> itemAtLeast;
+  std::vector<uint32_t> typeItemGoals;
+  std::vector<uint32_t> typeItemWeights;
+  /// Original instance-profile index when this is a one-item projection used
+  /// to implement a coverpoint or cross method query.
+  size_t projectedItemIndex = SIZE_MAX;
+  std::vector<FunctionalCoverageBinState> bins;
+  std::vector<FunctionalCoverageCrossState> crosses;
+  std::vector<uint64_t> instances;
+  /// Resolved ordinary transition alternatives removed by fixed transition
+  /// ignore/illegal words. This is derived from the v1 schema and therefore
+  /// is an implementation detail rather than a serialized identity.
+  std::unordered_set<uint64_t> suppressedTransitionAlternatives;
+};
+
+struct FunctionalCoverageTypeKey {
+  uint64_t typeID = 0;
+  obelisk::coverage::Digest configuration{};
+
+  bool operator<(const FunctionalCoverageTypeKey &other) const {
+    return std::tie(typeID, configuration) <
+           std::tie(other.typeID, other.configuration);
+  }
+};
+
+/// Mutable type-option state is context-wide and keyed only by stable schema
+/// identities. It is deliberately separate from resolved configurations so a
+/// procedural assignment updates already-bound configurations and is also
+/// inherited by configurations constructed later.
+struct FunctionalCoverageTypeOptions {
+  std::optional<uint32_t> goal;
+  std::optional<uint32_t> weight;
+  std::optional<bool> mergeInstances;
+  std::map<uint64_t, uint32_t> itemGoals;
+  std::map<uint64_t, uint32_t> itemWeights;
+  /// Zero names the group; positive keys name template FunctionalItems.
+  std::map<uint64_t, std::string> comments;
+};
+
+struct FunctionalCoverageInstanceState {
+  struct TransitionActiveState {
+    uint32_t ordinal = 0;
+    uint32_t gapForbiddenOrdinal = UINT32_MAX;
+    uint64_t repetitionsConsumed = 0;
+    bool excluded = false;
+
+    bool operator<(const TransitionActiveState &other) const {
+      return std::tie(ordinal, gapForbiddenOrdinal, repetitionsConsumed,
+                      excluded) <
+             std::tie(other.ordinal, other.gapForbiddenOrdinal,
+                      other.repetitionsConsumed, other.excluded);
+    }
+  };
+
+  uint64_t typeID = 0;
+  obelisk::coverage::Digest configuration{};
+  std::string name;
+  bool generatedName = false;
+  bool enabled = true;
+  bool strobe = false;
+  uint32_t instanceGoal = 100;
+  uint32_t instanceWeight = 1;
+  uint64_t groupAtLeast = 1;
+  uint64_t groupCrossNumPrintMissing = 0;
+  std::vector<uint32_t> itemGoals;
+  std::vector<uint32_t> itemWeights;
+  /// Effective threshold for every resolved item, including zero-bin items.
+  std::vector<uint64_t> itemAtLeast;
+  std::unordered_set<uint64_t> explicitAtLeastItems;
+  std::unordered_map<uint64_t, uint64_t> crossAtLeast;
+  /// Cross print limits use template IDs because procedural selectors and
+  /// persisted instance-option owners are stable across resolved schemas.
+  std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
+  std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
+  /// Mutable comments keyed by zero for the group or by template item ID.
+  std::map<uint64_t, std::string> comments;
+  std::unordered_set<uint64_t> disabledItems;
+  std::vector<FunctionalCoverageValue> formals;
+  std::vector<FunctionalCoverageBinState> bins;
+  /// Live overlapping matches keyed by resolved transition alternative. A
+  /// zero repeat count means the step has not matched yet. For a successor or
+  /// terminal accepting gap of nonconsecutive repetition,
+  /// gapForbiddenOrdinal identifies the repeated step whose value may not
+  /// recur. The terminal accepting state uses ordinal == stepCount.
+  std::map<uint64_t, std::set<TransitionActiveState>> transitionActive;
+  std::unordered_set<uint64_t> transitionSampledItems;
+  std::map<uint64_t,
+           std::map<std::vector<uint64_t>, FunctionalCoverageCrossTupleState>>
+      crossTuples;
+};
+
+struct CoverageToggleBinding {
+  uint64_t coverageBase = 0;
+  uint64_t stateLow = 0;
+  uint64_t bitWidth = 0;
+};
+
+struct CovergroupBlockEventRegistration {
+  uint64_t id = 0;
+  uint64_t covergroupHandle = 0;
+  obelisk_rt_object_v1 *receiver = nullptr;
+  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  uint64_t observerCodeUnitID = 0;
+  bool native = false;
+  std::vector<obelisk_rt_computed_capture_v1> captures;
+  // Construction-time automatic captures outlive the process that invoked
+  // new(). Retain them for the context-owned service lifetime; context
+  // teardown destroys the complete automatic-state table after this record.
+  std::vector<uint64_t> retainedAutomaticCaptures;
+};
+
+struct CovergroupBlockEventFeatureState {
+  uint64_t nextRegistration = 1;
+  std::unordered_map<uint64_t,
+                     std::unique_ptr<CovergroupBlockEventRegistration>>
+      registrations;
+  std::map<std::pair<uint64_t, uint32_t>, std::vector<uint64_t>> buckets;
+};
+
+// One context-owned service backs code and functional coverage. The code
+// arrays are finalized before worker execution; relaxed atomic line hits then
+// avoid the context mutex. Toggle publication already serializes committed
+// state transitions and uses the same context lock as the shadow planes.
+struct CoverageState {
+  std::unique_ptr<obelisk::coverage::Database> schema;
+  uint64_t nextInstance = 1;
+  std::map<FunctionalCoverageTypeKey, FunctionalCoverageTypeState> types;
+  std::map<uint64_t, FunctionalCoverageTypeOptions> typeOptions;
+  std::unordered_map<uint64_t, FunctionalCoverageInstanceState> instances;
+  std::unique_ptr<std::atomic<uint64_t>[]> lineCounters;
+  std::unique_ptr<std::atomic<uint8_t>[]> lineOverflow;
+  std::unique_ptr<std::atomic<uint8_t>[]> lineEnabled;
+  std::vector<uint8_t> lineExcluded;
+  uint64_t lineCount = 0;
+  std::vector<uint64_t> toggleCounters;
+  std::vector<uint8_t> toggleOverflow;
+  std::vector<uint8_t> toggleEnabled;
+  std::vector<uint8_t> toggleValue;
+  std::vector<uint8_t> toggleUnknown;
+  std::vector<uint8_t> toggleExcluded;
+  std::vector<uint8_t> toggleBound;
+  std::unordered_map<uint32_t, std::vector<CoverageToggleBinding>>
+      toggleBindings;
+  std::unordered_map<uint64_t, uint64_t> scopeParents;
+  std::unordered_map<std::string, std::vector<uint64_t>> definitionScopes;
+  std::unique_ptr<CovergroupBlockEventFeatureState> blockEvents;
+  uint64_t toggleBitCount = 0;
+  bool finalized = false;
+  bool toggleBindingsSealed = false;
+  std::string outputPath = "coverage.obcov";
+  std::string testName;
+  std::vector<std::pair<std::string, std::string>> tags;
+  std::vector<std::string> loadPaths;
+  uint64_t persistedRunFlags = 0;
+  bool dumpSuppressed = false;
+  bool outputExplicit = false;
+  obelisk::coverage::UUID runUUID{};
+};
+
+// Query immutable resolved covergroup type policy while the context mutex is
+// held. This is internal runtime state, not a second public ABI surface.
+obelisk_rt_status
+obelisk_rt_covergroup_strobe_unlocked(obelisk_rt_context *context,
+                                      uint64_t handle, bool &strobe);
+
+/// Record a committed canonical state transition. The caller owns the context
+/// mutex. Covered aliases are intentionally represented by separate bindings.
+void obelisk_rt_coverage_record_transition_unlocked(
+    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    const uint8_t *changed, const uint8_t *newValue, const uint8_t *newUnknown);
+
+/// Return whether a registered static state contributes any toggle
+/// obligations. The caller owns the context mutex.
+bool obelisk_rt_coverage_tracks_static_state_unlocked(
+    const obelisk_rt_context *context, uint32_t staticID);
 
 struct SampledHistoryState {
   uint64_t bitWidth = 0;
@@ -1854,12 +2185,11 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t, std::unordered_set<SignalSubscription *>>
       managedWatchWaiters;
   uint64_t nextManagedWatchToken = 1;
-  uint64_t nextCoverageInstance = 1;
-  std::unordered_map<uint64_t, CoverageTypeState> coverageTypes;
-  std::unordered_map<uint64_t, CoverageInstanceState> coverageInstances;
+  std::unique_ptr<CoverageState> coverage;
   std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
   obelisk_rt_random_state_v1 random{};
+  uint64_t configuredSeed = 1;
   // IEEE 1800 Annex N state for the no-argument `$random` form. Keep this
   // independent of hierarchical `$urandom` streams and initialize it to the
   // standardized algorithm's zero-seed entry point.
@@ -1873,6 +2203,15 @@ struct obelisk_rt_context {
   // the tail so every preexisting context field retains its offset, and leave
   // it null for designs that never execute a clock-cohort wait.
   std::unique_ptr<ClockOccurrenceFeatureState> clockOccurrences;
+  std::unique_ptr<CovergroupClockEventFeatureState> covergroupClockEvents;
+  // Compiler-generated primary and iff observers are read-only. This guard
+  // rejects malformed descriptors that publish while event-instant history is
+  // being committed; it is cleared before user sample evaluators run.
+  uint32_t covergroupClockEventEvaluationDepth = 0;
+  // Scoped to synchronous computed-condition and covergroup sampler
+  // evaluation. Keeping the publication view on the context allows the two
+  // independent lazy features to share exact post-transition loads.
+  const ClockConditionPublicationView *conditionPublication = nullptr;
   // IEEE 1800-2017 31.4.6 alone needs retroactive/deferred occurrence
   // storage. Keep the entire map pointer-lazy and outside the ordinary clock
   // feature so every other assertion/timing wait retains its exact layout.
@@ -2313,6 +2652,9 @@ private:
 };
 
 void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
+/// Latch a nonterminating simulation error while the context mutex is held.
+/// The scheduler continues running, but orderly shutdown reports failure.
+void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept;
 void setLastError(obelisk_rt_context *context, std::string message);
 void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(
@@ -2539,8 +2881,9 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
 bool obelisk_rt_publish_native_signal_transition_unlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
-    const uint8_t *newValue, const uint8_t *newUnknown,
-    bool indexedExternalDeposit = false);
+    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
+    const uint8_t *newUnknown, bool indexedExternalDeposit = false,
+    bool establishesOverride = false);
 bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
     const obelisk_rt_context *context, uint64_t stableID, uint64_t bit,
     bool &value, bool &unknown);
@@ -2555,7 +2898,7 @@ bool obelisk_rt_register_signal_wait_unlocked(
     std::unique_ptr<SignalWaitLatch> &latch, uint64_t waiterToken = 0,
     bool designWaiter = false);
 bool obelisk_rt_register_computed_signal_wait_unlocked(
-    obelisk_rt_context *context, const obelisk_rt_computed_wait_record_v1 *wait,
+    obelisk_rt_context *context, obelisk_rt_computed_wait_record_v1 *wait,
     uint64_t waiterToken, bool designWaiter,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     std::unique_ptr<SignalWaitLatch> &latch);
@@ -2577,6 +2920,8 @@ bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
                                                 uint64_t width);
 bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
                                                  uint64_t token);
+bool obelisk_rt_evaluate_covergroup_managed_clock_events_unlocked(
+    obelisk_rt_context *context, uint64_t token);
 void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
                                      obelisk_rt_managed_watch_kind kind,
                                      uint64_t selector, uint64_t size = 0);
@@ -2588,6 +2933,10 @@ bool obelisk_rt_evaluate_design_clock_condition_unlocked(
     obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
     const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t &value, uint64_t &unknown);
+bool obelisk_rt_evaluate_design_bound_observer_unlocked(
+    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCapacity);
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
     obelisk_rt_context *context, uint32_t automaticID);
 obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(

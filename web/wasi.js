@@ -1,24 +1,36 @@
 // Minimal WASI preview1 host for running a compiled Obelisk simulation.
 //
 // Scope is deliberately narrow: enough for a design to print ($display,
-// $write), read the clock, draw randomness, and exit ($finish). Writable files
-// are captured in memory for VCD collection. Reads and filesystem paths remain
-// unsupported and return an error rather than silently doing the wrong thing.
+// $write), read the clock, draw randomness, persist coverage and waveforms in
+// an in-memory namespace, and exit ($finish). There is no host filesystem.
 
 const WASI_ESUCCESS = 0;
 const WASI_EBADF = 8;
 const WASI_EINVAL = 28;
 const WASI_ENOSYS = 52;
+const LINUX_ENOENT = 2;
+const LINUX_EEXIST = 17;
+const LINUX_ENOTDIR = 20;
 const LINUX_EINVAL = 22;
 const LINUX_ENOTTY = 25;
 const LINUX_ENOSYS = 38;
 
-class MemoryFile {
-  constructor(name) {
+const LINUX_O_ACCMODE = 3;
+const LINUX_O_RDONLY = 0;
+const LINUX_O_WRONLY = 1;
+const LINUX_O_RDWR = 2;
+const LINUX_O_CREAT = 64;
+const LINUX_O_EXCL = 128;
+const LINUX_O_TRUNC = 512;
+const LINUX_O_APPEND = 1024;
+
+class MemoryFileNode {
+  constructor(name, initial = new Uint8Array(), dirty = true) {
     this.name = name;
-    this.bytes = new Uint8Array(4096);
-    this.length = 0;
-    this.position = 0;
+    this.bytes = new Uint8Array(Math.max(4096, initial.byteLength));
+    this.bytes.set(initial);
+    this.length = initial.byteLength;
+    this.dirty = dirty;
   }
 
   #reserve(required) {
@@ -32,27 +44,59 @@ class MemoryFile {
     this.bytes = grown;
   }
 
-  write(source) {
-    const end = this.position + source.byteLength;
+  write(position, source) {
+    const end = position + source.byteLength;
     this.#reserve(end);
-    this.bytes.set(source, this.position);
-    this.position = end;
+    if (position > this.length) this.bytes.fill(0, this.length, position);
+    this.bytes.set(source, position);
     this.length = Math.max(this.length, end);
+    this.dirty = true;
+    return end;
+  }
+
+  truncate() {
+    this.length = 0;
+    this.dirty = true;
+  }
+
+  snapshot() {
+    return { name: this.name, data: this.bytes.slice(0, this.length) };
+  }
+}
+
+class MemoryFileDescriptor {
+  constructor(node, { readable, writable, append }) {
+    this.node = node;
+    this.readable = readable;
+    this.writable = writable;
+    this.append = append;
+    this.position = append ? node.length : 0;
+  }
+
+  write(source) {
+    if (!this.writable) return false;
+    if (this.append) this.position = this.node.length;
+    this.position = this.node.write(this.position, source);
+    return true;
+  }
+
+  read(length) {
+    if (!this.readable) return null;
+    const end = Math.min(this.node.length, this.position + length);
+    const result = this.node.bytes.subarray(this.position, end);
+    this.position = end;
+    return result;
   }
 
   seek(offset, whence) {
     let position;
     if (whence === 0) position = offset;
     else if (whence === 1) position = this.position + offset;
-    else if (whence === 2) position = this.length + offset;
+    else if (whence === 2) position = this.node.length + offset;
     else return false;
     if (!Number.isSafeInteger(position) || position < 0) return false;
     this.position = position;
     return true;
-  }
-
-  snapshot() {
-    return { name: this.name, data: this.bytes.slice(0, this.length) };
   }
 }
 
@@ -68,11 +112,20 @@ export class Wasi {
   /**
    * @param {object} options
    * @param {string[]} options.args      argv for the simulation
+   * @param {{name: string, data: BufferSource}[]} options.files input files
    * @param {(text: string, stream: 'stdout'|'stderr') => void} options.onOutput
    * @param {(file: {name: string, data: Uint8Array}) => void} options.onFile
    */
-  constructor({ args = ['sim'], onOutput = () => {}, onFile = () => {} } = {}) {
-    this.args = args;
+  constructor({
+    args = ['sim'], files = [], onOutput = () => {}, onFile = () => {},
+  } = {}) {
+    if (!Array.isArray(args) ||
+        args.some((arg) => typeof arg !== 'string' || arg.includes('\0'))) {
+      throw new TypeError('args must be strings without embedded NUL bytes');
+    }
+    this.encoder = new TextEncoder();
+    this.args = [...args];
+    this.encodedArgs = this.args.map((arg) => this.encoder.encode(arg));
     this.onOutput = onOutput;
     this.onFile = onFile;
     this.memory = null;
@@ -81,8 +134,28 @@ export class Wasi {
     // stdout/stderr are line-buffered so partial writes do not fragment the
     // rendered output.
     this.buffers = { 1: '', 2: '' };
-    this.files = new Map();
+    this.fileNodes = new Map();
+    this.descriptors = new Map();
     this.nextFileDescriptor = 3;
+    for (const file of files) {
+      if (!file || typeof file.name !== 'string' || !file.name ||
+          this.fileNodes.has(file.name)) {
+        throw new TypeError('preloaded files require unique nonempty names');
+      }
+      let data;
+      if (file.data instanceof ArrayBuffer) {
+        data = new Uint8Array(file.data);
+      } else if (ArrayBuffer.isView(file.data)) {
+        data = new Uint8Array(
+          file.data.buffer, file.data.byteOffset, file.data.byteLength,
+        );
+      } else {
+        throw new TypeError('preloaded file data must be a BufferSource');
+      }
+      this.fileNodes.set(
+        file.name, new MemoryFileNode(file.name, data, false),
+      );
+    }
   }
 
   bindMemory(memory) {
@@ -116,31 +189,82 @@ export class Wasi {
     return this.decoder.decode(bytes.subarray(start, end));
   }
 
-  #openFile(pathPointer, flags) {
-    // O_RDONLY cannot produce a waveform and this host has no input-file
-    // namespace. O_WRONLY and O_RDWR are captured in memory.
-    if ((flags & 3) === 0) return -LINUX_ENOSYS;
+  #readPath(pathPointer) {
     let name;
     try {
       name = this.#readString(pathPointer);
     } catch {
-      return -LINUX_EINVAL;
+      return null;
     }
+    return name || null;
+  }
+
+  #openFile(pathPointer, flags) {
+    const name = this.#readPath(pathPointer);
+    if (!name) return -LINUX_EINVAL;
+    const access = flags & LINUX_O_ACCMODE;
+    if (access !== LINUX_O_RDONLY && access !== LINUX_O_WRONLY &&
+        access !== LINUX_O_RDWR) return -LINUX_EINVAL;
+    const readable = access === LINUX_O_RDONLY || access === LINUX_O_RDWR;
+    const writable = access === LINUX_O_WRONLY || access === LINUX_O_RDWR;
+    let node = this.fileNodes.get(name);
+    if (node && (flags & LINUX_O_CREAT) && (flags & LINUX_O_EXCL))
+      return -LINUX_EEXIST;
+    if (!node && !(flags & LINUX_O_CREAT)) return -LINUX_ENOENT;
+    if (!node) {
+      node = new MemoryFileNode(name);
+      this.fileNodes.set(name, node);
+    }
+    if ((flags & LINUX_O_TRUNC) && !writable) return -LINUX_EINVAL;
+    if (flags & LINUX_O_TRUNC) node.truncate();
     const descriptor = this.nextFileDescriptor++;
-    this.files.set(descriptor, new MemoryFile(name));
+    this.descriptors.set(descriptor, new MemoryFileDescriptor(node, {
+      readable, writable, append: Boolean(flags & LINUX_O_APPEND),
+    }));
     return descriptor;
   }
 
   #closeFile(descriptor) {
-    const file = this.files.get(descriptor);
-    if (!file) return false;
-    this.files.delete(descriptor);
-    this.onFile(file.snapshot());
+    if (!this.descriptors.has(descriptor)) return false;
+    this.descriptors.delete(descriptor);
     return true;
   }
 
   closeAllFiles() {
-    for (const descriptor of [...this.files.keys()]) this.#closeFile(descriptor);
+    this.descriptors.clear();
+    for (const node of this.fileNodes.values()) {
+      if (!node.dirty) continue;
+      this.onFile(node.snapshot());
+      node.dirty = false;
+    }
+  }
+
+  #renameFile(oldPathPointer, newPathPointer) {
+    const oldName = this.#readPath(oldPathPointer);
+    const newName = this.#readPath(newPathPointer);
+    if (!oldName || !newName) return -LINUX_EINVAL;
+    const node = this.fileNodes.get(oldName);
+    if (!node) return -LINUX_ENOENT;
+    if (oldName === newName) return 0;
+    this.fileNodes.delete(oldName);
+    this.fileNodes.delete(newName);
+    node.name = newName;
+    node.dirty = true;
+    this.fileNodes.set(newName, node);
+    return 0;
+  }
+
+  #unlinkFile(pathPointer, flags) {
+    if (flags !== 0) return -LINUX_EINVAL;
+    const name = this.#readPath(pathPointer);
+    if (!name) return -LINUX_EINVAL;
+    return this.fileNodes.delete(name) ? 0 : -LINUX_ENOENT;
+  }
+
+  #removeDirectory(pathPointer) {
+    const name = this.#readPath(pathPointer);
+    if (!name) return -LINUX_EINVAL;
+    return this.fileNodes.has(name) ? -LINUX_ENOTDIR : -LINUX_ENOENT;
   }
 
   #flush(fd, { force = false } = {}) {
@@ -174,6 +298,15 @@ export class Wasi {
         },
         __syscall_openat(_directory, path, flags) {
           return self.#openFile(path, flags);
+        },
+        __syscall_renameat(_oldDirectory, oldPath, _newDirectory, newPath) {
+          return self.#renameFile(oldPath, newPath);
+        },
+        __syscall_unlinkat(_directory, path, flags) {
+          return self.#unlinkFile(path, flags);
+        },
+        __syscall_rmdir(path) {
+          return self.#removeDirectory(path);
         },
         __syscall_fcntl64: () => -LINUX_ENOSYS,
         __syscall_ioctl: () => -LINUX_ENOTTY,
@@ -269,7 +402,7 @@ export class Wasi {
           const view = self.view;
           const bytes = new Uint8Array(self.memory.buffer);
           let written = 0;
-          const file = self.files.get(fd);
+          const file = self.descriptors.get(fd);
           if (fd !== 1 && fd !== 2 && !file) return WASI_EBADF;
           let text = '';
           // Each iovec is {ptr, len}, both 32-bit, so the stride is 8 bytes.
@@ -278,7 +411,8 @@ export class Wasi {
             const ptr = view.getUint32(base, true);
             const len = view.getUint32(base + 4, true);
             if (len === 0) continue;
-            if (file) file.write(bytes.subarray(ptr, ptr + len));
+            if (file && !file.write(bytes.subarray(ptr, ptr + len)))
+              return WASI_EBADF;
             else text += self.decoder.decode(bytes.subarray(ptr, ptr + len));
             written += len;
           }
@@ -297,7 +431,9 @@ export class Wasi {
         },
 
         args_sizes_get(countPtr, bufSizePtr) {
-          const size = self.args.reduce((n, a) => n + a.length + 1, 0);
+          const size = self.encodedArgs.reduce(
+            (total, argument) => total + argument.byteLength + 1, 0,
+          );
           self.#writeSize(Number(countPtr), self.args.length);
           self.#writeSize(Number(bufSizePtr), size);
           return WASI_ESUCCESS;
@@ -307,10 +443,11 @@ export class Wasi {
           const bytes = new Uint8Array(self.memory.buffer);
           let bufOffset = Number(argvBufPtr);
           let ptrOffset = Number(argvPtr);
-          for (const arg of self.args) {
+          for (const arg of self.encodedArgs) {
             self.#writeSize(ptrOffset, bufOffset);
             ptrOffset += 4;
-            for (let i = 0; i < arg.length; i++) bytes[bufOffset++] = arg.charCodeAt(i);
+            bytes.set(arg, bufOffset);
+            bufOffset += arg.byteLength;
             bytes[bufOffset++] = 0;
           }
           return WASI_ESUCCESS;
@@ -335,22 +472,39 @@ export class Wasi {
           return WASI_ESUCCESS;
         },
 
-        // Writable descriptors refer to captured in-memory files. Reading and
-        // resolving paths are unsupported because this host has no filesystem.
         fd_close(fd) {
           if (fd >= 0 && fd <= 2) return WASI_ESUCCESS;
           return self.#closeFile(fd) ? WASI_ESUCCESS : WASI_EBADF;
         },
         fd_fdstat_get: () => WASI_ESUCCESS,
         fd_seek(fd, offset, whence, newOffsetPtr) {
-          const file = self.files.get(fd);
+          const file = self.descriptors.get(fd);
           if (!file) return WASI_EBADF;
           const numericOffset = Number(offset);
+          if (!Number.isSafeInteger(numericOffset)) return WASI_EINVAL;
           if (!file.seek(numericOffset, Number(whence))) return WASI_EINVAL;
           self.#writeFilesize(Number(newOffsetPtr), file.position);
           return WASI_ESUCCESS;
         },
-        fd_read: () => WASI_ENOSYS,
+        fd_read(fd, iovsPtr, iovsLen, nreadPtr) {
+          const file = self.descriptors.get(fd);
+          if (!file) return WASI_EBADF;
+          const view = self.view;
+          const bytes = new Uint8Array(self.memory.buffer);
+          let read = 0;
+          for (let i = 0; i < Number(iovsLen); ++i) {
+            const base = Number(iovsPtr) + i * 8;
+            const pointer = view.getUint32(base, true);
+            const length = view.getUint32(base + 4, true);
+            const chunk = file.read(length);
+            if (chunk === null) return WASI_EBADF;
+            bytes.set(chunk, pointer);
+            read += chunk.byteLength;
+            if (chunk.byteLength !== length) break;
+          }
+          self.#writeSize(Number(nreadPtr), read);
+          return WASI_ESUCCESS;
+        },
         fd_prestat_get: () => WASI_EBADF,
         fd_prestat_dir_name: () => WASI_EBADF,
         path_open: () => WASI_ENOSYS,
@@ -367,13 +521,18 @@ export class Wasi {
  * @param {BufferSource} wasmBinary
  * @param {(text: string, stream: string) => void} onOutput
  * @param {object} options
+ * @param {string[]} options.args exact simulation argv including program name
+ * @param {{name: string, data: BufferSource}[]} options.files preloaded files
  * @param {(file: {name: string, data: Uint8Array}) => void} options.onFile
  * @returns {Promise<number>} the process exit code
  */
 export async function runSimulation(
-  wasmBinary, onOutput, { onFile = () => {}, onSimulatedTime = () => {} } = {},
+  wasmBinary, onOutput, {
+    args = ['sim'], files = [], onFile = () => {},
+    onSimulatedTime = () => {},
+  } = {},
 ) {
-  const wasi = new Wasi({ onOutput, onFile });
+  const wasi = new Wasi({ args, files, onOutput, onFile });
   const { instance } = await WebAssembly.instantiate(wasmBinary, wasi.imports);
   wasi.bindMemory(instance.exports.memory);
 
@@ -399,9 +558,47 @@ export async function runSimulation(
     if (typeof instance.exports._start === 'function') {
       instance.exports._start();
     } else if (typeof instance.exports.main === 'function') {
-      // argc, argv. Both are 32-bit on wasm32, so argv is a plain zero rather
-      // than a BigInt.
-      instance.exports.main(0, 0);
+      const allocate = instance.exports.malloc;
+      const release = instance.exports.free;
+      if (typeof allocate !== 'function' || typeof release !== 'function') {
+        throw new Error(
+          'direct-main simulation module exports neither malloc nor free',
+        );
+      }
+      const pointerBytes = (wasi.encodedArgs.length + 1) * 4;
+      const stringBytes = wasi.encodedArgs.reduce(
+        (total, argument) => total + argument.byteLength + 1, 0,
+      );
+      const allocationBytes = pointerBytes + stringBytes;
+      if (!Number.isSafeInteger(allocationBytes) ||
+          allocationBytes > 0xffffffff) {
+        throw new RangeError('simulation argv exceeds wasm32 address space');
+      }
+      const argv = Number(allocate(allocationBytes)) >>> 0;
+      if (argv === 0 ||
+          argv + allocationBytes > instance.exports.memory.buffer.byteLength) {
+        throw new Error('simulation module could not allocate argv');
+      }
+      try {
+        const memoryBytes = new Uint8Array(instance.exports.memory.buffer);
+        const memoryView = new DataView(instance.exports.memory.buffer);
+        let stringPointer = argv + pointerBytes;
+        wasi.encodedArgs.forEach((argument, index) => {
+          memoryView.setUint32(argv + index * 4, stringPointer, true);
+          memoryBytes.set(argument, stringPointer);
+          stringPointer += argument.byteLength;
+          memoryBytes[stringPointer++] = 0;
+        });
+        memoryView.setUint32(argv + wasi.encodedArgs.length * 4, 0, true);
+        const result = Number(
+          instance.exports.main(wasi.encodedArgs.length, argv),
+        );
+        if (!Number.isInteger(result))
+          throw new Error('simulation main returned a non-integer status');
+        wasi.exitCode = result;
+      } finally {
+        release(argv);
+      }
     } else {
       throw new Error('simulation module exports neither _start nor main');
     }

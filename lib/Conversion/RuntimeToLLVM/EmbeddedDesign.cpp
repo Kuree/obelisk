@@ -45,6 +45,8 @@ constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
 constexpr StringLiteral kExportsName = "__obelisk_dpi_exports_v1";
 constexpr StringLiteral kClassBitstreamName =
     "__obelisk_class_bitstream_blob_v1";
+constexpr StringLiteral kCoverageSchemaName =
+    "__obelisk_coverage_schema_blob_v1";
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -505,11 +507,17 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   auto database = module->getAttrOfType<DenseI8ArrayAttr>(kDatabaseAttr);
   auto classBitstream = module->getAttrOfType<DenseI8ArrayAttr>(
       sim::metadata::classBitstreamBlob);
+  auto coverageSchema = module->getAttrOfType<DenseI8ArrayAttr>(
+      sim::metadata::coverageSchemaBlob);
   if (bytecode && failed(checkMagic(module, bytecode, StringRef("OBBCDS1\0", 8),
                                     "embedded bytecode")))
     return failure();
   if (database && failed(checkMagic(module, database, StringRef("OBDSGN1\0", 8),
                                     "embedded design database")))
+    return failure();
+  if (coverageSchema &&
+      failed(checkMagic(module, coverageSchema, StringRef("OBCOV\r\n\x1a", 8),
+                        "embedded coverage schema")))
     return failure();
 
   if (bytecode && module.lookupSymbol(kBytecodeName))
@@ -524,6 +532,10 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     return module.emitError()
            << "symbol collision for reserved class bit-stream blob '"
            << kClassBitstreamName << "'";
+  if (coverageSchema && module.lookupSymbol(kCoverageSchemaName))
+    return module.emitError()
+           << "symbol collision for reserved coverage schema blob '"
+           << kCoverageSchemaName << "'";
 
   if (bytecode)
     makeByteGlobal(module, kBytecodeName, bytecode, ".obelisk.bytecode");
@@ -532,6 +544,9 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   if (classBitstream)
     makeByteGlobal(module, kClassBitstreamName, classBitstream,
                    ".obelisk.class_bitstream");
+  if (coverageSchema)
+    makeByteGlobal(module, kCoverageSchemaName, coverageSchema,
+                   ".obelisk.coverage");
 
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -634,8 +649,13 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       else if (isa<sim::DriverType>(type))
         kind = 4,
         captureWidth = widthOf(cast<sim::DriverType>(type).getElementType());
+      else if (isa<sim::CovergroupHandleType>(type))
+        kind = OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, captureWidth = 64;
       else if (sim::isManagedHandleType(type))
         kind = OBELISK_RT_OBSERVER_CAPTURE_MANAGED, captureWidth = 64;
+      else if (auto reference = dyn_cast<sim::ArgumentRefType>(type))
+        kind = OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF,
+        captureWidth = widthOf(reference.getElementType());
       if (kind == 0 || captureWidth == 0) {
         function.emitError() << "observer capture #" << index - 1
                              << " is not represented by the stable-handle ABI";
@@ -938,6 +958,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     flags |= OBELISK_RT_EXECUTION_DPI_EXPORTS;
   if (classBitstream)
     flags |= OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
+  if (coverageSchema)
+    flags |= OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {
@@ -1002,19 +1024,16 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
           return records;
         });
   }
-  Type executionExtensionV1Type =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, pointer, i64});
-  Type executionExtensionV2Type = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, pointer, i64, pointer, i64});
-  Type executionExtensionV3Type = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, pointer, i64, pointer, i64, pointer, i64});
+  Type executionExtensionV1Type = LLVM::LLVMStructType::getLiteral(
+      context,
+      {i32, i32, pointer, i64, pointer, i64, pointer, i64, pointer, i64});
   auto executionType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, pointer, i64, pointer, i64, i64, i64, pointer,
                 i64, i32, i32, pointer, i64, pointer, i64});
-  Type extensionType = classBitstream           ? executionExtensionV3Type
-                       : !exports.empty()       ? executionExtensionV2Type
-                       : !sampledRanges.empty() ? executionExtensionV1Type
-                                                : Type{};
+  Type extensionType = coverageSchema || classBitstream || !exports.empty() ||
+                               !sampledRanges.empty()
+                           ? executionExtensionV1Type
+                           : Type{};
   Type executionStorageType =
       extensionType ? Type(LLVM::LLVMStructType::getLiteral(
                           context, {executionType, extensionType}))
@@ -1036,17 +1055,10 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
        layoutI64, layoutI64, layoutI64, layoutPointer, layoutI64, layoutI32,
        layoutI32, layoutPointer, layoutI64, layoutPointer, layoutI64});
   auto *layoutExtensionV1 = llvm::StructType::get(
-      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64});
-  auto *layoutExtensionV2 = llvm::StructType::get(
-      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64,
-                      layoutPointer, layoutI64});
-  auto *layoutExtensionV3 = llvm::StructType::get(
-      layoutContext, {layoutI32, layoutI32, layoutPointer, layoutI64,
-                      layoutPointer, layoutI64, layoutPointer, layoutI64});
-  llvm::StructType *layoutExtension =
-      classBitstream
-          ? layoutExtensionV3
-          : (!exports.empty() ? layoutExtensionV2 : layoutExtensionV1);
+      layoutContext,
+      {layoutI32, layoutI32, layoutPointer, layoutI64, layoutPointer, layoutI64,
+       layoutPointer, layoutI64, layoutPointer, layoutI64});
+  llvm::StructType *layoutExtension = layoutExtensionV1;
   auto *layoutStorage =
       llvm::StructType::get(layoutContext, {layoutExecution, layoutExtension});
   uint64_t extensionOffset =
@@ -1141,14 +1153,11 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
 
         Value extension =
             LLVM::ZeroOp::create(builder, module.getLoc(), extensionType);
-        extension = insertValue(
-            builder, module.getLoc(), extension,
-            integerConstant(
-                builder, module.getLoc(), i32,
-                classBitstream     ? OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION
-                : !exports.empty() ? OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION
-                                   : OBELISK_RT_EXECUTION_EXTENSION_VERSION),
-            0);
+        extension =
+            insertValue(builder, module.getLoc(), extension,
+                        integerConstant(builder, module.getLoc(), i32,
+                                        OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+                        0);
         extension = insertValue(
             builder, module.getLoc(), extension,
             integerConstant(builder, module.getLoc(), i32, extensionSize), 1);
@@ -1183,6 +1192,17 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
                                   integerConstant(builder, module.getLoc(), i64,
                                                   classBitstream.size()),
                                   7);
+        }
+        if (coverageSchema) {
+          extension = insertValue(
+              builder, module.getLoc(), extension,
+              LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                        kCoverageSchemaName),
+              8);
+          extension = insertValue(builder, module.getLoc(), extension,
+                                  integerConstant(builder, module.getLoc(), i64,
+                                                  coverageSchema.size()),
+                                  9);
         }
         Value storage = LLVM::ZeroOp::create(builder, module.getLoc(),
                                              executionStorageType);

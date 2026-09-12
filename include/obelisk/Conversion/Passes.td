@@ -46,6 +46,19 @@ def ObeliskSimMaterializeDPIExportsPass
   ];
 }
 
+def ObeliskSimPrepareCoveragePass
+    : Pass<"obelisk-sim-prepare-coverage", "mlir::ModuleOp"> {
+  let summary = "Inventory coverage obligations and emit the native schema";
+  let description = [{
+    Runs after early symbol DCE and before per-unit lowering so stable coverage
+    identities do not depend on the optimization level. The pass owns all IR
+    analysis and schema construction; the driver only supplies policy attrs.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect"
+  ];
+}
+
 def ObeliskSimLowerUnitPass
     : Pass<"obelisk-sim-lower-unit", "obelisk::sim::SimFuncOp"> {
   let summary = "Lower one frozen simulation code unit to SSA and CF";
@@ -60,9 +73,11 @@ def ObeliskSimLowerUnitPass
 def ObeliskSimMaterializeClockedSamplesPass
     : Pass<"obelisk-sim-materialize-clocked-samples",
            "obelisk::sim::SimDesignOp"> {
-  let summary = "Deduplicate and statically spawn alternate-clock samplers";
+  let summary = "Materialize deferred assertion and coverage clock samplers";
   let dependentDialects = [
-    "obelisk::sim::ObeliskSimulationDialect"
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
   ];
 }
 

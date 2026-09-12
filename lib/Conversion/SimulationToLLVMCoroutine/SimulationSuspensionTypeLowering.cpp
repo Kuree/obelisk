@@ -144,15 +144,35 @@ public:
 
     SmallVector<int32_t> dependencyKinds;
     SmallVector<int32_t> dependencyWidths;
+    SmallVector<int32_t> dependencyCaptureIndices;
     for (Value dependency : operation.getDependencies()) {
       if (isa<sim::ManagedWatchType>(dependency.getType())) {
         dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
         dependencyWidths.push_back(1);
+        dependencyCaptureIndices.push_back(-1);
         continue;
       }
       if (isa<sim::EventType>(dependency.getType())) {
         dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
         dependencyWidths.push_back(1);
+        dependencyCaptureIndices.push_back(-1);
+        continue;
+      }
+      if (auto reference =
+              dyn_cast<sim::ArgumentRefType>(dependency.getType())) {
+        auto capture = llvm::find(operation.getCaptures(), dependency);
+        if (capture == operation.getCaptures().end())
+          return operation.emitOpError(
+              "argument-ref dependency must also be an observer capture");
+        std::optional<unsigned> width =
+            nativeStateWidth(reference.getElementType());
+        if (!width)
+          return operation.emitOpError(
+              "argument-ref dependency must have a simulation storage width");
+        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
+        dependencyWidths.push_back(static_cast<int32_t>(*width));
+        dependencyCaptureIndices.push_back(static_cast<int32_t>(
+            std::distance(operation.getCaptures().begin(), capture)));
         continue;
       }
       Type type =
@@ -169,6 +189,7 @@ public:
             "width");
       dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
       dependencyWidths.push_back(static_cast<int32_t>(*width));
+      dependencyCaptureIndices.push_back(-1);
     }
 
     // IEEE 1800-2017 31.7 makes this a zero-time condition descriptor, not a
@@ -190,6 +211,8 @@ public:
                     rewriter.getDenseI32ArrayAttr(dependencyKinds));
     bridge->setAttr("obelisk.coro.dependency_widths",
                     rewriter.getDenseI32ArrayAttr(dependencyWidths));
+    bridge->setAttr("obelisk.coro.dependency_capture_indices",
+                    rewriter.getDenseI32ArrayAttr(dependencyCaptureIndices));
     rewriter.replaceOp(operation, bridge.getResults());
     return success();
   }

@@ -51,7 +51,8 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
 
   auto isRuntimeOwnedColdActor = [&](sim::SimFuncOp function) {
     return analysis::isRuntimeClockCoordinator(function) ||
-           analysis::isNegativeTimingDelayMonitor(function);
+           analysis::isNegativeTimingDelayMonitor(function) ||
+           analysis::isCovergroupClockingSamplerActor(function);
   };
   auto isolatesRuntimeOwnedColdActors = [&](sim::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> nativeMembers;
@@ -171,9 +172,20 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         reject("bytecode-only compute fragment");
         continue;
       }
+      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+          fragment.getFunction().getValue());
+      bool runtimeOwnedColdActor = isRuntimeOwnedColdActor(function);
       for (Attribute effectAttribute : fragment.getEffects()) {
         auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
         if (effect.getEffect() != sim::ComputeEffectKind::Watch)
+          continue;
+        // Computed covergroup events are indexed by the runtime from their
+        // serialized observer dependencies. Their compiler-owned registration
+        // actor is excluded from the static superstep, and static publication
+        // still enters the central transition recorder before fanout. Its
+        // deliberately abstract graph watch therefore does not make the
+        // remaining generated island dynamic.
+        if (runtimeOwnedColdActor)
           continue;
         bool exact = effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
                      !effect.getDynamic() && !effect.getDeferred() &&
@@ -245,7 +257,8 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         // only non-root spawn admitted here: the shared structural certificate
         // also used by native AOT proves that the helper cannot introduce an
         // unplanned watcher or recursively spawn work.
-        if (analysis::isNegativeTimingDelayMonitorSpawn(spawn, actor))
+        if (analysis::isNegativeTimingDelayMonitorSpawn(spawn, actor) ||
+            isRuntimeOwnedColdActor(actor))
           return;
         reject("spawn outside the root initializer");
         return;

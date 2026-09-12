@@ -2358,7 +2358,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     sim::SimProgramExitOp::create(builder, location, context);
-    if (failed(emitFunctionReturn(location, std::nullopt, false)))
+    if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                  /*emitBlockEventEnd=*/false)))
       return failure();
     setCurrent(addBlock());
     return dummyTaskResult();
@@ -2382,7 +2383,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       sim::SimFinishOp::create(builder, location, context, verbosity);
     else
       sim::SimStopOp::create(builder, location, context, verbosity);
-    if (failed(emitFunctionReturn(location, std::nullopt, false)))
+    if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                  /*emitBlockEventEnd=*/false)))
       return failure();
     setCurrent(addBlock());
     return dummyTaskResult();
@@ -2446,65 +2448,37 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           .Default(false);
   if (coverageCall) {
     ensureCoverageInventory();
-    // IEEE 1800-2017 40.3.2 explicitly represents an implementation with no
-    // assertion, FSM, statement, or toggle coverage by SV_COV_NOCOV. Obelisk
-    // does not instrument those four code-coverage classes, so model that
-    // standardized capability result instead of inventing counters. The
-    // Clause 19 functional-coverage database routines remain unsupported when
-    // a design actually declares covergroups.
-    auto oneOf = [&](Value value, ArrayRef<int32_t> choices) -> Value {
-      Value result = arith::ConstantOp::create(
-          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
-      for (int32_t choice : choices) {
-        Value equal =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  value, constant(i32, choice));
-        result = arith::OrIOp::create(builder, location, result, equal);
+    // IEEE 1800-2017 40.3.2 distinguishes string module-definition targets
+    // from elaborated instance-path targets. Keep that distinction explicit
+    // in Simulation IR so neither the backends nor the runtime have to infer
+    // it from sentinel values.
+    struct CoverageTarget {
+      Value definition;
+      uint64_t instance = 0;
+
+      bool isDefinition() const { return static_cast<bool>(definition); }
+    };
+    auto lowerCoverageTarget =
+        [&](Operation *target) -> FailureOr<CoverageTarget> {
+      if (auto symbol =
+              dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(target)) {
+        std::optional<StringRef> path = symbol.getReferencedPath();
+        auto found = path ? coverageInstanceIDs.find(*path)
+                          : coverageInstanceIDs.end();
+        if (found == coverageInstanceIDs.end()) {
+          emitError(getSemanticLocation(target))
+              << "coverage instance target has no elaborated module scope";
+          return failure();
+        }
+        return CoverageTarget{Value{}, found->second};
       }
-      return result;
-    };
-    auto status = [&](Value valid, Value success) -> FailureOr<Value> {
-      Value error = constant(i32, -1); // SV_COV_ERROR
-      return convertResult(
-          arith::SelectOp::create(builder, location, valid, success, error));
-    };
-    auto validCoverageType = [&](Value value) -> Value {
-      return oneOf(value, {20, 21, 22, 23});
-    };
-    auto validScopeDefinition = [&](Value value) -> Value {
-      return oneOf(value, {10, 11});
-    };
-    auto lowerCoverageTarget = [&](Operation *target) -> FailureOr<Value> {
-      if (isa<semantic::SVArbitrarySymbolExpressionOp>(target))
-        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                         builder.getBoolAttr(true))
-            .getResult();
       FailureOr<Value> lowered = lowerExpression(target);
       if (failed(lowered) || !isa<sim::StringType>((*lowered).getType())) {
         emitError(getSemanticLocation(target))
             << "coverage scope must be a module instance or definition name";
         return failure();
       }
-      Value valid = arith::ConstantOp::create(
-          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
-      SmallVector<StringRef> definitionNames;
-      definitionNames.reserve(coverageDefinitionNames.size());
-      for (const auto &entry : coverageDefinitionNames)
-        definitionNames.push_back(entry.getKey());
-      llvm::sort(definitionNames);
-      for (StringRef definitionName : definitionNames) {
-        Value candidate = sim::SimStringLiteralOp::create(
-            builder, location, sim::StringType::get(function.getContext()),
-            builder.getStringAttr(definitionName));
-        Value compared = sim::SimStringCompareOp::create(
-            builder, location, i32, *lowered, candidate,
-            builder.getBoolAttr(false));
-        Value equal =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  compared, constant(i32, 0));
-        valid = arith::OrIOp::create(builder, location, valid, equal);
-      }
-      return valid;
+      return CoverageTarget{*lowered, 0};
     };
 
     if (name == "$coverage_control") {
@@ -2515,28 +2489,21 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       FailureOr<Value> control = lowerInteger(children[0], i32);
       FailureOr<Value> coverageType = lowerInteger(children[1], i32);
       FailureOr<Value> scope = lowerInteger(children[2], i32);
-      FailureOr<Value> target = lowerCoverageTarget(children[3]);
+      FailureOr<CoverageTarget> target = lowerCoverageTarget(children[3]);
       if (failed(control) || failed(coverageType) || failed(scope) ||
           failed(target))
         return failure();
-      Value valid = arith::AndIOp::create(
-          builder, location, oneOf(*control, {0, 1, 2, 3}),
-          arith::AndIOp::create(
-              builder, location, validCoverageType(*coverageType),
-              arith::AndIOp::create(builder, location,
-                                    validScopeDefinition(*scope), *target)));
-      Value stop =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                *control, constant(i32, 1));
-      Value reset =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                *control, constant(i32, 2));
-      Value stopOrReset = arith::OrIOp::create(builder, location, stop, reset);
-      Value result = arith::SelectOp::create(
-          builder, location, stopOrReset,
-          constant(i32, 1),  // SV_COV_OK: valid stop/reset are no-ops.
-          constant(i32, 0)); // SV_COV_NOCOV: check/start find no counters.
-      return status(valid, result);
+      Value result =
+          target->isDefinition()
+              ? sim::SimCoverageControlDefinitionOp::create(
+                    builder, location, i32, context, *control, *coverageType,
+                    *scope, target->definition)
+                    .getStatus()
+              : sim::SimCoverageControlInstanceOp::create(
+                    builder, location, i32, context, *control, *coverageType,
+                    *scope, builder.getI64IntegerAttr(target->instance))
+                    .getStatus();
+      return convertResult(result);
     }
 
     if (name == "$coverage_get_max" || name == "$coverage_get") {
@@ -2546,14 +2513,21 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       }
       FailureOr<Value> coverageType = lowerInteger(children[0], i32);
       FailureOr<Value> scope = lowerInteger(children[1], i32);
-      FailureOr<Value> target = lowerCoverageTarget(children[2]);
+      FailureOr<CoverageTarget> target = lowerCoverageTarget(children[2]);
       if (failed(coverageType) || failed(scope) || failed(target))
         return failure();
-      Value valid = arith::AndIOp::create(
-          builder, location, validCoverageType(*coverageType),
-          arith::AndIOp::create(builder, location, validScopeDefinition(*scope),
-                                *target));
-      return status(valid, constant(i32, 0)); // SV_COV_NOCOV
+      BoolAttr maximum = builder.getBoolAttr(name == "$coverage_get_max");
+      Value result =
+          target->isDefinition()
+              ? sim::SimCoverageQueryDefinitionOp::create(
+                    builder, location, i32, context, *coverageType, *scope,
+                    target->definition, maximum)
+                    .getValue()
+              : sim::SimCoverageQueryInstanceOp::create(
+                    builder, location, i32, context, *coverageType, *scope,
+                    builder.getI64IntegerAttr(target->instance), maximum)
+                    .getValue();
+      return convertResult(result);
     }
 
     if (name == "$coverage_merge" || name == "$coverage_save") {
@@ -2569,21 +2543,22 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
             << name << " requires a coverage type and string name";
         return failure();
       }
-      // Nothing can have been saved without code-coverage instrumentation.
-      // Merge therefore reports ERROR (database/type not found), while save
-      // reports NOCOV and creates no entry, exactly as 40.3.2.4/.5 specify.
-      Value result = constant(i32, name == "$coverage_merge" ? -1 : 0);
-      return status(validCoverageType(*coverageType), result);
+      Value result =
+          name == "$coverage_merge"
+              ? sim::SimCoverageMergeOp::create(builder, location, i32,
+                                                context, *coverageType,
+                                                *databaseName)
+                    .getStatus()
+              : sim::SimCoverageSaveOp::create(builder, location, i32,
+                                               context, *coverageType,
+                                               *databaseName)
+                    .getStatus();
+      return convertResult(result);
     }
 
     if (name == "$get_coverage") {
       if (!children.empty()) {
         emitError(location) << "$get_coverage takes no arguments";
-        return failure();
-      }
-      if (!semanticCovergroups.empty()) {
-        unsupported(op)
-            << " (coverage database aggregation with declared covergroups)";
         return failure();
       }
       FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -2593,9 +2568,9 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         emitError(location) << "$get_coverage has a non-real result type";
         return failure();
       }
-      return arith::ConstantOp::create(builder, location, floatType,
-                                       builder.getFloatAttr(floatType, 0.0))
-          .getResult();
+      Value result = sim::SimFunctionalCoverageGetOp::create(
+          builder, location, builder.getF64Type(), context);
+      return convertResult(result);
     }
 
     if (children.size() != 1) {
@@ -2608,12 +2583,12 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << name << " requires a string argument";
       return failure();
     }
-    if (!semanticCovergroups.empty()) {
-      unsupported(op) << " (coverage database I/O with declared covergroups)";
-      return failure();
-    }
-    // With no covergroup types there is no data to name or load. Clause 19.9
-    // gives these tasks no status result or required side effect in that case.
+    if (name == "$set_coverage_db_name")
+      sim::SimFunctionalCoverageSetDbNameOp::create(builder, location, context,
+                                                    *databaseName);
+    else
+      sim::SimFunctionalCoverageLoadDbOp::create(builder, location, context,
+                                                 *databaseName);
     return dummyTaskResult();
   }
 

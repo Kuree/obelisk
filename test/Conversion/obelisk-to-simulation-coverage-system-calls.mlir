@@ -217,24 +217,27 @@ module {
   }
 }
 
-// IEEE 1800-2017 40.3.2 status values for a simulator without code-coverage
-// instrumentation. String module names are validated against elaborated
-// definitions; hierarchical scope operands are selection syntax, not values.
+// IEEE 1800-2017 40.3.2 keeps definition-name and elaborated-instance
+// selection distinct all the way through the Simulation dialect. Dynamic
+// control, metric, and scope values are intentionally validated by the runtime.
 // CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}
-// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
-// CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i32
-// CHECK-DAG: %[[ERROR:.*]] = arith.constant -1 : i32
-// CHECK-DAG: %[[COVERAGE_ZERO:.*]] = arith.constant 0.000000e+00 : f64
-// CHECK: obelisk_sim.ref.store %[[ZERO]]
-// CHECK: %[[DUT_INPUT:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK: %[[DUT_NAME:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK-NOT: obelisk_sim.string.compare %[[DUT_INPUT]], %[[DUT_NAME]]
-// CHECK: obelisk_sim.ref.store %[[ONE]]
-// CHECK: obelisk_sim.ref.store %[[ONE]]
-// CHECK: obelisk_sim.ref.store %[[ONE]]
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.real.from_integer %[[ZERO]] signed = true : i32 -> f64
-// CHECK: obelisk_sim.ref.store %[[ERROR]]
-// CHECK: obelisk_sim.ref.store %[[ZERO]]
-// CHECK: obelisk_sim.ref.store %[[COVERAGE_ZERO]]
+// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
+// CHECK: %[[DUT_RESET:.*]] = obelisk_sim.string.literal "DUT"
+// CHECK: obelisk_sim.coverage.control_definition {{.*}} definition %[[DUT_RESET]] : !obelisk_sim.context
+// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
+// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
+// CHECK: %[[DUT_START:.*]] = obelisk_sim.string.literal "DUT"
+// CHECK: obelisk_sim.coverage.control_definition {{.*}} definition %[[DUT_START]] : !obelisk_sim.context
+// CHECK: %[[DUT_MAX:.*]] = obelisk_sim.string.literal "DUT"
+// CHECK: obelisk_sim.coverage.query_definition {{.*}} definition %[[DUT_MAX]] maximum true : !obelisk_sim.context
+// CHECK: obelisk_sim.coverage.query_instance {{.*}} instance {{-?[1-9][0-9]*}} maximum false : !obelisk_sim.context
+// CHECK: %[[MERGE_NAME:.*]] = obelisk_sim.string.literal "some_name"
+// CHECK: obelisk_sim.coverage.merge %{{.*}} metric %{{.*}} name %[[MERGE_NAME]] : !obelisk_sim.context
+// CHECK: %[[SAVE_NAME:.*]] = obelisk_sim.string.literal "some_name"
+// CHECK: obelisk_sim.coverage.save %{{.*}} metric %{{.*}} name %[[SAVE_NAME]] : !obelisk_sim.context
+// CHECK: %[[DB_NAME:.*]] = obelisk_sim.string.literal "coverage.db"
+// CHECK: obelisk_sim.coverage.functional_set_db_name %{{.*}}, %[[DB_NAME]]
+// CHECK: %[[LOAD_NAME:.*]] = obelisk_sim.string.literal "coverage.db"
+// CHECK: obelisk_sim.coverage.functional_load_db %{{.*}}, %[[LOAD_NAME]]
+// CHECK: %[[GLOBAL:.*]] = obelisk_sim.coverage.functional_get %{{.*}}
+// CHECK: obelisk_sim.ref.store %[[GLOBAL]]

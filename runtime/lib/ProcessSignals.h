@@ -3,6 +3,8 @@
 #ifndef OBELISK_RUNTIME_LIB_PROCESSSIGNALS_H
 #define OBELISK_RUNTIME_LIB_PROCESSSIGNALS_H
 
+#include "obelisk/Runtime/Runtime.h"
+
 #include <cstdint>
 
 struct obelisk_rt_context;
@@ -21,5 +23,11 @@ bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
 bool obelisk_rt_same_clock_occurrence_wait_unlocked(
     const obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
     uint64_t waiterToken, bool designWaiter);
+void obelisk_rt_unregister_covergroup_clock_events_unlocked(
+    obelisk_rt_context *context, uint64_t logicalToken);
+bool obelisk_rt_covergroup_strobes_pending_unlocked(
+    const obelisk_rt_context *context);
+obelisk_rt_status
+obelisk_rt_drain_covergroup_strobes_unlocked(obelisk_rt_context *context);
 
 #endif // OBELISK_RUNTIME_LIB_PROCESSSIGNALS_H

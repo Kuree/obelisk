@@ -17,6 +17,7 @@
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Conversion/FunctionalCoverageSchemaVerification.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -228,8 +229,13 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       continue;
     sim::SimFuncOp target =
         design.lookupSymbol<sim::SimFuncOp>(body.getValue());
+    // Observer entry points are invoked independently by the runtime, outside
+    // the generated eval coordinator's Tier-2 handoff. Keep their canonical
+    // four-state body instead of manufacturing a coordinator-owned route that
+    // has no valid initialization boundary.
     if (!target || !target->hasAttr("obelisk.eval.raw_captures") ||
-        target->hasAttr("obelisk.eval.inductive_two_state"))
+        target->hasAttr("obelisk.eval.inductive_two_state") ||
+        target.getEntryKind() == sim::EntryKind::Observer)
       continue;
     if (rootSet.insert(target.getOperation()).second)
       roots.push_back(target);
@@ -386,8 +392,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                 sim::SimDriverDriveInertialPathOp,
                 sim::SimDriverDriveInertialStrengthPairOp,
                 sim::SimDriverDriveInertialPathStrengthPairOp,
-                sim::SimDriverDriveDelayedNetOp,
-                sim::SimDriverDriveChangedOp>(operation)) {
+                sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+                operation)) {
           runtimeFree = false;
           checkpointSafe = false;
         }
@@ -459,10 +465,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
             (void)selectRange(write.getNet(), provenance, inductiveRanges);
-          preserving &=
-              knownStateDomains->isTwoStateWithInductiveRoots(
-                  write.getValue()) &&
-              selectRange(write.getNet(), provenance, localRanges);
+          preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
+                            write.getValue()) &&
+                        selectRange(write.getNet(), provenance, localRanges);
           return;
         }
         if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
@@ -861,8 +866,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation)) {
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation)) {
         supported = false;
         return;
       }
@@ -986,8 +991,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation)) {
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation)) {
         probeSupported = false;
         return;
       }
@@ -1022,8 +1027,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     SmallVector<Operation *> publications;
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimNBAEnqueueOp, sim::SimRefStoreOp, sim::SimDriverDriveOp,
-              sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation))
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation))
         publications.push_back(operation);
     });
     for (Operation *publication : publications)
@@ -1367,9 +1372,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // transition when it is lowered.  Transition materialization rewrites
       // that publication to Eval ingress, so keep shared coroutine helpers
       // out of the rewrite closure for all source kinds, not just variables.
-      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp,
-              sim::SimDriverDriveOp, sim::SimDriverDriveDelayedNetOp,
-              sim::SimDriverDriveChangedOp>(operation))
+      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp, sim::SimDriverDriveOp,
+              sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
+              operation))
         privateHelperSet.insert(helper.getOperation());
     });
   bool addedPrivateAncestor;
@@ -1466,6 +1471,11 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   // the small resolver in production builds.
   constexpr StringLiteral strengthResolveQuery =
       "obelisk_rt_v1_strength_resolve_kind";
+  // A line hit is a relaxed atomic increment through the context argument
+  // already present on every generated eval body. It cannot allocate, lock,
+  // re-enter the scheduler, or alter design state, so worker-lane eval bodies
+  // may retain it as an explicit observable side effect.
+  constexpr StringLiteral coveragePointHit = "obelisk_rt_v1_coverage_point_hit";
   SmallVector<LLVM::LLVMFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 32> visited;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
@@ -1481,7 +1491,8 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
       SmallVector<FlatSymbolRefAttr> targets;
       if (std::optional<StringRef> callee = call.getCallee()) {
         if (callee->starts_with("obelisk_rt_")) {
-          if (*callee == prioritySignalQuery || *callee == strengthResolveQuery)
+          if (*callee == prioritySignalQuery ||
+              *callee == strengthResolveQuery || *callee == coveragePointHit)
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
@@ -2260,6 +2271,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   FailureOr<NativeStateLayout> stateLayout = buildNativeStateLayout(module);
   if (failed(stateLayout))
     return failure();
+  auto embeddedStateBits =
+      module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+  if (!embeddedStateBits ||
+      embeddedStateBits.getValue().getZExtValue() != stateLayout->bitCount)
+    return module.emitError(
+        "prepared native state layout disagrees with embedded execution "
+        "metadata");
   markTiming("managed lowering and state layout");
   sim::StaticSpecializationAttr staticSpecialization;
   sim::StaticSuperstepAttr staticSuperstep;
@@ -2785,8 +2803,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
         module, *stateLayout, aotEligibility.getActorSlots(),
-        aotEligibility.getRuntimeOwnedFanoutActors(),
-        aotEligibility.getNegativeTimingFanoutActors(), true, staticEvalIsland);
+        aotEligibility.getRuntimeOwnedFanoutActors(), true, staticEvalIsland);
     if (failed(fanout))
       return failure();
     staticFanoutPlan = std::move(*fanout);
@@ -2799,6 +2816,30 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       for (const obelisk_rt_static_fanout_entry &entry :
            staticFanoutPlan.entries)
         stateLayout->transitionHandles.insert(entry.static_state);
+      // Toggle coverage observes every committed transition even when the
+      // exact language-level fanout is empty. Keep a notification at covered
+      // roots; the runtime's static fast path records it before its fanout-only
+      // early return.
+      module.walk([&](Operation *operation) {
+        if (!operation->hasAttr(sim::metadata::coverageToggleObservable))
+          return;
+        const uint64_t *handle = nullptr;
+        if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+          auto found = stateLayout->storage.find(storage.getId());
+          if (found != stateLayout->storage.end())
+            handle = &found->second;
+        } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+          auto found = stateLayout->nets.find(net.getId());
+          if (found != stateLayout->nets.end())
+            handle = &found->second;
+        }
+        if (!handle)
+          return;
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (obelisk_rt_stable_handle_decode(*handle, &decoded) &&
+            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+          stateLayout->transitionHandles.insert(decoded.id);
+      });
     }
   }
   if (useAOT) {
@@ -5078,6 +5119,8 @@ class ConvertObeliskSimProcessesToLLVMCoroutinesPass final
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    if (failed(verifyFunctionalCoverageSchemaBeforeBackend(module)))
+      return signalPassFailure();
     bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
     auto lastTiming = std::chrono::steady_clock::now();
     auto markTiming = [&](StringRef name) {
@@ -5110,6 +5153,21 @@ public:
     }
     if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
       return signalPassFailure();
+    FailureOr<analysis::NativeStateLayoutAnalysis> embeddedStateLayout =
+        analysis::NativeStateLayoutAnalysis::compute(module);
+    if (failed(embeddedStateLayout))
+      return signalPassFailure();
+    uint64_t stateBits = embeddedStateLayout->bitCount;
+    if (auto existing =
+            module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+        existing && existing.getValue().getZExtValue() != stateBits) {
+      module.emitError(
+          "native state layout disagrees with embedded execution metadata");
+      return signalPassFailure();
+    }
+    module->setAttr(
+        "obelisk.execution.state_bits",
+        IntegerAttr::get(IntegerType::get(&getContext(), 64), stateBits));
     if (failed(materializeEmbeddedSimulationDesign(module, *parsed)))
       return signalPassFailure();
     markTiming("validation and embedded design");

@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 using namespace obelisk::process;
@@ -484,6 +485,519 @@ bool signalSubscriptionBucketRange(uint64_t stableID, uint64_t bitWidth,
   return true;
 }
 
+namespace {
+
+bool isStaticCoverageSignal(obelisk_rt_context *context, uint64_t stableID,
+                            uint64_t width) {
+  obelisk_rt_stable_handle_v1 decoded;
+  if (!context || width == 0 ||
+      !obelisk_rt_stable_handle_decode(stableID, &decoded) ||
+      decoded.offset < 0 ||
+      (decoded.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL &&
+       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC &&
+       decoded.kind != OBELISK_RT_STABLE_HANDLE_AUTOMATIC))
+    return false;
+  uint64_t offset = static_cast<uint64_t>(decoded.offset);
+  if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC) {
+    auto state = context->nativeAutomaticStates.find(decoded.id);
+    return state != context->nativeAutomaticStates.end() &&
+           offset <= state->second.bitWidth &&
+           width <= state->second.bitWidth - offset;
+  }
+  if (decoded.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL)
+    return context->execution &&
+           offset <= context->execution->state_bit_count &&
+           width <= context->execution->state_bit_count - offset;
+  auto state = context->nativeStaticStates.find(decoded.id);
+  return state != context->nativeStaticStates.end() &&
+         offset <= state->second.bitWidth &&
+         width <= state->second.bitWidth - offset;
+}
+
+bool isValidArgumentRefCapture(obelisk_rt_context *context,
+                               const obelisk_rt_observer_capture_abi_v1 &abi,
+                               const obelisk_rt_computed_capture_v1 &capture) {
+  if (!context || abi.kind != OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF ||
+      abi.width == 0 || capture.payload1 > 2 || capture.payload2 != 0 ||
+      (capture.payload1 == 0 && capture.stable_id != 0) ||
+      (capture.payload1 != 0 && capture.stable_id == 0))
+    return false;
+  if (capture.payload1 == 0)
+    return isStaticCoverageSignal(context, capture.payload0, abi.width);
+  obelisk_rt_object_v1 *owner =
+      obelisk_rt_object_from_managed_word(capture.stable_id);
+  if (!owner ||
+      obelisk_rt_managed_word_from_object(owner) != capture.stable_id ||
+      obelisk_rt_managed_object_context(owner) != context)
+    return false;
+  obelisk_rt_managed_kind_v1 expected = capture.payload1 == 1
+                                            ? OBELISK_RT_MANAGED_CLASS
+                                            : OBELISK_RT_MANAGED_REFERENCE_PATH;
+  if (obelisk_rt_managed_object_kind(owner) != expected)
+    return false;
+  if (expected != OBELISK_RT_MANAGED_CLASS)
+    return true;
+  const obelisk_rt_class_descriptor_v1 *descriptor =
+      obelisk_rt_managed_object_class_descriptor(owner);
+  uint64_t byteWidth = (uint64_t{abi.width} + 7) / 8;
+  return descriptor && capture.payload0 >= sizeof(void *) &&
+         capture.payload0 <= descriptor->instance_size &&
+         byteWidth <= descriptor->instance_size - capture.payload0;
+}
+
+bool isValidManagedCapture(obelisk_rt_context *context,
+                           const obelisk_rt_observer_capture_abi_v1 &abi,
+                           const obelisk_rt_computed_capture_v1 &capture) {
+  if (!context || abi.kind != OBELISK_RT_OBSERVER_CAPTURE_MANAGED ||
+      abi.width != 64 || capture.payload0 != 0 || capture.payload1 != 0 ||
+      capture.payload2 != 0)
+    return false;
+  obelisk_rt_object_v1 *object =
+      obelisk_rt_object_from_managed_word(capture.stable_id);
+  return object &&
+         obelisk_rt_managed_word_from_object(object) == capture.stable_id &&
+         obelisk_rt_managed_object_context(object) == context;
+}
+
+bool resolveArgumentRefDependenciesUnlocked(
+    obelisk_rt_context *context,
+    const obelisk_rt_execution_descriptor_v1 *execution,
+    obelisk_rt_computed_wait_record_v1 *plan,
+    uint32_t observerLimit = UINT32_MAX) {
+  if (!context || !plan)
+    return false;
+  if (plan->dependency_count == 0)
+    return true;
+  auto *rawDependencies = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+      reinterpret_cast<uint8_t *>(plan) + plan->dependencies_offset);
+  if (observerLimit == UINT32_MAX) {
+    bool hasArgumentRef = false;
+    for (uint32_t index = 0; index != plan->dependency_count; ++index)
+      hasArgumentRef |= rawDependencies[index].kind ==
+                        OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF;
+    if (!hasArgumentRef)
+      return true;
+  }
+  auto *observers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+      plan, plan->observers_offset, plan->observer_count);
+  auto *captures = computedWaitSpan<obelisk_rt_computed_capture_v1>(
+      plan, plan->captures_offset, plan->capture_count);
+  auto *dependencies = computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+      plan, plan->dependencies_offset, plan->dependency_count);
+  if (!observers || !captures || !dependencies)
+    return false;
+  observerLimit = std::min(observerLimit, plan->observer_count);
+  bool hasArgumentRef = false;
+  for (uint32_t observerIndex = 0; observerIndex != observerLimit;
+       ++observerIndex) {
+    const obelisk_rt_computed_observer_v1 &observer = observers[observerIndex];
+    for (uint32_t dependencyIndex = 0;
+         dependencyIndex != observer.dependency_count; ++dependencyIndex)
+      hasArgumentRef |=
+          dependencies[observer.dependency_begin + dependencyIndex].kind ==
+          OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF;
+  }
+  if (!hasArgumentRef)
+    return true;
+  if (!execution)
+    return false;
+  for (uint32_t observerIndex = 0; observerIndex != observerLimit;
+       ++observerIndex) {
+    const obelisk_rt_computed_observer_v1 &observer = observers[observerIndex];
+    const obelisk_rt_observer_descriptor_v1 *descriptor =
+        findObserverDescriptor(execution, observer.code_unit_id);
+    if (!descriptor)
+      return false;
+    for (uint32_t dependencyIndex = 0;
+         dependencyIndex != observer.dependency_count; ++dependencyIndex) {
+      obelisk_rt_computed_dependency_v1 &dependency =
+          dependencies[observer.dependency_begin + dependencyIndex];
+      if (dependency.kind != OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF)
+        continue;
+      if (dependency.stable_id < observer.capture_begin ||
+          dependency.stable_id >=
+              uint64_t{observer.capture_begin} + observer.capture_count)
+        return false;
+      uint32_t localCapture =
+          static_cast<uint32_t>(dependency.stable_id - observer.capture_begin);
+      if (descriptor->capture_abi[localCapture].kind !=
+              OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF ||
+          descriptor->capture_abi[localCapture].width != dependency.width)
+        return false;
+      const obelisk_rt_computed_capture_v1 &capture =
+          captures[dependency.stable_id];
+      if (capture.payload1 == 0) {
+        if (capture.stable_id != 0 ||
+            !isStaticCoverageSignal(context, capture.payload0,
+                                    dependency.width))
+          return false;
+        dependency.stable_id = capture.payload0;
+        dependency.kind = OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL;
+        continue;
+      }
+      if (capture.payload1 != 1 || capture.payload2 != 0)
+        return false;
+      obelisk_rt_object_v1 *owner =
+          obelisk_rt_object_from_managed_word(capture.stable_id);
+      if (!owner ||
+          obelisk_rt_managed_word_from_object(owner) != capture.stable_id ||
+          obelisk_rt_managed_object_context(owner) != context ||
+          obelisk_rt_managed_object_kind(owner) != OBELISK_RT_MANAGED_CLASS)
+        return false;
+      uint64_t token = obelisk_rt_v1_managed_watch(
+          owner, OBELISK_RT_MANAGED_WATCH_FIELD, capture.payload0);
+      if (token == 0)
+        return false;
+      dependency.stable_id = token;
+      dependency.kind = OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED;
+      dependency.width = 1;
+    }
+  }
+  return true;
+}
+
+void eraseCovergroupClockEventRegistrationUnlocked(obelisk_rt_context *context,
+                                                   uint64_t logicalToken) {
+  if (!context || !context->covergroupClockEvents || logicalToken == 0)
+    return;
+  CovergroupClockEventFeatureState &feature = *context->covergroupClockEvents;
+  auto owned = feature.registrations.find(logicalToken);
+  if (owned == feature.registrations.end())
+    return;
+  if (owned->second && owned->second->strobePending &&
+      feature.pendingStrobeCount != 0)
+    --feature.pendingStrobeCount;
+  for (const auto &pointer : owned->second->clauses) {
+    if (!pointer)
+      continue;
+    CovergroupClockEventClause &clause = *pointer;
+    for (const SignalSubscriptionBucketSlot &slot : clause.bucketSlots) {
+      auto bucket = feature.subscriptionBuckets.find(slot.key);
+      if (bucket == feature.subscriptionBuckets.end() ||
+          slot.bucketIndex >= bucket->second.size())
+        continue;
+      CovergroupClockEventBucketEntry &entry = bucket->second[slot.bucketIndex];
+      if (entry.clause != &clause)
+        continue;
+      CovergroupClockEventBucketEntry moved = bucket->second.back();
+      size_t movedFrom = bucket->second.size() - 1;
+      entry = moved;
+      bucket->second.pop_back();
+      if (slot.bucketIndex != movedFrom && moved.clause &&
+          moved.slotIndex < moved.clause->bucketSlots.size())
+        moved.clause->bucketSlots[moved.slotIndex].bucketIndex =
+            slot.bucketIndex;
+      if (bucket->second.empty())
+        feature.subscriptionBuckets.erase(bucket);
+    }
+    if (!clause.bucketSlots.empty() && context->signalDiagnosticsEnabled &&
+        context->signalDiagnostics.subscriptionsCurrent != 0)
+      --context->signalDiagnostics.subscriptionsCurrent;
+  }
+  feature.registrations.erase(owned);
+  for (auto bucket = feature.subscriptionBuckets.begin();
+       bucket != feature.subscriptionBuckets.end();) {
+    if (bucket->second.empty())
+      bucket = feature.subscriptionBuckets.erase(bucket);
+    else
+      ++bucket;
+  }
+  if (feature.registrations.empty() && feature.subscriptionBuckets.empty())
+    context->covergroupClockEvents.reset();
+}
+
+} // namespace
+
+void obelisk_rt_unregister_covergroup_clock_events_unlocked(
+    obelisk_rt_context *context, uint64_t logicalToken) {
+  eraseCovergroupClockEventRegistrationUnlocked(context, logicalToken);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_clock_event_register(
+    obelisk_rt_context *context,
+    const obelisk_rt_computed_wait_record_v1 *eventPlan, uint64_t eventPlanSize,
+    uint32_t expectedStrobe, uint64_t observerCodeUnit,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount) {
+  if (!context || !eventPlan ||
+      eventPlanSize < sizeof(obelisk_rt_computed_wait_record_v1) ||
+      expectedStrobe > 1 || observerCodeUnit == 0 ||
+      (captureCount != 0 && !captures))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  uint64_t insertedLogicalToken = 0;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (context->schedulerStatus != OBELISK_RT_OK)
+      return context->schedulerStatus;
+    uint64_t logicalToken = context->activeLogicalProcessToken;
+    if (logicalToken == 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    bool native = (logicalToken & kNativeLogicalProcessTag) != 0;
+    const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+    if (native) {
+      uint64_t token = logicalToken & ~kNativeLogicalProcessTag;
+      ScheduledProcess *process = findScheduledProcess(context, token);
+      if (!process || !process->instance ||
+          process->instance != context->activeNativeProcess ||
+          !process->instance->descriptor)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      execution = process->instance->descriptor->execution;
+    } else {
+      if (!context->activeDesignTask ||
+          context->activeDesignTaskID != logicalToken ||
+          !context->designTaskExecuting)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      execution = context->execution;
+    }
+    const obelisk_rt_observer_descriptor_v1 *descriptor =
+        findObserverDescriptor(execution, observerCodeUnit);
+    if (!descriptor || descriptor->capture_count != captureCount ||
+        descriptor->result_width != 1 || descriptor->flags != 0 ||
+        captureCount == 0 ||
+        descriptor->capture_abi[0].kind !=
+            OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (!obelisk_rt_validate_computed_wait_record(execution, eventPlan,
+                                                  eventPlanSize) ||
+        eventPlan->clause_count > 64 || eventPlan->total_size != eventPlanSize)
+      return OBELISK_RT_INVALID_DESIGN;
+
+    uint64_t covergroupHandle = 0;
+    for (uint32_t index = 0; index != captureCount; ++index) {
+      const obelisk_rt_observer_capture_abi_v1 &abi =
+          descriptor->capture_abi[index];
+      const obelisk_rt_computed_capture_v1 &capture = captures[index];
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+        if (!isValidArgumentRefCapture(context, abi, capture))
+          return OBELISK_RT_INVALID_DESIGN;
+        continue;
+      }
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
+        if (!isValidManagedCapture(context, abi, capture))
+          return OBELISK_RT_INVALID_DESIGN;
+        continue;
+      }
+      if (capture.payload0 != 0 || capture.payload1 != 0 ||
+          capture.payload2 != 0)
+        return OBELISK_RT_INVALID_DESIGN;
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) {
+        if (index != 0 || covergroupHandle != 0 || capture.stable_id == 0 ||
+            abi.width != 64)
+          return OBELISK_RT_INVALID_DESIGN;
+        covergroupHandle = capture.stable_id;
+        continue;
+      }
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT &&
+          obelisk_rt_stable_handle_is_dynamic_event(capture.stable_id))
+        return OBELISK_RT_INVALID_DESIGN;
+      obelisk_rt_stable_handle_v1 decoded;
+      if (!obelisk_rt_stable_handle_decode(capture.stable_id, &decoded))
+        return OBELISK_RT_INVALID_DESIGN;
+    }
+    if (covergroupHandle == 0)
+      return OBELISK_RT_INVALID_DESIGN;
+    bool strobe = false;
+    obelisk_rt_status status = obelisk_rt_covergroup_strobe_unlocked(
+        context, covergroupHandle, strobe);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (strobe != (expectedStrobe != 0))
+      return OBELISK_RT_INVALID_DESIGN;
+
+    const auto *eventObservers =
+        computedWaitSpan<obelisk_rt_computed_observer_v1>(
+            eventPlan, eventPlan->observers_offset, eventPlan->observer_count);
+    const auto *eventCaptures =
+        computedWaitSpan<obelisk_rt_computed_capture_v1>(
+            eventPlan, eventPlan->captures_offset, eventPlan->capture_count);
+    const auto *eventDependencies =
+        computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+            eventPlan, eventPlan->dependencies_offset,
+            eventPlan->dependency_count);
+    if (!eventObservers || !eventCaptures || !eventDependencies)
+      return OBELISK_RT_INVALID_DESIGN;
+    for (uint32_t observerIndex = 0; observerIndex != eventPlan->observer_count;
+         ++observerIndex) {
+      const auto &observer = eventObservers[observerIndex];
+      const auto *eventDescriptor =
+          findObserverDescriptor(execution, observer.code_unit_id);
+      if (!eventDescriptor)
+        return OBELISK_RT_INVALID_DESIGN;
+      for (uint32_t captureIndex = 0; captureIndex != observer.capture_count;
+           ++captureIndex) {
+        const auto &abi = eventDescriptor->capture_abi[captureIndex];
+        const auto &capture =
+            eventCaptures[observer.capture_begin + captureIndex];
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+          if (!isValidArgumentRefCapture(context, abi, capture))
+            return OBELISK_RT_INVALID_DESIGN;
+          continue;
+        }
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
+          if (!isValidManagedCapture(context, abi, capture))
+            return OBELISK_RT_INVALID_DESIGN;
+          continue;
+        }
+        if (capture.payload0 != 0 || capture.payload1 != 0 ||
+            capture.payload2 != 0)
+          return OBELISK_RT_INVALID_DESIGN;
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP ||
+            (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT &&
+             obelisk_rt_stable_handle_is_dynamic_event(capture.stable_id)))
+          return OBELISK_RT_INVALID_DESIGN;
+        obelisk_rt_stable_handle_v1 decoded;
+        if (!obelisk_rt_stable_handle_decode(capture.stable_id, &decoded))
+          return OBELISK_RT_INVALID_DESIGN;
+      }
+      if (observerIndex < eventPlan->clause_count)
+        for (uint32_t dependencyIndex = 0;
+             dependencyIndex != observer.dependency_count; ++dependencyIndex) {
+          const auto &dependency =
+              eventDependencies[observer.dependency_begin + dependencyIndex];
+          if (dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF)
+            continue;
+          if (dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED) {
+            if (dependency.stable_id == 0 || dependency.width != 1)
+              return OBELISK_RT_INVALID_DESIGN;
+            continue;
+          }
+          if (dependency.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL ||
+              !isStaticCoverageSignal(context, dependency.stable_id,
+                                      dependency.width))
+            return OBELISK_RT_INVALID_DESIGN;
+        }
+    }
+    if (!context->covergroupClockEvents)
+      context->covergroupClockEvents =
+          std::make_unique<CovergroupClockEventFeatureState>();
+    CovergroupClockEventFeatureState &feature = *context->covergroupClockEvents;
+    if (feature.registrations.count(logicalToken) != 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+
+    auto registration = std::make_unique<CovergroupClockEventRegistration>();
+    registration->ownerLogicalToken = logicalToken;
+    registration->observerCodeUnitID = observerCodeUnit;
+    registration->covergroupHandle = covergroupHandle;
+    registration->native = native;
+    registration->strobe = strobe;
+    registration->eventPlan.resize((eventPlanSize + 7) / 8);
+    std::memcpy(registration->eventPlan.data(), eventPlan, eventPlanSize);
+    registration->captures.assign(captures, captures + captureCount);
+    registration->clauses.reserve(eventPlan->clause_count);
+    auto *resolvedPlan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        registration->eventPlan.data());
+    if (!resolveArgumentRefDependenciesUnlocked(
+            context, execution, resolvedPlan, resolvedPlan->clause_count))
+      return OBELISK_RT_INVALID_DESIGN;
+    CovergroupClockEventRegistration *stored = registration.get();
+    feature.registrations.emplace(logicalToken, std::move(registration));
+    insertedLogicalToken = logicalToken;
+    auto rollback = [&] {
+      eraseCovergroupClockEventRegistrationUnlocked(context, logicalToken);
+    };
+    auto *storedPlan = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        stored->eventPlan.data());
+    auto *storedObservers = computedWaitSpan<obelisk_rt_computed_observer_v1>(
+        storedPlan, storedPlan->observers_offset, storedPlan->observer_count);
+    auto *storedDependencies =
+        computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+            storedPlan, storedPlan->dependencies_offset,
+            storedPlan->dependency_count);
+    for (uint32_t index = 0; index != storedPlan->clause_count; ++index) {
+      auto clause = std::make_unique<CovergroupClockEventClause>();
+      clause->registration = stored;
+      clause->clauseIndex = index;
+      const auto &primary = storedObservers[index];
+      clause->bucketSlots.reserve(primary.dependency_count);
+      CovergroupClockEventClause *storedClause = clause.get();
+      stored->clauses.push_back(std::move(clause));
+      for (uint32_t dependencyIndex = 0;
+           dependencyIndex != primary.dependency_count; ++dependencyIndex) {
+        const auto &dependency =
+            storedDependencies[primary.dependency_begin + dependencyIndex];
+        if (dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED)
+          continue;
+        if (dependency.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL) {
+          rollback();
+          return OBELISK_RT_INVALID_DESIGN;
+        }
+        uint32_t kind = 0;
+        uint32_t id = 0;
+        int64_t firstPage = 0;
+        int64_t lastPage = 0;
+        if (!signalSubscriptionBucketRange(dependency.stable_id,
+                                           dependency.width, kind, id,
+                                           firstPage, lastPage)) {
+          rollback();
+          return OBELISK_RT_INVALID_DESIGN;
+        }
+        __int128 pageCount = static_cast<__int128>(lastPage) - firstPage + 1;
+        if (pageCount <= 0) {
+          rollback();
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        }
+        bool wide = pageCount > kMaximumIndexedSignalPages;
+        int64_t indexedFirst = wide ? kWideSignalSubscriptionPage : firstPage;
+        int64_t indexedLast = wide ? kWideSignalSubscriptionPage : lastPage;
+        for (int64_t page = indexedFirst;; ++page) {
+          SignalSubscriptionBucketKey key{kind, id, page};
+          bool alreadyIndexed =
+              std::any_of(storedClause->bucketSlots.begin(),
+                          storedClause->bucketSlots.end(),
+                          [&](const auto &slot) { return slot.key == key; });
+          if (!alreadyIndexed) {
+            auto &bucket = feature.subscriptionBuckets[key];
+            size_t slot = storedClause->bucketSlots.size();
+            // Record the reverse edge first. If growing the forward bucket
+            // then fails, registration rollback sees the provisional
+            // out-of-range index and safely discards this clause without
+            // leaving a dangling bucket pointer.
+            storedClause->bucketSlots.push_back(
+                {key, std::numeric_limits<size_t>::max()});
+            bucket.push_back({storedClause, slot});
+            storedClause->bucketSlots.back().bucketIndex = bucket.size() - 1;
+          }
+          if (page == indexedLast)
+            break;
+        }
+      }
+      if (!storedClause->bucketSlots.empty() &&
+          context->signalDiagnosticsEnabled) {
+        ++context->signalDiagnostics.subscriptionsCurrent;
+        context->signalDiagnostics.subscriptionsHighWater =
+            std::max(context->signalDiagnostics.subscriptionsHighWater,
+                     context->signalDiagnostics.subscriptionsCurrent);
+      }
+    }
+    insertedLogicalToken = 0;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    if (insertedLogicalToken != 0) {
+      ContextMutexLock lock(context);
+      eraseCovergroupClockEventRegistrationUnlocked(context,
+                                                    insertedLogicalToken);
+    }
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    if (insertedLogicalToken != 0) {
+      ContextMutexLock lock(context);
+      eraseCovergroupClockEventRegistrationUnlocked(context,
+                                                    insertedLogicalToken);
+    }
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+  OBELISK_RT_CATCH_ALL {
+    if (insertedLogicalToken != 0) {
+      ContextMutexLock lock(context);
+      eraseCovergroupClockEventRegistrationUnlocked(context,
+                                                    insertedLogicalToken);
+    }
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
 void obelisk_rt_unregister_signal_wait_unlocked(
     obelisk_rt_context *context,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
@@ -525,6 +1039,14 @@ void obelisk_rt_unregister_signal_wait_unlocked(
     }
     uint64_t logicalToken =
         designWaiter ? waiterToken : kNativeLogicalProcessTag | waiterToken;
+    bool terminated =
+        designWaiter
+            ? context->terminatedDesignTasks.count(waiterToken) != 0 ||
+                  context->killedDesignTasks.count(waiterToken) != 0
+            : context->terminatedNativeProcesses.count(waiterToken) != 0 ||
+                  context->killedNativeProcesses.count(waiterToken) != 0;
+    if (terminated)
+      eraseCovergroupClockEventRegistrationUnlocked(context, logicalToken);
     if (context->noChangeChecks) {
       auto &checks = context->noChangeChecks->checks;
       for (auto current = checks.begin(); current != checks.end();) {
@@ -912,12 +1434,23 @@ bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
 }
 
 bool obelisk_rt_register_computed_signal_wait_unlocked(
-    obelisk_rt_context *context, const obelisk_rt_computed_wait_record_v1 *wait,
+    obelisk_rt_context *context, obelisk_rt_computed_wait_record_v1 *wait,
     uint64_t waiterToken, bool designWaiter,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     std::unique_ptr<SignalWaitLatch> &latch) {
   if (!context || !wait || waiterToken == 0)
     return false;
+  const obelisk_rt_execution_descriptor_v1 *execution = context->execution;
+  if (!designWaiter) {
+    ScheduledProcess *process = findScheduledProcess(context, waiterToken);
+    execution = process && process->instance && process->instance->descriptor
+                    ? process->instance->descriptor->execution
+                    : nullptr;
+  }
+  if (!resolveArgumentRefDependenciesUnlocked(context, execution, wait)) {
+    context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+    return false;
+  }
   // A computed waiter is outside the exact generated fanout inventory. It can
   // be installed dynamically after AOT startup selected its guarded fast
   // path, so invalidate that cached proof before registering dependencies.
@@ -1097,8 +1630,7 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
     if (process.token == token && process.instance && process.started) {
       bool wasTriggered = process.signalTriggered;
       consider(currentWait(process), process.suspendKind,
-               kNativeLogicalProcessTag | token,
-               process.signalTriggered);
+               kNativeLogicalProcessTag | token, process.signalTriggered);
       if (!wasTriggered && process.signalTriggered) {
         OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
         OBELISK_RT_CATCH(const std::bad_alloc &) {
@@ -1201,9 +1733,15 @@ bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
             &sequence, &oldValueBits, &oldUnknownBits, &newValueBits,
             &newUnknownBits))
       return false;
-  } else if (!obelisk_rt_publish_signal_occurrence_unlocked(
-                 context, bitOffset, 1, edges, &sequence)) {
-    return false;
+  } else {
+    const uint8_t changedBits = 1;
+    const uint8_t newValueBits = newValue ? 1 : 0;
+    const uint8_t newUnknownBits = newUnknown ? 1 : 0;
+    obelisk_rt_coverage_record_transition_unlocked(
+        context, bitOffset, 1, &changedBits, &newValueBits, &newUnknownBits);
+    if (!obelisk_rt_publish_signal_occurrence_unlocked(context, bitOffset, 1,
+                                                       edges, &sequence))
+      return false;
   }
   if (obelisk_rt_has_conditional_signal_waiters(context))
     context->signalValueSnapshots[bitOffset] = {sequence, newValue, newUnknown};

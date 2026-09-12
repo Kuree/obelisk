@@ -22,3 +22,27 @@ obelisk_register_generated_file(
     include/obelisk/Reflection/VPITraversalEarly.td
     include/obelisk/Reflection/VPITraversalLate.td
     utils/obelisk-tblgen/obelisk-tblgen.cpp)
+
+obelisk_register_generated_file(
+  NAME CoverageFormatDecls
+  OUTPUT include/obelisk/Coverage/CoverageFormatDecls.h.inc
+  TOOL obelisk-tblgen
+  INPUT include/obelisk/Coverage/CoverageDatabase.td
+  ARGS -gen-obelisk-coverage-format-decls
+  DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)
+
+obelisk_register_generated_file(
+  NAME CoverageFormatParser
+  OUTPUT include/obelisk/Coverage/CoverageFormatParser.h.inc
+  TOOL obelisk-tblgen
+  INPUT include/obelisk/Coverage/CoverageDatabase.td
+  ARGS -gen-obelisk-coverage-format-parser
+  DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)
+
+obelisk_register_generated_file(
+  NAME CoverageFormatSerializer
+  OUTPUT include/obelisk/Coverage/CoverageFormatSerializer.h.inc
+  TOOL obelisk-tblgen
+  INPUT include/obelisk/Coverage/CoverageDatabase.td
+  ARGS -gen-obelisk-coverage-format-serializer
+  DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)

@@ -1016,6 +1016,21 @@ UnitLowering::outlineForkBranch(
     }
   llvm::StringSet<> referencedPaths;
   bool branchUsesThis = false;
+  auto collectCoveragePaths = [&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroup->walk([&](Operation *nested) {
+      if (auto path = nested->getAttrOfType<StringAttr>("referenced_path");
+          path && !path.getValue().empty())
+        referencedPaths.insert(path.getValue());
+      if (auto callCaptures =
+              nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+        for (Attribute capture : callCaptures)
+          referencedPaths.insert(cast<StringAttr>(capture).getValue());
+      if (auto observerCaptures =
+              nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+        for (Attribute capture : observerCaptures)
+          referencedPaths.insert(cast<StringAttr>(capture).getValue());
+    });
+  };
   branch->walk([&](Operation *nested) {
     // A captured expression is replaced wholesale in the outlined body. Its
     // internal references must not retain descriptor-backed bindings that
@@ -1048,6 +1063,11 @@ UnitLowering::outlineForkBranch(
     }
     if (!path.empty())
       referencedPaths.insert(path);
+    if (auto construct =
+            dyn_cast<semantic::SVNewCovergroupExpressionOp>(nested))
+      if (semantic::SVCovergroupTypeOp covergroup =
+              findSemanticCovergroup(construct))
+        collectCoveragePaths(covergroup);
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
         call && call->hasAttr("obelisk_sim.class_instance")) {
       auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
@@ -1565,6 +1585,17 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
     branches.erase(branches.begin());
   }
 
+  std::optional<uint64_t> blockEventTargetID;
+  if (auto targetID =
+          op->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName)) {
+    if (!targetID.getValue().isStrictlyPositive())
+      return op.emitError("coverage block-event target ID must be positive");
+    if (!branches.empty()) {
+      blockEventTargetID = targetID.getValue().getZExtValue();
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/0, location);
+    }
+  }
+
   uint64_t forkNode =
       op->getAttrOfType<IntegerAttr>("node_id")
           ? op->getAttrOfType<IntegerAttr>("node_id").getValue().getZExtValue()
@@ -1582,8 +1613,11 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   }
 
   semantic::SVStatementBlockKind kind = op.getBlockKind();
-  if (kind == semantic::SVStatementBlockKind::JoinNone || processes.empty())
+  if (kind == semantic::SVStatementBlockKind::JoinNone || processes.empty()) {
+    if (blockEventTargetID)
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
     return success();
+  }
   Block *continuation = addBlock();
   sim::JoinKind joinKind = kind == semantic::SVStatementBlockKind::JoinAny
                                ? sim::JoinKind::Any
@@ -1592,13 +1626,21 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
                                 processes.size(), sim::ContinuationSiteAttr{},
                                 sim::EventRegionAttr{}, continuation);
   setCurrent(continuation);
+  if (blockEventTargetID)
+    emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
   return success();
 }
 
 LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   auto path = op.getBlockPathAttr();
   SmallVector<Operation *> contents = getChildren(op);
-  auto lowerContents = [&]() {
+  SmallVector<Operation *> sequentialContents = contents;
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      sequentialContents.size() == 1 &&
+      isa<semantic::SVStatementListOp>(sequentialContents.front()))
+    sequentialContents = getChildren(sequentialContents.front());
+  auto lowerContents = [&](std::optional<uint64_t> blockEventTargetID =
+                               std::nullopt) {
     // A statement block is a lexical scope. Keep bindings introduced by the
     // block (and bindings that shadow an outer declaration) from leaking into
     // the lowering of following statements. The values themselves remain in
@@ -1609,8 +1651,20 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
       values = std::move(enclosingValues);
       lvalues = std::move(enclosingLValues);
     });
-    if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
-      return lowerSequence(contents);
+    if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential) {
+      SmallVector<Operation *> statements = sequentialContents;
+      while (!statements.empty() &&
+             isa<semantic::SVVariableDeclStatementOp>(statements.front())) {
+        if (failed(lowerVariableDeclaration(
+                cast<semantic::SVVariableDeclStatementOp>(statements.front()))))
+          return failure();
+        statements.erase(statements.begin());
+      }
+      if (blockEventTargetID && !statements.empty())
+        emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/0,
+                                 getSemanticLocation(op));
+      return lowerSequence(statements);
+    }
     return lowerFork(op);
   };
   if (!path)
@@ -1651,6 +1705,19 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
     return failure();
   }
   uint64_t targetID = targetIDAttr.getValue().getZExtValue();
+  std::optional<uint64_t> blockEventTargetID;
+  if (auto eventTarget =
+          op->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName)) {
+    if (!eventTarget.getValue().isStrictlyPositive())
+      return op.emitError("coverage block-event target ID must be positive");
+    SmallVector<Operation *> statements = sequentialContents;
+    while (!statements.empty() &&
+           isa<semantic::SVVariableDeclStatementOp>(statements.front()))
+      statements.erase(statements.begin());
+    if (op.getBlockKind() != semantic::SVStatementBlockKind::Sequential ||
+        !statements.empty())
+      blockEventTargetID = eventTarget.getValue().getZExtValue();
+  }
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
@@ -1664,12 +1731,16 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
                                       exit, body);
     setCurrent(body);
   }
-  controlScopes.push_back({path.getValue().str(), targetID, activation, exit});
-  LogicalResult result = lowerContents();
+  controlScopes.push_back(
+      {path.getValue().str(), targetID, activation, exit, blockEventTargetID});
+  LogicalResult result = lowerContents(blockEventTargetID);
   controlScopes.pop_back();
   if (failed(result))
     return failure();
   if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>()) {
+    if (blockEventTargetID &&
+        op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
     sim::SimControlLeaveOp::create(builder, location, activation);
     cf::BranchOp::create(builder, location, exit);
   }
@@ -1734,7 +1805,8 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
                              continuation, ValueRange{});
     setCurrent(abandon);
     if (function.getEntryKind() == sim::EntryKind::Function) {
-      if (failed(emitFunctionReturn(location, std::nullopt, false)))
+      if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                    /*emitBlockEventEnd=*/false)))
         return failure();
       builder.setInsertionPoint(current->getTerminator());
       sim::SimControlNonlocalExitOp::create(

@@ -1,9 +1,11 @@
-//===- MaterializeClockedSamples.cpp - Static alternate-clock samplers --===//
+//===- MaterializeClockedSamples.cpp - Deferred clock samplers ------------===//
 
 #include "Detail.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -26,6 +28,18 @@ class ObeliskSimMaterializeClockedSamplesPass
 public:
   void runOnOperation() override {
     sim::SimDesignOp design = getOperation();
+    if (failed(simlowering::materializeCovergroupClockingSamplers(design))) {
+      signalPassFailure();
+      return;
+    }
+    // Functional expressions can call ordinary code units before their
+    // constructor/sample helpers exist. Prepare keeps those callees alive
+    // through the early SymbolDCE with references on the root. Every semantic
+    // call has now become an executable symbol use, so release that temporary
+    // inventory before the ordinary post-lowering DCE and inliner.
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      function->removeAttr(sim::metadata::coverageRetainedCodeUnits);
     bool invalid = false;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {

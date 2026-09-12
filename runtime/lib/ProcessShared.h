@@ -168,7 +168,7 @@ bool publishNativeSignalTransitionUnlocked(
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown, bool establishesOverride = false);
-void publishOverrideEstablishmentTransition(
+void publishOverrideTransition(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown);

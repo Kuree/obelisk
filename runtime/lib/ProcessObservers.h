@@ -17,5 +17,9 @@ bool obelisk_rt_evaluate_native_clock_condition_unlocked(
     obelisk_rt_context *context, uint64_t processToken, uint64_t codeUnitID,
     const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t &value, uint64_t &unknown);
+bool obelisk_rt_evaluate_native_bound_observer_unlocked(
+    obelisk_rt_context *context, uint64_t processToken, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCapacity);
 
 #endif // OBELISK_RUNTIME_LIB_PROCESSOBSERVERS_H

@@ -2236,6 +2236,858 @@ mlir::GenRegistration vpiObjectModelGen(
     "Generate Obelisk VPI object and relationship descriptors",
     emitVPIObjectModel);
 
+bool validateCoverageSchema(const RecordKeeper &records) {
+  auto metrics = records.getAllDerivedDefinitions("CoverageMetric");
+  auto sections = records.getAllDerivedDefinitions("CoverageSection");
+  auto dimensions =
+      records.getAllDerivedDefinitions("CoverageToggleDimensionKind");
+  auto functionalItems =
+      records.getAllDerivedDefinitions("CoverageFunctionalItemKind");
+  auto functionalBins =
+      records.getAllDerivedDefinitions("CoverageFunctionalBinKind");
+  auto functionalSources =
+      records.getAllDerivedDefinitions("CoverageFunctionalSourceRole");
+  auto repetitions =
+      records.getAllDerivedDefinitions("CoverageTransitionRepetitionKind");
+  auto valueSets = records.getAllDerivedDefinitions("CoverageValueSetKind");
+  auto valueAtoms = records.getAllDerivedDefinitions("CoverageValueAtomKind");
+  auto retainPolicies =
+      records.getAllDerivedDefinitions("CoverageCrossRetainAutoPolicy");
+  auto selectors =
+      records.getAllDerivedDefinitions("CoverageCrossSelectorKind");
+  auto expressionOwners =
+      records.getAllDerivedDefinitions("CoverageExpressionOwnerKind");
+  auto expressionRoles =
+      records.getAllDerivedDefinitions("CoverageExpressionRole");
+  auto formalKinds =
+      records.getAllDerivedDefinitions("CoverageFunctionalFormalKind");
+  auto formalDirections =
+      records.getAllDerivedDefinitions("CoverageFunctionalFormalDirection");
+  auto expressionResults =
+      records.getAllDerivedDefinitions("CoverageExpressionResultKind");
+  auto signedness = records.getAllDerivedDefinitions("CoverageSignedness");
+  auto arrayModes =
+      records.getAllDerivedDefinitions("CoverageBinArrayMode");
+  auto distributions =
+      records.getAllDerivedDefinitions("CoverageBinDistributionKind");
+  auto matchesPolicies =
+      records.getAllDerivedDefinitions("CoverageCrossMatchesPolicy");
+  auto optionScopes =
+      records.getAllDerivedDefinitions("CoverageOptionScopeKind");
+  auto optionKinds =
+      records.getAllDerivedDefinitions("CoverageConfigurationOptionKind");
+  auto optionOwners = records.getAllDerivedDefinitions(
+      "CoverageConfigurationOptionOwnerKind");
+  auto optionValues =
+      records.getAllDerivedDefinitions("CoverageConfigurationValueKind");
+  auto expressionPhases = records.getAllDerivedDefinitions(
+      "CoverageExpressionEvaluationPhase");
+  auto tupleModes =
+      records.getAllDerivedDefinitions("CoverageTupleElementMode");
+  auto resolvedValueSetRoles =
+      records.getAllDerivedDefinitions("CoverageResolvedValueSetRole");
+  if (metrics.empty() || sections.empty() || dimensions.empty() ||
+      functionalItems.empty() || functionalBins.empty() ||
+      functionalSources.empty() || repetitions.empty() || valueSets.empty() ||
+      valueAtoms.empty() || retainPolicies.empty() || selectors.empty() ||
+      expressionOwners.empty() || expressionRoles.empty() ||
+      formalKinds.empty() || formalDirections.empty() ||
+      expressionResults.empty() || signedness.empty() || arrayModes.empty() ||
+      distributions.empty() || matchesPolicies.empty() ||
+      optionScopes.empty() || optionKinds.empty() || optionOwners.empty() ||
+      optionValues.empty() || expressionPhases.empty() || tupleModes.empty() ||
+      resolvedValueSetRoles.empty()) {
+    PrintError("coverage schema needs metrics, toggle dimensions, functional "
+               "kinds, and sections");
+    return false;
+  }
+  auto validateKinds = [&](ArrayRef<const Record *> kinds,
+                           StringRef description) {
+    DenseSet<uint32_t> values;
+    StringSet<> names;
+    for (const Record *kind : kinds) {
+      StringRef name;
+      uint32_t value = 0;
+      if (!getCppName(*kind, description, name) ||
+          !getU32(*kind, "value", 1, value))
+        return false;
+      if (!names.insert(name).second || !values.insert(value).second) {
+        PrintError(kind->getLoc(),
+                   Twine("duplicate ") + description + " name or value");
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!validateKinds(functionalItems, "functional item kind") ||
+      !validateKinds(functionalBins, "functional bin kind") ||
+      !validateKinds(functionalSources, "functional source role") ||
+      !validateKinds(repetitions, "transition repetition kind") ||
+      !validateKinds(valueSets, "value-set kind") ||
+      !validateKinds(valueAtoms, "value-atom kind") ||
+      !validateKinds(retainPolicies, "cross retain-auto policy") ||
+      !validateKinds(selectors, "cross selector kind") ||
+      !validateKinds(expressionOwners, "expression owner kind") ||
+      !validateKinds(expressionRoles, "expression role") ||
+      !validateKinds(formalKinds, "functional formal kind") ||
+      !validateKinds(formalDirections, "functional formal direction") ||
+      !validateKinds(expressionResults, "expression result kind") ||
+      !validateKinds(signedness, "coverage signedness") ||
+      !validateKinds(arrayModes, "bin array mode") ||
+      !validateKinds(distributions, "bin distribution kind") ||
+      !validateKinds(matchesPolicies, "cross matches policy") ||
+      !validateKinds(optionScopes, "functional option scope") ||
+      !validateKinds(optionKinds, "configuration option kind") ||
+      !validateKinds(optionOwners, "configuration option owner kind") ||
+      !validateKinds(optionValues, "configuration value kind") ||
+      !validateKinds(expressionPhases, "expression evaluation phase") ||
+      !validateKinds(tupleModes, "tuple element mode") ||
+      !validateKinds(resolvedValueSetRoles, "resolved value-set role"))
+    return false;
+  DenseSet<uint32_t> dimensionValues;
+  StringSet<> dimensionNames;
+  for (const Record *dimension : dimensions) {
+    StringRef name;
+    uint32_t value = 0;
+    if (!getCppName(*dimension, "toggle dimension", name) ||
+        !getU32(*dimension, "value", 1, value))
+      return false;
+    if (!dimensionNames.insert(name).second ||
+        !dimensionValues.insert(value).second) {
+      PrintError(dimension->getLoc(),
+                 "duplicate toggle dimension name or value");
+      return false;
+    }
+  }
+  DenseSet<uint32_t> metricValues;
+  StringSet<> metricNames;
+  for (const Record *metric : metrics) {
+    StringRef name;
+    uint32_t value = 0;
+    if (!getCppName(*metric, "coverage metric", name) ||
+        !getU32(*metric, "value", 1, value))
+      return false;
+    if (!metricNames.insert(name).second ||
+        !metricValues.insert(value).second) {
+      PrintError(metric->getLoc(), "duplicate coverage metric name or value");
+      return false;
+    }
+  }
+  DenseSet<uint32_t> sectionValues;
+  StringSet<> sectionNames;
+  for (const Record *section : sections) {
+    StringRef name;
+    uint32_t value = 0;
+    uint32_t recordSize = 0;
+    if (!getCppName(*section, "coverage section", name) ||
+        !getU32(*section, "value", 1, value) ||
+        !getU32(*section, "recordSize", 0, recordSize))
+      return false;
+    if (!sectionNames.insert(name).second ||
+        !sectionValues.insert(value).second) {
+      PrintError(section->getLoc(), "duplicate coverage section name or value");
+      return false;
+    }
+    if (recordSize && recordSize % 8 != 0) {
+      PrintError(section->getLoc(),
+                 "fixed coverage record size must be eight-byte aligned");
+      return false;
+    }
+  }
+
+  auto encodings =
+      records.getAllDerivedDefinitions("CoverageFieldEncoding");
+  auto domainDefs =
+      records.getAllDerivedDefinitions("CoverageFieldDomain");
+  SmallVector<const Record *> domains(domainDefs.begin(), domainDefs.end());
+  auto physicalRecords = records.getAllDerivedDefinitions("CoverageRecord");
+  if (encodings.empty() || domains.empty() || physicalRecords.empty()) {
+    PrintError("coverage schema needs physical field encodings, domains, and "
+               "records");
+    return false;
+  }
+  StringSet<> domainNames;
+  DenseSet<const Record *> domainRecords;
+  DenseSet<uint32_t> knownSectionValues;
+  for (const Record *section : sections)
+    knownSectionValues.insert(
+        static_cast<uint32_t>(section->getValueAsInt("value")));
+  for (const Record *domain : domains) {
+    StringRef name;
+    if (!getCppName(*domain, "coverage field domain", name))
+      return false;
+    StringRef category = domain->getValueAsString("category");
+    static constexpr StringLiteral categories[] = {
+        "None", "Enum", "String", "StableRef", "Range", "UUIDRef",
+        "Relational"};
+    uint32_t targetSection = 0;
+    if (!llvm::is_contained(categories, category) ||
+        !getU32(*domain, "targetSection", 0, targetSection) ||
+        (targetSection && !knownSectionValues.count(targetSection)) ||
+        !domainNames.insert(name).second || !domainRecords.insert(domain).second) {
+      PrintError(domain->getLoc(), "invalid coverage field domain");
+      return false;
+    }
+    auto values = domain->getValueAsListOfDefs("enumValues");
+    DenseSet<int64_t> uniqueValues;
+    for (const Record *valueRecord : values) {
+      int64_t value = valueRecord->getValueAsInt("value");
+      if (value < 0 || value > maxU32 || !uniqueValues.insert(value).second) {
+        PrintError(domain->getLoc(), "invalid coverage enum domain value");
+        return false;
+      }
+    }
+    if ((category == "Enum") != !values.empty() ||
+        ((category == "String" || category == "StableRef" ||
+          category == "Range" || category == "UUIDRef") !=
+         (targetSection != 0))) {
+      PrintError(domain->getLoc(),
+                 "coverage field domain category has inconsistent metadata");
+      return false;
+    }
+  }
+  auto validateEnumDomain = [&](StringRef domainName,
+                                ArrayRef<const Record *> expected) {
+    const Record *matchingDomain = nullptr;
+    for (const Record *domain : domains)
+      if (domain->getValueAsString("cppName") == domainName) {
+        matchingDomain = domain;
+        break;
+      }
+    if (!matchingDomain) {
+      PrintError(Twine("missing coverage enum domain ") + domainName);
+      return false;
+    }
+    auto actual = matchingDomain->getValueAsListOfDefs("enumValues");
+    DenseSet<const Record *> expectedSet(expected.begin(), expected.end());
+    if (actual.size() != expectedSet.size()) {
+      PrintError(matchingDomain->getLoc(),
+                 "coverage enum domain must list its complete enum class");
+      return false;
+    }
+    for (const Record *value : actual)
+      if (!expectedSet.erase(value)) {
+        PrintError(matchingDomain->getLoc(),
+                   "coverage enum domain contains a value from another enum");
+        return false;
+      }
+    return expectedSet.empty();
+  };
+  if (!validateEnumDomain("MetricKind", metrics) ||
+      !validateEnumDomain("ToggleDimensionKind", dimensions) ||
+      !validateEnumDomain("FunctionalSourceRole", functionalSources) ||
+      !validateEnumDomain("FunctionalItemKind", functionalItems) ||
+      !validateEnumDomain("FunctionalBinKind", functionalBins) ||
+      !validateEnumDomain("TransitionRepetitionKind", repetitions) ||
+      !validateEnumDomain("FunctionalValueSetKind", valueSets) ||
+      !validateEnumDomain("FunctionalValueAtomKind", valueAtoms) ||
+      !validateEnumDomain("CrossRetainAutoPolicy", retainPolicies) ||
+      !validateEnumDomain("CrossSelectorKind", selectors) ||
+      !validateEnumDomain("FunctionalExpressionOwnerKind", expressionOwners) ||
+      !validateEnumDomain("FunctionalExpressionRole", expressionRoles) ||
+      !validateEnumDomain("FunctionalFormalKind", formalKinds) ||
+      !validateEnumDomain("FunctionalFormalDirection", formalDirections) ||
+      !validateEnumDomain("FunctionalExpressionResultKind", expressionResults) ||
+      !validateEnumDomain("CoverageSignedness", signedness) ||
+      !validateEnumDomain("FunctionalBinArrayMode", arrayModes) ||
+      !validateEnumDomain("FunctionalBinDistributionKind", distributions) ||
+      !validateEnumDomain("CrossMatchesPolicy", matchesPolicies) ||
+      !validateEnumDomain("FunctionalOptionScopeKind", optionScopes) ||
+      !validateEnumDomain("FunctionalConfigurationOptionKind", optionKinds) ||
+      !validateEnumDomain("FunctionalConfigurationOptionOwnerKind",
+                          optionOwners) ||
+      !validateEnumDomain("FunctionalConfigurationValueKind", optionValues) ||
+      !validateEnumDomain("FunctionalExpressionEvaluationPhase",
+                          expressionPhases) ||
+      !validateEnumDomain("FunctionalTupleElementMode", tupleModes) ||
+      !validateEnumDomain("ResolvedFunctionalValueSetRole",
+                          resolvedValueSetRoles))
+    return false;
+  StringMap<uint32_t> encodingWidths;
+  for (const Record *encoding : encodings) {
+    StringRef name;
+    uint32_t width = 0;
+    if (!getCppName(*encoding, "coverage field encoding", name) ||
+        !getU32(*encoding, "width", 1, width))
+      return false;
+    if (!encodingWidths.try_emplace(name, width).second) {
+      PrintError(encoding->getLoc(),
+                 "duplicate coverage field encoding name");
+      return false;
+    }
+  }
+  StringSet<> recordNames;
+  DenseSet<const Record *> recordSections;
+  DenseMap<const Record *, std::pair<uint32_t, uint32_t>> identityCounts;
+  for (const Record *physicalRecord : physicalRecords) {
+    StringRef recordName;
+    if (!getCppName(*physicalRecord, "coverage physical record", recordName))
+      return false;
+    if (!recordNames.insert(recordName).second) {
+      PrintError(physicalRecord->getLoc(),
+                 "duplicate coverage physical record name");
+      return false;
+    }
+    const Record *section = physicalRecord->getValueAsDef("section");
+    if (!recordSections.insert(section).second) {
+      PrintError(physicalRecord->getLoc(),
+                 "coverage section has more than one physical record");
+      return false;
+    }
+    uint32_t recordSize = 0;
+    if (!getU32(*section, "recordSize", 1, recordSize))
+      return false;
+    auto fields = physicalRecord->getValueAsListOfDefs("fields");
+    if (fields.empty()) {
+      PrintError(physicalRecord->getLoc(),
+                 "coverage physical record needs fields");
+      return false;
+    }
+    StringSet<> fieldNames;
+    StringMap<const Record *> fieldRecords;
+    StringSet<> diagnosticNames;
+    SmallVector<std::pair<uint32_t, uint32_t>> ranges;
+    uint64_t coveredBytes = 0;
+    for (const Record *field : fields) {
+      StringRef fieldName;
+      uint32_t offset = 0;
+      if (!getCppName(*field, "coverage field", fieldName) ||
+          !getU32(*field, "offset", 0, offset))
+        return false;
+      StringRef diagnosticName = field->getValueAsString("diagnosticName");
+      StringRef semantic = field->getValueAsString("semantic");
+      static constexpr StringLiteral validSemantics[] = {
+          "Scalar",      "Enum",        "StableID",    "StableIDRef",
+          "RangeStart",  "RangeCount",  "StringIndex", "Flags",
+          "ReservedZero", "UUIDID",     "UUIDRef",    "Digest"};
+      if (!llvm::is_contained(validSemantics, semantic)) {
+        PrintError(field->getLoc(), "unknown coverage field semantic role");
+        return false;
+      }
+      const Record *domainRecord = field->getValueAsDef("domain");
+      StringRef domainCategory = domainRecord->getValueAsString("category");
+      StringRef pairedField = field->getValueAsString("pairedField");
+      StringRef expectedCategory =
+          semantic == "Enum"          ? "Enum"
+          : semantic == "StringIndex" ? "String"
+          : semantic == "RangeStart" || semantic == "RangeCount"
+              ? "Range"
+          : semantic == "UUIDID" || semantic == "UUIDRef" ? "UUIDRef"
+          : semantic == "StableID" || semantic == "StableIDRef"
+              ? (domainCategory == "Relational" ? "Relational" : "StableRef")
+              : "None";
+      if (domainCategory != expectedCategory) {
+        PrintError(field->getLoc(),
+                   "coverage field semantic has incompatible typed domain");
+        return false;
+      }
+      bool isRange = semantic == "RangeStart" || semantic == "RangeCount";
+      if (isRange == pairedField.empty()) {
+        PrintError(field->getLoc(),
+                   "coverage range fields need a paired field name");
+        return false;
+      }
+      const Record *encoding = field->getValueAsDef("encoding");
+      StringRef encodingName;
+      if (!getCppName(*encoding, "coverage field encoding", encodingName))
+        return false;
+      if (((semantic == "Enum" || semantic == "RangeStart" ||
+            semantic == "RangeCount" ||
+            semantic == "StringIndex") &&
+           encodingName != "U32") ||
+          (semantic == "Flags" && encodingName != "U32" &&
+           encodingName != "U64") ||
+          ((semantic == "StableID" || semantic == "StableIDRef") &&
+           encodingName != "U64") ||
+          ((semantic == "UUIDID" || semantic == "UUIDRef") &&
+           encodingName != "UUID") ||
+          (semantic == "Digest" && encodingName != "Digest")) {
+        PrintError(field->getLoc(),
+                   "coverage field semantic has incompatible encoding");
+        return false;
+      }
+      auto width = encodingWidths.find(encodingName);
+      if (diagnosticName.empty() || width == encodingWidths.end() ||
+          offset > recordSize || width->second > recordSize - offset) {
+        PrintError(field->getLoc(),
+                   "coverage field has invalid name, encoding, or range");
+        return false;
+      }
+      if (!fieldNames.insert(fieldName).second ||
+          !diagnosticNames.insert(diagnosticName).second) {
+        PrintError(field->getLoc(),
+                   "duplicate coverage field or diagnostic name");
+        return false;
+      }
+      fieldRecords.try_emplace(fieldName, field);
+      uint32_t end = offset + width->second;
+      for (auto [otherBegin, otherEnd] : ranges)
+        if (offset < otherEnd && otherBegin < end) {
+          PrintError(field->getLoc(), "overlapping coverage fields");
+          return false;
+        }
+      ranges.emplace_back(offset, end);
+      coveredBytes += width->second;
+      if (semantic == "StableID")
+        ++identityCounts[section].first;
+      else if (semantic == "UUIDID")
+        ++identityCounts[section].second;
+    }
+    for (const Record *field : fields) {
+      StringRef pairedField = field->getValueAsString("pairedField");
+      auto paired = fieldRecords.find(pairedField);
+      if (!pairedField.empty() && paired == fieldRecords.end()) {
+        PrintError(field->getLoc(),
+                   "coverage range field names a missing paired field");
+        return false;
+      }
+      if (!pairedField.empty()) {
+        const Record *other = paired->second;
+        StringRef semantic = field->getValueAsString("semantic");
+        StringRef otherSemantic = other->getValueAsString("semantic");
+        bool complementary =
+            (semantic == "RangeStart" && otherSemantic == "RangeCount") ||
+            (semantic == "RangeCount" && otherSemantic == "RangeStart");
+        if (!complementary ||
+            other->getValueAsString("pairedField") !=
+                field->getValueAsString("cppName") ||
+            other->getValueAsDef("domain") != field->getValueAsDef("domain") ||
+            other->getValueAsDef("encoding") !=
+                field->getValueAsDef("encoding") ||
+            field->getValueAsDef("encoding")->getValueAsString("cppName") !=
+                "U32") {
+          PrintError(field->getLoc(),
+                     "coverage range pair must be reciprocal and use one "
+                     "typed target domain and U32 encoding");
+          return false;
+        }
+      }
+    }
+    if (coveredBytes != recordSize) {
+      PrintError(physicalRecord->getLoc(),
+                 "coverage physical record must describe every wire byte");
+      return false;
+    }
+  }
+  for (const Record *section : sections) {
+    uint32_t recordSize = 0;
+    if (!getU32(*section, "recordSize", 0, recordSize))
+      return false;
+    if (recordSize && !recordSections.count(section)) {
+      PrintError(section->getLoc(),
+                 "fixed coverage section needs exactly one physical record");
+      return false;
+    }
+  }
+  for (const Record *domain : domains) {
+    StringRef category = domain->getValueAsString("category");
+    uint32_t targetSection =
+        static_cast<uint32_t>(domain->getValueAsInt("targetSection"));
+    if (category != "StableRef" && category != "UUIDRef")
+      continue;
+    const Record *target = nullptr;
+    for (const Record *section : sections)
+      if (section->getValueAsInt("value") == targetSection) {
+        target = section;
+        break;
+      }
+    if (!target)
+      return false;
+    const auto counts = identityCounts.lookup(target);
+    const uint32_t identityCount =
+        category == "StableRef" ? counts.first : counts.second;
+    if (identityCount != 1) {
+      PrintError(domain->getLoc(),
+                 "coverage reference target must expose exactly one typed "
+                 "identity field");
+      return false;
+    }
+  }
+  return true;
+}
+
+SmallVector<const Record *> sortedCoverageRecords(const RecordKeeper &records,
+                                                  StringRef base) {
+  auto derived = records.getAllDerivedDefinitions(base);
+  SmallVector<const Record *> result(derived.begin(), derived.end());
+  llvm::sort(result, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  return result;
+}
+
+bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
+  if (!validateCoverageSchema(records))
+    return true;
+  os << "// Generated from CoverageDatabase.td. Do not edit.\n";
+  os << "#ifndef OBELISK_COVERAGE_FORMAT_DECLS_H_INC\n";
+  os << "#define OBELISK_COVERAGE_FORMAT_DECLS_H_INC\n\n";
+  os << "namespace obelisk::coverage {\n";
+  os << "inline constexpr uint32_t CodecVersion = 1;\n";
+  os << "inline constexpr uint32_t HeaderSize = 104;\n";
+  os << "inline constexpr uint32_t DirectoryRecordSize = 32;\n";
+  os << "enum class MetricKind : uint32_t {\n";
+  for (const Record *metric : sortedCoverageRecords(records, "CoverageMetric"))
+    os << "  " << metric->getValueAsString("cppName") << " = "
+       << metric->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  os << "enum class ToggleDimensionKind : uint32_t {\n";
+  for (const Record *dimension :
+       sortedCoverageRecords(records, "CoverageToggleDimensionKind"))
+    os << "  " << dimension->getValueAsString("cppName") << " = "
+       << dimension->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  os << "enum class FunctionalItemKind : uint32_t {\n";
+  for (const Record *kind :
+       sortedCoverageRecords(records, "CoverageFunctionalItemKind"))
+    os << "  " << kind->getValueAsString("cppName") << " = "
+       << kind->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  os << "enum class FunctionalBinKind : uint32_t {\n";
+  for (const Record *kind :
+       sortedCoverageRecords(records, "CoverageFunctionalBinKind"))
+    os << "  " << kind->getValueAsString("cppName") << " = "
+       << kind->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  os << "enum class FunctionalSourceRole : uint32_t {\n";
+  for (const Record *kind :
+       sortedCoverageRecords(records, "CoverageFunctionalSourceRole"))
+    os << "  " << kind->getValueAsString("cppName") << " = "
+       << kind->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  auto emitEnum = [&](StringRef cppName, StringRef base) {
+    os << "enum class " << cppName << " : uint32_t {\n";
+    for (const Record *kind : sortedCoverageRecords(records, base))
+      os << "  " << kind->getValueAsString("cppName") << " = "
+         << kind->getValueAsInt("value") << ",\n";
+    os << "};\n";
+  };
+  emitEnum("TransitionRepetitionKind",
+           "CoverageTransitionRepetitionKind");
+  emitEnum("FunctionalValueSetKind", "CoverageValueSetKind");
+  emitEnum("FunctionalValueAtomKind", "CoverageValueAtomKind");
+  emitEnum("CrossRetainAutoPolicy", "CoverageCrossRetainAutoPolicy");
+  emitEnum("CrossSelectorKind", "CoverageCrossSelectorKind");
+  emitEnum("FunctionalExpressionOwnerKind", "CoverageExpressionOwnerKind");
+  emitEnum("FunctionalExpressionRole", "CoverageExpressionRole");
+  emitEnum("FunctionalFormalKind", "CoverageFunctionalFormalKind");
+  emitEnum("FunctionalFormalDirection",
+           "CoverageFunctionalFormalDirection");
+  emitEnum("FunctionalExpressionResultKind",
+           "CoverageExpressionResultKind");
+  emitEnum("CoverageSignedness", "CoverageSignedness");
+  emitEnum("FunctionalBinArrayMode", "CoverageBinArrayMode");
+  emitEnum("FunctionalBinDistributionKind",
+           "CoverageBinDistributionKind");
+  emitEnum("CrossMatchesPolicy", "CoverageCrossMatchesPolicy");
+  emitEnum("FunctionalOptionScopeKind", "CoverageOptionScopeKind");
+  emitEnum("FunctionalConfigurationOptionKind",
+           "CoverageConfigurationOptionKind");
+  emitEnum("FunctionalConfigurationOptionOwnerKind",
+           "CoverageConfigurationOptionOwnerKind");
+  emitEnum("FunctionalConfigurationValueKind",
+           "CoverageConfigurationValueKind");
+  emitEnum("FunctionalExpressionEvaluationPhase",
+           "CoverageExpressionEvaluationPhase");
+  emitEnum("FunctionalTupleElementMode", "CoverageTupleElementMode");
+  emitEnum("ResolvedFunctionalValueSetRole", "CoverageResolvedValueSetRole");
+  os << "enum class CoverageFieldSemantic : uint32_t {\n"
+        "  Scalar, Enum, StableID, StableIDRef, RangeStart, RangeCount,\n"
+        "  StringIndex, Flags, ReservedZero, UUIDID, UUIDRef, Digest,\n"
+        "};\n";
+  os << "enum class CoverageFieldDomainKind : uint32_t {\n"
+        "  None, Enum, String, StableRef, Range, UUIDRef, Relational,\n"
+        "};\n";
+  os << "enum class CoverageFieldDomain : uint32_t {\n";
+  auto declarationDomainRecords =
+      records.getAllDerivedDefinitions("CoverageFieldDomain");
+  SmallVector<const Record *> domains(declarationDomainRecords.begin(),
+                                      declarationDomainRecords.end());
+  llvm::sort(domains, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  for (auto [index, domain] : llvm::enumerate(domains))
+    os << "  " << domain->getValueAsString("cppName") << " = " << index
+       << ",\n";
+  os << "};\n";
+  os << "enum class CoverageFieldEncoding : uint32_t {\n";
+  uint32_t encodingValue = 1;
+  auto encodingRecords =
+      records.getAllDerivedDefinitions("CoverageFieldEncoding");
+  SmallVector<const Record *> encodings(encodingRecords.begin(),
+                                        encodingRecords.end());
+  llvm::sort(encodings, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  for (const Record *encoding : encodings)
+    os << "  " << encoding->getValueAsString("cppName") << " = "
+       << encodingValue++ << ",\n";
+  os << "};\n";
+  os << "enum class SectionKind : uint32_t {\n";
+  for (const Record *section :
+       sortedCoverageRecords(records, "CoverageSection"))
+    os << "  " << section->getValueAsString("cppName") << " = "
+       << section->getValueAsInt("value") << ",\n";
+  os << "};\n";
+  auto physicalRecordDefs = records.getAllDerivedDefinitions("CoverageRecord");
+  SmallVector<const Record *> physicalRecords(physicalRecordDefs.begin(),
+                                              physicalRecordDefs.end());
+  llvm::sort(physicalRecords, [](const Record *left, const Record *right) {
+    const Record *leftSection = left->getValueAsDef("section");
+    const Record *rightSection = right->getValueAsDef("section");
+    return leftSection->getValueAsInt("value") <
+           rightSection->getValueAsInt("value");
+  });
+  for (const Record *physicalRecord : physicalRecords) {
+    StringRef name = physicalRecord->getValueAsString("cppName");
+    const Record *section = physicalRecord->getValueAsDef("section");
+    os << "struct " << name << " {\n";
+    os << "  static constexpr SectionKind Section = SectionKind::"
+       << section->getValueAsString("cppName") << ";\n";
+    os << "  static constexpr uint32_t Size = "
+       << section->getValueAsInt("recordSize") << ";\n";
+    for (const Record *field :
+         physicalRecord->getValueAsListOfDefs("fields")) {
+      StringRef fieldName = field->getValueAsString("cppName");
+      const Record *encoding = field->getValueAsDef("encoding");
+      os << "  static constexpr uint32_t " << fieldName << "Offset = "
+         << field->getValueAsInt("offset") << ";\n";
+      os << "  static constexpr uint32_t " << fieldName << "Width = "
+         << encoding->getValueAsInt("width") << ";\n";
+      os << "  static constexpr const char *" << fieldName << "Name = \""
+         << field->getValueAsString("diagnosticName") << "\";\n";
+      os << "  static constexpr CoverageFieldSemantic " << fieldName
+         << "Semantic = CoverageFieldSemantic::"
+         << field->getValueAsString("semantic") << ";\n";
+      StringRef encodingName = encoding->getValueAsString("cppName");
+      uint32_t width = static_cast<uint32_t>(encoding->getValueAsInt("width"));
+      if (encodingName == "U32" || encodingName == "U64" ||
+          encodingName == "S64") {
+        StringRef type = encodingName == "U32" ? "uint32_t"
+                         : encodingName == "S64" ? "int64_t"
+                                                   : "uint64_t";
+        StringRef unsignedType =
+            encodingName == "U32" ? "uint32_t" : "uint64_t";
+        os << "  static " << type << " get" << fieldName
+           << "(const uint8_t *data) {\n"
+              "    " << unsignedType << " value = 0;\n"
+              "    for (uint32_t i = 0; i != "
+           << width << "; ++i)\n"
+           << "      value |= " << unsignedType << "(data[" << fieldName
+           << "Offset + i]) << (i * 8);\n"
+              "    return static_cast<" << type << ">(value);\n"
+              "  }\n"
+              "  static void set"
+           << fieldName << "(uint8_t *data, " << type << " value) {\n"
+           << "    const auto bits = static_cast<" << unsignedType
+           << ">(value);\n"
+           << "    for (uint32_t i = 0; i != " << width << "; ++i)\n"
+           << "      data[" << fieldName
+           << "Offset + i] = static_cast<uint8_t>(bits >> (i * 8));\n"
+              "  }\n";
+      } else {
+        os << "  static const uint8_t *get" << fieldName
+           << "(const uint8_t *data) { return data + " << fieldName
+           << "Offset; }\n"
+              "  static void set"
+           << fieldName << "(uint8_t *data, const uint8_t *value) {\n"
+           << "    for (uint32_t i = 0; i != " << width << "; ++i)\n"
+           << "      data[" << fieldName << "Offset + i] = value[i];\n"
+              "  }\n";
+      }
+    }
+    os << "};\n";
+  }
+  os << "} // namespace obelisk::coverage\n\n#endif\n";
+  return false;
+}
+
+bool emitCoverageRecordDescriptors(const RecordKeeper &records,
+                                   raw_ostream &os, StringRef prefix) {
+  auto domainRecords =
+      records.getAllDerivedDefinitions("CoverageFieldDomain");
+  SmallVector<const Record *> domains(domainRecords.begin(),
+                                      domainRecords.end());
+  llvm::sort(domains, [](const Record *left, const Record *right) {
+    return left->getValueAsString("cppName") <
+           right->getValueAsString("cppName");
+  });
+  for (const Record *domain : domains) {
+    auto values = domain->getValueAsListOfDefs("enumValues");
+    if (values.empty())
+      continue;
+    os << "inline constexpr uint32_t " << prefix << "Domain"
+       << domain->getValueAsString("cppName") << "Values[] = {";
+    for (auto [index, value] : llvm::enumerate(values))
+      os << (index ? ", " : "") << value->getValueAsInt("value");
+    os << "};\n";
+  }
+  os << "inline constexpr DomainDescriptor " << prefix
+     << "DomainDescriptors[] = {\n";
+  for (const Record *domain : domains) {
+    auto values = domain->getValueAsListOfDefs("enumValues");
+    os << "  {CoverageFieldDomain::" << domain->getValueAsString("cppName")
+       << ", CoverageFieldDomainKind::"
+       << domain->getValueAsString("category") << ", "
+       << domain->getValueAsInt("targetSection") << ", ";
+    if (values.empty())
+      os << "nullptr, 0";
+    else
+      os << prefix << "Domain" << domain->getValueAsString("cppName")
+         << "Values, " << values.size();
+    os << "},\n";
+  }
+  os << "};\n";
+  auto physicalRecordDefs = records.getAllDerivedDefinitions("CoverageRecord");
+  SmallVector<const Record *> physicalRecords(physicalRecordDefs.begin(),
+                                              physicalRecordDefs.end());
+  llvm::sort(physicalRecords, [](const Record *left, const Record *right) {
+    return left->getValueAsDef("section")->getValueAsInt("value") <
+           right->getValueAsDef("section")->getValueAsInt("value");
+  });
+  for (const Record *physicalRecord : physicalRecords) {
+    StringRef recordName = physicalRecord->getValueAsString("cppName");
+    os << "inline constexpr FieldDescriptor " << prefix << recordName
+       << "Fields[] = {\n";
+    for (const Record *field :
+         physicalRecord->getValueAsListOfDefs("fields")) {
+      const Record *encoding = field->getValueAsDef("encoding");
+      const Record *domain = field->getValueAsDef("domain");
+      StringRef pairedDiagnostic;
+      StringRef pairedName = field->getValueAsString("pairedField");
+      if (!pairedName.empty())
+        for (const Record *candidate :
+             physicalRecord->getValueAsListOfDefs("fields"))
+          if (candidate->getValueAsString("cppName") == pairedName) {
+            pairedDiagnostic =
+                candidate->getValueAsString("diagnosticName");
+            break;
+          }
+      os << "  {\"" << field->getValueAsString("diagnosticName") << "\", "
+         << field->getValueAsInt("offset") << ", "
+         << encoding->getValueAsInt("width")
+         << ", CoverageFieldEncoding::"
+         << encoding->getValueAsString("cppName")
+         << ", CoverageFieldSemantic::"
+         << field->getValueAsString("semantic")
+         << ", CoverageFieldDomain::"
+         << domain->getValueAsString("cppName") << ", "
+         << (field->getValueAsBit("nullable") ? "true" : "false") << ", "
+         << field->getValueAsInt("validMask") << ", \""
+         << pairedDiagnostic << "\"},\n";
+    }
+    os << "};\n";
+  }
+  os << "inline constexpr RecordDescriptor " << prefix
+     << "RecordDescriptors[] = {\n";
+  for (const Record *physicalRecord : physicalRecords) {
+    StringRef recordName = physicalRecord->getValueAsString("cppName");
+    const Record *section = physicalRecord->getValueAsDef("section");
+    os << "  {SectionKind::" << section->getValueAsString("cppName")
+       << ", \"" << recordName << "\", "
+       << section->getValueAsInt("recordSize") << ", " << prefix
+       << recordName << "Fields, "
+       << physicalRecord->getValueAsListOfDefs("fields").size() << "},\n";
+  }
+  os << "};\n";
+  os << "inline constexpr const DomainDescriptor *" << prefix
+     << "FindDomain(CoverageFieldDomain domain) {\n"
+        "  for (const auto &entry : "
+     << prefix
+     << "DomainDescriptors)\n"
+        "    if (entry.domain == domain)\n"
+        "      return &entry;\n"
+        "  return nullptr;\n"
+        "}\n";
+  os << "template <typename Validate> bool " << prefix
+     << "ValidatePhysicalRecord(const RecordDescriptor &record,\n"
+        "    const uint8_t *data, Validate &&validate,\n"
+        "    const FieldDescriptor *&invalidField) {\n"
+        "  for (uint32_t fieldIndex = 0; fieldIndex != record.fieldCount; "
+        "++fieldIndex) {\n"
+        "    const FieldDescriptor &field = record.fields[fieldIndex];\n"
+        "    uint64_t value = 0;\n"
+        "    const uint32_t scalarBytes = field.width > 8 ? 8 : field.width;\n"
+        "    for (uint32_t i = 0; i != scalarBytes; ++i)\n"
+        "      value |= uint64_t(data[field.offset + i]) << (i * 8);\n"
+        "    bool valid = true;\n"
+        "    if (field.semantic == CoverageFieldSemantic::ReservedZero) {\n"
+        "      for (uint32_t i = 0; i != field.width; ++i)\n"
+        "        valid = valid && data[field.offset + i] == 0;\n"
+        "    } else if (field.semantic == CoverageFieldSemantic::Flags) {\n"
+        "      valid = field.validMask >= 0 &&\n"
+        "              (value & ~uint64_t(field.validMask)) == 0;\n"
+        "    } else if (field.semantic == CoverageFieldSemantic::Enum) {\n"
+        "      valid = false;\n"
+        "      if (const DomainDescriptor *domain = "
+     << prefix
+     << "FindDomain(field.domain))\n"
+        "        for (uint32_t i = 0; i != domain->valueCount; ++i)\n"
+        "          valid = valid || value == domain->values[i];\n"
+        "    } else if (!field.nullable &&\n"
+        "               (field.semantic == CoverageFieldSemantic::StableID ||\n"
+        "                field.semantic == CoverageFieldSemantic::StableIDRef "
+        "||\n"
+        "                field.semantic == CoverageFieldSemantic::UUIDID ||\n"
+        "                field.semantic == CoverageFieldSemantic::UUIDRef)) {\n"
+        "      valid = false;\n"
+        "      for (uint32_t i = 0; i != field.width; ++i)\n"
+        "        valid = valid || data[field.offset + i] != 0;\n"
+        "    }\n"
+        "    if (valid)\n"
+        "      valid = validate(field, value, data + field.offset);\n"
+        "    if (!valid) { invalidField = &field; return false; }\n"
+        "  }\n"
+        "  invalidField = nullptr;\n"
+        "  return true;\n"
+        "}\n";
+  return false;
+}
+
+bool emitCoverageDescriptors(const RecordKeeper &records, raw_ostream &os,
+                             StringRef arrayName) {
+  if (!validateCoverageSchema(records))
+    return true;
+  os << "// Generated from CoverageDatabase.td. Do not edit.\n";
+  os << "inline constexpr SectionDescriptor " << arrayName << "[] = {\n";
+  for (const Record *section :
+       sortedCoverageRecords(records, "CoverageSection")) {
+    os << "  {SectionKind::" << section->getValueAsString("cppName") << ", "
+       << section->getValueAsInt("recordSize") << ", "
+       << (section->getValueAsBit("required") ? "true" : "false") << ", "
+       << (section->getValueAsBit("staticSchema") ? "true" : "false") << "},\n";
+  }
+  os << "};\n";
+  return false;
+}
+
+bool emitCoverageParser(const RecordKeeper &records, raw_ostream &os) {
+  if (emitCoverageDescriptors(records, os, "ParserSectionDescriptors"))
+    return true;
+  return emitCoverageRecordDescriptors(records, os, "Parser");
+}
+
+bool emitCoverageSerializer(const RecordKeeper &records, raw_ostream &os) {
+  if (emitCoverageDescriptors(records, os, "SerializerSectionDescriptors"))
+    return true;
+  return emitCoverageRecordDescriptors(records, os, "Serializer");
+}
+
+mlir::GenRegistration
+    coverageDeclsGen("gen-obelisk-coverage-format-decls",
+                     "Generate Obelisk coverage enums and wire constants",
+                     emitCoverageDecls);
+mlir::GenRegistration
+    coverageParserGen("gen-obelisk-coverage-format-parser",
+                      "Generate Obelisk coverage parser validation descriptors",
+                      emitCoverageParser);
+mlir::GenRegistration coverageSerializerGen(
+    "gen-obelisk-coverage-format-serializer",
+    "Generate Obelisk coverage serializer ordering descriptors",
+    emitCoverageSerializer);
+
 } // namespace
 
 int main(int argc, char **argv) { return mlir::MlirTblgenMain(argc, argv); }

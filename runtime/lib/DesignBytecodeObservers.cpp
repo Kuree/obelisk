@@ -93,14 +93,19 @@ bool evaluateBoundObserver(obelisk_rt_context *context, uint64_t taskID,
   uint32_t retainedCaptureCount = 0;
   obelisk_rt_status status = OBELISK_RT_OK;
   for (uint32_t index = 0; index != captureCount; ++index) {
-    if (descriptor->capture_abi[index].kind !=
-        OBELISK_RT_OBSERVER_CAPTURE_STORAGE)
+    uint32_t kind = descriptor->capture_abi[index].kind;
+    uint64_t retained = 0;
+    if (kind == OBELISK_RT_OBSERVER_CAPTURE_STORAGE)
+      retained = copiedCaptures[index].stable_id;
+    else if (kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+             copiedCaptures[index].payload1 == 0)
+      retained = copiedCaptures[index].payload0;
+    else
       continue;
-    status = obelisk_rt_v1_native_state_retain(context,
-                                               copiedCaptures[index].stable_id);
+    status = obelisk_rt_v1_native_state_retain(context, retained);
     if (status != OBELISK_RT_OK)
       break;
-    retainedCaptures[retainedCaptureCount++] = copiedCaptures[index].stable_id;
+    retainedCaptures[retainedCaptureCount++] = retained;
   }
   if (status != OBELISK_RT_OK) {
     while (retainedCaptureCount != 0)
@@ -208,6 +213,14 @@ bool obelisk_rt_evaluate_design_clock_condition_unlocked(
   return true;
 }
 
+bool obelisk_rt_evaluate_design_bound_observer_unlocked(
+    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    uint64_t *value, uint64_t *unknown, uint32_t limbCapacity) {
+  return evaluateBoundObserver(context, taskID, codeUnitID, captures,
+                               captureCount, value, unknown, limbCapacity);
+}
+
 bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
                                                    uint32_t dependencyKind,
                                                    uint64_t publishedHandle,
@@ -228,7 +241,6 @@ bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
           !task.signalTriggered)
         taskIDs.push_back(task.id);
   }
-
   for (uint64_t taskID : taskIDs) {
     ScheduledDesignTask *task = findDesignTask(context, taskID);
     obelisk_rt_computed_wait_record_v1 *wait =

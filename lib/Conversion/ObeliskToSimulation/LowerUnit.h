@@ -54,6 +54,9 @@ public:
 
   ::mlir::LogicalResult lower(::mlir::ArrayRef<::mlir::Operation *> roots);
 
+  friend ::mlir::LogicalResult
+  materializeCovergroupClockingSamplers(sim::SimDesignOp design);
+
 private:
   struct LoweredOutputList {
     ::mlir::SmallVector<::mlir::Value> items;
@@ -310,14 +313,36 @@ private:
   lowerInside(semantic::SVInsideExpressionOp op);
   ::mlir::FailureOr<::mlir::Value> lowerCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
-  lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op);
+  lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
+                     semantic::SVCovergroupTypeOp covergroup = {},
+                     bool dispatchInheritance = true);
   ::mlir::FailureOr<::mlir::Value>
   lowerCovergroupCall(semantic::SVCallExpressionOp op,
                       semantic::SVCovergroupTypeOp covergroup);
+  ::mlir::FailureOr<std::optional<::mlir::Value>>
+  lowerCovergroupOptionAssignment(semantic::SVAssignmentExpressionOp op,
+                                  ::mlir::Operation *destination,
+                                  ::mlir::Operation *source, ::mlir::Value rhs);
+  ::mlir::FailureOr<std::optional<::mlir::Value>>
+  lowerCovergroupIntegerOptionRead(semantic::SVMemberAccessExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerCovergroupSample(semantic::SVCallExpressionOp op,
                         semantic::SVCovergroupTypeOp covergroup,
-                        ::mlir::Value handle, ::mlir::Value classOwner = {});
+                        ::mlir::Value handle, ::mlir::Value classOwner = {},
+                        bool dispatchInheritance = true);
+  ::mlir::FailureOr<::mlir::Value>
+  emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
+                       ::mlir::Value handle, ::mlir::Value classOwner,
+                       ::mlir::Location location,
+                       ::mlir::ValueRange defaultValues = {},
+                       ::mlir::ArrayRef<int64_t> defaultExpressionIDs = {},
+                       ::mlir::ArrayRef<uint32_t> defaultResultOrdinals = {});
+  ::mlir::LogicalResult deferCovergroupClockingSampler(
+      semantic::SVNewCovergroupExpressionOp construct,
+      semantic::SVCovergroupTypeOp covergroup, ::mlir::Value handle);
+  ::mlir::LogicalResult deferCovergroupBlockEventSampler(
+      semantic::SVNewCovergroupExpressionOp construct,
+      semantic::SVCovergroupTypeOp covergroup, ::mlir::Value handle);
   semantic::SVCovergroupTypeOp
   findSemanticCovergroup(::mlir::Operation *operation);
   ::mlir::FailureOr<::mlir::Value>
@@ -607,7 +632,10 @@ private:
   ::mlir::LogicalResult
   emitFunctionReturn(::mlir::Location location,
                      std::optional<::mlir::Value> explicitResult,
-                     bool resultSigned = false);
+                     bool resultSigned = false,
+                     bool emitBlockEventEnd = true);
+  void emitCovergroupBlockEvent(uint64_t targetID, uint32_t eventKind,
+                                ::mlir::Location location);
   ::mlir::Block *addBlock();
   void setCurrent(::mlir::Block *block);
   // Whether `block` runs inside an occurrence of the clocking event given by
@@ -756,8 +784,9 @@ private:
       clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
   bool coverageInventoryReady = false;
+  bool coverageBlockEventStarted = false;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
-  ::llvm::StringSet<> coverageDefinitionNames;
+  ::llvm::StringMap<uint64_t> coverageInstanceIDs;
   ::mlir::Value thisObject;
   // The object of the scope containing a randomize() with call, live
   // only while its inline constraints are lowered. IEEE 1800-2017 18.7
@@ -818,6 +847,7 @@ private:
     uint64_t targetID;
     ::mlir::Value activation;
     ::mlir::Block *exit;
+    std::optional<uint64_t> coverageBlockEventTargetID;
   };
   ::mlir::SmallVector<ControlScope> controlScopes;
   ::llvm::StringMap<uint64_t> inheritedControlIDs;

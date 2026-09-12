@@ -39,6 +39,174 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+Operation::operand_range SimCovergroupClockEventRegisterOp::getPrimaries() {
+  return getValues().take_front(
+      std::min<size_t>(getEdges().size(), getValues().size()));
+}
+
+Operation::operand_range SimCovergroupClockEventRegisterOp::getConditions() {
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getValues().size());
+  size_t begin = std::min<size_t>(getValues().size(), primaryCount * 2);
+  size_t available = getValues().size() - begin;
+  size_t conditionCount =
+      getConditionCountAttr().getValue().isNegative()
+          ? 0
+          : std::min<uint64_t>(getConditionCount(), available);
+  return getValues().slice(begin, conditionCount);
+}
+
+Operation::operand_range SimCovergroupClockEventRegisterOp::getInitialValues() {
+  size_t primaryCount = std::min<size_t>(getEdges().size(), getValues().size());
+  size_t available = getValues().size() - primaryCount;
+  return getValues().slice(primaryCount, std::min(primaryCount, available));
+}
+
+Value SimCovergroupClockEventRegisterOp::getSampler() {
+  size_t index = getPrimaries().size() + getInitialValues().size() +
+                 getConditions().size();
+  return index < getValues().size() ? getValues()[index] : Value{};
+}
+
+LogicalResult SimCovergroupClockEventRegisterOp::verify() {
+  if (getConditionCountAttr().getValue().isNegative())
+    return emitOpError("condition count must be nonnegative");
+  if (getPrimaries().empty() || getPrimaries().size() > 64)
+    return emitOpError("requires between one and 64 event primaries");
+  if (getInitialValues().size() != getPrimaries().size() ||
+      getConditions().size() != static_cast<uint64_t>(getConditionCount()) ||
+      getValues().size() != getPrimaries().size() + getInitialValues().size() +
+                                getConditions().size() + 1)
+    return emitOpError(
+        "operand inventory must end with exactly one sampler observer");
+  if (getEdges().size() != getPrimaries().size() ||
+      getConditionIndices().size() != getPrimaries().size())
+    return emitOpError("requires one edge and condition index per primary");
+
+  SmallVector<bool> usedConditions(getConditions().size(), false);
+  int32_t nextCondition = 0;
+  for (auto [index, primary, initial, edge, conditionIndex] :
+       llvm::enumerate(getPrimaries(), getInitialValues(), getEdges(),
+                       getConditionIndices())) {
+    auto observer = dyn_cast<ObserverType>(primary.getType());
+    if (!observer)
+      return emitOpError("event primaries must be observer handles");
+    if (initial.getType() != observer.getResultType())
+      return emitOpError() << "initial value #" << index
+                           << " does not match its primary observer result";
+    if (edge < static_cast<int32_t>(EdgeKind::Change) ||
+        edge > static_cast<int32_t>(EdgeKind::Both))
+      return emitOpError("contains an invalid event edge");
+    if (conditionIndex < -1 ||
+        (conditionIndex >= 0 &&
+         static_cast<uint64_t>(conditionIndex) >= getConditions().size()))
+      return emitOpError("contains an invalid condition index");
+    if (conditionIndex >= 0) {
+      if (conditionIndex != nextCondition++)
+        return emitOpError(
+            "condition indices must be in canonical ascending order");
+      if (usedConditions[conditionIndex])
+        return emitOpError("a condition may belong to only one event");
+      usedConditions[conditionIndex] = true;
+    }
+  }
+  if (llvm::any_of(getConditions(), [&](Value condition) {
+        auto observer = dyn_cast<ObserverType>(condition.getType());
+        return !observer || !observer.getResultType().isSignlessInteger(1);
+      }))
+    return emitOpError("event conditions must be i1 observer handles");
+  if (llvm::is_contained(usedConditions, false))
+    return emitOpError("contains an unreferenced condition handle");
+
+  Value sampler = getSampler();
+  auto observer =
+      sampler ? dyn_cast<ObserverType>(sampler.getType()) : ObserverType{};
+  auto binding = sampler ? sampler.getDefiningOp<SimObserverBindOp>()
+                         : SimObserverBindOp{};
+  if (!observer || !observer.getResultType().isSignlessInteger(1) || !binding ||
+      !binding.getDependencies().empty())
+    return emitOpError(
+        "sampler must be a dependency-free i1 observer.bind token");
+  if (binding.getCaptures().empty() ||
+      binding.getCaptures().front() != getHandle())
+    return emitOpError(
+        "sampler observer must capture the registered covergroup handle first");
+  auto evaluator = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+      binding, binding.getEvaluatorAttr());
+  if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer ||
+      SymbolTable::getSymbolVisibility(evaluator) !=
+          SymbolTable::Visibility::Private ||
+      !evaluator->hasAttr("obelisk_sim.covergroup_event_sample_evaluator"))
+    return emitOpError(
+        "sampler must name a private covergroup event sample evaluator");
+  if (getStrobe() !=
+      evaluator->hasAttr("obelisk_sim.covergroup_strobe_sample_evaluator"))
+    return emitOpError(
+        "strobe policy must match the covergroup sample evaluator");
+  if (getStrobe() && failed(verifyPostponedReadOnly(evaluator)))
+    return failure();
+
+  SimFuncOp function = (*this)->getParentOfType<SimFuncOp>();
+  if (!function || function.getEntryKind() != EntryKind::Fork ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      !function->hasAttr("internal") ||
+      !function->hasAttr("obelisk_sim.detached_controls") ||
+      !function->hasAttr("obelisk_sim.prime_on_spawn") ||
+      !function->hasAttr("obelisk_sim.covergroup_clocking_sampler") ||
+      function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
+      function->hasAttr("obelisk_sim.timing_check_coordinator"))
+    return emitOpError(
+        "requires a private detached primed covergroup clocking owner");
+  unsigned registrations = 0;
+  function.walk([&](SimCovergroupClockEventRegisterOp) { ++registrations; });
+  if (registrations != 1)
+    return emitOpError(
+        "owner must contain exactly one clock-event registration");
+  return success();
+}
+
+LogicalResult SimCovergroupBlockEventRegisterOp::verify() {
+  if (getTargetIds().empty() || getTargetIds().size() > UINT32_MAX)
+    return emitOpError("requires between one and UINT32_MAX block events");
+  if (getTargetIds().size() != getEventKinds().size())
+    return emitOpError("requires one boundary kind per target ID");
+  for (auto [target, kind] : llvm::zip_equal(getTargetIds(), getEventKinds())) {
+    if (target <= 0)
+      return emitOpError("block-event target IDs must be positive");
+    if (kind < 0 || kind > 1)
+      return emitOpError("block-event kind must be begin (0) or end (1)");
+  }
+  auto observer = dyn_cast<ObserverType>(getSampler().getType());
+  auto binding = getSampler().getDefiningOp<SimObserverBindOp>();
+  if (!observer || !observer.getResultType().isSignlessInteger(1) || !binding ||
+      !binding.getDependencies().empty())
+    return emitOpError(
+        "sampler must be a dependency-free i1 observer.bind token");
+  if (binding.getCaptures().empty() ||
+      binding.getCaptures().front() != getHandle())
+    return emitOpError(
+        "sampler observer must capture the registered covergroup handle first");
+  auto evaluator = SymbolTable::lookupNearestSymbolFrom<SimFuncOp>(
+      binding, binding.getEvaluatorAttr());
+  if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer ||
+      SymbolTable::getSymbolVisibility(evaluator) !=
+          SymbolTable::Visibility::Private ||
+      !evaluator->hasAttr(
+          "obelisk_sim.covergroup_block_event_sample_evaluator"))
+    return emitOpError(
+        "sampler must name a private covergroup block-event sample evaluator");
+  return success();
+}
+
+LogicalResult SimCovergroupBlockEventFireOp::verify() {
+  if (getTargetIdAttr().getValue().isNegative() ||
+      getTargetIdAttr().getValue().isZero())
+    return emitOpError("block-event target ID must be positive");
+  if (getEventKindAttr().getValue().isNegative() || getEventKind() > 1)
+    return emitOpError("block-event kind must be begin (0) or end (1)");
+  return success();
+}
+
 LogicalResult SimTimeConstantOp::verify() {
   if (getValueAttr().getValue().isNegative())
     return emitOpError("simulation time must be nonnegative");

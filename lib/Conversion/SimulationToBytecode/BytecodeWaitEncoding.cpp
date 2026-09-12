@@ -10,6 +10,14 @@ using namespace mlir;
 
 namespace obelisk::bytecode {
 
+static uint32_t computedCaptureTransferSize(Type type) {
+  if (isa<sim::ArgumentRefType>(type))
+    return 3 * sizeof(uint64_t);
+  if (sim::isManagedHandleType(type) || isa<sim::CovergroupHandleType>(type))
+    return sizeof(uint64_t);
+  return sizeof(obelisk_rt_computed_capture_v1);
+}
+
 LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
                                           sim::SimSuspendObserveOp operation) {
   if (!plan.frame)
@@ -107,7 +115,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
 
   uint32_t captureCursor = 0;
   uint32_t dependencyCursor = 0;
-  uint32_t previousCursor = 0;
+  uint64_t previousCursor = 0;
   for (auto [index, binding] : llvm::enumerate(bindings)) {
     auto found = indices.find(binding.getEvaluator());
     if (found == indices.end())
@@ -125,12 +133,31 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
                 ? static_cast<uint32_t>(previousOffset +
                                         uint64_t{previousCursor} * 16)
                 : UINT32_MAX);
+    uint32_t bindingCaptureBegin = captureCursor;
     captureCursor += binding.getCaptures().size();
     for (Value dependency : binding.getDependencies()) {
       uint64_t entryOffset =
           dependenciesOffset + uint64_t{dependencyCursor} *
                                    sizeof(obelisk_rt_computed_dependency_v1);
-      if (isa<sim::ManagedWatchType>(dependency.getType())) {
+      if (auto reference =
+              dyn_cast<sim::ArgumentRefType>(dependency.getType())) {
+        auto capture = llvm::find(binding.getCaptures(), dependency);
+        if (capture == binding.getCaptures().end())
+          return binding.emitOpError(
+              "argument-ref dependency is not retained as a capture");
+        uint64_t absolute =
+            uint64_t{bindingCaptureBegin} +
+            std::distance(binding.getCaptures().begin(), capture);
+        std::optional<uint32_t> width =
+            simulationWidth(reference.getElementType());
+        if (absolute > UINT32_MAX || !width)
+          return binding.emitOpError(
+              "argument-ref dependency exceeds the computed-wait v1 ABI");
+        write64(bytes, entryOffset, absolute);
+        write32(bytes, entryOffset + 8,
+                OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
+        write32(bytes, entryOffset + 12, *width);
+      } else if (isa<sim::ManagedWatchType>(dependency.getType())) {
         write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
         write32(bytes, entryOffset + 12, 1);
       } else if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
@@ -194,10 +221,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
   dependencyCursor = 0;
   for (sim::SimObserverBindOp binding : bindings) {
     for (Value capture : binding.getCaptures()) {
-      uint32_t transferSize =
-          sim::isManagedHandleType(capture.getType())
-              ? static_cast<uint32_t>(sizeof(uint64_t))
-              : static_cast<uint32_t>(sizeof(obelisk_rt_computed_capture_v1));
+      uint32_t transferSize = computedCaptureTransferSize(capture.getType());
       emitFrameTransfer(plan, StoreFrame, capture,
                         suspension->waitOffset + capturesOffset +
                             uint64_t{captureCursor++} *
@@ -205,6 +229,10 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
                         transferSize);
     }
     for (Value dependency : binding.getDependencies()) {
+      if (isa<sim::ArgumentRefType>(dependency.getType())) {
+        ++dependencyCursor;
+        continue;
+      }
       if (isa<sim::ManagedWatchType>(dependency.getType())) {
         emitFrameTransfer(plan, StoreFrame, dependency,
                           suspension->waitOffset + dependenciesOffset +
@@ -364,10 +392,7 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
                           suspension->waitOffset + capturesOffset +
                               captureCursor++ *
                                   sizeof(obelisk_rt_computed_capture_v1),
-                          sim::isManagedHandleType(capture.getType())
-                              ? static_cast<uint32_t>(sizeof(uint64_t))
-                              : static_cast<uint32_t>(
-                                    sizeof(obelisk_rt_computed_capture_v1)));
+                          computedCaptureTransferSize(capture.getType()));
       }
       continue;
     }

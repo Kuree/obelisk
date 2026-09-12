@@ -25,6 +25,7 @@ add_mlir_library(ObeliskSimulationToBytecode
   ObeliskVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskCoverage
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
   ObeliskSimulationToStandard

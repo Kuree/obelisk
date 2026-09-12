@@ -140,6 +140,11 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   owned.push_back("--gc-sections");
   owned.push_back("--no-entry");
   owned.push_back("--export=main");
+  // The browser host invokes this no-entry module directly rather than
+  // through a C runtime start routine. Export the allocator so it can marshal
+  // the caller's UTF-8 argv into module-owned memory before calling main.
+  owned.push_back("--export=malloc");
+  owned.push_back("--export=free");
   // The host reads the design's final simulation time after main returns.
   // Both accessors are optional to a host, but wasm-ld drops anything not
   // reachable from an explicit export.

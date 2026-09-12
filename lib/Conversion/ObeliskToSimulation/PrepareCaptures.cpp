@@ -168,14 +168,15 @@ static bool isRandSequenceFormal(Operation *operation) {
 /// a type declare a single object (IEEE 1800-2017 13.3). The declaration keeps
 /// its own symbol, which the port names as its merged variable, so a reference
 /// through it is a reference to the formal.
-static bool isMergedFormalVariable(Operation *operation) {
+static semantic::SVFormalArgumentSymbolOp
+getMergedFormalVariable(Operation *operation) {
   auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(operation);
   if (!variable)
-    return false;
+    return {};
   auto subroutine = dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(
       operation->getParentOp());
   if (!subroutine)
-    return false;
+    return {};
   StringAttr name = variable.getSymNameAttr();
   for (Operation *sibling : getChildren(subroutine)) {
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(sibling);
@@ -183,9 +184,9 @@ static bool isMergedFormalVariable(Operation *operation) {
       continue;
     if (SymbolRefAttr merged = formal.getMergedVariableSymbolAttr();
         merged && merged.getLeafReference() == name)
-      return true;
+      return formal;
   }
-  return false;
+  return {};
 }
 
 FailureOr<PreparedCaptures>
@@ -199,6 +200,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   llvm::DenseMap<Operation *, Operation *> constructorSources;
   llvm::DenseMap<Operation *, SmallVector<Operation *>> propertyInitializers;
   llvm::StringMap<semantic::SVClassTypeOp> classesBySymbol;
+  llvm::DenseMap<Type, semantic::SVCovergroupTypeOp> covergroupsByType;
+  for (const auto &entry : semanticSymbols)
+    if (auto covergroup = dyn_cast<semantic::SVCovergroupTypeOp>(entry.second))
+      covergroupsByType.try_emplace(covergroup.getSemanticType(), covergroup);
   for (semantic::SVClassTypeOp classType : classSources) {
     auto handle =
         dyn_cast<semantic::ClassHandleType>(classType.getSemanticType());
@@ -266,13 +271,23 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     if (unit.entryKind == sim::EntryKind::Observer) {
       semantic::SVSubroutineSymbolOp subroutine =
           getOwningSubroutine(unit.source);
-      semantic::SVClassTypeOp owner = getOwningClass(subroutine);
-      if (subroutine && owner && !subroutine.getIsStatic().value_or(false)) {
+      semantic::SVCovergroupTypeOp covergroup =
+          unit.source->getParentOfType<semantic::SVCovergroupTypeOp>();
+      semantic::SVClassTypeOp owner =
+          subroutine   ? getOwningClass(subroutine)
+          : covergroup ? covergroup->getParentOfType<semantic::SVClassTypeOp>()
+                       : semantic::SVClassTypeOp{};
+      const bool needsThis =
+          owner && ((subroutine && !subroutine.getIsStatic().value_or(false)) ||
+                    (!subroutine && covergroup));
+      if (needsThis) {
         FailureOr<Type> type = getNormalizedSemanticType(owner);
-        std::optional<StringRef> path = subroutine.getThisVariablePath();
+        std::optional<StringRef> path = subroutine
+                                            ? subroutine.getThisVariablePath()
+                                            : owner.getThisVariablePath();
         if (failed(type) || !path) {
           emitError(getSemanticLocation(unit.source))
-              << "observer in an instance method has no resolved this "
+              << "observer in an instance class context has no resolved this "
                  "binding";
           invalid = true;
         } else {
@@ -296,6 +311,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       return localPath;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
+      if (isa<semantic::SVEventTriggerStatementOp>(nested))
+        result.mayPublishSchedulerState.insert(unit.source);
       if (auto path =
               nested->getAttrOfType<StringAttr>(interconnectLeafPathAttrName)) {
         auto descriptor = descriptors.find(path.getValue());
@@ -389,8 +406,11 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         reference = pattern.getReferencedSymbol();
       } else if (auto member =
                      dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
-        if (!member->hasAttr(staticClassPropertyAttrName))
+        if (!member->hasAttr(staticClassPropertyAttrName)) {
+          if (isWrittenReferenceUse(nested))
+            result.mayPublishSchedulerState.insert(unit.source);
           return;
+        }
         reference = member.getReferencedSymbol();
         path = member.getReferencedPath();
       } else if (auto instance =
@@ -426,12 +446,22 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       // activations copy each formal into shared task storage. Production
       // formals are different: 18.17 places them in the randsequence's
       // automatic scope, so they require activation-local bindings.
-      if (unit.entryKind == sim::EntryKind::Function &&
-          (isa_and_nonnull<semantic::SVFormalArgumentSymbolOp>(
-               referencedSymbol) ||
-           isMergedFormalVariable(referencedSymbol)) &&
-          !isRandSequenceFormal(referencedSymbol))
+      auto functionFormal =
+          dyn_cast_or_null<semantic::SVFormalArgumentSymbolOp>(
+              referencedSymbol);
+      if (!functionFormal)
+        functionFormal = getMergedFormalVariable(referencedSymbol);
+      if (unit.entryKind == sim::EntryKind::Function && functionFormal &&
+          !isRandSequenceFormal(referencedSymbol)) {
+        // An input formal is a function-local value, but writes through ref,
+        // output, and inout formals escape to the caller. Clocking-event
+        // primary and iff evaluators cannot permit those scheduler-visible
+        // publications while their dependency snapshot is being evaluated.
+        if (isWrittenReferenceUse(nested) &&
+            functionFormal.getDirection() != semantic::SVArgumentDirection::In)
+          result.mayPublishSchedulerState.insert(unit.source);
         return;
+      }
       // Unnamed statement scopes are not part of Slang's hierarchical name,
       // so an automatic local can have the same path string as design
       // storage it shadows. Give the local binding a stable symbol-qualified
@@ -440,6 +470,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       // distinguish the two bindings without consulting the symbol table.
       bool automaticLocal =
           referencedSymbol && isAutomaticLocalSymbol(referencedSymbol);
+      if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
+          isWrittenReferenceUse(nested) && !automaticLocal)
+        result.mayPublishSchedulerState.insert(unit.source);
       std::string localPath;
       if (auto qualified =
               qualifiedAutomaticPath(path, reference, referencedSymbol)) {
@@ -522,10 +555,17 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         auto &destination = unit.entryKind == sim::EntryKind::Observer
                                 ? result.observerLocals[unit.source]
                                 : result.locals[unit.source];
+        auto formal =
+            dyn_cast<semantic::SVFormalArgumentSymbolOp>(referencedSymbol);
+        bool covergroupRef =
+            formal &&
+            formal.getDirection() == semantic::SVArgumentDirection::Ref &&
+            !formal.getIsCoverageSampleFormal().value_or(false) &&
+            formal->getParentOfType<semantic::SVCovergroupTypeOp>();
         destination.push_back(
             {path.str(), *type, isAutomaticLocalSymbol(referencedSymbol),
-             isa<semantic::SVPatternVarSymbolOp>(referencedSymbol),
-             observerNet});
+             isa<semantic::SVPatternVarSymbolOp>(referencedSymbol), observerNet,
+             covergroupRef});
         referencedSymbol->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
@@ -700,6 +740,21 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (!covergroup)
         return;
       covergroup->walk<WalkOrder::PreOrder>(
+          [&](Operation *nested) { collectBinding(nested); });
+    });
+    // A clock-triggered covergroup evaluates its event and sample expressions
+    // in the detached waiter created at each new-expression site. Seed the
+    // constructing unit with the same descriptor and constant bindings so
+    // that waiter can inherit them without consulting sibling IR later.
+    unit.source->walk([&](semantic::SVNewCovergroupExpressionOp construct) {
+      auto type = construct->getAttrOfType<TypeAttr>("semantic_type");
+      auto found = type ? covergroupsByType.find(type.getValue())
+                        : covergroupsByType.end();
+      if (found == covergroupsByType.end() ||
+          found->second.getCoverageEventKind() !=
+              semantic::SVCoverageEventKind::Clocking)
+        return;
+      found->second->walk<WalkOrder::PreOrder>(
           [&](Operation *nested) { collectBinding(nested); });
     });
     if (auto connection = dyn_cast<semantic::SVPortConnectionOp>(unit.source)) {
@@ -1091,6 +1146,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           changed = true;
         }
       }
+      if (result.mayPublishSchedulerState.contains(source) &&
+          result.mayPublishSchedulerState.insert(destination).second)
+        changed = true;
       if (changed)
         enqueue(destination);
     }

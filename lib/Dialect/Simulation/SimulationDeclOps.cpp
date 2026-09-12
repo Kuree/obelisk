@@ -120,6 +120,19 @@ LogicalResult SimScopeDeclOp::verify() {
     return failure();
   if (getParentAttr() && getParentAttr() == getIdAttr())
     return emitOpError("scope cannot be its own parent");
+  if (auto definition = getDefinitionName(); definition) {
+    if (definition->empty())
+      return emitOpError("module definition name cannot be empty");
+    if (getId() == 0)
+      return emitOpError("root scope cannot carry a module definition name");
+    if (effectiveScopeVPIKind(*this) !=
+        static_cast<uint16_t>(reflection::VPIObjectKind::Module))
+      return emitOpError(
+          "only module scopes may carry a module definition name");
+  }
+  if (auto coverageID = getCoverageIdAttr();
+      coverageID && coverageID.getValue().isZero())
+    return emitOpError("coverage scope ID must be nonzero");
   StringAttr interfaceType = getInterfaceTypeAttr();
   if (interfaceType) {
     if (interfaceType.getValue().empty())
@@ -418,20 +431,55 @@ static LogicalResult verifyCovergroupHandle(Operation *operation,
 }
 
 LogicalResult SimCovergroupDeclOp::verify() {
-  if (failed(verifyPositive(*this, getIdAttr(), "covergroup ID")))
-    return failure();
-  if (getCoverpointBins().empty())
-    return emitOpError("requires at least one coverpoint");
-  for (int64_t bins : getCoverpointBins())
-    if (bins < 0 || static_cast<uint64_t>(bins) > UINT32_MAX)
-      return emitOpError(
-          "every coverpoint requires a nonnegative 32-bit contributing-bin "
-          "count");
+  return verifyPositive(*this, getSchemaTypeAttr(),
+                        "covergroup schema type ID");
+}
+
+static bool covergroupDerivesFrom(SymbolTableCollection &symbolTable,
+                                  Operation *from, SimCovergroupDeclOp derived,
+                                  SimCovergroupDeclOp base) {
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  while (derived && visited.insert(derived).second) {
+    if (derived == base)
+      return true;
+    FlatSymbolRefAttr parent = derived.getBaseAttr();
+    derived = parent ? symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+                           from, parent)
+                     : SimCovergroupDeclOp{};
+  }
+  return false;
+}
+
+LogicalResult
+SimCovergroupDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (!getBaseAttr())
+    return success();
+  SimCovergroupDeclOp base =
+      symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(*this,
+                                                               getBaseAttr());
+  if (!base)
+    return emitOpError("references an unknown base covergroup declaration");
+  if (covergroupDerivesFrom(symbolTable, *this, base, *this))
+    return emitOpError("base covergroup chain contains a cycle");
   return success();
 }
 
 LogicalResult SimCovergroupNullOp::verify() {
   return verifyCovergroupHandle(*this, getResult().getType());
+}
+
+LogicalResult
+SimCovergroupCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimCovergroupDeclOp source =
+      lookupCovergroup(*this, getInput().getType().getCovergroupName());
+  SimCovergroupDeclOp target =
+      lookupCovergroup(*this, getResult().getType().getCovergroupName());
+  if (!source || !target)
+    return emitOpError("references an unknown covergroup declaration");
+  if (!covergroupDerivesFrom(symbolTable, *this, source, target) &&
+      !covergroupDerivesFrom(symbolTable, *this, target, source))
+    return emitOpError("cannot cast between unrelated covergroup types");
+  return success();
 }
 
 LogicalResult SimVirtualInterfaceBindOp::verify() {
@@ -475,50 +523,156 @@ LogicalResult SimVirtualInterfaceEqualOp::verify() {
   return success();
 }
 
-LogicalResult SimCovergroupCreateOp::verify() {
+LogicalResult
+SimCovergroupCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimCovergroupDeclOp declaration =
-      lookupCovergroup(*this, getDeclarationAttr());
+      symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+          *this, getDeclarationAttr());
   if (!declaration)
     return emitOpError("references an unknown covergroup declaration");
   auto expected = FlatSymbolRefAttr::get(declaration.getOperation());
   if (getResult().getType().getCovergroupName() != expected)
     return emitOpError("result type must name the selected declaration");
+  ArrayRef<int64_t> formalIDs = getFormalIds();
+  if (static_cast<uint64_t>(getArgumentCount()) > getPayloads().size())
+    return emitOpError("constructor argument count exceeds the payload batch");
+  size_t argumentCount = static_cast<size_t>(getArgumentCount());
+  if (formalIDs.size() != argumentCount)
+    return emitOpError() << "requires one FunctionalFormal ID for each "
+                            "constructor argument; got "
+                         << formalIDs.size() << " IDs and " << argumentCount
+                         << " arguments";
+  llvm::DenseSet<uint64_t> seenFormals;
+  for (auto [index, id] : llvm::enumerate(formalIDs)) {
+    if (id <= 0)
+      return emitOpError() << "constructor FunctionalFormal ID " << index
+                           << " must be a positive signed 64-bit value";
+    if (!seenFormals.insert(static_cast<uint64_t>(id)).second)
+      return emitOpError() << "constructor FunctionalFormal IDs must be "
+                              "unique; ID "
+                           << id << " is repeated";
+  }
+  ArrayRef<int64_t> ids = getExpressionIds();
+  size_t valueCount = getPayloads().size() - argumentCount;
+  if (ids.size() != valueCount)
+    return emitOpError() << "requires one constructor FunctionalExpression "
+                            "ID for each value; got "
+                         << ids.size() << " IDs and " << valueCount
+                         << " values";
+  llvm::DenseSet<uint64_t> seen;
+  for (auto [index, id] : llvm::enumerate(ids)) {
+    if (id <= 0)
+      return emitOpError() << "constructor FunctionalExpression ID " << index
+                           << " must be a positive signed 64-bit value";
+    if (!seen.insert(static_cast<uint64_t>(id)).second)
+      return emitOpError()
+             << "constructor FunctionalExpression IDs must be unique; ID " << id
+             << " is repeated";
+  }
   return success();
+}
+
+LogicalResult SimCoveragePointHitOp::verify() {
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+  if (!module)
+    return emitOpError(
+        "must be nested in a module with a line-point inventory");
+  auto count =
+      module->getAttrOfType<IntegerAttr>(metadata::coverageLinePointCount);
+  if (!count)
+    return emitOpError("requires the module line-point inventory attribute '")
+           << metadata::coverageLinePointCount << "'";
+  if (!count.getType().isSignlessInteger(64))
+    return emitOpError("requires a 64-bit module line-point inventory");
+  if (count.getValue().isNegative() ||
+      getPoint() >= count.getValue().getZExtValue())
+    return emitOpError("point index is outside the module inventory");
+  return success();
+}
+
+LogicalResult SimCoverageKeepaliveOp::verify() {
+  if (!isa_and_nonnull<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("must be directly nested in obelisk_sim.design");
+  return success();
+}
+
+LogicalResult
+SimCoverageKeepaliveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
+                                                      getFunctionAttr()))
+    return emitOpError("must reference a sibling obelisk_sim.func");
+  return success();
+}
+
+static LogicalResult verifyCoverageScopeTarget(Operation *operation,
+                                               IntegerAttr idAttr) {
+  if (idAttr.getValue().isZero())
+    return operation->emitOpError("coverage scope ID must be nonzero");
+  auto design = operation->getParentOfType<SimDesignOp>();
+  if (!design)
+    return operation->emitOpError("must be nested in an obelisk_sim.design");
+  uint64_t id = idAttr.getValue().getZExtValue();
+  for (SimScopeDeclOp scope : design.getBody().front().getOps<SimScopeDeclOp>())
+    if (scope.getCoverageId().value_or(0) == id)
+      return success();
+  return operation->emitOpError()
+         << "references unknown coverage scope ID " << id;
+}
+
+LogicalResult SimCoverageControlInstanceOp::verify() {
+  return verifyCoverageScopeTarget(getOperation(), getCoverageScopeIdAttr());
+}
+
+LogicalResult SimCoverageQueryInstanceOp::verify() {
+  return verifyCoverageScopeTarget(getOperation(), getCoverageScopeIdAttr());
 }
 
 LogicalResult SimCovergroupSampleEnabledOp::verify() {
   return verifyCovergroupHandle(*this, getHandle().getType());
 }
 
-LogicalResult SimCovergroupBinHitOp::verify() {
-  SimCovergroupDeclOp declaration =
-      lookupCovergroup(*this, getHandle().getType().getCovergroupName());
-  if (!declaration)
-    return emitOpError("handle type references an unknown declaration");
-  uint64_t coverpoint = getCoverpoint();
-  if (coverpoint >= declaration.getCoverpointBins().size())
-    return emitOpError("coverpoint index is outside the declaration");
-  uint64_t bin = getBin();
-  if (bin >= static_cast<uint64_t>(declaration.getCoverpointBins()[coverpoint]))
-    return emitOpError("bin index is outside the selected coverpoint");
+LogicalResult SimCovergroupFormalReadOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  if (getFormalId() <= 0)
+    return emitOpError(
+        "FunctionalFormal ID must be a positive signed 64-bit value");
   return success();
 }
 
 LogicalResult SimCovergroupSampleOp::verify() {
-  SimCovergroupDeclOp declaration =
-      lookupCovergroup(*this, getHandle().getType().getCovergroupName());
-  if (!declaration)
+  if (!lookupCovergroup(*this, getHandle().getType().getCovergroupName()))
     return emitOpError(
         "handle type references an unknown covergroup declaration");
-  uint64_t expected = 0;
-  for (int64_t bins : declaration.getCoverpointBins()) {
-    if (static_cast<uint64_t>(bins) > UINT64_MAX - expected)
-      return emitOpError("declaration bin inventory is too large");
-    expected += static_cast<uint64_t>(bins);
+  ArrayRef<int64_t> ids = getExpressionIds();
+  if (ids.size() != getValues().size())
+    return emitOpError() << "requires one FunctionalExpression ID for each "
+                            "sample value; got "
+                         << ids.size() << " IDs and " << getValues().size()
+                         << " values";
+
+  llvm::DenseSet<uint64_t> seen;
+  for (auto [index, id] : llvm::enumerate(ids)) {
+    if (id <= 0)
+      return emitOpError() << "FunctionalExpression ID " << index
+                           << " must be a positive signed 64-bit value";
+    uint64_t stableID = static_cast<uint64_t>(id);
+    if (!seen.insert(stableID).second)
+      return emitOpError() << "FunctionalExpression IDs must be unique; ID "
+                           << stableID << " is repeated";
   }
-  if (getHits().size() != expected)
-    return emitOpError() << "requires exactly " << expected
-                         << " flattened bin-hit operands";
+  for (auto [index, value] : llvm::enumerate(getValues())) {
+    Type type = value.getType();
+    if (!type.isSignlessIntOrIndex() || isa<IndexType>(type)) {
+      if (isa<LogicType, StringType>(type) || type.isF64())
+        continue;
+      return emitOpError()
+             << "sample value " << index
+             << " must have signless integer, !obelisk_sim.logic, "
+                "!obelisk_sim.string, or f64 type, but has "
+             << type;
+    }
+  }
   return success();
 }
 
@@ -528,6 +682,52 @@ LogicalResult SimCovergroupStartOp::verify() {
 
 LogicalResult SimCovergroupStopOp::verify() {
   return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupSetNameOp::verify() {
+  return verifyCovergroupHandle(*this, getHandle().getType());
+}
+
+LogicalResult SimCovergroupSetIntegerOptionOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  if (getOption() == CovergroupInstanceOptionKind::Comment ||
+      getOption() == CovergroupInstanceOptionKind::MergeInstances)
+    return emitOpError("requires an integral option kind");
+  return success();
+}
+
+LogicalResult SimCovergroupGetIntegerOptionOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  if (getOption() == CovergroupInstanceOptionKind::Comment ||
+      getOption() == CovergroupInstanceOptionKind::MergeInstances)
+    return emitOpError("requires an integral instance-option kind");
+  return success();
+}
+
+LogicalResult SimCovergroupSetStringOptionOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  if (getOption() != CovergroupInstanceOptionKind::Comment)
+    return emitOpError("requires the comment option kind");
+  return success();
+}
+
+LogicalResult SimCovergroupSetTypeIntegerOptionOp::verify() {
+  if (!getTypeId() || getOption() == CovergroupInstanceOptionKind::Comment ||
+      getOption() == CovergroupInstanceOptionKind::AtLeast ||
+      getOption() == CovergroupInstanceOptionKind::CrossNumPrintMissing ||
+      (getItem() &&
+       getOption() == CovergroupInstanceOptionKind::MergeInstances))
+    return emitOpError("requires a valid integral type-option owner and kind");
+  return success();
+}
+
+LogicalResult SimCovergroupSetTypeStringOptionOp::verify() {
+  if (!getTypeId() || getOption() != CovergroupInstanceOptionKind::Comment)
+    return emitOpError("requires a valid comment type-option owner");
+  return success();
 }
 
 LogicalResult SimCovergroupInstanceQueryOp::verify() {
@@ -1442,9 +1642,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       precision &&
       (precision.getValue().isNegative() || precision.getValue().isZero()))
     return emitOpError("time precision must be a positive femtosecond value");
-  llvm::DenseSet<uint64_t> scopeIds, codeUnitIds, statementIds,
-      statementSiteIds, storageIds, netIds, driverIds, portIds, connectionIds,
-      covergroupIds, classIds;
+  llvm::DenseSet<uint64_t> scopeIds, coverageScopeIds, codeUnitIds,
+      statementIds, statementSiteIds, storageIds, netIds, driverIds, portIds,
+      connectionIds, covergroupIds, classIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
@@ -1468,6 +1668,10 @@ LogicalResult SimDesignOp::verifyRegions() {
     };
     if (auto scope = dyn_cast<SimScopeDeclOp>(op)) {
       if (failed(addId(scope.getIdAttr(), scopeIds, "scope")))
+        return failure();
+      if (scope.getCoverageIdAttr() &&
+          failed(addId(scope.getCoverageIdAttr(), coverageScopeIds,
+                       "coverage scope")))
         return failure();
       scopes[scope.getId()] = scope;
       if (!scope.getParentAttr()) {
@@ -1514,7 +1718,8 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       netConnections.push_back(connection);
     } else if (auto covergroup = dyn_cast<SimCovergroupDeclOp>(op)) {
-      if (failed(addId(covergroup.getIdAttr(), covergroupIds, "covergroup")))
+      if (failed(addId(covergroup.getSchemaTypeAttr(), covergroupIds,
+                       "covergroup schema type")))
         return failure();
     } else if (auto classDecl = dyn_cast<SimClassDeclOp>(op)) {
       if (failed(addId(classDecl.getIdAttr(), classIds, "class")))

@@ -1,0 +1,2 @@
+# RUN: %if node %{ %node %S/../Support/CoverageReport.test.mjs \
+# RUN:   %S/../../tools/obelisk-cov/CoverageReport.js %}

@@ -32,12 +32,28 @@ StringAttr getSimulationClassSymbol(SymbolRefAttr semanticClass) {
 }
 
 StringAttr getSimulationCovergroupSymbol(SymbolRefAttr semanticCovergroup) {
+  auto semanticName = [](StringRef component) {
+    if (component.starts_with("s")) {
+      StringRef suffix = component.drop_front();
+      size_t digits = suffix.find_first_not_of("0123456789");
+      if (digits != StringRef::npos && suffix[digits] == '.')
+        component = suffix.drop_front(digits + 1);
+    }
+    return component;
+  };
+  std::string identity = semanticName(semanticCovergroup.getRootReference()).str();
+  for (FlatSymbolRefAttr nested : semanticCovergroup.getNestedReferences()) {
+    identity.push_back('.');
+    identity.append(semanticName(nested.getValue()));
+  }
   std::string name = "__obelisk_covergroup_";
-  StringRef leaf = semanticCovergroup.getLeafReference();
-  name.reserve(name.size() + leaf.size());
+  StringRef leaf = semanticName(semanticCovergroup.getLeafReference());
   for (char character : leaf)
-    name.push_back(
-        std::isalnum(static_cast<unsigned char>(character)) ? character : '_');
+    name.push_back(std::isalnum(static_cast<unsigned char>(character))
+                       ? character
+                       : '_');
+  name.push_back('_');
+  name.append(llvm::utohexstr(stableCodeUnitID(identity)));
   return StringAttr::get(semanticCovergroup.getContext(), name);
 }
 
@@ -86,6 +102,135 @@ SmallVector<Operation *> getChildren(Operation *op) {
     for (Operation &child : op->getRegion(0).front())
       children.push_back(&child);
   return children;
+}
+
+FailureOr<CoverageBinChildren>
+decodeCoverageBinChildren(semantic::SVCoverageBinSymbolOp bin) {
+  auto malformed = [&](const Twine &detail)
+      -> FailureOr<CoverageBinChildren> {
+    emitError(getSemanticLocation(bin))
+        << "malformed coverage-bin child inventory: " << detail;
+    return failure();
+  };
+  ArrayRef<int64_t> roles = bin.getChildRoles();
+  ArrayRef<int64_t> setRanges = bin.getTransitionSetRangeCounts();
+  ArrayRef<int64_t> rangeItems = bin.getTransitionRangeItemCounts();
+  ArrayRef<int64_t> repeatKinds = bin.getTransitionRangeRepeatKinds();
+  ArrayRef<int64_t> hasRepeatFrom = bin.getTransitionRangeHasRepeatFrom();
+  ArrayRef<int64_t> hasRepeatTo = bin.getTransitionRangeHasRepeatTo();
+
+  SmallVector<Operation *> children = getChildren(bin);
+  if (roles.size() != children.size())
+    return malformed("child_roles size does not match the region");
+
+  ArrayRef<int64_t> setRangeValues = setRanges;
+  ArrayRef<int64_t> rangeItemValues = rangeItems;
+  ArrayRef<int64_t> repeatKindValues = repeatKinds;
+  ArrayRef<int64_t> hasRepeatFromValues = hasRepeatFrom;
+  ArrayRef<int64_t> hasRepeatToValues = hasRepeatTo;
+  if (setRangeValues.size() !=
+      static_cast<uint64_t>(bin.getTransitionSetCount()))
+    return malformed("transition-set count does not match its layout");
+
+  size_t rangeCount = 0;
+  for (int64_t count : setRangeValues) {
+    if (count <= 0 || rangeCount > rangeItemValues.size() ||
+        static_cast<uint64_t>(count) > rangeItemValues.size() - rangeCount)
+      return malformed("transition range count is out of bounds");
+    rangeCount += static_cast<size_t>(count);
+  }
+  if (rangeCount != rangeItemValues.size() ||
+      repeatKindValues.size() != rangeCount ||
+      hasRepeatFromValues.size() != rangeCount ||
+      hasRepeatToValues.size() != rangeCount)
+    return malformed("transition-range arrays have inconsistent sizes");
+
+  CoverageBinChildren result;
+  size_t childIndex = 0;
+  auto consume = [&](semantic::SVCoverageBinChildRole expected,
+                     Operation *&destination) -> LogicalResult {
+    if (childIndex >= children.size() ||
+        roles[childIndex] != static_cast<int64_t>(expected))
+      return failure();
+    destination = children[childIndex++];
+    return success();
+  };
+  if (bin.getHasIff() && failed(consume(semantic::SVCoverageBinChildRole::Iff,
+                                        result.iff)))
+    return malformed("iff expression has no matching child role");
+  if (bin.getHasNumberOfBins() &&
+      failed(consume(semantic::SVCoverageBinChildRole::NumberOfBins,
+                     result.numberOfBins)))
+    return malformed("bin-count expression has no matching child role");
+  if (bin.getHasSetCoverage() &&
+      failed(consume(semantic::SVCoverageBinChildRole::SetCoverage,
+                     result.setCoverage)))
+    return malformed("set expression has no matching child role");
+  if (bin.getHasWith() &&
+      failed(consume(semantic::SVCoverageBinChildRole::With, result.with)))
+    return malformed("with expression has no matching child role");
+  if (childIndex < children.size() &&
+      roles[childIndex] ==
+          static_cast<int64_t>(semantic::SVCoverageBinChildRole::CrossSelect))
+    result.crossSelect = children[childIndex++];
+
+  int64_t valueCount = bin.getValueCount();
+  if (valueCount < 0 || static_cast<uint64_t>(valueCount) > children.size())
+    return malformed("value_count is out of bounds");
+  result.values.reserve(static_cast<size_t>(valueCount));
+  for (int64_t index = 0; index < valueCount; ++index) {
+    Operation *value = nullptr;
+    if (failed(consume(semantic::SVCoverageBinChildRole::Value, value)))
+      return malformed("state value has no matching child role");
+    result.values.push_back(value);
+  }
+
+  result.transitions.reserve(setRangeValues.size());
+  size_t rangeIndex = 0;
+  for (int64_t rangesInSet : setRangeValues) {
+    CoverageTransitionSetChildren set;
+    set.ranges.reserve(static_cast<size_t>(rangesInSet));
+    for (int64_t ordinal = 0; ordinal < rangesInSet;
+         ++ordinal, ++rangeIndex) {
+      int64_t itemCount = rangeItemValues[rangeIndex];
+      int64_t repeatKind = repeatKindValues[rangeIndex];
+      int64_t hasFrom = hasRepeatFromValues[rangeIndex];
+      int64_t hasTo = hasRepeatToValues[rangeIndex];
+      if (itemCount <= 0 ||
+          static_cast<uint64_t>(itemCount) > children.size() - childIndex)
+        return malformed("transition item count is out of bounds");
+      if (repeatKind < 0 || repeatKind > 3 ||
+          (hasFrom != 0 && hasFrom != 1) ||
+          (hasTo != 0 && hasTo != 1) || hasTo > hasFrom ||
+          ((repeatKind == 0) != (hasFrom == 0)))
+        return malformed("transition repetition metadata is invalid");
+      CoverageTransitionRangeChildren range;
+      range.repeatKind =
+          static_cast<semantic::SVCoverageTransitionRepeatKind>(repeatKind);
+      range.items.reserve(static_cast<size_t>(itemCount));
+      for (int64_t item = 0; item < itemCount; ++item) {
+        Operation *expression = nullptr;
+        if (failed(consume(semantic::SVCoverageBinChildRole::TransitionItem,
+                           expression)))
+          return malformed("transition item has no matching child role");
+        range.items.push_back(expression);
+      }
+      if (hasFrom &&
+          failed(consume(
+              semantic::SVCoverageBinChildRole::TransitionRepeatFrom,
+              range.repeatFrom)))
+        return malformed("transition lower bound has no matching child role");
+      if (hasTo &&
+          failed(consume(semantic::SVCoverageBinChildRole::TransitionRepeatTo,
+                         range.repeatTo)))
+        return malformed("transition upper bound has no matching child role");
+      set.ranges.push_back(std::move(range));
+    }
+    result.transitions.push_back(std::move(set));
+  }
+  if (childIndex != children.size())
+    return malformed("unexpected or out-of-order child role");
+  return result;
 }
 
 SmallVector<Operation *> getNetInitializerExpressions(Operation *op) {
@@ -274,13 +419,63 @@ bool isUnboundedEndpoint(Operation *operation) {
       return false;
     operation = children.front();
   }
-  return isa<semantic::SVUnboundedLiteralOp>(operation);
+  if (isa<semantic::SVUnboundedLiteralOp>(operation))
+    return true;
+  auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
+  return semanticType && isa<semantic::UnboundedType>(semanticType.getValue());
 }
 
 uint64_t stableCodeUnitID(StringRef key) {
   uint64_t hash = obelisk_stable_hash(key.data(), key.size());
   hash &= static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
   return hash == 0 ? 1 : hash;
+}
+
+std::string functionalSemanticIdentity(Operation *operation) {
+  std::string identity;
+  llvm::raw_string_ostream stream(identity);
+  stream << operation->getName() << '|';
+  StringRef hierarchy = getHierarchyName(operation);
+  StringRef name = getDebugName(operation);
+  stream << hierarchy << '|' << name << '|';
+  auto appendAttribute = [&](StringRef key) {
+    if (Attribute attribute = operation->getAttr(key)) {
+      stream << key << '=';
+      attribute.print(stream);
+      stream << '|';
+    }
+  };
+  bool hasCanonicalSource = operation->hasAttr("source_range");
+  appendAttribute("source_range");
+  appendAttribute("original_source_range");
+  if (auto frames = operation->getAttrOfType<ArrayAttr>(
+          "macro_expansion_stack")) {
+    for (Attribute value : frames) {
+      auto frame = dyn_cast<DictionaryAttr>(value);
+      if (!frame)
+        continue;
+      for (StringRef key : {"name", "definition", "invocation"})
+        if (Attribute attribute = frame.get(key)) {
+          stream << "macro." << key << '=';
+          attribute.print(stream);
+          stream << '|';
+        }
+    }
+  }
+  if (!hasCanonicalSource)
+    if (auto location = operation->getLoc()->findInstanceOf<FileLineColLoc>())
+    stream << "loc=" << location.getFilename() << ':' << location.getLine()
+           << ':' << location.getColumn() << '|';
+  return identity;
+}
+
+uint64_t stableFunctionalTypeID(semantic::SVCovergroupTypeOp covergroup) {
+  uint64_t id = stableCodeUnitID(
+                    (Twine("functional.type|") +
+                     functionalSemanticIdentity(covergroup))
+                        .str()) &
+                static_cast<uint64_t>(INT64_MAX);
+  return id ? id : uint64_t{1};
 }
 
 bool isStaticallyAllocatedOverrideTarget(Value value) {

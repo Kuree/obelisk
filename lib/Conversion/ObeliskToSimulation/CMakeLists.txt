@@ -35,6 +35,7 @@ add_mlir_library(ObeliskToSimulation
   MaterializeComputeFusion.cpp
   MaterializeGraphRegions.cpp
   PlanStaticSuperstep.cpp
+  PrepareCoverage.cpp
   PrepareCaptures.cpp
   Prepare.cpp
   PrepareDeclarations.cpp
@@ -55,6 +56,7 @@ add_mlir_library(ObeliskToSimulation
 
   LINK_LIBS PUBLIC
   ObeliskIR
+  ObeliskCoverage
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
   ObeliskSolver

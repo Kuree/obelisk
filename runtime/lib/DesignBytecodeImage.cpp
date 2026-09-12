@@ -920,8 +920,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 0; index != 7; ++index)
       if (!twoStateBits(input(index), 64))
         return false;
-    if (!bytes(input(7)) ||
-        (site.inputCount == 11 && !bytes(input(8))))
+    if (!bytes(input(7)) || (site.inputCount == 11 && !bytes(input(8))))
       return false;
     return twoStateBits(input(site.inputCount - 2), 64) &&
            twoStateBits(input(site.inputCount - 1), 64);
@@ -1086,48 +1085,149 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
-    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
-        !twoStateBits(output(0), 64))
-      return false;
-    for (uint32_t index = 0; index != site.inputCount; ++index)
-      if (!twoStateBits(input(index), 64))
-        return false;
-    return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED:
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
-           twoStateBits(input(1), 64);
+           twoStateBits(input(1), 1);
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
+           string(input(3)) && twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
+           twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           twoStateBits(input(1), 32) && string(input(2)) &&
+           twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           twoStateBits(input(1), 32) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE:
+  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && twoStateBits(input(0), 32) &&
+           string(input(1)) && twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET:
+    return signature.flags == 0 && site.inputCount == 0 &&
+           site.outputCount == 1 && output(0) &&
+           output(0)->kind == OBELISK_RT_DBREG_REAL64;
+  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME:
+  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && string(input(0));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
+    if (signature.flags != 0 || site.inputCount < 3 || site.outputCount != 1 ||
+        !twoStateBits(output(0), 64) || !twoStateBits(input(0), 64) ||
+        !twoStateBits(input(1), 64) || !twoStateBits(input(2), 64))
+      return false;
+    for (uint32_t index = 3; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64) && !numeric(input(index)) &&
+          !floating(input(index)) && !argumentRef(input(index)) &&
+          !string(input(index)) && !managed(input(index)))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER:
+    if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 0)
+      return false;
+    for (uint32_t index = 0; index != 5; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    for (uint32_t index = 5; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64) && !numeric(input(index)) &&
+          !handle(input(index)) && !managed(input(index)) &&
+          !argumentRef(input(index)))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER:
+    if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 0 ||
+        !twoStateBits(input(0), 64) ||
+        (!managed(input(1)) && !twoStateBits(input(1), 64)))
+      return false;
+    for (uint32_t index = 2; index != 5; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    for (uint32_t index = 5; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index), 64) && !numeric(input(index)) &&
+          !handle(input(index)) && !managed(input(index)) &&
+          !argumentRef(input(index)))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) &&
+           (managed(input(2)) || twoStateBits(input(2), 64));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_NAME:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           string(input(1));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           string(input(3));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(input(3), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           string(input(3));
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT:
-    return signature.flags == 0 && site.inputCount == 3 &&
-           site.outputCount == 0 && twoStateBits(input(0), 64) &&
-           twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) &&
+           (numeric(output(0)) ||
+            (output(0) && output(0)->kind == OBELISK_RT_DBREG_REAL64));
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
-    if (signature.flags != 0 || site.inputCount < 1 || site.outputCount != 0 ||
-        !twoStateBits(input(0), 64))
+    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 0 ||
+        !twoStateBits(input(0), 64) || !twoStateBits(input(1), 64))
       return false;
-    for (uint32_t index = 1; index != site.inputCount; ++index)
-      if (!twoStateBits(input(index), 1))
+    for (uint32_t index = 2; index != site.inputCount; ++index)
+      if (!numeric(input(index)) && !floating(input(index)) &&
+          !string(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:
-    return signature.flags == 0 && site.inputCount == 1 &&
+    return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 3 && twoStateBits(input(0), 64) && output(0) &&
+           twoStateBits(input(1), 64) &&
            output(0)->kind == OBELISK_RT_DBREG_REAL64 &&
            twoStateBits(output(1), 32) && twoStateBits(output(2), 32);
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY:
-    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 3 ||
+    if (signature.flags != 0 || site.inputCount != 2 || site.outputCount != 3 ||
         !output(0) || output(0)->kind != OBELISK_RT_DBREG_REAL64 ||
         !twoStateBits(output(1), 32) || !twoStateBits(output(2), 32))
       return false;
-    for (uint32_t index = 0; index != site.inputCount; ++index)
-      if (!twoStateBits(input(index), 64))
-        return false;
-    return true;
+    return twoStateBits(input(0), 64) && twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE:
     if (signature.flags != 0 || site.inputCount != 9 || site.outputCount != 1 ||
         !managed(output(0)))
@@ -3286,11 +3386,27 @@ static bool matchesActivationBytecodeInventory(
       Layout captureLayout = layoutAt(image, function, capture + 1);
       const obelisk_rt_observer_capture_abi_v1 &abi =
           observer.capture_abi[capture];
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+        if (captureLayout.kind != OBELISK_RT_DBREG_ARGUMENT_REF ||
+            captureLayout.size != 24)
+          return rejectImage(
+              __LINE__,
+              "argument-ref observer capture layout is not a 24-byte alias");
+        continue;
+      }
       if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
         if (captureLayout.kind != OBELISK_RT_DBREG_MANAGED ||
             captureLayout.size != 8)
           return rejectImage(__LINE__,
                              "managed observer capture layout is not a handle");
+        continue;
+      }
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) {
+        if (captureLayout.kind != OBELISK_RT_DBREG_BITS ||
+            captureLayout.width != 64 || captureLayout.size != 8)
+          return rejectImage(
+              __LINE__,
+              "covergroup observer capture layout is not an i64 value");
         continue;
       }
       if (captureLayout.kind != OBELISK_RT_DBREG_HANDLE ||

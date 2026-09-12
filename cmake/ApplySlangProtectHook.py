@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply Obelisk's narrowly scoped protected-envelope hook to pinned slang.
+"""Apply Obelisk's narrowly scoped semantic hooks to pinned slang.
 
 The release archive remains immutable and offline builds need no git or patch
 utility. Every replacement checks its exact v11.0 context and is idempotent;
@@ -38,6 +38,94 @@ def main() -> None:
     overlay = Path(sys.argv[2])
     if not (source / "CMakeLists.txt").is_file():
         raise RuntimeError(f"not a slang source tree: {source}")
+
+    replace_once(
+        source / "source/ast/Scope.cpp",
+        "void Scope::handleNameConflict(const Symbol& member, const Symbol*& existing) const {\n"
+        "    // We have a name collision; first check if this is ok (forwarding typedefs share a\n",
+        "void Scope::handleNameConflict(const Symbol& member, const Symbol*& existing) const {\n"
+        "    // IEEE 1800-2023 19.4.1 permits a derived covergroup cross to\n"
+        "    // override an inherited cross with the same name. Cover crosses are\n"
+        "    // deferred members, so they are not present in the unelaborated name\n"
+        "    // map when CovergroupType::inheritMembers decides what to wrap.\n"
+        "    if (asSymbol().kind == SymbolKind::CovergroupBody &&\n"
+        "        existing->kind == SymbolKind::TransparentMember &&\n"
+        "        existing->as<TransparentMemberSymbol>().wrapped.kind ==\n"
+        "            SymbolKind::CoverCross &&\n"
+        "        member.kind == SymbolKind::CoverCross) {\n"
+        "        existing = &member;\n"
+        "        return;\n"
+        "    }\n\n"
+        "    // We have a name collision; first check if this is ok (forwarding typedefs share a\n")
+
+    # IEEE 1800-2017/2023 19.3 permits an object-qualified method name in a
+    # covergroup block event. Slang v11 treats the final method name as an
+    # ordinary selection and then rejects it. Bind the name as a non-invoking
+    # expression instead, retaining the receiver as a MemberAccess child.
+    replace_once(
+        source / "include/slang/ast/ASTContext.h",
+        "    /// AST binding is for a wildcard port connection.\n"
+        "    WildcardPortConn = 1ull << 42,\n"
+        "};\n"
+        "SLANG_BITMASK(ASTFlags, WildcardPortConn)\n",
+        "    /// AST binding is for a wildcard port connection.\n"
+        "    WildcardPortConn = 1ull << 42,\n\n"
+        "    /// AST binding names a task, function, or method as a covergroup block\n"
+        "    /// event target without invoking it.\n"
+        "    BlockEventReference = 1ull << 43,\n"
+        "};\n"
+        "SLANG_BITMASK(ASTFlags, BlockEventReference)\n")
+    replace_once(
+        source / "source/ast/Expression.cpp",
+        "    bitmask<LookupFlags> flags = LookupFlags::None;\n"
+        "    if (invocation && invocation->arguments)\n",
+        "    bitmask<LookupFlags> flags = LookupFlags::None;\n"
+        "    if (context.flags.has(ASTFlags::BlockEventReference))\n"
+        "        flags |= LookupFlags::ForceHierarchical;\n"
+        "    if (invocation && invocation->arguments)\n")
+    replace_once(
+        source / "source/ast/Expression.cpp",
+        "        case SymbolKind::Subroutine: {\n"
+        "            SLANG_ASSERT(result.selectors.empty());\n",
+        "        case SymbolKind::StatementBlock: {\n"
+        "            if (context.flags.has(ASTFlags::BlockEventReference)) {\n"
+        "                comp.noteReference(*symbol, context.flags.has(ASTFlags::LValue));\n"
+        "                auto hierRef = HierarchicalReference::fromLookup(comp, result);\n"
+        "                expr = comp.emplace<ArbitrarySymbolExpression>(\n"
+        "                    *context.scope, *symbol, comp.getVoidType(), &hierRef,\n"
+        "                    result.nameRange);\n"
+        "                break;\n"
+        "            }\n"
+        "            expr = &ValueExpressionBase::fromSymbol(context, *symbol, nullptr,\n"
+        "                                                    result.nameRange);\n"
+        "            break;\n"
+        "        }\n"
+        "        case SymbolKind::Subroutine: {\n"
+        "            if (context.flags.has(ASTFlags::BlockEventReference)) {\n"
+        "                comp.noteReference(*symbol, context.flags.has(ASTFlags::LValue));\n"
+        "                auto hierRef = HierarchicalReference::fromLookup(comp, result);\n"
+        "                expr = comp.emplace<ArbitrarySymbolExpression>(\n"
+        "                    *context.scope, *symbol, comp.getVoidType(), &hierRef,\n"
+        "                    result.nameRange);\n"
+        "                break;\n"
+        "            }\n"
+        "            SLANG_ASSERT(result.selectors.empty());\n")
+    replace_once(
+        source / "source/ast/expressions/SelectExpressions.cpp",
+        "            auto& sub = member->as<SubroutineSymbol>();\n"
+        "            if (!sub.flags.has(MethodFlags::Static)) {\n",
+        "            auto& sub = member->as<SubroutineSymbol>();\n"
+        "            if (context.flags.has(ASTFlags::BlockEventReference)) {\n"
+        "                comp.noteReference(sub);\n"
+        "                return *comp.emplace<MemberAccessExpression>(comp.getVoidType(), expr, sub,\n"
+        "                                                             range);\n"
+        "            }\n"
+        "            if (!sub.flags.has(MethodFlags::Static)) {\n")
+    replace_once(
+        source / "source/ast/TimingControl.cpp",
+        "        auto& expr = ArbitrarySymbolExpression::fromSyntax(comp, *evSyntax.name, context);\n",
+        "        auto& expr = Expression::bind(\n"
+        "            *evSyntax.name, context.resetFlags(ASTFlags::BlockEventReference));\n")
 
     shutil.copyfile(overlay / "ProtectEnvelope.h",
                     source / "include/slang/parsing/ProtectEnvelope.h")

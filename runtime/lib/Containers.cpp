@@ -1174,6 +1174,194 @@ int32_t compareViews(const StringView &left, const StringView &right,
 
 } // namespace
 
+obelisk_rt_status obelisk_rt_coverage_tuple_queue_snapshot(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *queue,
+    uint64_t expectedElementType, uint64_t expectedProvenanceSpan,
+    bool expectedFourState, uint64_t maximumElements,
+    CoverageTupleQueueSnapshot &output) {
+  output = {};
+  if (!context || !expectedElementType || !expectedProvenanceSpan ||
+      expectedProvenanceSpan > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const uint64_t expectedValueSize = (expectedProvenanceSpan + 7) / 8;
+  if (expectedValueSize > std::numeric_limits<size_t>::max() ||
+      expectedValueSize > obelisk::coverage::ParseLimits{}.maxSectionBytes)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  output.valueSize = expectedValueSize;
+  output.fourState = expectedFourState;
+  // A default-initialized queue is the canonical empty value. Its erased
+  // handle carries no element descriptor, so the trusted static CrossValType
+  // layout supplies the otherwise unobservable type.
+  if (!queue)
+    return OBELISK_RT_OK;
+  if (!obelisk_rt_managed_object_belongs_to(context, queue) ||
+      obelisk_rt_managed_object_kind(queue) != OBELISK_RT_MANAGED_CONTAINER)
+    return OBELISK_RT_INVALID_HANDLE;
+
+  ContainerHeader header;
+  obelisk_rt_status status = snapshotHeader(queue, header);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (header.kind != OBELISK_RT_CONTAINER_QUEUE || header.bound != UINT64_MAX ||
+      !header.element || header.element->kind != OBELISK_RT_ELEMENT_AGGREGATE ||
+      header.element->type_id != expectedElementType ||
+      header.element->flags !=
+          (expectedFourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0) ||
+      header.element->value_size != expectedValueSize ||
+      header.element->bit_width != expectedValueSize * 8 ||
+      header.element->trace || header.size > maximumElements)
+    return OBELISK_RT_INVALID_DESIGN;
+  if (header.size && expectedValueSize > UINT64_MAX / header.size)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  const uint64_t planeBytes = header.size * expectedValueSize;
+  if (planeBytes > std::numeric_limits<size_t>::max() ||
+      planeBytes > obelisk::coverage::ParseLimits{}.maxSectionBytes)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  OBELISK_RT_TRY {
+    output.value.resize(static_cast<size_t>(planeBytes));
+    if (expectedFourState)
+      output.unknown.resize(static_cast<size_t>(planeBytes));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+
+  if (header.size) {
+    const uint64_t stride = elementStride(header.element);
+    status = accessBuffer(header.buffer, [&](uint8_t *data, uint64_t size) {
+      for (uint64_t index = 0; index != header.size; ++index) {
+        const uint64_t physical = physicalIndex(header, index);
+        if (physical > UINT64_MAX / stride)
+          return OBELISK_RT_INVALID_HANDLE;
+        const uint64_t sourceOffset = physical * stride;
+        if (sourceOffset > size || stride > size - sourceOffset)
+          return OBELISK_RT_INVALID_HANDLE;
+        const uint64_t destinationOffset = index * expectedValueSize;
+        std::memcpy(output.value.data() + destinationOffset,
+                    data + sourceOffset, expectedValueSize);
+        if (expectedFourState)
+          std::memcpy(output.unknown.data() + destinationOffset,
+                      data + sourceOffset + expectedValueSize,
+                      expectedValueSize);
+      }
+      return OBELISK_RT_OK;
+    });
+    if (status != OBELISK_RT_OK) {
+      output = {};
+      return status;
+    }
+  }
+  output.count = header.size;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_coverage_set_snapshot(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *container,
+    uint64_t expectedBitWidth, uint32_t expectedElementKind,
+    bool expectedFourState, uint64_t maximumElements,
+    CoverageSetSnapshot &output) {
+  output = {};
+  const bool integral = expectedElementKind == OBELISK_RT_ELEMENT_BITS ||
+                        expectedElementKind == OBELISK_RT_ELEMENT_LOGIC;
+  const bool real = expectedElementKind == OBELISK_RT_ELEMENT_REAL;
+  if (!context || !expectedBitWidth || (!integral && !real) ||
+      (expectedElementKind == OBELISK_RT_ELEMENT_LOGIC) != expectedFourState ||
+      (real && ((expectedBitWidth != 32 && expectedBitWidth != 64) ||
+                expectedFourState)) ||
+      expectedBitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const uint64_t expectedValueSize = (expectedBitWidth + 7) / 8;
+  if (expectedValueSize > std::numeric_limits<size_t>::max() ||
+      expectedValueSize > obelisk::coverage::ParseLimits{}.maxSectionBytes)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  output.valueSize = expectedValueSize;
+  output.bitWidth = expectedBitWidth;
+  output.elementKind = expectedElementKind;
+  output.fourState = expectedFourState;
+  // A default-initialized dynamic array or queue is the canonical empty
+  // value. The trusted static expression descriptor supplies its otherwise
+  // unavailable element shape.
+  if (!container)
+    return OBELISK_RT_OK;
+  if (!obelisk_rt_managed_object_belongs_to(context, container) ||
+      obelisk_rt_managed_object_kind(container) != OBELISK_RT_MANAGED_CONTAINER)
+    return OBELISK_RT_INVALID_HANDLE;
+
+  ContainerHeader header;
+  obelisk_rt_status status = snapshotHeader(container, header);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const bool sequential = header.kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+                          header.kind == OBELISK_RT_CONTAINER_QUEUE;
+  if (!sequential || !header.element ||
+      header.element->kind != expectedElementKind ||
+      header.element->flags !=
+          (expectedFourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0) ||
+      header.element->value_size != expectedValueSize ||
+      header.element->bit_width != expectedBitWidth || header.element->trace ||
+      header.size > maximumElements)
+    return OBELISK_RT_INVALID_DESIGN;
+  if (header.size && expectedValueSize > UINT64_MAX / header.size)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  const uint64_t planeBytes = header.size * expectedValueSize;
+  if (planeBytes > std::numeric_limits<size_t>::max() ||
+      planeBytes > obelisk::coverage::ParseLimits{}.maxSectionBytes)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+
+  OBELISK_RT_TRY {
+    output.value.resize(static_cast<size_t>(planeBytes));
+    if (expectedFourState)
+      output.unknown.resize(static_cast<size_t>(planeBytes));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+
+  if (header.size) {
+    const uint64_t stride = elementStride(header.element);
+    status = accessBuffer(header.buffer, [&](uint8_t *data, uint64_t size) {
+      for (uint64_t index = 0; index != header.size; ++index) {
+        const uint64_t physical = physicalIndex(header, index);
+        if (physical > UINT64_MAX / stride)
+          return OBELISK_RT_INVALID_HANDLE;
+        const uint64_t sourceOffset = physical * stride;
+        if (sourceOffset > size || stride > size - sourceOffset)
+          return OBELISK_RT_INVALID_HANDLE;
+        const uint64_t destinationOffset = index * expectedValueSize;
+        std::memcpy(output.value.data() + destinationOffset,
+                    data + sourceOffset, expectedValueSize);
+        if (expectedFourState)
+          std::memcpy(output.unknown.data() + destinationOffset,
+                      data + sourceOffset + expectedValueSize,
+                      expectedValueSize);
+      }
+      return OBELISK_RT_OK;
+    });
+    if (status != OBELISK_RT_OK) {
+      output = {};
+      return status;
+    }
+  }
+
+  if (integral && expectedBitWidth % 8) {
+    const uint8_t padding = static_cast<uint8_t>(
+        ~((uint16_t{1} << (expectedBitWidth % 8)) - 1));
+    for (uint64_t index = 0; index != header.size; ++index) {
+      const uint64_t tail = (index + 1) * expectedValueSize - 1;
+      if ((output.value[tail] & padding) ||
+          (expectedFourState && (output.unknown[tail] & padding))) {
+        output = {};
+        return OBELISK_RT_INVALID_DESIGN;
+      }
+    }
+  }
+  output.count = header.size;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 obelisk_rt_validate_string(obelisk_rt_context *context,
                            obelisk_rt_string_v1 string) noexcept {

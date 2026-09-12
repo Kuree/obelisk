@@ -405,13 +405,17 @@ typedef struct obelisk_rt_handle_v1 {
 // waveform dumping. This grants no VPI access; the VPI permission bits remain
 // the sole authority for VPI handles and reads.
 #define OBELISK_RT_EXECUTION_WAVEFORM_METADATA (UINT32_C(1) << 6)
-// The optional execution extension is version two and contains scope-specific
-// zero-time DPI export descriptors.
+// The optional v1 execution extension contains scope-specific zero-time DPI
+// export descriptors.
 #define OBELISK_RT_EXECUTION_DPI_EXPORTS (UINT32_C(1) << 7)
-// The version-three execution extension carries the canonical, pointer-free
-// class bit-stream schema image. The image is validated and bound to the
-// context's registered class descriptors before the first cast executes.
+// The v1 execution extension carries the canonical, pointer-free class
+// bit-stream schema image. The image is validated and bound to the context's
+// registered class descriptors before the first cast executes.
 #define OBELISK_RT_EXECUTION_CLASS_BITSTREAM (UINT32_C(1) << 8)
+// The v1 execution extension carries a valid schema-only .obcov image. Runtime
+// counters and run metadata are context-owned and never mutate this
+// compiler-emitted blob.
+#define OBELISK_RT_EXECUTION_COVERAGE_SCHEMA (UINT32_C(1) << 9)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced
@@ -653,7 +657,13 @@ enum {
   OBELISK_RT_OBSERVER_CAPTURE_NET = 2,
   OBELISK_RT_OBSERVER_CAPTURE_EVENT = 3,
   OBELISK_RT_OBSERVER_CAPTURE_DRIVER = 4,
-  OBELISK_RT_OBSERVER_CAPTURE_MANAGED = 5
+  OBELISK_RT_OBSERVER_CAPTURE_MANAGED = 5,
+  // An opaque functional-coverage instance handle. Unlike state captures,
+  // this word is not decoded as a stable packed-state handle.
+  OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP = 6,
+  // A language ref alias represented by three words: owner, payload, and
+  // backing kind. The fourth computed-capture word is reserved and zero.
+  OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF = 7
 };
 
 typedef struct obelisk_rt_observer_capture_abi_v1 {
@@ -666,6 +676,9 @@ typedef struct obelisk_rt_observer_capture_abi_v1 {
 #define OBELISK_RT_OBSERVER_REAL64 (UINT32_C(1) << 2)
 #define OBELISK_RT_OBSERVER_NO_BYTECODE UINT32_MAX
 
+// `captures` addresses `capture_count` consecutive four-word computed-capture
+// records. The first word is the stable handle for ordinary captures. An
+// ARGUMENT_REF uses the first three words for owner, payload, and backing kind.
 typedef obelisk_rt_status (*obelisk_rt_native_observer_v1)(
     obelisk_rt_context *context, const uint64_t *captures,
     uint32_t capture_count, uint64_t *value, uint64_t *unknown,
@@ -690,18 +703,6 @@ typedef struct obelisk_rt_sampled_range_v1 {
   uint64_t snapshot_byte_offset;
   uint64_t bit_width;
 } obelisk_rt_sampled_range_v1;
-
-// Optional data carried at the byte offset in execution_descriptor_v1::reserved
-// when the Preponed snapshot capability is set. The offset is relative to the
-// execution descriptor, so generated static data needs no pointer-to-integer
-// relocation and has the same representation on wasm32 and native targets.
-#define OBELISK_RT_EXECUTION_EXTENSION_VERSION UINT32_C(1)
-typedef struct obelisk_rt_execution_extension_v1 {
-  uint32_t version;
-  uint32_t size;
-  const obelisk_rt_sampled_range_v1 *sampled_ranges;
-  uint64_t sampled_range_count;
-} obelisk_rt_execution_extension_v1;
 
 struct obelisk_rt_import_input_v1;
 struct obelisk_rt_import_output_v1;
@@ -732,24 +733,14 @@ typedef struct obelisk_rt_export_descriptor_v1 {
   uint64_t reserved_tail;
 } obelisk_rt_export_descriptor_v1;
 
-// Export-bearing designs use version two of the optional execution extension.
-// Its prefix is the complete version-one sampled-range extension, so sampled
-// designs without exports retain byte-identical metadata.
-#define OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION UINT32_C(2)
-typedef struct obelisk_rt_execution_extension_v2 {
-  uint32_t version;
-  uint32_t size;
-  const obelisk_rt_sampled_range_v1 *sampled_ranges;
-  uint64_t sampled_range_count;
-  const obelisk_rt_export_descriptor_v1 *exports;
-  uint64_t export_count;
-} obelisk_rt_execution_extension_v2;
-
-// Class bit-stream designs use version three. Its first six fields are the
-// complete version-two extension, so DPI-export readers can consume the
-// prefix without learning about the optional class service.
-#define OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION UINT32_C(3)
-typedef struct obelisk_rt_execution_extension_v3 {
+// Optional data carried at the byte offset in execution_descriptor_v1::reserved
+// whenever an execution feature needs immutable compiler metadata. The offset
+// is relative to the execution descriptor, so generated static data needs no
+// pointer-to-integer relocation and has the same representation on wasm32 and
+// native targets. Obelisk is still a prototype: this layout evolves in place
+// and deliberately retains the single v1 identity.
+#define OBELISK_RT_EXECUTION_EXTENSION_VERSION UINT32_C(1)
+typedef struct obelisk_rt_execution_extension_v1 {
   uint32_t version;
   uint32_t size;
   const obelisk_rt_sampled_range_v1 *sampled_ranges;
@@ -758,7 +749,9 @@ typedef struct obelisk_rt_execution_extension_v3 {
   uint64_t export_count;
   const uint8_t *class_bitstream;
   uint64_t class_bitstream_size;
-} obelisk_rt_execution_extension_v3;
+  const uint8_t *coverage_schema;
+  uint64_t coverage_schema_size;
+} obelisk_rt_execution_extension_v1;
 
 typedef struct obelisk_rt_execution_descriptor_v1 {
   uint32_t version;
@@ -1290,7 +1283,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE = UINT32_C(0x00010450),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED = UINT32_C(0x00010451),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED = UINT32_C(0x00010452),
-  OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIN_HIT = UINT32_C(0x00010453),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ = UINT32_C(0x00010453),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY = UINT32_C(0x00010454),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY = UINT32_C(0x00010455),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE = UINT32_C(0x00010456),
@@ -1303,6 +1296,33 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP = UINT32_C(0x0001045d),
   OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE = UINT32_C(0x00010463),
   OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY = UINT32_C(0x00010467),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT = UINT32_C(0x00010468),
+  OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET = UINT32_C(0x00010469),
+  OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME =
+      UINT32_C(0x0001046a),
+  OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB = UINT32_C(0x0001046b),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION = UINT32_C(0x0001046c),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE = UINT32_C(0x0001046d),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION = UINT32_C(0x0001046e),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE = UINT32_C(0x0001046f),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE = UINT32_C(0x00010470),
+  OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE = UINT32_C(0x00010471),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_NAME = UINT32_C(0x00010472),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER =
+      UINT32_C(0x00010473),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER =
+      UINT32_C(0x00010474),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE = UINT32_C(0x00010475),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION =
+      UINT32_C(0x00010476),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION =
+      UINT32_C(0x00010477),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION =
+      UINT32_C(0x00010478),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION =
+      UINT32_C(0x00010479),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION =
+      UINT32_C(0x0001047a),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -1998,7 +2018,9 @@ typedef uint32_t obelisk_rt_observer_dependency_kind;
 enum {
   OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL = 1,
   OBELISK_RT_OBSERVER_DEPENDENCY_EVENT = 2,
-  OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED = 3
+  OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED = 3,
+  // stable_id is the absolute capture-table index of an ArgumentRef capture.
+  OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF = 4
 };
 
 typedef struct obelisk_rt_computed_dependency_v1 {
@@ -3283,6 +3305,10 @@ obelisk_rt_v1_scheduler_execute_aot_actor(obelisk_rt_context *context,
 // generated coordinator executes another owner in the current event region.
 uint32_t
 obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context);
+// Return nonzero when a generated native schedule must hand control back to
+// the runtime after closing the current Active/NBA step. This includes a
+// runtime error and pending Postponed coverage work.
+uint32_t obelisk_rt_v1_scheduler_handoff_pending(obelisk_rt_context *context);
 // Publish one exact cold continuation after the generated coordinator
 // returns. The callback is invoked outside the hot Tier-1/Tier-2 call graph;
 // its generated thunk resumes the same slot's ready-mask/NBA transaction.
@@ -4224,35 +4250,225 @@ obelisk_rt_v1_context_create(obelisk_rt_context **out_context);
 obelisk_rt_status
 obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
                                      const char *const *argv);
+typedef uint32_t obelisk_rt_coverage_metric_v1;
+enum {
+  OBELISK_RT_COVERAGE_STATEMENT = 1,
+  OBELISK_RT_COVERAGE_TOGGLE = 2,
+  OBELISK_RT_COVERAGE_FUNCTIONAL = 3,
+  OBELISK_RT_COVERAGE_FSM = 4,
+  OBELISK_RT_COVERAGE_ASSERTION = 5
+};
+typedef uint32_t obelisk_rt_coverage_persistence_v1;
+enum {
+  OBELISK_RT_COVERAGE_PERSIST_LINE = 1u << 0,
+  OBELISK_RT_COVERAGE_PERSIST_TOGGLE = 1u << 1,
+  OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL = 1u << 2,
+  OBELISK_RT_COVERAGE_PERSIST_ALL =
+      OBELISK_RT_COVERAGE_PERSIST_LINE |
+      OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
+      OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL
+};
+obelisk_rt_status obelisk_rt_v1_coverage_finalize(
+    obelisk_rt_context *context, uint64_t line_count, uint64_t toggle_bit_count,
+    const uint8_t *initial_value, const uint8_t *initial_unknown,
+    uint32_t persistence_mask);
+obelisk_rt_status obelisk_rt_v1_coverage_point_hit(obelisk_rt_context *context,
+                                                   uint64_t point,
+                                                   uint32_t enabled);
+obelisk_rt_status obelisk_rt_v1_coverage_toggle_transition(
+    obelisk_rt_context *context, uint64_t first_bit, uint64_t bit_count,
+    const uint8_t *value, const uint8_t *unknown);
+obelisk_rt_status
+obelisk_rt_v1_coverage_toggle_bind(obelisk_rt_context *context,
+                                   uint64_t first_bit, uint64_t bit_count,
+                                   uint64_t state_handle);
+obelisk_rt_status
+obelisk_rt_v1_coverage_toggle_seal(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v1_coverage_reset(
+    obelisk_rt_context *context, obelisk_rt_coverage_metric_v1 metric,
+    const uint8_t *current_value, const uint8_t *current_unknown);
+obelisk_rt_status obelisk_rt_v1_coverage_query(
+    obelisk_rt_context *context, obelisk_rt_coverage_metric_v1 metric,
+    uint64_t *out_covered, uint64_t *out_total, double *out_percentage);
+// Clause 40 accessors take the IEEE SV_COV_* integer values verbatim. Their
+// return value reports ABI/operational failure; the out parameter receives the
+// language-defined result, including SV_COV_ERROR, NOCOV, and OVERFLOW.
+// Definition selectors are runtime strings. Instance selectors are stable
+// schema scope identities, never physical table indices.
+obelisk_rt_status obelisk_rt_v1_coverage_control_definition(
+    obelisk_rt_context *context, int32_t control, int32_t coverage_type,
+    int32_t scope_definition, obelisk_rt_string_v1 definition,
+    int32_t *out_status);
+obelisk_rt_status obelisk_rt_v1_coverage_control_instance(
+    obelisk_rt_context *context, int32_t control, int32_t coverage_type,
+    int32_t scope_definition, uint64_t coverage_scope_id, int32_t *out_status);
+obelisk_rt_status obelisk_rt_v1_coverage_query_definition(
+    obelisk_rt_context *context, int32_t coverage_type,
+    int32_t scope_definition, obelisk_rt_string_v1 definition, uint32_t maximum,
+    int32_t *out_value);
+obelisk_rt_status obelisk_rt_v1_coverage_query_instance(
+    obelisk_rt_context *context, int32_t coverage_type,
+    int32_t scope_definition, uint64_t coverage_scope_id, uint32_t maximum,
+    int32_t *out_value);
+// Clause 40 metric-specific persistence. The ABI status reports operational
+// failures; out_status receives the language-defined SV_COV_* result.
+obelisk_rt_status obelisk_rt_v1_coverage_database_save(
+    obelisk_rt_context *context, int32_t coverage_type,
+    obelisk_rt_string_v1 name, int32_t *out_status);
+obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
+    obelisk_rt_context *context, int32_t coverage_type,
+    obelisk_rt_string_v1 name, int32_t *out_status);
+obelisk_rt_status obelisk_rt_v1_coverage_load(obelisk_rt_context *context,
+                                              const char *path,
+                                              uint64_t path_size);
+obelisk_rt_status obelisk_rt_v1_coverage_save(obelisk_rt_context *context,
+                                              const char *path,
+                                              uint64_t path_size,
+                                              uint32_t run_status,
+                                              uint64_t simulation_time);
+obelisk_rt_status obelisk_rt_v1_coverage_snapshot(obelisk_rt_context *context,
+                                                  uint32_t run_status,
+                                                  uint64_t simulation_time);
+obelisk_rt_status
+obelisk_rt_v1_functional_coverage_get(obelisk_rt_context *context,
+                                      double *out_percentage);
+obelisk_rt_status
+obelisk_rt_v1_functional_coverage_set_db_name(obelisk_rt_context *context,
+                                              obelisk_rt_string_v1 name);
+obelisk_rt_status
+obelisk_rt_v1_functional_coverage_load_db(obelisk_rt_context *context,
+                                          obelisk_rt_string_v1 name);
 obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
                                              uint64_t seed);
-obelisk_rt_status
-obelisk_rt_v1_covergroup_create(obelisk_rt_context *context, uint64_t type_id,
-                                const uint64_t *coverpoint_bins,
-                                uint64_t coverpoint_count,
-                                obelisk_rt_covergroup_v1 *out_handle);
+
+/// One schema-indexed value transported by the exact v1 functional-coverage
+/// ABI. Integral planes are little-endian byte strings of `value_size` bytes;
+/// the final byte is zero-padded above `bit_width`. Four-state values carry a
+/// second plane with the same layout. Real values point at one native double.
+/// Argument references carry the exact owner/payload/tag triple used by
+/// argument_ref_load and have null value planes. String values carry an owned
+/// context string word in `payload` and have zero width and null value planes.
+typedef uint32_t obelisk_rt_functional_value_kind_v1;
+enum {
+  OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL = 1,
+  OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE = 2,
+  OBELISK_RT_FUNCTIONAL_VALUE_REAL = 3,
+  OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF = 4,
+  OBELISK_RT_FUNCTIONAL_VALUE_STRING = 5,
+  // One transient managed sequential container. `owner` carries a dynamic
+  // array or queue object (or null for an empty value); every other payload
+  // field is zero. The schema result kind supplies the logical element shape.
+  // covergroup_create consumes it synchronously and never retains the handle.
+  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER = 6
+};
+typedef struct obelisk_rt_functional_value_v1 {
+  uint64_t id;
+  uint64_t bit_width;
+  uint64_t value_size;
+  const void *value;
+  const void *unknown;
+  obelisk_rt_object_v1 *owner;
+  uint64_t payload;
+  obelisk_rt_functional_value_kind_v1 kind;
+  uint32_t argument_ref_kind;
+} obelisk_rt_functional_value_v1;
+
+obelisk_rt_status obelisk_rt_v1_covergroup_create(
+    obelisk_rt_context *context, uint64_t type_id,
+    const obelisk_rt_functional_value_v1 *formals, uint64_t formal_count,
+    const obelisk_rt_functional_value_v1 *expressions,
+    uint64_t expression_count, obelisk_rt_covergroup_v1 *out_handle);
 obelisk_rt_status
 obelisk_rt_v1_covergroup_set_enabled(obelisk_rt_context *context,
                                      obelisk_rt_covergroup_v1 handle,
-                                     uint32_t enabled);
+                                     uint64_t item_id, uint32_t enabled);
+obelisk_rt_status
+obelisk_rt_v1_covergroup_set_name(obelisk_rt_context *context,
+                                  obelisk_rt_covergroup_v1 handle,
+                                  obelisk_rt_string_v1 name);
+typedef uint32_t obelisk_rt_covergroup_instance_option_v1;
+enum {
+  OBELISK_RT_COVERGROUP_OPTION_WEIGHT = 1,
+  OBELISK_RT_COVERGROUP_OPTION_GOAL = 2,
+  OBELISK_RT_COVERGROUP_OPTION_COMMENT = 3,
+  OBELISK_RT_COVERGROUP_OPTION_AT_LEAST = 4,
+  OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES = 5,
+  OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING = 6
+};
+obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint64_t item_id, obelisk_rt_covergroup_instance_option_v1 option,
+    int64_t value);
+obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint64_t item_id, obelisk_rt_covergroup_instance_option_v1 option,
+    int64_t *out_value);
+obelisk_rt_status obelisk_rt_v1_covergroup_set_string_option(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint64_t item_id, obelisk_rt_covergroup_instance_option_v1 option,
+    obelisk_rt_string_v1 value);
+obelisk_rt_status obelisk_rt_v1_covergroup_set_type_integer_option(
+    obelisk_rt_context *context, uint64_t type_id, uint64_t item_id,
+    obelisk_rt_covergroup_instance_option_v1 option, int64_t value);
+obelisk_rt_status obelisk_rt_v1_covergroup_set_type_string_option(
+    obelisk_rt_context *context, uint64_t type_id, uint64_t item_id,
+    obelisk_rt_covergroup_instance_option_v1 option,
+    obelisk_rt_string_v1 value);
 obelisk_rt_status
 obelisk_rt_v1_covergroup_sample_enabled(obelisk_rt_context *context,
                                         obelisk_rt_covergroup_v1 handle,
                                         uint32_t *out_enabled);
-obelisk_rt_status
-obelisk_rt_v1_covergroup_bin_hit(obelisk_rt_context *context,
-                                 obelisk_rt_covergroup_v1 handle,
-                                 uint32_t coverpoint, uint32_t bin);
-obelisk_rt_status
-obelisk_rt_v1_covergroup_sample(obelisk_rt_context *context,
-                                obelisk_rt_covergroup_v1 handle,
-                                const uint8_t *hits, uint64_t hit_count);
+obelisk_rt_status obelisk_rt_v1_covergroup_sample(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    const obelisk_rt_functional_value_v1 *expressions,
+    uint64_t expression_count);
+// Register one covergroup clocking event with the active detached owner
+// process. `event_plan` is one exact v1 computed-observer record whose primary
+// observers retain their construction-time results and whose optional
+// condition observers implement event iff clauses. Dependencies may name
+// global, static, or live automatic packed state, or a managed class-field
+// watch resolved from an exact-alias argument-reference capture. `strobe` is
+// the compiler's exact v1 schema expectation; registration rejects it if it
+// differs from the resolved instance policy. False selects synchronous
+// sampling and true selects one Postponed sample per numeric time. The bound
+// sample observer must return known i1 true.
+obelisk_rt_status obelisk_rt_v1_covergroup_clock_event_register(
+    obelisk_rt_context *context,
+    const obelisk_rt_computed_wait_record_v1 *event_plan,
+    uint64_t event_plan_size, uint32_t strobe, uint64_t observer_code_unit,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t capture_count);
+// IEEE 1800 covergroup block-event sampling is synchronous and independent of
+// type_option.strobe. Registrations are context-owned because the covergroup
+// instance, unlike the process that called new(), remains live for the rest of
+// the simulation. A nonnull receiver restricts a class method or named block
+// event to that exact object instance.
+typedef uint32_t obelisk_rt_covergroup_block_event_kind_v1;
+enum {
+  OBELISK_RT_COVERGROUP_BLOCK_EVENT_BEGIN = 0,
+  OBELISK_RT_COVERGROUP_BLOCK_EVENT_END = 1
+};
+obelisk_rt_status obelisk_rt_v1_covergroup_block_event_register(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    obelisk_rt_object_v1 *receiver, uint64_t observer_code_unit,
+    const obelisk_rt_computed_capture_v1 *captures, uint32_t capture_count,
+    const uint64_t *target_ids,
+    const obelisk_rt_covergroup_block_event_kind_v1 *event_kinds,
+    uint32_t event_count);
+obelisk_rt_status obelisk_rt_v1_covergroup_block_event_fire(
+    obelisk_rt_context *context, uint64_t target_id,
+    obelisk_rt_covergroup_block_event_kind_v1 event_kind,
+    obelisk_rt_object_v1 *receiver);
+obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
+    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+    uint64_t formal_id, obelisk_rt_functional_value_kind_v1 kind,
+    uint64_t bit_width, uint64_t value_size, void *out_value,
+    void *out_unknown);
 obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    double *out_percentage, int32_t *out_covered, int32_t *out_total);
+    uint64_t item_id, double *out_percentage, int32_t *out_covered,
+    int32_t *out_total);
 obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
-    obelisk_rt_context *context, uint64_t type_id,
-    const uint64_t *coverpoint_bins, uint64_t coverpoint_count,
+    obelisk_rt_context *context, uint64_t type_id, uint64_t item_id,
     double *out_percentage, int32_t *out_covered, int32_t *out_total);
 obelisk_rt_status obelisk_rt_v1_random_next(obelisk_rt_context *context,
                                             uint64_t *out_value);

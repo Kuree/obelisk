@@ -89,13 +89,14 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            "-DLLVM_LIT_ARGS=-sv;-j12" \
             -DOBELISK_INCLUDE_TESTS=ON \
             -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build -j "$(nproc)"
+        run: cmake --build build -j 12
 
       # Host generators run in the native build. Their architecture-independent
       # outputs are the only build artifact the wasm compiler consumes from
@@ -105,6 +106,14 @@ jobs:
         with:
           name: obelisk-generated-files
           path: build/generated
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload host coverage tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: obelisk-host-coverage-tool
+          path: build/tools/obelisk-cov/obelisk-cov
           if-no-files-found: error
           retention-days: 1
 
@@ -124,7 +133,7 @@ jobs:
           key: ccache-native-${{ runner.os }}-${{ github.sha }}
 
       - name: Run lit regression suite
-        run: cmake --build build --target check-obelisk
+        run: cmake --build build --target check-obelisk -j 12
 
   # ---------------------------------------------------------------------------
   # Build and smoke-test the wasm toolchain on every ref. Main additionally
@@ -153,6 +162,12 @@ jobs:
         with:
           name: obelisk-generated-files
           path: build-host-generated
+
+      - name: Download host coverage tool
+        uses: actions/download-artifact@v4
+        with:
+          name: obelisk-host-coverage-tool
+          path: build-host-tools
 
       - name: Pull wasm32 SDK image
         run: docker pull "$WASM_IMAGE"
@@ -191,7 +206,7 @@ jobs:
                 -DOBELISK_GENERATED_DIR=/obelisk-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-              cmake --build build-wasm -j "$(nproc)" --target obelisk
+              cmake --build build-wasm -j 12 --target obelisk
             '
 
       - name: Compiler cache stats
@@ -265,7 +280,23 @@ jobs:
       - name: Run browser-toolchain smoke test
         run: |
           docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
-            node site/smoke-test.mjs
+            sh -c 'OBELISK_COVERAGE_OUTPUT_DIR=/src/build-wasm/coverage-smoke \
+                   node site/smoke-test.mjs'
+
+      - name: Validate wasm coverage snapshots with host tool
+        run: |
+          chmod +x build-host-tools/obelisk-cov
+          for input in build-wasm/coverage-smoke/*.obcov; do
+            build-host-tools/obelisk-cov inspect "$input"
+            build-host-tools/obelisk-cov report --format=json "$input" \
+              -o "$input.json"
+            python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["codec_version"] == 1; assert len(d["runs"]) == 2 and all(r["status"] == 0 and r["name"] for r in d["runs"]); assert sum(r["name"].startswith("web-loaded-") for r in d["runs"]) == 1; assert d["metrics"]["line"]["covered"] == d["metrics"]["line"]["total"] > 0; assert d["metrics"]["toggle"]["covered"] >= 3 and d["metrics"]["toggle"]["total"] >= 4; assert d["metrics"]["functional"]["covered"] > 0 and d["metrics"]["functional"]["total"] > 0; transition_ids={b["id"] for b in d["resolved_functional_bins"] if b["name"] == "round_trip"}; assert transition_ids and all(any(c["run"] == r["uuid"] and c["bin"] in transition_ids and c["count"] > 0 for c in d["functional_counters"]) for r in d["runs"]); assert all(any(t["run"] == r["uuid"] and t["hits"] > 0 for t in d["sparse_cross_tuples"]) for r in d["runs"])' "$input.json"
+            build-host-tools/obelisk-cov report --format=html "$input" \
+              -o "$input.html"
+            node test/Support/CheckCoverageHtml.js "$input.html" \
+              'round_trip = 0x0 => 0x1 => 0x0' \
+              web_smoke.cg.value_point.round_trip
+          done
 
       # Every design the page offers, at both optimization levels. The smoke
       # test proves one small design works; these cover classes, randomization,

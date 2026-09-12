@@ -110,7 +110,7 @@ void normalize(obelisk_rt_import_output_v1 &output) {
     output.unknown[output.limb_count - 1] &= mask;
 }
 
-const obelisk_rt_execution_extension_v2 *
+const obelisk_rt_execution_extension_v1 *
 exportExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
   if ((execution.flags & OBELISK_RT_EXECUTION_DPI_EXPORTS) == 0 ||
       execution.reserved < sizeof(execution))
@@ -119,19 +119,18 @@ exportExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
   if (execution.reserved > std::numeric_limits<uintptr_t>::max() - base)
     return nullptr;
   uintptr_t address = base + static_cast<uintptr_t>(execution.reserved);
-  if (address % alignof(obelisk_rt_execution_extension_v2) != 0)
+  if (address % alignof(obelisk_rt_execution_extension_v1) != 0)
     return nullptr;
   auto *extension =
-      reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(address);
-  bool v2 = extension->version == OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION &&
-            extension->size == sizeof(*extension);
-  bool v3 = extension->version == OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION &&
-            extension->size == sizeof(obelisk_rt_execution_extension_v3);
-  return (v2 || v3) ? extension : nullptr;
+      reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(address);
+  return extension->version == OBELISK_RT_EXECUTION_EXTENSION_VERSION &&
+                 extension->size == sizeof(*extension)
+             ? extension
+             : nullptr;
 }
 
 const obelisk_rt_export_descriptor_v1 *
-findExport(const obelisk_rt_execution_extension_v2 &extension,
+findExport(const obelisk_rt_execution_extension_v1 &extension,
            uint32_t exportID, uint64_t scopeID) {
   uint64_t low = 0, high = extension.export_count;
   while (low < high) {
@@ -251,7 +250,7 @@ obelisk_rt_v1_dpi_export_pack_vector(void *destination, const void *value,
 
 OBELISK_RT_FEATURE_TEXT bool obelisk_rt_validate_dpi_exports(
     const obelisk_rt_execution_descriptor_v1 &execution,
-    const obelisk_rt_execution_extension_v2 &extension) noexcept {
+    const obelisk_rt_execution_extension_v1 &extension) noexcept {
   constexpr uint32_t validFlags = OBELISK_RT_EXPORT_HAS_NATIVE |
                                   OBELISK_RT_EXPORT_HAS_BYTECODE |
                                   OBELISK_RT_EXPORT_TASK;
@@ -323,7 +322,7 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
       return fail(OBELISK_RT_INVALID_ARGUMENT);
   obelisk_rt_context *context = call->context;
   const obelisk_rt_execution_descriptor_v1 *execution = context->execution;
-  const obelisk_rt_execution_extension_v2 *extension =
+  const obelisk_rt_execution_extension_v1 *extension =
       execution ? exportExtension(*execution) : nullptr;
   const obelisk_rt_export_descriptor_v1 *descriptor =
       extension ? findExport(*extension, exportID, call->scope->id) : nullptr;

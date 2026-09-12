@@ -90,6 +90,98 @@ inline constexpr llvm::StringLiteral classBitstreamBytecodeSite =
 /// Module-level canonical pointer-free class schema/group/site blob.
 inline constexpr llvm::StringLiteral classBitstreamBlob =
     "obelisk.execution.class_bitstream_blob";
+/// Module-level schema-only native coverage database embedded in the v1
+/// execution extension. Runtime run data is never written back into this
+/// attribute.
+inline constexpr llvm::StringLiteral coverageSchemaBlob =
+    "obelisk.execution.coverage_schema_blob";
+/// Frontend-selected IEEE 1800 revision used for revision-sensitive coverage
+/// computation and persisted with every functional type.
+inline constexpr llvm::StringLiteral coverageLanguageVersion =
+    "obelisk.coverage.language_version";
+/// Stable FunctionalExpression identity assigned while the schema and helper
+/// contract are built together. Unit lowering must copy this exact identity
+/// to covergroup.sample; it must never synthesize an execution-local ordinal.
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionId =
+    "obelisk.coverage.functional_expression_id";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionOrdinal =
+    "obelisk.coverage.functional_expression_ordinal";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionKind =
+    "obelisk.coverage.functional_expression_kind";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionBitWidth =
+    "obelisk.coverage.functional_expression_bit_width";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionSignedness =
+    "obelisk.coverage.functional_expression_signedness";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionPhase =
+    "obelisk.coverage.functional_expression_phase";
+inline constexpr llvm::StringLiteral coverageFunctionalExpressionRole =
+    "obelisk.coverage.functional_expression_role";
+/// Constructor-time `with` predicates are evaluated once for every candidate
+/// occurrence. These transient arrays keep that one-to-many helper contract
+/// on the semantic predicate without introducing another runtime ABI shape.
+inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionIds =
+    "obelisk_sim.coverage.functional.with_expression_ids";
+inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionOrdinals =
+    "obelisk_sim.coverage.functional.with_expression_ordinals";
+inline constexpr llvm::StringLiteral coverageFunctionalWithCandidateValues =
+    "obelisk_sim.coverage.functional.with_candidate_values";
+inline constexpr llvm::StringLiteral coverageFunctionalWithIteratorPath =
+    "obelisk_sim.coverage.functional.with_iterator_path";
+/// Constructor-time cross-selector predicates are evaluated once for every
+/// tuple in the finite Cartesian product of their cross targets. The values
+/// are flattened tuple-major (the final target varies fastest); target paths
+/// identify the semantic iterator bindings restored around each evaluation.
+inline constexpr llvm::StringLiteral
+    coverageFunctionalCrossWithCandidateValues =
+        "obelisk_sim.coverage.functional.cross_with_candidate_values";
+inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTargetPaths =
+    "obelisk_sim.coverage.functional.cross_with_target_paths";
+inline constexpr llvm::StringLiteral coverageFunctionalFormalId =
+    "obelisk.coverage.functional_formal_id";
+/// Stable FunctionalItem identity assigned to its semantic declaration.
+inline constexpr llvm::StringLiteral coverageFunctionalItemId =
+    "obelisk.coverage.functional_item_id";
+/// Transient dense counter index assigned by coverage preparation. Stable
+/// entity identity remains in the native schema and never depends on this
+/// physical index.
+inline constexpr llvm::StringLiteral coverageLinePointIndex =
+    "obelisk.coverage.line_point_index";
+/// Number of line counters expected by the embedded schema.
+inline constexpr llvm::StringLiteral coverageLinePointCount =
+    "obelisk.coverage.line_point_count";
+/// Symbol uses that keep code units required by coverage instrumentation alive
+/// through the post-inventory devirtualization and SymbolDCE pipeline. This
+/// includes code units owning line obligations and callees referenced by
+/// functional constructor/sample expressions before their helpers exist. The
+/// references are physical compiler metadata, not schema or merge identities.
+inline constexpr llvm::StringLiteral coverageRetainedCodeUnits =
+    "obelisk.coverage.retained_code_units";
+/// Ordered flat-toggle bindings attached to source-visible declarations.
+/// Each dictionary contains base, low, and width i64 fields; aliases may bind
+/// multiple coverage ranges to one canonical state range.
+inline constexpr llvm::StringLiteral coverageToggleBindings =
+    "obelisk.coverage.toggle_bindings";
+/// Marks canonical state whose committed transitions are coverage-observable.
+inline constexpr llvm::StringLiteral coverageToggleObservable =
+    "obelisk.coverage.toggle_observable";
+/// Number of flattened toggle bits expected by the embedded schema.
+inline constexpr llvm::StringLiteral coverageToggleBitCount =
+    "obelisk.coverage.toggle_bit_count";
+/// Marks a design-lifetime declaration that directly represents a
+/// source-authored SystemVerilog object. Coverage preparation deliberately
+/// requires this marker so compiler support state never becomes an obligation.
+inline constexpr llvm::StringLiteral coverageSourceAuthored =
+    "obelisk.coverage.source_authored";
+/// Transient source type retained through coverage preparation when
+/// normalization intentionally erases reportable identity such as an enum
+/// name. This is not a runtime ABI attribute.
+inline constexpr llvm::StringLiteral coverageSourceType =
+    "obelisk.coverage.source_type";
+/// Exact flattened toggle shadow at the language-defined initial state.
+inline constexpr llvm::StringLiteral coverageToggleInitialValue =
+    "obelisk.coverage.toggle_initial_value";
+inline constexpr llvm::StringLiteral coverageToggleInitialUnknown =
+    "obelisk.coverage.toggle_initial_unknown";
 /// Preparation-time feature marker used to keep whole-design class planning
 /// off ordinary compilation paths.
 inline constexpr llvm::StringLiteral classBitstreamSourceFeature =

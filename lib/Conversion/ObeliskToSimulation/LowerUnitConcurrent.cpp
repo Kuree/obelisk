@@ -3232,6 +3232,19 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   if (op->hasAttr("obelisk_sim.global_future_resolver"))
     return lowerGlobalFutureAssertionResolver(op);
+  auto emitEvaluationCoverageHit = [&](Value enabled = {}) {
+    auto point = op->getAttrOfType<IntegerAttr>(
+        sim::metadata::coverageLinePointIndex);
+    if (!point)
+      return;
+    Value context = function.getBody().front().getArgument(0);
+    if (!enabled)
+      enabled = arith::ConstantOp::create(builder, location,
+                                          builder.getI1Type(),
+                                          builder.getBoolAttr(true));
+    sim::SimCoveragePointHitOp::create(builder, location, context, enabled,
+                                       point);
+  };
   SmallVector<Operation *> children = getChildren(op);
 
   bool proceduralAttempt =
@@ -3662,6 +3675,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      builder.getUnitAttr());
     return enabled;
   };
+  auto queryAttemptEnabledForCoverage = [&]() -> Value {
+    if (!op->hasAttr(sim::metadata::coverageLinePointIndex))
+      return {};
+    return queryAttemptEnabled();
+  };
+  auto ensureAttemptEnabled = [&](Value &enabled) {
+    if (!enabled)
+      enabled = queryAttemptEnabled();
+  };
   auto gateNewAttempt = [&](Value candidate, Value enabled) -> Value {
     if (!enabled)
       return candidate;
@@ -3861,6 +3883,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     Block *spawn = sample;
     if (disable) {
@@ -3876,9 +3900,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                wait, ValueRange{}, spawn, ValueRange{});
       setCurrent(spawn);
     }
-    if (Value enabled = queryAttemptEnabled()) {
+    ensureAttemptEnabled(attemptEnabled);
+    if (attemptEnabled) {
       Block *enabledSpawn = addBlock();
-      cf::CondBranchOp::create(builder, location, enabled, enabledSpawn,
+      cf::CondBranchOp::create(builder, location, attemptEnabled, enabledSpawn,
                                ValueRange{}, wait, ValueRange{});
       spawn = enabledSpawn;
       setCurrent(spawn);
@@ -5319,6 +5344,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Observed));
       setCurrent(sample);
+      emitEvaluationCoverageHit();
       markExpectStarted();
       Value falseValue = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(false));
@@ -5448,8 +5474,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Observed));
         setCurrent(sample);
-        if (age == 0)
+        if (age == 0) {
+          emitEvaluationCoverageHit();
           markExpectStarted();
+        }
 
         Value falseValue = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(false));
@@ -5614,8 +5642,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Observed));
         setCurrent(sample);
-        if (age == 0)
+        if (age == 0) {
+          emitEvaluationCoverageHit();
           markExpectStarted();
+        }
         Value matches = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(true));
         for (Operation *predicate : sequenceAge.predicates) {
@@ -7784,6 +7814,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, delayStateStorages)))
       return failure();
@@ -7799,7 +7831,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value currentAttemptCount = countNewAttempt(attemptEnabled);
     if (failed(
             abortPersistentSample(wait, *persistentAbort, currentAttemptCount)))
@@ -8090,6 +8122,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, unaryStateStorages)))
       return failure();
@@ -8161,7 +8195,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (failed(truth))
       return failure();
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value antecedentTruth;
     if (implication) {
       FailureOr<Value> antecedent =
@@ -8301,6 +8335,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, untilStateStorages)))
       return failure();
@@ -8370,7 +8406,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           .getResult();
     };
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value antecedentTruth;
     if (implication) {
       FailureOr<Value> antecedent =
@@ -8641,6 +8677,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, repetitionStateStorages)))
       return failure();
@@ -8756,7 +8794,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       target = arith::AddIOp::create(builder, location, target, count);
     };
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value antecedentTruth;
     if (implication && !persistentAntecedentImplication) {
       FailureOr<Value> antecedent =
@@ -10093,6 +10131,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, branchingStateStorages)))
       return failure();
@@ -10108,7 +10148,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value currentActionState = queryActionState();
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
@@ -10773,6 +10813,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
 
     if (failed(cancelDisabledSample(wait, branchingStateStorages)))
       return failure();
@@ -10788,7 +10830,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       activeSampledClock = savedSampledClock;
     });
 
-    Value attemptEnabled = queryAttemptEnabled();
+    ensureAttemptEnabled(attemptEnabled);
     Value currentActionState = queryActionState();
     Value falseValue = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
@@ -11650,6 +11692,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                    sim::EventRegion::Observed));
     setCurrent(sample);
+    Value attemptEnabled = queryAttemptEnabledForCoverage();
+    emitEvaluationCoverageHit(attemptEnabled);
     Value state;
     if (!killEpochStorage)
       state = stateStorage ? sim::SimRefLoadOp::create(builder, location,
@@ -11821,9 +11865,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     Block *afterStart = addBlock();
     afterStart->addArgument(stateType, location);
-    if (Value enabled = queryAttemptEnabled()) {
+    ensureAttemptEnabled(attemptEnabled);
+    if (attemptEnabled) {
       Block *evaluateStart = addBlock();
-      cf::CondBranchOp::create(builder, location, enabled, evaluateStart,
+      cf::CondBranchOp::create(builder, location, attemptEnabled,
+                               evaluateStart,
                                ValueRange{}, afterStart, ValueRange{nextState});
       setCurrent(evaluateStart);
     }
@@ -11907,6 +11953,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       "resume_region", sim::EventRegionAttr::get(function.getContext(),
                                                  sim::EventRegion::Observed));
   setCurrent(sample);
+  Value attemptEnabled = queryAttemptEnabledForCoverage();
+  emitEvaluationCoverageHit(attemptEnabled);
   Value state = zero;
   if (stateStorage && !killEpochStorage)
     state =
@@ -11928,7 +11976,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     activeSampledClock = savedSampledClock;
   });
 
-  Value attemptEnabled = queryAttemptEnabled();
+  ensureAttemptEnabled(attemptEnabled);
   Value currentActionState = queryActionState();
   SmallVector<Value, 3> capturedActionStates;
   SmallVector<Value, 3> nextCapturedActionStates;

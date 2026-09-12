@@ -19,28 +19,53 @@ feature_binaries = [pathlib.Path(sys.argv[index]) for index in (6, 8)]
 
 # ABI.cpp is compiled independently for native and wasm32 target runtimes.
 # These width-independent assertions lock the wasm32 rule that uint64_t keeps
-# eight-byte alignment in the v2 prefix and export tail.
+# eight-byte alignment in the execution extension and export tail.
 abi_source = (source / "runtime/lib/ABI.cpp").read_text()
 for assertion in (
     "ABI_SIZE_ALIGN(obelisk_rt_export_descriptor_v1, 64, 8);",
     "ABI_OFFSET(obelisk_rt_export_descriptor_v1, bytecode_function, 40);",
     "ABI_OFFSET(obelisk_rt_export_descriptor_v1, native_entry, 48);",
     "ABI_OFFSET(obelisk_rt_export_descriptor_v1, reserved_tail, ABI_PTR(56, 56));",
-    "ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v2, 40, 8);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v2, sampled_range_count, 16);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v2, exports, 24);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v2, export_count, 32);",
-    "ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v3, 56, 8);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v3, class_bitstream, 40);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v3, class_bitstream_size, 48);",
+    "ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v1, 72, 8);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, sampled_range_count, 16);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, exports, 24);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, export_count, 32);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, class_bitstream, 40);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, class_bitstream_size, 48);",
+    "ABI_OFFSET(obelisk_rt_execution_extension_v1, coverage_schema, 56);",
     "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_header_v1, 128, 8);",
     "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_site_v1, 40, 8);",
     "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_group_v1, 40, 8);",
     "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_schema_v1, 48, 8);",
     "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_field_v1, 48, 8);",
+    "ABI_SIZE_ALIGN(obelisk_rt_functional_value_v1, ABI_PTR(64, 56), 8);",
+    "ABI_OFFSET(obelisk_rt_functional_value_v1, unknown, ABI_PTR(32, 28));",
+    "ABI_OFFSET(obelisk_rt_functional_value_v1, owner, ABI_PTR(40, 32));",
+    "ABI_OFFSET(obelisk_rt_functional_value_v1, payload, ABI_PTR(48, 40));",
+    "ABI_OFFSET(obelisk_rt_functional_value_v1, kind, ABI_PTR(56, 48));",
+    "ABI_OFFSET(obelisk_rt_functional_value_v1, argument_ref_kind,",
+    "ABI_PTR(60, 52));",
 ):
     if assertion not in abi_source:
         raise SystemExit(f"missing native/wasm32 DPI export ABI assertion: {assertion}")
+
+coverage_lowering = (
+    source
+    / "lib/Conversion/SimulationToLLVMCoroutine/SimulationManagedCoverageLowering.cpp"
+).read_text()
+for rule in (
+    "layout.pointerSize = dataLayout.getPointerSize();",
+    "layout.unknown = 24 + layout.pointerSize;",
+    "layout.owner = layout.unknown + layout.pointerSize;",
+    "layout.payload = (layout.owner + layout.pointerSize + 7) & ~uint64_t{7};",
+    "layout.kind = layout.payload + 8;",
+    "layout.argumentRefKind = layout.kind + 4;",
+    "layout.size = (layout.argumentRefKind + 4 + 7) & ~uint64_t{7};",
+):
+    if rule not in coverage_lowering:
+        raise SystemExit(
+            f"native functional-value lowering is not target-width-derived: {rule}"
+        )
 
 
 def run(arguments, *, input=None):

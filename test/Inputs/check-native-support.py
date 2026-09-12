@@ -111,6 +111,8 @@ native_members = [
     "Bytecode.o",
     "Containers.o",
     "Coverage.o",
+    "CoverageBlockEvents.o",
+    "CoverageDatabase.o",
     "DesignBytecode.o",
     "DesignBytecodeImage.o",
     "DesignBytecodeIntrinsics.o",

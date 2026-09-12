@@ -81,7 +81,97 @@ bool isPersistentMonitorActor(sim::SimFuncOp function) {
          wait->getNumSuccessors() == 1 && wait->getSuccessor(0) == &dispatch;
 }
 
+/// Certify the compiler-owned covergroup clock-event registration actor. It
+/// executes once during bootstrap, installs one process-owned registration,
+/// and then parks forever; all subsequent sampling is runtime observer work.
+/// Keeping this exact shape as a cold island lets unrelated periodic model
+/// actors retain their native AOT schedule without admitting general Fork
+/// control.
+bool isCovergroupClockingSamplerActorImpl(sim::SimFuncOp function) {
+  if (!function ||
+      !function->hasAttr("obelisk_sim.covergroup_clocking_sampler") ||
+      !function->hasAttr("obelisk_sim.detached_controls") ||
+      !function->hasAttr("obelisk_sim.prime_on_spawn") ||
+      !function->hasAttr("internal") ||
+      SymbolTable::getSymbolVisibility(function) !=
+          SymbolTable::Visibility::Private ||
+      function.getEntryKind() != sim::EntryKind::Fork ||
+      function.getHomeRegion() != sim::EventRegion::Active ||
+      function.getDomain() != sim::ExecutionDomain::Design ||
+      function.getBody().getBlocks().size() != 2)
+    return false;
+
+  Block &entry = function.getBody().front();
+  Block &parked = function.getBody().back();
+  if (std::distance(parked.begin(), parked.end()) != 1 ||
+      function.getNumArguments() < 2)
+    return false;
+  SmallVector<sim::SimObserverBindOp> bindings;
+  sim::SimCovergroupClockEventRegisterOp registration;
+  for (Operation &operation : entry.without_terminator()) {
+    if (registration)
+      return false;
+    if (auto storage = dyn_cast<sim::SimContextStorageOp>(operation)) {
+      if (storage.getContext() != function.getArgument(0))
+        return false;
+    } else if (auto net = dyn_cast<sim::SimContextNetOp>(operation)) {
+      if (net.getContext() != function.getArgument(0))
+        return false;
+    } else if (auto driver = dyn_cast<sim::SimContextDriverOp>(operation)) {
+      if (driver.getContext() != function.getArgument(0))
+        return false;
+    } else if (auto binding = dyn_cast<sim::SimObserverBindOp>(operation)) {
+      bindings.push_back(binding);
+    } else if (auto candidate =
+                   dyn_cast<sim::SimCovergroupClockEventRegisterOp>(
+                       operation)) {
+      registration = candidate;
+      continue;
+    }
+    // The compiler-owned actor may compute packed construction-time event
+    // values before registration. Keep the structural certificate narrow:
+    // regionless operations may be pure or read state, but may not allocate,
+    // write, free, call unknown code, or alter control flow.
+    if (operation.getNumRegions() != 0 || operation.getNumSuccessors() != 0)
+      return false;
+    if (!isMemoryEffectFree(&operation)) {
+      auto effects = dyn_cast<MemoryEffectOpInterface>(operation);
+      if (!effects)
+        return false;
+      SmallVector<MemoryEffects::EffectInstance> instances;
+      effects.getEffects(instances);
+      if (llvm::any_of(instances, [](const auto &effect) {
+            return !isa<MemoryEffects::Read>(effect.getEffect());
+          }))
+        return false;
+    }
+  }
+  auto wait = dyn_cast<sim::SimSuspendForeverOp>(entry.getTerminator());
+  auto terminate = dyn_cast<sim::SimReturnOp>(parked.getTerminator());
+  if (!registration || bindings.empty())
+    return false;
+  auto sampler =
+      registration.getSampler().getDefiningOp<sim::SimObserverBindOp>();
+  if (!sampler || !llvm::is_contained(bindings, sampler) ||
+      llvm::any_of(bindings, [&](sim::SimObserverBindOp binding) {
+        return !llvm::is_contained(registration.getValues(),
+                                   binding.getResult());
+      }))
+    return false;
+  return sampler.getDependencies().empty() && !sampler.getCaptures().empty() &&
+         sampler.getCaptures().front() == function.getArgument(1) &&
+         registration.getContext() == function.getArgument(0) &&
+         registration.getHandle() == function.getArgument(1) &&
+         registration.getSampler() == sampler.getResult() && wait &&
+         wait->getNumSuccessors() == 1 && wait->getSuccessor(0) == &parked &&
+         terminate && terminate.getOperands().empty();
+}
+
 } // namespace
+
+bool isCovergroupClockingSamplerActor(sim::SimFuncOp function) {
+  return isCovergroupClockingSamplerActorImpl(function);
+}
 
 bool isNegativeTimingDelayCommit(sim::SimFuncOp function) {
   if (!function ||
@@ -251,6 +341,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (isNegativeTimingDelayMonitor(function))
       return true;
     if (isNegativeTimingDelayCommit(function))
+      return true;
+    if (isCovergroupClockingSamplerActor(function))
       return true;
     if (function->hasAttr("obelisk_sim.skew_deadline_helper")) {
       unsigned eventWaits = 0;
@@ -480,6 +572,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   }
 
   module.walk([&](sim::SimFuncOp function) {
+    if (isCovergroupClockingSamplerActor(function))
+      result.runtimeOwnedFanoutActors.insert(function.getOperation());
     if (isRuntimeClockCoordinator(function)) {
       result.runtimeOwnedFanoutActors.insert(function.getOperation());
       if (function->hasAttr("obelisk_sim.negative_timing_adjusted"))

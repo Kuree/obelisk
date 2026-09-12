@@ -26,6 +26,7 @@ struct PreparedClassDeclarations {
   llvm::DenseMap<mlir::Operation *, sim::SimClassDeclOp> declarations;
   llvm::DenseMap<mlir::Operation *, mlir::StringAttr> symbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr> fieldSymbols;
+  llvm::DenseMap<mlir::Operation *, mlir::Type> covergroupFieldStorageTypes;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
       randcKeyFieldSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
@@ -49,6 +50,11 @@ struct PreparedScopeDeclarations {
 /// Return the executable method behind either a direct method or prototype.
 ir::SVSubroutineSymbolOp getClassMethod(mlir::Operation *member);
 
+/// Materialize each inherited embedded covergroup's effective semantic plan.
+mlir::LogicalResult
+materializeInheritedCovergroupPlans(ir::SVRootSymbolOp semanticRoot,
+                                    mlir::OpBuilder &builder);
+
 /// Materialize deterministic covergroup declarations into `design`.
 mlir::LogicalResult materializeCovergroupDeclarations(
     ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,
@@ -64,7 +70,8 @@ mlir::FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
 /// Materialize hierarchical scopes and their DPI time-scale metadata.
 mlir::FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     ir::SVRootSymbolOp semanticRoot, mlir::ArrayRef<mlir::Operation *> units,
-    uint64_t designPrecisionFemtoseconds, mlir::OpBuilder &builder);
+    uint64_t designPrecisionFemtoseconds, mlir::OpBuilder &builder,
+    const llvm::StringMap<mlir::Operation *> &semanticSymbols);
 
 } // namespace obelisk::simlowering
 

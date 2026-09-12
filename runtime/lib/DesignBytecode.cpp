@@ -2119,46 +2119,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
               context, mirroredBegin, mirroredEnd - mirroredBegin);
         if (isLoad && !eventValue && !local && !automatic &&
             context->observerForcesCanonicalPlane &&
-            context->clockOccurrences &&
-            context->clockOccurrences->conditionPublication) {
+            context->conditionPublication) {
           uint64_t stable = UINT64_MAX;
           if (!encodeCanonicalHandle(frame.data + handleLayout.offset, stable))
             return OBELISK_RT_INVALID_HANDLE;
-          const ClockConditionPublicationView *publication =
-              context->clockOccurrences->conditionPublication;
-          obelisk_rt_stable_handle_v1 published;
-          obelisk_rt_stable_handle_v1 loaded;
-          if (publication->newValue && publication->bitWidth != 0 &&
-              obelisk_rt_stable_handle_decode(publication->stableID,
-                                              &published) &&
-              obelisk_rt_stable_handle_decode(stable, &loaded) &&
-              published.offset >= 0 && loaded.offset >= 0 &&
-              (published.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL ||
-               published.kind == OBELISK_RT_STABLE_HANDLE_STATIC) &&
-              published.kind == loaded.kind &&
-              (published.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
-               published.id == loaded.id)) {
-            __int128 relativeBegin =
-                static_cast<__int128>(loaded.offset) - published.offset;
-            __int128 first = std::max<__int128>(0, -relativeBegin);
-            __int128 last = std::min<__int128>(
-                value.width, publication->bitWidth - relativeBegin);
-            for (__int128 bitIndex = first; bitIndex < last; ++bitIndex) {
-              __int128 relative = relativeBegin + bitIndex;
-              if (relative < 0 ||
-                  relative > UINT64_MAX - publication->planeBitOffset)
-                continue;
-              uint64_t source =
-                  publication->planeBitOffset + static_cast<uint64_t>(relative);
-              setBit(value.value, static_cast<uint64_t>(bitIndex),
-                     ((publication->newValue[source / 8] >> (source % 8)) &
-                      1u) != 0);
-              setBit(
-                  value.unknown, static_cast<uint64_t>(bitIndex),
-                  publication->newUnknown &&
-                      ((publication->newUnknown[source / 8] >> (source % 8)) &
-                       1u) != 0);
-            }
+          for (uint64_t bit = 0; bit != value.width; ++bit) {
+            bool publishedValue = false;
+            bool publishedUnknown = false;
+            if (!obelisk_rt_read_clock_condition_publication_bit_unlocked(
+                    context, stable, bit, publishedValue, publishedUnknown))
+              continue;
+            setBit(value.value, bit, publishedValue);
+            setBit(value.unknown, bit, publishedUnknown);
           }
         }
         bool realNotified = false;
@@ -3031,8 +3003,23 @@ obelisk_rt_status obelisk_rt_execute_design_observer(
         uint64_t stable = captures[index].stable_id;
         const obelisk_rt_observer_capture_abi_v1 &abi =
             descriptor->capture_abi[index];
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+          if (layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF ||
+              layout.size != 24 || captures[index].payload1 > 2 ||
+              captures[index].payload2 != 0)
+            return OBELISK_RT_INVALID_BYTECODE;
+          std::memcpy(address, &captures[index], 24);
+          continue;
+        }
         if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
           if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
+            return OBELISK_RT_INVALID_BYTECODE;
+          std::memcpy(address, &stable, sizeof(stable));
+          continue;
+        }
+        if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) {
+          if (layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64 ||
+              layout.size != 8)
             return OBELISK_RT_INVALID_BYTECODE;
           std::memcpy(address, &stable, sizeof(stable));
           continue;
@@ -5532,8 +5519,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             finalizeStatus = OBELISK_RT_INVALID_FRAME;
             break;
           }
-          const auto *computed =
-              reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(
+          auto *computed =
+              reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
                   task.frame.data() + action.payload);
           if (!obelisk_rt_validate_computed_wait_record(
                   context->execution, computed,

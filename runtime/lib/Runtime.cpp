@@ -19,7 +19,7 @@ __attribute__((weak))
 #endif
 bool obelisk_rt_validate_dpi_exports(
     const obelisk_rt_execution_descriptor_v1 &execution,
-    const obelisk_rt_execution_extension_v2 &extension) noexcept;
+    const obelisk_rt_execution_extension_v1 &extension) noexcept;
 
 namespace {
 
@@ -105,9 +105,12 @@ bool validObserverInventory(
       const obelisk_rt_observer_capture_abi_v1 &abi =
           observer.capture_abi[capture];
       if (abi.kind < OBELISK_RT_OBSERVER_CAPTURE_STORAGE ||
-          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_MANAGED || abi.width == 0 ||
+          abi.kind > OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF ||
+          abi.width == 0 ||
           (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_EVENT && abi.width != 1) ||
-          (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED && abi.width != 64))
+          ((abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED ||
+            abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) &&
+           abi.width != 64))
         return false;
     }
     bool hasBytecode =
@@ -140,35 +143,37 @@ bool validExecutionExtension(
   bool exported = (execution.flags & OBELISK_RT_EXECUTION_DPI_EXPORTS) != 0;
   bool classBitstream =
       (execution.flags & OBELISK_RT_EXECUTION_CLASS_BITSTREAM) != 0;
-  if (!sampled && !exported && !classBitstream)
+  bool coverage = (execution.flags & OBELISK_RT_EXECUTION_COVERAGE_SCHEMA) != 0;
+  if (!sampled && !exported && !classBitstream && !coverage)
     return execution.reserved == 0;
   const obelisk_rt_execution_extension_v1 *extension =
       executionExtension(execution);
   if (!extension)
     return false;
-  const obelisk_rt_execution_extension_v2 *exportExtension = nullptr;
-  if (classBitstream) {
-    auto *v3 =
-        reinterpret_cast<const obelisk_rt_execution_extension_v3 *>(extension);
-    if (v3->version != OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION ||
-        v3->size != sizeof(*v3) || !v3->class_bitstream ||
-        v3->class_bitstream_size == 0 || exported != (v3->exports != nullptr) ||
-        exported != (v3->export_count != 0))
-      return false;
-    if (exported)
-      exportExtension =
-          reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(v3);
-  } else if (exported) {
-    auto *v2 =
-        reinterpret_cast<const obelisk_rt_execution_extension_v2 *>(extension);
-    if (v2->version != OBELISK_RT_EXECUTION_EXTENSION_V2_VERSION ||
-        v2->size != sizeof(*v2) || !v2->exports || v2->export_count == 0)
-      return false;
-    exportExtension = v2;
-  } else if (extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
-             extension->size != sizeof(*extension)) {
+  if (extension->version != OBELISK_RT_EXECUTION_EXTENSION_VERSION ||
+      extension->size != sizeof(*extension))
     return false;
+  if (coverage) {
+    if (!extension->coverage_schema || extension->coverage_schema_size < 104 ||
+        extension->coverage_schema_size > SIZE_MAX)
+      return false;
+    const uint32_t codecVersion =
+        uint32_t{extension->coverage_schema[8]} |
+        (uint32_t{extension->coverage_schema[9]} << 8) |
+        (uint32_t{extension->coverage_schema[10]} << 16) |
+        (uint32_t{extension->coverage_schema[11]} << 24);
+    if (std::memcmp(extension->coverage_schema, obelisk::coverage::Magic,
+                    sizeof(obelisk::coverage::Magic)) != 0 ||
+        codecVersion != obelisk::coverage::CodecVersion)
+      return false;
   }
+  if (coverage != (extension->coverage_schema != nullptr) ||
+      coverage != (extension->coverage_schema_size != 0) ||
+      classBitstream != (extension->class_bitstream != nullptr) ||
+      classBitstream != (extension->class_bitstream_size != 0) ||
+      exported != (extension->exports != nullptr) ||
+      exported != (extension->export_count != 0))
+    return false;
   if (sampled != (extension->sampled_ranges != nullptr) ||
       sampled != (extension->sampled_range_count != 0))
     return false;
@@ -189,9 +194,60 @@ bool validExecutionExtension(
   if (snapshotBytes > std::numeric_limits<size_t>::max() ||
       snapshotBytes > UINT64_MAX / 8)
     return false;
-  return !exported ||
-         (obelisk_rt_validate_dpi_exports &&
-          obelisk_rt_validate_dpi_exports(execution, *exportExtension));
+  return !exported || (obelisk_rt_validate_dpi_exports &&
+                       obelisk_rt_validate_dpi_exports(execution, *extension));
+}
+
+void seedContextUnlocked(obelisk_rt_context *context, uint64_t seed) {
+  // Allocate the complete work list before changing any random state.  This
+  // makes reseeding transactional even when allocation fails.
+  struct RootStream {
+    uint64_t sequence;
+    obelisk_rt_random_state_v1 *state;
+  };
+  std::vector<RootStream> roots;
+  roots.reserve(context->scheduledProcesses.size() +
+                context->scheduledDesignTasks.size());
+  for (ScheduledProcess &process : context->scheduledProcesses)
+    if (process.parent == 0 && !process.started)
+      roots.push_back({process.insertionSequence, &process.random});
+  for (ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (task.parent == 0 && !task.started)
+      roots.push_back({task.insertionSequence, &task.random});
+  std::sort(roots.begin(), roots.end(),
+            [](const RootStream &left, const RootStream &right) {
+              return left.sequence < right.sequence;
+            });
+
+  obelisk_rt_random_seed_context_unlocked(context, seed);
+  context->configuredSeed = seed;
+  for (RootStream root : roots)
+    obelisk_rt_random_split_unlocked(context, *root.state);
+}
+
+obelisk_rt_status mapCoverageStatus(obelisk::coverage::Status status) {
+  switch (status) {
+  case obelisk::coverage::Status::Ok:
+    return OBELISK_RT_OK;
+  case obelisk::coverage::Status::OutOfMemory:
+    return OBELISK_RT_OUT_OF_MEMORY;
+  case obelisk::coverage::Status::IoError:
+    return OBELISK_RT_IO_ERROR;
+  default:
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+}
+
+bool coverageSchemaCounts(const obelisk::coverage::Database &schema,
+                          uint64_t &lineCount, uint64_t &toggleBitCount) {
+  lineCount = schema.linePoints.size();
+  toggleBitCount = 0;
+  for (const obelisk::coverage::ToggleObject &object : schema.toggleObjects) {
+    if (object.bitWidth > UINT64_MAX - toggleBitCount)
+      return false;
+    toggleBitCount += object.bitWidth;
+  }
+  return true;
 }
 
 } // namespace
@@ -764,8 +820,8 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
       ticket = context->nextDeferredImmediateTicket++;
     uint64_t logicalProcess = context->activeLogicalProcessToken;
     context->deferredImmediateReports.emplace(
-        ticket, obelisk_rt_context::DeferredImmediateReport{
-                    logicalProcess, assertionID});
+        ticket, obelisk_rt_context::DeferredImmediateReport{logicalProcess,
+                                                            assertionID});
     context->deferredImmediateProcessReports[logicalProcess].insert(ticket);
     if (assertionID != 0)
       context->deferredImmediateAssertionReports[assertionID].insert(ticket);
@@ -849,30 +905,11 @@ obelisk_rt_v1_context_seed(obelisk_rt_context *context, uint64_t seed) {
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    obelisk_rt_random_seed_context_unlocked(context, seed);
     // Generated executables configure argv after elaboration has registered
     // root processes. Re-split those dormant roots in their common lexical
     // insertion order so --seed governs their streams and native/bytecode
     // registration details cannot perturb the result.
-    struct RootStream {
-      uint64_t sequence;
-      obelisk_rt_random_state_v1 *state;
-    };
-    std::vector<RootStream> roots;
-    roots.reserve(context->scheduledProcesses.size() +
-                  context->scheduledDesignTasks.size());
-    for (ScheduledProcess &process : context->scheduledProcesses)
-      if (process.parent == 0 && !process.started)
-        roots.push_back({process.insertionSequence, &process.random});
-    for (ScheduledDesignTask &task : context->scheduledDesignTasks)
-      if (task.parent == 0 && !task.started)
-        roots.push_back({task.insertionSequence, &task.random});
-    std::sort(roots.begin(), roots.end(),
-              [](const RootStream &left, const RootStream &right) {
-                return left.sequence < right.sequence;
-              });
-    for (RootStream root : roots)
-      obelisk_rt_random_split_unlocked(context, *root.state);
+    seedContextUnlocked(context, seed);
     return OBELISK_RT_OK;
   });
 }
@@ -893,6 +930,13 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     size_t plusargCount = 0;
     bool haveSeed = false;
     uint64_t configuredSeed = 0;
+    bool haveCoverageOptions = false;
+    std::string coverageOutput = "coverage.obcov";
+    std::string coverageTest;
+    std::vector<std::pair<std::string, std::string>> coverageTags;
+    std::vector<std::string> coverageLoads;
+    bool suppressCoverageDump = false;
+    std::unordered_set<std::string> coverageTagKeys;
 
     // Validate and size the replacement before touching the live context.
     for (int index = 1; index < argc; ++index) {
@@ -902,22 +946,58 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
         continue;
       }
       constexpr std::string_view prefix = "--seed=";
-      if (argument.substr(0, prefix.size()) != prefix)
+      if (argument.substr(0, prefix.size()) == prefix) {
+        std::string_view digits = argument.substr(prefix.size());
+        if (digits.empty())
+          return OBELISK_RT_INVALID_ARGUMENT;
+        uint64_t seed = 0;
+        for (char digit : digits) {
+          if (digit < '0' || digit > '9')
+            return OBELISK_RT_INVALID_ARGUMENT;
+          uint64_t value = static_cast<uint64_t>(digit - '0');
+          if (seed > (UINT64_MAX - value) / 10)
+            return OBELISK_RT_INVALID_ARGUMENT;
+          seed = seed * 10 + value;
+        }
+        configuredSeed = seed;
+        haveSeed = true;
         continue;
-      std::string_view digits = argument.substr(prefix.size());
-      if (digits.empty())
-        return OBELISK_RT_INVALID_ARGUMENT;
-      uint64_t seed = 0;
-      for (char digit : digits) {
-        if (digit < '0' || digit > '9')
-          return OBELISK_RT_INVALID_ARGUMENT;
-        uint64_t value = static_cast<uint64_t>(digit - '0');
-        if (seed > (UINT64_MAX - value) / 10)
-          return OBELISK_RT_INVALID_ARGUMENT;
-        seed = seed * 10 + value;
       }
-      configuredSeed = seed;
-      haveSeed = true;
+      constexpr std::string_view outputPrefix = "--coverage-output=";
+      constexpr std::string_view testPrefix = "--coverage-test=";
+      constexpr std::string_view tagPrefix = "--coverage-tag=";
+      constexpr std::string_view loadPrefix = "--coverage-load=";
+      if (argument.substr(0, outputPrefix.size()) == outputPrefix) {
+        std::string_view value = argument.substr(outputPrefix.size());
+        if (value.empty())
+          return OBELISK_RT_INVALID_ARGUMENT;
+        coverageOutput.assign(value);
+        haveCoverageOptions = true;
+      } else if (argument.substr(0, testPrefix.size()) == testPrefix) {
+        std::string_view value = argument.substr(testPrefix.size());
+        if (value.empty())
+          return OBELISK_RT_INVALID_ARGUMENT;
+        coverageTest.assign(value);
+        haveCoverageOptions = true;
+      } else if (argument.substr(0, tagPrefix.size()) == tagPrefix) {
+        std::string_view value = argument.substr(tagPrefix.size());
+        size_t equal = value.find('=');
+        if (equal == std::string_view::npos || equal == 0 ||
+            !coverageTagKeys.insert(std::string(value.substr(0, equal))).second)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        coverageTags.emplace_back(value.substr(0, equal),
+                                  value.substr(equal + 1));
+        haveCoverageOptions = true;
+      } else if (argument.substr(0, loadPrefix.size()) == loadPrefix) {
+        std::string_view value = argument.substr(loadPrefix.size());
+        if (value.empty())
+          return OBELISK_RT_INVALID_ARGUMENT;
+        coverageLoads.emplace_back(value);
+        haveCoverageOptions = true;
+      } else if (argument == "--no-coverage-dump") {
+        suppressCoverageDump = true;
+        haveCoverageOptions = true;
+      }
     }
     plusargs.reserve(plusargCount);
 
@@ -928,17 +1008,82 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
       plusargs.emplace_back(argument.substr(1));
     }
 
-    if (haveSeed) {
-      obelisk_rt_status status =
-          obelisk_rt_v1_context_seed(context, configuredSeed);
-      if (status != OBELISK_RT_OK)
-        return status;
+    // Parse every requested database before touching the context.  A bad
+    // later --coverage-load must not leave an earlier load, seed, plusarg, or
+    // output setting installed.
+    std::vector<obelisk::coverage::Database> loadedDatabases;
+    loadedDatabases.reserve(coverageLoads.size());
+    for (const std::string &path : coverageLoads) {
+      obelisk::coverage::Database incoming;
+      obelisk::coverage::Diagnostic diagnostic;
+      obelisk::coverage::Status status =
+          obelisk::coverage::readFile(path, incoming, {}, &diagnostic);
+      if (status != obelisk::coverage::Status::Ok)
+        return mapCoverageStatus(status);
+      loadedDatabases.push_back(std::move(incoming));
     }
+
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *liveCoverage = context->coverage.get();
+    std::unique_ptr<obelisk::coverage::Database> stagedSchema;
+    if (!loadedDatabases.empty()) {
+      if (liveCoverage && liveCoverage->schema)
+        stagedSchema = std::make_unique<obelisk::coverage::Database>(
+            *liveCoverage->schema);
+      for (obelisk::coverage::Database &incoming : loadedDatabases) {
+        if (liveCoverage && liveCoverage->finalized) {
+          uint64_t incomingLines = 0;
+          uint64_t incomingToggleBits = 0;
+          if (!coverageSchemaCounts(incoming, incomingLines,
+                                    incomingToggleBits) ||
+              incomingLines != liveCoverage->lineCount ||
+              incomingToggleBits != liveCoverage->toggleBitCount)
+            return OBELISK_RT_INVALID_DESIGN;
+        }
+        if (!stagedSchema) {
+          stagedSchema = std::make_unique<obelisk::coverage::Database>(
+              std::move(incoming));
+          continue;
+        }
+        obelisk::coverage::Diagnostic diagnostic;
+        obelisk::coverage::Status status = obelisk::coverage::merge(
+            *stagedSchema, incoming, false, &diagnostic);
+        if (status != obelisk::coverage::Status::Ok) {
+          std::fprintf(stderr, "error: coverage load failed%s%s%s%s\n",
+                       diagnostic.field ? " in " : "",
+                       diagnostic.field ? diagnostic.field : "",
+                       diagnostic.detail.empty() ? "" : ": ",
+                       diagnostic.detail.empty() ? ""
+                                                 : diagnostic.detail.c_str());
+          return mapCoverageStatus(status);
+        }
+      }
+    }
+
+    // Allocate optional service state before reseeding.  Everything following
+    // seedContextUnlocked is a no-throw move/swap commit.
+    std::unique_ptr<CoverageState> stagedCoverage;
+    if (haveCoverageOptions && !liveCoverage)
+      stagedCoverage = std::make_unique<CoverageState>();
+    if (haveSeed)
+      seedContextUnlocked(context, configuredSeed);
     context->plusargs.swap(plusargs);
     context->plusargIndexNodes.swap(nodes);
     context->plusargIndexEdges.swap(edges);
     context->plusargIndexBuilt = false;
+    if (haveCoverageOptions) {
+      if (stagedCoverage)
+        context->coverage = std::move(stagedCoverage);
+      CoverageState &coverage = *context->coverage;
+      if (stagedSchema)
+        coverage.schema = std::move(stagedSchema);
+      coverage.outputPath = std::move(coverageOutput);
+      coverage.outputExplicit = coverage.outputPath != "coverage.obcov";
+      coverage.testName = std::move(coverageTest);
+      coverage.tags = std::move(coverageTags);
+      coverage.loadPaths.clear();
+      coverage.dumpSuppressed = suppressCoverageDump;
+    }
     return OBELISK_RT_OK;
   });
 }
@@ -980,6 +1125,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
   OBELISK_RT_TRY {
     DesignDatabaseCache designDatabase;
     obelisk::designbytecode::Image designBytecodeImage;
+    obelisk::coverage::Database coverageSchema;
+    bool hasCoverageSchema = false;
     if (execution) {
       constexpr uint32_t validFlags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
                                       OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
@@ -989,7 +1136,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT |
                                       OBELISK_RT_EXECUTION_WAVEFORM_METADATA |
                                       OBELISK_RT_EXECUTION_DPI_EXPORTS |
-                                      OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
+                                      OBELISK_RT_EXECUTION_CLASS_BITSTREAM |
+                                      OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -1024,12 +1172,32 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
         if (status != OBELISK_RT_OK)
           return status;
       }
+      if ((execution->flags & OBELISK_RT_EXECUTION_COVERAGE_SCHEMA) != 0) {
+        const obelisk_rt_execution_extension_v1 *extension =
+            executionExtension(*execution);
+        obelisk::coverage::Diagnostic diagnostic;
+        obelisk::coverage::Status status = obelisk::coverage::parse(
+            extension->coverage_schema,
+            static_cast<size_t>(extension->coverage_schema_size),
+            coverageSchema, {}, &diagnostic);
+        if (status == obelisk::coverage::Status::OutOfMemory)
+          return OBELISK_RT_OUT_OF_MEMORY;
+        if (status != obelisk::coverage::Status::Ok ||
+            !obelisk::coverage::isSchemaOnly(coverageSchema))
+          return OBELISK_RT_INVALID_DESIGN;
+        hasCoverageSchema = true;
+      }
     }
     auto *context = new obelisk_rt_context();
     context->execution = execution;
     context->designDatabase = designDatabase;
     context->designBytecodeImage = designBytecodeImage;
     context->designBytecodeImageValidated = designBytecodeImage.data != nullptr;
+    if (hasCoverageSchema) {
+      context->coverage = std::make_unique<CoverageState>();
+      context->coverage->schema = std::make_unique<obelisk::coverage::Database>(
+          std::move(coverageSchema));
+    }
     if (execution) {
       obelisk_rt_status status =
           obelisk_rt_initialize_dpi_scopes(context, execution);

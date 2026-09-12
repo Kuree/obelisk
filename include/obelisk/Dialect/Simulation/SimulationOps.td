@@ -79,14 +79,17 @@ def SimDesignOp : SimOp<"design", [
 }
 
 def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
-  let summary = "immutable numeric hierarchy descriptor";
+  let summary = "immutable numeric hierarchy and coverage descriptor";
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<StrAttr>:$definition_name,
+                       OptionalAttr<I64Attr>:$coverage_id,
                        OptionalAttr<StrAttr>:$interface_type,
                        OptionalAttr<I32Attr>:$vpi_kind);
   let assemblyFormat = [{$id (`parent` $parent^)?
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
+    (`definition` $definition_name^)? (`coverage_id` $coverage_id^)?
     (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)? attr-dict}];
   let hasVerifier = 1;
 }
@@ -347,15 +350,23 @@ def SimPortDeclOp : SimOp<"port.decl", [MemoryEffects<[MemWrite<SimInventoryReso
 }
 
 def SimCovergroupDeclOp : SimOp<"covergroup.decl", [
-    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
-  let summary = "immutable executable covergroup schema";
-  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
-                       DenseI64ArrayAttr:$coverpoint_bins,
+  let summary = "symbolic reference to an embedded covergroup schema";
+  let description = [{
+    Names one functional-coverage type in the module's embedded typed v1
+    coverage database. `schema_type` is the stable type identity from that
+    database; it is not a physical table index. Coverpoints, crosses, bins,
+    options, source provenance, and resolved configurations live only in the
+    database and are deliberately not duplicated as parallel MLIR arrays.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$schema_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$base,
                        OptionalAttr<StrAttr>:$debug_name);
   let assemblyFormat = [{
-    $sym_name `id` $id `bins` $coverpoint_bins
-    (`debug` $debug_name^)? attr-dict
+    $sym_name `schema` $schema_type
+    (`base` $base^)? (`debug` $debug_name^)? attr-dict
   }];
   let hasVerifier = 1;
 }
@@ -366,6 +377,17 @@ def SimCovergroupNullOp : SimOp<"covergroup.null", [Pure, ConstantLike]> {
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
   let hasFolder = 1;
   let hasVerifier = 1;
+}
+
+def SimCovergroupCastOp : SimOp<"covergroup.cast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "change the static type of a related covergroup handle";
+  let arguments = (ins SimCovergroupHandleType:$input);
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `to` qualified(type($result))
+  }];
 }
 
 def SimVirtualInterfaceNullOp
@@ -436,18 +458,291 @@ def SimVirtualInterfaceScopeOp
 }
 
 def SimCovergroupCreateOp : SimOp<"covergroup.create", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimCoverageResource>,
                    MemWrite<SimCoverageResource>]>
   ]> {
   let summary = "create an enabled per-instance coverage accumulator";
   let arguments = (ins SimContextType:$context,
-                       FlatSymbolRefAttr:$declaration);
+                       FlatSymbolRefAttr:$declaration,
+                       Variadic<AnyType>:$payloads,
+                       I32Attr:$argument_count,
+                       DenseI64ArrayAttr:$formal_ids,
+                       DenseI64ArrayAttr:$expression_ids);
   let results = (outs SimCovergroupHandleType:$result);
   let assemblyFormat = [{
-    $context `from` $declaration attr-dict `:`
-    type($context) `->` qualified(type($result))
+    $context `from` $declaration
+    `payloads` `[` $payloads `]` `argument_count` $argument_count
+    `formal_ids` $formal_ids `expression_ids` $expression_ids
+    attr-dict `:` functional-type($payloads, results)
+  }];
+}
+
+def SimCovergroupClockingSpawnOp
+    : SimOp<"covergroup.clock_event.spawn", [
+        MemoryEffects<[MemWrite<SimSchedulerResource>,
+                       MemWrite<SimProcessResource>]>
+      ]> {
+  let summary = "defer a covergroup clocking sampler to its design pass";
+  let description = [{
+    Transiently records the spawn of one automatic functional-coverage
+    sampler. Per-function lowering may create this operation but must not
+    mutate its parent design's symbol table. The subsequent design-anchored
+    materialization pass replaces it with an ordinary `obelisk_sim.spawn` and
+    creates the private sampler symbol.
+
+    `bindings` contains only the declaration paths referenced by the clocking
+    event or sample plan. `capture_attrs` describes the complete eventual
+    sampler argument list (context, handle, then captures). The operation is
+    forbidden at the finalized simulation boundary. `class_owner_capture` is
+    the capture index of an embedded covergroup's owning object, or -1 for a
+    non-class covergroup.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$captures,
+                       I32Attr:$class_owner_capture,
+                       I64Attr:$node_id,
+                       StrAttr:$covergroup_symbol,
+                       ArrayAttr:$bindings,
+                       ArrayAttr:$capture_attrs,
+                       ArrayAttr:$event_observers);
+}
+
+def SimCovergroupClockEventRegisterOp
+    : SimOp<"covergroup.clock_event.register", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimSchedulerResource>,
+                       MemWrite<SimProcessResource>]>
+      ]> {
+  let summary = "register exact clock-event covergroup sampling";
+  let description = [{
+    Registers a compiler-private covergroup sampling observer with the current
+    detached owner process. The first `edges.size()` values are bound primary
+    observers, followed by one encounter-time initial value per primary,
+    `condition_count` bound iff observers, and one bound sample observer. The
+    runtime reevaluates a primary when any of its dependencies is published,
+    compares the complete expression result for a change event, and uses its
+    least-significant bit for an explicit edge. It evaluates an iff observer
+    only after the corresponding primary occurrence.
+
+    The runtime invokes the sample observer synchronously for each qualifying
+    atomic publication unless the resolved v1 covergroup schema sets
+    `type_option.strobe`. Strobe registrations retain one trigger per numeric
+    time and evaluate the observer in the Postponed region. Multiple matching
+    clauses in one publication always produce one sample.
+
+    This operation is part of the single mutable v1 runtime ABI. It does not
+    describe or preserve an older execution layout.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       BoolAttr:$strobe,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices);
+  let assemblyFormat = [{
+    $context `,` $handle `events` `[` $values `]`
+    `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices attr-dict `:` type($handle) `,` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getInitialValues();
+    ::mlir::Operation::operand_range getConditions();
+    ::mlir::Value getSampler();
   }];
   let hasVerifier = 1;
+}
+
+def SimCovergroupBlockEventPlanOp
+    : SimOp<"covergroup.block_event.plan", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "defer a covergroup block-event sampler to its design pass";
+  let description = [{
+    Transiently records construction-site captures for one block-event
+    covergroup. The design-anchored materialization pass creates the private
+    sample evaluator and replaces this operation with an immediate block-event
+    registration. Unlike a clocking event, this never creates or parks a
+    process, and type_option.strobe has no effect.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$captures,
+                       BoolAttr:$has_receiver,
+                       I32Attr:$class_owner_capture,
+                       I64Attr:$node_id,
+                       StrAttr:$covergroup_symbol,
+                       ArrayAttr:$bindings,
+                       ArrayAttr:$capture_attrs,
+                       DenseI64ArrayAttr:$target_ids,
+                       DenseI32ArrayAttr:$event_kinds);
+}
+
+def SimCovergroupBlockEventRegisterOp
+    : SimOp<"covergroup.block_event.register", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "register synchronous block-event covergroup sampling";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Optional<SimClassHandleType>:$receiver,
+                       SimObserverType:$sampler,
+                       DenseI64ArrayAttr:$target_ids,
+                       DenseI32ArrayAttr:$event_kinds);
+  let hasVerifier = 1;
+}
+
+def SimCovergroupBlockEventFireOp
+    : SimOp<"covergroup.block_event.fire", [
+        MemoryEffects<[
+          MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+          MemRead<SimNetResource>, MemWrite<SimNetResource>,
+          MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+          MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+          MemRead<SimCoverageResource>, MemWrite<SimCoverageResource>,
+          MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+          MemRead<SimIOResource>, MemWrite<SimIOResource>,
+          MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+          MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+        ]>
+      ]> {
+  let summary = "fire one exact covergroup block boundary";
+  let arguments = (ins SimContextType:$context,
+                       Optional<SimClassHandleType>:$receiver,
+                       I64Attr:$target_id,
+                       I32Attr:$event_kind);
+  let hasVerifier = 1;
+}
+
+def SimCoveragePointHitOp : SimOp<"coverage.point_hit", [
+    MemoryEffects<[MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "saturating hit of one inventoried source line point";
+  let description = [{
+    Records a semantic execution point by its dense physical counter index.
+    Stable point identity and source metadata live in the embedded native
+    coverage schema. The explicit index keeps lowering cheap while the
+    resource effect prevents motion across observed execution boundaries.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       I1:$enabled,
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$point);
+  let assemblyFormat = "$context `if` $enabled `[` $point `]` attr-dict `:` type($context)";
+  let hasVerifier = 1;
+}
+
+def SimCoverageKeepaliveOp : SimOp<"coverage.keepalive", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimInventoryResource>]>
+  ]> {
+  let summary = "retain a function containing an inventoried coverage point";
+  let description = [{
+    Creates an explicit symbol-use edge from the design inventory to a private
+    function containing an included line-coverage obligation. This prevents
+    later symbol DCE from invalidating the already-built coverage schema. The
+    finalization pass erases the marker after all symbol-pruning passes.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$function);
+  let assemblyFormat = "$function attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimCoverageControlDefinitionOp
+    : SimOp<"coverage.control_definition", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "control code coverage selected by module definition";
+  let arguments = (ins SimContextType:$context, I32:$control, I32:$metric,
+                       I32:$scope, SimStringType:$definition);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `control` $control `metric` $metric `scope` $scope
+    `definition` $definition attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageControlInstanceOp
+    : SimOp<"coverage.control_instance", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "control code coverage selected by elaborated instance";
+  let arguments = (ins SimContextType:$context, I32:$control, I32:$metric,
+                       I32:$scope, I64Attr:$coverage_scope_id);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `control` $control `metric` $metric `scope` $scope
+    `instance` $coverage_scope_id attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCoverageQueryDefinitionOp
+    : SimOp<"coverage.query_definition", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "query code coverage selected by module definition";
+  let arguments = (ins SimContextType:$context, I32:$metric, I32:$scope,
+                       SimStringType:$definition, BoolAttr:$maximum);
+  let results = (outs I32:$value);
+  let assemblyFormat = [{
+    $context `metric` $metric `scope` $scope `definition` $definition
+    `maximum` $maximum attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageQueryInstanceOp
+    : SimOp<"coverage.query_instance", [
+        MemoryEffects<[MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "query code coverage selected by elaborated instance";
+  let arguments = (ins SimContextType:$context, I32:$metric, I32:$scope,
+                       I64Attr:$coverage_scope_id, BoolAttr:$maximum);
+  let results = (outs I32:$value);
+  let assemblyFormat = [{
+    $context `metric` $metric `scope` $scope `instance` $coverage_scope_id
+    `maximum` $maximum attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+class SimCoverageDatabaseOp<string mnemonic, list<Trait> effects>
+    : SimOp<mnemonic, effects> {
+  let arguments = (ins SimContextType:$context, I32:$metric,
+                       SimStringType:$name);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `metric` $metric `name` $name attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageSaveOp
+    : SimCoverageDatabaseOp<"coverage.save", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimIOResource>]>
+      ]> {
+  let summary = "save one code-coverage metric to an exact-v1 database";
+}
+
+def SimCoverageMergeOp
+    : SimCoverageDatabaseOp<"coverage.merge", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimIOResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "merge one code-coverage metric from an exact-v1 database";
 }
 
 def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
@@ -460,17 +755,23 @@ def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
   let hasVerifier = 1;
 }
 
-def SimCovergroupBinHitOp : SimOp<"covergroup.bin_hit", [
-    MemoryEffects<[MemRead<SimCoverageResource>,
-                   MemWrite<SimCoverageResource>]>
+def SimCovergroupFormalReadOp : SimOp<"covergroup.formal_read", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
   ]> {
-  let summary = "saturating hit of one named bin";
+  let summary = "read a constructor formal captured by a covergroup instance";
+  let description = [{
+    Projects the value of an input constructor formal, or the current value of
+    a live `ref` constructor formal, from the instance configuration. The
+    positive stable ID names a `FunctionalFormal` record in the embedded v1
+    schema; it is not a physical table index.
+  }];
   let arguments = (ins SimContextType:$context,
                        SimCovergroupHandleType:$handle,
-                       I32Attr:$coverpoint, I32Attr:$bin);
+                       I64Attr:$formal_id);
+  let results = (outs AnyType:$result);
   let assemblyFormat = [{
-    $context `,` $handle `[` $coverpoint `,` $bin `]` attr-dict `:`
-    type($context) `,` qualified(type($handle))
+    $context `,` $handle `[` $formal_id `]` attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` qualified(type($result))
   }];
   let hasVerifier = 1;
 }
@@ -479,13 +780,34 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
     MemoryEffects<[MemRead<SimCoverageResource>,
                    MemWrite<SimCoverageResource>]>
   ]> {
-  let summary = "atomically commit one complete manual sample";
+  let summary = "atomically commit one typed functional-coverage sample";
+  let description = [{
+    Carries the once-evaluated results of every sample-phase expression needed
+    by the instance's typed plan. `expression_ids` contains the corresponding
+    stable `FunctionalExpression` identities from the embedded v1 schema in
+    operand order. These are semantic identities, never physical table
+    indices. The runtime resolves the handle's constructor configuration and
+    atomically performs direct-bin matching, transition automata, ignore and
+    illegal precedence, and cross tuple/selector processing.
+
+    Integral and four-state sampled values remain typed values; predicates are
+    i1 and real coverpoint samples are f64. A string value may occur only for
+    the once-evaluated default of a string formal on an overridden sample()
+    method; matching consumes the derived coverpoint and guard results. This
+    batch form ensures that a sampled expression or iff predicate is evaluated
+    once per sampling event even when several bins, transition steps, or
+    crosses consume it.
+  }];
   let arguments = (ins SimContextType:$context,
                        SimCovergroupHandleType:$handle,
-                       Variadic<I1>:$hits);
+                       Variadic<AnyTypeOf<[AnySignlessInteger,
+                                           SimLogicType, SimStringType,
+                                           F64]>>:$values,
+                       DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
-    $context `,` $handle `[` $hits `]` attr-dict `:`
-    type($context) `,` qualified(type($handle))
+    $context `,` $handle
+    `values` `[` $values `]` `ids` $expression_ids
+    attr-dict `:` functional-type(operands, results)
   }];
   let hasVerifier = 1;
 }
@@ -496,9 +818,10 @@ class SimCovergroupControlOp<string mnemonic>
                        MemWrite<SimCoverageResource>]>
       ]> {
   let arguments = (ins SimContextType:$context,
-                       SimCovergroupHandleType:$handle);
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item);
   let assemblyFormat = [{
-    $context `,` $handle attr-dict `:`
+    $context `,` $handle `item` $item attr-dict `:`
     type($context) `,` qualified(type($handle))
   }];
   let hasVerifier = 1;
@@ -506,21 +829,150 @@ class SimCovergroupControlOp<string mnemonic>
 
 def SimCovergroupStartOp
     : SimCovergroupControlOp<"covergroup.start"> {
-  let summary = "enable sampling without clearing coverage";
+  let summary = "enable group or functional-item sampling without clearing coverage";
 }
 
 def SimCovergroupStopOp
     : SimCovergroupControlOp<"covergroup.stop"> {
-  let summary = "disable sampling without clearing coverage";
+  let summary = "disable group or functional-item sampling without clearing coverage";
+}
+
+def SimCovergroupSetNameOp : SimOp<"covergroup.set_name", [
+    MemoryEffects<[MemRead<SimHeapResource>,
+                   MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "set the persistent name of a covergroup instance";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       SimStringType:$name);
+  let assemblyFormat = [{
+    $context `,` $handle `name` $name attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetIntegerOptionOp
+    : SimOp<"covergroup.set_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable integral option on a covergroup instance owner";
+  let description = [{
+    `item` is zero for the covergroup owner or a positive stable template
+    `FunctionalItem` ID for a coverpoint or cross. The runtime applies the
+    assignment to this instance only. Group-level `at_least` remains a default
+    and therefore does not replace an item-level override.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `value` $value
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupGetIntegerOptionOp
+    : SimOp<"covergroup.get_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "read a mutable integral option from a covergroup instance owner";
+  let description = [{
+    `item` is zero for the covergroup owner or a positive stable template
+    `FunctionalItem` ID for a coverpoint or cross. The result is the current
+    effective per-instance value after group defaults and item overrides.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option);
+  let results = (outs I64:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetStringOptionOp
+    : SimOp<"covergroup.set_string_option", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable string option on a covergroup instance owner";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       SimStringType:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `value` $value
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetTypeIntegerOptionOp
+    : SimOp<"covergroup.set_type_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable integral option on a covergroup type owner";
+  let description = [{
+    `type` and `item` are stable v1 schema identities. `item` is zero for the
+    covergroup or a positive template FunctionalItem ID. The update applies
+    immediately to cumulative queries and to configurations resolved later.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       I64Attr:$typeId,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$value);
+  let assemblyFormat = [{
+    $context `type` $typeId `item` $item `option` $option `value` $value
+    attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetTypeStringOptionOp
+    : SimOp<"covergroup.set_type_string_option", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable string option on a covergroup type owner";
+  let arguments = (ins SimContextType:$context,
+                       I64Attr:$typeId,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       SimStringType:$value);
+  let assemblyFormat = [{
+    $context `type` $typeId `item` $item `option` $option `value` $value
+    attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
 }
 
 def SimCovergroupInstanceQueryOp : SimOp<"covergroup.instance_query", [
     MemoryEffects<[MemRead<SimCoverageResource>]>
   ]> {
-  let summary = "query equal-weight per-instance coverage";
+  let summary = "query per-instance covergroup or functional-item coverage";
   let arguments = (ins SimContextType:$context,
-                       SimCovergroupHandleType:$handle);
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item);
   let results = (outs F64:$percentage, I32:$covered, I32:$total);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` `(` type($percentage) `,`
+    type($covered) `,` type($total) `)`
+  }];
   let hasVerifier = 1;
 }
 
@@ -528,15 +980,44 @@ def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimCoverageResource>]>
   ]> {
-  let summary = "query average coverage of all constructed instances";
+  let summary = "query cumulative covergroup or functional-item coverage";
   let arguments = (ins SimContextType:$context,
-                       FlatSymbolRefAttr:$declaration);
+                       FlatSymbolRefAttr:$declaration,
+                       I64Attr:$item);
   let results = (outs F64:$percentage, I32:$covered, I32:$total);
   let assemblyFormat = [{
-    $context `from` $declaration attr-dict `:`
+    $context `from` $declaration `item` $item attr-dict `:`
     type($context) `->` `(` type($percentage) `,`
     type($covered) `,` type($total) `)`
   }];
+}
+
+def SimFunctionalCoverageGetOp : SimOp<"coverage.functional_get", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query global functional coverage";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs F64:$percentage);
+  let assemblyFormat = "$context attr-dict `:` type($context) `->` type($percentage)";
+}
+
+class SimFunctionalCoverageDatabaseOp<string mnemonic>
+    : SimOp<mnemonic, [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let arguments = (ins SimContextType:$context, SimStringType:$name);
+  let assemblyFormat = "$context `,` $name attr-dict `:` type($context) `,` qualified(type($name))";
+}
+
+def SimFunctionalCoverageSetDbNameOp
+    : SimFunctionalCoverageDatabaseOp<"coverage.functional_set_db_name"> {
+  let summary = "set the automatic functional coverage database name";
+}
+
+def SimFunctionalCoverageLoadDbOp
+    : SimFunctionalCoverageDatabaseOp<"coverage.functional_load_db"> {
+  let summary = "load cumulative functional coverage from a database";
 }
 
 //===----------------------------------------------------------------------===//
@@ -4294,7 +4775,7 @@ def SimSuspendClockSetOp : SimOp<"suspend.clock_set", [
     MemoryEffects<[MemWrite<SimSchedulerResource>,
                    MemWrite<SimProcessResource>]>
   ]> {
-  let summary = "suspend on an exact set of frozen assertion clocks";
+  let summary = "suspend on an exact set of frozen clock occurrences";
   let description = [{
     The first `edges.size()` values are direct signal clock primaries. They are
     followed by `condition_count` optional iff handles and then successor

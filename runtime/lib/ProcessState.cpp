@@ -442,12 +442,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_load(
     obelisk_rt_object_v1 *owner, uint64_t payload, uint32_t managed,
     uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
     uint32_t valueKind, void *outValue, void *outUnknown) {
-  if (!context || !stateValue || !stateUnknown || !outValue || bitWidth == 0 ||
-      planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 2 || fourState > 1 ||
-      valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING ||
+  if (!context || !outValue || bitWidth == 0 || planeSize == 0 ||
+      planeSize > std::numeric_limits<size_t>::max() || managed > 2 ||
+      fourState > 1 || valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING ||
       (fourState && !outUnknown) ||
-      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState))
+      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState) ||
+      (!managed && (!stateValue || (fourState && !stateUnknown))))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(planeSize));
   if (outUnknown)
@@ -529,11 +529,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_argument_ref_store(
     uint64_t stateBitCount, obelisk_rt_object_v1 *owner, uint64_t payload,
     uint32_t managed, uint64_t bitWidth, uint64_t planeSize, uint32_t fourState,
     uint32_t valueKind, const void *value, const void *unknown) {
-  if (!context || !stateValue || !stateUnknown || !value || bitWidth == 0 ||
-      planeSize == 0 || planeSize > std::numeric_limits<size_t>::max() ||
-      managed > 2 || fourState > 1 ||
-      valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING || (fourState && !unknown) ||
-      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState))
+  if (!context || !value || bitWidth == 0 || planeSize == 0 ||
+      planeSize > std::numeric_limits<size_t>::max() || managed > 2 ||
+      fourState > 1 || valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING ||
+      (fourState && !unknown) ||
+      (valueKind != OBELISK_RT_ARGUMENT_VALUE_BITS && fourState) ||
+      (!managed && (!stateValue || (fourState && !stateUnknown))))
     return OBELISK_RT_INVALID_ARGUMENT;
   {
     ContextMutexLock lock(context);

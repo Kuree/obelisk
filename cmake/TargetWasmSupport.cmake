@@ -49,11 +49,22 @@ file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
   "${_obelisk_runtime_source_dir}/include/*.h"
   "${_obelisk_runtime_source_dir}/lib/*.h"
   "${_obelisk_vpi_include_dir}/*.h")
+set(_obelisk_target_reflection_include_dir "${CMAKE_BINARY_DIR}/include")
+if(DEFINED OBELISK_TARGET_REFLECTION_INCLUDE_DIR AND
+   NOT OBELISK_TARGET_REFLECTION_INCLUDE_DIR STREQUAL "")
+  get_filename_component(_obelisk_target_reflection_include_dir
+    "${OBELISK_TARGET_REFLECTION_INCLUDE_DIR}" ABSOLUTE)
+endif()
 set(_obelisk_target_reflection_headers
   "${_obelisk_source_dir}/include/obelisk/Reflection/DesignReflection.h"
   "${_obelisk_source_dir}/include/obelisk/Reflection/VPIObjectModel.h"
-  "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/DesignReflectionLayout.h.inc"
-  "${CMAKE_BINARY_DIR}/include/obelisk/Reflection/VPIObjectModel.h.inc")
+  "${_obelisk_target_reflection_include_dir}/obelisk/Reflection/DesignReflectionLayout.h.inc"
+  "${_obelisk_target_reflection_include_dir}/obelisk/Reflection/VPIObjectModel.h.inc")
+set(_obelisk_target_coverage_headers
+  "${_obelisk_source_dir}/include/obelisk/Coverage/CoverageDatabase.h"
+  "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatDecls.h.inc"
+  "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatParser.h.inc"
+  "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatSerializer.h.inc")
 
 set(_obelisk_target_runtime_definitions
   -DOBELISK_RT_IGNORE_EXCEPTIONS=1)
@@ -82,13 +93,13 @@ set(_obelisk_wasm_flags
   "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
   ${_obelisk_target_runtime_definitions}
   -I "${_obelisk_source_dir}/include"
-  -I "${CMAKE_BINARY_DIR}/include"
+  -I "${_obelisk_target_reflection_include_dir}"
   -I "${_obelisk_runtime_source_dir}/include"
   -I "${_obelisk_runtime_source_dir}/lib"
   -I "${_obelisk_vpi_include_dir}")
 
 set(_obelisk_target_runtime_common_sources
-    ABI Bytecode Containers Coverage DesignBytecode DesignBytecodeImage
+    ABI Bytecode Containers Coverage CoverageBlockEvents CoverageDatabase DesignBytecode DesignBytecodeImage
     DesignBytecodeIntrinsics DesignBytecodeLogic DesignBytecodeNets
     DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
@@ -109,6 +120,11 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
   set(source_dependencies
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
+  if(source STREQUAL "CoverageDatabase")
+    list(APPEND source_dependencies
+      "${_obelisk_source_dir}/lib/Coverage/CoverageFileSupport.h"
+      "${_obelisk_source_dir}/lib/Coverage/CoverageDatabase.cpp")
+  endif()
   if(source STREQUAL "RecursiveBitstream")
     list(APPEND source_dependencies
       "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
@@ -131,6 +147,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     DEPENDS
       ${source_dependencies}
       ${_obelisk_target_runtime_headers}
+      ${_obelisk_target_coverage_headers}
     COMMENT "Building wasm32 target runtime ${source}.cpp"
     VERBATIM)
 endforeach()

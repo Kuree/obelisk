@@ -154,16 +154,6 @@ inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
 /// synchronization object for such a cell (IEEE 1800-2017 6.17).
 inline constexpr ::mlir::StringLiteral eventExplicitInitializerAttrName =
     "obelisk_sim.event_explicit_initializer";
-/// Marks an ordinary state bin that retains at least one value after the
-/// coverpoint's ignore_bins and illegal_bins sets are removed.  Declaration
-/// planning computes this once so the schema and every sample site flatten
-/// exactly the same bin inventory.
-inline constexpr ::mlir::StringLiteral coverageContributingAttrName =
-    "obelisk_sim.coverage_contributing";
-/// Alternating inclusive lower/upper endpoints after applying the
-/// coverpoint-type value-resolution rules of IEEE 1800-2017 19.5.7.
-inline constexpr ::mlir::StringLiteral coverageResolvedIntervalsAttrName =
-    "obelisk_sim.coverage_resolved_intervals";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
     "obelisk_sim.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.
@@ -426,6 +416,15 @@ inline constexpr ::mlir::StringLiteral clockingEventRawSymbolAttrName =
 /// expression).
 inline constexpr ::mlir::StringLiteral clockingEventListAttrName =
     "clocking_event_list";
+/// Stable v1 identity of a named block, task, function, or class method used
+/// by a covergroup @@ sampling event.  Preparation attaches this to the event
+/// target expression and to every semantic operation that defines the target;
+/// later per-unit lowering only consumes the frozen numeric identity.
+inline constexpr ::mlir::StringLiteral coverageBlockEventTargetIdAttrName =
+    "obelisk_sim.coverage_block_event_target_id";
+inline constexpr ::mlir::StringLiteral
+    coverageBlockEventInstanceMethodAttrName =
+        "obelisk_sim.coverage_block_event_instance_method";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorRequiredAttrName =
     "clocking_event_monitor";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =
@@ -510,6 +509,37 @@ bool isCompileTimeOnlyInstanceMember(::mlir::Operation *op);
 /// Operations in the first block of an AST node's inventory region.
 ::mlir::SmallVector<::mlir::Operation *> getChildren(::mlir::Operation *op);
 
+/// Lossless view of the heterogeneous direct children of a coverage-bin
+/// symbol.  The frontend records source roles and transition grouping in
+/// attributes because the generic AST region itself has no operand segments.
+struct CoverageTransitionRangeChildren {
+  ::mlir::SmallVector<::mlir::Operation *> items;
+  ::mlir::Operation *repeatFrom = nullptr;
+  ::mlir::Operation *repeatTo = nullptr;
+  semantic::SVCoverageTransitionRepeatKind repeatKind =
+      semantic::SVCoverageTransitionRepeatKind::None;
+};
+
+struct CoverageTransitionSetChildren {
+  ::mlir::SmallVector<CoverageTransitionRangeChildren> ranges;
+};
+
+struct CoverageBinChildren {
+  ::mlir::Operation *iff = nullptr;
+  ::mlir::Operation *numberOfBins = nullptr;
+  ::mlir::Operation *setCoverage = nullptr;
+  ::mlir::Operation *with = nullptr;
+  ::mlir::Operation *crossSelect = nullptr;
+  ::mlir::SmallVector<::mlir::Operation *> values;
+  ::mlir::SmallVector<CoverageTransitionSetChildren> transitions;
+};
+
+/// Decode and validate the frontend's coverage-bin child inventory.  On
+/// failure this emits a diagnostic at the bin and returns failure without a
+/// partial view.
+::mlir::FailureOr<CoverageBinChildren>
+decodeCoverageBinChildren(semantic::SVCoverageBinSymbolOp bin);
+
 /// The value expression, if any, in a net declaration. Delay-control children
 /// describe either the declaration assignment or the net itself and are not
 /// initializer expressions.
@@ -557,9 +587,23 @@ bool isUnboundedEndpoint(::mlir::Operation *operation);
 /// Deterministic nonzero identifier for an outlined semantic code unit.
 uint64_t stableCodeUnitID(::mlir::StringRef key);
 
+/// Canonical source-authored identity for a semantic coverage entity. This
+/// excludes importer node numbers and generated symbol leaves so unrelated IR
+/// insertion cannot perturb coverage identities.
+std::string functionalSemanticIdentity(::mlir::Operation *operation);
+
+/// Stable nonzero v1 identity of a covergroup type.
+uint64_t stableFunctionalTypeID(semantic::SVCovergroupTypeOp covergroup);
+
 /// Whether overriding a captured reference mutates design/static storage
 /// rather than activation-local automatic storage.
 bool isStaticallyAllocatedOverrideTarget(::mlir::Value value);
+
+/// Materialize deferred automatic covergroup clocking samplers at the design
+/// anchor. Per-function lowering records plans but never mutates sibling
+/// symbols, keeping the nested pass safe under MLIR's parallel pass manager.
+::mlir::LogicalResult
+materializeCovergroupClockingSamplers(sim::SimDesignOp design);
 
 /// Whether a packed semantic type is signed.
 bool isSignedSemanticType(::mlir::Type type);

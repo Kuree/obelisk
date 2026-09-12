@@ -54,6 +54,13 @@ set_target_properties(obelisk-protect-inline-wipe-test PROPERTIES
 )
 add_dependencies(obelisk-protect-test obelisk-protect-inline-wipe-test)
 
+add_executable(obelisk-coverage-fixture EXCLUDE_FROM_ALL
+  Support/CoverageFixture.cpp)
+target_link_libraries(obelisk-coverage-fixture PRIVATE ObeliskCoverage)
+target_compile_features(obelisk-coverage-fixture PRIVATE cxx_std_17)
+set_target_properties(obelisk-coverage-fixture PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 function(obelisk_add_generated_process_object output_var directory input_file)
   set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/${directory}")
   set(generated_mlir "${generated_dir}/process.mlir")

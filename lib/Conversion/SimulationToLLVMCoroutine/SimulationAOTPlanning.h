@@ -217,7 +217,6 @@ mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
     const llvm::DenseSet<mlir::Operation *> &runtimeOwnedFanoutActors,
-    const llvm::DenseSet<mlir::Operation *> &negativeTimingFanoutActors,
     bool enabled, bool certifiedStaticIsland);
 mlir::FailureOr<NativeThreeTierPlan>
 buildNativeThreeTierPlan(mlir::ModuleOp module,

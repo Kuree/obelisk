@@ -1261,7 +1261,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
                               lexicalScope, op.getSystemLibraryCellAttr(),
                               timeMultiplier, timePrecision);
     if (display->fatal) {
-      if (failed(emitFunctionReturn(location, std::nullopt, false)))
+      if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                    /*emitBlockEventEnd=*/false)))
         return failure();
       setCurrent(addBlock());
     }

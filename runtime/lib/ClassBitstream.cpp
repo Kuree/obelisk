@@ -374,7 +374,7 @@ validatePlan(Plan &plan, const uint8_t *blob, uint64_t offset, uint64_t size,
   return true;
 }
 
-OBELISK_RT_FEATURE_HELPER const obelisk_rt_execution_extension_v3 *
+OBELISK_RT_FEATURE_HELPER const obelisk_rt_execution_extension_v1 *
 classExtension(const obelisk_rt_execution_descriptor_v1 *execution) {
   if (!execution ||
       (execution->flags & OBELISK_RT_EXECUTION_CLASS_BITSTREAM) == 0 ||
@@ -384,13 +384,13 @@ classExtension(const obelisk_rt_execution_descriptor_v1 *execution) {
   if (execution->reserved > UINTPTR_MAX - base)
     return nullptr;
   uintptr_t address = base + static_cast<uintptr_t>(execution->reserved);
-  if (address % alignof(obelisk_rt_execution_extension_v3) != 0)
+  if (address % alignof(obelisk_rt_execution_extension_v1) != 0)
     return nullptr;
   auto *extension =
-      reinterpret_cast<const obelisk_rt_execution_extension_v3 *>(address);
-  return extension->version == OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION &&
-                 extension->size == sizeof(*extension) &&
-                 extension->class_bitstream &&
+      reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(address);
+  bool valid = extension->version == OBELISK_RT_EXECUTION_EXTENSION_VERSION &&
+               extension->size == sizeof(*extension);
+  return valid && extension->class_bitstream &&
                  extension->class_bitstream_size != 0
              ? extension
              : nullptr;
@@ -405,7 +405,7 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status
 finalizeClassBitstream(obelisk_rt_context *context) {
   if (!context || !context->execution || context->classBitstreamState)
     return OBELISK_RT_INVALID_ARGUMENT;
-  const obelisk_rt_execution_extension_v3 *extension =
+  const obelisk_rt_execution_extension_v1 *extension =
       classExtension(context->execution);
   if (!extension || extension->class_bitstream_size < kHeaderSize ||
       extension->class_bitstream_size > SIZE_MAX ||

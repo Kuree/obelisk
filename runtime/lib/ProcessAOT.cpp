@@ -59,7 +59,8 @@ bool nativeStaticSpecializationEnvironmentClean(
 
 bool nativeAOTTransientBoundaryClean(const obelisk_rt_context *context) {
   if (!context || context->nativeScheduleExternalWritePending ||
-      context->nativeScheduleDirtyRootsPresent)
+      context->nativeScheduleDirtyRootsPresent ||
+      obelisk_rt_covergroup_strobes_pending_unlocked(context))
     return false;
   auto anyOverride = [](const std::vector<uint64_t> &mask) {
     return std::any_of(mask.begin(), mask.end(),
@@ -140,7 +141,10 @@ bool staticNBARootNeedsTransitions(const obelisk_rt_context *context,
                                    uint32_t rootIndex) {
   return !canUseStaticAOTFanout(context) ||
          rootIndex >= context->staticNBARootHasFanout.size() ||
-         context->staticNBARootHasFanout[rootIndex] != 0;
+         context->staticNBARootHasFanout[rootIndex] != 0 ||
+         rootIndex >= context->nativeScheduleNBARootCount ||
+         obelisk_rt_coverage_tracks_static_state_unlocked(
+             context, context->nativeScheduleNBARoots[rootIndex].static_state);
 }
 
 bool nativeStaticRootDirty(const obelisk_rt_context *context,
@@ -2921,6 +2925,7 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     };
     return context->nativeScheduleExternalWritePending ||
            context->nativeScheduleDirtyRootsPresent ||
+           obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
            anyOverride(context->forceMask) || anyOverride(context->assignMask);
   };
   auto runTransientHandoff = [&](bool &reachedBoundary) {

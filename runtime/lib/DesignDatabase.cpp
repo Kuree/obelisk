@@ -1,5 +1,6 @@
 //===- DesignDatabase.cpp - Checked DWARF-like design reflection ----------===//
 
+#include "ProcessShared.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
@@ -2462,18 +2463,21 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   }
   std::optional<PackedSignalTransitionBuffer> wideTransitions;
   constexpr size_t inlinePublishedBytes = 32;
-  std::array<uint8_t, inlinePublishedBytes * 2> inlinePublishedPlanes;
+  std::array<uint8_t, inlinePublishedBytes * 4> inlinePublishedPlanes;
   std::vector<uint8_t> overflowPublishedPlanes;
   uint8_t *publishedPlanes = nullptr;
   if (write && width > 64) {
+    if (width > UINT64_MAX - 7 ||
+        (width + 7) / 8 > std::numeric_limits<size_t>::max() / 4)
+      return OBELISK_RT_OUT_OF_RESOURCES;
     OBELISK_RT_TRY {
       wideTransitions.emplace(width);
       size_t bytes = static_cast<size_t>((width + 7) / 8);
       if (bytes <= inlinePublishedBytes) {
-        std::fill_n(inlinePublishedPlanes.data(), bytes * 2, uint8_t{0});
+        std::fill_n(inlinePublishedPlanes.data(), bytes * 4, uint8_t{0});
         publishedPlanes = inlinePublishedPlanes.data();
       } else {
-        overflowPublishedPlanes.assign(bytes * 2, 0);
+        overflowPublishedPlanes.assign(bytes * 4, 0);
         publishedPlanes = overflowPublishedPlanes.data();
       }
     }
@@ -2563,10 +2567,13 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
             ((oldZero & ~newZero) | (oldUnknown & newOne)) & mask;
         uint64_t negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & mask;
         std::array<uint8_t, 8> changedBytes{}, posedgeBytes{}, negedgeBytes{};
+        std::array<uint8_t, 8> oldValueBytes{}, oldUnknownBytes{};
         std::array<uint8_t, 8> valueBytes{}, unknownBytes{};
         storePackedBytes(changedBytes.data(), changed);
         storePackedBytes(posedgeBytes.data(), posedge);
         storePackedBytes(negedgeBytes.data(), negedge);
+        storePackedBytes(oldValueBytes.data(), oldValue);
+        storePackedBytes(oldUnknownBytes.data(), oldUnknown);
         storePackedBytes(valueBytes.data(), newValue);
         storePackedBytes(unknownBytes.data(), newUnknown);
         storePackedState(context->stateValue, stateOffset, width, newValue);
@@ -2584,8 +2591,9 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
               context, signalBase, stateOffset, width, false);
         if (!obelisk_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, changedBytes.data(),
-                posedgeBytes.data(), negedgeBytes.data(), valueBytes.data(),
-                unknownBytes.data(), synchronized))
+                posedgeBytes.data(), negedgeBytes.data(), oldValueBytes.data(),
+                oldUnknownBytes.data(), valueBytes.data(), unknownBytes.data(),
+                synchronized, overrideForce))
           return context->schedulerStatus;
         runClockCoordinator |=
             synchronized && context->nativeSchedulePlan &&
@@ -2594,10 +2602,17 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       }
     } else {
       size_t publishedBytes = static_cast<size_t>((width + 7) / 8);
-      uint8_t *publishedValue =
+      uint8_t *publishedOldValue =
           write ? publishedPlanes : static_cast<uint8_t *>(nullptr);
-      uint8_t *publishedUnknown = write ? publishedPlanes + publishedBytes
-                                        : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedOldUnknown =
+          write ? publishedPlanes + publishedBytes
+                : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedValue =
+          write ? publishedPlanes + publishedBytes * 2
+                : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedUnknown =
+          write ? publishedPlanes + publishedBytes * 3
+                : static_cast<uint8_t *>(nullptr);
       for (uint64_t bit = 0; bit != width; ++bit) {
         uint64_t sourceLimb = bit / 64;
         uint64_t sourceMask = uint64_t{1} << (bit % 64);
@@ -2606,14 +2621,19 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         uint64_t &stateValue = context->stateValue[absolute / 64];
         uint64_t &stateUnknown = context->stateUnknown[absolute / 64];
         if (write) {
+          bool oldValue = (stateValue & stateMask) != 0;
+          bool oldUnknown = (stateUnknown & stateMask) != 0;
+          setPackedByte(publishedOldValue, bit, oldValue);
+          setPackedByte(publishedOldUnknown, bit, oldUnknown);
           bool forced = absolute / 64 < context->forceMask.size() &&
                         (context->forceMask[absolute / 64] & stateMask) != 0;
           bool assigned = absolute / 64 < context->assignMask.size() &&
                           (context->assignMask[absolute / 64] & stateMask) != 0;
-          if ((forced || assigned) && !overrideForce)
+          if ((forced || assigned) && !overrideForce) {
+            setPackedByte(publishedValue, bit, oldValue);
+            setPackedByte(publishedUnknown, bit, oldUnknown);
             continue;
-          bool oldValue = (stateValue & stateMask) != 0;
-          bool oldUnknown = (stateUnknown & stateMask) != 0;
+          }
           bool newValue = (value[sourceLimb] & sourceMask) != 0;
           bool newUnknown =
               fourState && unknown && (unknown[sourceLimb] & sourceMask) != 0;
@@ -2661,7 +2681,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         if (!obelisk_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, wideTransitions->changed(),
                 wideTransitions->posedge(), wideTransitions->negedge(),
-                publishedValue, publishedUnknown, synchronized))
+                publishedOldValue, publishedOldUnknown, publishedValue,
+                publishedUnknown, synchronized, overrideForce))
           return context->schedulerStatus;
         runClockCoordinator |=
             synchronized && context->nativeSchedulePlan &&
@@ -2768,10 +2789,21 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_HANDLE;
   if (kind == OBELISK_RT_DESIGN_RECORD_NET)
     return obelisk_rt_release_design_nets(context, stateOffset, bitWidth);
-  std::vector<std::pair<uint64_t, uint32_t>> transitions;
-  OBELISK_RT_TRY { transitions.reserve(static_cast<size_t>(bitWidth)); }
+  if (bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  uint64_t byteCount = (bitWidth + 7) / 8;
+  if (byteCount > std::numeric_limits<size_t>::max())
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  std::vector<uint8_t> oldValue, oldUnknown, newValue, newUnknown;
+  OBELISK_RT_TRY {
+    oldValue.assign(static_cast<size_t>(byteCount), 0);
+    oldUnknown.assign(static_cast<size_t>(byteCount), 0);
+    newValue.assign(static_cast<size_t>(byteCount), 0);
+    newUnknown.assign(static_cast<size_t>(byteCount), 0);
+  }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   uint64_t signalBase = UINT64_MAX;
+  bool stateChanged = false;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     signalBase = obelisk_rt_canonical_state_handle_unlocked(
@@ -2788,46 +2820,44 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                       (context->assignMask[limb] & mask) != 0;
       bool retained = limb < context->continuousMask.size() &&
                       (context->continuousMask[limb] & mask) != 0;
+      bool oldValueBit = (context->stateValue[limb] & mask) != 0;
+      bool oldUnknownBit = (context->stateUnknown[limb] & mask) != 0;
+      bool newValueBit = oldValueBit;
+      bool newUnknownBit = oldUnknownBit;
       if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE && (assigned || retained)) {
-        bool oldValue = (context->stateValue[limb] & mask) != 0;
-        bool oldUnknown = (context->stateUnknown[limb] & mask) != 0;
-        bool newValue = assigned ? (context->assignValue[limb] & mask) != 0
-                                 : (context->continuousValue[limb] & mask) != 0;
-        bool newUnknown = assigned
-                              ? (context->assignUnknown[limb] & mask) != 0
-                              : (context->continuousUnknown[limb] & mask) != 0;
-        context->stateValue[limb] = newValue
+        newValueBit = assigned ? (context->assignValue[limb] & mask) != 0
+                               : (context->continuousValue[limb] & mask) != 0;
+        newUnknownBit = assigned
+                            ? (context->assignUnknown[limb] & mask) != 0
+                            : (context->continuousUnknown[limb] & mask) != 0;
+        context->stateValue[limb] = newValueBit
                                         ? context->stateValue[limb] | mask
                                         : context->stateValue[limb] & ~mask;
-        context->stateUnknown[limb] = newUnknown
+        context->stateUnknown[limb] = newUnknownBit
                                           ? context->stateUnknown[limb] | mask
                                           : context->stateUnknown[limb] & ~mask;
         uint32_t edges =
-            transitionEdges(oldValue, oldUnknown, newValue, newUnknown);
-        if (edges) {
-          uint64_t signal = obelisk_rt_v1_native_handle_offset(
-              signalBase, static_cast<int64_t>(bit));
-          if (signal == UINT64_MAX)
-            return OBELISK_RT_INVALID_HANDLE;
-          transitions.push_back({signal, edges});
-        }
+            transitionEdges(oldValueBit, oldUnknownBit, newValueBit,
+                            newUnknownBit);
+        stateChanged |= edges != 0;
       }
+      setPackedByte(oldValue.data(), bit, oldValueBit);
+      setPackedByte(oldUnknown.data(), bit, oldUnknownBit);
+      setPackedByte(newValue.data(), bit, newValueBit);
+      setPackedByte(newUnknown.data(), bit, newUnknownBit);
     }
-    if (!transitions.empty())
-      obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalBase,
-                                                      bitWidth);
-    if (!transitions.empty())
+    if (stateChanged)
       obelisk_rt_aot_external_write_unlocked(context);
     obelisk_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
   }
   // A procedural variable retains the forced value. Continuously driven
   // storage and nets immediately reveal their retained driver state.
-  for (auto [signal, edges] : transitions)
-    obelisk_rt_v1_scheduler_signal(context, signal, 1, edges);
-  if (!transitions.empty()) {
+  if (stateChanged) {
+    publishOverrideTransition(
+        context, signalBase, bitWidth, oldValue.data(), oldUnknown.data(),
+        newValue.data(), newUnknown.data());
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (!obelisk_rt_notify_observer_signal_unlocked(context, stateOffset,
-                                                    bitWidth))
+    if (context->schedulerStatus != OBELISK_RT_OK)
       return context->schedulerStatus;
   }
   return OBELISK_RT_OK;

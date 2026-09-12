@@ -1,0 +1,12 @@
+{
+  "include": [
+    {"metrics": ["toggle"], "hierarchy": "top.dut.**"}
+  ],
+  "exclude": [
+    {
+      "metrics": ["line", "toggle"],
+      "file": "third_party/**",
+      "reason": "external IP"
+    }
+  ]
+}

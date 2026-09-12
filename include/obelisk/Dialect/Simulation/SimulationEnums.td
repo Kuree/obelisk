@@ -5,6 +5,33 @@
 
 include "mlir/IR/EnumAttr.td"
 
+// Mutable instance options whose post-construction assignment affects live
+// functional-coverage queries. Keep these values aligned with the sole v1
+// runtime ABI; definition-only options are deliberately absent.
+def SimCovergroupOptionWeight
+    : I32EnumAttrCase<"Weight", 1, "weight">;
+def SimCovergroupOptionGoal
+    : I32EnumAttrCase<"Goal", 2, "goal">;
+def SimCovergroupOptionComment
+    : I32EnumAttrCase<"Comment", 3, "comment">;
+def SimCovergroupOptionAtLeast
+    : I32EnumAttrCase<"AtLeast", 4, "at_least">;
+def SimCovergroupOptionMergeInstances
+    : I32EnumAttrCase<"MergeInstances", 5, "merge_instances">;
+def SimCovergroupOptionCrossNumPrintMissing
+    : I32EnumAttrCase<"CrossNumPrintMissing", 6,
+                      "cross_num_print_missing">;
+def SimCovergroupInstanceOptionKind
+    : I32EnumAttr<"CovergroupInstanceOptionKind",
+                  "mutable functional-coverage option", [
+        SimCovergroupOptionWeight, SimCovergroupOptionGoal,
+        SimCovergroupOptionComment, SimCovergroupOptionAtLeast,
+        SimCovergroupOptionMergeInstances,
+        SimCovergroupOptionCrossNumPrintMissing
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimEntryRootInitializer
     : I32EnumAttrCase<"RootInitializer", 0, "root_initializer">;
 def SimEntryInitial : I32EnumAttrCase<"Initial", 1, "initial">;

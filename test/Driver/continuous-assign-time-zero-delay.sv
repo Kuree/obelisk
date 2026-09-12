@@ -31,3 +31,13 @@ module continuous_assign_time_zero_delay;
 endmodule
 
 // CHECK: CONTINUOUS ASSIGN DELAY PASS
+
+// Coverage must observe each semantic evaluation: the initial X evaluation,
+// the time-zero initialization assignment, and the later source transition.
+// RUN: obelisk -fno-lto -O0 --vpi=off --coverage=line %s -o %t.coverage.native
+// RUN: %t.coverage.native --coverage-output=%t.coverage.native.obcov
+// RUN: obelisk-cov report --format=lcov %t.coverage.native.obcov | FileCheck %s --check-prefix=COVERAGE
+// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode --coverage=line %s -o %t.coverage.bytecode
+// RUN: %t.coverage.bytecode --coverage-output=%t.coverage.bytecode.obcov
+// RUN: obelisk-cov report --format=lcov %t.coverage.bytecode.obcov | FileCheck %s --check-prefix=COVERAGE
+// COVERAGE: DA:15,3

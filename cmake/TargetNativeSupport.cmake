@@ -150,6 +150,11 @@ set(_obelisk_target_runtime_reflection_headers
     "${_obelisk_target_reflection_include_dir}/obelisk/Reflection/DesignReflectionLayout.h.inc"
     "${_obelisk_source_dir}/include/obelisk/Reflection/VPIObjectModel.h"
     "${_obelisk_target_reflection_include_dir}/obelisk/Reflection/VPIObjectModel.h.inc")
+set(_obelisk_target_runtime_coverage_headers
+    "${_obelisk_source_dir}/include/obelisk/Coverage/CoverageDatabase.h"
+    "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatDecls.h.inc"
+    "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatParser.h.inc"
+    "${_obelisk_target_reflection_include_dir}/obelisk/Coverage/CoverageFormatSerializer.h.inc")
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
 set(_obelisk_target_runtime_definitions)
@@ -158,7 +163,7 @@ if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
 endif()
 set(_obelisk_target_runtime_common_sources
-    ABI Bytecode Containers Coverage DesignBytecode DesignBytecodeImage
+    ABI Bytecode Containers Coverage CoverageBlockEvents CoverageDatabase DesignBytecode DesignBytecodeImage
     DesignBytecodeIntrinsics DesignBytecodeLogic DesignBytecodeNets
     DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
@@ -175,6 +180,11 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   set(source_dependencies
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
+  if(source STREQUAL "CoverageDatabase")
+    list(APPEND source_dependencies
+      "${_obelisk_source_dir}/lib/Coverage/CoverageFileSupport.h"
+      "${_obelisk_source_dir}/lib/Coverage/CoverageDatabase.cpp")
+  endif()
   if(source STREQUAL "RecursiveBitstream")
     list(APPEND source_dependencies
       "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
@@ -226,6 +236,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     DEPENDS
       ${source_dependencies}
       ${_obelisk_target_runtime_headers}
+      ${_obelisk_target_runtime_coverage_headers}
       ${_obelisk_target_runtime_vpi_headers}
     COMMENT "Building native and Full-LTO target runtime ${source}.cpp"
     VERBATIM)

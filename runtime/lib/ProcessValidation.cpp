@@ -636,9 +636,24 @@ bool obelisk_rt_validate_computed_wait_record(
     for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
       const obelisk_rt_observer_capture_abi_v1 &abi =
           descriptor->capture_abi[capture];
-      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED)
+      const obelisk_rt_computed_capture_v1 &value =
+          captures[observer.capture_begin + capture];
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+        if (value.payload1 > 2 || value.payload2 != 0 ||
+            (value.payload1 == 0 && value.stable_id != 0) ||
+            (value.payload1 != 0 && value.stable_id == 0))
+          return false;
+        if (value.payload1 == 0) {
+          obelisk_rt_stable_handle_v1 decoded;
+          if (!obelisk_rt_stable_handle_decode(value.payload0, &decoded))
+            return false;
+        }
         continue;
-      uint64_t stable = captures[observer.capture_begin + capture].stable_id;
+      }
+      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED ||
+          abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP)
+        continue;
+      uint64_t stable = value.stable_id;
       // Runtime-created named events use the disjoint dynamic-event
       // namespace, not the state-handle namespace. They are nevertheless a
       // canonical event capture and the observer evaluator reconstructs the
@@ -656,7 +671,8 @@ bool obelisk_rt_validate_computed_wait_record(
           dependencies[observer.dependency_begin + dependency];
       if ((entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL &&
            entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
-           entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED) ||
+           entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED &&
+           entry.kind != OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF) ||
           entry.width == 0 ||
           ((entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT ||
             entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED) &&
@@ -665,6 +681,17 @@ bool obelisk_rt_validate_computed_wait_record(
       if (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL) {
         obelisk_rt_stable_handle_v1 decoded;
         if (!obelisk_rt_stable_handle_decode(entry.stable_id, &decoded))
+          return false;
+      } else if (entry.kind == OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF) {
+        if (entry.stable_id < observer.capture_begin ||
+            entry.stable_id >=
+                uint64_t{observer.capture_begin} + observer.capture_count)
+          return false;
+        uint32_t localCapture =
+            static_cast<uint32_t>(entry.stable_id - observer.capture_begin);
+        if (descriptor->capture_abi[localCapture].kind !=
+                OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF ||
+            descriptor->capture_abi[localCapture].width != entry.width)
           return false;
       }
     }

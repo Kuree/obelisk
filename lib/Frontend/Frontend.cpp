@@ -17,6 +17,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -658,6 +659,28 @@ convertEnum(slang::ast::CoverageBinSymbol::BinKind kind) {
   return static_cast<slangir::CoverageBinKind>(static_cast<int>(kind));
 }
 
+std::optional<slangir::CoverageOptionKind>
+convertCoverageOptionName(std::string_view name) {
+  using Kind = slangir::CoverageOptionKind;
+  return llvm::StringSwitch<std::optional<Kind>>(name)
+      .Case("name", Kind::Name)
+      .Case("weight", Kind::Weight)
+      .Case("goal", Kind::Goal)
+      .Case("comment", Kind::Comment)
+      .Case("at_least", Kind::AtLeast)
+      .Case("auto_bin_max", Kind::AutoBinMax)
+      .Case("cross_num_print_missing", Kind::CrossNumPrintMissing)
+      .Case("cross_retain_auto_bins", Kind::CrossRetainAutoBins)
+      .Case("detect_overlap", Kind::DetectOverlap)
+      .Case("per_instance", Kind::PerInstance)
+      .Case("get_inst_coverage", Kind::GetInstCoverage)
+      .Case("strobe", Kind::Strobe)
+      .Case("merge_instances", Kind::MergeInstances)
+      .Case("distribute_first", Kind::DistributeFirst)
+      .Case("real_interval", Kind::RealInterval)
+      .Default(std::nullopt);
+}
+
 slangir::EdgeKind convertEnum(slang::ast::EdgeKind edge) {
   switch (edge) {
   case slang::ast::EdgeKind::None:
@@ -733,6 +756,17 @@ slangir::NetKind convertEnum(slang::ast::NetType::NetKind kind) {
   static_assert(static_cast<int>(slang::ast::NetType::Unknown) == 0 &&
                 static_cast<int>(slang::ast::NetType::UserDefined) == 14);
   return static_cast<slangir::NetKind>(static_cast<int>(kind));
+}
+
+slangir::CoverageTransitionRepeatKind
+convertEnum(slang::ast::CoverageBinSymbol::TransRangeList::RepeatKind kind) {
+  using Source = slang::ast::CoverageBinSymbol::TransRangeList;
+  static_assert(static_cast<int>(Source::None) == 0 &&
+                static_cast<int>(Source::Consecutive) == 1 &&
+                static_cast<int>(Source::Nonconsecutive) == 2 &&
+                static_cast<int>(Source::GoTo) == 3);
+  return static_cast<slangir::CoverageTransitionRepeatKind>(
+      static_cast<int>(kind));
 }
 
 slangir::AssertionUnaryOperator
@@ -4395,19 +4429,95 @@ private:
         SET_OP_ATTR(BaseGroup, TypeAttr::get(typeConverter.convert(*base)));
       SET_OP_ATTR(ConstructorArgumentCount,
                   builder.getI64IntegerAttr(node.getArguments().size()));
-      uint64_t sampleFormals = 0;
-      for (const auto &formal :
-           node.template membersOfType<slang::ast::FormalArgumentSymbol>())
-        sampleFormals +=
-            formal.flags.has(slang::ast::VariableFlags::CoverageSampleFormal);
-      SET_OP_ATTR(SampleFormalCount, builder.getI64IntegerAttr(sampleFormals));
+      SmallVector<const slang::ast::Symbol *> constructorFormals;
+      for (const slang::ast::FormalArgumentSymbol *formal : node.getArguments())
+        constructorFormals.push_back(formal);
+      SET_OP_ATTR(ConstructorFormals, builder.getArrayAttr({}));
+      currentPendingReferenceArrays.push_back(
+          {std::move(constructorFormals),
+           Op::getConstructorFormalsAttrName(operationName)});
+
+      SmallVector<const slang::ast::Symbol *> sampleFormals;
+      for (const slang::ast::Symbol &member : node.members()) {
+        const slang::ast::Symbol *candidate = &member;
+        if (const auto *transparent =
+                member.as_if<slang::ast::TransparentMemberSymbol>())
+          candidate = &transparent->wrapped;
+        if (const auto *formal =
+                candidate->as_if<slang::ast::FormalArgumentSymbol>();
+            formal &&
+            formal->flags.has(slang::ast::VariableFlags::CoverageSampleFormal))
+          sampleFormals.push_back(formal);
+      }
+      SET_OP_ATTR(SampleFormalCount,
+                  builder.getI64IntegerAttr(sampleFormals.size()));
+      SET_OP_ATTR(SampleFormals, builder.getArrayAttr({}));
+      currentPendingReferenceArrays.push_back(
+          {std::move(sampleFormals),
+           Op::getSampleFormalsAttrName(operationName)});
+
+      slangir::CoverageEventKind eventKind = slangir::CoverageEventKind::None;
+      if (const auto *syntax =
+              node.getSyntax()
+                  ? node.getSyntax()
+                        ->template as_if<
+                            slang::syntax::CovergroupDeclarationSyntax>()
+                  : nullptr) {
+        if (syntax->extends)
+          eventKind = slangir::CoverageEventKind::Inherited;
+        else if (syntax->event &&
+                 syntax->event->kind ==
+                     slang::syntax::SyntaxKind::WithFunctionSample)
+          eventKind = slangir::CoverageEventKind::CustomSample;
+        else if (syntax->event &&
+                 syntax->event->kind ==
+                     slang::syntax::SyntaxKind::BlockCoverageEvent)
+          eventKind = slangir::CoverageEventKind::Block;
+        else if (syntax->event)
+          eventKind = slangir::CoverageEventKind::Clocking;
+      }
+      SET_OP_ATTR(CoverageEventKind, slangir::CoverageEventKindAttr::get(
+                                         builder.getContext(), eventKind));
       SET_OP_ATTR(HasCoverageEvent,
                   builder.getBoolAttr(node.getCoverageEvent() != nullptr));
     } else if constexpr (std::same_as<T, slang::ast::CovergroupBodySymbol>) {
       SET_OP_ATTR(OptionCount, builder.getI64IntegerAttr(node.options.size()));
     } else if constexpr (std::same_as<T, slang::ast::CoverpointSymbol>) {
       SET_OP_ATTR(HasIff, builder.getBoolAttr(node.getIffExpr() != nullptr));
+      bool hasExplicitType = false;
+      if (const auto *syntax =
+              node.getSyntax()
+                  ? node.getSyntax()
+                        ->template as_if<slang::syntax::CoverpointSyntax>()
+                  : nullptr) {
+        const auto *implicit =
+            syntax->type->template as_if<slang::syntax::ImplicitTypeSyntax>();
+        hasExplicitType =
+            !implicit || implicit->signing || !implicit->dimensions.empty();
+      }
+      SET_OP_ATTR(HasExplicitType, builder.getBoolAttr(hasExplicitType));
       SET_OP_ATTR(OptionCount, builder.getI64IntegerAttr(node.options.size()));
+      SmallVector<Attribute> roles{slangir::CoverageExpressionRoleAttr::get(
+          builder.getContext(), slangir::CoverageExpressionRole::Sample)};
+      if (node.getIffExpr())
+        roles.push_back(slangir::CoverageExpressionRoleAttr::get(
+            builder.getContext(), slangir::CoverageExpressionRole::Iff));
+      SET_OP_ATTR(ExpressionRoles, builder.getArrayAttr(roles));
+    } else if constexpr (std::same_as<T, slang::ast::CoverCrossSymbol>) {
+      SET_OP_ATTR(TargetCount, builder.getI64IntegerAttr(node.targets.size()));
+      SET_OP_ATTR(TargetSymbols, builder.getArrayAttr({}));
+      SmallVector<const slang::ast::Symbol *> targets;
+      for (const slang::ast::CoverpointSymbol *target : node.targets)
+        targets.push_back(target);
+      currentPendingReferenceArrays.push_back(
+          {std::move(targets), Op::getTargetSymbolsAttrName(operationName)});
+      SET_OP_ATTR(HasIff, builder.getBoolAttr(node.getIffExpr() != nullptr));
+      SET_OP_ATTR(OptionCount, builder.getI64IntegerAttr(node.options.size()));
+      SmallVector<Attribute> roles;
+      if (node.getIffExpr())
+        roles.push_back(slangir::CoverageExpressionRoleAttr::get(
+            builder.getContext(), slangir::CoverageExpressionRole::Iff));
+      SET_OP_ATTR(ExpressionRoles, builder.getArrayAttr(roles));
     } else if constexpr (std::same_as<T, slang::ast::CoverageBinSymbol>) {
       SET_OP_ATTR(BinsKind,
                   slangir::CoverageBinKindAttr::get(
@@ -4427,9 +4537,80 @@ private:
                   builder.getI64IntegerAttr(node.getValues().size()));
       SET_OP_ATTR(TransitionSetCount,
                   builder.getI64IntegerAttr(node.getTransList().size()));
+
+      // CoverageBinSymbol::visitExprs visits a flat stream of optional
+      // expressions, state values, and transition atoms.  Record every
+      // direct child's source role, plus the transition grouping that the
+      // flat AST region cannot otherwise express.  Consumers must validate
+      // this inventory rather than depending on Slang's visitation order.
+      SmallVector<int64_t> childRoles;
+      auto addRole = [&](slangir::CoverageBinChildRole role) {
+        childRoles.push_back(static_cast<int64_t>(role));
+      };
+      if (node.getIffExpr())
+        addRole(slangir::CoverageBinChildRole::Iff);
+      if (node.getNumberOfBinsExpr())
+        addRole(slangir::CoverageBinChildRole::NumberOfBins);
+      if (node.getSetCoverageExpr())
+        addRole(slangir::CoverageBinChildRole::SetCoverage);
+      if (node.getWithExpr())
+        addRole(slangir::CoverageBinChildRole::With);
+      if (node.getCrossSelectExpr())
+        addRole(slangir::CoverageBinChildRole::CrossSelect);
+      for ([[maybe_unused]] const slang::ast::Expression *value :
+           node.getValues())
+        addRole(slangir::CoverageBinChildRole::Value);
+
+      SmallVector<int64_t> transitionSetRangeCounts;
+      SmallVector<int64_t> transitionRangeItemCounts;
+      SmallVector<int64_t> transitionRangeRepeatKinds;
+      SmallVector<int64_t> transitionRangeHasRepeatFrom;
+      SmallVector<int64_t> transitionRangeHasRepeatTo;
+      for (const auto &set : node.getTransList()) {
+        transitionSetRangeCounts.push_back(set.size());
+        for (const auto &range : set) {
+          transitionRangeItemCounts.push_back(range.items.size());
+          transitionRangeRepeatKinds.push_back(
+              static_cast<int64_t>(convertEnum(range.repeatKind)));
+          transitionRangeHasRepeatFrom.push_back(range.repeatFrom != nullptr);
+          transitionRangeHasRepeatTo.push_back(range.repeatTo != nullptr);
+          for ([[maybe_unused]] const slang::ast::Expression *item :
+               range.items)
+            addRole(slangir::CoverageBinChildRole::TransitionItem);
+          if (range.repeatFrom)
+            addRole(slangir::CoverageBinChildRole::TransitionRepeatFrom);
+          if (range.repeatTo)
+            addRole(slangir::CoverageBinChildRole::TransitionRepeatTo);
+        }
+      }
+      SET_OP_ATTR(ChildRoles, builder.getDenseI64ArrayAttr(childRoles));
+      SET_OP_ATTR(TransitionSetRangeCounts,
+                  builder.getDenseI64ArrayAttr(transitionSetRangeCounts));
+      SET_OP_ATTR(TransitionRangeItemCounts,
+                  builder.getDenseI64ArrayAttr(transitionRangeItemCounts));
+      SET_OP_ATTR(TransitionRangeRepeatKinds,
+                  builder.getDenseI64ArrayAttr(transitionRangeRepeatKinds));
+      SET_OP_ATTR(TransitionRangeHasRepeatFrom,
+                  builder.getDenseI64ArrayAttr(transitionRangeHasRepeatFrom));
+      SET_OP_ATTR(TransitionRangeHasRepeatTo,
+                  builder.getDenseI64ArrayAttr(transitionRangeHasRepeatTo));
     } else if constexpr (std::same_as<T, slang::ast::NewCovergroupExpression>) {
       SET_OP_ATTR(ArgumentCount,
                   builder.getI64IntegerAttr(node.arguments.size()));
+      SmallVector<int64_t> defaultedArguments;
+      defaultedArguments.reserve(node.arguments.size());
+      const auto &covergroupType =
+          node.type->getCanonicalType()
+              .template as<slang::ast::CovergroupType>();
+      auto formalArguments = covergroupType.getArguments();
+      for (auto [index, argument] : llvm::enumerate(node.arguments)) {
+        bool isDefaulted =
+            index < formalArguments.size() &&
+            formalArguments[index]->getDefaultValue() == argument;
+        defaultedArguments.push_back(isDefaulted);
+      }
+      SET_OP_ATTR(DefaultedArguments,
+                  builder.getDenseI64ArrayAttr(defaultedArguments));
     } else if constexpr (std::same_as<T, slang::ast::ConditionalStatement>) {
       SET_OP_ATTR(CheckKind,
                   slangir::UniquePriorityCheckAttr::get(
@@ -4669,10 +4850,49 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::EventListControl>) {
       SET_OP_ATTR(EventCount, builder.getI64IntegerAttr(node.events.size()));
     } else if constexpr (std::same_as<T, slang::ast::BlockEventListControl>) {
-      SmallVector<Attribute> isBegin;
+      SmallVector<Attribute> eventKinds;
       for (const auto &event : node.events)
-        isBegin.push_back(builder.getBoolAttr(event.isBegin));
-      SET_OP_ATTR(EventIsBegin, builder.getArrayAttr(isBegin));
+        eventKinds.push_back(slangir::CoverageBlockEventKindAttr::get(
+            builder.getContext(), event.isBegin
+                                      ? slangir::CoverageBlockEventKind::Begin
+                                      : slangir::CoverageBlockEventKind::End));
+      SET_OP_ATTR(EventKinds, builder.getArrayAttr(eventKinds));
+    }
+
+    if constexpr (std::derived_from<T, slang::ast::BinsSelectExpr>) {
+      const slang::ast::CoverCrossSymbol *cross = getCurrentCoverCross();
+      if (!cross) {
+        emitError(sourceLocation(getSourceRange(node).start()))
+            << "coverage bin selector has no enclosing cross";
+        sawInvalidNode = true;
+      } else {
+        attrs.set(Op::getEnclosingCrossSymbolAttrName(operationName),
+                  getSemanticSymbolReference(*cross));
+        currentPendingReferences.push_back(
+            {cross, Op::getEnclosingCrossSymbolAttrName(operationName)});
+      }
+    }
+    if constexpr (std::same_as<T, slang::ast::ConditionBinsSelectExpr>) {
+      SET_OP_ATTR(TargetSymbol, getSemanticSymbolReference(node.target));
+      currentPendingReferences.push_back(
+          {&node.target, Op::getTargetSymbolAttrName(operationName)});
+      SET_OP_ATTR(IntersectCount,
+                  builder.getI64IntegerAttr(node.intersects.size()));
+    } else if constexpr (std::same_as<T, slang::ast::UnaryBinsSelectExpr>) {
+      SET_OP_ATTR(OperatorKind,
+                  slangir::CoverageSelectUnaryOperatorAttr::get(
+                      builder.getContext(),
+                      slangir::CoverageSelectUnaryOperator::Negation));
+    } else if constexpr (std::same_as<T, slang::ast::BinaryBinsSelectExpr>) {
+      SET_OP_ATTR(OperatorKind,
+                  slangir::CoverageSelectBinaryOperatorAttr::get(
+                      builder.getContext(),
+                      node.op == slang::ast::BinaryBinsSelectExpr::And
+                          ? slangir::CoverageSelectBinaryOperator::And
+                          : slangir::CoverageSelectBinaryOperator::Or));
+    } else if constexpr (std::same_as<T, slang::ast::SetExprBinsSelectExpr> ||
+                         std::same_as<T, slang::ast::BinSelectWithFilterExpr>) {
+      SET_OP_ATTR(HasMatches, builder.getBoolAttr(node.matchesExpr != nullptr));
     }
 
     if constexpr (std::same_as<T, slang::ast::ConstraintList>) {
@@ -4835,6 +5055,75 @@ private:
 #undef SET_OP_ATTR
   }
 
+  const slang::ast::CoverCrossSymbol *getCurrentCoverCross() const {
+    for (const slang::ast::Scope *scope : llvm::reverse(currentScopes))
+      if (scope->asSymbol().kind == slang::ast::SymbolKind::CoverCross)
+        return &scope->asSymbol().as<slang::ast::CoverCrossSymbol>();
+    return nullptr;
+  }
+
+  void importCoverageOption(const slang::ast::CoverageOptionSetter &setter,
+                            const slang::ast::Symbol &owner,
+                            slangir::CoverageOptionOwnerKind ownerKind) {
+    std::optional<slangir::CoverageOptionKind> optionKind =
+        convertCoverageOptionName(setter.getName());
+    const auto *assignment =
+        setter.getExpression().as_if<slang::ast::AssignmentExpression>();
+    if (!optionKind || !assignment) {
+      emitError(sourceLocation(getSourceRange(setter.getExpression()).start()))
+          << "cannot retain malformed coverage option setter '"
+          << setter.getName() << "'";
+      sawInvalidNode = true;
+      return;
+    }
+
+    NamedAttrList attrs;
+    OperationName operationName(slangir::CoverageOptionOp::getOperationName(),
+                                builder.getContext());
+    attrs.set(slangir::CoverageOptionOp::getNodeIdAttrName(operationName),
+              builder.getI64IntegerAttr(nextNodeId++));
+    slang::SourceRange range = getSourceRange(*assignment);
+    if (std::optional<TypeAttr> expanded = sourceRangeAttr(range))
+      attrs.set(
+          slangir::CoverageOptionOp::getSourceRangeAttrName(operationName),
+          *expanded);
+    if (std::optional<TypeAttr> original =
+            sourceRangeAttr(range, /*useOriginalLocations=*/true))
+      attrs.set(slangir::CoverageOptionOp::getOriginalSourceRangeAttrName(
+                    operationName),
+                *original);
+    if (ArrayAttr macroStack = macroExpansionStack(range.start());
+        !macroStack.empty())
+      attrs.set(slangir::CoverageOptionOp::getMacroExpansionStackAttrName(
+                    operationName),
+                macroStack);
+    attrs.set(slangir::CoverageOptionOp::getOwnerKindAttrName(operationName),
+              slangir::CoverageOptionOwnerKindAttr::get(builder.getContext(),
+                                                        ownerKind));
+    attrs.set(slangir::CoverageOptionOp::getScopeKindAttrName(operationName),
+              slangir::CoverageOptionScopeKindAttr::get(
+                  builder.getContext(),
+                  setter.isTypeOption()
+                      ? slangir::CoverageOptionScopeKind::Type
+                      : slangir::CoverageOptionScopeKind::Instance));
+    attrs.set(slangir::CoverageOptionOp::getOptionKindAttrName(operationName),
+              slangir::CoverageOptionKindAttr::get(builder.getContext(),
+                                                   *optionKind));
+    attrs.set(slangir::CoverageOptionOp::getOwnerSymbolAttrName(operationName),
+              getSemanticSymbolReference(owner));
+
+    auto operation = slangir::CoverageOptionOp::create(
+        builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    operation.getBody().emplaceBlock();
+    pendingReferences.push_back(
+        {operation, &owner,
+         slangir::CoverageOptionOp::getOwnerSymbolAttrName(operationName)});
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&operation.getBody().front());
+    assignment->right().visit(*this);
+  }
+
   template <typename Op, typename Node> void importNode(const Node &node) {
     if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
       if (emittedSymbolPaths.contains(&node))
@@ -4934,7 +5223,47 @@ private:
       currentProcedures.push_back(&node);
       pushedProcedure = true;
     }
-    if constexpr (std::same_as<T, slang::ast::GenericClassDefSymbol>) {
+    if constexpr (std::same_as<T, slang::ast::CovergroupBodySymbol>) {
+      const slang::ast::Symbol &owner = node.getParentScope()->asSymbol();
+      for (const slang::ast::CoverageOptionSetter &option : node.options)
+        importCoverageOption(option, owner,
+                             slangir::CoverageOptionOwnerKind::Covergroup);
+      for (const slang::ast::Symbol &member : node.members())
+        member.visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::CovergroupType>) {
+      // Slang exposes the effective inherited sampling event through
+      // visitExprs(). Keep inheritance authoritative in base_group instead of
+      // cloning the base timing subtree into every derived type.
+      const auto *syntax =
+          node.getSyntax()
+              ? node.getSyntax()
+                    ->template as_if<
+                        slang::syntax::CovergroupDeclarationSyntax>()
+              : nullptr;
+      if (syntax && syntax->extends) {
+        for (const slang::ast::Symbol &member : node.members())
+          member.visit(*this);
+      } else {
+        this->visitDefault(node);
+      }
+    } else if constexpr (std::same_as<T, slang::ast::CoverpointSymbol>) {
+      node.getCoverageExpr().visit(*this);
+      if (const slang::ast::Expression *iff = node.getIffExpr())
+        iff->visit(*this);
+      for (const slang::ast::CoverageOptionSetter &option : node.options)
+        importCoverageOption(option, node,
+                             slangir::CoverageOptionOwnerKind::Coverpoint);
+      for (const slang::ast::Symbol &member : node.members())
+        member.visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::CoverCrossSymbol>) {
+      if (const slang::ast::Expression *iff = node.getIffExpr())
+        iff->visit(*this);
+      for (const slang::ast::CoverageOptionSetter &option : node.options)
+        importCoverageOption(option, node,
+                             slangir::CoverageOptionOwnerKind::Cross);
+      for (const slang::ast::Symbol &member : node.members())
+        member.visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::GenericClassDefSymbol>) {
       // Slang stores specializations in a hash map. Importing that iteration
       // order directly makes semantic symbol and node IDs depend on allocator
       // layout, invalidating deterministic native partitions and ThinLTO cache
@@ -5743,6 +6072,36 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     return failure();
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
+  (*module)->setAttr(
+      "obelisk.coverage.language_version",
+      IntegerAttr::get(IntegerType::get(&context, 32),
+                       options.languageVersion == LanguageVersion::IEEE1800_2017
+                           ? 2017
+                           : 2023));
+  if (options.collectCoverageSourceFiles) {
+    llvm::StringSet<> uniquePaths;
+    SmallVector<std::string> paths;
+    for (auto buffer : driver.sourceManager.getAllBuffers()) {
+      slang::SourceManager::BufferKind kind =
+          driver.sourceManager.getBufferKind(buffer);
+      if (kind == slang::SourceManager::BufferKind::Macro ||
+          kind == slang::SourceManager::BufferKind::MacroArg)
+        continue;
+      std::string path =
+          driver.sourceManager.getFullPath(buffer).generic_string();
+      if (path.empty())
+        path = std::string(driver.sourceManager.getRawFileName(buffer));
+      if (!path.empty() && uniquePaths.insert(path).second)
+        paths.push_back(std::move(path));
+    }
+    llvm::sort(paths);
+    SmallVector<Attribute> attributes;
+    attributes.reserve(paths.size());
+    for (const std::string &path : paths)
+      attributes.push_back(StringAttr::get(&context, path));
+    (*module)->setAttr("obelisk.coverage.source_files",
+                       ArrayAttr::get(&context, attributes));
+  }
   SlangASTImporter importer(*module, driver.sourceManager, *compilation,
                             *analysisManager, *sdfAnnotations);
   // Definitions are kept in Compilation's deterministic definition map and

@@ -94,6 +94,16 @@ void ObeliskSimFinalizePass::runOnOperation() {
   ModuleOp module = getOperation();
   bool invalid = false;
 
+  // Coverage keepalives are explicit SymbolUser edges needed only until the
+  // final symbol-pruning pass. They are compiler inventory markers rather than
+  // executable runtime operations.
+  SmallVector<sim::SimCoverageKeepaliveOp> coverageKeepalives;
+  module.walk([&](sim::SimCoverageKeepaliveOp op) {
+    coverageKeepalives.push_back(op);
+  });
+  for (sim::SimCoverageKeepaliveOp op : coverageKeepalives)
+    op.erase();
+
   // This is deliberately a module pass: operation passes must never mutate
   // ancestors or siblings, and design passes may execute concurrently.
   SmallVector<Operation *> obsoleteSemanticRoots;
@@ -120,6 +130,12 @@ void ObeliskSimFinalizePass::runOnOperation() {
   });
 
   module.walk([&](Operation *op) {
+    if (isa<sim::SimCovergroupClockingSpawnOp,
+            sim::SimCovergroupBlockEventPlanOp>(op)) {
+      op->emitError("deferred covergroup sampler survived its design-level "
+                    "materialization pass");
+      invalid = true;
+    }
     if (!isExecutableOperation(op, module)) {
       op->emitError() << "operation from dialect '"
                       << op->getName().getDialectNamespace()
@@ -207,12 +223,18 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   ObeliskSimPreparePassOptions prepareOptions;
   prepareOptions.pruneUnusedCoverage = earlySymbolDCE && vpiMode == "off";
   manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
-  OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable
   // private code units before paying the per-function lowering cost.
-  if (earlySymbolDCE)
-    designManager.addPass(createSymbolDCEPass());
+  if (earlySymbolDCE) {
+    OpPassManager &earlyDesignManager = manager.nest<sim::SimDesignOp>();
+    earlyDesignManager.addPass(createSymbolDCEPass());
+  }
+  // Coverage owns module-level schema metadata, so run it at the module
+  // anchor after the nested early DCE has completed. A nested pass must not
+  // mutate its parent operation.
+  manager.addPass(createObeliskSimPrepareCoveragePass());
+  OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   // Prepared virtual calls expose all compatible targets as symbol edges.
   // Once DCE removes unused method families, compact their vtable slots before
   // those call contracts are lowered to executable dispatch operations.

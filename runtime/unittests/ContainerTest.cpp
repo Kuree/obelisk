@@ -1300,6 +1300,130 @@ TEST_F(ManagedValueTest, QueueRingOperationsPreserveLogicalOrder) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest, CoverageSetSnapshotUsesLogicalContainerOrder) {
+  obelisk_rt_object_v1 *queue = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &queue),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+  for (uint64_t value = 1; value <= 5; ++value)
+    ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &value, nullptr),
+              OBELISK_RT_OK);
+  uint64_t discarded = 0;
+  uint32_t present = 0;
+  ASSERT_EQ(obelisk_rt_v1_queue_pop(queue, 1, &discarded, nullptr, &present),
+            OBELISK_RT_OK);
+  ASSERT_EQ(present, 1u);
+  uint64_t six = 6;
+  ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &six, nullptr),
+            OBELISK_RT_OK);
+
+  CoverageSetSnapshot snapshot;
+  ASSERT_EQ(obelisk_rt_coverage_set_snapshot(context, queue, 64,
+                                             OBELISK_RT_ELEMENT_BITS, false, 5,
+                                             snapshot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(snapshot.count, 5u);
+  ASSERT_EQ(snapshot.valueSize, sizeof(uint64_t));
+  ASSERT_EQ(snapshot.value.size(), 5 * sizeof(uint64_t));
+  const uint64_t expected[] = {2, 3, 4, 5, 6};
+  for (size_t index = 0; index != std::size(expected); ++index) {
+    uint64_t observed = 0;
+    std::memcpy(&observed, snapshot.value.data() + index * sizeof(uint64_t),
+                sizeof(observed));
+    EXPECT_EQ(observed, expected[index]);
+  }
+  EXPECT_TRUE(snapshot.unknown.empty());
+  EXPECT_EQ(obelisk_rt_coverage_set_snapshot(context, queue, 64,
+                                             OBELISK_RT_ELEMENT_BITS, false, 4,
+                                             snapshot),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, CoverageSetSnapshotPreservesLogicAndRealValues) {
+  obelisk_rt_object_v1 *logic = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &logicElement, 2, &logic),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 logicRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &logicRoot, &logic),
+            OBELISK_RT_OK);
+  const uint8_t logicValues[] = {0x5, 0xa};
+  const uint8_t logicUnknown[] = {0x2, 0x4};
+  for (int64_t index = 0; index != 2; ++index)
+    ASSERT_EQ(obelisk_rt_v1_container_write(lane, logic, index,
+                                            &logicValues[index],
+                                            &logicUnknown[index]),
+              OBELISK_RT_OK);
+
+  CoverageSetSnapshot snapshot;
+  ASSERT_EQ(obelisk_rt_coverage_set_snapshot(
+                context, logic, 4, OBELISK_RT_ELEMENT_LOGIC, true, 2, snapshot),
+            OBELISK_RT_OK);
+  EXPECT_EQ(snapshot.value, std::vector<uint8_t>(std::begin(logicValues),
+                                                 std::end(logicValues)));
+  EXPECT_EQ(snapshot.unknown, std::vector<uint8_t>(std::begin(logicUnknown),
+                                                   std::end(logicUnknown)));
+
+  const obelisk_rt_element_type_v1 realElement{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_REAL, 901, 0,      0,
+      sizeof(double),     alignof(double),         64,  nullptr};
+  obelisk_rt_object_v1 *reals = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &realElement, 2, &reals),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 realRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &realRoot, &reals), OBELISK_RT_OK);
+  const double realValues[] = {1.25, -2.5};
+  for (int64_t index = 0; index != 2; ++index)
+    ASSERT_EQ(obelisk_rt_v1_container_write(lane, reals, index,
+                                            &realValues[index], nullptr),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_coverage_set_snapshot(context, reals, 64,
+                                             OBELISK_RT_ELEMENT_REAL, false, 2,
+                                             snapshot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(snapshot.value.size(), sizeof(realValues));
+  EXPECT_EQ(std::memcmp(snapshot.value.data(), realValues, sizeof(realValues)),
+            0);
+
+  const obelisk_rt_element_type_v1 shortRealElement{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_REAL, 902, 0,      0,
+      sizeof(float),      alignof(float),          32,  nullptr};
+  obelisk_rt_object_v1 *shortReals = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &shortRealElement, 2,
+                                               &shortReals),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 shortRealRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &shortRealRoot, &shortReals),
+            OBELISK_RT_OK);
+  const float shortRealValues[] = {3.5f, -4.5f};
+  for (int64_t index = 0; index != 2; ++index)
+    ASSERT_EQ(obelisk_rt_v1_container_write(lane, shortReals, index,
+                                            &shortRealValues[index], nullptr),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_coverage_set_snapshot(context, shortReals, 32,
+                                             OBELISK_RT_ELEMENT_REAL, false, 2,
+                                             snapshot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(snapshot.value.size(), sizeof(shortRealValues));
+  EXPECT_EQ(std::memcmp(snapshot.value.data(), shortRealValues,
+                        sizeof(shortRealValues)),
+            0);
+
+  CoverageSetSnapshot empty;
+  EXPECT_EQ(obelisk_rt_coverage_set_snapshot(
+                context, nullptr, 9, OBELISK_RT_ELEMENT_BITS, false, 2, empty),
+            OBELISK_RT_OK);
+  EXPECT_EQ(empty.count, 0u);
+  EXPECT_EQ(empty.valueSize, 2u);
+  EXPECT_EQ(obelisk_rt_coverage_set_snapshot(
+                context, logic, 4, OBELISK_RT_ELEMENT_BITS, false, 2, snapshot),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &shortRealRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &realRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &logicRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedValueTest, QueueBoundsAreMaximumLegalIndices) {
   for (uint64_t bound : {UINT64_C(0), UINT64_C(2)}) {
     obelisk_rt_object_v1 *queue = nullptr;

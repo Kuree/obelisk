@@ -1875,7 +1875,7 @@ TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
   static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
   static_assert(sizeof(void *) != 8 ||
-                sizeof(ClockOccurrenceFeatureState) == 248);
+                sizeof(ClockOccurrenceFeatureState) == 240);
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -2323,7 +2323,7 @@ TEST(RuntimeInternals, ClockConditionPublicationViewMergesOnlyCapturedOverlap) {
   uint8_t publishedUnknown = 0x03;
   ClockConditionPublicationView publication{32, uint64_t{1} << 40, 0,
                                             &publishedValue, &publishedUnknown};
-  context->clockOccurrences->conditionPublication = &publication;
+  context->conditionPublication = &publication;
   uint8_t globalPlane[8] = {};
   uint8_t value = 0xff;
   uint8_t unknown = 0xff;
@@ -2347,7 +2347,7 @@ TEST(RuntimeInternals, ClockConditionPublicationViewMergesOnlyCapturedOverlap) {
   EXPECT_EQ(value, publishedValue);
   EXPECT_EQ(unknown, publishedUnknown);
 
-  context->clockOccurrences->conditionPublication = nullptr;
+  context->conditionPublication = nullptr;
   context->observerForcesCanonicalPlane = false;
   context->clockOccurrences.reset();
   obelisk_rt_v1_context_destroy(context);
@@ -4452,6 +4452,75 @@ TEST(Scheduler, NativeOverrideWakesWaitersOnTheForcedValue) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, NativeForceReleaseRestoresAssignedValueOnce) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+
+  uint8_t globalValue = 0;
+  uint8_t globalUnknown = 0;
+  constexpr uint8_t zero = 0;
+  constexpr uint8_t one = 1;
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, &globalValue, &globalUnknown, 1, root, 1,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 1, &one, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(globalValue, 1u);
+
+  // Rebase toggle coverage to the already-active assign. The force contributes
+  // one 1->0 transition; release must publish the restored assign as exactly
+  // one 0->1 transition even though assignMask remains active.
+  ASSERT_EQ(obelisk_rt_v1_coverage_finalize(
+                context, 0, 1, &one, &zero,
+                OBELISK_RT_COVERAGE_PERSIST_ALL),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, root),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, &globalValue, &globalUnknown, 1, root, 1,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0, &zero, &zero),
+            OBELISK_RT_OK);
+  ASSERT_EQ(globalValue, 0u);
+
+  SchedulerFixture fixture(6);
+  fixture.descriptor.execution = &execution;
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerWaitHandle = root;
+  schedulerWaitWidth = 1;
+  schedulerResumeCount = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(schedulerResumeCount, 0u);
+
+  ASSERT_EQ(obelisk_rt_v1_native_release_override(
+                context, &globalValue, &globalUnknown, 1, root, 1,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(globalValue, 1u);
+  EXPECT_EQ(context->stateValue[0] & 1, 1u);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+
+  ASSERT_NE(context->coverage, nullptr);
+  ASSERT_EQ(context->coverage->toggleCounters.size(), 4u);
+  EXPECT_EQ(context->coverage->toggleCounters[0], 1u);
+  EXPECT_EQ(context->coverage->toggleCounters[1], 1u);
+  EXPECT_EQ(context->coverage->toggleCounters[2], 0u);
+  EXPECT_EQ(context->coverage->toggleCounters[3], 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTStaticFanoutMatchesRangeAndFourStateEdgeExactly) {
   AOTTestState state;
   const obelisk_rt_static_fanout_entry fanout[] = {
@@ -4579,6 +4648,16 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
             OBELISK_RT_OK);
+  constexpr uint8_t zero = 0;
+  ASSERT_EQ(obelisk_rt_v1_coverage_finalize(
+                context, 0, 1, &zero, &zero,
+                OBELISK_RT_COVERAGE_PERSIST_ALL),
+            OBELISK_RT_OK);
+  uint64_t coveredState = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(coveredState, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, coveredState),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   SchedulerFixture fixture(5);
@@ -4609,8 +4688,8 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
   uint8_t newValue = 1;
   uint8_t newUnknown = 0;
   ASSERT_TRUE(obelisk_rt_publish_native_signal_transition_unlocked(
-      context, root, 1, &changed, &posedge, &negedge, &newValue, &newUnknown,
-      true));
+      context, root, 1, &changed, &posedge, &negedge, &zero, &zero, &newValue,
+      &newUnknown, true));
   EXPECT_EQ(ingress, 1u);
   EXPECT_FALSE(context->nativeScheduleExternalWritePending);
   EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
@@ -4624,6 +4703,45 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
   clockCoordinatorIngress = nullptr;
   EXPECT_EQ(schedulerResumeCount, 1u);
   EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
+  uint64_t covered = 0, total = 0;
+  double percentage = 0;
+  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+                                         &covered, &total, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 1u);
+  EXPECT_EQ(total, 2u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Coverage, GenericScalarNetPublicationRecordsToggleTransition) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  constexpr uint8_t zero = 0;
+  ASSERT_EQ(obelisk_rt_v1_coverage_finalize(
+                context, 0, 1, &zero, &zero,
+                OBELISK_RT_COVERAGE_PERSIST_ALL),
+            OBELISK_RT_OK);
+  uint64_t state = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(state, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, state),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+
+  ASSERT_TRUE(obelisk_rt_append_signal_event_unlocked(context, state, false,
+                                                      false, true, false));
+  uint64_t covered = 0, total = 0;
+  double percentage = 0;
+  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+                                         &covered, &total, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 1u);
+  EXPECT_EQ(total, 2u);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -5560,6 +5678,8 @@ TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   };
   uint8_t valuePlane = 0xc0;
   uint8_t unknownPlane = 0xf0;
+  uint8_t nativeValue = valuePlane;
+  uint8_t nativeUnknown = unknownPlane;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
   plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
@@ -5578,6 +5698,9 @@ TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   context->stateUnknown.assign(1, 0);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
             OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, &nativeValue,
+                                            &nativeUnknown, 8),
+            OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   generated.value[0] = 0x0a;
@@ -5588,6 +5711,8 @@ TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(valuePlane, 0xca);
   EXPECT_EQ(unknownPlane, 0xf5);
+  EXPECT_EQ(nativeValue, valuePlane);
+  EXPECT_EQ(nativeUnknown, unknownPlane);
   EXPECT_EQ(context->signalDiagnostics.aotNBAStages, 1u);
   EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
   EXPECT_EQ(generated.write_mask[0], 0u);
@@ -5604,8 +5729,69 @@ TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_EQ(valuePlane, 0x2a);
   EXPECT_EQ(unknownPlane, 0x45);
+  EXPECT_EQ(nativeValue, valuePlane);
+  EXPECT_EQ(nativeUnknown, unknownPlane);
   EXPECT_EQ(context->signalDiagnostics.aotNBAStages, 2u);
   EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 2u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, GeneratedNBAScalarRecordsCoveredTransitionsExactlyOnce) {
+  AOTTestState state;
+  obelisk_rt_generated_nba_accumulator_256 generated{};
+  const obelisk_rt_static_nba_root roots[] = {
+      {17, 1, 1, &generated},
+  };
+  uint8_t valuePlane = 0;
+  uint8_t unknownPlane = 0;
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.state_value = &valuePlane;
+  plan.state_unknown = &unknownPlane;
+  plan.state_bit_count = 1;
+  plan.nba_roots = roots;
+  plan.nba_root_count = std::size(roots);
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  constexpr std::array<uint8_t, 1> zero{0};
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_finalize(
+          context, 0, 1, zero.data(), zero.data(),
+          OBELISK_RT_COVERAGE_PERSIST_ALL),
+      OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, root),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  generated.value[0] = 1;
+  generated.write_mask[0] = 1;
+  generated.valid = 1;
+  generated.exec_region = OBELISK_RT_REGION_NBA;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+
+  generated.value[0] = 0;
+  generated.write_mask[0] = 1;
+  generated.valid = 1;
+  generated.exec_region = OBELISK_RT_REGION_NBA;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+
+  ASSERT_NE(context->coverage, nullptr);
+  ASSERT_EQ(context->coverage->toggleCounters.size(), 4u);
+  EXPECT_EQ(context->coverage->toggleCounters[0], 1u);
+  EXPECT_EQ(context->coverage->toggleCounters[1], 1u);
+  EXPECT_EQ(context->coverage->toggleCounters[2], 0u);
+  EXPECT_EQ(context->coverage->toggleCounters[3], 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -5836,6 +6022,8 @@ TEST(Scheduler, GeneratedNBA256CommitsDirectlyWithoutFanout) {
   };
   std::array<uint8_t, 32> valuePlane{};
   std::array<uint8_t, 32> unknownPlane{};
+  std::array<uint8_t, 32> nativeValue{};
+  std::array<uint8_t, 32> nativeUnknown{};
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
   plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
@@ -5854,6 +6042,9 @@ TEST(Scheduler, GeneratedNBA256CommitsDirectlyWithoutFanout) {
   context->stateUnknown.assign(4, 0);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 256),
             OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(
+                context, nativeValue.data(), nativeUnknown.data(), 256),
+            OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
 
   generated.value[0] = 0x55;
@@ -5867,6 +6058,8 @@ TEST(Scheduler, GeneratedNBA256CommitsDirectlyWithoutFanout) {
   EXPECT_EQ(valuePlane[31], 0xaa);
   EXPECT_EQ(context->stateValue[0] & 0xff, 0x55);
   EXPECT_EQ(context->stateValue[3] >> 56, 0xaa);
+  EXPECT_EQ(nativeValue, valuePlane);
+  EXPECT_EQ(nativeUnknown, unknownPlane);
   EXPECT_EQ(context->signalDiagnostics.aotNBAStages, 2u);
   EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
   EXPECT_FALSE(context->staticNBAAccumulators[0].valid);
@@ -5874,6 +6067,23 @@ TEST(Scheduler, GeneratedNBA256CommitsDirectlyWithoutFanout) {
                           std::end(generated.write_mask),
                           [](uint64_t mask) { return mask == 0; }));
   EXPECT_EQ(context->signalDiagnostics.publications, 0u);
+
+  // The active-AOT batch path intentionally leaves the canonical context
+  // plane lazy, but every separately bound native tier must still observe the
+  // committed plan state.
+  generated.value[0] = 0xaa;
+  generated.value[3] = UINT64_C(0x5500000000000000);
+  generated.unknown[0] = 0x33;
+  generated.write_mask[0] = UINT32_MAX;
+  generated.write_mask[3] = UINT64_C(0xffffffff00000000);
+  generated.valid = 1;
+  generated.exec_region = OBELISK_RT_REGION_NBA;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+  EXPECT_EQ(valuePlane[0], 0xaa);
+  EXPECT_EQ(valuePlane[31], 0x55);
+  EXPECT_EQ(unknownPlane[0], 0x33);
+  EXPECT_EQ(nativeValue, valuePlane);
+  EXPECT_EQ(nativeUnknown, unknownPlane);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -6369,6 +6579,40 @@ TEST(Scheduler, DelayedNBAsAdvanceTimeAndPreserveQueueOrder) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(plane, second);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, CanonicalNBAKeepsBoundNativeStateMirrorCoherent) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+
+  uint8_t nativeValue = 0;
+  uint8_t nativeUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, &nativeValue,
+                                            &nativeUnknown, 8),
+            OBELISK_RT_OK);
+  uint8_t value = 0xa6;
+  uint8_t unknown = 0x18;
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  ASSERT_NE(root, UINT64_MAX);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 8,
+                root, 8, 0, &value, &unknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+
+  EXPECT_EQ(context->stateValue[0] & 0xff, value);
+  EXPECT_EQ(context->stateUnknown[0] & 0xff, unknown);
+  EXPECT_EQ(nativeValue, value);
+  EXPECT_EQ(nativeUnknown, unknown);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -8643,6 +8887,201 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
 
 std::vector<uint32_t> preponedObserverSamples;
 
+std::vector<uint32_t> covergroupClockEventSamples;
+uint8_t covergroupClockEventGlobalPlane = 0;
+uint64_t covergroupClockEventSentinel = 1;
+uint64_t covergroupClockEventCompletionTarget = 0;
+bool covergroupClockEventReentrantTransition = false;
+uint32_t covergroupClockEventSamplerReentrantKind = 0;
+uint32_t covergroupClockEventRegion = UINT32_MAX;
+
+constexpr uint64_t covergroupClockEventPrimaryObserverID = 979;
+constexpr uint64_t covergroupClockEventOrObserverID = 980;
+
+obelisk_rt_status
+covergroupClockEventPrimaryEvaluator(obelisk_rt_context *context,
+                                     const uint64_t *captures,
+                                     uint32_t captureCount, uint64_t *value,
+                                     uint64_t *unknown, uint32_t limbCount) {
+  if (!context || !captures || captureCount != 1 || !value || !unknown ||
+      limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  bool bitValue = false;
+  bool bitUnknown = false;
+  if (!obelisk_rt_read_clock_condition_publication_bit_unlocked(
+          context, captures[0], 0, bitValue, bitUnknown) &&
+      !obelisk_rt_read_signal_bit_unlocked(context, captures[0], 0, bitValue,
+                                           bitUnknown,
+                                           /*useSnapshot=*/false))
+    return OBELISK_RT_INVALID_HANDLE;
+  value[0] = bitValue;
+  unknown[0] = bitUnknown;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status covergroupClockEventOrEvaluator(obelisk_rt_context *context,
+                                                  const uint64_t *captures,
+                                                  uint32_t captureCount,
+                                                  uint64_t *value,
+                                                  uint64_t *unknown,
+                                                  uint32_t limbCount) {
+  if (!context || !captures || captureCount != 1 || !value || !unknown ||
+      limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto read = [&](uint64_t stableID, bool &bitValue, bool &bitUnknown) {
+    return obelisk_rt_read_clock_condition_publication_bit_unlocked(
+               context, stableID, 0, bitValue, bitUnknown) ||
+           obelisk_rt_read_signal_bit_unlocked(context, stableID, 0, bitValue,
+                                               bitUnknown,
+                                               /*useSnapshot=*/false);
+  };
+  bool lhs = false;
+  bool lhsUnknown = false;
+  bool rhs = false;
+  bool rhsUnknown = false;
+  if (!read(0, lhs, lhsUnknown) || !read(1, rhs, rhsUnknown))
+    return OBELISK_RT_INVALID_HANDLE;
+  value[0] = lhs || rhs;
+  unknown[0] = !value[0] && (lhsUnknown || rhsUnknown);
+  return OBELISK_RT_OK;
+}
+
+std::vector<uint64_t>
+makeCovergroupClockEventPlan(const std::vector<uint64_t> &primaries,
+                             const std::vector<uint64_t> &conditions,
+                             const std::vector<uint32_t> &edges) {
+  uint32_t clauseCount = primaries.size();
+  uint32_t conditionCount = 0;
+  for (uint64_t condition : conditions)
+    conditionCount += condition != UINT64_MAX;
+  uint32_t observerCount = clauseCount + conditionCount;
+  uint32_t captureCount = observerCount;
+  uint32_t dependencyCount = observerCount;
+  uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+  uint64_t capturesOffset =
+      observersOffset +
+      uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+  uint64_t dependenciesOffset =
+      capturesOffset +
+      uint64_t{captureCount} * sizeof(obelisk_rt_computed_capture_v1);
+  uint64_t clausesOffset =
+      dependenciesOffset +
+      uint64_t{dependencyCount} * sizeof(obelisk_rt_computed_dependency_v1);
+  uint64_t previousOffset =
+      clausesOffset +
+      uint64_t{clauseCount} * sizeof(obelisk_rt_computed_clause_v1);
+  uint64_t totalSize = previousOffset + uint64_t{clauseCount} * 16;
+  EXPECT_EQ(totalSize % sizeof(uint64_t), 0u);
+  std::vector<uint64_t> bytes(totalSize / sizeof(uint64_t), 0);
+  auto write = [&](uint64_t offset, const auto &record) {
+    auto *storage = reinterpret_cast<uint8_t *>(bytes.data());
+    std::memcpy(storage + offset, &record, sizeof(record));
+  };
+  obelisk_rt_computed_wait_record_v1 header{
+      OBELISK_RT_VERSION,
+      OBELISK_RT_SUSPEND_OBSERVER,
+      OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+      clauseCount,
+      observerCount,
+      captureCount,
+      dependencyCount,
+      clauseCount,
+      observersOffset,
+      capturesOffset,
+      dependenciesOffset,
+      clausesOffset,
+      previousOffset,
+      0,
+      totalSize,
+      0};
+  write(0, header);
+  std::vector<uint64_t> handles(primaries);
+  for (uint64_t condition : conditions)
+    if (condition != UINT64_MAX)
+      handles.push_back(condition);
+  for (uint32_t index = 0; index != observerCount; ++index) {
+    obelisk_rt_computed_observer_v1 observer{
+        covergroupClockEventPrimaryObserverID,
+        index,
+        1,
+        index,
+        1,
+        index < clauseCount
+            ? static_cast<uint32_t>(previousOffset + uint64_t{index} * 16)
+            : UINT32_MAX,
+        0};
+    write(observersOffset +
+              uint64_t{index} * sizeof(obelisk_rt_computed_observer_v1),
+          observer);
+    obelisk_rt_computed_capture_v1 capture{handles[index], 0, 0, 0};
+    write(capturesOffset +
+              uint64_t{index} * sizeof(obelisk_rt_computed_capture_v1),
+          capture);
+    obelisk_rt_computed_dependency_v1 dependency{
+        handles[index], OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 1};
+    write(dependenciesOffset +
+              uint64_t{index} * sizeof(obelisk_rt_computed_dependency_v1),
+          dependency);
+  }
+  uint32_t conditionIndex = 0;
+  for (uint32_t index = 0; index != clauseCount; ++index) {
+    obelisk_rt_computed_clause_v1 clause{
+        index,
+        conditions[index] == UINT64_MAX ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                                        : clauseCount + conditionIndex++,
+        edges[index], 0};
+    write(clausesOffset +
+              uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1),
+          clause);
+  }
+  return bytes;
+}
+
+obelisk_rt_status covergroupClockEventEvaluator(obelisk_rt_context *context,
+                                                const uint64_t *captures,
+                                                uint32_t captureCount,
+                                                uint64_t *value,
+                                                uint64_t *unknown,
+                                                uint32_t limbCount) {
+  if (!context || !captures || captureCount != 1 || captures[0] != 42 ||
+      !value || !unknown || limbCount != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint8_t sampled = 0;
+  obelisk_rt_status status = obelisk_rt_v1_native_state_load_plane(
+      context, &covergroupClockEventGlobalPlane, 4, 0, 1, 0, 0, &sampled);
+  if (status != OBELISK_RT_OK)
+    return status;
+  covergroupClockEventRegion = context->activeExecRegion;
+  covergroupClockEventSamples.push_back(sampled & 1);
+  if (covergroupClockEventSamplerReentrantKind != 0) {
+    uint32_t kind = covergroupClockEventSamplerReentrantKind;
+    covergroupClockEventSamplerReentrantKind = 0;
+    if (kind == 1) {
+      const uint8_t oldValue = 0;
+      const uint8_t newValue = 1;
+      obelisk_rt_v1_scheduler_signal_transition(context, 1, 1, &oldValue,
+                                                nullptr, &newValue, nullptr);
+      context->stateValue[0] |= uint64_t{1} << 2;
+      context->stateUnknown[0] &= ~(uint64_t{1} << 2);
+    }
+  }
+  if (covergroupClockEventReentrantTransition) {
+    covergroupClockEventReentrantTransition = false;
+    const uint8_t oldValue = 0;
+    const uint8_t newValue = 1;
+    obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oldValue, nullptr,
+                                              &newValue, nullptr);
+  }
+  if (covergroupClockEventCompletionTarget != 0) {
+    uint64_t target = covergroupClockEventCompletionTarget;
+    covergroupClockEventCompletionTarget = 0;
+    obelisk_rt_program_complete_unlocked(context, target, 0);
+  }
+  value[0] = covergroupClockEventSentinel & 1;
+  unknown[0] = (covergroupClockEventSentinel >> 1) & 1;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status preponedObserverEvaluator(obelisk_rt_context *context,
                                             const uint64_t *,
                                             uint32_t captureCount,
@@ -8721,6 +9160,671 @@ TEST(RuntimeInternals, ComputedWaitAcceptsDynamicEventCapture) {
   record.capture.stable_id = UINT64_MAX;
   EXPECT_FALSE(obelisk_rt_validate_computed_wait_record(
       &execution, &record.wait, sizeof(record)));
+}
+
+TEST(RuntimeInternals,
+     CovergroupClockEventsSampleEachAtomicPublicationAndShareOneCohort) {
+  constexpr uint64_t observerID = 981;
+  const std::array<obelisk_rt_observer_capture_abi_v1, 2> misplacedABI{{
+      {OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1},
+      {OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64},
+  }};
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const std::array<obelisk_rt_observer_descriptor_v1, 3> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID - 1, misplacedABI.data(), 2, 1, 0,
+       OBELISK_RT_OBSERVER_NO_BYTECODE, covergroupClockEventEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.context = context;
+  instance.tier = OBELISK_RT_TIER_NATIVE;
+  context->scheduledProcesses.emplace_back();
+  ScheduledProcess &scheduled = context->scheduledProcesses.back();
+  scheduled.instance = &instance;
+  scheduled.token = 1;
+  scheduled.started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  context->activeNativeProcess = &instance;
+  context->activeLogicalProcessToken =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1};
+
+  const std::array<uint64_t, 2> primaries{{0, 1}};
+  // The first clause is gated by bit 2; the second has no iff condition.
+  const std::array<uint64_t, 2> conditions{{2, UINT64_MAX}};
+  const std::array<uint32_t, 2> edges{
+      {OBELISK_RT_WAIT_EDGE_BOTH, OBELISK_RT_WAIT_EDGE_BOTH}};
+  std::vector<uint64_t> eventPlan = makeCovergroupClockEventPlan(
+      std::vector<uint64_t>(primaries.begin(), primaries.end()),
+      std::vector<uint64_t>(conditions.begin(), conditions.end()),
+      std::vector<uint32_t>(edges.begin(), edges.end()));
+  auto *eventRecord =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(eventPlan.data());
+  auto *eventObservers = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+      reinterpret_cast<uint8_t *>(eventPlan.data()) +
+      eventRecord->observers_offset);
+  // Both primaries depend on two bits in the same indexed page. Registration
+  // must keep only one forward bucket entry per clause, and teardown must not
+  // leave a same-clause swap entry dangling.
+  eventObservers[0].dependency_count = 2;
+  eventObservers[1].dependency_begin = 0;
+  eventObservers[1].dependency_count = 2;
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  const std::array<obelisk_rt_computed_capture_v1, 2> misplacedCaptures{{
+      {0, 0, 0, 0},
+      capture,
+  }};
+  EXPECT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                observerID - 1, misplacedCaptures.data(),
+                misplacedCaptures.size()),
+            OBELISK_RT_INVALID_DESIGN);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                observerID, &capture, 1),
+            OBELISK_RT_OK);
+  ASSERT_NE(context->covergroupClockEvents, nullptr);
+  ASSERT_EQ(context->covergroupClockEvents->subscriptionBuckets.size(), 1u);
+  EXPECT_EQ(context->covergroupClockEvents->subscriptionBuckets.begin()
+                ->second.size(),
+            2u);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 0;
+  covergroupClockEventSentinel = 1;
+  const uint8_t bothOld = 0;
+  const uint8_t bothNew = 3;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 2, &bothOld, nullptr,
+                                            &bothNew, nullptr);
+  // Both clauses matched one atomic publication, and the evaluator's direct
+  // load observed that publication's new bit before canonical commit.
+  ASSERT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+
+  const uint8_t oneOld = 1;
+  const uint8_t oneNew = 0;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oneOld, nullptr,
+                                            &oneNew, nullptr);
+  obelisk_rt_v1_scheduler_signal_transition(context, 1, 1, &oneOld, nullptr,
+                                            &oneNew, nullptr);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1, 0}));
+
+  context->stateValue[0] |= uint64_t{1} << 2;
+  context->stateUnknown[0] &= ~(uint64_t{1} << 2);
+  bool conditionValue = false;
+  bool conditionUnknown = false;
+  ASSERT_TRUE(obelisk_rt_read_signal_bit_unlocked(context, 2, 0, conditionValue,
+                                                  conditionUnknown));
+  ASSERT_TRUE(conditionValue);
+  ASSERT_FALSE(conditionUnknown);
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oneNew, nullptr,
+                                            &oneOld, nullptr);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1, 0, 1}));
+
+  context->coverage->instances[42].enabled = false;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oneOld, nullptr,
+                                            &oneNew, nullptr);
+  EXPECT_EQ(covergroupClockEventSamples.size(), 3u);
+
+  obelisk_rt_program_complete_unlocked(
+      context, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1}, 0);
+  EXPECT_EQ(context->covergroupClockEvents, nullptr);
+  context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_handoff_pending(context), 1u);
+  context->schedulerStatus = OBELISK_RT_OK;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 2, &bothOld, nullptr,
+                                            &bothNew, nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     CovergroupClockEventUpdatesEveryOrClauseBeforeCoalescingSample) {
+  constexpr uint64_t observerID = 984;
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const std::array<obelisk_rt_observer_descriptor_v1, 3> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {covergroupClockEventOrObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventOrEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 2;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.context = context;
+  instance.tier = OBELISK_RT_TIER_NATIVE;
+  context->scheduledProcesses.emplace_back();
+  context->scheduledProcesses.back().instance = &instance;
+  context->scheduledProcesses.back().token = 1;
+  context->scheduledProcesses.back().started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  context->activeNativeProcess = &instance;
+  context->activeLogicalProcessToken =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1};
+
+  std::vector<uint64_t> eventPlan = makeCovergroupClockEventPlan(
+      {0, 0}, {UINT64_MAX, UINT64_MAX},
+      {OBELISK_RT_WAIT_EDGE_POSEDGE, OBELISK_RT_WAIT_EDGE_CHANGE});
+  auto *eventRecord =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(eventPlan.data());
+  auto *eventObservers = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+      reinterpret_cast<uint8_t *>(eventPlan.data()) +
+      eventRecord->observers_offset);
+  auto *eventDependencies =
+      reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+          reinterpret_cast<uint8_t *>(eventPlan.data()) +
+          eventRecord->dependencies_offset);
+  eventObservers[1].code_unit_id = covergroupClockEventOrObserverID;
+  eventObservers[1].dependency_begin = 0;
+  eventObservers[1].dependency_count = 2;
+  eventDependencies[1].stable_id = 1;
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                observerID, &capture, 1),
+            OBELISK_RT_OK);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 1;
+  covergroupClockEventSentinel = 1;
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  ASSERT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+
+  // The first publication also changes (a | b), even though posedge a wins
+  // sample coalescing. Updating b from zero to one leaves (a | b) stable and
+  // therefore must not synthesize a second event from stale clause history.
+  obelisk_rt_v1_scheduler_signal_transition(context, 1, 1, &zero, nullptr, &one,
+                                            nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     CovergroupClockEventEvaluatesReentrantIffAtEventInstant) {
+  constexpr uint64_t observerID = 985;
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 3;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  std::array<obelisk_rt_process_instance_v1, 2> instances{};
+  for (uint64_t index = 0; index != instances.size(); ++index) {
+    instances[index].descriptor = &descriptor;
+    instances[index].context = context;
+    instances[index].tier = OBELISK_RT_TIER_NATIVE;
+    context->scheduledProcesses.emplace_back();
+    context->scheduledProcesses.back().instance = &instances[index];
+    context->scheduledProcesses.back().token = index + 1;
+    context->scheduledProcesses.back().started = true;
+    context->scheduledProcessIndices.emplace(index + 1, index);
+  }
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  auto registerEvent = [&](uint64_t token, std::vector<uint64_t> &eventPlan) {
+    context->activeNativeProcess = &instances[token - 1];
+    context->activeLogicalProcessToken =
+        OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | token;
+    auto *record = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        eventPlan.data());
+    return obelisk_rt_v1_covergroup_clock_event_register(
+        context, record, eventPlan.size() * sizeof(uint64_t), 0, observerID,
+        &capture, 1);
+  };
+  std::vector<uint64_t> outerPlan = makeCovergroupClockEventPlan(
+      {0}, {UINT64_MAX}, {OBELISK_RT_WAIT_EDGE_POSEDGE});
+  std::vector<uint64_t> nestedPlan =
+      makeCovergroupClockEventPlan({1}, {2}, {OBELISK_RT_WAIT_EDGE_POSEDGE});
+  ASSERT_EQ(registerEvent(1, outerPlan), OBELISK_RT_OK);
+  ASSERT_EQ(registerEvent(2, nestedPlan), OBELISK_RT_OK);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 1;
+  covergroupClockEventSentinel = 1;
+  covergroupClockEventSamplerReentrantKind = 1;
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  // The outer sampler publishes signal 1 while gate bit 2 is zero, then sets
+  // the gate before returning. The nested iff is evaluated synchronously at
+  // publication and must not observe that later gate write.
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+  EXPECT_NE(context->stateValue[0] & (uint64_t{1} << 2), 0u);
+
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, CovergroupClockEventComposesNestedPublicationSnapshots) {
+  constexpr uint64_t observerID = 986;
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 2;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  std::array<obelisk_rt_process_instance_v1, 2> instances{};
+  for (uint64_t index = 0; index != instances.size(); ++index) {
+    instances[index].descriptor = &descriptor;
+    instances[index].context = context;
+    instances[index].tier = OBELISK_RT_TIER_NATIVE;
+    context->scheduledProcesses.emplace_back();
+    context->scheduledProcesses.back().instance = &instances[index];
+    context->scheduledProcesses.back().token = index + 1;
+    context->scheduledProcesses.back().started = true;
+    context->scheduledProcessIndices.emplace(index + 1, index);
+  }
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  auto registerEvent = [&](uint64_t token, std::vector<uint64_t> &eventPlan) {
+    context->activeNativeProcess = &instances[token - 1];
+    context->activeLogicalProcessToken =
+        OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | token;
+    auto *record = reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(
+        eventPlan.data());
+    return obelisk_rt_v1_covergroup_clock_event_register(
+        context, record, eventPlan.size() * sizeof(uint64_t), 0, observerID,
+        &capture, 1);
+  };
+  std::vector<uint64_t> outerPlan = makeCovergroupClockEventPlan(
+      {0}, {UINT64_MAX}, {OBELISK_RT_WAIT_EDGE_POSEDGE});
+  std::vector<uint64_t> nestedPlan = makeCovergroupClockEventPlan(
+      {1}, {UINT64_MAX}, {OBELISK_RT_WAIT_EDGE_POSEDGE});
+  ASSERT_EQ(registerEvent(1, outerPlan), OBELISK_RT_OK);
+  ASSERT_EQ(registerEvent(2, nestedPlan), OBELISK_RT_OK);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 1;
+  covergroupClockEventSentinel = 1;
+  covergroupClockEventSamplerReentrantKind = 1;
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  // The outer A publication has not committed canonical storage when its
+  // sampler publishes B. B's synchronous sampler must nevertheless retain
+  // the enclosing A snapshot and observe A's post-transition value.
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1, 1}));
+
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, CovergroupClockEventRejectsFalseSamplerSentinel) {
+  constexpr uint64_t observerID = 982;
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.context = context;
+  instance.tier = OBELISK_RT_TIER_NATIVE;
+  context->scheduledProcesses.emplace_back();
+  context->scheduledProcesses.back().instance = &instance;
+  context->scheduledProcesses.back().token = 1;
+  context->scheduledProcesses.back().started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  context->activeNativeProcess = &instance;
+  context->activeLogicalProcessToken =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1};
+  const uint64_t primary = 0;
+  const uint64_t condition = UINT64_MAX;
+  const uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  std::vector<uint64_t> eventPlan =
+      makeCovergroupClockEventPlan({primary}, {condition}, {edge});
+  auto *eventRecord =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(eventPlan.data());
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                observerID, &capture, 1),
+            OBELISK_RT_OK);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 0;
+  covergroupClockEventSentinel = 0;
+  const uint8_t oldValue = 0;
+  const uint8_t newValue = 1;
+  context->covergroupClockEventEvaluationDepth = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 3, 1, &oldValue, nullptr,
+                                            &newValue, nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_DESIGN);
+  context->covergroupClockEventEvaluationDepth = 0;
+  context->schedulerStatus = OBELISK_RT_OK;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oldValue, nullptr,
+                                            &newValue, nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+  covergroupClockEventSentinel = 1;
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     CovergroupClockEventReentrantCompletionInvalidatesNoCandidates) {
+  constexpr uint64_t observerID = 983;
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 1;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  context->coverage->instances.emplace(42, FunctionalCoverageInstanceState{});
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  std::array<obelisk_rt_process_instance_v1, 2> instances{};
+  for (uint64_t index = 0; index != instances.size(); ++index) {
+    instances[index].descriptor = &descriptor;
+    instances[index].context = context;
+    instances[index].tier = OBELISK_RT_TIER_NATIVE;
+    context->scheduledProcesses.emplace_back();
+    ScheduledProcess &scheduled = context->scheduledProcesses.back();
+    scheduled.instance = &instances[index];
+    scheduled.token = index + 1;
+    scheduled.started = true;
+    context->scheduledProcessIndices.emplace(index + 1, index);
+  }
+
+  const uint64_t primary = 0;
+  const uint64_t condition = UINT64_MAX;
+  const uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  std::vector<uint64_t> eventPlan =
+      makeCovergroupClockEventPlan({primary}, {condition}, {edge});
+  auto *eventRecord =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(eventPlan.data());
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  for (uint64_t index = 0; index != instances.size(); ++index) {
+    context->activeNativeProcess = &instances[index];
+    context->activeLogicalProcessToken =
+        OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | (index + 1);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                  context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                  observerID, &capture, 1),
+              OBELISK_RT_OK);
+  }
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 0;
+  covergroupClockEventSentinel = 1;
+  covergroupClockEventCompletionTarget =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{2};
+  const uint8_t oldValue = 0;
+  const uint8_t newValue = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &oldValue, nullptr,
+                                            &newValue, nullptr);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+  ASSERT_NE(context->covergroupClockEvents, nullptr);
+  EXPECT_EQ(context->covergroupClockEvents->registrations.size(), 1u);
+
+  obelisk_rt_program_complete_unlocked(
+      context, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1}, 0);
+  EXPECT_EQ(context->covergroupClockEvents, nullptr);
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, CovergroupStrobeDefersAndCoalescesUntilPostponedDrain) {
+  constexpr uint64_t observerID = 984;
+  const obelisk_rt_observer_capture_abi_v1 captureABI{
+      OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, 64};
+  const obelisk_rt_observer_capture_abi_v1 primaryABI{
+      OBELISK_RT_OBSERVER_CAPTURE_STORAGE, 1};
+  const std::array<obelisk_rt_observer_descriptor_v1, 2> observers{{
+      {covergroupClockEventPrimaryObserverID, &primaryABI, 1, 1,
+       OBELISK_RT_OBSERVER_FOUR_STATE, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventPrimaryEvaluator, 0},
+      {observerID, &captureABI, 1, 1, 0, OBELISK_RT_OBSERVER_NO_BYTECODE,
+       covergroupClockEventEvaluator, 0},
+  }};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 2;
+  execution.observers = observers.data();
+  execution.observer_count = observers.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->coverage = std::make_unique<CoverageState>();
+  FunctionalCoverageInstanceState coverageInstance;
+  coverageInstance.strobe = true;
+  context->coverage->instances.emplace(42, std::move(coverageInstance));
+
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.execution = &execution;
+  obelisk_rt_process_instance_v1 instance{};
+  instance.descriptor = &descriptor;
+  instance.context = context;
+  instance.tier = OBELISK_RT_TIER_NATIVE;
+  context->scheduledProcesses.emplace_back();
+  ScheduledProcess &scheduled = context->scheduledProcesses.back();
+  scheduled.instance = &instance;
+  scheduled.token = 1;
+  scheduled.started = true;
+  context->scheduledProcessIndices.emplace(1, 0);
+  context->activeNativeProcess = &instance;
+  context->activeLogicalProcessToken =
+      OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1};
+
+  const uint64_t primary = 0;
+  const uint64_t condition = UINT64_MAX;
+  const uint32_t edge = OBELISK_RT_WAIT_EDGE_BOTH;
+  std::vector<uint64_t> eventPlan =
+      makeCovergroupClockEventPlan({primary}, {condition}, {edge});
+  auto *eventRecord =
+      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(eventPlan.data());
+  const obelisk_rt_computed_capture_v1 capture{42, 0, 0, 0};
+  EXPECT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 0,
+                observerID, &capture, 1),
+            OBELISK_RT_INVALID_DESIGN);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_clock_event_register(
+                context, eventRecord, eventPlan.size() * sizeof(uint64_t), 1,
+                observerID, &capture, 1),
+            OBELISK_RT_OK);
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = 0;
+
+  covergroupClockEventSamples.clear();
+  covergroupClockEventGlobalPlane = 0;
+  covergroupClockEventSentinel = 1;
+  const uint8_t zero = 0;
+  const uint8_t one = 1;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &one, nullptr, &zero,
+                                            nullptr);
+  EXPECT_TRUE(obelisk_rt_covergroup_strobes_pending_unlocked(context));
+  EXPECT_TRUE(covergroupClockEventSamples.empty());
+  EXPECT_EQ(context->nativePeriodicTerminationRequested, 0u);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_handoff_pending(context), 1u);
+
+  // The sample expression is evaluated only when Postponed work drains, and
+  // the two qualifying publications above collapse to one sample. A signal
+  // publication reentered from the callback is still in this numeric time and
+  // must not queue a second automatic sample.
+  covergroupClockEventGlobalPlane = 1;
+  covergroupClockEventReentrantTransition = true;
+  covergroupClockEventRegion = UINT32_MAX;
+  context->activeHomeRegion = OBELISK_RT_REGION_REACTIVE;
+  context->activeExecRegion = OBELISK_RT_REGION_REACTIVE;
+  ASSERT_EQ(obelisk_rt_drain_covergroup_strobes_unlocked(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1}));
+  EXPECT_EQ(covergroupClockEventRegion, OBELISK_RT_REGION_POSTPONED);
+  EXPECT_EQ(context->activeHomeRegion, OBELISK_RT_REGION_REACTIVE);
+  EXPECT_EQ(context->activeExecRegion, OBELISK_RT_REGION_REACTIVE);
+  EXPECT_FALSE(obelisk_rt_covergroup_strobes_pending_unlocked(context));
+  EXPECT_EQ(obelisk_rt_v1_scheduler_handoff_pending(context), 0u);
+  ASSERT_EQ(obelisk_rt_drain_covergroup_strobes_unlocked(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples.size(), 1u);
+
+  // start()/stop() controls collection at the actual Postponed sample time.
+  ++context->schedulerTime;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  context->coverage->instances[42].enabled = false;
+  ASSERT_EQ(obelisk_rt_drain_covergroup_strobes_unlocked(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples.size(), 1u);
+
+  ++context->schedulerTime;
+  context->coverage->instances[42].enabled = false;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &one, nullptr, &zero,
+                                            nullptr);
+  context->coverage->instances[42].enabled = true;
+  covergroupClockEventGlobalPlane = 0;
+  ASSERT_EQ(obelisk_rt_drain_covergroup_strobes_unlocked(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covergroupClockEventSamples, std::vector<uint32_t>({1, 0}));
+
+  // Removing an owner with a queued sample removes its pending contribution;
+  // no stale Postponed work survives process teardown.
+  ++context->schedulerTime;
+  obelisk_rt_v1_scheduler_signal_transition(context, 0, 1, &zero, nullptr, &one,
+                                            nullptr);
+  EXPECT_TRUE(obelisk_rt_covergroup_strobes_pending_unlocked(context));
+  obelisk_rt_program_complete_unlocked(
+      context, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | uint64_t{1}, 0);
+  EXPECT_EQ(context->covergroupClockEvents, nullptr);
+  context->scheduledProcesses.clear();
+  context->scheduledProcessIndices.clear();
+  obelisk_rt_v1_context_destroy(context);
 }
 
 TEST(SampledValues, PreponedObserverRunsOncePerTimeSlot) {

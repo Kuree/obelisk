@@ -129,6 +129,106 @@ static_assert(haveSameEncoding(slangir::CoverageBinKind::Bins,
               haveSameEncoding(slangir::CoverageBinKind::IgnoreBins,
                                ir::SVCoverageBinKind::IgnoreBins));
 static_assert(
+    haveSameEncoding(slangir::CoverageEventKind::None,
+                     ir::SVCoverageEventKind::None) &&
+    haveSameEncoding(slangir::CoverageEventKind::Clocking,
+                     ir::SVCoverageEventKind::Clocking) &&
+    haveSameEncoding(slangir::CoverageEventKind::CustomSample,
+                     ir::SVCoverageEventKind::CustomSample) &&
+    haveSameEncoding(slangir::CoverageEventKind::Block,
+                     ir::SVCoverageEventKind::Block) &&
+    haveSameEncoding(slangir::CoverageEventKind::Inherited,
+                     ir::SVCoverageEventKind::Inherited));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Covergroup,
+                     ir::SVCoverageOptionOwnerKind::Covergroup) &&
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Coverpoint,
+                     ir::SVCoverageOptionOwnerKind::Coverpoint) &&
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Cross,
+                     ir::SVCoverageOptionOwnerKind::Cross));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionScopeKind::Instance,
+                     ir::SVCoverageOptionScopeKind::Instance) &&
+    haveSameEncoding(slangir::CoverageOptionScopeKind::Type,
+                     ir::SVCoverageOptionScopeKind::Type));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionKind::Name,
+                     ir::SVCoverageOptionKind::Name) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Weight,
+                     ir::SVCoverageOptionKind::Weight) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Goal,
+                     ir::SVCoverageOptionKind::Goal) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Comment,
+                     ir::SVCoverageOptionKind::Comment) &&
+    haveSameEncoding(slangir::CoverageOptionKind::AtLeast,
+                     ir::SVCoverageOptionKind::AtLeast) &&
+    haveSameEncoding(slangir::CoverageOptionKind::AutoBinMax,
+                     ir::SVCoverageOptionKind::AutoBinMax) &&
+    haveSameEncoding(slangir::CoverageOptionKind::CrossNumPrintMissing,
+                     ir::SVCoverageOptionKind::CrossNumPrintMissing) &&
+    haveSameEncoding(slangir::CoverageOptionKind::CrossRetainAutoBins,
+                     ir::SVCoverageOptionKind::CrossRetainAutoBins) &&
+    haveSameEncoding(slangir::CoverageOptionKind::DetectOverlap,
+                     ir::SVCoverageOptionKind::DetectOverlap) &&
+    haveSameEncoding(slangir::CoverageOptionKind::PerInstance,
+                     ir::SVCoverageOptionKind::PerInstance) &&
+    haveSameEncoding(slangir::CoverageOptionKind::GetInstCoverage,
+                     ir::SVCoverageOptionKind::GetInstCoverage) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Strobe,
+                     ir::SVCoverageOptionKind::Strobe) &&
+    haveSameEncoding(slangir::CoverageOptionKind::MergeInstances,
+                     ir::SVCoverageOptionKind::MergeInstances) &&
+    haveSameEncoding(slangir::CoverageOptionKind::DistributeFirst,
+                     ir::SVCoverageOptionKind::DistributeFirst) &&
+    haveSameEncoding(slangir::CoverageOptionKind::RealInterval,
+                     ir::SVCoverageOptionKind::RealInterval));
+static_assert(
+    haveSameEncoding(slangir::CoverageSelectUnaryOperator::Negation,
+                     ir::SVCoverageSelectUnaryOperator::Negation));
+static_assert(
+    haveSameEncoding(slangir::CoverageExpressionRole::Sample,
+                     ir::SVCoverageExpressionRole::Sample) &&
+    haveSameEncoding(slangir::CoverageExpressionRole::Iff,
+                     ir::SVCoverageExpressionRole::Iff));
+static_assert(
+    haveSameEncoding(slangir::CoverageBlockEventKind::Begin,
+                     ir::SVCoverageBlockEventKind::Begin) &&
+    haveSameEncoding(slangir::CoverageBlockEventKind::End,
+                     ir::SVCoverageBlockEventKind::End));
+static_assert(
+    haveSameEncoding(slangir::CoverageSelectBinaryOperator::And,
+                     ir::SVCoverageSelectBinaryOperator::And) &&
+    haveSameEncoding(slangir::CoverageSelectBinaryOperator::Or,
+                     ir::SVCoverageSelectBinaryOperator::Or));
+static_assert(
+    haveSameEncoding(slangir::CoverageBinChildRole::Iff,
+                     ir::SVCoverageBinChildRole::Iff) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::NumberOfBins,
+                     ir::SVCoverageBinChildRole::NumberOfBins) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::SetCoverage,
+                     ir::SVCoverageBinChildRole::SetCoverage) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::With,
+                     ir::SVCoverageBinChildRole::With) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::CrossSelect,
+                     ir::SVCoverageBinChildRole::CrossSelect) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::Value,
+                     ir::SVCoverageBinChildRole::Value) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionItem,
+                     ir::SVCoverageBinChildRole::TransitionItem) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionRepeatFrom,
+                     ir::SVCoverageBinChildRole::TransitionRepeatFrom) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionRepeatTo,
+                     ir::SVCoverageBinChildRole::TransitionRepeatTo));
+static_assert(
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::None,
+                     ir::SVCoverageTransitionRepeatKind::None) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::Consecutive,
+                     ir::SVCoverageTransitionRepeatKind::Consecutive) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::Nonconsecutive,
+                     ir::SVCoverageTransitionRepeatKind::Nonconsecutive) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::GoTo,
+                     ir::SVCoverageTransitionRepeatKind::GoTo));
+static_assert(
     haveSameEncoding(slangir::EdgeKind::None, ir::EdgeKind::Change) &&
     haveSameEncoding(slangir::EdgeKind::PosEdge, ir::EdgeKind::Posedge) &&
     haveSameEncoding(slangir::EdgeKind::NegEdge, ir::EdgeKind::Negedge) &&
@@ -487,6 +587,9 @@ public:
 
     RewritePatternSet patterns(&context);
     patterns.add<PortConnectionConversion>(converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::CoverageOptionOp,
+                                           ir::SVCoverageOptionOp>>(converter,
+                                                                    &context);
 #define SLANG_AST_NODE(Category, Kind, CppType)                                \
   patterns.add<                                                                \
       ConcreteASTNodeConversion<slangir::CppType##Op, ir::SV##CppType##Op>>(   \

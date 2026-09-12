@@ -963,6 +963,47 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     });
   }
 
+  // A covergroup declaration is not itself an executable code unit, but its
+  // automatic sampling event has the same computed-expression semantics as a
+  // procedural event control. Outline the primary and iff expressions here so
+  // the detached sampler can bind the ordinary observer ABI after the group is
+  // constructed. For an embedded group, capture analysis adds the owning
+  // object as the observer's explicit `this` argument.
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    if (!covergroup.getHasCoverageEvent() ||
+        covergroup.getCoverageEventKind() !=
+            semantic::SVCoverageEventKind::Clocking)
+      return;
+    std::string hierarchy = getHierarchyName(covergroup).str();
+    uint64_t parentID =
+        stableCodeUnitID((Twine(hierarchy) + ".$coverage_event").str());
+    SmallVector<semantic::SVSignalEventControlOp> events;
+    for (Operation *child : getChildren(covergroup)) {
+      if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(child)) {
+        events.push_back(event);
+        break;
+      }
+      if (auto list = dyn_cast<semantic::SVEventListControlOp>(child)) {
+        for (Operation *member : getChildren(list))
+          if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(member))
+            events.push_back(event);
+        break;
+      }
+    }
+    for (semantic::SVSignalEventControlOp event : events) {
+      SmallVector<Operation *> children = getChildren(event);
+      if (children.empty())
+        continue;
+      observerCandidates.push_back({children.front(), ObserverResult::Value,
+                                    "coverage_event_primary", parentID,
+                                    hierarchy});
+      if (event.getHasIff() && children.size() == 2)
+        observerCandidates.push_back({children[1], ObserverResult::Truth,
+                                      "coverage_event_iff", parentID,
+                                      hierarchy});
+    }
+  });
+
   // System timing checks are static actors rather than procedural expression
   // owners. Outline only a computed Clause 31.7 operand; direct handles keep
   // the compact clock-wait predicate path and its ordinary AOT fanout.

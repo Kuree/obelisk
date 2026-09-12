@@ -484,14 +484,55 @@ void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *context = &getContext();
 
+  bool usesFunctionalCoverageDatabase = false;
+  module.walk([&](semantic::SVCallExpressionOp call) {
+    if (!call.getIsSystemCall())
+      return;
+    usesFunctionalCoverageDatabase |=
+        llvm::StringSwitch<bool>(call.getCalleeName())
+            .Cases(
+                {"$get_coverage", "$set_coverage_db_name", "$load_coverage_db"},
+                true)
+            .Default(false);
+  });
+  if (usesFunctionalCoverageDatabase) {
+    SmallVector<Attribute> metrics;
+    if (auto current =
+            module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics"))
+      llvm::append_range(metrics, current);
+    bool hasFunctional = llvm::any_of(metrics, [](Attribute attribute) {
+      auto metric = dyn_cast<StringAttr>(attribute);
+      return metric && metric.getValue() == "functional";
+    });
+    if (!hasFunctional) {
+      metrics.push_back(StringAttr::get(context, "functional"));
+      module->setAttr("obelisk.coverage.metrics",
+                      ArrayAttr::get(context, metrics));
+    }
+  }
+
+  bool pruneCoverage = pruneUnusedCoverage;
+  if (auto metrics =
+          module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics"))
+    pruneCoverage &= !llvm::any_of(metrics, [](Attribute attribute) {
+      auto metric = dyn_cast<StringAttr>(attribute);
+      return metric && metric.getValue() == "functional";
+    });
+
   FailureOr<ValidatedSemanticDesign> validated =
-      validateSemanticDesign(module, pruneUnusedCoverage);
+      validateSemanticDesign(module, pruneCoverage);
   if (failed(validated)) {
     signalPassFailure();
     return;
   }
   semantic::SVRootSymbolOp semanticRoot = validated->root;
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
+  OpBuilder coveragePlanBuilder(context);
+  if (failed(materializeInheritedCovergroupPlans(semanticRoot,
+                                                 coveragePlanBuilder))) {
+    signalPassFailure();
+    return;
+  }
   bool invalid = false;
 
   // Propagate stale frontend folds through expression parents in postorder.
@@ -521,9 +562,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (std::optional<unsigned> filled =
             getUnsizedUnknownFillWidth(operation)) {
       Operation *widened = operation->getParentOp();
-      auto widenedType =
-          widened ? widened->getAttrOfType<TypeAttr>("semantic_type")
-                  : TypeAttr{};
+      auto widenedType = widened
+                             ? widened->getAttrOfType<TypeAttr>("semantic_type")
+                             : TypeAttr{};
       std::optional<uint64_t> widenedWidth =
           widenedType ? getSemanticPackedWidth(widenedType.getValue())
                       : std::nullopt;
@@ -1085,6 +1126,182 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
   assignPathIDs(controlPaths, "obelisk_sim.control_target_id");
   assignPathIDs(staticPaths, "obelisk_sim.static_site_id");
+
+  // IEEE 1800-2017 19.3 (and IEEE 1800-2023 19.3) permits @@ sampling at
+  // the begin or end of a named block, task, function, or class method.  The
+  // event registration and the instrumented definition are lowered in
+  // separate units, so freeze their common identity while the complete
+  // semantic symbol namespace is still available.
+  //
+  // Keep this namespace distinct from the compact control-target indices
+  // above.  Bit 62 is reserved for block-event targets; the remaining bits
+  // are a stable hash of the canonical semantic target identity.  A compiler
+  // diagnostic, rather than accidental aliasing, handles the vanishingly
+  // unlikely hash collision.
+  struct CoverageBlockEventTarget {
+    Operation *definition = nullptr;
+    uint64_t id = 0;
+  };
+  llvm::DenseMap<Operation *, CoverageBlockEventTarget>
+      coverageBlockEventTargets;
+  llvm::DenseMap<uint64_t, Operation *> coverageBlockEventIDs;
+  llvm::StringMap<uint64_t> coverageBlockEventBlockIDs;
+  llvm::StringMap<Operation *> coverageBlockEventBlockSymbols;
+  constexpr uint64_t coverageBlockEventIDDomain = uint64_t{1} << 62;
+  auto makeCoverageBlockEventTarget =
+      [&](Operation *referenceExpression,
+          Operation *referencedDefinition) -> CoverageBlockEventTarget * {
+    Operation *definition = referencedDefinition;
+    // A class member reference can name the prototype wrapper retained by
+    // the frontend.  Instrument the executable method nested in that wrapper
+    // while also preserving the ID on the referenced definition below.
+    if (auto method = getClassMethod(definition))
+      definition = method;
+    if (!isa_and_nonnull<semantic::SVSubroutineSymbolOp,
+                         semantic::SVStatementBlockSymbolOp>(definition)) {
+      emitError(getSemanticLocation(referenceExpression))
+          << "covergroup block-event target must resolve to a named block, "
+             "task, function, or class method";
+      invalid = true;
+      return nullptr;
+    }
+    StringRef hierarchy = getHierarchyName(definition);
+    if (hierarchy.empty()) {
+      emitError(getSemanticLocation(referenceExpression))
+          << "covergroup block-event target has no canonical semantic "
+             "identity";
+      invalid = true;
+      return nullptr;
+    }
+    auto [entry, inserted] = coverageBlockEventTargets.try_emplace(definition);
+    if (!inserted)
+      return &entry->second;
+
+    std::string identity =
+        (Twine("coverage-block-event-target|") +
+         definition->getName().getStringRef() + "|" + hierarchy)
+            .str();
+    uint64_t id =
+        coverageBlockEventIDDomain |
+        (stableCodeUnitID(identity) & (coverageBlockEventIDDomain - 1));
+    auto [collision, unique] =
+        coverageBlockEventIDs.try_emplace(id, definition);
+    if (!unique && collision->second != definition) {
+      emitError(getSemanticLocation(referenceExpression))
+          << "stable covergroup block-event target ID collision for '"
+          << hierarchy << "'";
+      emitError(getSemanticLocation(collision->second))
+          << "conflicting covergroup block-event target is here";
+      invalid = true;
+      coverageBlockEventTargets.erase(entry);
+      return nullptr;
+    }
+    entry->second = {definition, id};
+    return &entry->second;
+  };
+
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    if (covergroup.getCoverageEventKind() !=
+        semantic::SVCoverageEventKind::Block)
+      return;
+    semantic::SVBlockEventListControlOp control;
+    for (Operation *child : getChildren(covergroup)) {
+      auto candidate = dyn_cast<semantic::SVBlockEventListControlOp>(child);
+      if (!candidate)
+        continue;
+      if (control) {
+        emitError(getSemanticLocation(candidate))
+            << "covergroup has more than one block-event control";
+        invalid = true;
+        return;
+      }
+      control = candidate;
+    }
+    if (!control) {
+      emitError(getSemanticLocation(covergroup))
+          << "block-event covergroup has no typed event control";
+      invalid = true;
+      return;
+    }
+    SmallVector<Operation *> expressions = getChildren(control);
+    if (expressions.empty() ||
+        expressions.size() != control.getEventKinds().size()) {
+      emitError(getSemanticLocation(control))
+          << "block-event target and kind counts differ";
+      invalid = true;
+      return;
+    }
+    for (Operation *expression : expressions) {
+      auto reference =
+          expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto path = expression->getAttrOfType<StringAttr>("referenced_path");
+      auto found = reference
+                       ? semanticSymbols.find(reference.getLeafReference())
+                       : semanticSymbols.end();
+      if (!reference || !path || found == semanticSymbols.end()) {
+        emitError(getSemanticLocation(expression))
+            << "block-event target has no resolved semantic symbol and path";
+        invalid = true;
+        continue;
+      }
+      Operation *referencedDefinition = found->second;
+      CoverageBlockEventTarget *target =
+          makeCoverageBlockEventTarget(expression, referencedDefinition);
+      if (!target)
+        continue;
+      StringRef hierarchy = getHierarchyName(target->definition);
+      IntegerAttr id =
+          IntegerAttr::get(IntegerType::get(context, 64), target->id);
+      expression->setAttr(coverageBlockEventTargetIdAttrName, id);
+      referencedDefinition->setAttr(coverageBlockEventTargetIdAttrName, id);
+      target->definition->setAttr(coverageBlockEventTargetIdAttrName, id);
+      if (auto subroutine =
+              dyn_cast<semantic::SVSubroutineSymbolOp>(target->definition);
+          subroutine && getOwningClass(subroutine) &&
+          !subroutine.getIsStatic().value_or(false))
+        expression->setAttr(coverageBlockEventInstanceMethodAttrName,
+                            UnitAttr::get(context));
+      if (isa<semantic::SVStatementBlockSymbolOp>(target->definition)) {
+        auto [it, inserted] =
+            coverageBlockEventBlockIDs.try_emplace(hierarchy, target->id);
+        coverageBlockEventBlockSymbols.try_emplace(hierarchy,
+                                                   target->definition);
+        if (!inserted && it->second != target->id) {
+          emitError(getSemanticLocation(expression))
+              << "named block has conflicting block-event target IDs";
+          invalid = true;
+        }
+      }
+    }
+  });
+
+  llvm::StringSet<> materializedCoverageBlockEvents;
+  semanticRoot->walk([&](semantic::SVBlockStatementOp block) {
+    auto path = block.getBlockPathAttr();
+    if (!path)
+      return;
+    auto target = coverageBlockEventBlockIDs.find(path.getValue());
+    if (target == coverageBlockEventBlockIDs.end())
+      return;
+    block->setAttr(
+        coverageBlockEventTargetIdAttrName,
+        IntegerAttr::get(IntegerType::get(context, 64), target->second));
+    if (!materializedCoverageBlockEvents.insert(path.getValue()).second) {
+      emitError(getSemanticLocation(block))
+          << "named block event target has more than one executable "
+             "definition";
+      invalid = true;
+    }
+  });
+  for (const auto &target : coverageBlockEventBlockIDs)
+    if (!materializedCoverageBlockEvents.contains(target.getKey())) {
+      Operation *symbol =
+          coverageBlockEventBlockSymbols.lookup(target.getKey());
+      emitError(symbol ? getSemanticLocation(symbol)
+                       : getSemanticLocation(semanticRoot))
+          << "named block event target has no executable block definition";
+      invalid = true;
+    }
 
   struct AssertionInventoryEntry {
     Operation *operation = nullptr;
@@ -1728,13 +1945,18 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!property ||
           property.getLifetime() == semantic::SVVariableLifetime::Static)
         return;
-      if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
+      if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property)) {
         nested->setAttr("obelisk_sim.class_field", field);
+        if (Type storageType =
+                classes->covergroupFieldStorageTypes.lookup(property))
+          nested->setAttr("obelisk_sim.covergroup_field_storage_type",
+                          TypeAttr::get(storageType));
+      }
     });
   });
 
   FailureOr<PreparedScopeDeclarations> scopes = materializeScopeDeclarations(
-      semanticRoot, sourceUnits, designPrecisionFs, builder);
+      semanticRoot, sourceUnits, designPrecisionFs, builder, semanticSymbols);
   if (failed(scopes)) {
     abort();
     return;
@@ -7382,8 +7604,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         if ((!property ||
              property.getLifetime() != semantic::SVVariableLifetime::Static))
           if (auto field = classFieldSymbols.find(symbol->second);
-              field != classFieldSymbols.end())
+              field != classFieldSymbols.end()) {
             nested->setAttr("obelisk_sim.class_field", field->second);
+            if (Type storageType =
+                    classes->covergroupFieldStorageTypes.lookup(symbol->second))
+              nested->setAttr("obelisk_sim.covergroup_field_storage_type",
+                              TypeAttr::get(storageType));
+          }
         std::optional<unsigned> index = getRandomPropertyIndex(symbol->second);
         if (index && !nested->hasAttr(randomFunctionStateAttrName)) {
           if (properties[*index].isContainerSize) {
@@ -8007,6 +8234,78 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &observerValueCaptures = preparedCaptures->observerValues;
   auto &observerReadLocals = preparedCaptures->observerReadLocals;
   auto &indirectRefTasks = preparedCaptures->indirectRefTasks;
+  auto &mayPublishSchedulerState = preparedCaptures->mayPublishSchedulerState;
+
+  // A clocking-event primary and iff are evaluated synchronously at the
+  // publication that affects their dependency set (IEEE 1800-2023 9.4.2.3).
+  // The v1 runtime commits all affected primary histories before it invokes a
+  // sampler, but it intentionally does not snapshot arbitrary state across a
+  // reentrant publication from within one of these event evaluators. Admit
+  // direct calls when the capture analysis proves their entire call tree
+  // read-only; diagnose calls that can publish scheduler-visible state. This
+  // restriction can be lifted in place once event evaluation itself becomes
+  // a resumable transaction.
+  llvm::DenseMap<Operation *, bool> eventCallMayPublishCache;
+  llvm::DenseSet<Operation *> activeEventCalls;
+  std::function<bool(Operation *)> eventCallMayPublish =
+      [&](Operation *source) -> bool {
+    if (!source)
+      return true;
+    if (auto found = eventCallMayPublishCache.find(source);
+        found != eventCallMayPublishCache.end())
+      return found->second;
+    if (!activeEventCalls.insert(source).second)
+      return true;
+    bool mayPublish = mayPublishSchedulerState.contains(source);
+    source->walk([&](semantic::SVCallExpressionOp call) {
+      if (mayPublish)
+        return;
+      if (call.getIsSystemCall()) {
+        mayPublish = true;
+        return;
+      }
+      Operation *target = resolveDirectCallee(call);
+      auto subroutine =
+          dyn_cast_or_null<semantic::SVSubroutineSymbolOp>(target);
+      if (!subroutine || getOwningClass(subroutine) ||
+          subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task ||
+          (subroutine.getIsDpiImport().value_or(false) &&
+           !subroutine.getIsPure().value_or(false)) ||
+          eventCallMayPublish(target))
+        mayPublish = true;
+    });
+    activeEventCalls.erase(source);
+    eventCallMayPublishCache[source] = mayPublish;
+    return mayPublish;
+  };
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    if (covergroup.getCoverageEventKind() !=
+        semantic::SVCoverageEventKind::Clocking)
+      return;
+    for (Operation *child : getChildren(covergroup)) {
+      SmallVector<Operation *> controls;
+      if (isa<semantic::SVSignalEventControlOp>(child))
+        controls.push_back(child);
+      else if (isa<semantic::SVEventListControlOp>(child))
+        llvm::append_range(controls, getChildren(child));
+      else
+        continue;
+      for (Operation *control : controls)
+        for (Operation *expression : getChildren(control))
+          if (eventCallMayPublish(expression)) {
+            emitError(getSemanticLocation(expression))
+                << "covergroup clocking-event primary and iff calls must be "
+                   "transitively read-only with statically materializable "
+                   "dependencies; this expression may write, publish "
+                   "scheduler-visible state, or read through a method "
+                   "receiver";
+            invalid = true;
+          }
+      break;
+    }
+  });
+  if (invalid)
+    return abort();
 
   llvm::DenseMap<uint64_t, Operation *> timingConditions;
   semanticRoot->walk([&](Operation *nested) {
@@ -8433,6 +8732,25 @@ void ObeliskSimPreparePass::runOnOperation() {
            "resolved direct callee has no frozen symbol");
     call->setAttr(calleeAttrName,
                   FlatSymbolRefAttr::get(context, target->second));
+    // Calls nested in a covergroup plan are not executable until constructor
+    // and sample helpers are materialized by LowerUnit. Keep their code units
+    // visible to the early SymbolDCE through a normal symbol-use attribute on
+    // the always-live root. A design-level pass removes this transient
+    // inventory after LowerUnit replaces the semantic calls with executable
+    // obelisk_sim.call ops.
+    if (call->getParentOfType<semantic::SVCovergroupTypeOp>()) {
+      SmallVector<Attribute> retained;
+      if (auto existing = rootInitializer->getAttrOfType<ArrayAttr>(
+              sim::metadata::coverageRetainedCodeUnits))
+        llvm::append_range(retained, existing);
+      FlatSymbolRefAttr symbol =
+          FlatSymbolRefAttr::get(context, target->second);
+      if (!llvm::is_contained(retained, symbol)) {
+        retained.push_back(symbol);
+        rootInitializer->setAttr(sim::metadata::coverageRetainedCodeUnits,
+                                 builder.getArrayAttr(retained));
+      }
+    }
     if (auto targetSubroutine =
             dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
         targetSubroutine && getOwningClass(targetSubroutine) &&
@@ -8592,6 +8910,37 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!preparedUnits->resolveVirtualInterfaceCallees(call).empty())
       freezeCallContract(call);
   });
+
+  // Manual sampling lowers coverpoint and guard expressions directly from
+  // their semantic declarations. Freeze ordinary call contracts in those
+  // expressions as well: unlike calls cloned into a prepared code unit, they
+  // have no later unit walk that would otherwise attach their callee ABI.
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroup->walk(
+        [&](semantic::SVCallExpressionOp call) { freezeCallContract(call); });
+  });
+
+  // Computed automatic-sampling expressions are outlined before their
+  // detached sampler exists. Retain those observer code units through the
+  // early SymbolDCE by attaching ordinary symbol uses to the always-live root;
+  // the materialization pass removes this transient inventory after it emits
+  // the actual observer.bind operations.
+  SmallVector<Attribute> retainedCoverageCodeUnits;
+  if (auto existing = rootInitializer->getAttrOfType<ArrayAttr>(
+          sim::metadata::coverageRetainedCodeUnits))
+    llvm::append_range(retainedCoverageCodeUnits, existing);
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroup->walk([&](Operation *nested) {
+      auto evaluator =
+          nested->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
+      if (evaluator &&
+          !llvm::is_contained(retainedCoverageCodeUnits, evaluator))
+        retainedCoverageCodeUnits.push_back(evaluator);
+    });
+  });
+  if (!retainedCoverageCodeUnits.empty())
+    rootInitializer->setAttr(sim::metadata::coverageRetainedCodeUnits,
+                             builder.getArrayAttr(retainedCoverageCodeUnits));
 
   auto constructorSourceFor = [](semantic::SVClassTypeOp classType) {
     for (Operation *child : getChildren(classType)) {
@@ -8829,9 +9178,11 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     for (const PreparedLocal &local : observerLocals) {
       unsigned argument = inputs.size();
-      inputs.push_back(local.net
-                           ? Type(sim::NetType::get(context, local.type))
-                           : Type(sim::RefType::get(context, local.type)));
+      inputs.push_back(
+          local.argumentRef
+              ? Type(sim::ArgumentRefType::get(context, local.type))
+          : local.net ? Type(sim::NetType::get(context, local.type))
+                      : Type(sim::RefType::get(context, local.type)));
       argAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Value));
       bindings.push_back(sim::ArgumentBindingAttr::get(
           context, builder.getStringAttr(local.path), argument,
@@ -9637,6 +9988,10 @@ void ObeliskSimPreparePass::runOnOperation() {
               "obelisk_sim.control_target_id"))
         functionAttrs.push_back(
             builder.getNamedAttr("obelisk_sim.control_target_id", targetID));
+    if (auto targetID = unit.source->getAttrOfType<IntegerAttr>(
+            coverageBlockEventTargetIdAttrName))
+      functionAttrs.push_back(builder.getNamedAttr(
+          coverageBlockEventTargetIdAttrName, targetID));
     // Clocking inputs must be sampled before program-domain Reactive work.
     // Keep the shared event-list monitor in the design domain even when the
     // clocking block is declared lexically inside a program.
@@ -10078,8 +10433,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
         if (field != classFieldSymbols.end() &&
             (!property ||
-             property.getLifetime() != semantic::SVVariableLifetime::Static))
+             property.getLifetime() != semantic::SVVariableLifetime::Static)) {
           named->setAttr("obelisk_sim.class_field", field->second);
+          if (Type storageType =
+                  classes->covergroupFieldStorageTypes.lookup(symbol->second))
+            named->setAttr("obelisk_sim.covergroup_field_storage_type",
+                           TypeAttr::get(storageType));
+        }
         return;
       }
       if (auto hierarchical =
@@ -10118,8 +10478,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
         if (field != classFieldSymbols.end() &&
             (!property ||
-             property.getLifetime() != semantic::SVVariableLifetime::Static))
+             property.getLifetime() != semantic::SVVariableLifetime::Static)) {
           member->setAttr("obelisk_sim.class_field", field->second);
+          if (Type storageType =
+                  classes->covergroupFieldStorageTypes.lookup(symbol->second))
+            member->setAttr("obelisk_sim.covergroup_field_storage_type",
+                            TypeAttr::get(storageType));
+        }
         return;
       }
     });

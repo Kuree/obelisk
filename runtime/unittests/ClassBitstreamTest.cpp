@@ -176,14 +176,14 @@ Blob makeWideSharedCycleBlob(uint64_t classCount) {
 
 struct Execution {
   obelisk_rt_execution_descriptor_v1 descriptor{};
-  obelisk_rt_execution_extension_v3 extension{};
+  obelisk_rt_execution_extension_v1 extension{};
 
   Execution() = default;
   explicit Execution(const uint8_t *blob, uint64_t size) {
     descriptor.version = OBELISK_RT_VERSION;
     descriptor.flags = OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
     descriptor.reserved = sizeof(descriptor);
-    extension.version = OBELISK_RT_EXECUTION_EXTENSION_V3_VERSION;
+    extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
     extension.size = sizeof(extension);
     extension.class_bitstream = blob;
     extension.class_bitstream_size = size;

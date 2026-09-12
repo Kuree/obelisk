@@ -1,4 +1,5 @@
 add_subdirectory(Dialect)
+add_subdirectory(Coverage)
 add_subdirectory(Analysis)
 add_subdirectory(Solver)
 add_subdirectory(Conversion)
