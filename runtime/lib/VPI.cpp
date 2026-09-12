@@ -4814,6 +4814,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // or frame handle is therefore valid at the instant of this query.
   if (property == vpiValid)
     return 1;
+  // The current runtime object representations cover the two non-transient
+  // vpiHasActual cases in IEEE 1800-2023 37.61 detail 3. Objects reached in an
+  // elaborated context have an actual; objects reached lexically from a class
+  // definition do not. Indexed and relation-derived handles preserve that
+  // provenance when they are created. Dynamic class-object, virtual-interface,
+  // and frame representations will refine this branch when those handle forms
+  // are introduced.
+  if (property == vpiHasActual)
+    return !handle->classDefinitionOrigin;
   // propertyFor() already rejected protected sources. The applicable legacy
   // scope property has the canonical false value in every other case.
   if (property == vpiProtected)
