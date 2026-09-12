@@ -32,6 +32,9 @@ namespace obelisk::bytecode {
 namespace {
 
 constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
+constexpr uint32_t kDefinitionMemberRefObjectFlag = UINT32_C(1) << 31;
+constexpr uint32_t kDefinitionMemberInstanceTargetFlag = UINT32_C(1) << 31;
+constexpr uint32_t kVirtualBindingLimit = UINT32_C(1) << 30;
 using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
@@ -43,6 +46,9 @@ static_assert(DefinitionMemberRelationTargetLayout.size == 4);
 static_assert(DefinitionSpecializationLayout.size == 12);
 static_assert(DefinitionSpecializationBindingLayout.size == 8);
 static_assert(DefinitionMemberEndpointLayout.size == 4);
+static_assert(DefinitionMemberInstanceRelationLayout.size == 20);
+static_assert(DefinitionMemberInstanceRelationTargetLayout.size == 4);
+static_assert(DefinitionMemberInstanceRelationInverseLayout.size == 4);
 static_assert(static_cast<uint8_t>(TableKind::Scope) == 0);
 static_assert(static_cast<uint8_t>(TableKind::Object) == 1);
 static_assert(static_cast<uint8_t>(TableKind::Statement) == 2);
@@ -245,6 +251,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionMemberEndpointRecord {
     uint32_t targetIndexAndTable = UINT32_MAX;
   };
+  struct DefinitionMemberInstanceRelationRecord {
+    uint32_t binding = 0;
+    uint32_t memberAndFlags = 0;
+    uint16_t selector = 0;
+    uint16_t modeAndFlags = 0;
+    uint32_t firstTarget = 0;
+    uint32_t targetCount = 0;
+  };
+  struct DefinitionMemberInstanceRelationInverseRecord {
+    uint32_t target = 0;
+  };
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
     uint32_t netType = 0;
@@ -276,6 +293,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionMemberSpecializations;
   SmallVector<sim::SimVPIDefinitionMemberInstanceBindingOp>
       definitionMemberInstanceBindings;
+  SmallVector<sim::SimVPIDefinitionMemberInstanceRelationOp>
+      definitionMemberInstanceRelationDeclarations;
   llvm::StringMap<sim::SimVPIDefinitionDeclOp> definitionsBySymbol;
   llvm::StringMap<sim::SimVPIDefinitionMemberDeclOp> definitionMembersBySymbol;
   llvm::StringMap<sim::SimVPIDefinitionSpecializationDeclOp>
@@ -296,6 +315,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<DefinitionSpecializationBindingRecord>
       definitionSpecializationBindings;
   SmallVector<DefinitionMemberEndpointRecord> definitionMemberEndpoints;
+  SmallVector<DefinitionMemberInstanceRelationRecord>
+      definitionMemberInstanceRelations;
+  SmallVector<uint32_t> definitionMemberInstanceRelationTargets;
+  SmallVector<DefinitionMemberInstanceRelationInverseRecord>
+      definitionMemberInstanceRelationInverses;
   DenseMap<uint32_t, uint32_t> definitionForSource;
   SmallVector<ResolvedNetRunRecord> resolvedNetRuns;
   SmallVector<NetDelayRunRecord> netDelayRuns;
@@ -380,6 +404,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        operation)) {
       if (includeStatements)
         definitionMemberInstanceBindings.push_back(binding);
+    } else if (auto relation =
+                   dyn_cast<sim::SimVPIDefinitionMemberInstanceRelationOp>(
+                       operation)) {
+      if (includeStatements)
+        definitionMemberInstanceRelationDeclarations.push_back(relation);
     } else if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation)) {
       if (includeStatements) {
         anchors.push_back(anchor);
@@ -953,8 +982,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
           uint32_t memberIndex = definition.firstMember + ordinal;
           if (vpiObjectSetContains(
                   edge->targets,
-                  definitionMembers[memberIndex].declaration.getVpiKind()))
+                  definitionMembers[memberIndex].declaration.getVpiKind())) {
+            if (definitionMemberRelationTargets.size() >=
+                kDefinitionMemberInstanceTargetFlag) {
+              definition.declaration.emitOpError(
+                  "VPI definition-member target table exceeds its compact "
+                  "token encoding");
+              return {};
+            }
             definitionMemberRelationTargets.push_back(memberIndex);
+          }
         }
         uint32_t count =
             static_cast<uint32_t>(definitionMemberRelationTargets.size()) -
@@ -992,7 +1029,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       auto found = definitionsBySymbol.find(reference.getValue());
       uint32_t packedSource = 0;
-      if (found == definitionsBySymbol.end() ||
+      if (definitionBindings.size() >= kVirtualBindingLimit ||
+          found == definitionsBySymbol.end() ||
           !tryPackTableIndex(TableKind::Scope,
                              static_cast<uint32_t>(scopeIndex), packedSource)) {
         scope.emitOpError("VPI definition binding cannot be encoded");
@@ -1217,7 +1255,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   }
 
-  DenseMap<uint64_t, ImageObjectRef> storageRefs, netRefs, netIdentityRefs;
+  DenseMap<uint64_t, ImageObjectRef> storageRefs, netRefs, netIdentityRefs,
+      portRefs;
   if (includeStatements) {
     for (auto [index, object] : llvm::enumerate(objects)) {
       ImageObjectRef reference{TableKind::Object, static_cast<uint32_t>(index),
@@ -1230,7 +1269,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           netIdentityRefs.try_emplace(identity.getId(), reference);
         else
           netRefs.try_emplace(object.id, reference);
-      }
+      } else if (object.kind == OBELISK_RT_DESIGN_RECORD_PORT)
+        portRefs.try_emplace(object.id, reference);
     }
 
     DenseMap<uint64_t, uint32_t> definitionBindingByScope;
@@ -1313,6 +1353,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
         break;
       }
       case sim::VPIObjectRefKind::Statement:
+      case sim::VPIObjectRefKind::Port:
         break;
       }
       bool ref =
@@ -1363,6 +1404,188 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       definitionMemberEndpoints[slot].targetIndexAndTable = packedTarget;
+    }
+
+    struct PreparedMemberInstanceRelation {
+      sim::SimVPIDefinitionMemberInstanceRelationOp declaration;
+      uint32_t binding = 0;
+      uint32_t memberAndFlags = 0;
+      uint16_t selector = 0;
+      uint16_t mode = 0;
+      uint32_t inverseSelector = 0;
+      uint32_t ordinal = 0;
+      uint32_t packedTarget = 0;
+    };
+    SmallVector<PreparedMemberInstanceRelation> preparedRelations;
+    preparedRelations.reserve(
+        definitionMemberInstanceRelationDeclarations.size());
+    for (sim::SimVPIDefinitionMemberInstanceRelationOp relation :
+         definitionMemberInstanceRelationDeclarations) {
+      auto binding = definitionBindingByScope.find(relation.getScopeId());
+      auto member =
+          definitionMembersBySymbol.find(relation.getMemberAttr().getValue());
+      uint64_t targetId =
+          relation.getTarget().getId().getValue().getZExtValue();
+      auto target = portRefs.find(targetId);
+      if (binding == definitionBindingByScope.end() ||
+          member == definitionMembersBySymbol.end() ||
+          !definitionMemberIndices.count(member->second) ||
+          relation.getTarget().getKind() != sim::VPIObjectRefKind::Port ||
+          target == portRefs.end()) {
+        relation.emitOpError(
+            "VPI definition-member instance relation cannot be encoded");
+        return {};
+      }
+      uint32_t memberIndex = definitionMemberIndices.lookup(member->second);
+      if (memberIndex >= kDefinitionMemberRefObjectFlag ||
+          target->second.vpiKind !=
+              static_cast<uint32_t>(VPIObjectKind::Port)) {
+        relation.emitOpError(
+            "VPI definition-member instance relation endpoint is invalid");
+        return {};
+      }
+      const DefinitionBindingRecord &sourceBinding =
+          definitionBindings[binding->second];
+      const DefinitionRecord &sourceDefinition =
+          definitions[sourceBinding.definition];
+      if (memberIndex < sourceDefinition.firstMember ||
+          memberIndex - sourceDefinition.firstMember >=
+              sourceDefinition.memberCount ||
+          member->second.getDirection().value_or(
+              sim::VPIIODirection::Undefined) != sim::VPIIODirection::Ref) {
+        relation.emitOpError(
+            "VPI definition-member relation source is not a RefObj");
+        return {};
+      }
+      uint32_t endpointIndex = sourceBinding.firstMemberEndpoint +
+                               (memberIndex - sourceDefinition.firstMember);
+      if (endpointIndex >= definitionMemberEndpoints.size() ||
+          definitionMemberEndpoints[endpointIndex].targetIndexAndTable ==
+              UINT32_MAX) {
+        relation.emitOpError(
+            "VPI definition-member relation source has no instance endpoint");
+        return {};
+      }
+      auto mode = static_cast<VPITraversalMode>(
+          static_cast<uint32_t>(relation.getMode()));
+      const VPITraversalDescriptor *edge =
+          findVPITraversal(static_cast<uint32_t>(VPIObjectKind::RefObj),
+                           relation.getSelector(), mode);
+      if (!edge ||
+          edge->automaticRelation !=
+              VPIAutomaticRelation::DefinitionMemberInstanceRelation ||
+          edge->inverseSelector == 0 ||
+          !vpiObjectSetContains(edge->targets, target->second.vpiKind)) {
+        relation.emitOpError(
+            "relation is not legal in the generated VPI object model");
+        return {};
+      }
+      uint32_t packedTarget = 0;
+      if (!tryPackTableIndex(target->second.table, target->second.index,
+                             packedTarget)) {
+        relation.emitOpError("VPI port target cannot be packed");
+        return {};
+      }
+      auto port = dyn_cast_if_present<sim::SimPortDeclOp>(
+          objects[target->second.index].identity);
+      if (edge->inverseSelector ==
+              static_cast<uint32_t>(VPIRelationKind::LowConnRel) &&
+          (!port || port.getDirection() != sim::PortDirection::InOut)) {
+        relation.emitOpError(
+            "owning ref port must have inout execution direction");
+        return {};
+      }
+      preparedRelations.push_back(
+          {relation, binding->second,
+           kDefinitionMemberRefObjectFlag | memberIndex,
+           static_cast<uint16_t>(relation.getSelector()),
+           static_cast<uint16_t>(relation.getMode()), edge->inverseSelector,
+           static_cast<uint32_t>(relation.getOrdinal()), packedTarget});
+    }
+    llvm::sort(preparedRelations, [](const auto &left, const auto &right) {
+      return std::make_tuple(left.binding, left.memberAndFlags, left.selector,
+                             left.mode, left.ordinal, left.packedTarget) <
+             std::make_tuple(right.binding, right.memberAndFlags,
+                             right.selector, right.mode, right.ordinal,
+                             right.packedTarget);
+    });
+    std::tuple<uint32_t, uint32_t, uint16_t, uint16_t> previousKey{};
+    bool haveKey = false;
+    uint32_t expectedOrdinal = 0;
+    llvm::DenseSet<uint32_t> targetsInGroup;
+    llvm::DenseSet<std::pair<uint32_t, uint32_t>> inverseKeys;
+    llvm::DenseSet<uint32_t> refLowConnectionPorts;
+    for (PreparedMemberInstanceRelation &relation : preparedRelations) {
+      auto key = std::make_tuple(relation.binding, relation.memberAndFlags,
+                                 relation.selector, relation.mode);
+      if (!haveKey || key != previousKey) {
+        if (definitionMemberInstanceRelations.size() == UINT32_MAX ||
+            definitionMemberInstanceRelationTargets.size() >=
+                kDefinitionMemberInstanceTargetFlag) {
+          relation.declaration.emitOpError(
+              "VPI definition-member relation table exceeds 32-bit indices");
+          return {};
+        }
+        definitionMemberInstanceRelations.push_back(
+            {relation.binding, relation.memberAndFlags, relation.selector,
+             relation.mode,
+             static_cast<uint32_t>(
+                 definitionMemberInstanceRelationTargets.size()),
+             0});
+        previousKey = key;
+        haveKey = true;
+        expectedOrdinal = 0;
+        targetsInGroup.clear();
+      }
+      if (relation.ordinal != expectedOrdinal++) {
+        relation.declaration.emitOpError(
+            "VPI definition-member relation ordinals must be dense");
+        return {};
+      }
+      if (!targetsInGroup.insert(relation.packedTarget).second) {
+        relation.declaration.emitOpError(
+            "duplicate target in a VPI definition-member relation");
+        return {};
+      }
+      uint32_t inverseSelector = relation.inverseSelector;
+      if (!inverseKeys.insert({relation.packedTarget, inverseSelector})
+               .second) {
+        relation.declaration.emitOpError(
+            "VPI port has more than one reference connection");
+        return {};
+      }
+      if (definitionMemberInstanceRelationTargets.size() >=
+              kDefinitionMemberInstanceTargetFlag ||
+          definitionMemberInstanceRelations.back().targetCount == UINT32_MAX) {
+        relation.declaration.emitOpError(
+            "VPI definition-member relation target table exceeds its "
+            "compact encoding");
+        return {};
+      }
+      uint32_t targetIndex =
+          static_cast<uint32_t>(definitionMemberInstanceRelationTargets.size());
+      definitionMemberInstanceRelationTargets.push_back(relation.packedTarget);
+      definitionMemberInstanceRelationInverses.push_back({targetIndex});
+      if (inverseSelector == static_cast<uint32_t>(VPIRelationKind::LowConnRel))
+        refLowConnectionPorts.insert(relation.packedTarget);
+      ++definitionMemberInstanceRelations.back().targetCount;
+    }
+    llvm::sort(
+        definitionMemberInstanceRelationInverses,
+        [&](const auto &left, const auto &right) {
+          return std::tie(definitionMemberInstanceRelationTargets[left.target],
+                          left.target) <
+                 std::tie(definitionMemberInstanceRelationTargets[right.target],
+                          right.target);
+        });
+
+    // Ref ports have a synthetic RefObj as their low connection. Ordinary
+    // whole ports keep the canonical net/variable connection below.
+    for (uint32_t packedPort : refLowConnectionPorts) {
+      Record &port = objects[unpackTableIndex(packedPort)];
+      port.caps &= ~OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
+      port.caps |= OBELISK_RT_DESIGN_CAP_PORT_REF;
+      wholePortConnections.erase(port.id);
     }
   }
 
@@ -1969,6 +2192,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       case sim::VPIObjectRefKind::NetIdentity: {
         auto found = netIdentityRefs.find(id);
         if (found != netIdentityRefs.end())
+          resolved = found->second;
+        break;
+      }
+      case sim::VPIObjectRefKind::Port: {
+        auto found = portRefs.find(id);
+        if (found != portRefs.end())
           resolved = found->second;
         break;
       }
@@ -3260,9 +3489,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionSpecializationBindingOffset +
       definitionSpecializationBindings.size() *
           DefinitionSpecializationBindingLayout.size;
-  uint64_t stringOffset =
+  uint64_t definitionMemberInstanceRelationOffset =
       definitionMemberEndpointOffset +
       definitionMemberEndpoints.size() * DefinitionMemberEndpointLayout.size;
+  uint64_t definitionMemberInstanceRelationTargetOffset =
+      definitionMemberInstanceRelationOffset +
+      definitionMemberInstanceRelations.size() *
+          DefinitionMemberInstanceRelationLayout.size;
+  uint64_t definitionMemberInstanceRelationInverseOffset =
+      definitionMemberInstanceRelationTargetOffset +
+      definitionMemberInstanceRelationTargets.size() *
+          DefinitionMemberInstanceRelationTargetLayout.size;
+  uint64_t stringOffset =
+      definitionMemberInstanceRelationInverseOffset +
+      definitionMemberInstanceRelationInverses.size() *
+          DefinitionMemberInstanceRelationInverseLayout.size;
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -3543,6 +3784,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionSpecializationBindings.size());
     writer.setDefinitionMemberEndpointOffset(definitionMemberEndpointOffset);
     writer.setDefinitionMemberEndpointCount(definitionMemberEndpoints.size());
+    writer.setDefinitionMemberInstanceRelationOffset(
+        definitionMemberInstanceRelationOffset);
+    writer.setDefinitionMemberInstanceRelationCount(
+        definitionMemberInstanceRelations.size());
+    writer.setDefinitionMemberInstanceRelationTargetOffset(
+        definitionMemberInstanceRelationTargetOffset);
+    writer.setDefinitionMemberInstanceRelationTargetCount(
+        definitionMemberInstanceRelationTargets.size());
+    writer.setDefinitionMemberInstanceRelationInverseOffset(
+        definitionMemberInstanceRelationInverseOffset);
+    writer.setDefinitionMemberInstanceRelationInverseCount(
+        definitionMemberInstanceRelationInverses.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -3705,6 +3958,32 @@ SmallVector<uint8_t> serializeDesignDatabase(
         output.data() + definitionMemberEndpointOffset +
         index * DefinitionMemberEndpointLayout.size);
     writer.setTargetIndexAndTable(endpoint.targetIndexAndTable);
+  }
+  for (auto [index, relation] :
+       llvm::enumerate(definitionMemberInstanceRelations)) {
+    DefinitionMemberInstanceRelationWriter writer(
+        output.data() + definitionMemberInstanceRelationOffset +
+        index * DefinitionMemberInstanceRelationLayout.size);
+    writer.setBinding(relation.binding);
+    writer.setMemberAndFlags(relation.memberAndFlags);
+    writer.setSelector(relation.selector);
+    writer.setModeAndFlags(relation.modeAndFlags);
+    writer.setFirstTarget(relation.firstTarget);
+    writer.setTargetCount(relation.targetCount);
+  }
+  for (auto [index, target] :
+       llvm::enumerate(definitionMemberInstanceRelationTargets)) {
+    DefinitionMemberInstanceRelationTargetWriter writer(
+        output.data() + definitionMemberInstanceRelationTargetOffset +
+        index * DefinitionMemberInstanceRelationTargetLayout.size);
+    writer.setTargetIndexAndTable(target);
+  }
+  for (auto [index, inverse] :
+       llvm::enumerate(definitionMemberInstanceRelationInverses)) {
+    DefinitionMemberInstanceRelationInverseWriter writer(
+        output.data() + definitionMemberInstanceRelationInverseOffset +
+        index * DefinitionMemberInstanceRelationInverseLayout.size);
+    writer.setTarget(inverse.target);
   }
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +

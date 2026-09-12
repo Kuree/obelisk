@@ -893,7 +893,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"IndexedContainer", 4},
       {"DefinitionMember", 5},
       {"DefinitionMemberParent", 6},
-      {"DefinitionMemberExpr", 7}};
+      {"DefinitionMemberExpr", 7},
+      {"DefinitionMemberInstanceRelation", 8}};
   const std::pair<StringRef, uint32_t> supportedIndexedAccessKinds[] = {
       {"PortElement", 0},
       {"NetElement", 1},
@@ -1592,10 +1593,13 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
     const Record *mode = edge->getValueAsDef("mode");
     const Record *order = edge->getValueAsDef("order");
     const Record *automatic = edge->getValueAsDef("automaticRelation");
+    int64_t inverseSelector = edge->getValueAsInt("inverseSelector");
     StringRef clause = edge->getValueAsString("clause");
-    if (targets->getValueAsBit("nullRoot") || clause.empty()) {
+    if (targets->getValueAsBit("nullRoot") || clause.empty() ||
+        inverseSelector < 0 || inverseSelector > UINT32_MAX) {
       PrintError(edge->getLoc(),
-                 "VPI traversal needs non-root targets and an LRM clause");
+                 "VPI traversal needs non-root targets, an LRM clause, and a "
+                 "32-bit inverse selector");
       return false;
     }
     if (edge->getValueAsBit("statementContainment")) {
@@ -1623,7 +1627,9 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
         return false;
       }
       StringRef requiredMode =
-          automaticName == "DirectChild" || automaticName == "DefinitionMember"
+          automaticName == "DirectChild" ||
+                  automaticName == "DefinitionMember" ||
+                  automaticName == "DefinitionMemberInstanceRelation"
               ? "Iterate"
               : "Handle";
       if (mode->getValueAsString("cppName") != requiredMode) {
@@ -1722,6 +1728,34 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
           return false;
         }
       }
+      if (automaticName == "DefinitionMemberInstanceRelation") {
+        for (const Record *source : expandedSets.lookup(sources))
+          if (source->getValueAsString("apiName") != "vpiRefObj") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member instance relation source "
+                       "is not a reference object");
+            return false;
+          }
+        for (const Record *target : expandedSets.lookup(targets))
+          if (target->getValueAsString("apiName") != "vpiPort" &&
+              target->getValueAsString("apiName") != "vpiPortBit") {
+            PrintError(edge->getLoc(),
+                       "automatic definition-member instance relation target "
+                       "is not a port");
+            return false;
+          }
+        StringRef selectorName = selector->getValueAsString("apiName");
+        StringRef inverseName = selectorName == "vpiPort"       ? "vpiLowConn"
+                                : selectorName == "vpiPortInst" ? "vpiHighConn"
+                                                                : StringRef{};
+        const Record *inverse = relationApiNames.lookup(inverseName);
+        if (!inverse || inverseSelector != inverse->getValueAsInt("value")) {
+          PrintError(edge->getLoc(),
+                     "automatic definition-member instance relation has an "
+                     "invalid inverse selector");
+          return false;
+        }
+      }
       if (automaticName == "DefinitionMemberParent") {
         StringRef selectorName = selector->getValueAsString("apiName");
         for (const Record *source : expandedSets.lookup(sources)) {
@@ -1784,6 +1818,17 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
           return false;
         }
       }
+      if (automaticName != "DefinitionMemberInstanceRelation" &&
+          inverseSelector != 0) {
+        PrintError(edge->getLoc(),
+                   "automatic VPI traversal category does not support an "
+                   "inverse selector");
+        return false;
+      }
+    } else if (inverseSelector != 0) {
+      PrintError(edge->getLoc(),
+                 "non-automatic VPI traversal has an inverse selector");
+      return false;
     }
     if (!selector->getValueAsString("aliasOf").empty()) {
       PrintError(edge->getLoc(), "VPI traversal selector must be canonical");
@@ -2863,6 +2908,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     const Record *targets;
     bool statementContainment;
     const Record *automaticRelation;
+    uint32_t inverseSelector;
     StringRef selectorName;
     StringRef clause;
   };
@@ -2878,6 +2924,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
            edge->getValueAsDef("targets"),
            edge->getValueAsBit("statementContainment"),
            edge->getValueAsDef("automaticRelation"),
+           static_cast<uint32_t>(edge->getValueAsInt("inverseSelector")),
            selector->getValueAsString("apiName"),
            edge->getValueAsString("clause")});
     };
@@ -2901,6 +2948,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  VPIObjectSetID targets;\n"
         "  bool statementContainment;\n"
         "  VPIAutomaticRelation automaticRelation;\n"
+        "  uint32_t inverseSelector;\n"
         "  const char *selectorName;\n"
         "  const char *clause;\n"
         "};\n\n";
@@ -2908,13 +2956,13 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   for (const EmittedTraversalEdge &edge : emittedEdges) {
     os << formatv(
         "  {{{0}, {1}, VPITraversalMode::{2}, VPITraversalOrder::{3}, "
-        "VPIObjectSetID::{4}, {5}, VPIAutomaticRelation::{6}, \"{7}\", "
-        "\"{8}\"",
+        "VPIObjectSetID::{4}, {5}, VPIAutomaticRelation::{6}, {7}, \"{8}\", "
+        "\"{9}\"",
         edge.source, edge.selector, edge.mode->getValueAsString("cppName"),
         edge.order->getValueAsString("cppName"),
         edge.targets->getValueAsString("cppName"), edge.statementContainment,
-        edge.automaticRelation->getValueAsString("cppName"), edge.selectorName,
-        edge.clause);
+        edge.automaticRelation->getValueAsString("cppName"),
+        edge.inverseSelector, edge.selectorName, edge.clause);
     os << "},\n";
   }
   os << "};\n\n";
@@ -3044,7 +3092,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   constexpr uint32_t imageObjectSize = 12;
   constexpr uint32_t imageRelationSize = 4;
   constexpr uint32_t imageSetSize = 4;
-  constexpr uint32_t imageTraversalSize = 8;
+  constexpr uint32_t imageTraversalSize = 12;
   constexpr uint32_t imagePropertySize = 6;
   constexpr uint32_t imageValuePolicySize = 8;
   constexpr uint32_t imageArrayValuePolicySize = 4;
@@ -3137,8 +3185,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     image.push_back(static_cast<uint8_t>(edge.mode->getValueAsInt("value")));
     image.push_back(static_cast<uint8_t>(
         edge.order->getValueAsInt("value") |
-        (edge.automaticRelation->getValueAsInt("value") << 4) |
-        (edge.statementContainment ? 0x80 : 0)));
+        (edge.statementContainment ? 0x08 : 0) |
+        (edge.automaticRelation->getValueAsInt("value") << 4)));
+    append32(edge.inverseSelector);
   }
 
   size_t propertyOffset = image.size();
@@ -3290,13 +3339,13 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "= "
      << imageIntegerPropertyValueSize << ";\n\n";
   os << "inline constexpr uint8_t "
-        "vpiObjectModelImageOrderMask = 0x0f;\n"
+        "vpiObjectModelImageOrderMask = 0x07;\n"
         "inline constexpr uint8_t "
-        "vpiObjectModelImageAutomaticRelationMask = 0x70;\n"
+        "vpiObjectModelImageAutomaticRelationMask = 0xf0;\n"
         "inline constexpr uint8_t "
         "vpiObjectModelImageAutomaticRelationShift = 4;\n"
         "inline constexpr uint8_t "
-        "vpiObjectModelImageStatementContainment = 0x80;\n\n";
+        "vpiObjectModelImageStatementContainment = 0x08;\n\n";
   os << formatv("inline constexpr uint64_t "
                 "vpiObjectModelImageFingerprint = UINT64_C({0});\n\n",
                 imageChecksum);
@@ -3534,6 +3583,9 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     uint8_t automaticRelation =
         (flagsAndOrder & vpiObjectModelImageAutomaticRelationMask) >>
         vpiObjectModelImageAutomaticRelationShift;
+    uint32_t inverseSelector = readVPIObjectModelImage32(record, 8);
+    const VPITraversalDescriptor *descriptor = findVPITraversal(
+        source, selector, static_cast<VPITraversalMode>(mode));
     bool automaticTargetsValid = true;
     if (automaticRelation ==
         static_cast<uint8_t>(VPIAutomaticRelation::IndexedContainer)) {
@@ -3561,16 +3613,19 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
                     (previousSelector < selector ||
                      (previousSelector == selector && previousMode < mode)));
     if (!ordered || targets >= setCount || mode > 1 || order > 4 ||
+        !descriptor || descriptor->inverseSelector != inverseSelector ||
         !automaticTargetsValid ||
         automaticRelation > static_cast<uint8_t>(
-                                VPIAutomaticRelation::DefinitionMemberExpr) ||
+            VPIAutomaticRelation::DefinitionMemberInstanceRelation) ||
         (automaticRelation !=
              static_cast<uint8_t>(VPIAutomaticRelation::None) &&
          ((flagsAndOrder & vpiObjectModelImageStatementContainment) != 0 ||
           mode != ((automaticRelation == static_cast<uint8_t>(
                                              VPIAutomaticRelation::DirectChild) ||
                     automaticRelation == static_cast<uint8_t>(
-                                             VPIAutomaticRelation::DefinitionMember))
+                                             VPIAutomaticRelation::DefinitionMember) ||
+                    automaticRelation == static_cast<uint8_t>(
+                        VPIAutomaticRelation::DefinitionMemberInstanceRelation))
                        ? 1
                        : 0))) ||
         (mode == 0 && order != 0))
@@ -3884,6 +3939,7 @@ struct VPIObjectModelImageTraversal {
   VPITraversalOrder order;
   bool statementContainment;
   VPIAutomaticRelation automaticRelation;
+  uint32_t inverseSelector;
 };
 
 inline constexpr bool findVPIObjectModelImageTraversal(
@@ -3925,7 +3981,8 @@ inline constexpr bool findVPIObjectModelImageTraversal(
             (record[7] & vpiObjectModelImageStatementContainment) != 0,
             static_cast<VPIAutomaticRelation>(
                 (record[7] & vpiObjectModelImageAutomaticRelationMask) >>
-                vpiObjectModelImageAutomaticRelationShift)};
+                vpiObjectModelImageAutomaticRelationShift),
+            readVPIObjectModelImage32(record, 8)};
   return result.sourceType == sourceType && result.selector == selector &&
          result.mode == mode;
 }

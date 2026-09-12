@@ -167,6 +167,29 @@ def SimVPIDefinitionMemberInstanceBindingOp
   }];
 }
 
+def SimVPIDefinitionMemberInstanceRelationOp
+    : SimOp<"vpi_definition_member.relation", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific relation from a synthetic VPI member";
+  let description = [{
+    Preserves a sparse relation whose source is the allocation-free VPI
+    cursor formed from `scope_id` and `member`.  This keeps high-connection
+    provenance distinct even when multiple reference formals ultimately alias
+    the same simulated storage.  The inventory is cold and never participates
+    in executable scheduling.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       I32Attr:$selector, SimVPIRelationMode:$mode,
+                       I64Attr:$ordinal, SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `selector` $selector $mode
+    `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimScopeDeclOp : SimOp<"scope.decl", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

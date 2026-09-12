@@ -3803,18 +3803,19 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionMemberDeclOp,
               sim::SimVPIDefinitionSpecializationDeclOp,
               sim::SimVPIDefinitionMemberSpecializationOp,
-              sim::SimVPIDefinitionMemberInstanceBindingOp, sim::SimScopeDeclOp,
-              sim::SimCodeUnitDeclOp, sim::SimStatementDeclOp,
-              sim::SimStatementSiteDeclOp, sim::SimVPIStatementRelationDeclOp,
-              sim::SimVPIRelationDeclOp, sim::SimVPINetIdentityDeclOp,
-              sim::SimStorageDeclOp, sim::SimNetDeclOp, sim::SimDriverDeclOp,
-              sim::SimPortDeclOp, sim::SimNetConnectDeclOp,
-              sim::SimPassSwitchDeclOp, sim::SimClassDeclOp,
-              sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
-              sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
-              sim::SimVPIEnumConstDeclOp, sim::SimClassFieldDeclOp,
-              sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp>(
-              operation)) {
+              sim::SimVPIDefinitionMemberInstanceBindingOp,
+              sim::SimVPIDefinitionMemberInstanceRelationOp,
+              sim::SimScopeDeclOp, sim::SimCodeUnitDeclOp,
+              sim::SimStatementDeclOp, sim::SimStatementSiteDeclOp,
+              sim::SimVPIStatementRelationDeclOp, sim::SimVPIRelationDeclOp,
+              sim::SimVPINetIdentityDeclOp, sim::SimStorageDeclOp,
+              sim::SimNetDeclOp, sim::SimDriverDeclOp, sim::SimPortDeclOp,
+              sim::SimNetConnectDeclOp, sim::SimPassSwitchDeclOp,
+              sim::SimClassDeclOp, sim::SimCovergroupDeclOp,
+              sim::SimVPIObjectAnchorOp, sim::SimVPINettypeDeclOp,
+              sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
+              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
+              sim::SimRandomConstraintTemplateOp>(operation)) {
         operation->erase();
         continue;
       }

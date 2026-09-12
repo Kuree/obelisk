@@ -16,7 +16,7 @@ OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
 using namespace obelisk::reflection;
 
 static_assert(vpiObjectModelImageHeaderSize == 120);
-static_assert(vpiObjectModelImageTraversalSize == 8);
+static_assert(vpiObjectModelImageTraversalSize == 12);
 static_assert(vpiObjectModelImagePropertySize == 6);
 static_assert(vpiObjectModelImageValuePolicySize == 8);
 static_assert(vpiObjectModelImageArrayValuePolicySize == 4);

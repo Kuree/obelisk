@@ -3162,6 +3162,8 @@ add("37.16",
     vpiPortInst, Mode::Iterate, S({vpiPort, vpiPortBit}), Order::None);
 add("37.15", S({vpiRefObj}), vpiPortInst, Mode::Iterate,
     S({vpiPort, vpiPortBit}), Order::None);
+add("37.15", S({vpiRefObj}), vpiPort, Mode::Iterate,
+    S({vpiPort, vpiPortBit}), Order::None);
 add("37.5", S({vpiModule}), vpiProcess, Mode::Iterate,
     S({vpiAlways, vpiInitial, vpiFinal}), Order::None);
 add("37.6", S({vpiInterface}), vpiProcess, Mode::Iterate,

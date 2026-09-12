@@ -393,6 +393,44 @@ def DefinitionMemberEndpointTarget
 def DefinitionMemberEndpoint : ReflectionLayout<"DefinitionMemberEndpoint", 4,
   [DefinitionMemberEndpointTarget]>;
 
+// Sparse instance-specific edges from a synthetic definition-member cursor.
+// Binding and member form the source identity.  Selector/mode allow this one
+// generated representation to serve every legal relation of that source.
+def DefinitionMemberInstanceRelationBinding
+    : ReflectionField<"Binding", 0, U32LE>;
+def DefinitionMemberInstanceRelationMemberAndFlags
+    : ReflectionField<"MemberAndFlags", 4, U32LE>;
+def DefinitionMemberInstanceRelationSelector
+    : ReflectionField<"Selector", 8, U16LE>;
+def DefinitionMemberInstanceRelationModeAndFlags
+    : ReflectionField<"ModeAndFlags", 10, U16LE>;
+def DefinitionMemberInstanceRelationFirstTarget
+    : ReflectionField<"FirstTarget", 12, U32LE>;
+def DefinitionMemberInstanceRelationTargetCount
+    : ReflectionField<"TargetCount", 16, U32LE>;
+def DefinitionMemberInstanceRelation
+    : ReflectionLayout<"DefinitionMemberInstanceRelation", 20,
+      [DefinitionMemberInstanceRelationBinding,
+       DefinitionMemberInstanceRelationMemberAndFlags,
+       DefinitionMemberInstanceRelationSelector,
+       DefinitionMemberInstanceRelationModeAndFlags,
+       DefinitionMemberInstanceRelationFirstTarget,
+       DefinitionMemberInstanceRelationTargetCount]>;
+def DefinitionMemberInstanceRelationTargetIndexAndTable
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def DefinitionMemberInstanceRelationTarget
+    : ReflectionLayout<"DefinitionMemberInstanceRelationTarget", 4,
+      [DefinitionMemberInstanceRelationTargetIndexAndTable]>;
+// Permutation of absolute indices in the target table above, sorted by the
+// dereferenced physical port and then target index. The owning relation range
+// provides the source binding/member and reverse selector without duplicating
+// either endpoint in this index.
+def DefinitionMemberInstanceRelationInverseTarget
+    : ReflectionField<"Target", 0, U32LE>;
+def DefinitionMemberInstanceRelationInverse
+    : ReflectionLayout<"DefinitionMemberInstanceRelationInverse", 4,
+      [DefinitionMemberInstanceRelationInverseTarget]>;
+
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
 // mean that the exact dominating subtype is unavailable.
@@ -500,7 +538,19 @@ def SemanticDirectoryDefinitionMemberEndpointOffset
     : ReflectionField<"DefinitionMemberEndpointOffset", 288, U64LE>;
 def SemanticDirectoryDefinitionMemberEndpointCount
     : ReflectionField<"DefinitionMemberEndpointCount", 296, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 304,
+def SemanticDirectoryDefinitionMemberInstanceRelationOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationOffset", 304, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationCount
+    : ReflectionField<"DefinitionMemberInstanceRelationCount", 312, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationTargetOffset", 320, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationTargetCount
+    : ReflectionField<"DefinitionMemberInstanceRelationTargetCount", 328, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationInverseOffset", 336, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationInverseCount
+    : ReflectionField<"DefinitionMemberInstanceRelationInverseCount", 344, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 352,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -535,7 +585,13 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 304,
    SemanticDirectoryDefinitionSpecializationBindingOffset,
    SemanticDirectoryDefinitionSpecializationBindingCount,
    SemanticDirectoryDefinitionMemberEndpointOffset,
-   SemanticDirectoryDefinitionMemberEndpointCount]>;
+   SemanticDirectoryDefinitionMemberEndpointCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationTargetCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationInverseCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

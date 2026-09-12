@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <tuple>
 
 using namespace mlir;
 
@@ -704,12 +705,14 @@ bool isNestedInCodeUnit(Operation *op) {
 }
 
 FailureOr<llvm::StringMap<DescriptorInfo>>
-materializeDesignDescriptors(ModuleOp module,
+materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                              semantic::SVRootSymbolOp semanticRoot,
                              const PreparedPortAliases &portAliases,
                              const PreparedScopeDeclarations &scopes,
                              const PreparedClassDeclarations &classes,
                              uint64_t designPrecisionFs, OpBuilder &builder) {
+  OpBuilder::InsertionGuard insertionGuard(builder);
+  builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
   uint64_t nextStorageId = 0;
   uint64_t nextNetId = 0;
@@ -3148,6 +3151,77 @@ materializeDesignDescriptors(ModuleOp module,
     }
     descriptors[path].vpiType = *viewType;
   }
+  struct RefMemberSource {
+    uint64_t scopeId = 0;
+    FlatSymbolRefAttr member;
+  };
+  llvm::DenseMap<uint64_t, sim::SimScopeDeclOp> scopeDeclarationsById;
+  for (sim::SimScopeDeclOp scope : scopes.declarations)
+    scopeDeclarationsById[scope.getId()] = scope;
+  using ScopedSymbol = std::pair<uint64_t, Attribute>;
+  llvm::DenseMap<ScopedSymbol, RefMemberSource> refMembersByFormalSymbol;
+  llvm::DenseMap<ScopedSymbol, RefMemberSource> refMembersByInternalSymbol;
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    uint32_t ordinal = 0;
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      if (ordinal >= plan.memberSymbols.size())
+        break;
+      if (plan.signatures[ordinal].direction != sim::VPIIODirection::Ref) {
+        ++ordinal;
+        continue;
+      }
+      auto connection =
+          connectionsByFormalSymbol.find(getSemanticSymbolReference(&child));
+      if (connection == connectionsByFormalSymbol.end())
+        connection = connectionsByFormalSymbol.find(
+            getSemanticSymbolReference(&child, true));
+      if (connection != connectionsByFormalSymbol.end()) {
+        RefMemberSource source{instance.scope.getId(),
+                               plan.memberSymbols[ordinal]};
+        if (!refMembersByFormalSymbol
+                 .try_emplace(
+                     ScopedSymbol{source.scopeId,
+                                  connection->second.getFormalSymbolAttr()},
+                     source)
+                 .second) {
+          connection->second.emitOpError(
+              "duplicate ref formal symbol in one instance");
+          invalid = true;
+        }
+        if (SymbolRefAttr internal = connection->second.getInternalSymbolAttr())
+          if (!refMembersByInternalSymbol
+                   .try_emplace(ScopedSymbol{source.scopeId, internal}, source)
+                   .second) {
+            connection->second.emitOpError(
+                "duplicate ref internal symbol in one instance");
+            invalid = true;
+          }
+      }
+      ++ordinal;
+    }
+  }
+  llvm::DenseMap<std::tuple<uint64_t, Attribute, uint32_t>, uint64_t>
+      nextRefMemberRelationOrdinal;
+  auto emitRefMemberPortRelation = [&](const RefMemberSource &source,
+                                       uint32_t selector, uint64_t portId,
+                                       Location location) {
+    auto key =
+        std::make_tuple(source.scopeId, Attribute(source.member), selector);
+    uint64_t ordinal = nextRefMemberRelationOrdinal[key]++;
+    sim::VPIObjectRefAttr target = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Port,
+        builder.getI64IntegerAttr(portId));
+    sim::SimVPIDefinitionMemberInstanceRelationOp::create(
+        builder, location, source.scopeId, source.member.getValue(), selector,
+        sim::VPIRelationMode::Iterate, ordinal, target);
+  };
+
   uint64_t nextPortId = 0;
   llvm::StringSet<> emittedPorts;
   auto hasInterconnectLeaves = [&](StringRef root) {
@@ -3239,8 +3313,9 @@ materializeDesignDescriptors(ModuleOp module,
       invalid = true;
       continue;
     }
+    uint64_t portId = nextPortId++;
     auto declaration = sim::SimPortDeclOp::create(
-        builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
+        builder, getSemanticLocation(connection), portId, *portScopeId,
         source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
         source->second.viewOffset, source->second.type, direction,
         connection.getFormalOrdinal(), builder.getStringAttr(portHierarchy),
@@ -3249,6 +3324,39 @@ materializeDesignDescriptors(ModuleOp module,
             : StringAttr{},
         *formalVPIType);
     retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
+
+    if (auto own = refMembersByFormalSymbol.find(
+            ScopedSymbol{*portScopeId, connection.getFormalSymbolAttr()});
+        own != refMembersByFormalSymbol.end())
+      emitRefMemberPortRelation(own->second,
+                                static_cast<uint32_t>(VPIKind::Port), portId,
+                                getSemanticLocation(connection));
+
+    Operation *actual = getPortActualLValue(connection);
+    SymbolRefAttr referenced =
+        actual ? actual->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+               : SymbolRefAttr{};
+    if (referenced) {
+      auto scope = scopeDeclarationsById.find(*portScopeId);
+      std::optional<uint64_t> ancestor = scope == scopeDeclarationsById.end()
+                                             ? std::nullopt
+                                             : scope->second.getParent();
+      while (ancestor) {
+        auto high = refMembersByInternalSymbol.find(
+            ScopedSymbol{*ancestor, referenced});
+        if (high != refMembersByInternalSymbol.end()) {
+          emitRefMemberPortRelation(
+              high->second,
+              static_cast<uint32_t>(reflection::VPIRelationKind::PortInstRel),
+              portId, getSemanticLocation(connection));
+          break;
+        }
+        auto parent = scopeDeclarationsById.find(*ancestor);
+        ancestor = parent == scopeDeclarationsById.end()
+                       ? std::nullopt
+                       : parent->second.getParent();
+      }
+    }
   }
 
   // Execution collapses whole-net aliases onto one resolved-net descriptor.
@@ -3552,9 +3660,6 @@ materializeDesignDescriptors(ModuleOp module,
                               declared.vpiKind, declared.scopeId,
                               declared.type});
   };
-  llvm::DenseMap<uint64_t, sim::SimScopeDeclOp> scopeDeclarationsById;
-  for (sim::SimScopeDeclOp scope : scopes.declarations)
-    scopeDeclarationsById[scope.getId()] = scope;
   llvm::DenseMap<uint64_t, std::optional<uint64_t>> moduleScopeCache;
   std::function<std::optional<uint64_t>(uint64_t)> moduleInstanceScope =
       [&](uint64_t id) -> std::optional<uint64_t> {

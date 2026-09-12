@@ -70,6 +70,12 @@ constexpr uint64_t kDefinitionSpecializationBindingSize =
     obelisk::reflection::DefinitionSpecializationBindingLayout.size;
 constexpr uint64_t kDefinitionMemberEndpointSize =
     obelisk::reflection::DefinitionMemberEndpointLayout.size;
+constexpr uint64_t kDefinitionMemberInstanceRelationSize =
+    obelisk::reflection::DefinitionMemberInstanceRelationLayout.size;
+constexpr uint64_t kDefinitionMemberInstanceRelationTargetSize =
+    obelisk::reflection::DefinitionMemberInstanceRelationTargetLayout.size;
+constexpr uint64_t kDefinitionMemberInstanceRelationInverseSize =
+    obelisk::reflection::DefinitionMemberInstanceRelationInverseLayout.size;
 
 // Physical image offsets occupy the 00 prefix. The other prefixes provide
 // allocation-free cursors and relation tokens for per-instance views of
@@ -84,6 +90,7 @@ constexpr uint64_t kVirtualScopeMask = (UINT64_C(1) << 30) - 1;
 constexpr uint32_t kVirtualEndpointRelationFlag = UINT32_C(1) << 31;
 constexpr uint32_t kVirtualRefObjectFlag = UINT32_C(1) << 31;
 constexpr uint32_t kVirtualRefObjectRelationFlag = UINT32_C(1) << 30;
+constexpr uint32_t kVirtualInstanceRelationTargetFlag = UINT32_C(1) << 31;
 constexpr uint16_t kVPIIODirectionRef = 6;
 
 uint64_t virtualToken(uint64_t tag, uint32_t scope, uint32_t payload) {
@@ -244,6 +251,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t definitionSpecializationBindingCount = 0;
   uint64_t definitionMemberEndpointOffset = 0;
   uint64_t definitionMemberEndpointCount = 0;
+  uint64_t definitionMemberInstanceRelationOffset = 0;
+  uint64_t definitionMemberInstanceRelationCount = 0;
+  uint64_t definitionMemberInstanceRelationTargetOffset = 0;
+  uint64_t definitionMemberInstanceRelationTargetCount = 0;
+  uint64_t definitionMemberInstanceRelationInverseOffset = 0;
+  uint64_t definitionMemberInstanceRelationInverseCount = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -288,6 +301,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     definitionSpecializationBindingCount = read64(directory + 280);
     definitionMemberEndpointOffset = read64(directory + 288);
     definitionMemberEndpointCount = read64(directory + 296);
+    definitionMemberInstanceRelationOffset = read64(directory + 304);
+    definitionMemberInstanceRelationCount = read64(directory + 312);
+    definitionMemberInstanceRelationTargetOffset = read64(directory + 320);
+    definitionMemberInstanceRelationTargetCount = read64(directory + 328);
+    definitionMemberInstanceRelationInverseOffset = read64(directory + 336);
+    definitionMemberInstanceRelationInverseCount = read64(directory + 344);
   }
   database = {data,
               execution->design_database_size,
@@ -347,6 +366,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               definitionSpecializationBindingCount,
               definitionMemberEndpointOffset,
               definitionMemberEndpointCount,
+              definitionMemberInstanceRelationOffset,
+              definitionMemberInstanceRelationCount,
+              definitionMemberInstanceRelationTargetOffset,
+              definitionMemberInstanceRelationTargetCount,
+              definitionMemberInstanceRelationInverseOffset,
+              definitionMemberInstanceRelationInverseCount,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -400,6 +425,15 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kDefinitionSpecializationBindingSize},
         {database.definitionMemberEndpoints,
          database.definitionMemberEndpointCount, kDefinitionMemberEndpointSize},
+        {database.definitionMemberInstanceRelations,
+         database.definitionMemberInstanceRelationCount,
+         kDefinitionMemberInstanceRelationSize},
+        {database.definitionMemberInstanceRelationTargets,
+         database.definitionMemberInstanceRelationTargetCount,
+         kDefinitionMemberInstanceRelationTargetSize},
+        {database.definitionMemberInstanceRelationInverses,
+         database.definitionMemberInstanceRelationInverseCount,
+         kDefinitionMemberInstanceRelationInverseSize},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -437,7 +471,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.definitionMemberRelationTargetCount != 0 ||
         database.definitionSpecializationCount != 0 ||
         database.definitionSpecializationBindingCount != 0 ||
-        database.definitionMemberEndpointCount != 0)) ||
+        database.definitionMemberEndpointCount != 0 ||
+        database.definitionMemberInstanceRelationCount != 0 ||
+        database.definitionMemberInstanceRelationTargetCount != 0 ||
+        database.definitionMemberInstanceRelationInverseCount != 0)) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -499,6 +536,16 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.definitionMemberEndpoints,
                   database.definitionMemberEndpointCount,
                   kDefinitionMemberEndpointSize, database.size) ||
+      !validRange(database.definitionMemberInstanceRelations,
+                  database.definitionMemberInstanceRelationCount,
+                  kDefinitionMemberInstanceRelationSize, database.size) ||
+      !validRange(database.definitionMemberInstanceRelationTargets,
+                  database.definitionMemberInstanceRelationTargetCount,
+                  kDefinitionMemberInstanceRelationTargetSize, database.size) ||
+      !validRange(database.definitionMemberInstanceRelationInverses,
+                  database.definitionMemberInstanceRelationInverseCount,
+                  kDefinitionMemberInstanceRelationInverseSize,
+                  database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -549,6 +596,15 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       ((database.definitionMemberEndpointCount != 0 ||
         database.definitionMemberEndpoints != 0) &&
        database.definitionMemberEndpoints < kHeaderSize) ||
+      ((database.definitionMemberInstanceRelationCount != 0 ||
+        database.definitionMemberInstanceRelations != 0) &&
+       database.definitionMemberInstanceRelations < kHeaderSize) ||
+      ((database.definitionMemberInstanceRelationTargetCount != 0 ||
+        database.definitionMemberInstanceRelationTargets != 0) &&
+       database.definitionMemberInstanceRelationTargets < kHeaderSize) ||
+      ((database.definitionMemberInstanceRelationInverseCount != 0 ||
+        database.definitionMemberInstanceRelationInverses != 0) &&
+       database.definitionMemberInstanceRelationInverses < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.size >= kVirtualForwardRelationTag || database.stringSize == 0 ||
       database.scopeCount > kVirtualScopeMask ||
@@ -568,14 +624,19 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.netDelayRunCount > UINT32_MAX ||
       database.staticObjectCount > UINT32_MAX ||
       database.definitionCount > UINT32_MAX ||
-      database.definitionBindingCount > UINT32_MAX ||
+      database.definitionBindingCount > uint64_t{kVirtualScopeMask} + 1 ||
       database.definitionMemberCount >= kVirtualRefObjectRelationFlag ||
       database.definitionMemberRelationCount > UINT32_MAX ||
-      database.definitionMemberRelationTargetCount > UINT32_MAX ||
+      database.definitionMemberRelationTargetCount >=
+          kVirtualInstanceRelationTargetFlag ||
       database.definitionSpecializationCount > UINT32_MAX ||
       database.definitionSpecializationBindingCount > UINT32_MAX ||
       database.definitionMemberEndpointCount > UINT32_MAX ||
       database.definitionMemberEndpointCount >= kVirtualEndpointRelationFlag ||
+      database.definitionMemberInstanceRelationCount > UINT32_MAX ||
+      database.definitionMemberInstanceRelationTargetCount >=
+          kVirtualInstanceRelationTargetFlag ||
+      database.definitionMemberInstanceRelationInverseCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount +
                                 database.staticObjectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
@@ -793,6 +854,15 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kDefinitionSpecializationBindingSize},
       {database.definitionMemberEndpoints,
        database.definitionMemberEndpointCount, kDefinitionMemberEndpointSize},
+      {database.definitionMemberInstanceRelations,
+       database.definitionMemberInstanceRelationCount,
+       kDefinitionMemberInstanceRelationSize},
+      {database.definitionMemberInstanceRelationTargets,
+       database.definitionMemberInstanceRelationTargetCount,
+       kDefinitionMemberInstanceRelationTargetSize},
+      {database.definitionMemberInstanceRelationInverses,
+       database.definitionMemberInstanceRelationInverseCount,
+       kDefinitionMemberInstanceRelationInverseSize},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -1325,9 +1395,9 @@ uint64_t nextOffset(const uint8_t *record, uint32_t kind) {
   return read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
 }
 
-constexpr uint32_t kPortIdentityCaps = OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                                       OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
-                                       OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+constexpr uint32_t kPortIdentityCaps =
+    OBELISK_RT_DESIGN_CAP_PORT_INPUT | OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+    OBELISK_RT_DESIGN_CAP_PORT_REF | OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
 
 bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
   uint32_t canonicalKind = recordKind(canonical);
@@ -1398,7 +1468,8 @@ bool validateDatabaseImpl(const Database &database) {
         ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
          (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
       return false;
-    if ((caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor) {
+    if ((caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor &&
+        kind != OBELISK_RT_DESIGN_RECORD_PORT) {
       const auto *descriptor =
           obelisk::reflection::findVPIObjectKind(intrinsicKind);
       if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT || !descriptor ||
@@ -1490,6 +1561,7 @@ bool validateDatabaseImpl(const Database &database) {
                   ~(OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
                     OBELISK_RT_DESIGN_CAP_PORT_INPUT |
                     OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
+                    OBELISK_RT_DESIGN_CAP_PORT_REF |
                     OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
                     OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
                     OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK)) != 0 ||
@@ -1504,11 +1576,16 @@ bool validateDatabaseImpl(const Database &database) {
       uint32_t ordinalCaps = caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
       bool wholePortSource =
           (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0;
+      bool refPort = (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0;
       if (wholePortSource && kind != OBELISK_RT_DESIGN_RECORD_PORT)
         return false;
       if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
         if (portCaps == 0 ||
+            (refPort &&
+             portCaps != (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                          OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) ||
             caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps |
+                     (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) |
                      (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE)))
           return false;
       } else if (portCaps != 0 && kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
@@ -2837,6 +2914,208 @@ bool validateDatabaseImpl(const Database &database) {
   if (nextDefinitionMemberEndpoint != database.definitionMemberEndpointCount)
     return false;
 
+  uint32_t nextMemberInstanceTarget = 0;
+  uint32_t previousBinding = 0;
+  uint32_t previousMemberAndFlags = 0;
+  uint16_t previousInstanceSelector = 0;
+  uint16_t previousInstanceMode = 0;
+  std::unordered_set<uint32_t> memberInstanceTargets;
+  for (uint32_t index = 0;
+       index != database.definitionMemberInstanceRelationCount; ++index) {
+    const uint8_t *relation =
+        database.data + database.definitionMemberInstanceRelations +
+        uint64_t{index} * kDefinitionMemberInstanceRelationSize;
+    uint32_t bindingIndex = read32(relation);
+    uint32_t memberAndFlags = read32(relation + 4);
+    uint16_t selector = read16(relation + 8);
+    uint16_t modeAndFlags = read16(relation + 10);
+    uint32_t firstTarget = read32(relation + 12);
+    uint32_t targetCount = read32(relation + 16);
+    bool ordered = index == 0 || previousBinding < bindingIndex ||
+                   (previousBinding == bindingIndex &&
+                    (previousMemberAndFlags < memberAndFlags ||
+                     (previousMemberAndFlags == memberAndFlags &&
+                      (previousInstanceSelector < selector ||
+                       (previousInstanceSelector == selector &&
+                        previousInstanceMode < modeAndFlags)))));
+    if (!ordered || bindingIndex >= database.definitionBindingCount ||
+        (memberAndFlags & kVirtualRefObjectFlag) == 0 ||
+        (memberAndFlags & ~(kVirtualRefObjectFlag - 1)) !=
+            kVirtualRefObjectFlag ||
+        modeAndFlags > 1 || firstTarget != nextMemberInstanceTarget ||
+        targetCount == 0 ||
+        firstTarget > database.definitionMemberInstanceRelationTargetCount ||
+        targetCount >
+            database.definitionMemberInstanceRelationTargetCount - firstTarget)
+      return false;
+    uint32_t memberIndex = memberAndFlags & ~kVirtualRefObjectFlag;
+    const uint8_t *binding = database.data + database.definitionBindings +
+                             uint64_t{bindingIndex} * kDefinitionBindingSize;
+    uint32_t packedSource = read32(binding);
+    uint32_t sourceScopeIndex =
+        obelisk::reflection::unpackTableIndex(packedSource);
+    if (obelisk::reflection::unpackTableIndexKind(packedSource) !=
+            obelisk::reflection::TableKind::Scope ||
+        sourceScopeIndex >= database.scopeCount)
+      return false;
+    uint64_t sourceScopeOffset =
+        database.scopes + uint64_t{sourceScopeIndex} * kScopeSize;
+    uint32_t definitionIndex = read32(binding + 4);
+    if (definitionIndex >= database.definitionCount)
+      return false;
+    const uint8_t *definition = database.data + database.definitions +
+                                uint64_t{definitionIndex} * kDefinitionSize;
+    uint32_t firstMember = read32(definition + 16);
+    uint32_t memberCount = read32(definition + 20);
+    if (memberIndex < firstMember || memberIndex - firstMember >= memberCount)
+      return false;
+    uint32_t endpointIndex = read32(binding + 12) + (memberIndex - firstMember);
+    if (endpointIndex >= database.definitionMemberEndpointCount)
+      return false;
+    const uint8_t *endpoint =
+        database.data + database.definitionMemberEndpoints +
+        uint64_t{endpointIndex} * kDefinitionMemberEndpointSize;
+    if (read32(endpoint) == UINT32_MAX)
+      return false;
+    const uint8_t *member = database.data + database.definitionMembers +
+                            uint64_t{memberIndex} * kDefinitionMemberSize;
+    const auto *edge = obelisk::reflection::findVPITraversal(
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
+        selector,
+        modeAndFlags == 0 ? obelisk::reflection::VPITraversalMode::Handle
+                          : obelisk::reflection::VPITraversalMode::Iterate);
+    if (read16(member + 16) !=
+            static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::IODecl) ||
+        read16(member + 18) != kVPIIODirectionRef || !edge ||
+        edge->automaticRelation != obelisk::reflection::VPIAutomaticRelation::
+                                       DefinitionMemberInstanceRelation)
+      return false;
+    memberInstanceTargets.clear();
+    memberInstanceTargets.reserve(targetCount);
+    for (uint32_t ordinal = 0; ordinal != targetCount; ++ordinal) {
+      const uint8_t *target = database.data +
+                              database.definitionMemberInstanceRelationTargets +
+                              uint64_t{firstTarget + ordinal} *
+                                  kDefinitionMemberInstanceRelationTargetSize;
+      uint32_t packedTarget = read32(target);
+      uint64_t targetOffset = 0;
+      if (obelisk::reflection::unpackTableIndexKind(packedTarget) !=
+              obelisk::reflection::TableKind::Object ||
+          !packedObjectReferenceOffset(database, packedTarget, targetOffset))
+        return false;
+      const uint8_t *object = database.data + targetOffset;
+      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_PORT ||
+          recordVPIKind(object) !=
+              static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) ||
+          !obelisk::reflection::vpiObjectSetContains(edge->targets,
+                                                     recordVPIKind(object)))
+        return false;
+      uint64_t targetScopeOffset = read64(object + 16);
+      if (selector ==
+          static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::Port)) {
+        if (targetScopeOffset != sourceScopeOffset)
+          return false;
+      } else if (selector ==
+                 static_cast<uint16_t>(
+                     obelisk::reflection::VPIRelationKind::PortInstRel)) {
+        if (targetScopeOffset == sourceScopeOffset)
+          return false;
+        bool descendant = false;
+        uint64_t current = targetScopeOffset;
+        for (uint64_t depth = 0; depth != database.scopeCount; ++depth) {
+          if (!isScopeOffset(database, current))
+            return false;
+          current = read64(database.data + current + 16);
+          if (current == sourceScopeOffset) {
+            descendant = true;
+            break;
+          }
+          if (current == 0)
+            break;
+        }
+        if (!descendant)
+          return false;
+      }
+      if (!memberInstanceTargets.insert(packedTarget).second)
+        return false;
+    }
+    previousBinding = bindingIndex;
+    previousMemberAndFlags = memberAndFlags;
+    previousInstanceSelector = selector;
+    previousInstanceMode = modeAndFlags;
+    nextMemberInstanceTarget += targetCount;
+  }
+  if (nextMemberInstanceTarget !=
+      database.definitionMemberInstanceRelationTargetCount)
+    return false;
+  if (database.definitionMemberInstanceRelationInverseCount !=
+      database.definitionMemberInstanceRelationTargetCount)
+    return false;
+  std::vector<uint8_t> inverseTargets(
+      database.definitionMemberInstanceRelationTargetCount, 0);
+  std::unordered_set<uint64_t> inverseConnectionKeys;
+  uint32_t previousInversePort = 0;
+  uint32_t previousInverseTarget = 0;
+  for (uint32_t index = 0;
+       index != database.definitionMemberInstanceRelationInverseCount;
+       ++index) {
+    const uint8_t *inverse =
+        database.data + database.definitionMemberInstanceRelationInverses +
+        uint64_t{index} * kDefinitionMemberInstanceRelationInverseSize;
+    uint32_t targetIndex = read32(inverse);
+    if (targetIndex >= database.definitionMemberInstanceRelationTargetCount ||
+        inverseTargets[targetIndex] != 0)
+      return false;
+    const uint8_t *target =
+        database.data + database.definitionMemberInstanceRelationTargets +
+        uint64_t{targetIndex} * kDefinitionMemberInstanceRelationTargetSize;
+    uint32_t packedPort = read32(target);
+    if (index != 0 && std::tie(packedPort, targetIndex) <=
+                          std::tie(previousInversePort, previousInverseTarget))
+      return false;
+    uint32_t low = 0;
+    uint32_t high =
+        static_cast<uint32_t>(database.definitionMemberInstanceRelationCount);
+    while (low != high) {
+      uint32_t middle = low + (high - low) / 2;
+      const uint8_t *relation =
+          database.data + database.definitionMemberInstanceRelations +
+          uint64_t{middle} * kDefinitionMemberInstanceRelationSize;
+      uint32_t first = read32(relation + 12);
+      uint32_t count = read32(relation + 16);
+      if (targetIndex >= first + count)
+        low = middle + 1;
+      else
+        high = middle;
+    }
+    if (low == database.definitionMemberInstanceRelationCount)
+      return false;
+    const uint8_t *relation =
+        database.data + database.definitionMemberInstanceRelations +
+        uint64_t{low} * kDefinitionMemberInstanceRelationSize;
+    uint32_t first = read32(relation + 12);
+    uint16_t reverseSelector = read16(relation + 8);
+    const auto *reverseEdge = obelisk::reflection::findVPITraversal(
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
+        reverseSelector, obelisk::reflection::VPITraversalMode::Iterate);
+    uint32_t forwardSelector = reverseEdge ? reverseEdge->inverseSelector : 0;
+    const auto *forwardEdge = obelisk::reflection::findVPITraversal(
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port),
+        forwardSelector, obelisk::reflection::VPITraversalMode::Handle);
+    uint64_t connectionKey = (uint64_t{packedPort} << 16) | forwardSelector;
+    if (targetIndex < first || forwardSelector == 0 ||
+        forwardSelector > UINT16_MAX || !forwardEdge ||
+        !obelisk::reflection::vpiObjectSetContains(
+            forwardEdge->targets,
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::RefObj)) ||
+        !inverseConnectionKeys.insert(connectionKey).second)
+      return false;
+    inverseTargets[targetIndex] = 1;
+    previousInversePort = packedPort;
+    previousInverseTarget = targetIndex;
+  }
+
   uint64_t previousSiteID = 0;
   for (uint64_t index = 0; index != database.statementSiteCount; ++index) {
     const uint8_t *site =
@@ -3171,6 +3450,10 @@ bool validateDatabaseImpl(const Database &database) {
     } else if (automaticEdge != edge) {
       return false;
     }
+    if (inverseConnectionKeys.find(
+            (uint64_t{relationEndpoint(sourceTable, sourceIndex)} << 16) |
+            selector) != inverseConnectionKeys.end())
+      return false;
     switch (edge->automaticRelation) {
     case obelisk::reflection::VPIAutomaticRelation::None:
       break;
@@ -3224,6 +3507,8 @@ bool validateDatabaseImpl(const Database &database) {
     case obelisk::reflection::VPIAutomaticRelation::DefinitionMember:
     case obelisk::reflection::VPIAutomaticRelation::DefinitionMemberParent:
     case obelisk::reflection::VPIAutomaticRelation::DefinitionMemberExpr:
+    case obelisk::reflection::VPIAutomaticRelation::
+        DefinitionMemberInstanceRelation:
       // These edges are reconstructed from the compact definition tables and
       // must not also appear in the per-instance general relation table.
       return false;
@@ -3668,16 +3953,30 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t offset = database.objects + index * kObjectSize;
     const uint8_t *port = database.data + offset;
     bool indexed = indexedRecords.find(offset) != indexedRecords.end();
+    uint64_t refLowConnectionKey =
+        (uint64_t{relationEndpoint(obelisk::reflection::TableKind::Object,
+                                   static_cast<uint32_t>(index))}
+         << 16) |
+        static_cast<uint16_t>(obelisk::reflection::VPIRelationKind::LowConnRel);
+    bool hasRefLowConnection =
+        inverseConnectionKeys.find(refLowConnectionKey) !=
+        inverseConnectionKeys.end();
+    uint32_t caps = read32(port + 4);
+    bool isRefPort = (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0;
+    if (recordKind(port) == OBELISK_RT_DESIGN_RECORD_PORT &&
+        (isRefPort != hasRefLowConnection ||
+         (isRefPort && (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0)))
+      return false;
     if (indexed) {
       if (recordKind(port) == OBELISK_RT_DESIGN_RECORD_PORT &&
-          (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0) {
+          (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0 &&
+          !hasRefLowConnection) {
         uint32_t targetIndex = 0;
         if (!lowConnectionTarget(static_cast<uint32_t>(index), targetIndex))
           return false;
       }
       continue;
     }
-    uint32_t caps = read32(port + 4);
     // Compiler/runtime machinery is deliberately absent from the public name
     // index. Static records without the named-typespec capability are reached
     // exclusively through generated VPI relations (for example anonymous
@@ -3697,10 +3996,12 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     uint32_t sourceIndex = static_cast<uint32_t>(index);
     uint32_t targetIndex = 0;
-    if (!lowConnectionTarget(sourceIndex, targetIndex) ||
-        targetIndex !=
-            static_cast<uint32_t>((canonicalName->second - database.objects) /
-                                  kObjectSize))
+    if ((!hasRefLowConnection &&
+         !lowConnectionTarget(sourceIndex, targetIndex)) ||
+        (!hasRefLowConnection &&
+         targetIndex !=
+             static_cast<uint32_t>((canonicalName->second - database.objects) /
+                                   kObjectSize)))
       return false;
   }
   return true;
@@ -3852,6 +4153,18 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.definitionMemberEndpoints == right.definitionMemberEndpoints &&
          left.definitionMemberEndpointCount ==
              right.definitionMemberEndpointCount &&
+         left.definitionMemberInstanceRelations ==
+             right.definitionMemberInstanceRelations &&
+         left.definitionMemberInstanceRelationCount ==
+             right.definitionMemberInstanceRelationCount &&
+         left.definitionMemberInstanceRelationTargets ==
+             right.definitionMemberInstanceRelationTargets &&
+         left.definitionMemberInstanceRelationTargetCount ==
+             right.definitionMemberInstanceRelationTargetCount &&
+         left.definitionMemberInstanceRelationInverses ==
+             right.definitionMemberInstanceRelationInverses &&
+         left.definitionMemberInstanceRelationInverseCount ==
+             right.definitionMemberInstanceRelationInverseCount &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -4797,6 +5110,74 @@ obelisk_rt_status designVPIArrayMember(const Database &database,
   return designVPIRelationIndex(database, outInfo->array, &outInfo->index);
 }
 
+bool findDefinitionMemberInstanceInverse(const Database &database,
+                                         uint32_t packedPort,
+                                         uint16_t forwardSelector,
+                                         uint32_t &bindingIndex,
+                                         uint32_t &memberIndex) {
+  uint32_t low = 0;
+  uint32_t high = static_cast<uint32_t>(
+      database.definitionMemberInstanceRelationInverseCount);
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *inverse =
+        database.data + database.definitionMemberInstanceRelationInverses +
+        uint64_t{middle} * kDefinitionMemberInstanceRelationInverseSize;
+    uint32_t targetIndex = read32(inverse);
+    const uint8_t *target =
+        database.data + database.definitionMemberInstanceRelationTargets +
+        uint64_t{targetIndex} * kDefinitionMemberInstanceRelationTargetSize;
+    if (read32(target) < packedPort)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  for (uint32_t inverseIndex = low;
+       inverseIndex != database.definitionMemberInstanceRelationInverseCount;
+       ++inverseIndex) {
+    const uint8_t *inverse =
+        database.data + database.definitionMemberInstanceRelationInverses +
+        uint64_t{inverseIndex} * kDefinitionMemberInstanceRelationInverseSize;
+    uint32_t targetIndex = read32(inverse);
+    const uint8_t *target =
+        database.data + database.definitionMemberInstanceRelationTargets +
+        uint64_t{targetIndex} * kDefinitionMemberInstanceRelationTargetSize;
+    if (read32(target) != packedPort)
+      break;
+    uint32_t relationLow = 0;
+    uint32_t relationHigh =
+        static_cast<uint32_t>(database.definitionMemberInstanceRelationCount);
+    while (relationLow != relationHigh) {
+      uint32_t middle = relationLow + (relationHigh - relationLow) / 2;
+      const uint8_t *relation =
+          database.data + database.definitionMemberInstanceRelations +
+          uint64_t{middle} * kDefinitionMemberInstanceRelationSize;
+      if (targetIndex >= read32(relation + 12) + read32(relation + 16))
+        relationLow = middle + 1;
+      else
+        relationHigh = middle;
+    }
+    if (relationLow == database.definitionMemberInstanceRelationCount)
+      return false;
+    const uint8_t *relation =
+        database.data + database.definitionMemberInstanceRelations +
+        uint64_t{relationLow} * kDefinitionMemberInstanceRelationSize;
+    uint16_t reverseSelector = read16(relation + 8);
+    const auto *reverseEdge = obelisk::reflection::findVPITraversal(
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
+        reverseSelector, obelisk::reflection::VPITraversalMode::Iterate);
+    if (!reverseEdge || reverseEdge->inverseSelector != forwardSelector)
+      continue;
+    uint32_t memberAndFlags = read32(relation + 4);
+    if ((memberAndFlags & kVirtualRefObjectFlag) == 0)
+      return false;
+    bindingIndex = read32(relation);
+    memberIndex = memberAndFlags & ~kVirtualRefObjectFlag;
+    return true;
+  }
+  return false;
+}
+
 obelisk_rt_status designVPIRelationRange(const Database &database,
                                          obelisk_rt_design_cursor_v1 source,
                                          uint32_t selector, bool iterate,
@@ -4823,6 +5204,45 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
     if (!edge)
       return OBELISK_RT_EOF;
     if (virtualRefObject) {
+      if (edge->automaticRelation == obelisk::reflection::VPIAutomaticRelation::
+                                         DefinitionMemberInstanceRelation) {
+        uint32_t memberAndFlags = kVirtualRefObjectFlag | virtualMember;
+        uint16_t compactSelector = static_cast<uint16_t>(selector);
+        uint16_t compactMode = iterate ? 1 : 0;
+        uint32_t low = 0;
+        uint32_t high = static_cast<uint32_t>(
+            database.definitionMemberInstanceRelationCount);
+        while (low != high) {
+          uint32_t middle = low + (high - low) / 2;
+          const uint8_t *relation =
+              database.data + database.definitionMemberInstanceRelations +
+              uint64_t{middle} * kDefinitionMemberInstanceRelationSize;
+          auto recordKey =
+              std::make_tuple(read32(relation), read32(relation + 4),
+                              read16(relation + 8), read16(relation + 10));
+          auto wantedKey = std::make_tuple(virtualBinding, memberAndFlags,
+                                           compactSelector, compactMode);
+          if (recordKey < wantedKey)
+            low = middle + 1;
+          else
+            high = middle;
+        }
+        if (low == database.definitionMemberInstanceRelationCount)
+          return OBELISK_RT_EOF;
+        const uint8_t *relation =
+            database.data + database.definitionMemberInstanceRelations +
+            uint64_t{low} * kDefinitionMemberInstanceRelationSize;
+        if (read32(relation) != virtualBinding ||
+            read32(relation + 4) != memberAndFlags ||
+            read16(relation + 8) != compactSelector ||
+            read16(relation + 10) != compactMode)
+          return OBELISK_RT_EOF;
+        outRange->first = virtualToken(
+            kVirtualForwardRelationTag, virtualBinding,
+            kVirtualInstanceRelationTargetFlag | read32(relation + 12));
+        outRange->count = read32(relation + 16);
+        return OBELISK_RT_OK;
+      }
       if (edge->automaticRelation ==
           obelisk::reflection::VPIAutomaticRelation::DefinitionMemberParent) {
         outRange->first = virtualToken(kVirtualReverseRelationTag,
@@ -4879,6 +5299,32 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
   if (!relationSourceForCursor(database, source.offset, table, sourceIndex))
     return OBELISK_RT_INVALID_HANDLE;
   uint16_t compactSelector = static_cast<uint16_t>(selector);
+
+  if (!iterate && table == obelisk::reflection::TableKind::Object &&
+      (compactSelector ==
+           static_cast<uint16_t>(
+               obelisk::reflection::VPIRelationKind::LowConnRel) ||
+       compactSelector ==
+           static_cast<uint16_t>(
+               obelisk::reflection::VPIRelationKind::HighConnRel))) {
+    const uint8_t *record =
+        database.data + database.objects + uint64_t{sourceIndex} * kObjectSize;
+    uint32_t packedPort = 0;
+    uint32_t bindingIndex = 0;
+    uint32_t memberIndex = 0;
+    if (recordVPIKind(record) ==
+            static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) &&
+        obelisk::reflection::tryPackTableIndex(table, sourceIndex,
+                                               packedPort) &&
+        findDefinitionMemberInstanceInverse(
+            database, packedPort, compactSelector, bindingIndex, memberIndex)) {
+      outRange->first =
+          virtualToken(kVirtualReverseRelationTag, bindingIndex,
+                       kVirtualRefObjectRelationFlag | memberIndex);
+      outRange->count = 1;
+      return OBELISK_RT_OK;
+    }
+  }
 
   if (table == obelisk::reflection::TableKind::Scope) {
     uint16_t sourceType = static_cast<uint16_t>(recordVPIKind(
@@ -4952,6 +5398,25 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
   uint32_t payload = 0;
   if (decodeVirtualToken(relationIndex, kVirtualForwardRelationTag,
                          bindingIndex, payload)) {
+    if ((payload & kVirtualInstanceRelationTargetFlag) != 0) {
+      uint32_t targetIndex = payload & ~kVirtualInstanceRelationTargetFlag;
+      if (bindingIndex >= database.definitionBindingCount ||
+          targetIndex >= database.definitionMemberInstanceRelationTargetCount)
+        return OBELISK_RT_INVALID_HANDLE;
+      const uint8_t *target =
+          database.data + database.definitionMemberInstanceRelationTargets +
+          uint64_t{targetIndex} * kDefinitionMemberInstanceRelationTargetSize;
+      uint32_t packedTarget = read32(target);
+      if (!packedObjectReferenceOffset(database, packedTarget,
+                                       outCursor->offset))
+        return OBELISK_RT_INVALID_DESIGN;
+      auto table = obelisk::reflection::unpackTableIndexKind(packedTarget);
+      *outStatement = table == obelisk::reflection::TableKind::Statement;
+      *outType = *outStatement
+                     ? read16(database.data + outCursor->offset + 36)
+                     : recordVPIKind(database.data + outCursor->offset);
+      return OBELISK_RT_OK;
+    }
     if (bindingIndex >= database.definitionBindingCount ||
         payload >= database.definitionMemberRelationTargetCount)
       return OBELISK_RT_INVALID_HANDLE;

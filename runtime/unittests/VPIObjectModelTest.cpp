@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1893;
+constexpr size_t kExpectedTraversalCount = 1894;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2338;
@@ -151,6 +151,7 @@ const VPITraversalDescriptor &requireTraversal(uint32_t source,
       static_cast<VPIObjectSetID>(0),
       false,
       VPIAutomaticRelation::None,
+      0,
       "missing",
       "missing"};
   return edge ? *edge : missing;
@@ -846,8 +847,10 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
       continue;
     EXPECT_FALSE(edge.statementContainment)
         << keyName(edge.sourceType, edge.selector, edge.mode);
-    bool isIteration = edge.automaticRelation == Automatic::DirectChild ||
-                       edge.automaticRelation == Automatic::DefinitionMember;
+    bool isIteration =
+        edge.automaticRelation == Automatic::DirectChild ||
+        edge.automaticRelation == Automatic::DefinitionMember ||
+        edge.automaticRelation == Automatic::DefinitionMemberInstanceRelation;
     EXPECT_EQ(edge.mode, isIteration ? Mode::Iterate : Mode::Handle)
         << keyName(edge.sourceType, edge.selector, edge.mode);
   }
@@ -2333,6 +2336,7 @@ TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
     EXPECT_EQ(imageEdge.order, edge.order);
     EXPECT_EQ(imageEdge.statementContainment, edge.statementContainment);
     EXPECT_EQ(imageEdge.automaticRelation, edge.automaticRelation);
+    EXPECT_EQ(imageEdge.inverseSelector, edge.inverseSelector);
     for (const auto &object : vpiObjectKinds) {
       if (object.aliasOf != nullptr || object.role != VPIObjectRole::Concrete)
         continue;
@@ -2778,6 +2782,16 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+
+  // The compact image carries the inverse selector as part of the canonical
+  // traversal contract.  Corrupting it must be rejected even after repairing
+  // the checksum.
+  reset();
+  damaged[traversalOffset + 8] ^= 1;
+  refreshImageChecksum(damaged);
+  EXPECT_FALSE(
+      validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
+  EXPECT_FALSE(validateVPIObjectModelImage(damaged.data(), damaged.size()));
 
   reset();
   write16(traversalOffset, UINT16_MAX);

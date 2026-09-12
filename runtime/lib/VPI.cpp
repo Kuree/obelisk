@@ -4996,6 +4996,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                  vpiNotice);
         return vpiUndefined;
       }
+      if ((info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0)
+        return vpiRef;
       bool input = (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
       bool output =
           (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;

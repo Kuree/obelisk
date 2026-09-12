@@ -78,7 +78,7 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 304);
+static_assert(SemanticDirectoryLayout.size == 352);
 static_assert(field::SemanticDirectoryStaticObjectOffset == 160);
 static_assert(field::SemanticDirectoryStaticObjectCount == 168);
 static_assert(field::SemanticDirectoryDefinitionOffset == 176);
@@ -101,6 +101,21 @@ static_assert(field::SemanticDirectoryDefinitionSpecializationBindingCount ==
               280);
 static_assert(field::SemanticDirectoryDefinitionMemberEndpointOffset == 288);
 static_assert(field::SemanticDirectoryDefinitionMemberEndpointCount == 296);
+static_assert(field::SemanticDirectoryDefinitionMemberInstanceRelationOffset ==
+              304);
+static_assert(field::SemanticDirectoryDefinitionMemberInstanceRelationCount ==
+              312);
+static_assert(
+    field::SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset ==
+    320);
+static_assert(
+    field::SemanticDirectoryDefinitionMemberInstanceRelationTargetCount == 328);
+static_assert(
+    field::SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset ==
+    336);
+static_assert(
+    field::SemanticDirectoryDefinitionMemberInstanceRelationInverseCount ==
+    344);
 static_assert(DefinitionLayout.size == 32);
 static_assert(field::DefinitionVPIKind == 0);
 static_assert(field::DefinitionFlags == 2);
@@ -118,6 +133,9 @@ static_assert(DefinitionMemberRelationTargetLayout.size == 4);
 static_assert(DefinitionSpecializationLayout.size == 12);
 static_assert(DefinitionSpecializationBindingLayout.size == 8);
 static_assert(DefinitionMemberEndpointLayout.size == 4);
+static_assert(DefinitionMemberInstanceRelationLayout.size == 20);
+static_assert(DefinitionMemberInstanceRelationTargetLayout.size == 4);
+static_assert(DefinitionMemberInstanceRelationInverseLayout.size == 4);
 static_assert(FixedPropertyLayout.size == 16);
 static_assert(field::FixedPropertySourceIndexAndTable == 0);
 static_assert(field::FixedPropertySelector == 4);

@@ -126,14 +126,13 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
 
   vpiHandle iterator = vpi_iterate(vpiPort, module);
   ASSERT_NE(iterator, nullptr);
-  constexpr std::array<const char *, 6> expectedNames{
-      "top.d.a", "top.d.io",    "top.d.p",
-      "top.d.q", "top.d.slice", "top.d.zouter"};
-  constexpr std::array<PLI_INT32, 6> expectedOrdinals{0, 1, 3, 4, 2, 5};
-  constexpr std::array<PLI_INT32, 6> expectedDirections{
-      vpiInput, vpiInout, vpiInput, vpiInput, vpiOutput, vpiInput};
-  constexpr std::array<PLI_INT32, 6> expectedWidths{8, 1, 8, 8, 4, 16};
-  std::array<vpiHandle, 6> ports{};
+  constexpr std::array<const char *, 4> expectedNames{"top.d.a", "top.d.io",
+                                                      "top.d.p", "top.d.slice"};
+  constexpr std::array<PLI_INT32, 4> expectedOrdinals{0, 1, 3, 2};
+  constexpr std::array<PLI_INT32, 4> expectedDirections{vpiInput, vpiInout,
+                                                        vpiRef, vpiOutput};
+  constexpr std::array<PLI_INT32, 4> expectedWidths{8, 1, 8, 4};
+  std::array<vpiHandle, 4> ports{};
   for (size_t index = 0; index != ports.size(); ++index) {
     ports[index] = vpi_scan(iterator);
     ASSERT_NE(ports[index], nullptr);
@@ -169,22 +168,17 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   EXPECT_EQ(vpi_compare_objects(inout, ports[1]), 0);
   vpiHandle inputLowConnection = vpi_handle(vpiLowConn, ports[0]);
   vpiHandle inoutLowConnection = vpi_handle(vpiLowConn, ports[1]);
-  vpiHandle renamedInputLowConnection = vpi_handle(vpiLowConn, ports[2]);
-  vpiHandle anonymousLowConnection = vpi_handle(vpiLowConn, ports[3]);
+  vpiHandle refLowConnection = vpi_handle(vpiLowConn, ports[2]);
   ASSERT_NE(inputLowConnection, nullptr);
   ASSERT_NE(inoutLowConnection, nullptr);
-  ASSERT_NE(renamedInputLowConnection, nullptr);
-  ASSERT_NE(anonymousLowConnection, nullptr);
+  ASSERT_NE(refLowConnection, nullptr);
   EXPECT_EQ(vpi_compare_objects(input, inputLowConnection), 1);
   EXPECT_EQ(vpi_compare_objects(inout, inoutLowConnection), 1);
-  EXPECT_EQ(vpi_compare_objects(input, renamedInputLowConnection), 1);
-  EXPECT_EQ(vpi_compare_objects(anonymousBacking, anonymousLowConnection), 1);
+  EXPECT_EQ(vpi_get(vpiType, refLowConnection), vpiRefObj);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, refLowConnection), "top.d.r");
   // A selected port needs a select/ref-object identity before it can expose a
   // low connection; it must never be redirected to the whole backing object.
-  EXPECT_EQ(vpi_handle(vpiLowConn, ports[4]), nullptr);
-  // A full-width source in another scope is a higher-side connection, not the
-  // formal's same-scope lower connection.
-  EXPECT_EQ(vpi_handle(vpiLowConn, ports[5]), nullptr);
+  EXPECT_EQ(vpi_handle(vpiLowConn, ports[3]), nullptr);
 
   vpiHandle variables = vpi_iterate(vpiVariables, module);
   ASSERT_NE(variables, nullptr);
@@ -313,6 +307,60 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       EXPECT_EQ(vpi_compare_objects(actual, expression), 0);
       EXPECT_EQ(integerValue(expression), 0);
       EXPECT_EQ(vpi_release_handle(actual), 1);
+
+      vpiHandle ownPorts = vpi_iterate(vpiPort, expression);
+      ASSERT_NE(ownPorts, nullptr);
+      vpiHandle ownPort = vpi_scan(ownPorts);
+      ASSERT_NE(ownPort, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, ownPort), vpiPort);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, ownPort), "top.d.p");
+      EXPECT_EQ(vpi_get(vpiPortIndex, ownPort), 3);
+      vpiHandle ownPortInstance = vpi_handle(vpiInstance, ownPort);
+      ASSERT_NE(ownPortInstance, nullptr);
+      EXPECT_EQ(vpi_compare_objects(ownPortInstance, module), 1);
+      EXPECT_EQ(vpi_release_handle(ownPortInstance), 1);
+      vpiHandle lowConnection = vpi_handle(vpiLowConn, ownPort);
+      ASSERT_NE(lowConnection, nullptr);
+      EXPECT_EQ(vpi_compare_objects(lowConnection, expression), 1);
+      EXPECT_EQ(vpi_release_handle(lowConnection), 1);
+      EXPECT_EQ(vpi_scan(ownPorts), nullptr);
+      EXPECT_EQ(vpi_release_handle(ownPort), 1);
+
+      vpiHandle downstream = vpi_iterate(vpiPortInst, expression);
+      ASSERT_NE(downstream, nullptr);
+      vpiHandle firstDownstream = vpi_scan(downstream);
+      vpiHandle secondDownstream = vpi_scan(downstream);
+      ASSERT_NE(firstDownstream, nullptr);
+      ASSERT_NE(secondDownstream, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, firstDownstream), "top.d.child.q");
+      EXPECT_STREQ(vpi_get_str(vpiFullName, secondDownstream),
+                   "top.d.child.zouter");
+      EXPECT_EQ(vpi_get(vpiPortIndex, firstDownstream), 4);
+      EXPECT_EQ(vpi_get(vpiPortIndex, secondDownstream), 5);
+      vpiHandle firstDownstreamInstance =
+          vpi_handle(vpiInstance, firstDownstream);
+      vpiHandle secondDownstreamInstance =
+          vpi_handle(vpiInstance, secondDownstream);
+      ASSERT_NE(firstDownstreamInstance, nullptr);
+      ASSERT_NE(secondDownstreamInstance, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, firstDownstreamInstance),
+                   "top.d.child");
+      EXPECT_STREQ(vpi_get_str(vpiFullName, secondDownstreamInstance),
+                   "top.d.child");
+      EXPECT_EQ(vpi_release_handle(firstDownstreamInstance), 1);
+      EXPECT_EQ(vpi_release_handle(secondDownstreamInstance), 1);
+      vpiHandle firstHighConnection = vpi_handle(vpiHighConn, firstDownstream);
+      vpiHandle secondHighConnection =
+          vpi_handle(vpiHighConn, secondDownstream);
+      ASSERT_NE(firstHighConnection, nullptr);
+      ASSERT_NE(secondHighConnection, nullptr);
+      EXPECT_EQ(vpi_compare_objects(firstHighConnection, expression), 1);
+      EXPECT_EQ(vpi_compare_objects(secondHighConnection, expression), 1);
+      EXPECT_EQ(vpi_release_handle(firstHighConnection), 1);
+      EXPECT_EQ(vpi_release_handle(secondHighConnection), 1);
+      EXPECT_EQ(vpi_scan(downstream), nullptr);
+      EXPECT_EQ(vpi_release_handle(firstDownstream), 1);
+      EXPECT_EQ(vpi_release_handle(secondDownstream), 1);
       EXPECT_EQ(vpi_release_handle(expression), 1);
     } else {
       EXPECT_EQ(expression, nullptr);
@@ -374,6 +422,48 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       EXPECT_EQ(vpi_compare_objects(actual, directInput), 1);
       EXPECT_EQ(vpi_compare_objects(actual, secondDirectInput), 0);
       EXPECT_EQ(vpi_release_handle(actual), 1);
+
+      vpiHandle ownPorts = vpi_iterate(vpiPort, expression);
+      ASSERT_NE(ownPorts, nullptr);
+      vpiHandle ownPort = vpi_scan(ownPorts);
+      ASSERT_NE(ownPort, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, ownPort), "top.e.r");
+      EXPECT_EQ(vpi_get(vpiPortIndex, ownPort), 3);
+      vpiHandle ownPortInstance = vpi_handle(vpiInstance, ownPort);
+      ASSERT_NE(ownPortInstance, nullptr);
+      EXPECT_EQ(vpi_compare_objects(ownPortInstance, secondModule), 1);
+      EXPECT_EQ(vpi_release_handle(ownPortInstance), 1);
+      vpiHandle lowConnection = vpi_handle(vpiLowConn, ownPort);
+      ASSERT_NE(lowConnection, nullptr);
+      EXPECT_EQ(vpi_compare_objects(lowConnection, expression), 1);
+      EXPECT_EQ(vpi_release_handle(lowConnection), 1);
+      EXPECT_EQ(vpi_scan(ownPorts), nullptr);
+      EXPECT_EQ(vpi_release_handle(ownPort), 1);
+
+      vpiHandle downstream = vpi_iterate(vpiPortInst, expression);
+      ASSERT_NE(downstream, nullptr);
+      vpiHandle downstreamPort = vpi_scan(downstream);
+      ASSERT_NE(downstreamPort, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, downstreamPort), "top.e.child.r");
+      EXPECT_EQ(vpi_get(vpiPortIndex, downstreamPort), 0);
+      vpiHandle downstreamInstance = vpi_handle(vpiInstance, downstreamPort);
+      ASSERT_NE(downstreamInstance, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, downstreamInstance), "top.e.child");
+      EXPECT_EQ(vpi_release_handle(downstreamInstance), 1);
+      vpiHandle highConnection = vpi_handle(vpiHighConn, downstreamPort);
+      vpiHandle childLowConnection = vpi_handle(vpiLowConn, downstreamPort);
+      ASSERT_NE(highConnection, nullptr);
+      ASSERT_NE(childLowConnection, nullptr);
+      EXPECT_EQ(vpi_compare_objects(highConnection, expression), 1);
+      EXPECT_EQ(vpi_get(vpiType, childLowConnection), vpiRefObj);
+      EXPECT_STREQ(vpi_get_str(vpiFullName, childLowConnection),
+                   "top.e.child.r");
+      EXPECT_EQ(vpi_compare_objects(childLowConnection, expression), 0);
+      EXPECT_EQ(vpi_get(vpiDirection, downstreamPort), vpiRef);
+      EXPECT_EQ(vpi_release_handle(highConnection), 1);
+      EXPECT_EQ(vpi_release_handle(childLowConnection), 1);
+      EXPECT_EQ(vpi_scan(downstream), nullptr);
+      EXPECT_EQ(vpi_release_handle(downstreamPort), 1);
       EXPECT_EQ(vpi_release_handle(expression), 1);
     } else {
       EXPECT_EQ(expression, nullptr);
@@ -392,13 +482,16 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
           dumpDescriptor.execution->design_database_size);
   uint32_t directory = read32(database, 12);
   EXPECT_EQ(read64(database, directory + 184), 1u);  // definitions
-  EXPECT_EQ(read64(database, directory + 200), 2u);  // instance bindings
+  EXPECT_EQ(read64(database, directory + 200), 3u);  // instance bindings
   EXPECT_EQ(read64(database, directory + 216), 5u);  // member templates
   EXPECT_EQ(read64(database, directory + 232), 1u);  // relation ranges
   EXPECT_EQ(read64(database, directory + 248), 5u);  // relation targets
   EXPECT_EQ(read64(database, directory + 264), 1u);  // specializations
   EXPECT_EQ(read64(database, directory + 280), 5u);  // type bindings
-  EXPECT_EQ(read64(database, directory + 296), 10u); // instance endpoints
+  EXPECT_EQ(read64(database, directory + 296), 15u); // instance endpoints
+  EXPECT_EQ(read64(database, directory + 312), 5u);  // sparse relation ranges
+  EXPECT_EQ(read64(database, directory + 328), 6u);  // relation targets
+  EXPECT_EQ(read64(database, directory + 344), 6u);  // inverse targets
   constexpr uint64_t objectSize = 96;
   uint64_t objects = read64(database, 64);
   uint64_t objectCount = read64(database, 72);
@@ -432,14 +525,20 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   uint64_t specialization = read64(original, directory + 256);
   uint64_t typeBinding = read64(original, directory + 272);
   uint64_t endpoint = read64(original, directory + 288);
+  uint64_t instanceRelation = read64(original, directory + 304);
+  uint64_t instanceRelationTarget = read64(original, directory + 320);
+  uint64_t instanceRelationInverse = read64(original, directory + 336);
   ASSERT_EQ(read64(original, directory + 184), 1u);
-  ASSERT_EQ(read64(original, directory + 200), 2u);
+  ASSERT_EQ(read64(original, directory + 200), 3u);
   ASSERT_EQ(read64(original, directory + 216), 5u);
   ASSERT_EQ(read64(original, directory + 232), 1u);
   ASSERT_EQ(read64(original, directory + 248), 5u);
   ASSERT_EQ(read64(original, directory + 264), 1u);
   ASSERT_EQ(read64(original, directory + 280), 5u);
-  ASSERT_EQ(read64(original, directory + 296), 10u);
+  ASSERT_EQ(read64(original, directory + 296), 15u);
+  ASSERT_EQ(read64(original, directory + 312), 5u);
+  ASSERT_EQ(read64(original, directory + 328), 6u);
+  ASSERT_EQ(read64(original, directory + 344), 6u);
 
   auto rejects = [&](std::vector<uint8_t> database) {
     write64(database, 32, imageChecksum(database));
@@ -506,6 +605,11 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   rejects(std::move(malformed));
 
   malformed = original;
+  write32(malformed, endpoint + 3 * 4,
+          UINT32_MAX); // Relation source endpoint is absent.
+  rejects(std::move(malformed));
+
+  malformed = original;
   write32(malformed, typeBinding + 3 * 8 + 4,
           read32(original,
                  typeBinding + 1 * 8 + 4)); // Ref actual type mismatch.
@@ -523,6 +627,88 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   malformed = original;
   write32(malformed, instanceBinding + 8,
           UINT32_MAX); // Member-bearing definitions require one.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelation, 2); // Unknown definition binding.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelation + 4, 3); // Missing RefObj role flag.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write16(malformed, instanceRelation + 8, vpiActual); // Wrong auto edge.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write16(malformed, instanceRelation + 10, 0); // Handle instead of iterate.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelation + 20 + 12,
+          0); // Noncontiguous target range.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelationTarget,
+          uint32_t{3} << 30); // Invalid target table/index.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelationTarget + 2 * 4,
+          read32(malformed,
+                 instanceRelationTarget + 4)); // Duplicate target in group.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelationInverse,
+          UINT32_MAX); // Inverse target index is out of range.
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, instanceRelationInverse + 4,
+          read32(original,
+                 instanceRelationInverse)); // Duplicate/unsorted inverse.
+  rejects(std::move(malformed));
+
+  constexpr uint64_t objectSize = 96;
+  uint64_t objects = read64(original, 64);
+  uint32_t ownPortIndex =
+      read32(original, instanceRelationTarget) & UINT32_C(0x3fffffff);
+  uint64_t ownPort = objects + uint64_t{ownPortIndex} * objectSize;
+  malformed = original;
+  write32(malformed, ownPort + 4,
+          read32(original, ownPort + 4) &
+              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_REF});
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, ownPort + 4,
+          read32(original, ownPort + 4) |
+              OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, ownPort + 4,
+          read32(original, ownPort + 4) &
+              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_INPUT});
+  rejects(std::move(malformed));
+
+  malformed = original;
+  write32(malformed, ownPort + 4,
+          read32(original, ownPort + 4) &
+              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_OUTPUT});
+  rejects(std::move(malformed));
+
+  uint32_t downstreamPortIndex =
+      read32(original, instanceRelationTarget + 4) & UINT32_C(0x3fffffff);
+  uint64_t downstreamPort =
+      objects + uint64_t{downstreamPortIndex} * objectSize;
+  malformed = original;
+  write32(malformed, downstreamPort + 4,
+          read32(original, downstreamPort + 4) |
+              OBELISK_RT_DESIGN_CAP_PORT_REF);
   rejects(std::move(malformed));
 }
 

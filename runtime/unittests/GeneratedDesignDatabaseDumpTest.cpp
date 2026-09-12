@@ -167,6 +167,12 @@ TEST(GeneratedDesignDatabase, Dump) {
            definitionSpecializationBindingCount = 0;
   uint64_t definitionMemberEndpointOffset = 0,
            definitionMemberEndpointCount = 0;
+  uint64_t definitionMemberInstanceRelationOffset = 0,
+           definitionMemberInstanceRelationCount = 0;
+  uint64_t definitionMemberInstanceRelationTargetOffset = 0,
+           definitionMemberInstanceRelationTargetCount = 0;
+  uint64_t definitionMemberInstanceRelationInverseOffset = 0,
+           definitionMemberInstanceRelationInverseCount = 0;
   if (header.getReserved() != 0) {
     const uint64_t directoryOffset = header.getReserved();
     ASSERT_TRUE(validRange(directoryOffset, 1, SemanticDirectoryLayout.size,
@@ -220,6 +226,18 @@ TEST(GeneratedDesignDatabase, Dump) {
         directory.getDefinitionMemberEndpointOffset();
     definitionMemberEndpointCount =
         directory.getDefinitionMemberEndpointCount();
+    definitionMemberInstanceRelationOffset =
+        directory.getDefinitionMemberInstanceRelationOffset();
+    definitionMemberInstanceRelationCount =
+        directory.getDefinitionMemberInstanceRelationCount();
+    definitionMemberInstanceRelationTargetOffset =
+        directory.getDefinitionMemberInstanceRelationTargetOffset();
+    definitionMemberInstanceRelationTargetCount =
+        directory.getDefinitionMemberInstanceRelationTargetCount();
+    definitionMemberInstanceRelationInverseOffset =
+        directory.getDefinitionMemberInstanceRelationInverseOffset();
+    definitionMemberInstanceRelationInverseCount =
+        directory.getDefinitionMemberInstanceRelationInverseCount();
   }
 
 #define ASSERT_SECTION_RANGE(Offset, Count, Layout)                            \
@@ -267,6 +285,15 @@ TEST(GeneratedDesignDatabase, Dump) {
   ASSERT_SECTION_RANGE(definitionMemberEndpointOffset,
                        definitionMemberEndpointCount,
                        DefinitionMemberEndpointLayout);
+  ASSERT_SECTION_RANGE(definitionMemberInstanceRelationOffset,
+                       definitionMemberInstanceRelationCount,
+                       DefinitionMemberInstanceRelationLayout);
+  ASSERT_SECTION_RANGE(definitionMemberInstanceRelationTargetOffset,
+                       definitionMemberInstanceRelationTargetCount,
+                       DefinitionMemberInstanceRelationTargetLayout);
+  ASSERT_SECTION_RANGE(definitionMemberInstanceRelationInverseOffset,
+                       definitionMemberInstanceRelationInverseCount,
+                       DefinitionMemberInstanceRelationInverseLayout);
 #undef ASSERT_SECTION_RANGE
 
   std::unordered_map<uint64_t, std::string> scopeNames;
@@ -719,6 +746,13 @@ TEST(GeneratedDesignDatabase, Dump) {
            << " semantic_type=" << binding.getSemanticType() << '\n';
   }
 
+  const std::array<const std::vector<std::string> *, 4> tableNames{
+      &scopeIndexNames, &objectIndexNames, &statementIndexNames,
+      &staticObjectIndexNames};
+  std::vector<uint32_t> endpointBindings(
+      static_cast<size_t>(definitionMemberEndpointCount), UINT32_MAX);
+  std::vector<uint32_t> endpointMembers(
+      static_cast<size_t>(definitionMemberEndpointCount), UINT32_MAX);
   for (uint64_t index = 0; index != definitionBindingCount; ++index) {
     const DefinitionBindingView binding(image + definitionBindingOffset +
                                         index * DefinitionBindingLayout.size);
@@ -740,7 +774,116 @@ TEST(GeneratedDesignDatabase, Dump) {
       output << "none";
     else
       output << binding.getSpecialization();
-    output << " source_name=" << scopeIndexNames[source] << '\n';
+    output << " source_name=" << scopeIndexNames[source]
+           << " first_member_endpoint=" << binding.getFirstMemberEndpoint()
+           << '\n';
+    const DefinitionView definition(image + definitionOffset +
+                                    uint64_t{binding.getDefinition()} *
+                                        DefinitionLayout.size);
+    ASSERT_LE(binding.getFirstMemberEndpoint(), definitionMemberEndpointCount);
+    ASSERT_LE(definition.getMemberCount(),
+              definitionMemberEndpointCount - binding.getFirstMemberEndpoint());
+    for (uint32_t ordinal = 0; ordinal != definition.getMemberCount();
+         ++ordinal) {
+      uint32_t endpoint = binding.getFirstMemberEndpoint() + ordinal;
+      ASSERT_EQ(endpointBindings[endpoint], UINT32_MAX);
+      endpointBindings[endpoint] = static_cast<uint32_t>(index);
+      endpointMembers[endpoint] = definition.getFirstMember() + ordinal;
+    }
+  }
+
+  for (uint64_t index = 0; index != definitionMemberEndpointCount; ++index) {
+    ASSERT_NE(endpointBindings[index], UINT32_MAX);
+    ASSERT_LT(endpointMembers[index], definitionMemberNames.size());
+    const DefinitionMemberEndpointView endpoint(
+        image + definitionMemberEndpointOffset +
+        index * DefinitionMemberEndpointLayout.size);
+    output << "definition_member_endpoint index=" << index
+           << " binding=" << endpointBindings[index]
+           << " member=" << endpointMembers[index]
+           << " member_name=" << definitionMemberNames[endpointMembers[index]];
+    if (endpoint.getTargetIndexAndTable() == UINT32_MAX) {
+      output << " target=none\n";
+      continue;
+    }
+    size_t targetTable = static_cast<size_t>(
+        unpackTableIndexKind(endpoint.getTargetIndexAndTable()));
+    uint32_t target = unpackTableIndex(endpoint.getTargetIndexAndTable());
+    ASSERT_LT(targetTable, tableNames.size());
+    ASSERT_LT(target, tableNames[targetTable]->size());
+    output << " target_table=" << targetTable << " target=" << target
+           << " target_name=" << (*tableNames[targetTable])[target] << '\n';
+  }
+
+  std::vector<uint32_t> instanceTargetRelations(
+      static_cast<size_t>(definitionMemberInstanceRelationTargetCount),
+      UINT32_MAX);
+  for (uint64_t index = 0; index != definitionMemberInstanceRelationCount;
+       ++index) {
+    const DefinitionMemberInstanceRelationView relation(
+        image + definitionMemberInstanceRelationOffset +
+        index * DefinitionMemberInstanceRelationLayout.size);
+    ASSERT_LT(relation.getBinding(), definitionBindingCount);
+    uint32_t member = relation.getMemberAndFlags() & UINT32_C(0x7fffffff);
+    ASSERT_LT(member, definitionMemberNames.size());
+    ASSERT_LE(relation.getFirstTarget(),
+              definitionMemberInstanceRelationTargetCount);
+    ASSERT_LE(relation.getTargetCount(),
+              definitionMemberInstanceRelationTargetCount -
+                  relation.getFirstTarget());
+    for (uint32_t ordinal = 0; ordinal != relation.getTargetCount();
+         ++ordinal) {
+      uint32_t target = relation.getFirstTarget() + ordinal;
+      ASSERT_EQ(instanceTargetRelations[target], UINT32_MAX);
+      instanceTargetRelations[target] = static_cast<uint32_t>(index);
+    }
+    output << "definition_member_instance_relation index=" << index
+           << " binding=" << relation.getBinding() << " member=" << member
+           << " member_name=" << definitionMemberNames[member]
+           << " selector=" << relation.getSelector()
+           << " mode=" << relation.getModeAndFlags() << " targets=["
+           << relation.getFirstTarget() << ':'
+           << relation.getFirstTarget() + relation.getTargetCount() << ")\n";
+  }
+
+  for (uint64_t index = 0; index != definitionMemberInstanceRelationTargetCount;
+       ++index) {
+    ASSERT_NE(instanceTargetRelations[index], UINT32_MAX);
+    const DefinitionMemberInstanceRelationTargetView target(
+        image + definitionMemberInstanceRelationTargetOffset +
+        index * DefinitionMemberInstanceRelationTargetLayout.size);
+    size_t targetTable = static_cast<size_t>(
+        unpackTableIndexKind(target.getTargetIndexAndTable()));
+    uint32_t targetIndex = unpackTableIndex(target.getTargetIndexAndTable());
+    ASSERT_LT(targetTable, tableNames.size());
+    ASSERT_LT(targetIndex, tableNames[targetTable]->size());
+    output << "definition_member_instance_relation_target index=" << index
+           << " relation=" << instanceTargetRelations[index]
+           << " target_table=" << targetTable << " target=" << targetIndex
+           << " target_name=" << (*tableNames[targetTable])[targetIndex]
+           << '\n';
+  }
+
+  for (uint64_t index = 0;
+       index != definitionMemberInstanceRelationInverseCount; ++index) {
+    const DefinitionMemberInstanceRelationInverseView inverse(
+        image + definitionMemberInstanceRelationInverseOffset +
+        index * DefinitionMemberInstanceRelationInverseLayout.size);
+    ASSERT_LT(inverse.getTarget(), definitionMemberInstanceRelationTargetCount);
+    const DefinitionMemberInstanceRelationTargetView target(
+        image + definitionMemberInstanceRelationTargetOffset +
+        uint64_t{inverse.getTarget()} *
+            DefinitionMemberInstanceRelationTargetLayout.size);
+    size_t targetTable = static_cast<size_t>(
+        unpackTableIndexKind(target.getTargetIndexAndTable()));
+    uint32_t targetIndex = unpackTableIndex(target.getTargetIndexAndTable());
+    ASSERT_LT(targetTable, tableNames.size());
+    ASSERT_LT(targetIndex, tableNames[targetTable]->size());
+    output << "definition_member_instance_relation_inverse index=" << index
+           << " target_index=" << inverse.getTarget()
+           << " target_table=" << targetTable << " target=" << targetIndex
+           << " target_name=" << (*tableNames[targetTable])[targetIndex]
+           << '\n';
   }
 
   for (uint64_t index = 0; index != netDelayRunCount; ++index) {
@@ -764,9 +907,6 @@ TEST(GeneratedDesignDatabase, Dump) {
            << hex(site.getFlags()) << '\n';
   }
 
-  const std::array<const std::vector<std::string> *, 4> tableNames{
-      &scopeIndexNames, &objectIndexNames, &statementIndexNames,
-      &staticObjectIndexNames};
   for (uint64_t index = 0; index != header.getRelationCount(); ++index) {
     const RelationView relation(image + header.getRelationOffset() +
                                 index * RelationLayout.size);

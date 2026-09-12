@@ -425,3 +425,304 @@ module {
         <kind = storage, id = 0 : i64>
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_without_binding {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.a"
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 inout
+        ordinal 0 hierarchy "top.a" debug "a"
+    // expected-error @+1 {{source member has no expression endpoint in this instance}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_non_port_target {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{target must be a canonical VPI port}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = storage, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_illegal_selector {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 inout
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{relation is not legal for a generated RefObj traversal}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 77 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_portinst_same_scope {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 input
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{vpiPortInst target must belong to a descendant instance}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 98 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_owning_port_direction {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 input
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{owning ref port must have inout execution direction}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+1 {{VPI definition-member relation ordinals must be dense}}
+  obelisk_sim.design @ref_relation_non_dense_ordinal {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 inout
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 1 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_unknown_scope {
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    // expected-error @+1 {{references an unknown scope ID}}
+    obelisk_sim.vpi_definition_member.relation scope 99 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @relation_source_is_not_ref {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction input
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.a" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 input
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{source member does not materialize a RefObj}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_unknown_port {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    // expected-error @+1 {{references an unknown port target ID}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 99 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_duplicate_inverse {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_member.decl @b of @cell type 28 ordinal 1
+        name "b" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @spec member @b type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i1 inout
+        ordinal 0 hierarchy "top.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 1 member @b expr
+        <kind = storage, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+    // expected-error @+1 {{target port already has a reference connection}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @b
+        selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @ref_relation_duplicate_ordinal {
+    obelisk_sim.scope.decl 0 hierarchy "$root"
+    obelisk_sim.vpi_definition.decl @cell type 32 name "cell"
+    obelisk_sim.vpi_definition_member.decl @a of @cell type 28 ordinal 0
+        name "a" direction ref
+    obelisk_sim.vpi_definition_specialization.decl @spec of @cell
+    obelisk_sim.vpi_definition_member.specialize @spec member @a type
+        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32
+        definition @cell specialization @spec
+    obelisk_sim.scope.decl 2 parent 1 hierarchy "top.left" vpi_kind 32
+    obelisk_sim.scope.decl 3 parent 1 hierarchy "top.right" vpi_kind 32
+    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "actual" {
+      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+          isFourState = false, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 1 in 2 : i1 design hierarchy "top.left.a"
+    obelisk_sim.storage.decl 2 in 3 : i1 design hierarchy "top.right.a"
+    obelisk_sim.port.decl 0 in 2 source 1 net = false at 0 : i1 input
+        ordinal 0 hierarchy "top.left.a" debug "a"
+    obelisk_sim.port.decl 1 in 3 source 2 net = false at 0 : i1 input
+        ordinal 0 hierarchy "top.right.a" debug "a"
+    obelisk_sim.vpi_definition_member.bind scope 1 member @a expr
+        <kind = storage, id = 0 : i64>
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 98 iterate ordinal 0 to <kind = port, id = 0 : i64>
+    // expected-error @+1 {{duplicates an ordinal in the same relation}}
+    obelisk_sim.vpi_definition_member.relation scope 1 member @a
+        selector 98 iterate ordinal 0 to <kind = port, id = 1 : i64>
+  }
+}

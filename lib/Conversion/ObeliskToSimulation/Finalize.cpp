@@ -195,12 +195,16 @@ void ObeliskSimFinalizePass::runOnOperation() {
             reference.getNestedReferences().empty();
         bool definitionMemberReference =
             isa<sim::SimVPIDefinitionMemberSpecializationOp,
-                sim::SimVPIDefinitionMemberInstanceBindingOp>(op) &&
+                sim::SimVPIDefinitionMemberInstanceBindingOp,
+                sim::SimVPIDefinitionMemberInstanceRelationOp>(op) &&
             named.getName() ==
                 (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op)
                      ? sim::SimVPIDefinitionMemberSpecializationOp::
                            getMemberAttrName(op->getName())
-                     : sim::SimVPIDefinitionMemberInstanceBindingOp::
+                 : isa<sim::SimVPIDefinitionMemberInstanceBindingOp>(op)
+                     ? sim::SimVPIDefinitionMemberInstanceBindingOp::
+                           getMemberAttrName(op->getName())
+                     : sim::SimVPIDefinitionMemberInstanceRelationOp::
                            getMemberAttrName(op->getName())) &&
             reference.getNestedReferences().empty();
         bool allowed = callTarget || observerTarget || graphReference ||

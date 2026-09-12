@@ -374,7 +374,11 @@ def VPIEarlyPortLowConn : VPITraversalEdge<PortTargetObjects, LowConnRel,
 def VPIEarlyPortTypespec : VPITraversalEdge<PortObjects, Typespec, HandleMode,
   VPIEarlyTypespecs, NoOrder, "37.14">;
 def VPIEarlyRefObjPortInsts : VPITraversalEdge<RefObjectObjects, PortInstRel,
-  IterateMode, VPIEarlyPorts, NoOrder, "37.15">;
+  IterateMode, VPIEarlyPorts, NoOrder, "37.15", 0,
+  AutomaticDefinitionMemberInstanceRelation, 76 /* vpiHighConn */>;
+def VPIEarlyRefObjPort : VPITraversalEdge<RefObjectObjects, Port,
+  IterateMode, VPIEarlyPorts, NoOrder, "37.15", 0,
+  AutomaticDefinitionMemberInstanceRelation, 80 /* vpiLowConn */>;
 def VPIEarlyRefObjInstance : VPITraversalEdge<RefObjectObjects, InstanceRel,
   HandleMode, VPIEarlyInstances, NoOrder, "37.15", 0,
   AutomaticDefinitionMemberParent>;

@@ -1521,6 +1521,10 @@ enum {
   // Distinguishes a user-defined typedef typespec, whose vpiName is defined,
   // from unnamed built-in and anonymous static typespec records.
   OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC = UINT32_C(1) << 7,
+  // The same record-kind-specific bit identifies a physical port whose IEEE
+  // direction is ref. Its execution-facing input/output bits remain available
+  // to the scheduler and waveform backends.
+  OBELISK_RT_DESIGN_CAP_PORT_REF = UINT32_C(1) << 7,
   // The same record-kind-specific bit marks a process, function, or generic
   // interconnect net whose lexical VPI owner is supplied by generated
   // relations instead of its physical executable scope. These kinds cannot be

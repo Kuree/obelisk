@@ -361,6 +361,28 @@ LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
   return success();
 }
 
+LogicalResult SimVPIDefinitionMemberInstanceRelationOp::verify() {
+  if (failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getSelectorAttr(), "VPI selector")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "ordinal")))
+    return failure();
+  if (getSelector() > UINT16_MAX)
+    return emitOpError("VPI selector exceeds the reflection encoding");
+  if (getOrdinal() > UINT32_MAX)
+    return emitOpError("ordinal exceeds the reflection encoding");
+  if (getMode() == VPIRelationMode::Handle && getOrdinal() != 0)
+    return emitOpError("vpi_handle relation must use ordinal zero");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberInstanceRelationOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr()))
+    return emitOpError("references an unknown VPI definition member");
+  return success();
+}
+
 LogicalResult
 SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   FlatSymbolRefAttr reference = getVpiDefinitionAttr();
@@ -2285,6 +2307,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       definitionMemberSpecializations;
   SmallVector<SimVPIDefinitionMemberInstanceBindingOp>
       definitionMemberInstanceBindings;
+  SmallVector<SimVPIDefinitionMemberInstanceRelationOp>
+      definitionMemberInstanceRelations;
   llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
   SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
@@ -2294,6 +2318,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStorageDeclOp> storages;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
+  llvm::DenseMap<uint64_t, SimPortDeclOp> portsById;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
   SmallVector<SimNetConnectDeclOp> netConnections;
   llvm::StringMap<SimClassDeclOp> classes;
@@ -2345,6 +2370,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto binding =
                    dyn_cast<SimVPIDefinitionMemberInstanceBindingOp>(op)) {
       definitionMemberInstanceBindings.push_back(binding);
+    } else if (auto relation =
+                   dyn_cast<SimVPIDefinitionMemberInstanceRelationOp>(op)) {
+      definitionMemberInstanceRelations.push_back(relation);
     } else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op)) {
       if (failed(addId(identity.getIdAttr(), vpiNetIdentityIds,
                        "VPI net identity")))
@@ -2389,6 +2417,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto port = dyn_cast<SimPortDeclOp>(op)) {
       if (failed(addId(port.getIdAttr(), portIds, "port")))
         return failure();
+      portsById[port.getId()] = port;
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
@@ -2537,6 +2566,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       break;
     }
     case VPIObjectRefKind::Statement:
+    case VPIObjectRefKind::Port:
       return binding.emitOpError(
           "expression endpoint must be whole storage or a declared net");
     }
@@ -2602,6 +2632,115 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (!inserted)
       return binding.emitOpError(
           "duplicates an instance binding for the same VPI member");
+  }
+
+  auto memberRelationKey = [](uint64_t scope, Attribute member,
+                              uint32_t selector, uint32_t mode) {
+    return std::make_tuple(scope, member, selector, mode);
+  };
+  llvm::DenseMap<
+      std::tuple<uint64_t, Attribute, uint32_t, uint32_t>,
+      llvm::DenseMap<uint64_t, SimVPIDefinitionMemberInstanceRelationOp>>
+      memberRelationOrdinals;
+  llvm::DenseMap<std::tuple<uint64_t, Attribute, uint32_t, uint32_t>,
+                 llvm::DenseSet<uint64_t>>
+      memberRelationTargets;
+  llvm::DenseSet<std::pair<uint64_t, uint32_t>> memberRelationInverseKeys;
+  auto isStrictDescendantScope = [&](uint64_t candidate, uint64_t ancestor) {
+    if (candidate == ancestor)
+      return false;
+    for (size_t depth = 0; depth != scopes.size(); ++depth) {
+      auto scope = scopes.find(candidate);
+      if (scope == scopes.end() || !scope->second.getParentAttr())
+        return false;
+      candidate = *scope->second.getParent();
+      if (candidate == ancestor)
+        return true;
+    }
+    return false;
+  };
+  for (SimVPIDefinitionMemberInstanceRelationOp relation :
+       definitionMemberInstanceRelations) {
+    auto scope = scopes.find(relation.getScopeId());
+    if (scope == scopes.end())
+      return relation.emitOpError("references an unknown scope ID");
+    auto member =
+        symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+            relation, relation.getMemberAttr());
+    if (!member)
+      continue;
+    if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
+      return relation.emitOpError(
+          "member does not belong to the scope's VPI definition");
+    if (member.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::IODecl) ||
+        member.getDirection().value_or(VPIIODirection::Undefined) !=
+            VPIIODirection::Ref)
+      return relation.emitOpError(
+          "source member does not materialize a RefObj");
+    if (!instanceMemberBindings.contains(std::make_pair(
+            relation.getScopeId(), Attribute(relation.getMemberAttr()))))
+      return relation.emitOpError(
+          "source member has no expression endpoint in this instance");
+    if (relation.getTarget().getKind() != VPIObjectRefKind::Port)
+      return relation.emitOpError("target must be a canonical VPI port");
+    uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    auto port = portsById.find(targetId);
+    if (port == portsById.end())
+      return relation.emitOpError("references an unknown port target ID");
+    auto mode = static_cast<reflection::VPITraversalMode>(
+        static_cast<uint32_t>(relation.getMode()));
+    const auto *edge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::RefObj),
+        relation.getSelector(), mode);
+    if (!edge ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::
+                                       DefinitionMemberInstanceRelation ||
+        !reflection::vpiObjectSetContains(
+            edge->targets,
+            static_cast<uint32_t>(reflection::VPIObjectKind::Port)))
+      return relation.emitOpError(
+          "relation is not legal for a generated RefObj traversal");
+    uint64_t targetScope = port->second.getScopeId();
+    if (relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Port) &&
+        targetScope != relation.getScopeId())
+      return relation.emitOpError(
+          "vpiPort target must belong to the RefObj instance");
+    if (relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::PortInstRel) &&
+        !isStrictDescendantScope(targetScope, relation.getScopeId()))
+      return relation.emitOpError(
+          "vpiPortInst target must belong to a descendant instance");
+    uint32_t inverseSelector = edge->inverseSelector;
+    if (inverseSelector == 0)
+      return relation.emitOpError(
+          "generated RefObj traversal has no inverse selector");
+    if (inverseSelector ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel) &&
+        port->second.getDirection() != PortDirection::InOut)
+      return relation.emitOpError(
+          "owning ref port must have inout execution direction");
+    if (!memberRelationInverseKeys.insert({targetId, inverseSelector}).second)
+      return relation.emitOpError(
+          "target port already has a reference connection");
+    auto key = memberRelationKey(
+        relation.getScopeId(), Attribute(relation.getMemberAttr()),
+        relation.getSelector(), static_cast<uint32_t>(relation.getMode()));
+    auto [sameOrdinal, insertedOrdinal] =
+        memberRelationOrdinals[key].try_emplace(relation.getOrdinal(),
+                                                relation);
+    if (!insertedOrdinal)
+      return relation.emitOpError("duplicates an ordinal in the same relation");
+    if (!memberRelationTargets[key].insert(targetId).second)
+      return relation.emitOpError("duplicates a target in the same relation");
+  }
+  for (const auto &entry : memberRelationOrdinals) {
+    const auto &ordinals = entry.second;
+    for (uint64_t ordinal = 0; ordinal != ordinals.size(); ++ordinal)
+      if (!ordinals.contains(ordinal))
+        return emitOpError(
+            "VPI definition-member relation ordinals must be dense");
   }
 
   llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
@@ -3308,6 +3447,13 @@ LogicalResult SimDesignOp::verifyRegions() {
         kind = vpiKindForNet(found->second.getVpiTypeAttr());
         break;
       }
+      case VPIObjectRefKind::Port: {
+        auto found = portsById.find(id);
+        if (found == portsById.end())
+          return missing();
+        kind = static_cast<uint32_t>(reflection::VPIObjectKind::Port);
+        break;
+      }
       }
       const auto *object = reflection::findVPIObjectKind(kind);
       if (!kind || !object ||
@@ -3341,6 +3487,11 @@ LogicalResult SimDesignOp::verifyRegions() {
 
     uint64_t sourceId = relation.getSource().getId().getValue().getZExtValue();
     uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    if (relation.getSource().getKind() == VPIObjectRefKind::Port &&
+        memberRelationInverseKeys.contains(
+            {sourceId, static_cast<uint32_t>(relation.getSelector())}))
+      return relation.emitOpError(
+          "port connection is already supplied by a synthetic RefObj");
     generalRelations.push_back(
         {static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
          static_cast<uint32_t>(relation.getSelector()),

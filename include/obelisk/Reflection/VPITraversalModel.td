@@ -107,6 +107,12 @@ def AutomaticDefinitionMemberParent :
 // endpoint through the compact definition-binding endpoint slice.
 def AutomaticDefinitionMemberExpr :
     VPIAutomaticRelation<"DefinitionMemberExpr", 7>;
+// Resolve an instance-specific relation whose source is a synthetic
+// definition-member cursor.  Unlike DefinitionMember, both the binding and
+// member participate in the key, so two instances of one definition never
+// share downstream connectivity accidentally.
+def AutomaticDefinitionMemberInstanceRelation :
+    VPIAutomaticRelation<"DefinitionMemberInstanceRelation", 8>;
 
 // statementContainment marks forward structural ownership of Statement-family
 // targets. Sources may be scopes, code units/processes, assertions, or other
@@ -116,7 +122,8 @@ class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
                        VPITraversalOrder order_, string clause_,
                        bit statementContainment_ = 0,
                        VPIAutomaticRelation automaticRelation_ =
-                           NoAutomaticRelation> {
+                           NoAutomaticRelation,
+                       int inverseSelector_ = 0> {
   VPIObjectSet sources = sources_;
   VPISelector selector = selector_;
   VPITraversalMode mode = mode_;
@@ -125,6 +132,9 @@ class VPITraversalEdge<VPIObjectSet sources_, VPISelector selector_,
   string clause = clause_;
   bit statementContainment = statementContainment_;
   VPIAutomaticRelation automaticRelation = automaticRelation_;
+  // Nonzero only when an automatically materialized reverse traversal also
+  // owns the singular forward edge from each target back to its source.
+  int inverseSelector = inverseSelector_;
 }
 
 // Access-by-index is a handle construction operation, not a traversal edge.

@@ -81,8 +81,8 @@ bool isNestedInCodeUnit(mlir::Operation *operation);
 
 /// Materialize design storage/net/event descriptors and resolve all aliases.
 mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
-    mlir::ModuleOp module, ir::SVRootSymbolOp semanticRoot,
-    const PreparedPortAliases &portAliases,
+    mlir::ModuleOp module, sim::SimDesignOp design,
+    ir::SVRootSymbolOp semanticRoot, const PreparedPortAliases &portAliases,
     const PreparedScopeDeclarations &scopes,
     const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     mlir::OpBuilder &builder);
