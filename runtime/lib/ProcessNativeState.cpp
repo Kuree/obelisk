@@ -108,6 +108,17 @@ bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
          context->stateUnknown.size() == context->stateValue.size();
 }
 
+static bool executionHasBytecodeState(const obelisk_rt_context *context) {
+  return context->execution &&
+         (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+}
+
+static bool hasBoundNativeStatePlanes(const obelisk_rt_context *context,
+                                      uint64_t bitCount) {
+  return context->nativeStateValue && context->nativeStateUnknown &&
+         context->nativeStateBitCount >= bitCount;
+}
+
 bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
                                      const uint8_t *value,
                                      const uint8_t *unknown,
@@ -786,8 +797,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       context->schedulerStatus = rangeStatus;
       return rangeStatus;
     }
-    bool canonical = context->execution &&
-                     context->execution->state_bit_count == globalBitCount;
+    // Native-only generic execution does not import generated initializers
+    // into the canonical image. Bytecode, an explicit native-plane binding,
+    // or an observer request makes that image authoritative for reads.
+    bool layoutMatches = context->execution &&
+                         context->execution->state_bit_count == globalBitCount;
+    bool canonical =
+        layoutMatches && (executionHasBytecodeState(context) ||
+                          hasBoundNativeStatePlanes(context, globalBitCount) ||
+                          context->observerForcesCanonicalPlane);
     const std::vector<uint64_t> *canonicalPlane = nullptr;
     if (canonical) {
       canonicalPlane =
@@ -799,8 +817,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
         bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset)) {
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
-      bool readGlobal =
-          !context->observerForcesCanonicalPlane && isStaticControlAOT(context);
+      bool readGlobal = !context->observerForcesCanonicalPlane &&
+                        isStaticControlAOT(context);
       uint64_t globalValue = loadPackedBytes(globalPlane, source, bitWidth);
       uint64_t canonicalValue =
           loadPackedBits(*canonicalPlane, source, bitWidth);
@@ -822,8 +840,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       return OBELISK_RT_OK;
     }
     bool readGlobalPlane =
-        !canonical ||
-        (!context->observerForcesCanonicalPlane && isStaticControlAOT(context));
+        !canonical || (!context->observerForcesCanonicalPlane &&
+                       isStaticControlAOT(context));
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&
@@ -927,8 +945,11 @@ static obelisk_rt_status nativeStateStorePlane(
       context->schedulerStatus = rangeStatus;
       return rangeStatus;
     }
+    // Writes mirror canonical state only after it has an authoritative image.
     bool canonical = context->execution &&
-                     context->execution->state_bit_count == globalBitCount;
+                     context->execution->state_bit_count == globalBitCount &&
+                     (executionHasBytecodeState(context) ||
+                      hasBoundNativeStatePlanes(context, globalBitCount));
     std::vector<uint64_t> *canonicalPlane = nullptr;
     if (canonical) {
       canonicalPlane =
