@@ -394,6 +394,31 @@ checkFileArguments(obelisk_rt_context *context, uint32_t descriptor,
 
 } // namespace
 
+bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
+                                   uint32_t descriptor,
+                                   std::string_view &name) noexcept {
+  name = {};
+  if (!context)
+    return false;
+  FileEntry *entry = nullptr;
+  if (descriptor & kFDTag) {
+    entry = getFileUnlocked(context, descriptor);
+  } else {
+    if (descriptor == 0 || (descriptor & (descriptor - 1)) != 0)
+      return false;
+    uint32_t bit = 0;
+    while ((descriptor & (uint32_t{1} << bit)) == 0)
+      ++bit;
+    if (bit >= context->mcd.size() || !context->mcd[bit].stream)
+      return false;
+    entry = &context->mcd[bit];
+  }
+  if (!entry || entry->name.empty())
+    return false;
+  name = entry->name;
+  return true;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_file_open_mcd(obelisk_rt_context *context, const char *path,
                             uint64_t pathSize, uint32_t *outDescriptor) {
@@ -420,7 +445,8 @@ obelisk_rt_v1_file_open_mcd(obelisk_rt_context *context, const char *path,
     }
     uint32_t bit = context->freeMCDs.back();
     context->freeMCDs.pop_back();
-    context->mcd[bit] = {stream, 0, true};
+    context->mcd[bit] = {stream, 0, true, false, -1,
+                         std::move(*pathString)};
     *outDescriptor = uint32_t{1} << bit;
     return OBELISK_RT_OK;
   });
@@ -463,14 +489,16 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
     if (!context->freeFiles.empty()) {
       index = context->freeFiles.back();
       context->freeFiles.pop_back();
-      context->files[index] = {stream.get(), 0, writable, readable};
+      context->files[index] = {stream.get(), 0, writable, readable, -1,
+                               std::move(*pathString)};
     } else {
       if (context->files.size() > kFDIndexMask) {
         setLastErrorUnlocked(context, "file descriptor table is full");
         return OBELISK_RT_OUT_OF_RESOURCES;
       }
       index = static_cast<uint32_t>(context->files.size());
-      context->files.push_back({stream.get(), 0, writable, readable});
+      context->files.push_back({stream.get(), 0, writable, readable, -1,
+                                std::move(*pathString)});
     }
     stream.release();
     *outDescriptor = kFDTag | index;
@@ -534,6 +562,7 @@ obelisk_rt_v1_file_close(obelisk_rt_context *context, uint32_t descriptor) {
       errno = 0;
       int result = std::fclose(entry->stream);
       entry->stream = nullptr;
+      entry->name.clear();
       context->freeFiles.push_back(index);
       if (result != 0) {
         recordIOError(context, *entry, "fclose failed");
@@ -557,6 +586,7 @@ obelisk_rt_v1_file_close(obelisk_rt_context *context, uint32_t descriptor) {
         status = OBELISK_RT_IO_ERROR;
       }
       context->mcd[bit].stream = nullptr;
+      context->mcd[bit].name.clear();
       context->freeMCDs.push_back(bit);
     }
     return status;

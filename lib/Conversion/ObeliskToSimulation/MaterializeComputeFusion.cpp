@@ -32,7 +32,6 @@ namespace obelisk {
 namespace {
 
 constexpr StringLiteral evalOriginNBASiteAttr = "obelisk.eval.origin_nba_site";
-
 static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
   body.walk([&](sim::SimNBAEnqueueOp enqueue) {
     if (enqueue->hasAttr(evalOriginNBASiteAttr))
@@ -747,6 +746,8 @@ std::optional<uint64_t> resolveStorageRoot(Value value) {
       return descriptor.getValue().getZExtValue();
     }
     Operation *definition = value.getDefiningOp();
+    if (auto context = dyn_cast_or_null<sim::SimContextStorageOp>(definition))
+      return context.getId();
     if (auto view = dyn_cast_or_null<sim::SimRefExtractOp>(definition))
       value = view.getInput();
     else if (auto view = dyn_cast_or_null<sim::SimRefDynExtractOp>(definition))
@@ -826,7 +827,8 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
 /// activation overwrites it before use, retaining the canonical store would
 /// add a signal-transition publication with no observer or semantic consumer.
 uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
-                                         sim::SimFuncOp function) {
+                                         sim::SimFuncOp function,
+                                         bool markDormantTier1 = false) {
   DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
   for (sim::SimStorageDeclOp declaration :
        design.getBody().front().getOps<sim::SimStorageDeclOp>())
@@ -852,7 +854,7 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
               sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation))
         return;
       if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation);
-          spawn && spawn.getCalleeAttr() == function.getSymNameAttr())
+          spawn && spawn.getCallee() == function.getSymName())
         return;
       for (Value operand : operation->getOperands()) {
         if (!isa<sim::RefType>(operand.getType()))
@@ -884,7 +886,9 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
         rootStores.size() != 1 || rootLoads->second.empty() ||
         accessedElsewhere.contains(descriptor) ||
         unsupportedUses.contains(descriptor) ||
-        declaration->second.getLifetime() != sim::Lifetime::Static)
+        declaration->second.getLifetime() != sim::Lifetime::Static ||
+        declaration->second->hasAttr(
+            sim::metadata::coverageToggleObservable))
       continue;
     std::optional<sim::ComputeObservabilityKind> observability =
         declaration->second.getObservability();
@@ -1024,12 +1028,71 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
         if (Operation *definition = reference.getDefiningOp();
             definition && definition->use_empty())
           definition->erase();
-    }
+    } else if (markDormantTier1)
+      store->setAttr(sim::metadata::evalDiscardableStore,
+                     UnitAttr::get(function.getContext()));
     if (flattened.use_empty())
       flattened.getDefiningOp()->erase();
     ++promoted;
   }
   return promoted;
+}
+
+/// Remove stores that are needed only by the canonical read-observable body
+/// from dormant eval clones, then erase the transient marker everywhere.  The
+/// marker is assigned only after the promotion proof has established that the
+/// reference family is private and every activation forwards reads from the
+/// dominating SSA value.
+void finalizeDormantTier1Stores(sim::SimDesignOp design) {
+  SmallVector<sim::SimFuncOp> evalBodies;
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    if (function->hasAttr("obelisk.eval.borrowed_captures"))
+      evalBodies.push_back(function);
+
+  for (sim::SimFuncOp evalBody : evalBodies) {
+    SmallVector<sim::SimRefStoreOp> stores;
+    evalBody.walk([&](sim::SimRefStoreOp store) {
+      if (store->hasAttr(sim::metadata::evalDiscardableStore))
+        stores.push_back(store);
+    });
+    for (sim::SimRefStoreOp store : stores)
+      store.erase();
+
+    // Match the ordinary Invisible-state cleanup structurally.  Loads were
+    // already forwarded by the promotion proof, so iterating to a fixed point
+    // removes every now-dead subelement view, including sibling load paths.
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      SmallVector<Operation *> deadViews;
+      evalBody.walk([&](Operation *operation) {
+        if (isa<sim::SimContextStorageOp, sim::SimRefExtractOp,
+                sim::SimRefDynExtractOp, sim::SimRefSubelementOp,
+                sim::SimRefArrayElementOp>(operation) &&
+            operation->getNumResults() == 1 && operation->use_empty())
+          deadViews.push_back(operation);
+      });
+      for (Operation *operation : deadViews) {
+        operation->erase();
+        changed = true;
+      }
+    }
+  }
+
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>()) {
+    // Canonical function helpers are cloned into a private eval call closure
+    // later. Keep their proof marker until that specialization consumes it;
+    // every actor/coroutine canonical body is complete here and must not leak
+    // the transient marker into emitted Simulation IR.
+    if (!function->hasAttr("obelisk.eval.borrowed_captures") &&
+        function.getEntryKind() == sim::EntryKind::Function)
+      continue;
+    function.walk([&](sim::SimRefStoreOp store) {
+      store->removeAttr(sim::metadata::evalDiscardableStore);
+    });
+  }
 }
 
 /// Share branch conditions whose complete expression trees are structurally
@@ -2874,10 +2937,41 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
 void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  bool forgedDiscardableStore = false;
+  design.walk([&](sim::SimRefStoreOp store) {
+    forgedDiscardableStore |=
+        store->hasAttr(sim::metadata::evalDiscardableStore);
+  });
+  if (forgedDiscardableStore) {
+    design.emitOpError("contains a preexisting internal eval-store proof");
+    signalPassFailure();
+    return;
+  }
   ArrayAttr fusions =
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
   bool evalScheduler = useEvalBodyFusion(design);
+  analysis::SimulationVPIAnalysis vpi =
+      analysis::SimulationVPIAnalysis::compute(design);
+  bool prepareTier1Promotion = evalScheduler && !vpi.allowsWrite();
+  bool prepareDormantTier1 =
+      prepareTier1Promotion && vpi.getMode() == sim::ComputeVPIMode::Read;
+  uint64_t preparedPrivateStores = 0;
+  if (prepareTier1Promotion) {
+    // Promote before any activation cloning.  Off mode erases Invisible
+    // publication immediately.  Read mode keeps canonical safe-point stores
+    // with a transient tag, while every cloned Tier-1 body inherits enough
+    // proof to discard its hot publication afterward.
+    SmallVector<sim::SimFuncOp> functions;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      if (!function.isExternal() &&
+          !function->hasAttr("obelisk.eval.borrowed_captures"))
+        functions.push_back(function);
+    for (sim::SimFuncOp function : functions)
+      preparedPrivateStores += promotePrivateStaticTemporaries(
+          design, function, prepareDormantTier1);
+  }
   if ((!fusions || !graph || graph.getWorkers() != 1) && evalScheduler) {
     // Standalone activation cloning is not conditional on finding a profitable
     // multi-actor fusion.  Keeping it behind the fusion-inventory early return
@@ -2888,9 +2982,14 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       actors.push_back(function);
     for (sim::SimFuncOp function : actors)
       if (failed(materializeStandaloneEvalBody(design, function))) {
+        if (prepareDormantTier1)
+          finalizeDormantTier1Stores(design);
         signalPassFailure();
         return;
       }
+    if (prepareDormantTier1)
+      finalizeDormantTier1Stores(design);
+    promotedPrivateStores += preparedPrivateStores;
   }
   if (!fusions || !graph || graph.getWorkers() != 1)
     return;
@@ -2957,15 +3056,19 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       // and debugging concern; generated bodies must not depend on the
       // frontend's current `unit_N` naming convention.
       if (failed(materializeStandaloneEvalBody(design, function))) {
+        if (prepareDormantTier1)
+          finalizeDormantTier1Stores(design);
         signalPassFailure();
         return;
       }
     }
   }
+  if (prepareDormantTier1)
+    finalizeDormantTier1Stores(design);
   eliminatedTerminationPolls += removedPolls;
   ifConvertedNBAs += convertedNBAs;
   sharedStableConditions += sharedConditions;
-  promotedPrivateStores += promotedStores;
+  promotedPrivateStores += promotedStores + preparedPrivateStores;
   design->removeAttr(sim::metadata::staticBodyFusion);
   if (!changed)
     return;

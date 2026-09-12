@@ -759,12 +759,19 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   const uint8_t *nativeValue = nullptr;
   const uint8_t *nativeUnknown = nullptr;
   uint64_t nativeBits = 0;
+  bool schedulePlanState = false;
   if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
+      (context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+      !context->nativeScheduleDeoptimized &&
       context->nativeSchedulePlan->state_bit_count ==
-          context->execution->state_bit_count) {
+          context->execution->state_bit_count &&
+      context->nativeSchedulePlan->state_value &&
+      context->nativeSchedulePlan->state_unknown) {
     nativeValue = context->nativeSchedulePlan->state_value;
     nativeUnknown = context->nativeSchedulePlan->state_unknown;
     nativeBits = context->nativeSchedulePlan->state_bit_count;
+    schedulePlanState = true;
   } else if (useNativeState && context->execution &&
              context->nativeStateBitCount ==
                  context->execution->state_bit_count) {
@@ -774,7 +781,21 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   }
   auto stateBit = [&](bool unknownPlane, uint64_t offset) {
     const uint8_t *native = unknownPlane ? nativeUnknown : nativeValue;
-    if (native && offset < nativeBits)
+    bool dirty = false;
+    if (schedulePlanState && context->nativeScheduleDirtyRootsPresent) {
+      for (const auto &[id, state] : context->nativeStaticStates) {
+        if (offset < state.bitOffset ||
+            offset - state.bitOffset >= state.bitWidth)
+          continue;
+        dirty = context->nativeScheduleTransientDirtyRoots.find(id) !=
+                    context->nativeScheduleTransientDirtyRoots.end() ||
+                context->nativeSchedulePersistentDirtyRoots.find(id) !=
+                    context->nativeSchedulePersistentDirtyRoots.end();
+        if (dirty)
+          break;
+      }
+    }
+    if (native && offset < nativeBits && !dirty)
       return (native[offset / 8] & static_cast<uint8_t>(1u << (offset % 8))) !=
              0;
     return bit(unknownPlane ? context->stateUnknown : context->stateValue,

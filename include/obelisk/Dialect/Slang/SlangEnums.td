@@ -543,6 +543,20 @@ def SlangNetKind : I32EnumAttr<"NetKind", "SystemVerilog net resolution kind", [
   let cppNamespace = "::obelisk::slangir";
 }
 
+def SlangNetExpansion_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def SlangNetExpansion_Vectored
+    : I32EnumAttrCase<"Vectored", 1, "vectored">;
+def SlangNetExpansion_Scalared
+    : I32EnumAttrCase<"Scalared", 2, "scalared">;
+def SlangNetExpansionHint : I32EnumAttr<"NetExpansionHint",
+    "explicit SystemVerilog net vector expansion request", [
+  SlangNetExpansion_None, SlangNetExpansion_Vectored,
+  SlangNetExpansion_Scalared
+]> {
+  let cppNamespace = "::obelisk::slangir";
+}
+
 // Keep these values aligned with slang::ast::DriveStrength and
 // slang::ast::ChargeStrength. The Slang-to-Obelisk conversion intentionally
 // copies semantic enum attributes without rebuilding them.

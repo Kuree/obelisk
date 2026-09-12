@@ -252,6 +252,12 @@ static_assert(haveSameEncoding(slangir::NetKind::Unknown,
                                ir::SVNetKind::Unknown) &&
               haveSameEncoding(slangir::NetKind::UserDefined,
                                ir::SVNetKind::UserDefined));
+static_assert(haveSameEncoding(slangir::NetExpansionHint::None,
+                               ir::SVNetExpansionHint::None) &&
+              haveSameEncoding(slangir::NetExpansionHint::Vectored,
+                               ir::SVNetExpansionHint::Vectored) &&
+              haveSameEncoding(slangir::NetExpansionHint::Scalared,
+                               ir::SVNetExpansionHint::Scalared));
 static_assert(haveSameEncoding(slangir::PortConnectionKind::Ordered,
                                ir::SVPortConnectionKind::Ordered) &&
               haveSameEncoding(slangir::PortConnectionKind::Default,

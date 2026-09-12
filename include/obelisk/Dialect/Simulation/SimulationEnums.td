@@ -64,10 +64,133 @@ def SimVPIStatementSourceCodeUnit
     : I32EnumAttrCase<"CodeUnit", 1, "code_unit">;
 def SimVPIStatementSourceStatement
     : I32EnumAttrCase<"Statement", 2, "statement">;
+def SimVPIStatementSourceAnchor
+    : I32EnumAttrCase<"Anchor", 3, "anchor">;
 def SimVPIStatementSourceKind : I32EnumAttr<
     "VPIStatementSourceKind", "VPI statement-relation source kind", [
       SimVPIStatementSourceScope, SimVPIStatementSourceCodeUnit,
-      SimVPIStatementSourceStatement
+      SimVPIStatementSourceStatement, SimVPIStatementSourceAnchor
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// Stable logical identities used by explicit direct-object VPI relations.
+// These are resolved to compact image-table indices only during design-
+// database serialization. Add endpoint categories only with a producer and a
+// collision policy for relations synthesized by the serializer.
+def SimVPIObjectRefStatement : I32EnumAttrCase<"Statement", 0, "statement">;
+def SimVPIObjectRefStorage : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
+def SimVPIObjectRefNetIdentity
+    : I32EnumAttrCase<"NetIdentity", 3, "net_identity">;
+def SimVPIObjectRefPort : I32EnumAttrCase<"Port", 4, "port">;
+def SimVPIObjectRefKind : I32EnumAttr<
+    "VPIObjectRefKind", "stable VPI relation endpoint identity", [
+      SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet,
+      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+def SimVPIRelationHandle : I32EnumAttrCase<"Handle", 0, "handle">;
+def SimVPIRelationIterate : I32EnumAttrCase<"Iterate", 1, "iterate">;
+def SimVPIRelationMode : I32EnumAttr<
+    "VPIRelationMode", "VPI relation access mode", [
+      SimVPIRelationHandle, SimVPIRelationIterate
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// A source VPI identity may alias an executable descriptor that already has
+// a compact runtime representation.  Keeping the backing category explicit
+// lets serialization reuse that object instead of creating a duplicate
+// handle, while unbacked anchors become static reflection records directly.
+def SimVPIObjectBackingScope
+    : I32EnumAttrCase<"Scope", 0, "scope">;
+def SimVPIObjectBackingClass
+    : I32EnumAttrCase<"Class", 1, "class">;
+def SimVPIObjectBackingCodeUnit
+    : I32EnumAttrCase<"CodeUnit", 2, "code_unit">;
+def SimVPIObjectBackingNet
+    : I32EnumAttrCase<"Net", 3, "net">;
+def SimVPIObjectBackingKind : I32EnumAttr<
+    "VPIObjectBackingKind", "physical descriptor backing a VPI anchor", [
+      SimVPIObjectBackingScope, SimVPIObjectBackingClass,
+      SimVPIObjectBackingCodeUnit, SimVPIObjectBackingNet
+    ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// Source-semantic type categories retained only in immutable reflection
+// inventory. Executable operations continue to use normalized simulation
+// types, so VPI metadata cannot inhibit canonicalization or tier formation.
+def SimVPITypeUnknown : I32EnumAttrCase<"Unknown", 0, "unknown">;
+def SimVPITypeGenericIntegral
+    : I32EnumAttrCase<"GenericIntegral", 1, "generic_integral">;
+def SimVPITypeBit : I32EnumAttrCase<"Bit", 2, "bit">;
+def SimVPITypeLogic : I32EnumAttrCase<"Logic", 3, "logic">;
+def SimVPITypeReg : I32EnumAttrCase<"Reg", 4, "reg">;
+def SimVPITypeByte : I32EnumAttrCase<"Byte", 5, "byte">;
+def SimVPITypeShortInt : I32EnumAttrCase<"ShortInt", 6, "shortint">;
+def SimVPITypeInt : I32EnumAttrCase<"Int", 7, "int">;
+def SimVPITypeLongInt : I32EnumAttrCase<"LongInt", 8, "longint">;
+def SimVPITypeInteger : I32EnumAttrCase<"Integer", 9, "integer">;
+def SimVPITypeEnum : I32EnumAttrCase<"Enum", 10, "enum">;
+def SimVPITypeTime : I32EnumAttrCase<"Time", 11, "time">;
+def SimVPITypeShortReal : I32EnumAttrCase<"ShortReal", 12, "shortreal">;
+def SimVPITypeReal : I32EnumAttrCase<"Real", 13, "real">;
+def SimVPITypeRealtime : I32EnumAttrCase<"Realtime", 14, "realtime">;
+def SimVPITypeString : I32EnumAttrCase<"String", 15, "string">;
+def SimVPITypeChandle : I32EnumAttrCase<"Chandle", 16, "chandle">;
+def SimVPITypePackedArray
+    : I32EnumAttrCase<"PackedArray", 17, "packed_array">;
+def SimVPITypeUnpackedArray
+    : I32EnumAttrCase<"UnpackedArray", 18, "unpacked_array">;
+def SimVPITypePackedStruct
+    : I32EnumAttrCase<"PackedStruct", 19, "packed_struct">;
+def SimVPITypeUnpackedStruct
+    : I32EnumAttrCase<"UnpackedStruct", 20, "unpacked_struct">;
+def SimVPITypePackedUnion
+    : I32EnumAttrCase<"PackedUnion", 21, "packed_union">;
+def SimVPITypeUnpackedUnion
+    : I32EnumAttrCase<"UnpackedUnion", 22, "unpacked_union">;
+def SimVPITypeDynamicArray
+    : I32EnumAttrCase<"DynamicArray", 23, "dynamic_array">;
+def SimVPITypeQueue : I32EnumAttrCase<"Queue", 24, "queue">;
+def SimVPITypeAssocArray
+    : I32EnumAttrCase<"AssocArray", 25, "assoc_array">;
+def SimVPITypeClass : I32EnumAttrCase<"Class", 26, "class">;
+def SimVPITypeVirtualInterface
+    : I32EnumAttrCase<"VirtualInterface", 27, "virtual_interface">;
+def SimVPITypeEvent : I32EnumAttrCase<"Event", 28, "event">;
+def SimVPITypePackedOpenArray
+    : I32EnumAttrCase<"PackedOpenArray", 29, "packed_open_array">;
+def SimVPITypeUnpackedOpenArray
+    : I32EnumAttrCase<"UnpackedOpenArray", 30, "unpacked_open_array">;
+def SimVPITypeProcess : I32EnumAttrCase<"Process", 31, "process">;
+def SimVPITypeCovergroup
+    : I32EnumAttrCase<"Covergroup", 32, "covergroup">;
+def SimVPITypeMailbox : I32EnumAttrCase<"Mailbox", 33, "mailbox">;
+def SimVPITypeSemaphore : I32EnumAttrCase<"Semaphore", 34, "semaphore">;
+def SimVPITypeVoid : I32EnumAttrCase<"Void", 35, "void">;
+def SimVPITypeUntyped : I32EnumAttrCase<"Untyped", 36, "untyped">;
+def SimVPITypeSequence : I32EnumAttrCase<"Sequence", 37, "sequence">;
+def SimVPITypeProperty : I32EnumAttrCase<"Property", 38, "property">;
+def SimVPITypeKind : I32EnumAttr<
+    "VPITypeKind", "source-semantic VPI reflection type category", [
+      SimVPITypeUnknown, SimVPITypeGenericIntegral, SimVPITypeBit,
+      SimVPITypeLogic, SimVPITypeReg, SimVPITypeByte, SimVPITypeShortInt,
+      SimVPITypeInt, SimVPITypeLongInt, SimVPITypeInteger, SimVPITypeEnum,
+      SimVPITypeTime, SimVPITypeShortReal, SimVPITypeReal,
+      SimVPITypeRealtime, SimVPITypeString, SimVPITypeChandle,
+      SimVPITypePackedArray, SimVPITypeUnpackedArray, SimVPITypePackedStruct,
+      SimVPITypeUnpackedStruct, SimVPITypePackedUnion,
+      SimVPITypeUnpackedUnion, SimVPITypeDynamicArray, SimVPITypeQueue,
+      SimVPITypeAssocArray, SimVPITypeClass, SimVPITypeVirtualInterface,
+      SimVPITypeEvent, SimVPITypePackedOpenArray,
+      SimVPITypeUnpackedOpenArray, SimVPITypeProcess, SimVPITypeCovergroup,
+      SimVPITypeMailbox, SimVPITypeSemaphore, SimVPITypeVoid,
+      SimVPITypeUntyped, SimVPITypeSequence, SimVPITypeProperty
     ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -94,6 +217,24 @@ def SimPortInOut : I32EnumAttrCase<"InOut", 2, "inout">;
 def SimPortDirection
     : I32EnumAttr<"PortDirection", "elaborated module-port direction", [
         SimPortInput, SimPortOutput, SimPortInOut
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// Exact IEEE 1800 VPI direction values. Keep this distinct from the physical
+// module-port direction above: an IO declaration may be a ref argument or may
+// deliberately have no direction for an interface/modport reference.
+def SimVPIIOUndefined : I32EnumAttrCase<"Undefined", 0, "undefined">;
+def SimVPIIOInput : I32EnumAttrCase<"Input", 1, "input">;
+def SimVPIIOOutput : I32EnumAttrCase<"Output", 2, "output">;
+def SimVPIIOInOut : I32EnumAttrCase<"InOut", 3, "inout">;
+def SimVPIIOMixed : I32EnumAttrCase<"Mixed", 4, "mixed">;
+def SimVPIIONone : I32EnumAttrCase<"None", 5, "none">;
+def SimVPIIORef : I32EnumAttrCase<"Ref", 6, "ref">;
+def SimVPIIODirection
+    : I32EnumAttr<"VPIIODirection", "source IO-declaration direction", [
+        SimVPIIOUndefined, SimVPIIOInput, SimVPIIOOutput, SimVPIIOInOut,
+        SimVPIIOMixed, SimVPIIONone, SimVPIIORef
       ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -657,6 +798,24 @@ def SimComputeObservabilityKind
     : I32EnumAttr<"ComputeObservabilityKind", "VPI state observability", [
         SimComputeObservabilityInvisible, SimComputeObservabilitySafePoint,
         SimComputeObservabilityExternallyWritable
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
+// How a persistent typespec entered the reflection inventory.  This is kept
+// distinct from the concrete VPI typespec kind: an enum typedef and an
+// anonymous enum definition have the same VPI kind but different ownership
+// and vpiTypedef behavior.
+def SimVPITypespecTypedef
+    : I32EnumAttrCase<"Typedef", 0, "typedef">;
+def SimVPITypespecInterface
+    : I32EnumAttrCase<"Interface", 1, "interface">;
+def SimVPITypespecAnonymousEnum
+    : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
+def SimVPITypespecOrigin
+    : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
+        SimVPITypespecTypedef, SimVPITypespecInterface,
+        SimVPITypespecAnonymousEnum
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

@@ -60,7 +60,8 @@ bool nativeStaticSpecializationEnvironmentClean(
 bool nativeAOTTransientBoundaryClean(const obelisk_rt_context *context) {
   if (!context || context->nativeScheduleExternalWritePending ||
       context->nativeScheduleDirtyRootsPresent ||
-      obelisk_rt_covergroup_strobes_pending_unlocked(context))
+      obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
+      context->vpiObservationDemand)
     return false;
   auto anyOverride = [](const std::vector<uint64_t> &mask) {
     return std::any_of(mask.begin(), mask.end(),
@@ -216,6 +217,21 @@ void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {
     plan->promotion_invalidate();
 }
 
+void obelisk_rt_aot_observation_demand_changed_unlocked(
+    obelisk_rt_context *context, bool active) {
+  if (!context || context->vpiObservationDemand == active)
+    return;
+  context->vpiObservationDemand = active;
+  if (!active)
+    return;
+  // Observation changes routing, not canonical state.  Invalidate generated
+  // assumptions without manufacturing an external write or a dirty root.
+  invalidateNativeStaticSpecializationFastUnlocked(context);
+  invalidateNativeTwoStatePromotionUnlocked(context);
+  context->nativeScheduleGuardedFanoutActive = false;
+  context->nativeStaticEvalIslandCertified = false;
+}
+
 void refreshNativeStaticSpecializationFastUnlocked(
     obelisk_rt_context *context) {
   const obelisk_rt_native_schedule_plan *plan =
@@ -225,6 +241,7 @@ void refreshNativeStaticSpecializationFastUnlocked(
   bool slowNBA = context->staticNBASlowRootsPresent;
   *plan->specialization_fast =
       context->nativeScheduleRunning && !context->nativeScheduleDeoptimized &&
+              !context->vpiObservationDemand &&
               !context->nativeScheduleExternalWritePending &&
               !context->nativeScheduleDirtyRootsPresent && !slowNBA &&
               nativeStaticSpecializationEnvironmentClean(context)
@@ -2903,10 +2920,12 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
       return runScheduler(context);
     guardedFanout =
         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
+        !context->vpiObservationDemand &&
         !context->nativeScheduleExternalWritePending &&
         !context->nativeScheduleDirtyRootsPresent &&
         nativeStaticSpecializationEnvironmentClean(context);
     specializationFast = plan->specialization_fast &&
+                         !context->vpiObservationDemand &&
                          !context->nativeScheduleExternalWritePending &&
                          !context->nativeScheduleDirtyRootsPresent &&
                          nativeStaticSpecializationEnvironmentClean(context);
@@ -2926,7 +2945,8 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     return context->nativeScheduleExternalWritePending ||
            context->nativeScheduleDirtyRootsPresent ||
            obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
-           anyOverride(context->forceMask) || anyOverride(context->assignMask);
+           context->vpiObservationDemand || anyOverride(context->forceMask) ||
+           anyOverride(context->assignMask);
   };
   auto runTransientHandoff = [&](bool &reachedBoundary) {
     {
@@ -2978,9 +2998,11 @@ retryNativeSchedule:;
       ContextMutexLock lock(context);
       guardedFanout =
           (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
+          !context->vpiObservationDemand &&
           !context->nativeScheduleDirtyRootsPresent &&
           nativeStaticSpecializationEnvironmentClean(context);
       specializationFast = plan->specialization_fast &&
+                           !context->vpiObservationDemand &&
                            nativeStaticSpecializationEnvironmentClean(context);
       if (plan->specialization_fast)
         *plan->specialization_fast = specializationFast ? 1 : 0;

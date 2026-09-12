@@ -9,6 +9,7 @@
 
 #include "Detail.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "mlir/IR/SymbolTable.h"
 
@@ -1007,7 +1008,80 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
       builder, getSemanticLocation(semanticRoot), nextScopeId++, IntegerAttr{},
       builder.getStringAttr(getHierarchyName(semanticRoot)),
       builder.getStringAttr(getDebugName(semanticRoot)), StringAttr{},
-      IntegerAttr{}, StringAttr{}, IntegerAttr{}));
+      IntegerAttr{}, StringAttr{}, IntegerAttr{}, FlatSymbolRefAttr{},
+      FlatSymbolRefAttr{}));
+  llvm::DenseMap<Operation *, std::pair<FlatSymbolRefAttr, StringAttr>>
+      definitionSymbols;
+  llvm::StringMap<semantic::SVDefinitionSymbolOp> definitionsBySymbol;
+  if (ModuleOp module = semanticRoot->getParentOfType<ModuleOp>())
+    module.walk([&](semantic::SVDefinitionSymbolOp definition) {
+      definitionsBySymbol.try_emplace(definition.getSymName(), definition);
+    });
+  uint64_t nextDefinitionId = 0;
+  auto materializeDefinition =
+      [&](semantic::SVInstanceBodySymbolOp body) -> FlatSymbolRefAttr {
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(body->getParentOp());
+    if (!instance)
+      return {};
+    SymbolRefAttr reference = instance.getReferencedSymbolAttr();
+    if (!reference)
+      return {};
+    semantic::SVDefinitionSymbolOp definition =
+        SymbolTable::lookupNearestSymbolFrom<semantic::SVDefinitionSymbolOp>(
+            instance, reference);
+    if (!definition) {
+      auto found = definitionsBySymbol.find(reference.getLeafReference());
+      if (found != definitionsBySymbol.end())
+        definition = found->second;
+    }
+    if (!definition)
+      return {};
+    StringAttr definitionName =
+        body->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+    if (!definitionName)
+      definitionName = definition->getAttrOfType<StringAttr>("name");
+    if (!definitionName)
+      definitionName = definition.getSymNameAttr();
+    auto existing = definitionSymbols.find(definition);
+    if (existing != definitionSymbols.end()) {
+      if (existing->second.second != definitionName) {
+        emitError(getSemanticLocation(body))
+            << "instances of one source definition disagree on the VPI "
+               "definition name";
+        invalid = true;
+      }
+      return existing->second.first;
+    }
+
+    uint32_t vpiKind = 0;
+    switch (definition.getDefinitionKind()) {
+    case semantic::SVDefinitionKind::Module:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Module);
+      break;
+    case semantic::SVDefinitionKind::Interface:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface);
+      break;
+    case semantic::SVDefinitionKind::Program:
+      vpiKind =
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Program);
+      break;
+    }
+    std::string symbol =
+        (Twine("__obelisk_vpi_definition_") + Twine(nextDefinitionId++)).str();
+    Location location = getSemanticLocation(definition);
+    LocationAttr definitionLoc;
+    if (auto file = location->findInstanceOf<FileLineColLoc>())
+      definitionLoc = file;
+    sim::SimVPIDefinitionDeclOp::create(builder, location, symbol, vpiKind,
+                                        definitionName.getValue(),
+                                        definitionLoc);
+    FlatSymbolRefAttr result =
+        FlatSymbolRefAttr::get(builder.getContext(), symbol);
+    definitionSymbols[definition] = {result, definitionName};
+    return result;
+  };
   semanticRoot->walk<WalkOrder::PreOrder>([&](semantic::SVInstanceBodySymbolOp
                                                   body) {
     Operation *parent = body->getParentOp();
@@ -1059,7 +1133,8 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
         builder.getStringAttr(getHierarchyName(body)),
         builder.getStringAttr(getDebugName(body)), definitionName,
         IntegerAttr{}, interfaceType,
-        body->getAttrOfType<IntegerAttr>("vpi_scope_kind"));
+        body->getAttrOfType<IntegerAttr>("vpi_scope_kind"),
+        materializeDefinition(body), FlatSymbolRefAttr{});
     if (interfaceType) {
       auto parentBody =
           instance

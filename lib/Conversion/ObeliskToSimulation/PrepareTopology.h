@@ -26,6 +26,7 @@ struct DescriptorInfo {
   uint64_t scopeId;
   mlir::Type type;
   sim::NetResolutionKind netKind = sim::NetResolutionKind::Wire;
+  sim::VPITypeSemanticsAttr vpiType;
   mlir::Type rootType;
   uint64_t viewOffset = 0;
   uint64_t packedViewOffset = 0;
@@ -38,6 +39,11 @@ struct StaticStorageView {
   std::string path;
   mlir::Type rootType;
   mlir::Type viewType;
+  /// Exact source-semantic type of the selected view. Unlike `viewType`, this
+  /// is never normalized and therefore retains integral flavor, typedef and
+  /// virtual-interface identity for immutable VPI inventory.
+  mlir::Type semanticType;
+  mlir::ArrayAttr typedefLayers;
   uint64_t offset = 0;
   uint64_t packedOffset = 0;
   mlir::SmallVector<int64_t> indices;
@@ -75,9 +81,10 @@ bool isNestedInCodeUnit(mlir::Operation *operation);
 
 /// Materialize design storage/net/event descriptors and resolve all aliases.
 mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
-    mlir::ModuleOp module, ir::SVRootSymbolOp semanticRoot,
-    const PreparedPortAliases &portAliases,
-    const PreparedScopeDeclarations &scopes, uint64_t designPrecisionFs,
+    mlir::ModuleOp module, sim::SimDesignOp design,
+    ir::SVRootSymbolOp semanticRoot, const PreparedPortAliases &portAliases,
+    const PreparedScopeDeclarations &scopes,
+    const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering

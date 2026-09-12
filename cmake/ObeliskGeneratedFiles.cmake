@@ -21,6 +21,7 @@ obelisk_register_generated_file(
     include/obelisk/Reflection/VPIObjectModel.td
     include/obelisk/Reflection/VPITraversalEarly.td
     include/obelisk/Reflection/VPITraversalLate.td
+    include/obelisk/Reflection/VPIValueModel.td
     utils/obelisk-tblgen/obelisk-tblgen.cpp)
 
 obelisk_register_generated_file(

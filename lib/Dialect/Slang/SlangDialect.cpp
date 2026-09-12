@@ -44,6 +44,14 @@ bool isPackedType(Type type) {
   return false;
 }
 
+bool isPackedInterconnectShape(Type type) {
+  if (isa<UntypedType>(type))
+    return true;
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return isPackedInterconnectShape(array.getElementType());
+  return false;
+}
+
 LogicalResult
 verifySourceRange(llvm::function_ref<InFlightDiagnostic()> emitError,
                   StringAttr startFile, uint32_t startLine,
@@ -97,7 +105,9 @@ PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         Type elementType, int64_t left, int64_t right) {
   if (!getInclusiveRangeWidth(left, right))
     return emitError() << "packed array range width exceeds uint64_t";
-  if (!isPackedType(elementType))
+  // Generic interconnect leaves are unresolved, but their packed source
+  // dimensions must survive import for VPI reflection.
+  if (!isPackedType(elementType) && !isPackedInterconnectShape(elementType))
     return emitError() << "packed array element must be packed, got "
                        << elementType;
   return success();
@@ -145,6 +155,8 @@ LogicalResult AggregateType::verify(
     auto index = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
     auto offset =
         field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+    auto randMode =
+        field ? field.getAs<IntegerAttr>("rand_mode") : IntegerAttr{};
     if (!name || name.getValue().empty() || !type || !index || !offset)
       return emitError() << "aggregate fields require name, type, ordinal, and "
                             "packed_offset metadata";
@@ -155,6 +167,9 @@ LogicalResult AggregateType::verify(
     if (offset.getValue().isNegative() ||
         (!isPacked && !offset.getValue().isZero()))
       return emitError() << "aggregate field has invalid packed offset";
+    if (randMode && (randMode.getValue().isNegative() ||
+                     randMode.getValue().getZExtValue() > 2))
+      return emitError() << "aggregate field has invalid randomization mode";
     if (!names.insert(name.getValue()).second)
       return emitError() << "aggregate field names must be unique";
   }
@@ -183,10 +198,11 @@ SourceRangeType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                            endFile, endLine, endColumn);
 }
 
-static LogicalResult verifyBindingProvenance(
-    Operation *op, BoolAttr isFromBind, BoolAttr isBelowBind,
-    BoolAttr isBindTarget, StringAttr selectedCell,
-    bool hasConfiguration = false) {
+static LogicalResult verifyBindingProvenance(Operation *op, BoolAttr isFromBind,
+                                             BoolAttr isBelowBind,
+                                             BoolAttr isBindTarget,
+                                             StringAttr selectedCell,
+                                             bool hasConfiguration = false) {
   auto requireTrue = [&](BoolAttr value, StringRef name) -> LogicalResult {
     if (value && !value.getValue())
       return op->emitOpError() << name << " must be true when present";
@@ -196,9 +212,9 @@ static LogicalResult verifyBindingProvenance(
       failed(requireTrue(isBelowBind, "is_below_bind")) ||
       failed(requireTrue(isBindTarget, "is_bind_target")))
     return failure();
-  unsigned provenanceCount =
-      static_cast<bool>(isFromBind) + static_cast<bool>(isBelowBind) +
-      static_cast<bool>(isBindTarget);
+  unsigned provenanceCount = static_cast<bool>(isFromBind) +
+                             static_cast<bool>(isBelowBind) +
+                             static_cast<bool>(isBindTarget);
   if (provenanceCount > 1)
     return op->emitOpError()
            << "bind provenance flags must be mutually exclusive";
@@ -280,8 +296,7 @@ LogicalResult CheckerInstanceSymbolOp::verify() {
   auto getBool = [&](StringRef name) {
     return (*this)->getAttrOfType<BoolAttr>(name);
   };
-  StringAttr selectedCell =
-      (*this)->getAttrOfType<StringAttr>("selected_cell");
+  StringAttr selectedCell = (*this)->getAttrOfType<StringAttr>("selected_cell");
   return verifyBindingProvenance(*this, getBool("is_from_bind"),
                                  getBool("is_below_bind"),
                                  getBool("is_bind_target"), selectedCell);

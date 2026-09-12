@@ -8,14 +8,19 @@
 #include "PrepareTopology.h"
 
 #include "Detail.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <tuple>
 
 using namespace mlir;
 
@@ -43,9 +48,19 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     path = hierarchical.getReferencedPath();
   if (!path.empty()) {
     FailureOr<Type> type = getNormalizedSemanticType(expression);
-    if (failed(type))
+    auto semanticType = expression->getAttrOfType<TypeAttr>("semantic_type");
+    if (failed(type) || !semanticType)
       return failure();
-    return StaticStorageView{path.str(), *type, *type, 0, 0, {}, *type};
+    return StaticStorageView{
+        path.str(),
+        *type,
+        *type,
+        semanticType.getValue(),
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName),
+        0,
+        0,
+        {},
+        *type};
   }
 
   SmallVector<Operation *> children = getChildren(expression);
@@ -54,6 +69,10 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   FailureOr<StaticStorageView> base = getStaticStorageView(children.front());
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
   if (failed(base) || failed(resultType))
+    return failure();
+  auto resultSemanticType =
+      expression->getAttrOfType<TypeAttr>("semantic_type");
+  if (!resultSemanticType)
     return failure();
   base->identity = false;
 
@@ -73,6 +92,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     base->offset += subelement->first;
     base->indices.push_back(ordinal.getValue().getZExtValue());
     base->viewType = *resultType;
+    base->semanticType = resultSemanticType.getValue();
+    base->typedefLayers =
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
     base->aggregateType = *resultType;
     return *base;
   }
@@ -114,6 +136,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
     base->offset += subelement->first;
     base->indices.push_back(static_cast<unsigned>(ordinal.getZExtValue()));
     base->viewType = *resultType;
+    base->semanticType = resultSemanticType.getValue();
+    base->typedefLayers =
+        expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
     base->aggregateType = *resultType;
     return *base;
   }
@@ -163,6 +188,9 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
   base->offset += *low;
   base->packedOffset += *low;
   base->viewType = *resultType;
+  base->semanticType = resultSemanticType.getValue();
+  base->typedefLayers =
+      expression->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName);
   return *base;
 }
 
@@ -236,7 +264,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     });
   };
 
-  // IEEE 1800-2017 10.10 net aliases are static topology, not executable
+  // IEEE 1800-2023 10.11 net aliases are static topology, not executable
   // connectivity.  Collapse direct whole-net aliases onto one descriptor so
   // drivers, readers, and observers all use the same resolved net without
   // adding any runtime propagation work.
@@ -677,11 +705,14 @@ bool isNestedInCodeUnit(Operation *op) {
 }
 
 FailureOr<llvm::StringMap<DescriptorInfo>>
-materializeDesignDescriptors(ModuleOp module,
+materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                              semantic::SVRootSymbolOp semanticRoot,
                              const PreparedPortAliases &portAliases,
                              const PreparedScopeDeclarations &scopes,
+                             const PreparedClassDeclarations &classes,
                              uint64_t designPrecisionFs, OpBuilder &builder) {
+  OpBuilder::InsertionGuard insertionGuard(builder);
+  builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
   uint64_t nextStorageId = 0;
   uint64_t nextNetId = 0;
@@ -698,6 +729,970 @@ materializeDesignDescriptors(ModuleOp module,
 
   const llvm::StringSet<> &eventCellPaths = portAliases.eventCellPaths;
 
+  // Freeze every source object that can own the static reflection records
+  // materialized below.  The anchor symbol, rather than an erased semantic
+  // node ID or a display path, is the canonical identity of the object.
+  using VPIKind = reflection::VPIObjectKind;
+  llvm::StringMap<semantic::SVDefinitionKind> definitionKinds;
+  llvm::StringMap<StringAttr> definitionNames;
+  module.walk([&](semantic::SVDefinitionSymbolOp definition) {
+    definitionKinds.try_emplace(definition.getSymName(),
+                                definition.getDefinitionKind());
+    if (StringAttr name = definition->getAttrOfType<StringAttr>("name"))
+      definitionNames.try_emplace(definition.getSymName(), name);
+  });
+  auto primitiveKind = [&](semantic::SVPrimitiveInstanceSymbolOp primitive) {
+    if (primitive->hasAttr("udp_metadata"))
+      return VPIKind::Udp;
+    StringAttr primitiveName =
+        primitive->getAttrOfType<StringAttr>("primitive_name");
+    StringRef name = primitiveName ? primitiveName.getValue() : StringRef{};
+    bool isSwitch = name == "nmos" || name == "pmos" || name == "cmos" ||
+                    name == "rnmos" || name == "rpmos" || name == "rcmos" ||
+                    name == "tran" || name == "rtran" || name == "tranif0" ||
+                    name == "tranif1" || name == "rtranif0" ||
+                    name == "rtranif1";
+    return isSwitch ? VPIKind::Switch : VPIKind::Gate;
+  };
+  auto instanceLeafKind = [&](Operation *leaf) -> std::optional<VPIKind> {
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(leaf)) {
+      switch (primitiveKind(primitive)) {
+      case VPIKind::Gate:
+        return VPIKind::GateArray;
+      case VPIKind::Switch:
+        return VPIKind::SwitchArray;
+      case VPIKind::Udp:
+        return VPIKind::UdpArray;
+      default:
+        llvm_unreachable("unexpected primitive VPI kind");
+      }
+    }
+    auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(leaf);
+    if (!instance)
+      return std::nullopt;
+    if (auto reference = instance.getReferencedSymbolAttr()) {
+      auto found = definitionKinds.find(reference.getLeafReference());
+      if (found != definitionKinds.end()) {
+        switch (found->second) {
+        case semantic::SVDefinitionKind::Interface:
+          return VPIKind::InterfaceArray;
+        case semantic::SVDefinitionKind::Program:
+          return VPIKind::ProgramArray;
+        case semantic::SVDefinitionKind::Module:
+          return VPIKind::ModuleArray;
+        }
+      }
+    }
+    for (Operation &child : instance.getBody().front()) {
+      auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(&child);
+      if (!body)
+        continue;
+      if (auto kind = body->getAttrOfType<IntegerAttr>("vpi_scope_kind")) {
+        switch (static_cast<VPIKind>(kind.getValue().getZExtValue())) {
+        case VPIKind::Interface:
+          return VPIKind::InterfaceArray;
+        case VPIKind::Program:
+          return VPIKind::ProgramArray;
+        default:
+          return VPIKind::ModuleArray;
+        }
+      }
+    }
+    return VPIKind::ModuleArray;
+  };
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> fixedArrayRanges;
+  llvm::DenseMap<Operation *, VPIKind> fixedArrayKinds;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> sparseArrayIndices;
+  llvm::DenseMap<Operation *, Operation *> relationArrayMemberRoots;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> relationArrayMemberIndices;
+  llvm::DenseMap<Operation *, SmallVector<int64_t>> namedEventArrayRanges;
+  llvm::DenseSet<Operation *> scalarNamedEvents;
+  module.walk([&](semantic::SVInstanceArraySymbolOp array) {
+    if (isa_and_nonnull<semantic::SVInstanceArraySymbolOp>(
+            array->getParentOp()))
+      return;
+    // Legacy hand-authored semantic IR predates exact source ranges. It can
+    // still lower executable array values, but it cannot safely contribute a
+    // relation-indexed VPI identity.
+    if (!array.getArrayRangeAttr())
+      return;
+    SmallVector<int64_t> ranges;
+    std::optional<VPIKind> leafKind;
+    std::optional<unsigned> leafDepth;
+    SmallVector<int64_t> path;
+    SmallVector<std::pair<Operation *, SmallVector<int64_t>>> memberPlans;
+    std::function<bool(semantic::SVInstanceArraySymbolOp, unsigned)> visit =
+        [&](semantic::SVInstanceArraySymbolOp current,
+            unsigned dimension) -> bool {
+      DenseI64ArrayAttr rangeAttr = current.getArrayRangeAttr();
+      if (!rangeAttr || rangeAttr.size() != 2) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension requires an exact source range";
+        return false;
+      }
+      ArrayRef<int64_t> range = rangeAttr.asArrayRef();
+      if (ranges.size() == dimension * 2)
+        llvm::append_range(ranges, range);
+      else if (ranges[dimension * 2] != range[0] ||
+               ranges[dimension * 2 + 1] != range[1]) {
+        emitError(getSemanticLocation(current))
+            << "instance-array branches have mismatched dimension ranges";
+        return false;
+      }
+      uint64_t distance = range[0] >= range[1]
+                              ? static_cast<uint64_t>(range[0]) -
+                                    static_cast<uint64_t>(range[1])
+                              : static_cast<uint64_t>(range[1]) -
+                                    static_cast<uint64_t>(range[0]);
+      if (distance == UINT64_MAX || distance + 1 > UINT32_MAX) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension exceeds VPI relation encoding";
+        return false;
+      }
+      uint64_t extent = distance + 1;
+      SmallVector<Operation *> elements;
+      for (Operation &child : current.getBody().front())
+        if (isa<semantic::SVInstanceArraySymbolOp, semantic::SVInstanceSymbolOp,
+                semantic::SVPrimitiveInstanceSymbolOp>(&child))
+          elements.push_back(&child);
+      if (elements.size() != extent) {
+        emitError(getSemanticLocation(current))
+            << "instance-array dimension has " << elements.size()
+            << " elements but its source range requires " << extent;
+        return false;
+      }
+      bool nested = isa<semantic::SVInstanceArraySymbolOp>(elements.front());
+      for (Operation *element : elements)
+        if (isa<semantic::SVInstanceArraySymbolOp>(element) != nested) {
+          emitError(getSemanticLocation(current))
+              << "instance-array dimension mixes nested arrays and leaves";
+          return false;
+        }
+      int64_t lower = std::min(range[0], range[1]);
+      for (auto [ordinal, element] : llvm::enumerate(elements)) {
+        __int128 index = static_cast<__int128>(lower) + ordinal;
+        if (index < INT64_MIN || index > INT64_MAX)
+          return false;
+        path.push_back(static_cast<int64_t>(index));
+        if (nested) {
+          if (!visit(cast<semantic::SVInstanceArraySymbolOp>(element),
+                     dimension + 1))
+            return false;
+        } else {
+          unsigned depth = dimension + 1;
+          if (leafDepth && *leafDepth != depth) {
+            emitError(getSemanticLocation(element))
+                << "instance-array branches have mismatched terminal ranks";
+            return false;
+          }
+          leafDepth = depth;
+          std::optional<VPIKind> kind = instanceLeafKind(element);
+          if (!kind) {
+            emitError(getSemanticLocation(element))
+                << "instance-array leaf has no supported VPI identity";
+            return false;
+          }
+          if (leafKind && *leafKind != *kind) {
+            emitError(getSemanticLocation(element))
+                << "instance-array leaves have mixed VPI object kinds";
+            return false;
+          }
+          leafKind = *kind;
+          memberPlans.emplace_back(element, path);
+        }
+        path.pop_back();
+      }
+      return true;
+    };
+    if (!visit(array, 0) || !leafKind) {
+      invalid = true;
+      return;
+    }
+    if ((*leafKind == VPIKind::GateArray || *leafKind == VPIKind::SwitchArray ||
+         *leafKind == VPIKind::UdpArray) &&
+        ranges.size() != 2) {
+      emitError(getSemanticLocation(array))
+          << "primitive instance arrays must be one-dimensional";
+      invalid = true;
+      return;
+    }
+    fixedArrayKinds.try_emplace(array, *leafKind);
+    fixedArrayRanges.try_emplace(array, std::move(ranges));
+    for (auto &[element, indices] : memberPlans) {
+      relationArrayMemberRoots[element] = array;
+      relationArrayMemberIndices[element] = std::move(indices);
+    }
+  });
+  module.walk([&](semantic::SVGenerateBlockArraySymbolOp array) {
+    if (DenseI64ArrayAttr indices = array.getArrayIndicesAttr()) {
+      SmallVector<Operation *> elements;
+      for (Operation &child : array.getBody().front()) {
+        if (isa<semantic::SVGenerateBlockSymbolOp>(&child)) {
+          if (auto uninstantiated =
+                  child.getAttrOfType<BoolAttr>("is_uninstantiated");
+              uninstantiated && uninstantiated.getValue()) {
+            emitError(getSemanticLocation(&child))
+                << "generate-array contains an uninstantiated indexed "
+                   "element";
+            invalid = true;
+            return;
+          }
+          elements.push_back(&child);
+        }
+      }
+      if (elements.size() != static_cast<size_t>(indices.size())) {
+        emitError(getSemanticLocation(array))
+            << "generate-array source indices do not match its elements";
+        invalid = true;
+        return;
+      }
+      llvm::DenseSet<int64_t> uniqueIndices;
+      for (int64_t index : indices.asArrayRef())
+        if (!uniqueIndices.insert(index).second) {
+          emitError(getSemanticLocation(array))
+              << "generate-array source indices must be unique";
+          invalid = true;
+          return;
+        }
+      sparseArrayIndices.try_emplace(
+          array, SmallVector<int64_t>(indices.asArrayRef()));
+      for (auto [ordinal, element] : llvm::enumerate(elements)) {
+        relationArrayMemberRoots[element] = array;
+        relationArrayMemberIndices[element] = {indices.asArrayRef()[ordinal]};
+      }
+    }
+  });
+  module.walk([&](semantic::SVVariableSymbolOp variable) {
+    TypeAttr semanticType = variable->getAttrOfType<TypeAttr>("semantic_type");
+    if (!semanticType)
+      return;
+    Type current = semanticType.getValue();
+    SmallVector<int64_t> ranges;
+    for (;;) {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(current)) {
+        ranges.push_back(array.getLeft());
+        ranges.push_back(array.getRight());
+        current = array.getElementType();
+        continue;
+      }
+      if (auto array = dyn_cast<semantic::UnpackedArrayType>(current)) {
+        ranges.push_back(static_cast<int64_t>(array.getSize()) - 1);
+        ranges.push_back(0);
+        current = array.getElementType();
+        continue;
+      }
+      break;
+    }
+    if (!isa<semantic::EventType>(current))
+      return;
+    if (ranges.empty())
+      scalarNamedEvents.insert(variable);
+    else
+      namedEventArrayRanges.try_emplace(variable, std::move(ranges));
+  });
+  auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
+    if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
+             semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
+             semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
+             semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
+             semantic::SVInstanceArraySymbolOp,
+             semantic::SVGenerateBlockArraySymbolOp,
+             semantic::SVPrimitiveInstanceSymbolOp,
+             semantic::SVGenerateBlockSymbolOp,
+             semantic::SVInstanceBodySymbolOp>(operation))
+      return std::nullopt;
+    // Slang materializes interface bodies solely to describe parameterized
+    // virtual-interface types.  They have no run-time instance identity and
+    // must not become traversable vpiInterface objects.  Their typespecs are
+    // retained below and owned by the nearest persistent lexical anchor.
+    if (isCompileTimeOnlyInstanceMember(operation))
+      return std::nullopt;
+    if (isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp>(
+            operation))
+      return VPIKind::Package;
+    if (isa<semantic::SVClassTypeOp>(operation))
+      return VPIKind::ClassDefn;
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation))
+      return subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
+                 ? VPIKind::Task
+                 : VPIKind::Function;
+    if (isa<semantic::SVPropertySymbolOp>(operation))
+      return VPIKind::PropertyDecl;
+    if (isa<semantic::SVSequenceSymbolOp>(operation))
+      return VPIKind::SequenceDecl;
+    if (isa<semantic::SVClockingBlockSymbolOp>(operation))
+      return VPIKind::ClockingBlock;
+    if (isa<semantic::SVVariableSymbolOp>(operation)) {
+      if (namedEventArrayRanges.count(operation))
+        return VPIKind::NamedEventArray;
+      return scalarNamedEvents.contains(operation)
+                 ? std::optional(VPIKind::NamedEvent)
+                 : std::nullopt;
+    }
+    if (auto array = dyn_cast<semantic::SVInstanceArraySymbolOp>(operation)) {
+      if (!fixedArrayRanges.count(array))
+        return std::nullopt;
+      return fixedArrayKinds.lookup(array);
+    }
+    if (auto array =
+            dyn_cast<semantic::SVGenerateBlockArraySymbolOp>(operation))
+      return sparseArrayIndices.count(array)
+                 ? std::optional(VPIKind::GenScopeArray)
+                 : std::nullopt;
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(operation))
+      return primitiveKind(primitive);
+    if (auto generate =
+            dyn_cast<semantic::SVGenerateBlockSymbolOp>(operation)) {
+      if (auto uninstantiated =
+              generate->getAttrOfType<BoolAttr>("is_uninstantiated");
+          uninstantiated && uninstantiated.getValue())
+        return std::nullopt;
+      return VPIKind::GenScope;
+    }
+    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(operation)) {
+      if (auto kind = body->getAttrOfType<IntegerAttr>("vpi_scope_kind"))
+        return static_cast<VPIKind>(kind.getValue().getZExtValue());
+      if (body->hasAttr("virtual_interface_identity"))
+        return VPIKind::Interface;
+      if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(
+              body->getParentOp()))
+        if (auto reference = instance.getReferencedSymbolAttr()) {
+          auto found = definitionKinds.find(reference.getLeafReference());
+          if (found != definitionKinds.end()) {
+            switch (found->second) {
+            case semantic::SVDefinitionKind::Module:
+              return VPIKind::Module;
+            case semantic::SVDefinitionKind::Interface:
+              return VPIKind::Interface;
+            case semantic::SVDefinitionKind::Program:
+              return VPIKind::Program;
+            }
+          }
+        }
+      return VPIKind::Module;
+    }
+    return std::nullopt;
+  };
+
+  SmallVector<Operation *> anchorSources;
+  llvm::DenseMap<Operation *, VPIKind> anchorKinds;
+  module.walk<WalkOrder::PreOrder>([&](Operation *operation) {
+    std::optional<VPIKind> kind = sourceAnchorKind(operation);
+    if (!kind)
+      return;
+    anchorSources.push_back(operation);
+    anchorKinds[operation] = *kind;
+  });
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> anchorSymbols;
+  llvm::DenseMap<Operation *, uint64_t> anchorInventoryIds;
+  llvm::DenseMap<Operation *, sim::SimVPIObjectAnchorOp> anchorDeclarations;
+  for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
+    std::string symbolName =
+        "__obelisk_vpi_anchor_" + std::to_string(inventoryId);
+    anchorSymbols[source] =
+        FlatSymbolRefAttr::get(builder.getContext(), symbolName);
+    anchorInventoryIds[source] = inventoryId;
+  }
+  llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
+  auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
+    SmallVector<Attribute> properties;
+    auto addBoolean = [&](uint32_t selector, bool value) {
+      if (!value)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getBoolAttr(true)));
+    };
+    auto addString = [&](uint32_t selector, StringAttr value) {
+      if (!value)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector), value));
+    };
+
+    bool top = false;
+    if (BoolAttr frozen =
+            source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_top")) {
+      top = frozen.getValue();
+    } else if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source)) {
+      Operation *instance = body->getParentOp();
+      top = isa_and_nonnull<semantic::SVInstanceSymbolOp>(instance) &&
+            isa_and_nonnull<semantic::SVRootSymbolOp>(instance->getParentOp());
+    }
+    if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
+            source))
+      top = true;
+    BoolAttr cell =
+        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_cell_instance");
+    BoolAttr automatic =
+        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_automatic");
+    if (sourceKind == VPIKind::Module) {
+      addBoolean(7, top);                     // vpiTopModule
+      addBoolean(8, cell && cell.getValue()); // vpiCellInstance
+    }
+    StringAttr definitionName =
+        source->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+    if (!definitionName)
+      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source))
+        if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(
+                body->getParentOp()))
+          if (auto reference = instance.getReferencedSymbolAttr()) {
+            auto found = definitionNames.find(reference.getLeafReference());
+            if (found != definitionNames.end())
+              definitionName = found->second;
+          }
+    if (!definitionName && isa<semantic::SVPackageSymbolOp>(source))
+      definitionName = builder.getStringAttr(getDebugName(source));
+    // Compilation units have no declared definition name. Use the same
+    // implementation-defined `$unit` spelling as their special-access name.
+    if (!definitionName && isa<semantic::SVCompilationUnitSymbolOp>(source))
+      definitionName = builder.getStringAttr("$unit");
+    // Production frontend IR freezes the definition identity on every
+    // instance. Keep hand-authored and partially lowered MLIR valid when that
+    // optional provenance is absent: sparse fixed properties represent the
+    // lack of a value by omitting the record, and the runtime reports the
+    // property as unavailable instead of inventing a definition name.
+    addString(9, definitionName);                      // vpiDefName
+    addBoolean(50, automatic && automatic.getValue()); // vpiAutomatic
+    addBoolean(600, top);                              // vpiTop
+    addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
+
+    if (properties.empty())
+      return sim::VPIPropertySetAttr{};
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
+  auto netProperties = [&](semantic::SVNetSymbolOp net) {
+    SmallVector<Attribute> properties;
+    auto addBoolean = [&](uint32_t selector, bool value) {
+      if (value)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector),
+            builder.getBoolAttr(true)));
+    };
+    auto addInteger = [&](uint32_t selector, int32_t value) {
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getI32IntegerAttr(value)));
+    };
+
+    // IEEE 1800-2023 37.16 adds exact declaration subtypes for user-defined
+    // nettypes and interconnects. A selected part is reported as
+    // vpiNettypeNetSelect by the query layer because it is handle-specific.
+    std::optional<int32_t> netType;
+    switch (net.getNetKind()) {
+    case semantic::SVNetKind::Wire:
+      netType = 1; // vpiWire
+      break;
+    case semantic::SVNetKind::WAnd:
+      netType = 2; // vpiWand
+      break;
+    case semantic::SVNetKind::WOr:
+      netType = 3; // vpiWor
+      break;
+    case semantic::SVNetKind::Tri:
+      netType = 4; // vpiTri
+      break;
+    case semantic::SVNetKind::Tri0:
+      netType = 5; // vpiTri0
+      break;
+    case semantic::SVNetKind::Tri1:
+      netType = 6; // vpiTri1
+      break;
+    case semantic::SVNetKind::TriReg:
+      netType = 7; // vpiTriReg
+      break;
+    case semantic::SVNetKind::TriAnd:
+      netType = 8; // vpiTriAnd
+      break;
+    case semantic::SVNetKind::TriOr:
+      netType = 9; // vpiTriOr
+      break;
+    case semantic::SVNetKind::Supply1:
+      netType = 10; // vpiSupply1
+      break;
+    case semantic::SVNetKind::Supply0:
+      netType = 11; // vpiSupply0
+      break;
+    case semantic::SVNetKind::UWire:
+      netType = 13; // vpiUwire
+      break;
+    case semantic::SVNetKind::Interconnect:
+      netType = 16; // vpiInterconnect
+      break;
+    case semantic::SVNetKind::UserDefined:
+      netType = 14; // vpiNettypeNet
+      break;
+    case semantic::SVNetKind::Unknown:
+      break;
+    }
+    if (netType)
+      addInteger(22, *netType); // vpiNetType
+    bool scalared =
+        net.getExpansionHint() == semantic::SVNetExpansionHint::Scalared;
+    bool vectored =
+        net.getExpansionHint() == semantic::SVNetExpansionHint::Vectored;
+    addBoolean(23, scalared);            // vpiExplicitScalared
+    addBoolean(24, vectored);            // vpiExplicitVectored
+    addBoolean(25, scalared);            // vpiExpanded
+    addBoolean(26, net.getIsImplicit()); // vpiImplicitDecl
+
+    int32_t chargeStrength = 0;
+    if (net.getNetKind() == semantic::SVNetKind::TriReg) {
+      switch (net.getChargeStrength().value_or(
+          semantic::SVChargeStrength::Medium)) {
+      case semantic::SVChargeStrength::Small:
+        chargeStrength = 0x02;
+        break;
+      case semantic::SVChargeStrength::Medium:
+        chargeStrength = 0x04;
+        break;
+      case semantic::SVChargeStrength::Large:
+        chargeStrength = 0x10;
+        break;
+      }
+    }
+    addInteger(27, chargeStrength); // vpiChargeStrength
+    bool declarationAssignment = !getNetInitializerExpressions(net).empty();
+    if (declarationAssignment) {
+      auto driveStrength = [](semantic::SVDriveStrength strength) -> int32_t {
+        switch (strength) {
+        case semantic::SVDriveStrength::Supply:
+          return 0x80; // vpiSupplyDrive
+        case semantic::SVDriveStrength::Strong:
+          return 0x40; // vpiStrongDrive
+        case semantic::SVDriveStrength::Pull:
+          return 0x20; // vpiPullDrive
+        case semantic::SVDriveStrength::Weak:
+          return 0x08; // vpiWeakDrive
+        case semantic::SVDriveStrength::HighZ:
+          return 0x01; // vpiHiZ
+        }
+        llvm_unreachable("unknown SystemVerilog drive strength");
+      };
+      addInteger(31, driveStrength(net.getDriveStrength0().value_or(
+                         semantic::SVDriveStrength::Strong)));
+      addInteger(32, driveStrength(net.getDriveStrength1().value_or(
+                         semantic::SVDriveStrength::Strong)));
+    }
+    addBoolean(43, declarationAssignment);
+
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
+  for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
+    Operation *parent = source->getParentOp();
+    while (parent && !anchorSymbols.count(parent))
+      parent = parent->getParentOp();
+    FlatSymbolRefAttr parentSymbol = anchorSymbols.lookup(parent);
+    uint64_t ordinal = nextAnchorOrdinal[parent]++;
+    uint64_t scopeId = scopes.lookup(source);
+
+    sim::VPIObjectBackingAttr backing;
+    if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source);
+        body && !isCompileTimeOnlyInstanceMember(body)) {
+      backing = sim::VPIObjectBackingAttr::get(
+          builder.getContext(), sim::VPIObjectBackingKind::Scope,
+          builder.getI64IntegerAttr(scopeId), FlatSymbolRefAttr{});
+      // Authored and legacy semantic IR may omit the frontend's explicit
+      // vpi_scope_kind attribute. Once the definition has been resolved for
+      // the source anchor, freeze that exact kind on the physical scope too so
+      // backing verification does not have to infer identity from defaults.
+      if (scopeId < scopes.declarations.size()) {
+        sim::SimScopeDeclOp scope = scopes.declarations[scopeId];
+        if (!scope.getVpiKindAttr())
+          scope->setAttr("vpi_kind",
+                         builder.getI32IntegerAttr(static_cast<uint32_t>(
+                             anchorKinds.lookup(source))));
+      }
+    } else if (auto classType = dyn_cast<semantic::SVClassTypeOp>(source)) {
+      auto classSymbol = classes.symbols.find(classType);
+      if (classSymbol != classes.symbols.end())
+        backing = sim::VPIObjectBackingAttr::get(
+            builder.getContext(), sim::VPIObjectBackingKind::Class,
+            IntegerAttr{}, FlatSymbolRefAttr::get(classSymbol->second));
+    }
+
+    StringRef hierarchy = getHierarchyName(source);
+    VPIKind sourceKind = anchorKinds.lookup(source);
+    bool aggregateArray = sourceKind == VPIKind::ModuleArray ||
+                          sourceKind == VPIKind::InterfaceArray ||
+                          sourceKind == VPIKind::ProgramArray ||
+                          sourceKind == VPIKind::GateArray ||
+                          sourceKind == VPIKind::SwitchArray ||
+                          sourceKind == VPIKind::UdpArray ||
+                          sourceKind == VPIKind::NamedEventArray ||
+                          sourceKind == VPIKind::GenScopeArray;
+    Operation *arrayRoot = nullptr;
+    SmallVector<int64_t> memberIndices;
+    if (!aggregateArray) {
+      for (Operation *cursor = source; cursor; cursor = cursor->getParentOp()) {
+        if (cursor != source && anchorSymbols.count(cursor))
+          break;
+        auto root = relationArrayMemberRoots.find(cursor);
+        if (root == relationArrayMemberRoots.end())
+          continue;
+        arrayRoot = root->second;
+        memberIndices = relationArrayMemberIndices.lookup(cursor);
+        break;
+      }
+    }
+    if (!memberIndices.empty())
+      if (arrayRoot) {
+        std::string indexedHierarchy = getHierarchyName(arrayRoot).str();
+        for (int64_t index : memberIndices)
+          indexedHierarchy += "[" + std::to_string(index) + "]";
+        hierarchy = builder.getStringAttr(indexedHierarchy).getValue();
+      }
+    if (hierarchy.empty() && parent)
+      hierarchy = getHierarchyName(parent);
+    if (hierarchy.empty()) {
+      emitError(getSemanticLocation(source))
+          << "VPI source object is missing a hierarchy name";
+      invalid = true;
+      continue;
+    }
+    DenseI64ArrayAttr indexRanges;
+    DenseI64ArrayAttr sparseIndices;
+    if (auto found = fixedArrayRanges.find(source);
+        found != fixedArrayRanges.end())
+      indexRanges = builder.getDenseI64ArrayAttr(found->second);
+    if (auto found = namedEventArrayRanges.find(source);
+        found != namedEventArrayRanges.end())
+      indexRanges = builder.getDenseI64ArrayAttr(found->second);
+    if (auto found = sparseArrayIndices.find(source);
+        found != sparseArrayIndices.end())
+      sparseIndices = builder.getDenseI64ArrayAttr(found->second);
+    IntegerAttr primitiveInputCount;
+    if (isa<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
+      SmallVector<Operation *> terminals = getChildren(source);
+      uint64_t count = llvm::count_if(terminals, [](Operation *terminal) {
+        return !isa<semantic::SVAssignmentExpressionOp>(terminal);
+      });
+      primitiveInputCount = builder.getI64IntegerAttr(count);
+    }
+    sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
+        builder, getSemanticLocation(source),
+        anchorSymbols.lookup(source).getValue(), inventoryId,
+        static_cast<uint32_t>(anchorKinds.lookup(source)), scopeId,
+        parentSymbol, ordinal, builder.getStringAttr(hierarchy),
+        builder.getStringAttr(getDebugName(source)),
+        isa<semantic::SVCompilationUnitSymbolOp>(source) ? builder.getUnitAttr()
+                                                         : UnitAttr{},
+        backing, indexRanges, DenseI64ArrayAttr{}, sparseIndices,
+        memberIndices.empty() ? DenseI64ArrayAttr{}
+                              : builder.getDenseI64ArrayAttr(memberIndices),
+        primitiveInputCount);
+    anchorDeclarations[source] = anchor;
+    if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
+            source))
+      if (auto definitionLoc =
+              getSemanticLocation(source)->findInstanceOf<FileLineColLoc>())
+        anchor->setAttr("definition_loc", definitionLoc);
+    if (sim::VPIPropertySetAttr properties =
+            identityProperties(source, sourceKind))
+      anchor->setAttr("vpi_properties", properties);
+    source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
+  }
+
+  // IO declarations are source-definition members, not the per-instance
+  // vpiPort connection objects emitted below. Preserve their invariant
+  // identity once, then share effective type sets across all instances with
+  // the same elaborated specialization.
+  struct DefinitionMemberSignature {
+    std::string name;
+    Location location;
+    sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
+  };
+  struct DefinitionMemberPlan {
+    bool initialized = false;
+    SmallVector<DefinitionMemberSignature> signatures;
+    SmallVector<FlatSymbolRefAttr> memberSymbols;
+    llvm::DenseMap<Attribute, FlatSymbolRefAttr> specializations;
+  };
+  struct DefinitionInstancePlan {
+    semantic::SVInstanceBodySymbolOp body;
+    sim::SimScopeDeclOp scope;
+    FlatSymbolRefAttr definition;
+  };
+  llvm::StringMap<DefinitionMemberPlan> definitionMemberPlans;
+  SmallVector<DefinitionInstancePlan> definitionInstancePlans;
+  uint64_t nextDefinitionMemberId = 0;
+  uint64_t nextDefinitionSpecializationId = 0;
+  semanticRoot.walk<WalkOrder::PreOrder>(
+      [&](semantic::SVInstanceBodySymbolOp body) {
+        if (isCompileTimeOnlyInstanceMember(body))
+          return;
+        uint64_t scopeId = scopes.lookup(body);
+        if (scopeId >= scopes.declarations.size())
+          return;
+        sim::SimScopeDeclOp scope = scopes.declarations[scopeId];
+        FlatSymbolRefAttr definition = scope.getVpiDefinitionAttr();
+        if (!definition || sim::vpiKindForScope(scope) !=
+                               static_cast<uint32_t>(VPIKind::Module))
+          return;
+
+        SmallVector<DefinitionMemberSignature> signatures;
+        for (Operation &child : body.getBody().front()) {
+          sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
+          if (auto port = dyn_cast<semantic::SVPortSymbolOp>(child)) {
+            switch (port.getDirection()) {
+            case semantic::SVArgumentDirection::In:
+              direction = sim::VPIIODirection::Input;
+              break;
+            case semantic::SVArgumentDirection::Out:
+              direction = sim::VPIIODirection::Output;
+              break;
+            case semantic::SVArgumentDirection::InOut:
+              direction = sim::VPIIODirection::InOut;
+              break;
+            case semantic::SVArgumentDirection::Ref:
+              direction = sim::VPIIODirection::Ref;
+              break;
+            }
+            // IEEE 1800-2023 37.13 defines virtual-interface IO declarations
+            // as directionless, irrespective of the source argument mode.
+            if (auto type = child.getAttrOfType<TypeAttr>("semantic_type");
+                type && isa<semantic::VirtualInterfaceType>(type.getValue()))
+              direction = sim::VPIIODirection::Undefined;
+          } else if (!isa<semantic::SVInterfacePortSymbolOp>(child)) {
+            // A multi-port is a vpiPort association. Its leaf declarations
+            // appear as ordinary SVPortSymbolOps and are the IODecl objects.
+            continue;
+          }
+          StringRef name = getDebugName(&child);
+          // Empty ordered-port slots are connectivity placeholders, not IO
+          // declarations in the source definition's VPI object graph.
+          if (name.empty())
+            continue;
+          signatures.push_back(
+              {name.str(), getSemanticLocation(&child), direction});
+        }
+
+        DefinitionMemberPlan &plan =
+            definitionMemberPlans[definition.getValue()];
+        if (!plan.initialized) {
+          plan.initialized = true;
+          plan.signatures = signatures;
+          for (auto [ordinal, signature] : llvm::enumerate(signatures)) {
+            std::string symbol = (Twine("__obelisk_vpi_definition_member_") +
+                                  Twine(nextDefinitionMemberId++))
+                                     .str();
+            auto declaration = sim::SimVPIDefinitionMemberDeclOp::create(
+                builder, signature.location, builder.getStringAttr(symbol),
+                definition,
+                builder.getI32IntegerAttr(
+                    static_cast<uint32_t>(VPIKind::IODecl)),
+                builder.getI32IntegerAttr(static_cast<uint32_t>(ordinal)),
+                builder.getStringAttr(signature.name),
+                sim::VPIIODirectionAttr::get(builder.getContext(),
+                                             signature.direction));
+            plan.memberSymbols.push_back(FlatSymbolRefAttr::get(declaration));
+          }
+        } else if (plan.signatures.size() != signatures.size()) {
+          emitError(getSemanticLocation(body))
+              << "instances of one definition disagree on IO declaration "
+                 "count";
+          invalid = true;
+          return;
+        } else {
+          for (auto [expected, actual] :
+               llvm::zip_equal(plan.signatures, signatures)) {
+            if (expected.name != actual.name ||
+                expected.direction != actual.direction) {
+              emitError(getSemanticLocation(body))
+                  << "instances of one definition disagree on IO declaration "
+                     "identity";
+              invalid = true;
+              return;
+            }
+          }
+        }
+        if (!signatures.empty())
+          definitionInstancePlans.push_back({body, scope, definition});
+      });
+  if (invalid)
+    return failure();
+
+  // Continuous assignments and net aliases are scope-owned VPI statement
+  // objects even though continuous assignments also have an internal
+  // executable code unit. Preserve their source identity independently of
+  // that executable representation. The generated traversal model decides
+  // whether the exact lexical scope may expose each statement kind.
+  uint64_t nextStatementId = 1;
+  struct ScopeOwnedStatementPlan {
+    Operation *source;
+    uint64_t statementId;
+    uint64_t scopeId;
+    VPIKind kind;
+    Operation *lhs = nullptr;
+    Operation *rhs = nullptr;
+  };
+  SmallVector<ScopeOwnedStatementPlan> scopeOwnedStatementPlans;
+  llvm::DenseMap<Operation *, llvm::DenseMap<uint32_t, uint64_t>>
+      nextStatementOrdinal;
+  auto isInUninstantiatedGenerate = [](Operation *operation) {
+    for (Operation *cursor = operation; cursor;
+         cursor = cursor->getParentOp()) {
+      auto generate = dyn_cast<semantic::SVGenerateBlockSymbolOp>(cursor);
+      if (!generate)
+        continue;
+      auto uninstantiated =
+          generate->getAttrOfType<BoolAttr>("is_uninstantiated");
+      if (uninstantiated && uninstantiated.getValue())
+        return true;
+    }
+    return false;
+  };
+  semanticRoot->walk<WalkOrder::PreOrder>(
+      [&](Operation *source) {
+        VPIKind statementKind;
+        if (isa<semantic::SVContinuousAssignSymbolOp>(source))
+          statementKind = VPIKind::ContAssign;
+        else if (isa<semantic::SVNetAliasSymbolOp>(source))
+          statementKind = VPIKind::AliasStmt;
+        else
+          return;
+        if (isCompileTimeOnlyInstanceMember(source) ||
+            isInUninstantiatedGenerate(source))
+          return;
+
+        Location location = getSemanticLocation(source);
+        Operation *owner = source->getParentOp();
+        while (owner && !anchorKinds.count(owner))
+          owner = owner->getParentOp();
+        if (!owner) {
+          emitError(location)
+              << "VPI scope-owned statement has no persistent lexical anchor";
+          invalid = true;
+          return;
+        }
+
+        uint32_t ownerKind = static_cast<uint32_t>(anchorKinds.lookup(owner));
+        uint32_t selector = static_cast<uint32_t>(statementKind);
+        const auto *edge = reflection::findVPITraversal(
+            ownerKind, selector, reflection::VPITraversalMode::Iterate);
+        if (!edge || !edge->statementContainment ||
+            !reflection::vpiObjectSetContains(edge->targets, selector)) {
+          emitError(location)
+              << "VPI " << reflection::findVPIObjectKind(selector)->apiName
+              << " is not legal in lexical owner kind " << ownerKind;
+          invalid = true;
+          return;
+        }
+
+        sim::SimVPIObjectAnchorOp ownerAnchor =
+            anchorDeclarations.lookup(owner);
+        if (!ownerAnchor) {
+          emitError(location)
+              << "VPI statement lexical anchor was not materialized";
+          invalid = true;
+          return;
+        }
+        sim::VPIObjectBackingAttr backing = ownerAnchor.getBackingAttr();
+        bool physicalScope =
+            backing && backing.getKind() == sim::VPIObjectBackingKind::Scope;
+        // IEEE 1800-2023 37.76 defines an N-net alias declaration as N-1
+        // alias objects, each relating one of the first N-1 nets to the final
+        // net. A continuous-assignment declaration always contributes one.
+        size_t statementCount = 1;
+        SmallVector<Operation *> aliasOperands;
+        if (isa<semantic::SVNetAliasSymbolOp>(source)) {
+          aliasOperands = getChildren(source);
+          size_t operandCount = aliasOperands.size();
+          statementCount = operandCount > 1 ? operandCount - 1 : 0;
+        }
+        for (size_t statement = 0; statement != statementCount; ++statement) {
+          uint64_t statementId = nextStatementId++;
+          uint64_t ordinal = nextStatementOrdinal[owner][selector]++;
+          sim::SimStatementDeclOp::create(builder, location, statementId,
+                                          IntegerAttr{}, scopes.lookup(source),
+                                          selector, IntegerAttr{}, StringAttr{},
+                                          UnitAttr{}, UnitAttr{});
+          if (statementKind == VPIKind::ContAssign)
+            scopeOwnedStatementPlans.push_back(
+                {source, statementId, scopes.lookup(source), statementKind});
+          else
+            scopeOwnedStatementPlans.push_back(
+                {source, statementId, scopes.lookup(source), statementKind,
+                 aliasOperands[statement], aliasOperands.back()});
+          sim::SimVPIStatementRelationDeclOp::create(
+              builder, location,
+              physicalScope ? sim::VPIStatementSourceKind::Scope
+                            : sim::VPIStatementSourceKind::Anchor,
+              physicalScope ? backing.getId().getValue().getZExtValue()
+                            : anchorInventoryIds.lookup(owner),
+              ownerKind, selector, ordinal,
+              uint32_t{1} << static_cast<uint32_t>(
+                  reflection::VPITraversalMode::Iterate),
+              statementId);
+        }
+      });
+  uint64_t nextSyntheticInventoryId = anchorSources.size();
+  for (Operation *source : anchorSources) {
+    auto eventArray = namedEventArrayRanges.find(source);
+    if (eventArray == namedEventArrayRanges.end())
+      continue;
+    ArrayRef<int64_t> ranges = eventArray->second;
+    SmallVector<uint64_t> extents;
+    uint64_t elementCount = 1;
+    for (size_t dimension = 0; dimension != ranges.size(); dimension += 2) {
+      uint64_t distance = ranges[dimension] >= ranges[dimension + 1]
+                              ? static_cast<uint64_t>(ranges[dimension]) -
+                                    static_cast<uint64_t>(ranges[dimension + 1])
+                              : static_cast<uint64_t>(ranges[dimension + 1]) -
+                                    static_cast<uint64_t>(ranges[dimension]);
+      if (distance == UINT64_MAX || distance + 1 > UINT32_MAX ||
+          elementCount > UINT32_MAX / (distance + 1)) {
+        emitError(getSemanticLocation(source))
+            << "named-event array shape exceeds VPI relation encoding";
+        invalid = true;
+        elementCount = 0;
+        break;
+      }
+      extents.push_back(distance + 1);
+      elementCount *= distance + 1;
+    }
+    for (uint64_t ordinal = 0; ordinal != elementCount; ++ordinal) {
+      uint64_t remainder = ordinal;
+      SmallVector<int64_t> indices(extents.size());
+      for (size_t dimension = extents.size(); dimension != 0;) {
+        --dimension;
+        uint64_t coordinate = remainder % extents[dimension];
+        remainder /= extents[dimension];
+        int64_t left = ranges[dimension * 2];
+        indices[dimension] = left >= ranges[dimension * 2 + 1]
+                                 ? left - static_cast<int64_t>(coordinate)
+                                 : left + static_cast<int64_t>(coordinate);
+      }
+      std::string hierarchy = getHierarchyName(source).str();
+      for (int64_t index : indices)
+        hierarchy += "[" + std::to_string(index) + "]";
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(source), symbolName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::NamedEvent), scopes.lookup(source),
+          anchorSymbols.lookup(source), ordinal,
+          builder.getStringAttr(hierarchy),
+          builder.getStringAttr(getDebugName(source)), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
+          IntegerAttr{});
+    }
+  }
+  auto ownerAnchorFor = [&](Operation *member) -> FlatSymbolRefAttr {
+    for (Operation *cursor = member; cursor; cursor = cursor->getParentOp()) {
+      if (FlatSymbolRefAttr anchor = anchorSymbols.lookup(cursor))
+        return anchor;
+      if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
+        return {};
+    }
+    return {};
+  };
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
       return;
@@ -723,6 +1718,712 @@ materializeDesignDescriptors(ModuleOp module,
       designObjects.push_back(op);
   });
 
+  // Source typedef symbols live in the semantic hierarchy, which is erased
+  // at finalization. Every explicit declaration is independently traversable
+  // through vpiTypedef, including declarations unused by executable storage.
+  // Give all of them flat simulation symbols and remap every alias chain before
+  // embedding it in immutable VPI type inventory.
+  auto getSemanticSymbolReference = [&](Operation *symbol,
+                                        bool collapseTransparentWrappers =
+                                            false) {
+    SmallVector<Operation *> path;
+    for (Operation *current = symbol; current; current = current->getParentOp())
+      if (isa<SymbolOpInterface>(current))
+        path.push_back(current);
+    std::reverse(path.begin(), path.end());
+    SmallVector<StringAttr> names;
+    for (auto [index, current] : llvm::enumerate(path)) {
+      // Frontend semantic references omit wrappers around elaborated instance
+      // bodies and generic-class specializations. Preserve the target symbol
+      // itself and every component that participates in frontend identity.
+      if (collapseTransparentWrappers && current != symbol &&
+          index + 1 < path.size() &&
+          path[index + 1]->getParentOp() == current &&
+          ((isa<semantic::SVInstanceSymbolOp>(current) &&
+            isa<semantic::SVInstanceBodySymbolOp>(path[index + 1])) ||
+           (isa<semantic::SVGenericClassDefSymbolOp>(current) &&
+            isa<semantic::SVClassTypeOp>(path[index + 1]))))
+        continue;
+      names.push_back(SymbolTable::getSymbolName(current));
+    }
+    SmallVector<FlatSymbolRefAttr> nested;
+    for (StringAttr name : ArrayRef(names).drop_front())
+      nested.push_back(FlatSymbolRefAttr::get(name));
+    return SymbolRefAttr::get(names.front(), nested);
+  };
+  SmallVector<semantic::SVNetTypeOp> sourceNettypes;
+  llvm::DenseMap<Attribute, semantic::SVNetTypeOp> nettypesByReference;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> nettypeSymbols;
+  module.walk([&](semantic::SVNetTypeOp nettype) {
+    if (nettype.getIsBuiltin())
+      return;
+    auto index = [&](SymbolRefAttr reference) {
+      auto [found, inserted] =
+          nettypesByReference.try_emplace(reference, nettype);
+      if (!inserted && found->second != nettype) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype identity collides with another declaration "
+            << reference;
+        invalid = true;
+      }
+    };
+    index(getSemanticSymbolReference(nettype, true));
+    index(getSemanticSymbolReference(nettype));
+    sourceNettypes.push_back(nettype);
+  });
+  for (auto [index, nettype] : llvm::enumerate(sourceNettypes)) {
+    std::string name = "__obelisk_vpi_nettype_" + std::to_string(index);
+    nettypeSymbols[nettype] =
+        FlatSymbolRefAttr::get(builder.getContext(), name);
+  }
+  llvm::DenseMap<Attribute, Operation *> anchorsBySemanticReference;
+  for (Operation *source : anchorSources) {
+    anchorsBySemanticReference.try_emplace(
+        getSemanticSymbolReference(source, true), source);
+    anchorsBySemanticReference.try_emplace(getSemanticSymbolReference(source),
+                                           source);
+  }
+  auto resolveSourceNettype = [&](SymbolRefAttr reference) {
+    auto found = nettypesByReference.find(reference);
+    return found == nettypesByReference.end() ? semantic::SVNetTypeOp{}
+                                              : found->second;
+  };
+  llvm::DenseMap<Attribute, semantic::SVTypeAliasTypeOp>
+      aliasesBySymbolReference;
+  SmallVector<semantic::SVTypeAliasTypeOp> aliases;
+  module.walk([&](semantic::SVTypeAliasTypeOp alias) {
+    auto indexAlias = [&](SymbolRefAttr reference) {
+      auto [found, inserted] =
+          aliasesBySymbolReference.try_emplace(reference, alias);
+      if (!inserted && found->second != alias) {
+        emitError(getSemanticLocation(alias))
+            << "VPI typedef identity collides with another semantic alias "
+            << reference;
+        invalid = true;
+      }
+    };
+    // Native frontend IR uses the collapsed identity. Also retain the raw
+    // exact path for authored MLIR and legacy producers that model wrappers as
+    // identity-bearing symbols.
+    indexAlias(getSemanticSymbolReference(alias, true));
+    indexAlias(getSemanticSymbolReference(alias));
+    aliases.push_back(alias);
+  });
+  auto resolveAlias = [&](Operation *, SymbolRefAttr reference) {
+    auto found = aliasesBySymbolReference.find(reference);
+    return found == aliasesBySymbolReference.end()
+               ? semantic::SVTypeAliasTypeOp{}
+               : found->second;
+  };
+  auto collectAliases = [&](Operation *owner, ArrayAttr layers) {
+    if (!layers)
+      return;
+    for (Attribute rawLayer : layers) {
+      auto layer = dyn_cast<DictionaryAttr>(rawLayer);
+      auto sourceAliases =
+          layer ? layer.getAs<ArrayAttr>("aliases") : ArrayAttr{};
+      if (!sourceAliases) {
+        emitError(getSemanticLocation(owner))
+            << "malformed VPI typedef-layer inventory";
+        invalid = true;
+        continue;
+      }
+      for (Attribute rawAlias : sourceAliases) {
+        auto reference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto alias = reference ? resolveAlias(owner, reference)
+                               : semantic::SVTypeAliasTypeOp{};
+        if (!alias) {
+          emitError(getSemanticLocation(owner))
+              << "VPI typedef inventory references an unknown alias "
+              << rawAlias;
+          invalid = true;
+          continue;
+        }
+      }
+    }
+  };
+  for (Operation *op : designObjects)
+    collectAliases(op, op->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName));
+  for (semantic::SVPortConnectionOp connection : portAliases.connections)
+    collectAliases(connection, connection->getAttrOfType<ArrayAttr>(
+                                   vpiTypedefLayersAttrName));
+  for (const auto &entry : portAliases.refViews)
+    collectAliases(semanticRoot, entry.second.typedefLayers);
+  for (const auto &entry : portAliases.interfaceViews)
+    collectAliases(semanticRoot, entry.second.typedefLayers);
+
+  // `module.walk` is source order for the semantic inventory.  Do not rebuild
+  // this list from the DenseSet: hand-authored IR may reuse source node IDs,
+  // and declaration order is part of VPI traversal semantics.
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> aliasSymbols;
+  for (auto [index, alias] : llvm::enumerate(aliases)) {
+    std::string name = "__obelisk_vpi_typespec_" + std::to_string(index);
+    aliasSymbols[alias] = FlatSymbolRefAttr::get(builder.getContext(), name);
+  }
+  auto remapTypedefLayers = [&](Operation *owner,
+                                ArrayAttr layers) -> FailureOr<ArrayAttr> {
+    if (!layers)
+      return ArrayAttr{};
+    SmallVector<Attribute> remappedLayers;
+    remappedLayers.reserve(layers.size());
+    for (Attribute rawLayer : layers) {
+      auto layer = dyn_cast<DictionaryAttr>(rawLayer);
+      auto path =
+          layer ? layer.getAs<DenseI64ArrayAttr>("path") : DenseI64ArrayAttr{};
+      auto sourceAliases =
+          layer ? layer.getAs<ArrayAttr>("aliases") : ArrayAttr{};
+      if (!path || !sourceAliases) {
+        emitError(getSemanticLocation(owner))
+            << "malformed VPI typedef-layer inventory";
+        return failure();
+      }
+      SmallVector<Attribute> remappedAliases;
+      remappedAliases.reserve(sourceAliases.size());
+      for (Attribute rawAlias : sourceAliases) {
+        auto sourceReference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto sourceAlias = sourceReference
+                               ? resolveAlias(owner, sourceReference)
+                               : semantic::SVTypeAliasTypeOp{};
+        auto mapped =
+            sourceAlias ? aliasSymbols.find(sourceAlias) : aliasSymbols.end();
+        if (mapped == aliasSymbols.end()) {
+          emitError(getSemanticLocation(owner))
+              << "VPI typedef layer cannot resolve its simulation alias";
+          return failure();
+        }
+        remappedAliases.push_back(mapped->second);
+      }
+      remappedLayers.push_back(builder.getDictionaryAttr(
+          {builder.getNamedAttr("path", path),
+           builder.getNamedAttr("aliases",
+                                builder.getArrayAttr(remappedAliases))}));
+    }
+    return builder.getArrayAttr(remappedLayers);
+  };
+  auto typedefLayersFor = [&](Operation *owner) -> ArrayAttr {
+    FailureOr<ArrayAttr> layers = remapTypedefLayers(
+        owner, owner->getAttrOfType<ArrayAttr>(vpiTypedefLayersAttrName));
+    if (failed(layers)) {
+      invalid = true;
+      return {};
+    }
+    return *layers;
+  };
+
+  llvm::DenseMap<Attribute, semantic::SVPortConnectionOp>
+      connectionsByFormalSymbol;
+  for (semantic::SVPortConnectionOp connection : portAliases.connections)
+    connectionsByFormalSymbol.try_emplace(connection.getFormalSymbolAttr(),
+                                          connection);
+
+  // Type identities can only be frozen after source typedef references have
+  // been remapped to persistent simulation symbols. Keep template discovery
+  // above independent of that ordering, then hash-cons the complete effective
+  // type vector here into one specialization shared by equivalent instances.
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    SmallVector<sim::VPITypeSemanticsAttr> effectiveTypes;
+    SmallVector<Operation *> memberSources;
+    effectiveTypes.reserve(definitionMemberPlans[instance.definition.getValue()]
+                               .signatures.size());
+    memberSources.reserve(definitionMemberPlans[instance.definition.getValue()]
+                              .signatures.size());
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      Operation *member = &child;
+      sim::VPITypeSemanticsAttr effectiveType;
+      if (auto semanticType =
+              member->getAttrOfType<TypeAttr>("semantic_type")) {
+        FailureOr<sim::VPITypeSemanticsAttr> converted = makeVPITypeSemantics(
+            semanticType.getValue(), getSemanticLocation(member),
+            typedefLayersFor(member), member);
+        if (failed(converted)) {
+          invalid = true;
+          break;
+        }
+        effectiveType = *converted;
+      } else if (isa<semantic::SVInterfacePortSymbolOp>(member)) {
+        auto connection =
+            connectionsByFormalSymbol.find(getSemanticSymbolReference(member));
+        if (connection == connectionsByFormalSymbol.end())
+          connection = connectionsByFormalSymbol.find(
+              getSemanticSymbolReference(member, true));
+        if (connection != connectionsByFormalSymbol.end()) {
+          FailureOr<sim::VPITypeSemanticsAttr> converted = makeVPITypeSemantics(
+              connection->second.getFormalType(), getSemanticLocation(member),
+              typedefLayersFor(connection->second), connection->second);
+          if (failed(converted)) {
+            invalid = true;
+            break;
+          }
+          effectiveType = *converted;
+        }
+      }
+      if (!effectiveType) {
+        emitError(getSemanticLocation(member))
+            << "VPI IO declaration is missing semantic type metadata";
+        invalid = true;
+        break;
+      }
+      effectiveTypes.push_back(effectiveType);
+      memberSources.push_back(member);
+    }
+    if (invalid)
+      continue;
+
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    SmallVector<Attribute> keyElements;
+    keyElements.reserve(effectiveTypes.size());
+    for (sim::VPITypeSemanticsAttr type : effectiveTypes)
+      keyElements.push_back(type);
+    ArrayAttr key = builder.getArrayAttr(keyElements);
+    FlatSymbolRefAttr specialization = plan.specializations.lookup(key);
+    if (!specialization) {
+      std::string symbol = (Twine("__obelisk_vpi_definition_specialization_") +
+                            Twine(nextDefinitionSpecializationId++))
+                               .str();
+      auto declaration = sim::SimVPIDefinitionSpecializationDeclOp::create(
+          builder, getSemanticLocation(instance.body),
+          builder.getStringAttr(symbol), instance.definition);
+      specialization = FlatSymbolRefAttr::get(declaration);
+      plan.specializations.try_emplace(key, specialization);
+      for (auto [member, type, source] :
+           llvm::zip_equal(plan.memberSymbols, effectiveTypes, memberSources)) {
+        auto binding = sim::SimVPIDefinitionMemberSpecializationOp::create(
+            builder, getSemanticLocation(instance.body), specialization, member,
+            type);
+        if (auto identity = source->getAttrOfType<IntegerAttr>(
+                vpiSourceTypeIdentityAttrName))
+          binding->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+      }
+    }
+    instance.scope.setVpiSpecializationAttr(specialization);
+  }
+  if (invalid)
+    return failure();
+
+  std::function<FailureOr<sim::VPITypeSemanticsAttr>(Operation *,
+                                                     sim::VPITypeSemanticsAttr)>
+      remapVPITypeAliases;
+  remapVPITypeAliases = [&](Operation *owner, sim::VPITypeSemanticsAttr current)
+      -> FailureOr<sim::VPITypeSemanticsAttr> {
+    SmallVector<Attribute> children;
+    children.reserve(current.getChildren().size());
+    for (Attribute childAttr : current.getChildren()) {
+      FailureOr<sim::VPITypeSemanticsAttr> child = remapVPITypeAliases(
+          owner, cast<sim::VPITypeSemanticsAttr>(childAttr));
+      if (failed(child))
+        return failure();
+      children.push_back(*child);
+    }
+    ArrayAttr aliases;
+    if (ArrayAttr sourceAliases = current.getTypedefAliases()) {
+      SmallVector<Attribute> mappedAliases;
+      mappedAliases.reserve(sourceAliases.size());
+      for (Attribute rawAlias : sourceAliases) {
+        auto sourceReference = dyn_cast<SymbolRefAttr>(rawAlias);
+        auto sourceAlias = sourceReference
+                               ? resolveAlias(owner, sourceReference)
+                               : semantic::SVTypeAliasTypeOp{};
+        auto mapped =
+            sourceAlias ? aliasSymbols.find(sourceAlias) : aliasSymbols.end();
+        if (mapped == aliasSymbols.end()) {
+          emitError(getSemanticLocation(owner))
+              << "inferred interconnect VPI type cannot resolve its typedef "
+                 "alias";
+          return failure();
+        }
+        mappedAliases.push_back(mapped->second);
+      }
+      aliases = builder.getArrayAttr(mappedAliases);
+    }
+    return sim::VPITypeSemanticsAttr::get(
+        builder.getContext(), current.getKind(), current.getIsSigned(),
+        current.getIsFourState(), current.getName(), current.getSymbol(),
+        current.getModport(), current.getRange(),
+        builder.getArrayAttr(children), current.getChildNames(),
+        current.getIsTagged(), current.getIsSoft(), current.getBitWidth(),
+        current.getSelectableWidth(), current.getBitstreamWidth(),
+        current.getTagBits(), current.getQueueBound(),
+        current.getWildcardIndex(), current.getChildOrdinals(),
+        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases);
+  };
+  uint64_t nextNettypeId = 0;
+  for (semantic::SVNetTypeOp nettype : sourceNettypes) {
+    FlatSymbolRefAttr owner = ownerAnchorFor(nettype);
+    if (!owner)
+      continue;
+    ArrayAttr layers = typedefLayersFor(nettype);
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        nettype.getDataType(), getSemanticLocation(nettype), layers, nettype);
+    StringRef hierarchy = getHierarchyName(nettype);
+    StringRef debug = getDebugName(nettype);
+    if (failed(target) || hierarchy.empty() || debug.empty()) {
+      if (hierarchy.empty() || debug.empty())
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype is missing a hierarchy or debug name";
+      invalid = true;
+      continue;
+    }
+    FlatSymbolRefAttr directAlias;
+    if (SymbolRefAttr reference = nettype.getAliasedNettypeSymbolAttr()) {
+      semantic::SVNetTypeOp targetNettype = resolveSourceNettype(reference);
+      directAlias = nettypeSymbols.lookup(targetNettype);
+      if (!directAlias) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype alias target was not preserved";
+        invalid = true;
+        continue;
+      }
+    }
+    FlatSymbolRefAttr resolutionFunction;
+    if (SymbolRefAttr reference = nettype.getResolutionFunctionSymbolAttr()) {
+      Operation *source = anchorsBySemanticReference.lookup(reference);
+      resolutionFunction = anchorSymbols.lookup(source);
+      if (!resolutionFunction) {
+        emitError(getSemanticLocation(nettype))
+            << "VPI nettype resolver anchor was not preserved";
+        invalid = true;
+        continue;
+      }
+    }
+    sim::SimVPINettypeDeclOp::create(builder, getSemanticLocation(nettype),
+                                     nettypeSymbols.lookup(nettype).getValue(),
+                                     nextNettypeId++, scopes.lookup(nettype),
+                                     owner.getValue(), hierarchy, debug,
+                                     *target, directAlias, resolutionFunction);
+  }
+  uint64_t nextTypespecId = 0;
+  llvm::DenseMap<Attribute, FlatSymbolRefAttr> enumTypespecsByIdentity;
+  auto getEnumIdentity = [&](Operation *operation,
+                             sim::VPITypeSemanticsAttr type) -> Attribute {
+    if (auto identity = operation->getAttrOfType<IntegerAttr>(
+            vpiSourceTypeIdentityAttrName))
+      return builder.getArrayAttr(
+          {builder.getStringAttr("source-type"), identity});
+    Attribute owner = ownerAnchorFor(operation);
+    if (!owner)
+      owner = builder.getUnitAttr();
+    return builder.getArrayAttr(
+        {builder.getStringAttr("lexical-owner"), owner,
+         type.getName() ? type.getName() : builder.getStringAttr("")});
+  };
+  for (semantic::SVTypeAliasTypeOp alias : aliases) {
+    auto semanticType = alias->getAttrOfType<TypeAttr>("semantic_type");
+    ArrayAttr layers = typedefLayersFor(alias);
+    FailureOr<sim::VPITypeSemanticsAttr> target =
+        semanticType
+            ? makeVPITypeSemantics(semanticType.getValue(),
+                                   getSemanticLocation(alias), layers, alias)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    StringRef hierarchy = getHierarchyName(alias);
+    StringRef debug = getDebugName(alias);
+    if (!semanticType || failed(target) || hierarchy.empty() || debug.empty()) {
+      if (!semanticType)
+        emitError(getSemanticLocation(alias))
+            << "VPI typedef is missing semantic type metadata";
+      else if (hierarchy.empty() || debug.empty())
+        emitError(getSemanticLocation(alias))
+            << "VPI typedef is missing a hierarchy or debug name";
+      invalid = true;
+      continue;
+    }
+    FlatSymbolRefAttr owner = ownerAnchorFor(alias);
+    if (!owner)
+      continue;
+    auto sourceTypeIdentity =
+        alias->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName);
+    sim::SimVPITypespecDeclOp declaration = sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(alias),
+        aliasSymbols.lookup(alias).getValue(), nextTypespecId++,
+        scopes.lookup(alias), owner.getValue(), hierarchy, debug, *target,
+        sim::VPITypespecOrigin::Typedef, sourceTypeIdentity);
+    if (target->getKind() == sim::VPITypeKind::Enum)
+      enumTypespecsByIdentity.try_emplace(
+          getEnumIdentity(alias, *target),
+          FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+  }
+
+  struct InterfaceTypespec {
+    SymbolRefAttr identity;
+    StringAttr modport;
+    semantic::SVInstanceBodySymbolOp representative;
+  };
+  SmallVector<InterfaceTypespec> interfaceTypespecs;
+  llvm::DenseSet<Attribute> interfaceTypespecKeys;
+  llvm::DenseMap<Attribute, semantic::SVInstanceBodySymbolOp> interfaceBodies;
+  llvm::DenseMap<Attribute, semantic::SVInstanceSymbolOp>
+      interfaceInstancesByIdentity;
+  SmallVector<SymbolRefAttr> interfaceIdentityOrder;
+  semanticRoot.walk([&](semantic::SVInstanceSymbolOp instance) {
+    auto indexInstance = [&](SymbolRefAttr reference) {
+      auto [found, inserted] =
+          interfaceInstancesByIdentity.try_emplace(reference, instance);
+      if (!inserted && found->second != instance) {
+        emitError(getSemanticLocation(instance))
+            << "VPI interface identity collides with another semantic "
+               "instance "
+            << reference;
+        invalid = true;
+      }
+    };
+    indexInstance(getSemanticSymbolReference(instance, true));
+    indexInstance(getSemanticSymbolReference(instance));
+  });
+  semanticRoot.walk([&](semantic::SVInstanceBodySymbolOp body) {
+    if (auto identity =
+            body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity"))
+      if (interfaceBodies.try_emplace(identity, body).second)
+        interfaceIdentityOrder.push_back(identity);
+  });
+  auto findInterfaceBody = [&](SymbolRefAttr identity) {
+    auto found = interfaceBodies.find(identity);
+    if (found != interfaceBodies.end())
+      return found->second;
+    auto instance = interfaceInstancesByIdentity.find(identity);
+    if (instance == interfaceInstancesByIdentity.end())
+      return semantic::SVInstanceBodySymbolOp{};
+    for (Operation *child : getChildren(instance->second))
+      if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(child))
+        return body;
+    return semantic::SVInstanceBodySymbolOp{};
+  };
+  auto addInterfaceTypespec = [&](SymbolRefAttr identity, StringAttr modport,
+                                  Operation *owner) {
+    if (!identity || !modport)
+      return;
+    Attribute key = builder.getArrayAttr({identity, modport});
+    if (!interfaceTypespecKeys.insert(key).second)
+      return;
+    semantic::SVInstanceBodySymbolOp representative =
+        findInterfaceBody(identity);
+    if (!representative) {
+      emitError(getSemanticLocation(owner))
+          << "VPI virtual-interface typespec cannot resolve elaborated "
+             "interface identity "
+          << identity;
+      invalid = true;
+      return;
+    }
+    interfaceTypespecs.push_back({identity, modport, representative});
+  };
+  for (SymbolRefAttr identity : interfaceIdentityOrder)
+    addInterfaceTypespec(identity, builder.getStringAttr(""),
+                         interfaceBodies.lookup(identity));
+  llvm::DenseSet<Type> inspectedInterfaceTypes;
+  semanticRoot.walk([&](Operation *op) {
+    auto inspectType = [&](Type type) {
+      if (!inspectedInterfaceTypes.insert(type).second)
+        return;
+      type.walk([&](semantic::VirtualInterfaceType interface) {
+        addInterfaceTypespec(interface.getInterfaceName(),
+                             interface.getModport(), op);
+        addInterfaceTypespec(interface.getInterfaceName(),
+                             builder.getStringAttr(""), op);
+      });
+    };
+    for (NamedAttribute named : op->getAttrs())
+      named.getValue().walk(inspectType);
+    for (Type type : op->getOperandTypes())
+      inspectType(type);
+    for (Type type : op->getResultTypes())
+      inspectType(type);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          inspectType(argument.getType());
+  });
+  llvm::sort(interfaceTypespecs,
+             [](const InterfaceTypespec &left, const InterfaceTypespec &right) {
+               if (left.identity != right.identity) {
+                 std::string leftText, rightText;
+                 llvm::raw_string_ostream(leftText) << left.identity;
+                 llvm::raw_string_ostream(rightText) << right.identity;
+                 return leftText < rightText;
+               }
+               return left.modport.getValue() < right.modport.getValue();
+             });
+  for (const InterfaceTypespec &entry : interfaceTypespecs) {
+    Type type = semantic::VirtualInterfaceType::get(
+        builder.getContext(), entry.identity, entry.modport);
+    FailureOr<sim::VPITypeSemanticsAttr> target =
+        makeVPITypeSemantics(type, getSemanticLocation(entry.representative),
+                             {}, entry.representative);
+    if (failed(target)) {
+      invalid = true;
+      continue;
+    }
+    std::string identity;
+    llvm::raw_string_ostream(identity) << entry.identity;
+    StringRef debug = getDebugName(entry.representative);
+    if (debug.empty()) {
+      emitError(getSemanticLocation(entry.representative))
+          << "VPI interface typespec is missing its definition name";
+      invalid = true;
+      continue;
+    }
+    FlatSymbolRefAttr owner = ownerAnchorFor(entry.representative);
+    // Statement-backed ownership is emitted in the next chunk. Defer the
+    // complete local typespec instead of collapsing its identity outward or
+    // rejecting otherwise valid source IR.
+    if (!owner)
+      continue;
+    StringAttr symbolName = getSimulationVirtualInterfaceTypespecSymbol(
+        entry.identity, entry.modport);
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(entry.representative),
+        symbolName.getValue(), nextTypespecId++,
+        scopes.lookup(entry.representative), owner.getValue(), identity, debug,
+        *target, sim::VPITypespecOrigin::Interface, IntegerAttr{});
+  }
+
+  // Materialize a standalone enum typespec when no typedef declaration names
+  // the exact Slang type identity.  Identity, rather than a hierarchy display
+  // string, is the relation key so same-named `$unit` enums remain distinct.
+  struct EnumValueInventory {
+    semantic::SVEnumValueSymbolOp operation;
+    sim::VPITypeSemanticsAttr type;
+    Attribute identity;
+    FlatSymbolRefAttr owner;
+    StringAttr constant;
+  };
+  SmallVector<EnumValueInventory> enumValues;
+  module.walk([&](semantic::SVEnumValueSymbolOp enumValue) {
+    // Statement-backed lexical ownership is materialized in the next chunk.
+    // Until then, omit the whole local enum inventory rather than emitting a
+    // dangling constant or collapsing its vpiTypedef ownership outward.
+    FlatSymbolRefAttr owner = ownerAnchorFor(enumValue);
+    if (!owner)
+      return;
+    auto semanticType = enumValue->getAttrOfType<TypeAttr>("semantic_type");
+    auto constant = enumValue->getAttrOfType<StringAttr>("constant_value");
+    StringRef name = getDebugName(enumValue);
+    if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
+        !constant || name.empty()) {
+      emitError(getSemanticLocation(enumValue))
+          << "VPI enum constant is missing semantic type, exact typespec, "
+             "name, or value";
+      invalid = true;
+      return;
+    }
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        semanticType.getValue(), getSemanticLocation(enumValue), {}, enumValue);
+    if (failed(target)) {
+      invalid = true;
+      return;
+    }
+    if (target->getKind() != sim::VPITypeKind::Enum) {
+      emitError(getSemanticLocation(enumValue))
+          << "VPI enum constant does not describe an enum type";
+      invalid = true;
+      return;
+    }
+    Attribute identity = getEnumIdentity(enumValue, *target);
+    // A value can join an existing typedef typespec through its lexical
+    // identity. Creating a new anonymous typespec, however, requires the
+    // frontend's exact source-type identity; otherwise identically named
+    // anonymous enums in the same owner cannot be distinguished.
+    if (!enumTypespecsByIdentity.count(identity) &&
+        !enumValue->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+      return;
+    enumValues.push_back({enumValue, *target, identity, owner, constant});
+  });
+
+  llvm::DenseMap<Attribute, size_t> anonymousEnumRepresentatives;
+  SmallVector<Attribute> anonymousEnumIdentities;
+  for (auto [index, enumValue] : llvm::enumerate(enumValues)) {
+    Attribute identity = enumValue.identity;
+    if (!enumTypespecsByIdentity.count(identity) &&
+        anonymousEnumRepresentatives.try_emplace(identity, index).second)
+      anonymousEnumIdentities.push_back(identity);
+  }
+  for (Attribute identity : anonymousEnumIdentities) {
+    const EnumValueInventory &inventory =
+        enumValues[anonymousEnumRepresentatives.lookup(identity)];
+    semantic::SVEnumValueSymbolOp enumValue = inventory.operation;
+    sim::VPITypeSemanticsAttr target = inventory.type;
+    StringRef hierarchy = getHierarchyName(enumValue);
+    StringRef name = target.getName() ? target.getName().getValue()
+                                      : getDebugName(enumValue);
+    size_t separator = hierarchy.rfind('.');
+    size_t namespaceSeparator = hierarchy.rfind("::");
+    if (namespaceSeparator != StringRef::npos &&
+        (separator == StringRef::npos || namespaceSeparator > separator))
+      separator = namespaceSeparator;
+    if (separator != StringRef::npos)
+      hierarchy = hierarchy.take_front(separator);
+    if (hierarchy.empty() || name.empty()) {
+      emitError(getSemanticLocation(enumValue))
+          << "VPI enum typespec is missing source names";
+      invalid = true;
+      continue;
+    }
+    auto sourceTypeIdentity =
+        enumValue->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName);
+    std::string symbolName =
+        "__obelisk_vpi_enum_typespec_" + std::to_string(nextTypespecId);
+    FlatSymbolRefAttr symbol =
+        FlatSymbolRefAttr::get(builder.getContext(), symbolName);
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
+        scopes.lookup(enumValue), inventory.owner.getValue(), hierarchy, name,
+        target, sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity);
+    enumTypespecsByIdentity[identity] = symbol;
+  }
+
+  uint64_t nextEnumConstId = 0;
+  llvm::DenseMap<Attribute, uint64_t> nextEnumOrdinal;
+  for (const EnumValueInventory &inventory : enumValues) {
+    semantic::SVEnumValueSymbolOp enumValue = inventory.operation;
+    StringRef name = getDebugName(enumValue);
+    FlatSymbolRefAttr typespec =
+        enumTypespecsByIdentity.lookup(inventory.identity);
+    if (!typespec) {
+      emitError(getSemanticLocation(enumValue))
+          << "VPI enum constant cannot resolve its exact enum typespec";
+      invalid = true;
+      continue;
+    }
+    sim::SimVPIEnumConstDeclOp::create(
+        builder, getSemanticLocation(enumValue), nextEnumConstId++,
+        nextEnumOrdinal[inventory.identity]++, typespec.getValue(), name,
+        inventory.constant.getValue());
+  }
+
+  auto retainVPITypeForPersistentOwner =
+      [&](Operation *owner, sim::VPITypeSemanticsAttr type,
+          IntegerAttr propagatedTypeIdentity = {}) {
+        // Statement-backed source ownership is emitted in the next chunk.
+        // Runtime storage must still exist now, but it must not retain a
+        // typedef or interface-typespec symbol whose local declaration was
+        // deliberately deferred with that owner.
+        if (!ownerAnchorFor(owner))
+          return sim::VPITypeSemanticsAttr{};
+        // Anonymous enum reflection is only sound when the frontend supplied
+        // the exact declaration identity used to join the value to its
+        // typespec. Legacy and hand-authored semantic IR may carry an
+        // enum-shaped value without that identity; keep lowering its executable
+        // storage, but do not retain an unresolvable VPI type on the persistent
+        // declaration.
+        if (type.getKind() == sim::VPITypeKind::Enum &&
+            !type.getTypedefAliases() && !propagatedTypeIdentity &&
+            !owner->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+          return sim::VPITypeSemanticsAttr{};
+        return type;
+      };
+  auto retainVPISourceTypeIdentity =
+      [&](Operation *source, Operation *declaration,
+          sim::VPITypeSemanticsAttr retainedType) {
+        if (!retainedType)
+          return;
+        if (auto identity = source->getAttrOfType<IntegerAttr>(
+                vpiSourceTypeIdentityAttrName))
+          declaration->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+      };
+
   auto emitDescriptor = [&](Operation *op) {
     bool storage =
         isa<semantic::SVVariableSymbolOp, semantic::SVFormalArgumentSymbolOp,
@@ -745,6 +2446,13 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = type;
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+          makeVPITypeSemantics(type, getSemanticLocation(op));
+      if (failed(vpiType)) {
+        invalid = true;
+        return;
+      }
+      descriptors[path].vpiType = *vpiType;
 
       // Event descriptors have no standalone declaration operation. Record
       // interface-owned clocking events on their scope declaration so
@@ -773,24 +2481,115 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopes.lookup(op),
                            type, sim::NetResolutionKind::Wire};
       descriptors[path].rootType = type;
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+          makeVPITypeSemantics(type, getSemanticLocation(op));
+      if (failed(vpiType)) {
+        invalid = true;
+        return;
+      }
+      descriptors[path].vpiType = *vpiType;
       return;
     }
     uint64_t scopeId = scopes.lookup(op);
     if (!storage) {
       if (auto leafDefinitions =
               op->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)) {
+        SmallVector<int64_t> boundsStorage;
+        SmallVector<int64_t> packedStorage;
+        auto sourceType = op->getAttrOfType<TypeAttr>("semantic_type");
+        Type shape = sourceType ? sourceType.getValue() : Type{};
+        while (shape) {
+          if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(shape)) {
+            boundsStorage.push_back(array.getLeft());
+            boundsStorage.push_back(array.getRight());
+            packedStorage.push_back(false);
+            shape = array.getElementType();
+            continue;
+          }
+          if (auto array = dyn_cast<semantic::RangedPackedArrayType>(shape)) {
+            boundsStorage.push_back(array.getLeft());
+            boundsStorage.push_back(array.getRight());
+            packedStorage.push_back(true);
+            shape = array.getElementType();
+            continue;
+          }
+          break;
+        }
+        ArrayRef<int64_t> bounds = boundsStorage;
+        ArrayRef<int64_t> packed = packedStorage;
+        if (bounds.empty() || !isa<semantic::UntypedType>(shape)) {
+          emitError(getSemanticLocation(op))
+              << "interconnect has malformed typeless array shape";
+          invalid = true;
+          return;
+        }
+        Operation *lexicalOwner = op->getParentOp();
+        while (lexicalOwner && !anchorSymbols.count(lexicalOwner))
+          lexicalOwner = lexicalOwner->getParentOp();
+        FlatSymbolRefAttr lexicalOwnerSymbol =
+            anchorSymbols.lookup(lexicalOwner);
+        if (!lexicalOwnerSymbol) {
+          emitError(getSemanticLocation(op))
+              << "interconnect array has no persistent lexical owner";
+          invalid = true;
+          return;
+        }
+        auto makeSymbol = [&] {
+          return "__obelisk_vpi_anchor_" +
+                 std::to_string(nextSyntheticInventoryId);
+        };
+        auto makeArrayAnchor = [&]() {
+          std::string symbolName = makeSymbol();
+          sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
+              builder, getSemanticLocation(op), symbolName,
+              nextSyntheticInventoryId++,
+              static_cast<uint32_t>(VPIKind::InterconnectArray), scopeId,
+              lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++,
+              builder.getStringAttr(path),
+              builder.getStringAttr(getDebugName(op)), UnitAttr{},
+              sim::VPIObjectBackingAttr{}, builder.getDenseI64ArrayAttr(bounds),
+              builder.getDenseI64ArrayAttr(packed), DenseI64ArrayAttr{},
+              DenseI64ArrayAttr{}, IntegerAttr{});
+          anchor->setAttr("vpi_properties",
+                          netProperties(cast<semantic::SVNetSymbolOp>(op)));
+          return anchor;
+        };
+        sim::SimVPIObjectAnchorOp root = makeArrayAnchor();
         for (Attribute attribute : leafDefinitions) {
           auto definition = dyn_cast<DictionaryAttr>(attribute);
           auto leafPath =
               definition ? definition.getAs<StringAttr>("path") : StringAttr{};
           auto semanticType =
               definition ? definition.getAs<TypeAttr>("type") : TypeAttr{};
-          if (!leafPath || !semanticType) {
+          auto semanticVPIType =
+              definition
+                  ? definition.getAs<sim::VPITypeSemanticsAttr>("vpi_type")
+                  : sim::VPITypeSemanticsAttr{};
+          auto sourceNettypeReference =
+              definition ? definition.getAs<SymbolRefAttr>("nettype")
+                         : SymbolRefAttr{};
+          auto sourceTypeIdentity =
+              definition ? definition.getAs<IntegerAttr>("type_identity")
+                         : IntegerAttr{};
+          auto indicesAttr =
+              definition ? definition.getAs<DenseI64ArrayAttr>("indices")
+                         : DenseI64ArrayAttr{};
+          ArrayRef<int64_t> indices =
+              indicesAttr ? indicesAttr.asArrayRef() : ArrayRef<int64_t>{};
+          if (!leafPath || !semanticType || !semanticVPIType ||
+              indices.size() * 2 != bounds.size()) {
             emitError(getSemanticLocation(op))
                 << "interconnect has malformed typed-leaf metadata";
             invalid = true;
             continue;
           }
+          FailureOr<sim::VPITypeSemanticsAttr> mappedVPIType =
+              remapVPITypeAliases(op, semanticVPIType);
+          if (failed(mappedVPIType)) {
+            invalid = true;
+            continue;
+          }
+          semanticVPIType = *mappedVPIType;
           FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
                                                        getSemanticLocation(op));
           if (failed(type)) {
@@ -802,34 +2601,92 @@ materializeDesignDescriptors(ModuleOp module,
                                               scopeId, *type,
                                               sim::NetResolutionKind::Wire};
           descriptors[leafPath.getValue()].rootType = *type;
+          sim::VPITypeSemanticsAttr retainedVPIType =
+              retainVPITypeForPersistentOwner(op, semanticVPIType,
+                                              sourceTypeIdentity);
+          descriptors[leafPath.getValue()].vpiType = retainedVPIType;
+          FlatSymbolRefAttr sourceNettype;
+          if (sourceNettypeReference) {
+            sourceNettype = nettypeSymbols.lookup(
+                resolveSourceNettype(sourceNettypeReference));
+            if (!sourceNettype) {
+              emitError(getSemanticLocation(op))
+                  << "interconnect leaf's VPI nettype declaration was not "
+                     "preserved";
+              invalid = true;
+              continue;
+            }
+          }
           auto declaration = sim::SimNetDeclOp::create(
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
               sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
-              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{});
+              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
+              retainedVPIType, sourceNettype);
           declaration->setAttr(sim::metadata::coverageSourceAuthored,
                                builder.getUnitAttr());
           if (retainCoverageSourceTypes)
             declaration->setAttr(sim::metadata::coverageSourceType,
                                  semanticType);
+          declaration->setAttr(
+              "vpi_properties",
+              netProperties(cast<semantic::SVNetSymbolOp>(op)));
+          if (sourceTypeIdentity)
+            declaration->setAttr(sim::metadata::vpiSourceTypeIdentity,
+                                 sourceTypeIdentity);
+          else
+            retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+          std::string leafSymbolName = makeSymbol();
+          sim::VPIObjectBackingAttr backing = sim::VPIObjectBackingAttr::get(
+              builder.getContext(), sim::VPIObjectBackingKind::Net,
+              builder.getI64IntegerAttr(id), FlatSymbolRefAttr{});
+          sim::SimVPIObjectAnchorOp::create(
+              builder, getSemanticLocation(op), leafSymbolName,
+              nextSyntheticInventoryId++,
+              static_cast<uint32_t>(VPIKind::InterconnectNet), scopeId,
+              FlatSymbolRefAttr::get(root.getSymNameAttr()),
+              nextAnchorOrdinal[root.getOperation()]++, leafPath,
+              builder.getStringAttr(getDebugName(op)), UnitAttr{}, backing,
+              DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+              builder.getDenseI64ArrayAttr(indices), IntegerAttr{});
         }
         return;
       }
     }
     FailureOr<Type> type = getNormalizedSemanticType(op);
-    if (failed(type)) {
+    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    sim::VPITypeSemanticsAttr inferredInterconnectVPIType =
+        op->getAttrOfType<sim::VPITypeSemanticsAttr>(
+            interconnectVPITypeAttrName);
+    FailureOr<sim::VPITypeSemanticsAttr> inferredMappedVPIType =
+        inferredInterconnectVPIType
+            ? remapVPITypeAliases(op, inferredInterconnectVPIType)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+        inferredInterconnectVPIType ? inferredMappedVPIType
+        : semanticType ? makeVPITypeSemantics(semanticType.getValue(),
+                                              getSemanticLocation(op),
+                                              typedefLayersFor(op), op)
+                       : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    if (failed(type) || failed(vpiType)) {
+      if (!semanticType)
+        emitError(getSemanticLocation(op))
+            << "design object is missing semantic type metadata";
       invalid = true;
       return;
     }
     StringAttr hierarchy = builder.getStringAttr(path);
     StringAttr debug = builder.getStringAttr(getDebugName(op));
+    sim::VPITypeSemanticsAttr retainedVPIType =
+        retainVPITypeForPersistentOwner(op, *vpiType);
     if (storage && isa<sim::EventType>(*type) &&
         !eventCellPaths.contains(path)) {
       uint64_t id = nextEventId++;
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopeId, *type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = *type;
+      descriptors[path].vpiType = retainedVPIType;
       return;
     }
     if (storage) {
@@ -837,6 +2694,7 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId, *type,
                            sim::NetResolutionKind::Wire};
       descriptors[path].rootType = *type;
+      descriptors[path].vpiType = retainedVPIType;
       sim::Lifetime lifetime =
           (op->getParentOfType<semantic::SVStatementBlockSymbolOp>() ||
            isStaticFormal(op))
@@ -844,12 +2702,17 @@ materializeDesignDescriptors(ModuleOp module,
               : sim::Lifetime::Design;
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
-          hierarchy, debug, sim::ComputeObservabilityKindAttr{});
+          hierarchy, debug, sim::ComputeObservabilityKindAttr{},
+          retainedVPIType);
       declaration->setAttr(sim::metadata::coverageSourceAuthored,
                            builder.getUnitAttr());
       if (retainCoverageSourceTypes)
         declaration->setAttr(sim::metadata::coverageSourceType,
                              op->getAttr("semantic_type"));
+      retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+      if (namedEventArrayRanges.count(op))
+        declaration->setAttr(sim::metadata::vpiIdentityDelegated,
+                             anchorSymbols.lookup(op));
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&
@@ -973,7 +2836,23 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[path] = {DescriptorInfo::Kind::Net, id, scopeId, *type,
                          resolution};
     descriptors[path].rootType = *type;
+    descriptors[path].vpiType = retainedVPIType;
     descriptors[path].delayedNet = static_cast<bool>(propagationDelays);
+    FlatSymbolRefAttr sourceNettype;
+    SymbolRefAttr nettypeReference = net.getNettypeSymbolAttr();
+    if (!nettypeReference)
+      nettypeReference =
+          op->getAttrOfType<SymbolRefAttr>(interconnectNettypeAttrName);
+    if (nettypeReference) {
+      sourceNettype =
+          nettypeSymbols.lookup(resolveSourceNettype(nettypeReference));
+      if (!sourceNettype) {
+        emitError(getSemanticLocation(net))
+            << "user-defined net's VPI nettype declaration was not preserved";
+        invalid = true;
+        return;
+      }
+    }
     auto declaration = sim::SimNetDeclOp::create(
         builder, getSemanticLocation(op), id, scopeId, *type,
         sim::Lifetime::Design, hierarchy, debug,
@@ -985,12 +2864,39 @@ materializeDesignDescriptors(ModuleOp module,
                       ? lowerChargeStrength(*net.getChargeStrength())
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
-        UnitAttr{});
+        UnitAttr{}, retainedVPIType, sourceNettype);
     declaration->setAttr(sim::metadata::coverageSourceAuthored,
                          builder.getUnitAttr());
     if (retainCoverageSourceTypes)
       declaration->setAttr(sim::metadata::coverageSourceType,
                            op->getAttr("semantic_type"));
+    declaration->setAttr("vpi_properties", netProperties(net));
+    retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
+    if (net.getNetKind() == semantic::SVNetKind::Interconnect) {
+      Operation *lexicalOwner = op->getParentOp();
+      while (lexicalOwner && !anchorSymbols.count(lexicalOwner))
+        lexicalOwner = lexicalOwner->getParentOp();
+      FlatSymbolRefAttr lexicalOwnerSymbol = anchorSymbols.lookup(lexicalOwner);
+      if (!lexicalOwnerSymbol) {
+        emitError(getSemanticLocation(op))
+            << "interconnect net has no persistent lexical owner";
+        invalid = true;
+        return;
+      }
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      sim::VPIObjectBackingAttr backing = sim::VPIObjectBackingAttr::get(
+          builder.getContext(), sim::VPIObjectBackingKind::Net,
+          builder.getI64IntegerAttr(id), FlatSymbolRefAttr{});
+      sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(op), symbolName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::InterconnectNet), scopeId,
+          lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++, hierarchy,
+          debug, UnitAttr{}, backing, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{});
+      anchor->setAttr("vpi_properties", netProperties(net));
+    }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
         net->hasAttr("obelisk_sim.inferred_user_net")) {
       declaration->setAttr("obelisk_sim.user_defined_net",
@@ -1043,7 +2949,7 @@ materializeDesignDescriptors(ModuleOp module,
         builder, getSemanticLocation(constraint), id, scopeId, type,
         sim::Lifetime::Design, builder.getStringAttr(hierarchy),
         builder.getStringAttr("__obelisk_constraint_mode"),
-        sim::ComputeObservabilityKindAttr{});
+        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   // A static random property has one rand_mode bit shared by all instances of
@@ -1076,11 +2982,11 @@ materializeDesignDescriptors(ModuleOp module,
     descriptors[hierarchy] = {DescriptorInfo::Kind::Storage, id, scopeId, type,
                               sim::NetResolutionKind::Wire};
     descriptors[hierarchy].rootType = type;
-    sim::SimStorageDeclOp::create(builder, getSemanticLocation(property), id,
-                                  scopeId, type, sim::Lifetime::Design,
-                                  builder.getStringAttr(hierarchy),
-                                  builder.getStringAttr("__obelisk_rand_mode"),
-                                  sim::ComputeObservabilityKindAttr{});
+    sim::SimStorageDeclOp::create(
+        builder, getSemanticLocation(property), id, scopeId, type,
+        sim::Lifetime::Design, builder.getStringAttr(hierarchy),
+        builder.getStringAttr("__obelisk_rand_mode"),
+        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   for (Operation *op : designObjects) {
@@ -1177,6 +3083,15 @@ materializeDesignDescriptors(ModuleOp module,
       descriptors[path].packedViewOffset = packedViewOffset;
       descriptors[path].viewIndices = std::move(viewIndices);
       descriptors[path].aggregateViewType = aggregateViewType;
+      auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+      FailureOr<sim::VPITypeSemanticsAttr> viewType = makeVPITypeSemantics(
+          semanticType ? semanticType.getValue() : view->second.viewType,
+          getSemanticLocation(op), typedefLayersFor(op), op);
+      if (failed(viewType)) {
+        invalid = true;
+        continue;
+      }
+      descriptors[path].vpiType = *viewType;
     }
   }
   for (const auto &[path, targetPath] : portAliases.interfaceAliases) {
@@ -1243,7 +3158,92 @@ materializeDesignDescriptors(ModuleOp module,
         target->second.packedViewOffset + view->second.packedOffset;
     descriptors[path].viewIndices = std::move(viewIndices);
     descriptors[path].aggregateViewType = aggregateViewType;
+    FailureOr<ArrayAttr> viewTypedefLayers =
+        remapTypedefLayers(semanticRoot, view->second.typedefLayers);
+    if (failed(viewTypedefLayers)) {
+      invalid = true;
+      continue;
+    }
+    FailureOr<sim::VPITypeSemanticsAttr> viewType =
+        makeVPITypeSemantics(view->second.semanticType, module.getLoc(),
+                             *viewTypedefLayers, semanticRoot);
+    if (failed(viewType)) {
+      invalid = true;
+      continue;
+    }
+    descriptors[path].vpiType = *viewType;
   }
+  struct RefMemberSource {
+    uint64_t scopeId = 0;
+    FlatSymbolRefAttr member;
+  };
+  llvm::DenseMap<uint64_t, sim::SimScopeDeclOp> scopeDeclarationsById;
+  for (sim::SimScopeDeclOp scope : scopes.declarations)
+    scopeDeclarationsById[scope.getId()] = scope;
+  using ScopedSymbol = std::pair<uint64_t, Attribute>;
+  llvm::DenseMap<ScopedSymbol, RefMemberSource> refMembersByFormalSymbol;
+  llvm::DenseMap<ScopedSymbol, RefMemberSource> refMembersByInternalSymbol;
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    uint32_t ordinal = 0;
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      if (ordinal >= plan.memberSymbols.size())
+        break;
+      if (plan.signatures[ordinal].direction != sim::VPIIODirection::Ref) {
+        ++ordinal;
+        continue;
+      }
+      auto connection =
+          connectionsByFormalSymbol.find(getSemanticSymbolReference(&child));
+      if (connection == connectionsByFormalSymbol.end())
+        connection = connectionsByFormalSymbol.find(
+            getSemanticSymbolReference(&child, true));
+      if (connection != connectionsByFormalSymbol.end()) {
+        RefMemberSource source{instance.scope.getId(),
+                               plan.memberSymbols[ordinal]};
+        if (!refMembersByFormalSymbol
+                 .try_emplace(
+                     ScopedSymbol{source.scopeId,
+                                  connection->second.getFormalSymbolAttr()},
+                     source)
+                 .second) {
+          connection->second.emitOpError(
+              "duplicate ref formal symbol in one instance");
+          invalid = true;
+        }
+        if (SymbolRefAttr internal = connection->second.getInternalSymbolAttr())
+          if (!refMembersByInternalSymbol
+                   .try_emplace(ScopedSymbol{source.scopeId, internal}, source)
+                   .second) {
+            connection->second.emitOpError(
+                "duplicate ref internal symbol in one instance");
+            invalid = true;
+          }
+      }
+      ++ordinal;
+    }
+  }
+  llvm::DenseMap<std::tuple<uint64_t, Attribute, uint32_t>, uint64_t>
+      nextRefMemberRelationOrdinal;
+  auto emitRefMemberPortRelation = [&](const RefMemberSource &source,
+                                       uint32_t selector, uint64_t portId,
+                                       Location location) {
+    auto key =
+        std::make_tuple(source.scopeId, Attribute(source.member), selector);
+    uint64_t ordinal = nextRefMemberRelationOrdinal[key]++;
+    sim::VPIObjectRefAttr target = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Port,
+        builder.getI64IntegerAttr(portId));
+    sim::SimVPIDefinitionMemberInstanceRelationOp::create(
+        builder, location, source.scopeId, source.member.getValue(), selector,
+        sim::VPIRelationMode::Iterate, ordinal, target);
+  };
+
   uint64_t nextPortId = 0;
   llvm::StringSet<> emittedPorts;
   auto hasInterconnectLeaves = [&](StringRef root) {
@@ -1328,19 +3328,506 @@ materializeDesignDescriptors(ModuleOp module,
     }
     std::string portHierarchy =
         (Twine(portScopeHierarchy) + "." + formalName).str();
-    auto port = sim::SimPortDeclOp::create(
-        builder, getSemanticLocation(connection), nextPortId++, *portScopeId,
+    FailureOr<sim::VPITypeSemanticsAttr> formalVPIType = makeVPITypeSemantics(
+        connection.getFormalType(), getSemanticLocation(connection),
+        typedefLayersFor(connection), connection);
+    if (failed(formalVPIType)) {
+      invalid = true;
+      continue;
+    }
+    uint64_t portId = nextPortId++;
+    auto declaration = sim::SimPortDeclOp::create(
+        builder, getSemanticLocation(connection), portId, *portScopeId,
         source->second.id, source->second.kind == DescriptorInfo::Kind::Net,
         source->second.viewOffset, source->second.type, direction,
         connection.getFormalOrdinal(), builder.getStringAttr(portHierarchy),
         connection.getFormalName()
             ? builder.getStringAttr(*connection.getFormalName())
-            : StringAttr{});
-    port->setAttr(sim::metadata::coverageSourceAuthored,
-                  builder.getUnitAttr());
+            : StringAttr{},
+        *formalVPIType);
+    declaration->setAttr(sim::metadata::coverageSourceAuthored,
+                         builder.getUnitAttr());
     if (retainCoverageSourceTypes)
-      port->setAttr(sim::metadata::coverageSourceType,
-                    TypeAttr::get(connection.getFormalType()));
+      declaration->setAttr(sim::metadata::coverageSourceType,
+                           TypeAttr::get(connection.getFormalType()));
+    retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
+
+    if (auto own = refMembersByFormalSymbol.find(
+            ScopedSymbol{*portScopeId, connection.getFormalSymbolAttr()});
+        own != refMembersByFormalSymbol.end())
+      emitRefMemberPortRelation(own->second,
+                                static_cast<uint32_t>(VPIKind::Port), portId,
+                                getSemanticLocation(connection));
+
+    Operation *actual = getPortActualLValue(connection);
+    SymbolRefAttr referenced =
+        actual ? actual->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+               : SymbolRefAttr{};
+    if (referenced) {
+      auto scope = scopeDeclarationsById.find(*portScopeId);
+      std::optional<uint64_t> ancestor = scope == scopeDeclarationsById.end()
+                                             ? std::nullopt
+                                             : scope->second.getParent();
+      while (ancestor) {
+        auto high = refMembersByInternalSymbol.find(
+            ScopedSymbol{*ancestor, referenced});
+        if (high != refMembersByInternalSymbol.end()) {
+          emitRefMemberPortRelation(
+              high->second,
+              static_cast<uint32_t>(reflection::VPIRelationKind::PortInstRel),
+              portId, getSemanticLocation(connection));
+          break;
+        }
+        auto parent = scopeDeclarationsById.find(*ancestor);
+        ancestor = parent == scopeDeclarationsById.end()
+                       ? std::nullopt
+                       : parent->second.getParent();
+      }
+    }
+  }
+
+  // Execution collapses whole-net aliases onto one resolved-net descriptor.
+  // Preserve every other declared spelling as a separate cold VPI object
+  // whose value plane is the canonical descriptor's state offset. The
+  // canonical spelling continues to use the physical net declaration itself.
+  struct DeclaredNetObject {
+    sim::VPIObjectRefAttr reference;
+    uint32_t vpiKind;
+    uint64_t scopeId;
+    Type type;
+    uint64_t backingNetId;
+  };
+  llvm::StringMap<DeclaredNetObject> declaredNets;
+  llvm::DenseMap<uint64_t, SmallVector<DeclaredNetObject, 2>>
+      declaredNetsByBacking;
+  uint64_t nextVPINetIdentityId = 0;
+  for (Operation *operation : designObjects) {
+    auto net = dyn_cast<semantic::SVNetSymbolOp>(operation);
+    if (!net)
+      continue;
+    StringRef path = getHierarchyName(operation);
+    auto descriptor = descriptors.find(path);
+    if (path.empty() || descriptor == descriptors.end() ||
+        descriptor->second.kind != DescriptorInfo::Kind::Net ||
+        descriptor->second.viewOffset != 0 ||
+        descriptor->second.packedViewOffset != 0 ||
+        !descriptor->second.viewIndices.empty() ||
+        descriptor->second.type != descriptor->second.rootType)
+      continue;
+    uint64_t scopeId = scopes.lookup(operation);
+
+    if (!portAliases.aliases.count(path)) {
+      sim::VPIObjectRefAttr reference = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Net,
+          builder.getI64IntegerAttr(descriptor->second.id));
+      DeclaredNetObject declared{
+          reference, sim::vpiKindForNet(descriptor->second.vpiType), scopeId,
+          descriptor->second.type, descriptor->second.id};
+      declaredNets[path] = declared;
+      declaredNetsByBacking[descriptor->second.id].push_back(declared);
+      continue;
+    }
+
+    FailureOr<Type> sourceType = getNormalizedSemanticType(operation);
+    auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
+    FailureOr<sim::VPITypeSemanticsAttr> vpiType =
+        semanticType
+            ? makeVPITypeSemantics(semanticType.getValue(),
+                                   getSemanticLocation(operation),
+                                   typedefLayersFor(operation), operation)
+            : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+    if (failed(sourceType) || failed(vpiType)) {
+      if (!semanticType)
+        emitError(getSemanticLocation(operation))
+            << "aliased net is missing semantic type metadata";
+      invalid = true;
+      continue;
+    }
+    sim::VPITypeSemanticsAttr retainedVPIType =
+        retainVPITypeForPersistentOwner(operation, *vpiType);
+    if (!retainedVPIType) {
+      emitError(getSemanticLocation(operation))
+          << "aliased net source type cannot be retained for VPI";
+      invalid = true;
+      continue;
+    }
+    FlatSymbolRefAttr sourceNettype;
+    if (SymbolRefAttr reference = net.getNettypeSymbolAttr()) {
+      sourceNettype = nettypeSymbols.lookup(resolveSourceNettype(reference));
+      if (!sourceNettype) {
+        emitError(getSemanticLocation(net))
+            << "collapsed user-defined net's VPI nettype declaration was not "
+               "preserved";
+        invalid = true;
+        continue;
+      }
+    }
+    uint64_t identityId = nextVPINetIdentityId++;
+    sim::SimVPINetIdentityDeclOp identity =
+        sim::SimVPINetIdentityDeclOp::create(
+            builder, getSemanticLocation(operation), identityId,
+            descriptor->second.id, scopeId, *sourceType,
+            builder.getStringAttr(path),
+            builder.getStringAttr(getDebugName(operation)), retainedVPIType,
+            sourceNettype);
+    identity->setAttr("vpi_properties", netProperties(net));
+    retainVPISourceTypeIdentity(operation, identity, retainedVPIType);
+    sim::VPIObjectRefAttr reference = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::NetIdentity,
+        builder.getI64IntegerAttr(identityId));
+    DeclaredNetObject declared{reference, sim::vpiKindForNet(retainedVPIType),
+                               scopeId, *sourceType, descriptor->second.id};
+    declaredNets[path] = declared;
+    declaredNetsByBacking[descriptor->second.id].push_back(declared);
+  }
+
+  // IEEE 1800-2023 37.16 requires every collapsed declared net to identify
+  // one unique simulated net. Only collapsed spellings need image edges;
+  // the cold VPI query returns an uncollapsed net itself without storing one
+  // redundant relation for every physical net in the design.
+  for (Operation *operation : designObjects) {
+    StringRef path = getHierarchyName(operation);
+    auto source = declaredNets.find(path);
+    auto descriptor = descriptors.find(path);
+    if (source == declaredNets.end() || descriptor == descriptors.end() ||
+        descriptor->second.kind != DescriptorInfo::Kind::Net ||
+        source->second.reference.getKind() !=
+            sim::VPIObjectRefKind::NetIdentity)
+      continue;
+    sim::VPIObjectRefAttr target = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Net,
+        builder.getI64IntegerAttr(descriptor->second.id));
+    sim::SimVPIRelationDeclOp::create(
+        builder, getSemanticLocation(operation), source->second.reference,
+        static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel),
+        sim::VPIRelationMode::Handle, 0, target);
+  }
+
+  // Preserve direct whole-object operands of scope-owned statements as cold
+  // immutable relation inventory. Selects and computed expressions require a
+  // distinct occurrence identity and are intentionally left for the compact
+  // expression table instead of being misrepresented as their root storage.
+  struct DirectEndpoint {
+    sim::VPIObjectRefAttr reference;
+    const DescriptorInfo *descriptor;
+    uint32_t vpiKind;
+    uint64_t scopeId;
+    Type type;
+  };
+  auto directEndpointForPath =
+      [&](StringRef path) -> std::optional<DirectEndpoint> {
+    auto found = descriptors.find(path);
+    if (found == descriptors.end())
+      return std::nullopt;
+    const DescriptorInfo &descriptor = found->second;
+    if ((descriptor.kind != DescriptorInfo::Kind::Storage &&
+         descriptor.kind != DescriptorInfo::Kind::Net) ||
+        descriptor.viewOffset != 0 || descriptor.packedViewOffset != 0 ||
+        !descriptor.viewIndices.empty() ||
+        descriptor.type != descriptor.rootType)
+      return std::nullopt;
+    sim::VPIObjectRefAttr reference;
+    uint64_t scopeId = descriptor.scopeId;
+    Type endpointType = descriptor.type;
+    uint32_t vpiKind = 0;
+    if (descriptor.kind == DescriptorInfo::Kind::Net) {
+      auto declared = declaredNets.find(path);
+      if (declared == declaredNets.end())
+        return std::nullopt;
+      reference = declared->second.reference;
+      scopeId = declared->second.scopeId;
+      endpointType = declared->second.type;
+      vpiKind = declared->second.vpiKind;
+    } else {
+      reference = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Storage,
+          builder.getI64IntegerAttr(descriptor.id));
+      vpiKind = sim::vpiKindForStorage(descriptor.vpiType);
+    }
+    return DirectEndpoint{reference, &descriptor, vpiKind, scopeId,
+                          endpointType};
+  };
+  auto directEndpoint =
+      [&](Operation *expression) -> std::optional<DirectEndpoint> {
+    FailureOr<StaticStorageView> view = getStaticStorageView(expression);
+    if (failed(view) || !view->identity || view->offset != 0 ||
+        view->packedOffset != 0 || !view->indices.empty() ||
+        view->rootType != view->viewType)
+      return std::nullopt;
+    return directEndpointForPath(view->path);
+  };
+
+  // Emit only exact whole formal objects here. Ref/interface selections use
+  // the dedicated compact view/ref-object layer added in the following
+  // chunk; never collapse them onto an unrelated backing root.
+  const auto *memberExprEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::IODecl),
+      static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
+      reflection::VPITraversalMode::Handle);
+  const auto *refActualEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::RefObj),
+      static_cast<uint32_t>(reflection::VPIRelationKind::ActualRel),
+      reflection::VPITraversalMode::Handle);
+  for (DefinitionInstancePlan &instance : definitionInstancePlans) {
+    DefinitionMemberPlan &plan =
+        definitionMemberPlans[instance.definition.getValue()];
+    uint32_t ordinal = 0;
+    for (Operation &child : instance.body.getBody().front()) {
+      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
+              child) ||
+          getDebugName(&child).empty())
+        continue;
+      if (ordinal >= plan.memberSymbols.size()) {
+        emitError(getSemanticLocation(&child))
+            << "VPI definition member endpoint ordinal is out of range";
+        invalid = true;
+        break;
+      }
+      auto connection =
+          connectionsByFormalSymbol.find(getSemanticSymbolReference(&child));
+      if (connection == connectionsByFormalSymbol.end())
+        connection = connectionsByFormalSymbol.find(
+            getSemanticSymbolReference(&child, true));
+      if (connection == connectionsByFormalSymbol.end()) {
+        ++ordinal;
+        continue;
+      }
+      sim::VPIIODirection direction = plan.signatures[ordinal].direction;
+      // A ref declaration denotes the caller's ultimate actual object, not
+      // the scope-local formal alias.  Keeping that one instance-specific
+      // word beside the shared definition member lets the runtime synthesize
+      // the RefObj identity without materializing another object record.
+      Operation *internalExpression =
+          getSingleRegionRoot(direction == sim::VPIIODirection::Ref
+                                  ? connection->second.getActual()
+                                  : connection->second.getInternal());
+      std::optional<DirectEndpoint> endpoint;
+      if (internalExpression) {
+        endpoint = directEndpoint(internalExpression);
+      } else if (direction != sim::VPIIODirection::Ref) {
+        StringRef internal = connection->second.getInternalPath().value_or(
+            connection->second.getFormalPath());
+        endpoint = directEndpointForPath(internal);
+      }
+      bool virtualInterface =
+          endpoint && endpoint->vpiKind ==
+                          static_cast<uint32_t>(VPIKind::VirtualInterfaceVar);
+      bool compatibleDirection =
+          virtualInterface ? direction == sim::VPIIODirection::Undefined ||
+                                 direction == sim::VPIIODirection::Ref
+                           : direction == sim::VPIIODirection::Input ||
+                                 direction == sim::VPIIODirection::Output ||
+                                 direction == sim::VPIIODirection::InOut ||
+                                 direction == sim::VPIIODirection::Ref;
+      bool compatibleScope =
+          direction == sim::VPIIODirection::Ref ||
+          (endpoint && endpoint->scopeId == instance.scope.getId());
+      bool legalEndpoint =
+          endpoint && memberExprEdge &&
+          (direction == sim::VPIIODirection::Ref
+               ? endpoint->descriptor->kind == DescriptorInfo::Kind::Storage &&
+                     refActualEdge &&
+                     reflection::vpiObjectSetContains(
+                         memberExprEdge->targets,
+                         static_cast<uint32_t>(VPIKind::RefObj)) &&
+                     reflection::vpiObjectSetContains(refActualEdge->targets,
+                                                      endpoint->vpiKind)
+               : reflection::vpiObjectSetContains(memberExprEdge->targets,
+                                                  endpoint->vpiKind));
+      if (legalEndpoint && compatibleScope && compatibleDirection)
+        sim::SimVPIDefinitionMemberInstanceBindingOp::create(
+            builder, getSemanticLocation(&child), instance.scope.getIdAttr(),
+            plan.memberSymbols[ordinal], endpoint->reference);
+      ++ordinal;
+    }
+  }
+  if (invalid)
+    return failure();
+  auto statementReference = [&](uint64_t id) {
+    return sim::VPIObjectRefAttr::get(builder.getContext(),
+                                      sim::VPIObjectRefKind::Statement,
+                                      builder.getI64IntegerAttr(id));
+  };
+  auto selectorValue = [](reflection::VPIRelationKind relation) {
+    return static_cast<uint32_t>(relation);
+  };
+  struct ReverseRelation {
+    sim::VPIObjectRefAttr source;
+    uint32_t selector;
+    sim::VPIObjectRefAttr target;
+    Location location;
+  };
+  SmallVector<ReverseRelation> reverseRelations;
+  auto addReverse = [&](const DirectEndpoint &source, uint32_t selector,
+                        const ScopeOwnedStatementPlan &target) {
+    const auto *edge = reflection::findVPITraversal(
+        source.vpiKind, selector, reflection::VPITraversalMode::Iterate);
+    if (!edge || edge->statementContainment ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        !reflection::vpiObjectSetContains(edge->targets,
+                                          static_cast<uint32_t>(target.kind)))
+      return;
+    reverseRelations.push_back({source.reference, selector,
+                                statementReference(target.statementId),
+                                getSemanticLocation(target.source)});
+  };
+  auto forPhysicalNetSpelling = [&](const DirectEndpoint &source,
+                                    auto &&callback) {
+    if (source.descriptor->kind != DescriptorInfo::Kind::Net) {
+      callback(source);
+      return;
+    }
+    auto aliases = declaredNetsByBacking.find(source.descriptor->id);
+    if (aliases == declaredNetsByBacking.end()) {
+      callback(source);
+      return;
+    }
+    for (const DeclaredNetObject &declared : aliases->second)
+      callback(DirectEndpoint{declared.reference, source.descriptor,
+                              declared.vpiKind, declared.scopeId,
+                              declared.type});
+  };
+  llvm::DenseMap<uint64_t, std::optional<uint64_t>> moduleScopeCache;
+  std::function<std::optional<uint64_t>(uint64_t)> moduleInstanceScope =
+      [&](uint64_t id) -> std::optional<uint64_t> {
+    if (auto cached = moduleScopeCache.find(id);
+        cached != moduleScopeCache.end())
+      return cached->second;
+    auto found = scopeDeclarationsById.find(id);
+    if (found == scopeDeclarationsById.end())
+      return moduleScopeCache[id] = std::nullopt;
+    uint32_t kind = sim::vpiKindForScope(found->second);
+    if (kind == static_cast<uint32_t>(VPIKind::Module) ||
+        kind == static_cast<uint32_t>(VPIKind::Interface) ||
+        kind == static_cast<uint32_t>(VPIKind::Program))
+      return moduleScopeCache[id] = id;
+    if (!found->second.getParent())
+      return moduleScopeCache[id] = std::nullopt;
+    return moduleScopeCache[id] =
+               moduleInstanceScope(*found->second.getParent());
+  };
+
+  for (const ScopeOwnedStatementPlan &plan : scopeOwnedStatementPlans) {
+    SmallVector<Operation *> lhsRhs;
+    if (plan.kind == VPIKind::AliasStmt) {
+      lhsRhs = {plan.lhs, plan.rhs};
+    } else {
+      SmallVector<Operation *> children = getChildren(plan.source);
+      if (children.size() != 1)
+        continue;
+      auto assignment =
+          dyn_cast<semantic::SVAssignmentExpressionOp>(children.front());
+      if (!assignment)
+        continue;
+      lhsRhs = getChildren(assignment);
+    }
+    if (lhsRhs.size() != 2)
+      continue;
+
+    std::optional<DirectEndpoint> lhs = directEndpoint(lhsRhs[0]);
+    std::optional<DirectEndpoint> rhs = directEndpoint(lhsRhs[1]);
+    sim::VPIObjectRefAttr statement = statementReference(plan.statementId);
+    auto emitForward = [&](std::optional<DirectEndpoint> target,
+                           reflection::VPIRelationKind selector) {
+      if (!target)
+        return;
+      uint32_t selectorNumber = selectorValue(selector);
+      const auto *edge = reflection::findVPITraversal(
+          static_cast<uint32_t>(plan.kind), selectorNumber,
+          reflection::VPITraversalMode::Handle);
+      if (!edge || edge->statementContainment ||
+          edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+          !reflection::vpiObjectSetContains(edge->targets, target->vpiKind))
+        return;
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(plan.source), statement, selectorNumber,
+          sim::VPIRelationMode::Handle, 0, target->reference);
+    };
+    emitForward(lhs, reflection::VPIRelationKind::LhsRel);
+    emitForward(rhs, reflection::VPIRelationKind::RhsRel);
+
+    if (plan.kind == VPIKind::AliasStmt)
+      continue;
+
+    // IEEE 1800-2023 37.46 and 37.58 define the continuous-assignment
+    // connectivity relations below.
+    std::optional<uint64_t> statementModule = moduleInstanceScope(plan.scopeId);
+    if (lhs) {
+      forPhysicalNetSpelling(*lhs, [&](const DirectEndpoint &spelling) {
+        addReverse(spelling,
+                   selectorValue(reflection::VPIRelationKind::DriverRel), plan);
+        std::optional<uint64_t> objectModule =
+            moduleInstanceScope(spelling.scopeId);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            statementModule && objectModule &&
+            *statementModule == *objectModule)
+          addReverse(spelling,
+                     selectorValue(reflection::VPIRelationKind::LocalDriverRel),
+                     plan);
+        std::optional<uint64_t> width = sim::getPackedWidth(spelling.type);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net && width &&
+            *width == 1)
+          addReverse(spelling, static_cast<uint32_t>(VPIKind::ContAssign),
+                     plan);
+      });
+      addReverse(*lhs, selectorValue(reflection::VPIRelationKind::UseRel),
+                 plan);
+      // IEEE 1800-2023 37.16 restricts vpiContAssign iteration from a net to
+      // scalar nets and bit-selects. Variables have their own driver model in
+      // 37.17 and 37.21 and expose whole-variable continuous assignments.
+      if (lhs->descriptor->kind == DescriptorInfo::Kind::Storage)
+        addReverse(*lhs, static_cast<uint32_t>(VPIKind::ContAssign), plan);
+    }
+    if (rhs) {
+      forPhysicalNetSpelling(*rhs, [&](const DirectEndpoint &spelling) {
+        addReverse(spelling,
+                   selectorValue(reflection::VPIRelationKind::LoadRel), plan);
+        std::optional<uint64_t> objectModule =
+            moduleInstanceScope(spelling.scopeId);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            statementModule && objectModule &&
+            *statementModule == *objectModule)
+          addReverse(spelling,
+                     selectorValue(reflection::VPIRelationKind::LocalLoadRel),
+                     plan);
+      });
+      addReverse(*rhs, selectorValue(reflection::VPIRelationKind::UseRel),
+                 plan);
+    }
+  }
+  llvm::sort(reverseRelations, [](const ReverseRelation &left,
+                                  const ReverseRelation &right) {
+    uint64_t leftSource = left.source.getId().getValue().getZExtValue();
+    uint64_t rightSource = right.source.getId().getValue().getZExtValue();
+    uint64_t leftTarget = left.target.getId().getValue().getZExtValue();
+    uint64_t rightTarget = right.target.getId().getValue().getZExtValue();
+    return std::make_tuple(left.source.getKind(), leftSource, left.selector,
+                           leftTarget) <
+           std::make_tuple(right.source.getKind(), rightSource, right.selector,
+                           rightTarget);
+  });
+  reverseRelations.erase(std::unique(reverseRelations.begin(),
+                                     reverseRelations.end(),
+                                     [](const ReverseRelation &left,
+                                        const ReverseRelation &right) {
+                                       return left.source == right.source &&
+                                              left.selector == right.selector &&
+                                              left.target == right.target;
+                                     }),
+                         reverseRelations.end());
+  sim::VPIObjectRefAttr previousSource;
+  uint32_t previousSelector = 0;
+  uint64_t ordinal = 0;
+  for (const ReverseRelation &relation : reverseRelations) {
+    if (relation.source != previousSource ||
+        relation.selector != previousSelector) {
+      previousSource = relation.source;
+      previousSelector = relation.selector;
+      ordinal = 0;
+    }
+    sim::SimVPIRelationDeclOp::create(
+        builder, relation.location, relation.source, relation.selector,
+        sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
   if (invalid)
     return failure();

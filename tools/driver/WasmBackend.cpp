@@ -150,6 +150,8 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   // reachable from an explicit export.
   owned.push_back("--export=obelisk_final_time");
   owned.push_back("--export=obelisk_time_precision_fs");
+  if (options.vpi != "off")
+    owned.push_back("--export=obelisk_rt_v1_vpi_object_model");
   owned.push_back("--export-memory");
   owned.push_back("--allow-undefined");
   owned.push_back("-o");

@@ -872,6 +872,20 @@ def ObeliskSVNetKind : I32EnumAttr<"SVNetKind",
   let cppNamespace = "::obelisk::ir";
 }
 
+def ObeliskSVNetExpansion_None
+    : I32EnumAttrCase<"None", 0, "none">;
+def ObeliskSVNetExpansion_Vectored
+    : I32EnumAttrCase<"Vectored", 1, "vectored">;
+def ObeliskSVNetExpansion_Scalared
+    : I32EnumAttrCase<"Scalared", 2, "scalared">;
+def ObeliskSVNetExpansionHint : I32EnumAttr<"SVNetExpansionHint",
+    "explicit SystemVerilog net vector expansion request", [
+  ObeliskSVNetExpansion_None, ObeliskSVNetExpansion_Vectored,
+  ObeliskSVNetExpansion_Scalared
+]> {
+  let cppNamespace = "::obelisk::ir";
+}
+
 def ObeliskSVDrive_Supply : I32EnumAttrCase<"Supply", 0, "supply">;
 def ObeliskSVDrive_Strong : I32EnumAttrCase<"Strong", 1, "strong">;
 def ObeliskSVDrive_Pull : I32EnumAttrCase<"Pull", 2, "pull">;

@@ -42,6 +42,7 @@ class ReflectionTableKind<string cppName_, int value_, int packedWidth_ = 2> {
 def ScopeTable : ReflectionTableKind<"Scope", 0>;
 def ObjectTable : ReflectionTableKind<"Object", 1>;
 def StatementTable : ReflectionTableKind<"Statement", 2>;
+def StaticObjectTable : ReflectionTableKind<"StaticObject", 3>;
 
 def HeaderMagic : ReflectionField<"Magic", 0, Bytes8>;
 def HeaderVersion : ReflectionField<"Version", 8, U32LE>;
@@ -157,6 +158,24 @@ def Statement : ReflectionLayout<"Statement", 40,
    StatementSourceLine, StatementSourceColumn, StatementVPIKind,
    StatementFlags]>;
 
+// Compact immutable source/semantic identities that have no executable
+// storage. UINT32_MAX denotes an absent scope; zero denotes an absent source
+// file or name, matching the existing relative-string convention. All
+// object relationships and immutable non-universal properties remain in the
+// shared relation/fixed-property tables, avoiding per-record pointer fields.
+def StaticObjectID : ReflectionField<"ID", 0, U64LE>;
+def StaticObjectScopeIndex : ReflectionField<"ScopeIndex", 8, U32LE>;
+def StaticObjectSourceFile : ReflectionField<"SourceFile", 12, U32LE>;
+def StaticObjectName : ReflectionField<"Name", 16, U32LE>;
+def StaticObjectSourceLine : ReflectionField<"SourceLine", 20, U32LE>;
+def StaticObjectSourceColumn : ReflectionField<"SourceColumn", 24, U32LE>;
+def StaticObjectVPIKind : ReflectionField<"VPIKind", 28, U16LE>;
+def StaticObjectFlags : ReflectionField<"Flags", 30, U16LE>;
+def StaticObject : ReflectionLayout<"StaticObject", 32,
+  [StaticObjectID, StaticObjectScopeIndex, StaticObjectSourceFile,
+   StaticObjectName, StaticObjectSourceLine, StaticObjectSourceColumn,
+   StaticObjectVPIKind, StaticObjectFlags]>;
+
 def StatementSiteID : ReflectionField<"ID", 0, U64LE>;
 def StatementSiteStatementIndex
     : ReflectionField<"StatementIndex", 8, U32LE>;
@@ -182,6 +201,398 @@ def Relation : ReflectionLayout<"Relation", 16,
   [RelationSourceIndex, RelationTargetIndexAndTable, RelationOrdinal,
    RelationSelector, RelationSourceKindAndTable]>;
 
+// Exact source-semantic VPI types form a compact graph separate from the
+// executable Type table.  The latter is also consumed by VCD and value-layout
+// code and deliberately remains normalized and nonzero-width.  Semantic graph
+// cursors are table indices; UINT32_MAX denotes an absent edge/object/string.
+def SemanticTypeKindAndFlags : ReflectionField<"KindAndFlags", 0, U32LE>;
+def SemanticTypeFirstEdge : ReflectionField<"FirstEdge", 4, U32LE>;
+def SemanticTypeEdgeCount : ReflectionField<"EdgeCount", 8, U32LE>;
+def SemanticTypeAliasObject
+    : ReflectionField<"AliasObjectIndexAndTable", 12, U32LE>;
+def SemanticTypeIdentityTarget
+    : ReflectionField<"IdentityTargetIndexAndTable", 16, U32LE>;
+def SemanticTypeName : ReflectionField<"Name", 20, U32LE>;
+def SemanticTypeModport : ReflectionField<"Modport", 24, U32LE>;
+def SemanticTypeQueueBound : ReflectionField<"QueueBound", 28, U32LE>;
+def SemanticTypeLeft : ReflectionField<"Left", 32, I64LE>;
+def SemanticTypeRight : ReflectionField<"Right", 40, I64LE>;
+def SemanticTypeBitWidth : ReflectionField<"BitWidth", 48, U64LE>;
+def SemanticTypeTagBits : ReflectionField<"TagBits", 56, U64LE>;
+def SemanticType : ReflectionLayout<"SemanticType", 64,
+  [SemanticTypeKindAndFlags, SemanticTypeFirstEdge, SemanticTypeEdgeCount,
+   SemanticTypeAliasObject, SemanticTypeIdentityTarget, SemanticTypeName,
+   SemanticTypeModport, SemanticTypeQueueBound, SemanticTypeLeft,
+   SemanticTypeRight, SemanticTypeBitWidth, SemanticTypeTagBits]>;
+
+def SemanticTypeEdgeChild : ReflectionField<"Child", 0, U32LE>;
+def SemanticTypeEdgeRoleAndFlags
+    : ReflectionField<"RoleAndFlags", 4, U32LE>;
+def SemanticTypeEdgeOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def SemanticTypeEdgeName : ReflectionField<"Name", 12, U32LE>;
+def SemanticTypeEdgePackedOffset
+    : ReflectionField<"PackedOffset", 16, U64LE>;
+def SemanticTypeEdge : ReflectionLayout<"SemanticTypeEdge", 24,
+  [SemanticTypeEdgeChild, SemanticTypeEdgeRoleAndFlags,
+   SemanticTypeEdgeOrdinal, SemanticTypeEdgeName,
+   SemanticTypeEdgePackedOffset]>;
+
+// Sparse bindings avoid a four-byte null slot on every physical or compact
+// object that has no semantic type. ObjectIndexAndTable uses the same packed
+// table/index representation as relation targets and is sorted for lookup.
+def SemanticRootBindingObjectIndexAndTable
+    : ReflectionField<"ObjectIndexAndTable", 0, U32LE>;
+def SemanticRootBindingType : ReflectionField<"SemanticType", 4, U32LE>;
+def SemanticRootBinding : ReflectionLayout<"SemanticRootBinding", 8,
+  [SemanticRootBindingObjectIndexAndTable, SemanticRootBindingType]>;
+
+// Immutable indexing geometry for relation-backed static arrays.  Records are
+// sorted by object-table index; dense arrays reference declared ranges in
+// left-to-right order, while sparse generate arrays reference exact source
+// index keys.  Relation ordinals select the canonical object already stored in
+// the ordinary VPI relation table, so no second object graph is materialized.
+def RelationIndexObjectIndex
+    : ReflectionField<"ObjectIndex", 0, U32LE>;
+def RelationIndexFirstDimension
+    : ReflectionField<"FirstDimension", 4, U32LE>;
+def RelationIndexDimensionCount
+    : ReflectionField<"DimensionCount", 8, U16LE>;
+def RelationIndexFlags : ReflectionField<"Flags", 10, U16LE>;
+def RelationIndexFirstKey : ReflectionField<"FirstKey", 12, U32LE>;
+def RelationIndexFirstOrdinalKey
+    : ReflectionField<"FirstOrdinalKey", 16, U32LE>;
+def RelationIndex : ReflectionLayout<"RelationIndex", 20,
+  [RelationIndexObjectIndex, RelationIndexFirstDimension,
+   RelationIndexDimensionCount, RelationIndexFlags, RelationIndexFirstKey,
+   RelationIndexFirstOrdinalKey]>;
+
+def RelationIndexDimensionLeft : ReflectionField<"Left", 0, I64LE>;
+def RelationIndexDimensionRight : ReflectionField<"Right", 8, I64LE>;
+def RelationIndexDimension : ReflectionLayout<"RelationIndexDimension", 16,
+  [RelationIndexDimensionLeft, RelationIndexDimensionRight]>;
+
+def RelationIndexKeyIndex : ReflectionField<"Index", 0, I64LE>;
+def RelationIndexKeyOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def RelationIndexKey : ReflectionLayout<"RelationIndexKey", 12,
+  [RelationIndexKeyIndex, RelationIndexKeyOrdinal]>;
+
+def RelationIndexMemberTarget
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def RelationIndexMemberRelationIndex
+    : ReflectionField<"RelationIndex", 4, U32LE>;
+def RelationIndexMemberOrdinal : ReflectionField<"Ordinal", 8, U32LE>;
+def RelationIndexMember : ReflectionLayout<"RelationIndexMember", 12,
+  [RelationIndexMemberTarget, RelationIndexMemberRelationIndex,
+   RelationIndexMemberOrdinal]>;
+
+// Sparse immutable VPI properties are keyed by the same compact physical
+// table/index identity used by relations.  KindAndFlags stores the generated
+// VPIPropertyValueKind in its low two bits; all remaining bits are reserved.
+// String payloads are absolute image offsets into the canonical string pool.
+def FixedPropertySource
+    : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
+def FixedPropertySelector : ReflectionField<"Selector", 4, U16LE>;
+def FixedPropertyKindAndFlags
+    : ReflectionField<"KindAndFlags", 6, U16LE>;
+def FixedPropertyPayload : ReflectionField<"Payload", 8, U64LE>;
+def FixedProperty : ReflectionLayout<"FixedProperty", 16,
+  [FixedPropertySource, FixedPropertySelector, FixedPropertyKindAndFlags,
+   FixedPropertyPayload]>;
+
+// Definition-invariant instance metadata is stored once per source design
+// unit. Instance bindings use the universal packed table/index source key and
+// are sorted by that key for allocation-free binary lookup. Relative string
+// offsets are 32-bit offsets into the canonical image string pool.
+def DefinitionVPIKind : ReflectionField<"VPIKind", 0, U16LE>;
+def DefinitionFlags : ReflectionField<"Flags", 2, U16LE>;
+def DefinitionName : ReflectionField<"Name", 4, U32LE>;
+def DefinitionFile : ReflectionField<"File", 8, U32LE>;
+def DefinitionLine : ReflectionField<"Line", 12, U32LE>;
+def DefinitionFirstMember : ReflectionField<"FirstMember", 16, U32LE>;
+def DefinitionMemberCount : ReflectionField<"MemberCount", 20, U32LE>;
+def DefinitionFirstMemberRelation
+    : ReflectionField<"FirstMemberRelation", 24, U32LE>;
+def DefinitionMemberRelationCount
+    : ReflectionField<"MemberRelationCount", 28, U32LE>;
+def Definition : ReflectionLayout<"Definition", 32,
+  [DefinitionVPIKind, DefinitionFlags, DefinitionName, DefinitionFile,
+   DefinitionLine, DefinitionFirstMember, DefinitionMemberCount,
+   DefinitionFirstMemberRelation, DefinitionMemberRelationCount]>;
+
+def DefinitionBindingSource
+    : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
+def DefinitionBindingDefinition
+    : ReflectionField<"Definition", 4, U32LE>;
+def DefinitionBindingSpecialization
+    : ReflectionField<"Specialization", 8, U32LE>;
+def DefinitionBindingFirstMemberEndpoint
+    : ReflectionField<"FirstMemberEndpoint", 12, U32LE>;
+def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 16,
+  [DefinitionBindingSource, DefinitionBindingDefinition,
+   DefinitionBindingSpecialization, DefinitionBindingFirstMemberEndpoint]>;
+
+// Definition-owned declarations are templates. A synthetic runtime cursor
+// combines one of these member indices with an elaborated instance scope.
+// Flags currently carry the exact low-byte vpiDirection value for IODecl.
+def DefinitionMemberName : ReflectionField<"Name", 0, U32LE>;
+def DefinitionMemberFile : ReflectionField<"File", 4, U32LE>;
+def DefinitionMemberLine : ReflectionField<"Line", 8, U32LE>;
+def DefinitionMemberColumn : ReflectionField<"Column", 12, U32LE>;
+def DefinitionMemberVPIKind : ReflectionField<"VPIKind", 16, U16LE>;
+def DefinitionMemberFlags : ReflectionField<"Flags", 18, U16LE>;
+def DefinitionMember : ReflectionLayout<"DefinitionMember", 20,
+  [DefinitionMemberName, DefinitionMemberFile, DefinitionMemberLine,
+   DefinitionMemberColumn, DefinitionMemberVPIKind, DefinitionMemberFlags]>;
+
+// One range per generated (definition, selector) adjacency group; the compact
+// target list is shared by every instance and its position is the ordinal.
+def DefinitionMemberRelationSelector
+    : ReflectionField<"Selector", 0, U16LE>;
+def DefinitionMemberRelationFlags
+    : ReflectionField<"Flags", 2, U16LE>;
+def DefinitionMemberRelationFirstTarget
+    : ReflectionField<"FirstTarget", 4, U32LE>;
+def DefinitionMemberRelationTargetCount
+    : ReflectionField<"TargetCount", 8, U32LE>;
+def DefinitionMemberRelation : ReflectionLayout<"DefinitionMemberRelation", 12,
+  [DefinitionMemberRelationSelector, DefinitionMemberRelationFlags,
+   DefinitionMemberRelationFirstTarget,
+   DefinitionMemberRelationTargetCount]>;
+def DefinitionMemberRelationTargetMember
+    : ReflectionField<"Member", 0, U32LE>;
+def DefinitionMemberRelationTarget
+    : ReflectionLayout<"DefinitionMemberRelationTarget", 4,
+      [DefinitionMemberRelationTargetMember]>;
+
+// Effective member types are hash-consed as complete definition
+// specializations. DefinitionBinding selects one specialization per instance.
+def DefinitionSpecializationDefinition
+    : ReflectionField<"Definition", 0, U32LE>;
+def DefinitionSpecializationFirstBinding
+    : ReflectionField<"FirstBinding", 4, U32LE>;
+def DefinitionSpecializationBindingCount
+    : ReflectionField<"BindingCount", 8, U32LE>;
+def DefinitionSpecialization : ReflectionLayout<"DefinitionSpecialization", 12,
+  [DefinitionSpecializationDefinition,
+   DefinitionSpecializationFirstBinding,
+   DefinitionSpecializationBindingCount]>;
+def DefinitionSpecializationBindingMember
+    : ReflectionField<"Member", 0, U32LE>;
+def DefinitionSpecializationBindingSemanticType
+    : ReflectionField<"SemanticType", 4, U32LE>;
+def DefinitionSpecializationBinding
+    : ReflectionLayout<"DefinitionSpecializationBinding", 8,
+      [DefinitionSpecializationBindingMember,
+       DefinitionSpecializationBindingSemanticType]>;
+
+// One instance-specific expression endpoint per definition member. The row
+// ordinal is implicit in DefinitionBinding.FirstMemberEndpoint, so the common
+// direct case costs only one packed table/index word.
+def DefinitionMemberEndpointTarget
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def DefinitionMemberEndpoint : ReflectionLayout<"DefinitionMemberEndpoint", 4,
+  [DefinitionMemberEndpointTarget]>;
+
+// Sparse instance-specific edges from a synthetic definition-member cursor.
+// Binding and member form the source identity.  Selector/mode allow this one
+// generated representation to serve every legal relation of that source.
+def DefinitionMemberInstanceRelationBinding
+    : ReflectionField<"Binding", 0, U32LE>;
+def DefinitionMemberInstanceRelationMemberAndFlags
+    : ReflectionField<"MemberAndFlags", 4, U32LE>;
+def DefinitionMemberInstanceRelationSelector
+    : ReflectionField<"Selector", 8, U16LE>;
+def DefinitionMemberInstanceRelationModeAndFlags
+    : ReflectionField<"ModeAndFlags", 10, U16LE>;
+def DefinitionMemberInstanceRelationFirstTarget
+    : ReflectionField<"FirstTarget", 12, U32LE>;
+def DefinitionMemberInstanceRelationTargetCount
+    : ReflectionField<"TargetCount", 16, U32LE>;
+def DefinitionMemberInstanceRelation
+    : ReflectionLayout<"DefinitionMemberInstanceRelation", 20,
+      [DefinitionMemberInstanceRelationBinding,
+       DefinitionMemberInstanceRelationMemberAndFlags,
+       DefinitionMemberInstanceRelationSelector,
+       DefinitionMemberInstanceRelationModeAndFlags,
+       DefinitionMemberInstanceRelationFirstTarget,
+       DefinitionMemberInstanceRelationTargetCount]>;
+def DefinitionMemberInstanceRelationTargetIndexAndTable
+    : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
+def DefinitionMemberInstanceRelationTarget
+    : ReflectionLayout<"DefinitionMemberInstanceRelationTarget", 4,
+      [DefinitionMemberInstanceRelationTargetIndexAndTable]>;
+// Permutation of absolute indices in the target table above, sorted by the
+// dereferenced physical port and then target index. The owning relation range
+// provides the source binding/member and reverse selector without duplicating
+// either endpoint in this index.
+def DefinitionMemberInstanceRelationInverseTarget
+    : ReflectionField<"Target", 0, U32LE>;
+def DefinitionMemberInstanceRelationInverse
+    : ReflectionLayout<"DefinitionMemberInstanceRelationInverse", 4,
+      [DefinitionMemberInstanceRelationInverseTarget]>;
+
+// Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
+// first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
+// mean that the exact dominating subtype is unavailable.
+def ResolvedNetRunObjectIndex : ReflectionField<"ObjectIndex", 0, U32LE>;
+def ResolvedNetRunNetType : ReflectionField<"NetType", 4, U32LE>;
+def ResolvedNetRunFirstBit : ReflectionField<"FirstBit", 8, U64LE>;
+def ResolvedNetRunBitCount : ReflectionField<"BitCount", 16, U64LE>;
+def ResolvedNetRun : ReflectionLayout<"ResolvedNetRun", 24,
+  [ResolvedNetRunObjectIndex, ResolvedNetRunNetType,
+   ResolvedNetRunFirstBit, ResolvedNetRunBitCount]>;
+
+// Effective net delays use the same per-bit run representation as resolved
+// net subtypes. Rise, fall, and third are scheduler ticks at the design-wide
+// time precision; Third is the turn-off delay for ordinary nets and the charge
+// decay time for trireg nets. Runs are sorted and maximally coalesced; missing
+// bits have the default zero delay and therefore consume no image space.
+def NetDelayRunObjectIndex : ReflectionField<"ObjectIndex", 0, U32LE>;
+def NetDelayRunReserved : ReflectionField<"Reserved", 4, U32LE>;
+def NetDelayRunFirstBit : ReflectionField<"FirstBit", 8, U64LE>;
+def NetDelayRunBitCount : ReflectionField<"BitCount", 16, U64LE>;
+def NetDelayRunRise : ReflectionField<"Rise", 24, I64LE>;
+def NetDelayRunFall : ReflectionField<"Fall", 32, I64LE>;
+def NetDelayRunThird : ReflectionField<"Third", 40, I64LE>;
+def NetDelayRun : ReflectionLayout<"NetDelayRun", 48,
+  [NetDelayRunObjectIndex, NetDelayRunReserved, NetDelayRunFirstBit,
+   NetDelayRunBitCount, NetDelayRunRise, NetDelayRunFall, NetDelayRunThird]>;
+
+// HeaderReserved is zero when no extension is present, otherwise it is the
+// absolute 32-bit image offset of this directory. Keeping the fixed header
+// stable lets future reflection producers add orthogonal generated sections
+// without rebuilding every existing consumer image.
+def SemanticDirectoryTypeOffset
+    : ReflectionField<"SemanticTypeOffset", 0, U64LE>;
+def SemanticDirectoryTypeCount
+    : ReflectionField<"SemanticTypeCount", 8, U64LE>;
+def SemanticDirectoryEdgeOffset
+    : ReflectionField<"SemanticTypeEdgeOffset", 16, U64LE>;
+def SemanticDirectoryEdgeCount
+    : ReflectionField<"SemanticTypeEdgeCount", 24, U64LE>;
+def SemanticDirectoryRootOffset
+    : ReflectionField<"SemanticRootBindingOffset", 32, U64LE>;
+def SemanticDirectoryRootCount
+    : ReflectionField<"SemanticRootBindingCount", 40, U64LE>;
+def SemanticDirectoryRelationIndexOffset
+    : ReflectionField<"RelationIndexOffset", 48, U64LE>;
+def SemanticDirectoryRelationIndexCount
+    : ReflectionField<"RelationIndexCount", 56, U64LE>;
+def SemanticDirectoryRelationIndexDimensionOffset
+    : ReflectionField<"RelationIndexDimensionOffset", 64, U64LE>;
+def SemanticDirectoryRelationIndexDimensionCount
+    : ReflectionField<"RelationIndexDimensionCount", 72, U64LE>;
+def SemanticDirectoryRelationIndexKeyOffset
+    : ReflectionField<"RelationIndexKeyOffset", 80, U64LE>;
+def SemanticDirectoryRelationIndexKeyCount
+    : ReflectionField<"RelationIndexKeyCount", 88, U64LE>;
+def SemanticDirectoryRelationIndexMemberOffset
+    : ReflectionField<"RelationIndexMemberOffset", 96, U64LE>;
+def SemanticDirectoryRelationIndexMemberCount
+    : ReflectionField<"RelationIndexMemberCount", 104, U64LE>;
+def SemanticDirectoryFixedPropertyOffset
+    : ReflectionField<"FixedPropertyOffset", 112, U64LE>;
+def SemanticDirectoryFixedPropertyCount
+    : ReflectionField<"FixedPropertyCount", 120, U64LE>;
+def SemanticDirectoryResolvedNetRunOffset
+    : ReflectionField<"ResolvedNetRunOffset", 128, U64LE>;
+def SemanticDirectoryResolvedNetRunCount
+    : ReflectionField<"ResolvedNetRunCount", 136, U64LE>;
+def SemanticDirectoryNetDelayRunOffset
+    : ReflectionField<"NetDelayRunOffset", 144, U64LE>;
+def SemanticDirectoryNetDelayRunCount
+    : ReflectionField<"NetDelayRunCount", 152, U64LE>;
+def SemanticDirectoryStaticObjectOffset
+    : ReflectionField<"StaticObjectOffset", 160, U64LE>;
+def SemanticDirectoryStaticObjectCount
+    : ReflectionField<"StaticObjectCount", 168, U64LE>;
+def SemanticDirectoryDefinitionOffset
+    : ReflectionField<"DefinitionOffset", 176, U64LE>;
+def SemanticDirectoryDefinitionCount
+    : ReflectionField<"DefinitionCount", 184, U64LE>;
+def SemanticDirectoryDefinitionBindingOffset
+    : ReflectionField<"DefinitionBindingOffset", 192, U64LE>;
+def SemanticDirectoryDefinitionBindingCount
+    : ReflectionField<"DefinitionBindingCount", 200, U64LE>;
+def SemanticDirectoryDefinitionMemberOffset
+    : ReflectionField<"DefinitionMemberOffset", 208, U64LE>;
+def SemanticDirectoryDefinitionMemberCount
+    : ReflectionField<"DefinitionMemberCount", 216, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationOffset
+    : ReflectionField<"DefinitionMemberRelationOffset", 224, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationCount
+    : ReflectionField<"DefinitionMemberRelationCount", 232, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationTargetOffset
+    : ReflectionField<"DefinitionMemberRelationTargetOffset", 240, U64LE>;
+def SemanticDirectoryDefinitionMemberRelationTargetCount
+    : ReflectionField<"DefinitionMemberRelationTargetCount", 248, U64LE>;
+def SemanticDirectoryDefinitionSpecializationOffset
+    : ReflectionField<"DefinitionSpecializationOffset", 256, U64LE>;
+def SemanticDirectoryDefinitionSpecializationCount
+    : ReflectionField<"DefinitionSpecializationCount", 264, U64LE>;
+def SemanticDirectoryDefinitionSpecializationBindingOffset
+    : ReflectionField<"DefinitionSpecializationBindingOffset", 272, U64LE>;
+def SemanticDirectoryDefinitionSpecializationBindingCount
+    : ReflectionField<"DefinitionSpecializationBindingCount", 280, U64LE>;
+def SemanticDirectoryDefinitionMemberEndpointOffset
+    : ReflectionField<"DefinitionMemberEndpointOffset", 288, U64LE>;
+def SemanticDirectoryDefinitionMemberEndpointCount
+    : ReflectionField<"DefinitionMemberEndpointCount", 296, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationOffset", 304, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationCount
+    : ReflectionField<"DefinitionMemberInstanceRelationCount", 312, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationTargetOffset", 320, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationTargetCount
+    : ReflectionField<"DefinitionMemberInstanceRelationTargetCount", 328, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset
+    : ReflectionField<"DefinitionMemberInstanceRelationInverseOffset", 336, U64LE>;
+def SemanticDirectoryDefinitionMemberInstanceRelationInverseCount
+    : ReflectionField<"DefinitionMemberInstanceRelationInverseCount", 344, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 352,
+  [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
+   SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
+   SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
+   SemanticDirectoryRelationIndexOffset,
+   SemanticDirectoryRelationIndexCount,
+   SemanticDirectoryRelationIndexDimensionOffset,
+   SemanticDirectoryRelationIndexDimensionCount,
+   SemanticDirectoryRelationIndexKeyOffset,
+   SemanticDirectoryRelationIndexKeyCount,
+   SemanticDirectoryRelationIndexMemberOffset,
+   SemanticDirectoryRelationIndexMemberCount,
+   SemanticDirectoryFixedPropertyOffset,
+   SemanticDirectoryFixedPropertyCount,
+   SemanticDirectoryResolvedNetRunOffset,
+   SemanticDirectoryResolvedNetRunCount,
+   SemanticDirectoryNetDelayRunOffset,
+   SemanticDirectoryNetDelayRunCount,
+   SemanticDirectoryStaticObjectOffset,
+   SemanticDirectoryStaticObjectCount,
+   SemanticDirectoryDefinitionOffset,
+   SemanticDirectoryDefinitionCount,
+   SemanticDirectoryDefinitionBindingOffset,
+   SemanticDirectoryDefinitionBindingCount,
+   SemanticDirectoryDefinitionMemberOffset,
+   SemanticDirectoryDefinitionMemberCount,
+   SemanticDirectoryDefinitionMemberRelationOffset,
+   SemanticDirectoryDefinitionMemberRelationCount,
+   SemanticDirectoryDefinitionMemberRelationTargetOffset,
+   SemanticDirectoryDefinitionMemberRelationTargetCount,
+   SemanticDirectoryDefinitionSpecializationOffset,
+   SemanticDirectoryDefinitionSpecializationCount,
+   SemanticDirectoryDefinitionSpecializationBindingOffset,
+   SemanticDirectoryDefinitionSpecializationBindingCount,
+   SemanticDirectoryDefinitionMemberEndpointOffset,
+   SemanticDirectoryDefinitionMemberEndpointCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationTargetCount,
+   SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset,
+   SemanticDirectoryDefinitionMemberInstanceRelationInverseCount]>;
+
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;
 def NetRecord : ReflectionRecordKind<"Net", 3, Object>;
@@ -190,3 +601,7 @@ def ProcessRecord : ReflectionRecordKind<"Process", 5, Object>;
 def TypeRecord : ReflectionRecordKind<"Type", 6, Type>;
 def FunctionRecord : ReflectionRecordKind<"Function", 7, Object>;
 def PortRecord : ReflectionRecordKind<"Port", 8, Object>;
+// Source-only VPI identities share the pointer-free object layout. Their
+// state offset is always zero; any immutable value payload is represented by
+// explicit metadata and relations rather than executable design state.
+def StaticObjectRecord : ReflectionRecordKind<"StaticObject", 9, Object>;

@@ -101,12 +101,24 @@ LogicType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 static FailureOr<uint64_t> getPackedBitWidth(Type type);
 static bool isPackedType(Type type);
 
+static bool isPackedInterconnectShape(Type type) {
+  if (isa<UntypedType>(type))
+    return true;
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return isPackedInterconnectShape(array.getElementType());
+  if (auto array = dyn_cast<RangedPackedArrayType>(type))
+    return isPackedInterconnectShape(array.getElementType());
+  return false;
+}
+
 LogicalResult RangedPackedArrayType::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError, Type elementType,
     int64_t left, int64_t right) {
   if (!getInclusiveRangeWidth(left, right))
     return emitError() << "packed array range width exceeds uint64_t";
-  if (!isPackedType(elementType))
+  // A generic interconnect retains its syntactic packed dimensions while its
+  // leaf type remains intentionally unresolved until topology preparation.
+  if (!isPackedType(elementType) && !isPackedInterconnectShape(elementType))
     return emitError() << "packed array element must be packed, got "
                        << elementType;
   return success();
@@ -144,6 +156,8 @@ LogicalResult SourceAggregateType::verify(
     auto index = field ? field.getAs<IntegerAttr>("ordinal") : IntegerAttr{};
     auto offset =
         field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+    auto randMode =
+        field ? field.getAs<IntegerAttr>("rand_mode") : IntegerAttr{};
     if (!name || name.getValue().empty() || !type || !index || !offset)
       return emitError() << "aggregate fields require name, type, ordinal, and "
                             "packed_offset metadata";
@@ -154,6 +168,9 @@ LogicalResult SourceAggregateType::verify(
     if (offset.getValue().isNegative() ||
         (!isPacked && !offset.getValue().isZero()))
       return emitError() << "aggregate field has invalid packed offset";
+    if (randMode && (randMode.getValue().isNegative() ||
+                     randMode.getValue().getZExtValue() > 2))
+      return emitError() << "aggregate field has invalid randomization mode";
     if (!names.insert(name.getValue()).second)
       return emitError() << "aggregate field names must be unique";
   }

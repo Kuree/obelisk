@@ -52,6 +52,24 @@ module {
             }
           }
         }
+        // A multi-output gate has one assignment expression per output.
+        // vpiSize counts only the non-assignment input terminals.
+        obelisk.sv.symbol.primitive_instance attributes {hierarchical_name = "primitive_strength.multi", name = "multi", node_id = 60 : i64, primitive_name = "buf", sym_name = "s60.multi", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 61 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            obelisk.sv.expression.named_value attributes {node_id = 62 : i64, referenced_path = "primitive_strength.value", referenced_symbol = @s1.$root::@s3.primitive_strength::@s4.primitive_strength::@s5.value, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            }
+            obelisk.sv.expression.empty_argument attributes {node_id = 63 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 64 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            obelisk.sv.expression.named_value attributes {node_id = 65 : i64, referenced_path = "primitive_strength.value", referenced_symbol = @s1.$root::@s3.primitive_strength::@s4.primitive_strength::@s5.value, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            }
+            obelisk.sv.expression.empty_argument attributes {node_id = 66 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 67 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+          }
+        }
       }
     }
   }
@@ -60,6 +78,7 @@ module {
 // IEEE 1800-2017 28.12.2 requires an uncertain conditional-gate output to
 // retain L/H ranges. The low and high polarity banks encode those ranges with
 // asymmetric high-impedance strengths.
+// CHECK: obelisk_sim.vpi_object.anchor {{.*}} type 21 {{.*}} hierarchy "primitive_strength.multi" debug "multi" {{.*}}primitive_input_count = 1 : i64
 // CHECK: obelisk_sim.net.decl {{[0-9]+}} in {{[0-9]+}} : !obelisk_sim.logic<1> design
 // CHECK-SAME: resolution_kind = 2 : i32
 // CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design

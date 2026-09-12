@@ -29,6 +29,9 @@ module {
           }
         }
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif", lifetime = 1 : i32, name = "vif", node_id = 8 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "">, sym_name = "s8.vif"} {}
+        // Keep an otherwise unused modport view so VPI retains both the
+        // modport typespec and its base-interface parent typespec.
+        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif_phy", lifetime = 1 : i32, name = "vif_phy", node_id = 104 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s9.bus_if, "phy">, sym_name = "s104.vif_phy"} {}
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.list attributes {node_id = 11 : i64} {
@@ -174,13 +177,17 @@ module {
 
 // CHECK: obelisk_sim.scope.decl [[BUS:[0-9]+]] parent 1 hierarchy "top.bus" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
 // CHECK: obelisk_sim.scope.decl [[OTHER:[0-9]+]] parent 1 hierarchy "top.other" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
+// CHECK: obelisk_sim.vpi_object.anchor @[[BUS_ANCHOR:__obelisk_vpi_anchor_[0-9]+]] id {{[0-9]+}} type 601 in [[BUS]] {{.*}}hierarchy "top.bus" debug "bus_if"
+// CHECK: obelisk_sim.vpi_typespec.decl @[[VIF_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
+// CHECK: obelisk_sim.vpi_typespec.decl @[[VIF_PHY_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_[0-9A-F]+]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
 // CHECK-DAG: obelisk_sim.storage.decl [[SIGNAL:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.signal"
 // CHECK-DAG: obelisk_sim.net.decl [[READY:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.ready"
 // CHECK-DAG: obelisk_sim.storage.decl [[CLK:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.clk"
 // CHECK-DAG: obelisk_sim.storage.decl [[OTHER_SIGNAL:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.signal"
 // CHECK-DAG: obelisk_sim.net.decl [[OTHER_READY:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.ready"
 // CHECK-DAG: obelisk_sim.storage.decl [[OTHER_CLK:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.clk"
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif"
+// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
+// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "phy"> design hierarchy "top.vif_phy" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
 // The value-returning observer exercises the typed fatal-path return while
 // per-pass verification is active; it is inlined into the timed process later.
 // CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 observer hierarchy "top.$code_unit_9.$observer.91.primary"

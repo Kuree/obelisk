@@ -129,7 +129,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     list(APPEND source_dependencies
       "${_obelisk_runtime_source_dir}/lib/ContainerBitstream.cpp")
   endif()
-  if(source STREQUAL "DesignDatabase" OR
+  if(source STREQUAL "DesignDatabase" OR source STREQUAL "VPI" OR
      source IN_LIST _obelisk_target_runtime_check_sources)
     list(APPEND source_dependencies ${_obelisk_target_reflection_headers})
   endif()

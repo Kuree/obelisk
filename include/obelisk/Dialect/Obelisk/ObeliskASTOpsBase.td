@@ -115,10 +115,24 @@ class ObeliskSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
 // symbolic (SymbolRefAttr), so they legitimately cross the isolation boundary
 // through the symbol mechanism rather than through captured SSA values.
 class ObeliskSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
-                                 list<Trait> traits = []>
+                                  list<Trait> traits = []>
     : ObeliskSymbolASTNodeOp<mnemonic,
         !listconcat([SymbolTable, IsolatedFromAbove], traits),
         symbolArgs>;
+
+class ObeliskInstanceArrayASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_range)> {
+  let description = [{
+    The body contains one element per source index in ascending numeric index
+    order, independent of the declared direction in `array_range`. Nested
+    instance-array nodes repeat this contract for the next dimension.
+  }];
+}
+
+class ObeliskGenerateBlockArrayASTNodeOp<string mnemonic>
+    : ObeliskSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_indices)>;
 
 class ObeliskRootASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic,
@@ -410,6 +424,10 @@ class ObeliskNetSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
         ObeliskSVNetKind:$net_kind,
         BoolAttr:$is_implicit,
+        DefaultValuedAttr<ObeliskSVNetExpansionHint,
+          "::obelisk::ir::SVNetExpansionHint::None">:$expansion_hint,
+        OptionalAttr<SymbolRefAttr>:$nettype_symbol,
+        OptionalAttr<StrAttr>:$nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<ObeliskSVDriveStrength>:$drive_strength0,
@@ -439,6 +457,8 @@ class ObeliskNetTypeASTNodeOp<string mnemonic>
         ObeliskSVNetKind:$net_kind,
         TypeAttr:$data_type,
         BoolAttr:$is_builtin,
+        OptionalAttr<SymbolRefAttr>:$aliased_nettype_symbol,
+        OptionalAttr<StrAttr>:$aliased_nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path
       )>;

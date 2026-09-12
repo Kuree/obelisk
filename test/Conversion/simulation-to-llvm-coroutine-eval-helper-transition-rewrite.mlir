@@ -68,9 +68,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func private @touch_clock(%arg0: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 5 : i64, domain = 0 : i32, effect_summary = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #obelisk_sim.effect<effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>], entry_kind = 8 : i32, home_region = 2 : i32} {
       obelisk_sim.call @pure_leaf(%arg0) : (!obelisk_sim.context) -> ()
       %clock = obelisk_sim.context.storage %arg0[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %0 = obelisk_sim.ref.load %clock : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %1 = obelisk_sim.logic.unary bit_not %0 : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %1 to %clock : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      // This is the exact post-promotion shape: the proven dominating value
+      // has already replaced every load, while canonical publication remains.
+      %value = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+      obelisk_sim.ref.store %value to %clock {obelisk.eval.discardable_store} : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
       obelisk_sim.return
     }
     obelisk_sim.code_unit.decl 6 in 0 function hierarchy "eval_wide_dynamic_nba.touch_net" {internal}
@@ -112,6 +113,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: module attributes
 // CHECK-SAME: obelisk.eval.generated
+// CHECK-NOT: obelisk.eval.discardable_store
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
 // The known net write contributes [1096, 1097) to the promotion scan. Without
@@ -133,14 +135,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: llvm.call @touch_clock.__obelisk_two_state_0
 // CHECK-LABEL: llvm.func @touch_clock.__obelisk_two_state_0(
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
-// CHECK: llvm.store
+// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NOT: llvm.getelementptr
+// CHECK-NOT: llvm.store
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @touch_clock.__obelisk_eval_private_0(
 // CHECK: llvm.call @pure_leaf
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
-// CHECK: llvm.store
+// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NOT: llvm.getelementptr
+// CHECK-NOT: llvm.store
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @touch_net.__obelisk_eval_private_0(
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition

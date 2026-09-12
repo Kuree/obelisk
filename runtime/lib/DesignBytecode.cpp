@@ -5,6 +5,7 @@
 #include "DesignBytecodeLogic.h"
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeRoots.h"
+#include "ProcessShared.h"
 #include "ProcessSignals.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
@@ -2776,26 +2777,6 @@ bool indexedSignalBlocked(const ScheduledDesignTask &task) {
   return obelisk_rt_design_signal_wait_blocked(task);
 }
 
-OBELISK_RT_FEATURE_HELPER const obelisk_rt_wait_record_v1 *
-designTaskCurrentWait(const ScheduledDesignTask &task) {
-  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
-      task.waitOffset > task.frame.size() ||
-      task.waitSize > task.frame.size() - task.waitOffset)
-    return nullptr;
-  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
-                                                             task.waitOffset);
-}
-
-OBELISK_RT_FEATURE_HELPER uint32_t
-designTaskOrderingRegion(const ScheduledDesignTask &task, bool signalResume) {
-  if (signalResume && obelisk_rt_is_slot_final_clock_occurrence_wait(
-                          designTaskCurrentWait(task)))
-    return OBELISK_RT_REGION_POSTPONED;
-  return task.queuedRegion == OBELISK_RT_REGION_POSTPONED
-             ? OBELISK_RT_REGION_POSTPONED + 1
-             : task.queuedRegion;
-}
-
 OBELISK_RT_FEATURE_HELPER bool
 designReadyCohortLater(const DesignReadyCohortEntry &lhs,
                        const DesignReadyCohortEntry &rhs) {
@@ -4807,6 +4788,168 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
+struct DesignTaskReadiness {
+  bool runnable = false;
+  bool signalTriggered = false;
+};
+
+// This is the canonical readiness predicate shared by scheduler selection and
+// cold VPI inspection. Inspection suppresses diagnostics and error-state
+// mutation, but evaluates the same wait sources as execution.
+__attribute__((always_inline)) static inline obelisk_rt_status
+inspectDesignTaskReadiness(obelisk_rt_context *context,
+                           const ScheduledDesignTask &task,
+                           uint32_t activePhase, uint32_t unstartedActorRegion,
+                           bool recordSchedulerEffects,
+                           DesignTaskReadiness &result) {
+  result = {};
+  if (task.phase != activePhase)
+    return OBELISK_RT_OK;
+
+  bool awaited = false;
+  bool childrenDone = false;
+  bool eventTriggered = false;
+  bool eventOrderReady = task.waitOrderReady;
+  bool mailboxReady = false;
+  bool semaphoreReady = false;
+  result.signalTriggered =
+      task.signalTriggered || ((task.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+                                task.suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
+                               task.signalLatch && task.signalLatch->triggered);
+  if (recordSchedulerEffects && context->signalDiagnosticsEnabled &&
+      task.started &&
+      (task.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+       task.suspendKind == OBELISK_RT_SUSPEND_EDGE ||
+       task.suspendKind == OBELISK_RT_SUSPEND_OBSERVER))
+    ++context->signalDiagnostics.readinessCalls;
+
+  if (task.started &&
+      (task.suspendKind == OBELISK_RT_SUSPEND_EVENT ||
+       task.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
+       task.suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
+       task.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
+       task.suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
+       task.suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
+      task.waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
+      task.waitOffset <= task.scratchOffset &&
+      task.waitSize <= task.scratchOffset - task.waitOffset) {
+    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+        task.frame.data() + task.waitOffset);
+    const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
+        reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
+    if (task.suspendKind == OBELISK_RT_SUSPEND_EVENT) {
+      if (task.waitGenerations.size() == wait->count)
+        for (uint32_t index = 0; index != wait->count; ++index) {
+          auto event = context->events.find(entries[index].stable_id);
+          uint64_t generation =
+              event == context->events.end() ? 0 : event->second.generation;
+          eventTriggered |= generation != task.waitGenerations[index];
+        }
+    } else if (task.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER) {
+      eventOrderReady = task.waitOrderReady;
+    } else if (task.suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
+      if (wait->count == 1) {
+        obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
+            obelisk_rt_object_from_managed_word(entries[0].stable_id),
+            wait->flags, mailboxReady);
+        if (status != OBELISK_RT_OK) {
+          if (recordSchedulerEffects)
+            context->schedulerStatus = status;
+          return status;
+        }
+      }
+    } else if (task.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+      if (wait->count == 1 && wait->payload <= UINT32_MAX) {
+        obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
+            context, obelisk_rt_object_from_managed_word(entries[0].stable_id),
+            static_cast<int32_t>(wait->payload), task.waitSequence,
+            semaphoreReady);
+        if (status != OBELISK_RT_OK) {
+          if (recordSchedulerEffects)
+            context->schedulerStatus = status;
+          return status;
+        }
+      }
+    } else if (task.suspendKind == OBELISK_RT_SUSPEND_AWAIT) {
+      awaited = wait->count == 1 && obelisk_rt_logical_process_terminated(
+                                        context, entries[0].stable_id);
+    } else if (wait->count != 0) {
+      awaited = wait->flags == 0;
+      if (wait->flags == 0)
+        for (uint32_t index = 0; index != wait->count; ++index)
+          awaited &= obelisk_rt_logical_process_terminated(
+              context, entries[index].stable_id);
+      else
+        for (uint32_t index = 0; index != wait->count; ++index)
+          awaited |= obelisk_rt_logical_process_terminated(
+              context, entries[index].stable_id);
+    }
+  }
+
+  if (task.started && task.suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
+    childrenDone = true;
+    for (const ScheduledDesignTask &child : context->scheduledDesignTasks)
+      childrenDone &= child.terminated || child.parent != task.id;
+    for (const ScheduledProcess &child : context->scheduledProcesses)
+      childrenDone &= !child.instance || child.parent != task.id;
+  }
+
+  result.runnable =
+      !task.terminated && !task.explicitlySuspended &&
+      (!task.started || awaited || eventTriggered || eventOrderReady ||
+       mailboxReady || semaphoreReady || result.signalTriggered ||
+       childrenDone || task.suspendKind == OBELISK_RT_SUSPEND_NONE ||
+       (task.suspendKind == OBELISK_RT_SUSPEND_DELAY
+            ? task.wakeTime <= context->schedulerTime
+            : (task.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+               task.suspendKind != OBELISK_RT_SUSPEND_EDGE &&
+               task.suspendKind != OBELISK_RT_SUSPEND_EVENT &&
+               task.suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER &&
+               task.suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
+               task.suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
+               task.suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
+               task.suspendKind != OBELISK_RT_SUSPEND_JOIN &&
+               task.suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
+               task.suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
+               task.suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
+               task.observedEpoch != context->schedulerEpoch)));
+  if (result.runnable && task.queuedRegion >= unstartedActorRegion &&
+      result.signalTriggered && !task.urgent && !task.prioritySignal)
+    result.runnable = false;
+  return OBELISK_RT_OK;
+}
+
+bool obelisk_rt_design_task_pending_before_read_only_unlocked(
+    obelisk_rt_context *context) {
+  if (!context || context->designTaskExecuting)
+    return false;
+  uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
+  uint32_t unstartedActorRegion =
+      obelisk_rt_peek_unstarted_actor_region(context, activePhase);
+  for (uint64_t candidateID : context->designPollCandidates) {
+    if (context->nativeScheduleDesignTaskFilterActive &&
+        candidateID != context->nativeScheduleForcedDesignTask)
+      continue;
+    auto indexed = context->scheduledDesignTaskIndices.find(candidateID);
+    if (indexed == context->scheduledDesignTaskIndices.end() ||
+        indexed->second >= context->scheduledDesignTasks.size())
+      continue;
+    const ScheduledDesignTask &task =
+        context->scheduledDesignTasks[indexed->second];
+    DesignTaskReadiness readiness;
+    if (inspectDesignTaskReadiness(context, task, activePhase,
+                                   unstartedActorRegion, false,
+                                   readiness) != OBELISK_RT_OK ||
+        !readiness.runnable)
+      continue;
+    if (task.urgent ||
+        designTaskOrderingRegion(task, readiness.signalTriggered) <=
+            OBELISK_RT_REGION_POSTPONED)
+      return true;
+  }
+  return false;
+}
+
 template <bool EnableReadyCohort>
 __attribute__((always_inline)) inline obelisk_rt_status
 runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
@@ -4949,125 +5092,14 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               context->scheduledDesignTasks.begin() + candidateIndex;
           if (context->signalDiagnosticsEnabled)
             ++context->signalDiagnostics.candidateScans;
-          if (iterator->phase != (context->schedulerRunningFinals ? 1u : 0u))
-            continue;
-          bool awaited = false;
-          bool childrenDone = false;
-          bool eventTriggered = false;
-          bool eventOrderReady = iterator->waitOrderReady;
-          bool mailboxReady = false;
-          bool semaphoreReady = false;
-          bool signalTriggered =
-              iterator->signalTriggered ||
-              ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-                iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
-               iterator->signalLatch && iterator->signalLatch->triggered);
-          if (context->signalDiagnosticsEnabled && iterator->started &&
-              (iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_OBSERVER))
-            ++context->signalDiagnostics.readinessCalls;
-          if (iterator->started &&
-              (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
-              iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
-              iterator->waitOffset <= iterator->scratchOffset &&
-              iterator->waitSize <=
-                  iterator->scratchOffset - iterator->waitOffset) {
-            const auto *wait =
-                reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
-                    iterator->frame.data() + iterator->waitOffset);
-            const auto *entries =
-                reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
-                    reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-            if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT) {
-              if (iterator->waitGenerations.size() == wait->count)
-                for (uint32_t index = 0; index != wait->count; ++index) {
-                  auto event = context->events.find(entries[index].stable_id);
-                  uint64_t generation = event == context->events.end()
-                                            ? 0
-                                            : event->second.generation;
-                  eventTriggered |=
-                      generation != iterator->waitGenerations[index];
-                }
-            } else if (iterator->suspendKind ==
-                       OBELISK_RT_SUSPEND_EVENT_ORDER) {
-              eventOrderReady = iterator->waitOrderReady;
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
-              if (wait->count == 1) {
-                obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
-                    wait->flags, mailboxReady);
-                if (status != OBELISK_RT_OK) {
-                  context->schedulerStatus = status;
-                  return status;
-                }
-              }
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
-              if (wait->count == 1 && wait->payload <= UINT32_MAX) {
-                obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
-                    context,
-                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
-                    static_cast<int32_t>(wait->payload), iterator->waitSequence,
-                    semaphoreReady);
-                if (status != OBELISK_RT_OK) {
-                  context->schedulerStatus = status;
-                  return status;
-                }
-              }
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
-              awaited =
-                  wait->count == 1 && obelisk_rt_logical_process_terminated(
-                                          context, entries[0].stable_id);
-            else if (wait->count != 0) {
-              awaited = wait->flags == 0;
-              if (wait->flags == 0)
-                for (uint32_t index = 0; index != wait->count; ++index)
-                  awaited &= obelisk_rt_logical_process_terminated(
-                      context, entries[index].stable_id);
-              else
-                for (uint32_t index = 0; index != wait->count; ++index)
-                  awaited |= obelisk_rt_logical_process_terminated(
-                      context, entries[index].stable_id);
-            }
-          }
-          if (iterator->started &&
-              iterator->suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
-            childrenDone = true;
-            for (const ScheduledDesignTask &child :
-                 context->scheduledDesignTasks)
-              childrenDone &= child.terminated || child.parent != iterator->id;
-            for (const ScheduledProcess &child : context->scheduledProcesses)
-              childrenDone &= !child.instance || child.parent != iterator->id;
-          }
-          bool runnable =
-              !iterator->terminated && !iterator->explicitlySuspended &&
-              (!iterator->started || awaited || eventTriggered ||
-               eventOrderReady || mailboxReady || semaphoreReady ||
-               signalTriggered || childrenDone ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
-               (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
-                    ? iterator->wakeTime <= context->schedulerTime
-                    : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
-                       iterator->suspendKind !=
-                           OBELISK_RT_SUSPEND_EVENT_ORDER &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
-                       iterator->observedEpoch != context->schedulerEpoch)));
-          if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
-              signalTriggered && !iterator->urgent && !iterator->prioritySignal)
-            runnable = false;
+          DesignTaskReadiness readiness;
+          obelisk_rt_status readinessStatus = inspectDesignTaskReadiness(
+              context, *iterator, context->schedulerRunningFinals ? 1u : 0u,
+              unstartedActorRegion, true, readiness);
+          if (readinessStatus != OBELISK_RT_OK)
+            return readinessStatus;
+          bool runnable = readiness.runnable;
+          bool signalTriggered = readiness.signalTriggered;
           uint32_t orderingRegion =
               designTaskOrderingRegion(*iterator, signalTriggered);
           auto key = iterator->prioritySignal && signalTriggered
@@ -5141,123 +5173,14 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               readyCohortBuild->slow.push_back(candidateID);
             continue;
           }
-          bool awaited = false;
-          bool childrenDone = false;
-          bool eventTriggered = false;
-          bool eventOrderReady = iterator->waitOrderReady;
-          bool mailboxReady = false;
-          bool semaphoreReady = false;
-          bool signalTriggered =
-              iterator->signalTriggered ||
-              ((iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-                iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE) &&
-               iterator->signalLatch && iterator->signalLatch->triggered);
-          if (context->signalDiagnosticsEnabled && iterator->started &&
-              (iterator->suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_EDGE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_OBSERVER))
-            ++context->signalDiagnostics.readinessCalls;
-          if (iterator->started &&
-              (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_JOIN) &&
-              iterator->waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
-              iterator->waitOffset <= iterator->scratchOffset &&
-              iterator->waitSize <=
-                  iterator->scratchOffset - iterator->waitOffset) {
-            const auto *wait =
-                reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
-                    iterator->frame.data() + iterator->waitOffset);
-            const auto *entries =
-                reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
-                    reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-            if (iterator->suspendKind == OBELISK_RT_SUSPEND_EVENT) {
-              if (iterator->waitGenerations.size() == wait->count)
-                for (uint32_t index = 0; index != wait->count; ++index) {
-                  auto event = context->events.find(entries[index].stable_id);
-                  uint64_t generation = event == context->events.end()
-                                            ? 0
-                                            : event->second.generation;
-                  eventTriggered |=
-                      generation != iterator->waitGenerations[index];
-                }
-            } else if (iterator->suspendKind ==
-                       OBELISK_RT_SUSPEND_EVENT_ORDER) {
-              eventOrderReady = iterator->waitOrderReady;
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_MAILBOX) {
-              if (wait->count == 1) {
-                obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
-                    wait->flags, mailboxReady);
-                if (status != OBELISK_RT_OK) {
-                  context->schedulerStatus = status;
-                  return status;
-                }
-              }
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
-              if (wait->count == 1 && wait->payload <= UINT32_MAX) {
-                obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
-                    context,
-                    obelisk_rt_object_from_managed_word(entries[0].stable_id),
-                    static_cast<int32_t>(wait->payload), iterator->waitSequence,
-                    semaphoreReady);
-                if (status != OBELISK_RT_OK) {
-                  context->schedulerStatus = status;
-                  return status;
-                }
-              }
-            } else if (iterator->suspendKind == OBELISK_RT_SUSPEND_AWAIT)
-              awaited =
-                  wait->count == 1 && obelisk_rt_logical_process_terminated(
-                                          context, entries[0].stable_id);
-            else if (wait->count != 0) {
-              awaited = wait->flags == 0;
-              if (wait->flags == 0)
-                for (uint32_t index = 0; index != wait->count; ++index)
-                  awaited &= obelisk_rt_logical_process_terminated(
-                      context, entries[index].stable_id);
-              else
-                for (uint32_t index = 0; index != wait->count; ++index)
-                  awaited |= obelisk_rt_logical_process_terminated(
-                      context, entries[index].stable_id);
-            }
-          }
-          if (iterator->started &&
-              iterator->suspendKind == OBELISK_RT_SUSPEND_CHILDREN) {
-            childrenDone = true;
-            for (const ScheduledDesignTask &child :
-                 context->scheduledDesignTasks)
-              childrenDone &= child.terminated || child.parent != iterator->id;
-            for (const ScheduledProcess &child : context->scheduledProcesses)
-              childrenDone &= !child.instance || child.parent != iterator->id;
-          }
-          bool runnable =
-              !iterator->terminated && !iterator->explicitlySuspended &&
-              (!iterator->started || awaited || eventTriggered ||
-               eventOrderReady || mailboxReady || semaphoreReady ||
-               signalTriggered || childrenDone ||
-               iterator->suspendKind == OBELISK_RT_SUSPEND_NONE ||
-               (iterator->suspendKind == OBELISK_RT_SUSPEND_DELAY
-                    ? iterator->wakeTime <= context->schedulerTime
-                    : (iterator->suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_EDGE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_EVENT &&
-                       iterator->suspendKind !=
-                           OBELISK_RT_SUSPEND_EVENT_ORDER &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_MAILBOX &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_AWAIT &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_JOIN &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_FOREVER &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_CHILDREN &&
-                       iterator->suspendKind != OBELISK_RT_SUSPEND_OBSERVER &&
-                       iterator->observedEpoch != context->schedulerEpoch)));
-          if (runnable && iterator->queuedRegion >= unstartedActorRegion &&
-              signalTriggered && !iterator->urgent && !iterator->prioritySignal)
-            runnable = false;
+          DesignTaskReadiness readiness;
+          obelisk_rt_status readinessStatus =
+              inspectDesignTaskReadiness(context, *iterator, activePhase,
+                                         unstartedActorRegion, true, readiness);
+          if (readinessStatus != OBELISK_RT_OK)
+            return readinessStatus;
+          bool runnable = readiness.runnable;
+          bool signalTriggered = readiness.signalTriggered;
           if constexpr (collect) {
             DesignReadyCohortEntry cached;
             if (runnable &&

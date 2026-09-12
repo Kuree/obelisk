@@ -156,7 +156,14 @@ struct FileEntry {
   // stream cannot hold it: glibc accepts ungetc() on a write-only stream and
   // then corrupts it on the next write.
   int pushback = -1;
+  // Original SystemVerilog/VPI pathname. This is populated only when a file
+  // is opened, so dormant VPI support adds no scheduler-side work.
+  std::string name;
 };
+
+bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
+                                   uint32_t descriptor,
+                                   std::string_view &name) noexcept;
 
 // Parsed dynamic $sscanf/$fscanf formats are feature-local and immutable.
 // Prefix strings are owned by the plan, so scanners may use their bytes after
@@ -1494,6 +1501,50 @@ struct DesignDatabaseCache {
   uint64_t statementSiteCount = 0;
   uint64_t relations = 0;
   uint64_t relationCount = 0;
+  uint64_t semanticTypes = 0;
+  uint64_t semanticTypeCount = 0;
+  uint64_t semanticTypeEdges = 0;
+  uint64_t semanticTypeEdgeCount = 0;
+  uint64_t semanticRootBindings = 0;
+  uint64_t semanticRootBindingCount = 0;
+  uint64_t relationIndices = 0;
+  uint64_t relationIndexCount = 0;
+  uint64_t relationIndexDimensions = 0;
+  uint64_t relationIndexDimensionCount = 0;
+  uint64_t relationIndexKeys = 0;
+  uint64_t relationIndexKeyCount = 0;
+  uint64_t relationIndexMembers = 0;
+  uint64_t relationIndexMemberCount = 0;
+  uint64_t fixedProperties = 0;
+  uint64_t fixedPropertyCount = 0;
+  uint64_t resolvedNetRuns = 0;
+  uint64_t resolvedNetRunCount = 0;
+  uint64_t netDelayRuns = 0;
+  uint64_t netDelayRunCount = 0;
+  uint64_t staticObjects = 0;
+  uint64_t staticObjectCount = 0;
+  uint64_t definitions = 0;
+  uint64_t definitionCount = 0;
+  uint64_t definitionBindings = 0;
+  uint64_t definitionBindingCount = 0;
+  uint64_t definitionMembers = 0;
+  uint64_t definitionMemberCount = 0;
+  uint64_t definitionMemberRelations = 0;
+  uint64_t definitionMemberRelationCount = 0;
+  uint64_t definitionMemberRelationTargets = 0;
+  uint64_t definitionMemberRelationTargetCount = 0;
+  uint64_t definitionSpecializations = 0;
+  uint64_t definitionSpecializationCount = 0;
+  uint64_t definitionSpecializationBindings = 0;
+  uint64_t definitionSpecializationBindingCount = 0;
+  uint64_t definitionMemberEndpoints = 0;
+  uint64_t definitionMemberEndpointCount = 0;
+  uint64_t definitionMemberInstanceRelations = 0;
+  uint64_t definitionMemberInstanceRelationCount = 0;
+  uint64_t definitionMemberInstanceRelationTargets = 0;
+  uint64_t definitionMemberInstanceRelationTargetCount = 0;
+  uint64_t definitionMemberInstanceRelationInverses = 0;
+  uint64_t definitionMemberInstanceRelationInverseCount = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -1516,6 +1567,35 @@ struct FunctionalCoverageValue {
   std::vector<uint8_t> unknown;
   obelisk_rt_object_v1 *owner = nullptr;
   uint64_t payload = 0;
+};
+
+struct VPIFixedPropertyValue {
+  uint8_t kind = 0;
+  uint64_t payload = 0;
+  const uint8_t *stringData = nullptr;
+  uint64_t stringSize = 0;
+};
+
+struct VPINetDelayValue {
+  int64_t rise = 0;
+  int64_t fall = 0;
+  int64_t third = 0;
+};
+
+struct VPIRelationIndexInfo {
+  uint32_t firstDimension = UINT32_MAX;
+  uint32_t firstKey = UINT32_MAX;
+  uint32_t firstOrdinalKey = UINT32_MAX;
+  uint32_t elementCount = 0;
+  uint16_t dimensionCount = 0;
+  bool sparse = false;
+};
+
+struct VPIArrayMemberInfo {
+  obelisk_rt_design_cursor_v1 array{};
+  VPIRelationIndexInfo index{};
+  uint32_t arrayType = 0;
+  uint32_t ordinal = 0;
 };
 
 struct FunctionalCoverageBinState {
@@ -1821,6 +1901,10 @@ struct obelisk_rt_context {
   // the order they were given. $test$plusargs and $value$plusargs match
   // against these.
   std::vector<std::string> plusargs;
+  // Full invocation arguments are retained only for a VPI-readable design.
+  // They are never consulted by execution or the scheduler; vpi_get_vlog_info
+  // snapshots them on explicit request.
+  std::vector<std::string> vpiArguments;
   std::vector<PlusargIndexNode> plusargIndexNodes;
   std::vector<PlusargIndexEdge> plusargIndexEdges;
   bool plusargIndexBuilt = false;
@@ -1897,6 +1981,10 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleForcedProcessToken = 0;
   bool nativeScheduleStopAtCleanBoundary = false;
   bool nativeScheduleCleanBoundaryReached = false;
+  // Set only while a live VPI registration can observe running design state.
+  // Static startup inspection leaves this false, so loading an otherwise
+  // inert read-only VPI library does not perturb the Tier-1 hot path.
+  bool vpiObservationDemand = false;
   // A static eval island may use exact fanout only after periodic preparation
   // has proved that no runtime Clause 31 primary is generated-writable.
   bool nativeStaticEvalIslandCertified = false;
@@ -2402,6 +2490,51 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
   return earliest;
 }
 
+// Read-only counterpart used by inspection APIs. Unlike the scheduler helper,
+// this never compacts stale inventory entries.
+inline uint32_t
+obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
+                                       uint32_t phase) {
+  const auto &actors = phase == 0 ? context->unstartedActiveActors
+                                  : context->unstartedFinalActors;
+  uint32_t earliest = UINT32_MAX;
+  for (uint64_t logicalToken : actors) {
+    bool pending = false;
+    bool explicitlySuspended = false;
+    uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
+    if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      auto indexed = context->scheduledProcessIndices.find(token);
+      if (indexed != context->scheduledProcessIndices.end() &&
+          indexed->second < context->scheduledProcesses.size()) {
+        const ScheduledProcess &process =
+            context->scheduledProcesses[indexed->second];
+        pending = process.instance && process.token == token &&
+                  process.phase == phase && !process.started;
+        explicitlySuspended = process.explicitlySuspended;
+        homeRegion = process.homeRegion;
+      }
+    } else {
+      auto indexed = context->scheduledDesignTaskIndices.find(logicalToken);
+      if (indexed != context->scheduledDesignTaskIndices.end() &&
+          indexed->second < context->scheduledDesignTasks.size()) {
+        const ScheduledDesignTask &task =
+            context->scheduledDesignTasks[indexed->second];
+        pending = !task.terminated && task.id == logicalToken &&
+                  task.phase == phase && !task.started;
+        explicitlySuspended = task.explicitlySuspended;
+        homeRegion = task.homeRegion;
+      }
+    }
+    if (!pending || explicitlySuspended)
+      continue;
+    if (homeRegion == OBELISK_RT_REGION_ACTIVE)
+      return OBELISK_RT_REGION_ACTIVE;
+    earliest = std::min(earliest, homeRegion);
+  }
+  return earliest;
+}
+
 inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
                                                uint32_t phase) {
   return obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
@@ -2660,6 +2793,8 @@ void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept;
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
+void obelisk_rt_aot_observation_demand_changed_unlocked(
+    obelisk_rt_context *context, bool active);
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   uint64_t bitOffset,
                                                   uint64_t bitWidth,
@@ -2724,6 +2859,16 @@ DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
     obelisk_rt_context *context,
     const obelisk_rt_execution_descriptor_v1 *execution);
+
+// Cold VPI query support. The caller holds the recursive context lock. This
+// snapshots only canonical future scheduler calendars, never their heaps,
+// mirrors, or deoptimization scratch state.
+obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
+    const obelisk_rt_context *context, std::vector<uint64_t> &times);
+bool obelisk_rt_current_time_queue_pending_unlocked(
+    obelisk_rt_context *context);
+bool obelisk_rt_design_task_pending_before_read_only_unlocked(
+    obelisk_rt_context *context);
 
 template <typename Callable>
 obelisk_rt_status guarded(obelisk_rt_context *context,
@@ -3020,6 +3165,15 @@ obelisk_rt_status obelisk_rt_cached_design_type_info(
 obelisk_rt_status obelisk_rt_cached_design_type_child(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_root(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_source(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
@@ -3029,9 +3183,34 @@ obelisk_rt_status obelisk_rt_cached_design_name(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept;
 
+// Read a narrow bit window from one reflected storage object. This is the
+// cold VPI/debugger path and deliberately preserves direct native state
+// access without allocating buffers proportional to the containing object.
+obelisk_rt_status
+obelisk_rt_read_design_slice(obelisk_rt_context *context,
+                             obelisk_rt_design_cursor_v1 cursor,
+                             uint64_t bitOffset, uint64_t bitWidth,
+                             uint64_t *value, uint64_t *unknown) noexcept;
+
+// Resolve one reflected storage/net bit to its canonical global-state
+// coordinate. Query-only consumers use this instead of confusing a source
+// object ID with its independently allocated state offset.
+obelisk_rt_status obelisk_rt_design_state_offset(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t *outStateOffset) noexcept;
+
 obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
                                              obelisk_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_net_delay(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    uint64_t bitOffset, uint64_t bitWidth, VPINetDelayValue *outDelay) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;
@@ -3039,6 +3218,23 @@ obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
     const obelisk_rt_context *context, uint64_t relationIndex,
     obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType,
     bool *outStatement) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_relation_index(const obelisk_rt_context *context,
+                                     obelisk_rt_design_cursor_v1 source,
+                                     VPIRelationIndexInfo *outInfo) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_dimension(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t dimension, int64_t *outLeft, int64_t *outRight) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    int64_t index, uint32_t *outOrdinal) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_relation_index_ordinal_key(
+    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+    uint32_t ordinal, int64_t *outIndex) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_array_member(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 member,
+                                   VPIArrayMemberInfo *outInfo) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     obelisk_rt_design_cursor_v1 *outScope) noexcept;
@@ -3055,5 +3251,8 @@ obelisk_rt_status
 obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
                                          obelisk_rt_design_cursor_v1 statement,
                                          bool *outIsScope) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+    bool *outIsProtected) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

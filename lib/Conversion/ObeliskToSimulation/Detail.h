@@ -172,6 +172,10 @@ inline constexpr ::mlir::StringLiteral interconnectLeafPathAttrName =
     "obelisk_sim.interconnect_leaf_path";
 inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
     "obelisk_sim.interconnect_leaves";
+inline constexpr ::mlir::StringLiteral interconnectVPITypeAttrName =
+    "obelisk_sim.interconnect_vpi_type";
+inline constexpr ::mlir::StringLiteral interconnectNettypeAttrName =
+    "obelisk_sim.interconnect_nettype";
 /// Identity a type reference shares with every reference to a matching type
 /// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
 /// fixed there as well.
@@ -658,6 +662,16 @@ struct SemanticDimension {
 getNormalizedSemanticType(::mlir::Operation *op);
 ::mlir::FailureOr<::mlir::Type>
 normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
+/// Lossless source-semantic type inventory used only by VPI reflection.
+::mlir::FailureOr<::obelisk::sim::VPITypeSemanticsAttr>
+makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location,
+                     ::mlir::ArrayAttr typedefLayers = {},
+                     ::mlir::Operation *semanticOwner = nullptr);
+
+inline constexpr ::llvm::StringLiteral vpiTypedefLayersAttrName =
+    "vpi_typedef_layers";
+inline constexpr ::llvm::StringLiteral vpiSourceTypeIdentityAttrName =
+    "vpi_source_type_identity";
 ::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
 makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
                     ::mlir::Location location, ::mlir::Builder &builder,
@@ -676,6 +690,12 @@ bool storageDecidesTruth(::mlir::Operation *expression);
 getSimulationClassSymbol(::mlir::SymbolRefAttr semanticClass);
 ::mlir::StringAttr
 getSimulationCovergroupSymbol(::mlir::SymbolRefAttr semanticCovergroup);
+
+/// Stable flat reflection symbol for one elaborated virtual-interface
+/// specialization and optional modport view. Unlike the opaque executable
+/// specialization key, this names an immutable SimVPITypespecDeclOp.
+::mlir::StringAttr getSimulationVirtualInterfaceTypespecSymbol(
+    ::mlir::SymbolRefAttr semanticInterface, ::mlir::StringAttr modport);
 
 /// Classify a canonical source-semantic type for the initial DPI-C ABI.
 /// Diagnostics are issued at `location` for unsupported categories.

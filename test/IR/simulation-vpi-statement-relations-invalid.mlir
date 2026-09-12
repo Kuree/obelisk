@@ -10,6 +10,61 @@ module {
 // -----
 
 module {
+  obelisk_sim.design @unknown_anchor_source {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.statement.decl 1 scope 0 type 8
+    // expected-error @below {{references an unknown source VPI anchor inventory ID}}
+    obelisk_sim.vpi_statement_relation.decl anchor 99 type 134 selector 8 ordinal 0 modes 2 to 1
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @anchor_source_kind_mismatch {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 0 ordinal 0
+        hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 0 : i64>}
+    obelisk_sim.vpi_object.anchor @generated id 1 type 134 in 0 parent @top
+        ordinal 0 hierarchy "top.g" debug "g"
+    obelisk_sim.statement.decl 1 scope 0 type 8
+    // expected-error @below {{source VPI kind does not match the anchor declaration}}
+    obelisk_sim.vpi_statement_relation.decl anchor 1 type 32 selector 8 ordinal 0 modes 2 to 1
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @backed_anchor_source {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 0 ordinal 0
+        hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 0 : i64>}
+    obelisk_sim.statement.decl 1 scope 0 type 8
+    // expected-error @below {{backed anchor source must use its canonical scope or code-unit ID}}
+    obelisk_sim.vpi_statement_relation.decl anchor 0 type 32 selector 8 ordinal 0 modes 2 to 1
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @anchor_source_scope_mismatch {
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.child" vpi_kind 32
+    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 0 ordinal 0
+        hierarchy "top" debug "top" {backing = #obelisk_sim.vpi_backing<kind = scope, id = 0 : i64>}
+    obelisk_sim.vpi_object.anchor @generated id 1 type 134 in 0 parent @top
+        ordinal 0 hierarchy "top.g" debug "g"
+    obelisk_sim.statement.decl 1 scope 1 type 8
+    // expected-error @below {{anchor source does not own the root scope-owned statement}}
+    obelisk_sim.vpi_statement_relation.decl anchor 1 type 134 selector 8 ordinal 0 modes 2 to 1
+  }
+}
+
+// -----
+
+module {
   obelisk_sim.design @reserved_mode_bit {
     // expected-error @below {{mode mask must contain only vpi_handle and/or vpi_iterate}}
     obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 4 to 1
@@ -97,7 +152,7 @@ module {
   obelisk_sim.design @plain_scope_claims_interface_kind {
     obelisk_sim.scope.decl 0
     obelisk_sim.statement.decl 10 scope 0 type 8 loc("test.sv":1:1)
-    // expected-error @below {{interface scope metadata and source VPI kind disagree}}
+    // expected-error @below {{source VPI kind does not match the scope declaration}}
     obelisk_sim.vpi_statement_relation.decl scope 0 type 601 selector 8 ordinal 0 modes 2 to 10
   }
 }
@@ -383,15 +438,6 @@ module {
   obelisk_sim.design @intrinsic_scope_kind_is_not_scope {
     // expected-error @below {{VPI kind is not a concrete scope object}}
     obelisk_sim.scope.decl 0 vpi_kind 24
-  }
-}
-
-// -----
-
-module {
-  obelisk_sim.design @intrinsic_interface_kind_without_interface_metadata {
-    // expected-error @below {{interface scope metadata and intrinsic VPI kind disagree}}
-    obelisk_sim.scope.decl 0 vpi_kind 601
   }
 }
 

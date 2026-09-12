@@ -8,6 +8,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -50,6 +51,137 @@ static uint32_t effectiveScopeVPIKind(SimScopeDeclOp scope) {
   if (scope.getInterfaceType())
     return static_cast<uint16_t>(VPIKind::Interface);
   return scope.getId() == 0 ? 0 : static_cast<uint16_t>(VPIKind::Module);
+}
+
+static uint32_t effectiveCodeUnitVPIKind(SimCodeUnitDeclOp codeUnit) {
+  using Kind = reflection::VPIObjectKind;
+  // Inspect the marker directly so hidden-object classification remains
+  // independent of the optional reflection metadata on this operation.
+  if (codeUnit->hasAttr("internal"))
+    return 0;
+  switch (codeUnit.getCodeUnitKind()) {
+  case EntryKind::Initial:
+    return static_cast<uint16_t>(Kind::Initial);
+  case EntryKind::Final:
+    return static_cast<uint16_t>(Kind::Final);
+  case EntryKind::Always:
+  case EntryKind::AlwaysComb:
+  case EntryKind::AlwaysFF:
+  case EntryKind::AlwaysLatch:
+    return static_cast<uint16_t>(Kind::Always);
+  case EntryKind::Function:
+    return static_cast<uint16_t>(Kind::Function);
+  case EntryKind::Task:
+    return static_cast<uint16_t>(Kind::Task);
+  default:
+    return 0;
+  }
+}
+
+static LogicalResult verifyVPIProperties(Operation *operation,
+                                         uint32_t exactKind,
+                                         VPIPropertySetAttr properties) {
+  if (!properties)
+    return success();
+  for (Attribute attribute : properties.getProperties()) {
+    auto property = cast<VPIPropertyAttr>(attribute);
+    uint32_t selector =
+        static_cast<uint32_t>(property.getSelector().getValue().getZExtValue());
+    if (selector == 15 || selector == 16)
+      return operation->emitOpError()
+             << "VPI definition file and line properties must use "
+                "definition_loc as their canonical IR representation";
+    if (selector == 624)
+      return operation->emitOpError()
+             << "vpiAlwaysType must use code_unit_kind as its canonical IR "
+                "representation";
+    const auto *descriptor = reflection::findVPIProperty(exactKind, selector);
+    if (!descriptor)
+      return operation->emitOpError()
+             << "VPI property " << selector
+             << " is not applicable to exact object kind " << exactKind;
+    if (descriptor->realization !=
+            reflection::VPIPropertyRealization::FixedImage &&
+        descriptor->realization !=
+            reflection::VPIPropertyRealization::DefinitionImage)
+      return operation->emitOpError()
+             << "VPI property " << selector << " is not a FixedImage property";
+    if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
+                              operation->hasAttr("is_protected"))
+      return operation->emitOpError(
+          "explicit vpiIsProtected value conflicts with is_protected");
+  }
+  return success();
+}
+
+static LogicalResult verifyDefinitionLocation(Operation *operation,
+                                              uint32_t exactKind,
+                                              LocationAttr definitionLoc) {
+  if (!definitionLoc)
+    return success();
+  if (!reflection::findVPIProperty(exactKind, 15) ||
+      !reflection::findVPIProperty(exactKind, 16))
+    return operation->emitOpError(
+        "definition_loc is not applicable to this exact VPI object kind");
+  auto file = dyn_cast<FileLineColLoc>(definitionLoc);
+  if (!file || file.getFilename().empty() || file.getLine() == 0)
+    return operation->emitOpError(
+        "definition_loc requires a concrete source file and line");
+  if (file.getFilename().getValue().contains('\0'))
+    return operation->emitOpError(
+        "definition_loc filename contains an embedded NUL");
+  if (file.getLine() > INT32_MAX)
+    return operation->emitOpError(
+        "definition_loc line exceeds the VPI 32-bit integer range");
+  return success();
+}
+
+static LogicalResult verifyFixedReflection(Operation *operation,
+                                           uint32_t exactKind,
+                                           VPIPropertySetAttr properties,
+                                           LocationAttr definitionLoc) {
+  if (Attribute attribute = operation->getAttr("vpi_properties");
+      attribute && !isa<VPIPropertySetAttr>(attribute))
+    return operation->emitOpError(
+        "vpi_properties must be a #obelisk_sim.vpi_properties attribute");
+  if (Attribute attribute = operation->getAttr("definition_loc");
+      attribute && !isa<LocationAttr>(attribute))
+    return operation->emitOpError(
+        "definition_loc must be a location attribute");
+  if (Attribute attribute = operation->getAttr("is_protected")) {
+    if (!isa<UnitAttr>(attribute))
+      return operation->emitOpError("is_protected must be a unit attribute");
+    const auto *descriptor = reflection::findVPIProperty(exactKind, 74);
+    if (!descriptor || descriptor->realization !=
+                           reflection::VPIPropertyRealization::FixedImage)
+      return operation->emitOpError(
+          "is_protected is not applicable to this exact VPI object kind");
+  }
+  if (failed(verifyVPIProperties(operation, exactKind, properties)))
+    return failure();
+  return verifyDefinitionLocation(operation, exactKind, definitionLoc);
+}
+
+static VPIPropertySetAttr reflectionProperties(Operation *operation) {
+  return operation->getAttrOfType<VPIPropertySetAttr>("vpi_properties");
+}
+
+static LocationAttr reflectionDefinitionLoc(Operation *operation) {
+  return operation->getAttrOfType<LocationAttr>("definition_loc");
+}
+
+static bool hasNetSubtype(Operation *operation, int64_t expected) {
+  VPIPropertySetAttr properties = reflectionProperties(operation);
+  if (!properties)
+    return false;
+  for (Attribute attribute : properties.getProperties()) {
+    auto property = cast<VPIPropertyAttr>(attribute);
+    if (property.getSelector().getValue().getZExtValue() != 22)
+      continue;
+    auto value = dyn_cast<IntegerAttr>(property.getValue());
+    return value && value.getValue().getSExtValue() == expected;
+  }
+  return false;
 }
 
 static bool isEntirelyFourState(Type type) {
@@ -150,10 +282,150 @@ LogicalResult SimScopeDeclOp::verify() {
         (kind->families &
          reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) == 0)
       return emitOpError("VPI kind is not a concrete scope object");
-    if (bool(interfaceType) != (StringRef(kind->apiName) == "vpiInterface"))
+    // `interface_type` is the optional virtual-interface specialization key,
+    // not the source scope category. Every keyed scope must be an interface,
+    // while an authored or legacy interface scope may legitimately lack a key
+    // until virtual-interface binding metadata is available.
+    if (interfaceType && StringRef(kind->apiName) != "vpiInterface")
       return emitOpError(
           "interface scope metadata and intrinsic VPI kind disagree");
   }
+  return verifyFixedReflection(*this, effectiveScopeVPIKind(*this),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPIDefinitionDeclOp::verify() {
+  if (getDefinitionName().empty())
+    return emitOpError("requires a nonempty source definition name");
+  if (getDefinitionName().contains('\0'))
+    return emitOpError("source definition name contains an embedded NUL");
+  if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")))
+    return failure();
+  using Kind = reflection::VPIObjectKind;
+  switch (static_cast<Kind>(getVpiKind())) {
+  case Kind::Module:
+  case Kind::Interface:
+  case Kind::Program:
+    return verifyDefinitionLocation(*this, getVpiKind(),
+                                    getDefinitionLocAttr());
+  default:
+    return emitOpError(
+        "VPI definition kind must be a module, interface, or program");
+  }
+}
+
+LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
+  if (getMemberName().empty())
+    return emitOpError("requires a nonempty member name");
+  if (getMemberName().contains('\0'))
+    return emitOpError("member name contains an embedded NUL");
+  if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "member ordinal")))
+    return failure();
+  using Kind = reflection::VPIObjectKind;
+  if (static_cast<Kind>(getVpiKind()) != Kind::IODecl)
+    return emitOpError("currently requires vpiIODecl member kind");
+  if (!getDirectionAttr())
+    return emitOpError("vpiIODecl member requires a direction");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!definition)
+    return emitOpError("references an unknown VPI definition");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionSpecializationDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+          *this, getDefinitionAttr()))
+    return emitOpError("references an unknown VPI definition");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto specialization =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionSpecializationDeclOp>(
+          *this, getSpecializationAttr());
+  auto member =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr());
+  if (!specialization)
+    return emitOpError("references an unknown VPI definition specialization");
+  if (!member)
+    return emitOpError("references an unknown VPI definition member");
+  if (specialization.getDefinitionAttr() != member.getDefinitionAttr())
+    return emitOpError(
+        "member and specialization reference different VPI definitions");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr()))
+    return emitOpError("references an unknown VPI definition member");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verify() {
+  return verifyNonnegative(*this, getScopeIdAttr(), "scope ID");
+}
+
+LogicalResult SimVPIDefinitionMemberInstanceRelationOp::verify() {
+  if (failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getSelectorAttr(), "VPI selector")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "ordinal")))
+    return failure();
+  if (getSelector() > UINT16_MAX)
+    return emitOpError("VPI selector exceeds the reflection encoding");
+  if (getOrdinal() > UINT32_MAX)
+    return emitOpError("ordinal exceeds the reflection encoding");
+  if (getMode() == VPIRelationMode::Handle && getOrdinal() != 0)
+    return emitOpError("vpi_handle relation must use ordinal zero");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionMemberInstanceRelationOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+          *this, getMemberAttr()))
+    return emitOpError("references an unknown VPI definition member");
+  return success();
+}
+
+LogicalResult
+SimScopeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr reference = getVpiDefinitionAttr();
+  FlatSymbolRefAttr specializationRef = getVpiSpecializationAttr();
+  if (specializationRef && !reference)
+    return emitOpError("VPI specialization requires a VPI definition");
+  if (!reference)
+    return success();
+  if (!getParentAttr())
+    return emitOpError("root scope cannot reference a VPI definition");
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, reference);
+  if (!definition)
+    return emitOpError("references an unknown VPI definition");
+  if (definition.getVpiKind() != effectiveScopeVPIKind(*this))
+    return emitOpError("VPI definition kind disagrees with the scope kind");
+  if (!specializationRef)
+    return success();
+  auto specialization =
+      symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionSpecializationDeclOp>(
+          *this, specializationRef);
+  if (!specialization)
+    return emitOpError("references an unknown VPI definition specialization");
+  if (specialization.getDefinitionAttr() != reference)
+    return emitOpError(
+        "VPI specialization and scope reference different definitions");
   return success();
 }
 
@@ -165,7 +437,9 @@ LogicalResult SimCodeUnitDeclOp::verify() {
     return emitOpError("code-unit ID must be nonzero");
   if (getHierarchicalName().empty())
     return emitOpError("requires a nonempty hierarchical name");
-  return success();
+  return verifyFixedReflection(*this, effectiveCodeUnitVPIKind(*this),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimStatementDeclOp::verify() {
@@ -213,10 +487,8 @@ LogicalResult SimStatementDeclOp::verify() {
   if (requiresScope && !getIsScope())
     return emitOpError(
         "named begin/fork and foreach statements must be marked is_scope");
-  auto source = getLoc()->findInstanceOf<FileLineColLoc>();
-  if (!source || source.getLine() == 0 || source.getColumn() == 0)
-    return emitOpError("requires a concrete source file, line, and column");
-  return success();
+  return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
 }
 
 LogicalResult SimStatementSiteDeclOp::verify() {
@@ -260,11 +532,550 @@ LogicalResult SimVPIStatementRelationDeclOp::verify() {
   return success();
 }
 
+LogicalResult SimVPIRelationDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getSelectorAttr(), "VPI selector")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "ordinal")))
+    return failure();
+  if (getSelector() > UINT16_MAX)
+    return emitOpError("VPI selector exceeds the reflection encoding");
+  if (getOrdinal() > UINT32_MAX)
+    return emitOpError("ordinal exceeds the reflection encoding");
+  if (getMode() == VPIRelationMode::Handle && getOrdinal() != 0)
+    return emitOpError("vpi_handle relation must use ordinal zero");
+  return success();
+}
+
+LogicalResult SimVPINetIdentityDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "VPI net identity ID")) ||
+      failed(
+          verifyNonnegative(*this, getBackingNetIdAttr(), "backing net ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getHierarchicalName().empty())
+    return emitOpError("requires a nonempty source hierarchy name");
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  if (failed(verifyVPITypeSemantics(emit, getType(), getVpiType())))
+    return failure();
+  uint32_t kind = vpiKindForNet(getVpiTypeAttr());
+  const auto *object = reflection::findVPIObjectKind(kind);
+  if (!kind || !object || object->role != reflection::VPIObjectRole::Concrete)
+    return emitOpError("source type has no concrete VPI net object");
+  return verifyFixedReflection(*this, kind, reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPIObjectAnchorOp::verify() {
+  if (failed(verifyNonnegative(*this, getInventoryIdAttr(),
+                               "VPI anchor inventory ID")) ||
+      failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
+      failed(verifyNonnegative(*this, getEnclosingScopeIdAttr(),
+                               "enclosing scope ID")) ||
+      failed(verifyNonnegative(*this, getOwnerOrdinalAttr(), "owner ordinal")))
+    return failure();
+  if (getHierarchicalName().empty())
+    return emitOpError("requires a nonempty source hierarchy name");
+  const auto *kind = reflection::findVPIObjectKind(getVpiKind());
+  if (getVpiKind() > UINT16_MAX || !kind ||
+      kind->role != reflection::VPIObjectRole::Concrete)
+    return emitOpError("VPI kind is not a concrete object");
+  using Kind = reflection::VPIObjectKind;
+  Kind anchorKind = static_cast<Kind>(getVpiKind());
+  if (failed(verifyFixedReflection(*this, getVpiKind(),
+                                   reflectionProperties(*this),
+                                   reflectionDefinitionLoc(*this))))
+    return failure();
+  switch (anchorKind) {
+  case Kind::Module:
+  case Kind::Interface:
+  case Kind::Program:
+  case Kind::Package:
+  case Kind::ClassDefn:
+  case Kind::Task:
+  case Kind::Function:
+  case Kind::ClockingBlock:
+  case Kind::GenScope:
+  case Kind::PropertyDecl:
+  case Kind::SequenceDecl:
+  case Kind::ModuleArray:
+  case Kind::InterfaceArray:
+  case Kind::ProgramArray:
+  case Kind::GateArray:
+  case Kind::SwitchArray:
+  case Kind::UdpArray:
+  case Kind::NamedEventArray:
+  case Kind::GenScopeArray:
+  case Kind::InterconnectArray:
+  case Kind::InterconnectNet:
+  case Kind::Gate:
+  case Kind::Switch:
+  case Kind::Udp:
+  case Kind::NamedEvent:
+    break;
+  default:
+    return emitOpError("kind cannot be a persistent lexical source anchor");
+  }
+  bool primitive = anchorKind == Kind::Gate || anchorKind == Kind::Switch ||
+                   anchorKind == Kind::Udp;
+  if (primitive != static_cast<bool>(getPrimitiveInputCountAttr()))
+    return emitOpError(
+        primitive ? "scalar primitive anchor requires an input count"
+                  : "primitive_input_count requires a scalar primitive");
+  if (getPrimitiveInputCount() && *getPrimitiveInputCount() > UINT32_MAX)
+    return emitOpError("primitive input count exceeds the reflection encoding");
+  if (getIsCompilationUnitAttr() &&
+      getVpiKind() != static_cast<uint32_t>(reflection::VPIObjectKind::Package))
+    return emitOpError("compilation-unit anchor must have vpiPackage kind");
+  if (getIsCompilationUnitAttr() && getParentAttr())
+    return emitOpError("compilation-unit anchor cannot have a lexical parent");
+  if (getParentAttr() &&
+      getParentAttr() == FlatSymbolRefAttr::get(getSymNameAttr()))
+    return emitOpError("cannot be its own lexical parent");
+  if (VPIObjectBackingAttr backing = getBackingAttr()) {
+    switch (backing.getKind()) {
+    case VPIObjectBackingKind::Scope:
+      if (anchorKind != Kind::Module && anchorKind != Kind::Interface &&
+          anchorKind != Kind::Program)
+        return emitOpError(
+            "scope backing requires a module, interface, or program anchor");
+      break;
+    case VPIObjectBackingKind::Class:
+      if (anchorKind != Kind::ClassDefn)
+        return emitOpError("class backing requires a class-definition anchor");
+      break;
+    case VPIObjectBackingKind::CodeUnit:
+      if (anchorKind != Kind::Task && anchorKind != Kind::Function)
+        return emitOpError(
+            "code-unit backing requires a task or function anchor");
+      break;
+    case VPIObjectBackingKind::Net:
+      if (anchorKind != Kind::InterconnectNet)
+        return emitOpError("net backing requires an interconnect-net anchor");
+      break;
+    }
+  } else {
+    if (anchorKind == Kind::Module || anchorKind == Kind::Interface ||
+        anchorKind == Kind::Program)
+      return emitOpError(
+          "module, interface, and program anchors require scope backing");
+  }
+  if (anchorKind == Kind::InterconnectNet &&
+      (!getBackingAttr() ||
+       getBackingAttr().getKind() != VPIObjectBackingKind::Net))
+    return emitOpError("interconnect-net anchor requires a net backing");
+  if (anchorKind == Kind::InterconnectArray && !hasNetSubtype(*this, 16))
+    return emitOpError("interconnect-array requires vpiInterconnect subtype");
+  DenseI64ArrayAttr rangesAttr = getIndexRangesAttr();
+  DenseI64ArrayAttr dimensionFlagsAttr = getIndexDimensionFlagsAttr();
+  DenseI64ArrayAttr sparseAttr = getSparseIndicesAttr();
+  ArrayRef<int64_t> ranges =
+      rangesAttr ? rangesAttr.asArrayRef() : ArrayRef<int64_t>{};
+  ArrayRef<int64_t> sparse =
+      sparseAttr ? sparseAttr.asArrayRef() : ArrayRef<int64_t>{};
+  bool fixedArray =
+      anchorKind == Kind::ModuleArray || anchorKind == Kind::InterfaceArray ||
+      anchorKind == Kind::ProgramArray || anchorKind == Kind::GateArray ||
+      anchorKind == Kind::SwitchArray || anchorKind == Kind::UdpArray ||
+      anchorKind == Kind::NamedEventArray ||
+      anchorKind == Kind::InterconnectArray;
+  if (rangesAttr && sparseAttr)
+    return emitOpError("VPI array cannot be both fixed and sparse");
+  if (rangesAttr && !fixedArray)
+    return emitOpError("index_ranges is only valid on a fixed array anchor");
+  if (rangesAttr && ranges.size() % 2 != 0)
+    return emitOpError(
+        "index_ranges requires left/right pairs on a fixed array anchor");
+  if (fixedArray && (!rangesAttr || ranges.empty()))
+    return emitOpError("fixed VPI array requires nonempty index_ranges");
+  if (anchorKind == Kind::InterconnectArray && !dimensionFlagsAttr)
+    return emitOpError("interconnect-array requires index dimension flags");
+  if (anchorKind != Kind::InterconnectArray && dimensionFlagsAttr)
+    return emitOpError(
+        "index_dimension_flags is only valid on an interconnect-array anchor");
+  if (dimensionFlagsAttr) {
+    ArrayRef<int64_t> flags = dimensionFlagsAttr.asArrayRef();
+    if (!rangesAttr || flags.size() * 2 != ranges.size())
+      return emitOpError(
+          "index_dimension_flags must have one entry per index range");
+    if (llvm::any_of(flags,
+                     [](int64_t flag) { return flag != 0 && flag != 1; }))
+      return emitOpError("index dimension flags must be zero or one");
+  }
+  if (sparseAttr && dimensionFlagsAttr)
+    return emitOpError("sparse VPI arrays cannot carry fixed-dimension flags");
+  if (sparseAttr && anchorKind != Kind::GenScopeArray)
+    return emitOpError(
+        "sparse_indices is only valid on a generate-scope array anchor");
+  if (anchorKind == Kind::GenScopeArray && !sparseAttr)
+    return emitOpError("generate-scope array requires sparse_indices");
+  if ((anchorKind == Kind::GateArray || anchorKind == Kind::SwitchArray ||
+       anchorKind == Kind::UdpArray) &&
+      ranges.size() != 2)
+    return emitOpError("primitive VPI array must be one-dimensional");
+  uint64_t elements = 1;
+  for (size_t offset = 0; offset != ranges.size(); offset += 2) {
+    uint64_t distance = ranges[offset] >= ranges[offset + 1]
+                            ? static_cast<uint64_t>(ranges[offset]) -
+                                  static_cast<uint64_t>(ranges[offset + 1])
+                            : static_cast<uint64_t>(ranges[offset + 1]) -
+                                  static_cast<uint64_t>(ranges[offset]);
+    if (distance == UINT64_MAX || distance + 1 > UINT32_MAX ||
+        elements > UINT32_MAX / (distance + 1))
+      return emitOpError("fixed VPI array shape exceeds relation encoding");
+    elements *= distance + 1;
+  }
+  llvm::DenseSet<int64_t> sparseSet;
+  for (int64_t index : sparse)
+    if (!sparseSet.insert(index).second)
+      return emitOpError("sparse_indices contains a duplicate index");
+  if (getMemberIndicesAttr() &&
+      ((fixedArray && anchorKind != Kind::InterconnectArray) ||
+       anchorKind == Kind::GenScopeArray))
+    return emitOpError("array aggregates cannot carry member_indices");
+  return success();
+}
+
+LogicalResult
+SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (FlatSymbolRefAttr parent = getParentAttr()) {
+    SimVPIObjectAnchorOp target =
+        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                  parent);
+    if (!target)
+      return emitOpError("references an unknown VPI parent anchor");
+    using Kind = reflection::VPIObjectKind;
+    Kind childKind = static_cast<Kind>(getVpiKind());
+    Kind parentKind = static_cast<Kind>(target.getVpiKind());
+    bool parentFixedArray =
+        parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
+        parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
+        parentKind == Kind::SwitchArray || parentKind == Kind::UdpArray ||
+        parentKind == Kind::NamedEventArray ||
+        parentKind == Kind::InterconnectArray;
+    DenseI64ArrayAttr memberAttr = getMemberIndicesAttr();
+    ArrayRef<int64_t> member =
+        memberAttr ? memberAttr.asArrayRef() : ArrayRef<int64_t>{};
+    if (parentFixedArray) {
+      DenseI64ArrayAttr rangesAttr = target.getIndexRangesAttr();
+      if (!rangesAttr)
+        return emitOpError("fixed-array parent has no index_ranges");
+      ArrayRef<int64_t> ranges = rangesAttr.asArrayRef();
+      size_t expectedRank = ranges.size() / 2;
+      if (member.size() != expectedRank)
+        return emitOpError(
+            "fixed-array child member_indices rank does not match parent");
+      for (size_t dimension = 0; dimension != member.size(); ++dimension) {
+        int64_t left = ranges[dimension * 2];
+        int64_t right = ranges[dimension * 2 + 1];
+        if (member[dimension] < std::min(left, right) ||
+            member[dimension] > std::max(left, right))
+          return emitOpError(
+              "fixed-array child member index is outside parent range");
+      }
+    } else if (parentKind == Kind::GenScopeArray) {
+      DenseI64ArrayAttr sparseAttr = target.getSparseIndicesAttr();
+      if (!sparseAttr || member.size() != 1 ||
+          !llvm::is_contained(sparseAttr.asArrayRef(), member.front()))
+        return emitOpError(
+            "generate-array child member index is absent from parent");
+    } else if (memberAttr) {
+      return emitOpError(
+          "member_indices requires a fixed or generate array parent");
+    }
+    auto isDesignScope = [](Kind kind) {
+      return kind == Kind::Module || kind == Kind::Interface ||
+             kind == Kind::Program;
+    };
+    auto isDeclarationScope = [&](Kind kind) {
+      return isDesignScope(kind) || kind == Kind::Package ||
+             kind == Kind::ClassDefn || kind == Kind::Task ||
+             kind == Kind::Function || kind == Kind::GenScope;
+    };
+    bool legal = false;
+    switch (childKind) {
+    case Kind::Module:
+    case Kind::Interface:
+    case Kind::Program:
+      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
+              (childKind == Kind::Module && parentKind == Kind::ModuleArray) ||
+              (childKind == Kind::Interface &&
+               parentKind == Kind::InterfaceArray) ||
+              (childKind == Kind::Program && parentKind == Kind::ProgramArray);
+      break;
+    case Kind::ClassDefn:
+    case Kind::Task:
+    case Kind::Function:
+      legal = isDeclarationScope(parentKind);
+      break;
+    case Kind::PropertyDecl:
+    case Kind::SequenceDecl:
+      legal =
+          isDeclarationScope(parentKind) || parentKind == Kind::ClockingBlock;
+      break;
+    case Kind::ClockingBlock:
+      legal = isDesignScope(parentKind);
+      break;
+    case Kind::GenScope:
+      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
+              parentKind == Kind::GenScopeArray;
+      break;
+    case Kind::Gate:
+      legal = parentKind == Kind::GateArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::Switch:
+      legal = parentKind == Kind::SwitchArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::Udp:
+      legal = parentKind == Kind::UdpArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::NamedEvent:
+      legal =
+          parentKind == Kind::NamedEventArray || isDeclarationScope(parentKind);
+      break;
+    case Kind::InterconnectNet:
+      legal = parentKind == Kind::InterconnectArray ||
+              isDeclarationScope(parentKind);
+      break;
+    case Kind::ModuleArray:
+    case Kind::InterfaceArray:
+    case Kind::ProgramArray:
+    case Kind::GateArray:
+    case Kind::SwitchArray:
+    case Kind::UdpArray:
+    case Kind::NamedEventArray:
+    case Kind::GenScopeArray:
+      legal = isDeclarationScope(parentKind);
+      break;
+    case Kind::InterconnectArray:
+      legal = isDeclarationScope(parentKind) ||
+              parentKind == Kind::InterconnectArray;
+      break;
+    case Kind::Package:
+      // Compilation units use the vpiPackage kind internally so that they
+      // can own declarations without manufacturing a fake vpiModule.  A
+      // source package may therefore be nested under that wrapper, but
+      // packages cannot otherwise be nested.
+      legal = parentKind == Kind::Package && target.getIsCompilationUnitAttr();
+      break;
+    default:
+      llvm_unreachable("anchor kind was checked by verify()");
+    }
+    if (!legal)
+      return emitOpError("has an illegal lexical parent kind: child ")
+             << getVpiKind() << ", parent " << target.getVpiKind();
+  } else {
+    using Kind = reflection::VPIObjectKind;
+    Kind kind = static_cast<Kind>(getVpiKind());
+    if (kind != Kind::Package && kind != Kind::Module &&
+        kind != Kind::Interface && kind != Kind::Program)
+      return emitOpError("kind requires a lexical parent anchor");
+    if (getMemberIndicesAttr())
+      return emitOpError(
+          "member_indices requires a fixed or generate array parent");
+  }
+  VPIObjectBackingAttr backing = getBackingAttr();
+  if (backing && backing.getKind() == VPIObjectBackingKind::Class) {
+    SimClassDeclOp target = symbolTable.lookupNearestSymbolFrom<SimClassDeclOp>(
+        *this, backing.getSymbol());
+    if (!target)
+      return emitOpError("references an unknown backing class declaration");
+  }
+  return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPITypespecDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      (getSourceTypeIdentityAttr() &&
+       failed(verifyNonnegative(*this, getSourceTypeIdentityAttr(),
+                                "source type identity"))))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty source names");
+  if (getOrigin() == VPITypespecOrigin::Interface) {
+    if (getTargetType().getKind() != VPITypeKind::VirtualInterface)
+      return emitOpError("interface typespec origin requires an interface");
+    SymbolRefAttr symbol = getTargetType().getSymbol();
+    if (!symbol || !symbol.getNestedReferences().empty() ||
+        symbol.getRootReference() != getSymNameAttr())
+      return emitOpError(
+          "raw interface typespec identity must exactly reference itself");
+    if (!getTargetType().getName() ||
+        getTargetType().getName().getValue() != getHierarchicalName())
+      return emitOpError(
+          "raw interface hierarchy must equal its specialization identity");
+  }
+  if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
+      (getTargetType().getKind() != VPITypeKind::Enum ||
+       !getSourceTypeIdentityAttr()))
+    return emitOpError(
+        "anonymous-enum origin requires an enum typespec and exact source "
+        "type identity");
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::LogicTypespec),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPINettypeDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "nettype ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty source names");
+  std::optional<uint32_t> kind = vpiKindForTypespec(getTargetType());
+  if (!kind)
+    return emitOpError("declared data type has no concrete VPI typespec");
+  if (getDirectAliasAttr() == FlatSymbolRefAttr::get(getSymNameAttr()))
+    return emitOpError("cannot directly alias itself");
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::NettypeDecl),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult
+SimVPINettypeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimVPIObjectAnchorOp owner =
+      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                getOwnerAttr());
+  if (!owner)
+    return emitOpError("nettype must be owned by a VPI anchor");
+  if (owner.getEnclosingScopeId() != getScopeId())
+    return emitOpError("scope ID does not match the owner anchor");
+  if (!reflection::findVPITraversal(
+          owner.getVpiKind(),
+          static_cast<uint32_t>(reflection::VPIRelationKind::NetTypedefRel),
+          reflection::VPITraversalMode::Iterate))
+    return emitOpError("owner kind does not support vpiNetTypedef traversal");
+  if (FlatSymbolRefAttr alias = getDirectAliasAttr()) {
+    SimVPINettypeDeclOp target =
+        symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, alias);
+    if (!target)
+      return emitOpError("references an unknown direct nettype alias");
+    if (target.getTargetType() != getTargetType())
+      return emitOpError(
+          "direct nettype alias target has a different declared data type");
+    if (target.getResolutionFunctionAttr() != getResolutionFunctionAttr())
+      return emitOpError(
+          "direct nettype alias must preserve the effective resolution "
+          "function");
+  }
+  if (FlatSymbolRefAttr resolver = getResolutionFunctionAttr()) {
+    SimVPIObjectAnchorOp target =
+        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                  resolver);
+    if (!target ||
+        target.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::Function))
+      return emitOpError("resolution function must reference a function VPI "
+                         "anchor");
+  }
+  return success();
+}
+
+static bool hasUserDefinedNetSubtype(Operation *operation) {
+  return hasNetSubtype(operation, 14); // vpiNettypeNet
+}
+
+static bool matchesDeclaredNettype(VPITypeSemanticsAttr declaration,
+                                   VPITypeSemanticsAttr nettype) {
+  // IEEE 1800-2023 6.7.2 permits declaration-added unpacked dimensions on a
+  // user-defined nettype. Stop as soon as the remaining semantic subtree is
+  // the nettype's exact data type so a nettype whose data type is itself an
+  // unpacked array is not stripped accidentally.
+  while (declaration && declaration != nettype &&
+         declaration.getKind() == VPITypeKind::UnpackedArray)
+    declaration = cast<VPITypeSemanticsAttr>(declaration.getChildren()[0]);
+  return declaration == nettype;
+}
+
+LogicalResult
+SimVPINetIdentityDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr nettype = getNettypeAttr();
+  if (!nettype)
+    return success();
+  SimVPINettypeDeclOp target =
+      symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, nettype);
+  if (!target)
+    return emitOpError("references an unknown user-defined nettype");
+  if (!matchesDeclaredNettype(getVpiTypeAttr(), target.getTargetType()))
+    return emitOpError(
+        "VPI type semantics do not match the referenced nettype");
+  if (!hasUserDefinedNetSubtype(*this))
+    return emitOpError(
+        "user-defined nettype reference requires vpiNettypeNet subtype");
+  return success();
+}
+
+LogicalResult SimVPIEnumConstDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "enum-constant ID")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "enum ordinal")))
+    return failure();
+  if (getName().empty() || getValue().empty())
+    return emitOpError("requires a nonempty name and constant value");
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::EnumConst),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult
+SimVPIEnumConstDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimVPITypespecDeclOp target =
+      symbolTable.lookupNearestSymbolFrom<SimVPITypespecDeclOp>(
+          *this, getEnumTypespecAttr());
+  if (!target || target.getTargetType().getKind() != VPITypeKind::Enum)
+    return emitOpError("references an unknown or non-enum typespec");
+  return success();
+}
+
+LogicalResult
+SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimVPIObjectAnchorOp anchor =
+      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
+                                                                getOwnerAttr());
+  if (!anchor)
+    return emitOpError("typespec must be owned by a VPI anchor");
+  if (anchor.getEnclosingScopeId() != getScopeId())
+    return emitOpError("scope ID does not match the owner anchor");
+  if (getOrigin() == VPITypespecOrigin::Typedef &&
+      !reflection::findVPITraversal(anchor.getVpiKind(), 725,
+                                    reflection::VPITraversalMode::Iterate))
+    return emitOpError("owner kind does not support vpiTypedef traversal");
+  return success();
+}
+
 LogicalResult SimStorageDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "storage ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
     return failure();
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  if (failed(verifyFixedReflection(
+          *this, static_cast<uint16_t>(reflection::VPIObjectKind::Reg),
+          reflectionProperties(*this), reflectionDefinitionLoc(*this))))
+    return failure();
+  Attribute delegated = (*this)->getAttr(metadata::vpiIdentityDelegated);
+  if (!delegated)
+    return success();
+  if (!isa<FlatSymbolRefAttr>(delegated))
+    return emitOpError(
+        "delegated VPI identity must name its owning object anchor");
+  VPITypeSemanticsAttr semantic = getVpiTypeAttr();
+  bool sawArray = false;
+  while (semantic && semantic.getKind() == VPITypeKind::UnpackedArray) {
+    sawArray = true;
+    semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+  }
+  if (!sawArray || !semantic || semantic.getKind() != VPITypeKind::Event ||
+      !getHierarchicalName())
+    return emitOpError(
+        "delegated VPI identity requires named unpacked event-array storage");
+  return success();
 }
 
 LogicalResult SimNetDeclOp::verify() {
@@ -308,7 +1119,38 @@ LogicalResult SimNetDeclOp::verify() {
             "and a nonnegative or -1 third delay");
     }
   }
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::Net),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+}
+
+LogicalResult
+SimNetDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  FlatSymbolRefAttr nettype = getNettypeAttr();
+  if (!nettype)
+    return success();
+  SimVPINettypeDeclOp target =
+      symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(*this, nettype);
+  if (!target)
+    return emitOpError("references an unknown user-defined nettype");
+  if (!getVpiTypeAttr())
+    return emitOpError("user-defined nettype reference requires VPI type "
+                       "semantics");
+  if (!matchesDeclaredNettype(getVpiTypeAttr(), target.getTargetType()))
+    return emitOpError(
+        "VPI type semantics do not match the referenced nettype");
+  if (!hasUserDefinedNetSubtype(*this) &&
+      !hasNetSubtype(*this, 16)) // vpiInterconnect
+    return emitOpError(
+        "user-defined nettype reference requires vpiNettypeNet or "
+        "vpiInterconnect subtype");
+  return success();
 }
 
 LogicalResult SimNetConnectDeclOp::verify() {
@@ -412,7 +1254,15 @@ LogicalResult SimPortDeclOp::verify() {
     return emitOpError("requires a nonempty hierarchical name");
   if (getOrdinalAttr().getValue().getActiveBits() > 24)
     return emitOpError("port ordinal must be an unsigned 24-bit integer");
-  return verifyElementType([&] { return emitOpError(); }, getType());
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getType())))
+    return failure();
+  if (getVpiType() &&
+      failed(verifyVPITypeSemantics(emit, getType(), *getVpiType())))
+    return failure();
+  return verifyFixedReflection(
+      *this, static_cast<uint16_t>(reflection::VPIObjectKind::Port),
+      reflectionProperties(*this), reflectionDefinitionLoc(*this));
 }
 
 static SimCovergroupDeclOp lookupCovergroup(Operation *operation,
@@ -1644,15 +2494,35 @@ LogicalResult SimDesignOp::verifyRegions() {
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, coverageScopeIds, codeUnitIds,
       statementIds, statementSiteIds, storageIds, netIds, driverIds, portIds,
-      connectionIds, covergroupIds, classIds;
+      connectionIds, covergroupIds, classIds, vpiAnchorIds,
+      vpiNetIdentityIds, typespecIds, nettypeIds, enumConstIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
+  llvm::DenseMap<uint64_t, SimVPIObjectAnchorOp> vpiAnchorsById;
+  llvm::DenseMap<uint64_t, SimStorageDeclOp> storagesById;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
+  SmallVector<SimVPIRelationDeclOp> vpiRelations;
+  SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
+  SmallVector<SimVPIDefinitionSpecializationDeclOp> definitionSpecializations;
+  SmallVector<SimVPIDefinitionMemberSpecializationOp>
+      definitionMemberSpecializations;
+  SmallVector<SimVPIDefinitionMemberInstanceBindingOp>
+      definitionMemberInstanceBindings;
+  SmallVector<SimVPIDefinitionMemberInstanceRelationOp>
+      definitionMemberInstanceRelations;
+  llvm::DenseMap<uint64_t, SimVPINetIdentityDeclOp> vpiNetIdentitiesById;
+  SmallVector<SimVPINetIdentityDeclOp> vpiNetIdentities;
+  SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
+  SmallVector<SimVPINettypeDeclOp> nettypes;
+  SmallVector<SimVPITypespecDeclOp> typespecs;
+  SmallVector<SimVPIEnumConstDeclOp> enumConstants;
+  SmallVector<SimStorageDeclOp> storages;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
   llvm::DenseMap<uint64_t, SimNetDeclOp> nets;
+  llvm::DenseMap<uint64_t, SimPortDeclOp> portsById;
   llvm::DenseMap<uint64_t, NetResolutionKind> netResolutions;
   SmallVector<SimNetConnectDeclOp> netConnections;
   llvm::StringMap<SimClassDeclOp> classes;
@@ -1695,10 +2565,53 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementSites.push_back(site);
     } else if (auto relation = dyn_cast<SimVPIStatementRelationDeclOp>(op)) {
       statementRelations.push_back(relation);
+    } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
+      vpiRelations.push_back(relation);
+    } else if (auto member = dyn_cast<SimVPIDefinitionMemberDeclOp>(op)) {
+      definitionMembers.push_back(member);
+    } else if (auto specialization =
+                   dyn_cast<SimVPIDefinitionSpecializationDeclOp>(op)) {
+      definitionSpecializations.push_back(specialization);
+    } else if (auto binding =
+                   dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op)) {
+      definitionMemberSpecializations.push_back(binding);
+    } else if (auto binding =
+                   dyn_cast<SimVPIDefinitionMemberInstanceBindingOp>(op)) {
+      definitionMemberInstanceBindings.push_back(binding);
+    } else if (auto relation =
+                   dyn_cast<SimVPIDefinitionMemberInstanceRelationOp>(op)) {
+      definitionMemberInstanceRelations.push_back(relation);
+    } else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op)) {
+      if (failed(addId(identity.getIdAttr(), vpiNetIdentityIds,
+                       "VPI net identity")))
+        return failure();
+      vpiNetIdentities.push_back(identity);
+      vpiNetIdentitiesById[identity.getId()] = identity;
+    } else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op)) {
+      if (failed(addId(anchor.getInventoryIdAttr(), vpiAnchorIds,
+                       "VPI object anchor")))
+        return failure();
+      vpiAnchors.push_back(anchor);
+      vpiAnchorsById[anchor.getInventoryId()] = anchor;
+    } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
+      if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
+        return failure();
+      typespecs.push_back(typespec);
+    } else if (auto nettype = dyn_cast<SimVPINettypeDeclOp>(op)) {
+      if (failed(addId(nettype.getIdAttr(), nettypeIds, "VPI nettype")))
+        return failure();
+      nettypes.push_back(nettype);
+    } else if (auto enumConstant = dyn_cast<SimVPIEnumConstDeclOp>(op)) {
+      if (failed(addId(enumConstant.getIdAttr(), enumConstIds,
+                       "VPI enum constant")))
+        return failure();
+      enumConstants.push_back(enumConstant);
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (failed(addId(storage.getIdAttr(), storageIds, "storage")))
         return failure();
       storageTypes[storage.getId()] = storage.getType();
+      storages.push_back(storage);
+      storagesById[storage.getId()] = storage;
     } else if (auto net = dyn_cast<SimNetDeclOp>(op)) {
       if (failed(addId(net.getIdAttr(), netIds, "net")))
         return failure();
@@ -1712,6 +2625,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     } else if (auto port = dyn_cast<SimPortDeclOp>(op)) {
       if (failed(addId(port.getIdAttr(), portIds, "port")))
         return failure();
+      portsById[port.getId()] = port;
     } else if (auto connection = dyn_cast<SimNetConnectDeclOp>(op)) {
       if (failed(
               addId(connection.getIdAttr(), connectionIds, "net connection")))
@@ -1729,6 +2643,614 @@ LogicalResult SimDesignOp::verifyRegions() {
       functions.push_back(function);
     }
   }
+
+  llvm::DenseMap<Attribute,
+                 llvm::DenseMap<uint64_t, SimVPIDefinitionMemberDeclOp>>
+      definitionMemberOrdinals;
+  SmallVector<Attribute> definitionMemberOrder;
+  for (SimVPIDefinitionMemberDeclOp member : definitionMembers) {
+    auto [definitionEntry, newDefinition] =
+        definitionMemberOrdinals.try_emplace(member.getDefinitionAttr());
+    if (newDefinition)
+      definitionMemberOrder.push_back(member.getDefinitionAttr());
+    auto &ordinals = definitionEntry->second;
+    auto [sameOrdinal, inserted] =
+        ordinals.try_emplace(member.getOrdinal(), member);
+    if (!inserted)
+      return member.emitOpError()
+             << "duplicates member ordinal " << member.getOrdinal()
+             << " in the same VPI definition (first declared by "
+             << sameOrdinal->second.getSymName() << ")";
+  }
+  for (Attribute definition : definitionMemberOrder) {
+    const auto &ordinals = definitionMemberOrdinals.find(definition)->second;
+    for (uint64_t ordinal = 0; ordinal != ordinals.size(); ++ordinal)
+      if (!ordinals.contains(ordinal))
+        return emitOpError()
+               << "VPI definition " << definition
+               << " member ordinals must be dense declaration order";
+  }
+
+  llvm::DenseMap<Attribute, llvm::DenseSet<Attribute>> specializedMembers;
+  llvm::DenseMap<std::pair<Attribute, Attribute>, VPITypeSemanticsAttr>
+      specializedMemberTypes;
+  for (SimVPIDefinitionMemberSpecializationOp binding :
+       definitionMemberSpecializations) {
+    auto &members = specializedMembers[binding.getSpecializationAttr()];
+    if (!members.insert(binding.getMemberAttr()).second)
+      return binding.emitOpError(
+          "duplicates a member binding in the same VPI specialization");
+    specializedMemberTypes.try_emplace(
+        std::make_pair(Attribute(binding.getSpecializationAttr()),
+                       Attribute(binding.getMemberAttr())),
+        binding.getEffectiveType());
+  }
+  for (SimVPIDefinitionSpecializationDeclOp specialization :
+       definitionSpecializations) {
+    size_t expectedMemberCount = 0;
+    if (auto definition =
+            definitionMemberOrdinals.find(specialization.getDefinitionAttr());
+        definition != definitionMemberOrdinals.end())
+      expectedMemberCount = definition->second.size();
+    size_t actualMemberCount = 0;
+    auto specializationMembers = specializedMembers.find(
+        FlatSymbolRefAttr::get(specialization.getSymNameAttr()));
+    if (specializationMembers != specializedMembers.end())
+      actualMemberCount = specializationMembers->second.size();
+    if (actualMemberCount != expectedMemberCount)
+      return specialization.emitOpError()
+             << "must bind every member in its VPI definition (expected "
+             << expectedMemberCount << ", got " << actualMemberCount << ")";
+  }
+  for (Operation &op : getBody().front()) {
+    auto scope = dyn_cast<SimScopeDeclOp>(op);
+    if (!scope || !scope.getVpiDefinitionAttr() ||
+        scope.getVpiSpecializationAttr())
+      continue;
+    auto definition =
+        definitionMemberOrdinals.find(scope.getVpiDefinitionAttr());
+    if (definition != definitionMemberOrdinals.end() &&
+        !definition->second.empty())
+      return scope.emitOpError(
+          "VPI definition with members requires a specialization");
+  }
+  llvm::DenseMap<std::pair<uint64_t, Attribute>,
+                 SimVPIDefinitionMemberInstanceBindingOp>
+      instanceMemberBindings;
+  for (SimVPIDefinitionMemberInstanceBindingOp binding :
+       definitionMemberInstanceBindings) {
+    auto scope = scopes.find(binding.getScopeId());
+    if (scope == scopes.end())
+      return binding.emitOpError("references an unknown scope ID");
+    auto member =
+        symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+            binding, binding.getMemberAttr());
+    if (!member)
+      continue;
+    if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
+      return binding.emitOpError(
+          "member does not belong to the scope's VPI definition");
+    if (member.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl))
+      return binding.emitOpError(
+          "expression endpoint member is not a VPI IO declaration");
+
+    uint64_t targetId =
+        binding.getExprTarget().getId().getValue().getZExtValue();
+    uint64_t targetScope = 0;
+    uint32_t targetKind = 0;
+    VPITypeSemanticsAttr targetType;
+    auto missingTarget = [&]() -> LogicalResult {
+      return binding.emitOpError()
+             << "references an unknown expression "
+             << stringifyVPIObjectRefKind(binding.getExprTarget().getKind())
+             << " ID " << targetId;
+    };
+    switch (binding.getExprTarget().getKind()) {
+    case VPIObjectRefKind::Storage: {
+      auto found = storagesById.find(targetId);
+      if (found == storagesById.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForStorage(targetType);
+      break;
+    }
+    case VPIObjectRefKind::Net: {
+      auto found = nets.find(targetId);
+      if (found == nets.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForNet(targetType);
+      break;
+    }
+    case VPIObjectRefKind::NetIdentity: {
+      auto found = vpiNetIdentitiesById.find(targetId);
+      if (found == vpiNetIdentitiesById.end())
+        return missingTarget();
+      targetScope = found->second.getScopeId();
+      targetType = found->second.getVpiTypeAttr();
+      targetKind = vpiKindForNet(targetType);
+      break;
+    }
+    case VPIObjectRefKind::Statement:
+    case VPIObjectRefKind::Port:
+      return binding.emitOpError(
+          "expression endpoint must be whole storage or a declared net");
+    }
+    VPIIODirection direction =
+        member.getDirection().value_or(VPIIODirection::Undefined);
+    if (direction == VPIIODirection::Ref) {
+      auto specialization = scope->second.getVpiSpecializationAttr();
+      auto effective = specialization
+                           ? specializedMemberTypes.find(std::make_pair(
+                                 Attribute(specialization),
+                                 Attribute(binding.getMemberAttr())))
+                           : specializedMemberTypes.end();
+      if (effective == specializedMemberTypes.end() ||
+          !areEquivalentVPIRefTypes(effective->second, targetType))
+        return binding.emitOpError(
+            "ref actual type does not match its specialized member type");
+    }
+    // An ordinary formal resolves inside its elaborated instance. A ref
+    // formal instead resolves to the caller's actual and is normally owned by
+    // another scope.
+    if (direction != VPIIODirection::Ref && targetScope != binding.getScopeId())
+      return binding.emitOpError(
+          "non-ref expression endpoint belongs to a different scope");
+    const auto *exprEdge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl),
+        static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
+        reflection::VPITraversalMode::Handle);
+    const auto *actualEdge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::RefObj),
+        static_cast<uint32_t>(reflection::VPIRelationKind::ActualRel),
+        reflection::VPITraversalMode::Handle);
+    bool legalEndpoint =
+        direction == VPIIODirection::Ref
+            ? binding.getExprTarget().getKind() == VPIObjectRefKind::Storage &&
+                  exprEdge && actualEdge &&
+                  reflection::vpiObjectSetContains(
+                      exprEdge->targets,
+                      static_cast<uint32_t>(
+                          reflection::VPIObjectKind::RefObj)) &&
+                  reflection::vpiObjectSetContains(actualEdge->targets,
+                                                   targetKind)
+            : exprEdge && reflection::vpiObjectSetContains(exprEdge->targets,
+                                                           targetKind);
+    if (!legalEndpoint)
+      return binding.emitOpError(
+          "expression endpoint is not legal for a VPI IO declaration");
+    bool virtualInterface =
+        targetKind ==
+        static_cast<uint32_t>(reflection::VPIObjectKind::VirtualInterfaceVar);
+    if (virtualInterface ? direction != VPIIODirection::Undefined &&
+                               direction != VPIIODirection::Ref
+                         : direction != VPIIODirection::Input &&
+                               direction != VPIIODirection::Output &&
+                               direction != VPIIODirection::InOut &&
+                               direction != VPIIODirection::Ref)
+      return binding.emitOpError(
+          "expression endpoint is incompatible with the IO declaration "
+          "direction");
+    auto [sameBinding, inserted] = instanceMemberBindings.try_emplace(
+        std::make_pair(binding.getScopeId(),
+                       Attribute(binding.getMemberAttr())),
+        binding);
+    if (!inserted)
+      return binding.emitOpError(
+          "duplicates an instance binding for the same VPI member");
+  }
+
+  auto memberRelationKey = [](uint64_t scope, Attribute member,
+                              uint32_t selector, uint32_t mode) {
+    return std::make_tuple(scope, member, selector, mode);
+  };
+  llvm::DenseMap<
+      std::tuple<uint64_t, Attribute, uint32_t, uint32_t>,
+      llvm::DenseMap<uint64_t, SimVPIDefinitionMemberInstanceRelationOp>>
+      memberRelationOrdinals;
+  llvm::DenseMap<std::tuple<uint64_t, Attribute, uint32_t, uint32_t>,
+                 llvm::DenseSet<uint64_t>>
+      memberRelationTargets;
+  llvm::DenseSet<std::pair<uint64_t, uint32_t>> memberRelationInverseKeys;
+  auto isStrictDescendantScope = [&](uint64_t candidate, uint64_t ancestor) {
+    if (candidate == ancestor)
+      return false;
+    for (size_t depth = 0; depth != scopes.size(); ++depth) {
+      auto scope = scopes.find(candidate);
+      if (scope == scopes.end() || !scope->second.getParentAttr())
+        return false;
+      candidate = *scope->second.getParent();
+      if (candidate == ancestor)
+        return true;
+    }
+    return false;
+  };
+  for (SimVPIDefinitionMemberInstanceRelationOp relation :
+       definitionMemberInstanceRelations) {
+    auto scope = scopes.find(relation.getScopeId());
+    if (scope == scopes.end())
+      return relation.emitOpError("references an unknown scope ID");
+    auto member =
+        symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+            relation, relation.getMemberAttr());
+    if (!member)
+      continue;
+    if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
+      return relation.emitOpError(
+          "member does not belong to the scope's VPI definition");
+    if (member.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::IODecl) ||
+        member.getDirection().value_or(VPIIODirection::Undefined) !=
+            VPIIODirection::Ref)
+      return relation.emitOpError(
+          "source member does not materialize a RefObj");
+    if (!instanceMemberBindings.contains(std::make_pair(
+            relation.getScopeId(), Attribute(relation.getMemberAttr()))))
+      return relation.emitOpError(
+          "source member has no expression endpoint in this instance");
+    if (relation.getTarget().getKind() != VPIObjectRefKind::Port)
+      return relation.emitOpError("target must be a canonical VPI port");
+    uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    auto port = portsById.find(targetId);
+    if (port == portsById.end())
+      return relation.emitOpError("references an unknown port target ID");
+    auto mode = static_cast<reflection::VPITraversalMode>(
+        static_cast<uint32_t>(relation.getMode()));
+    const auto *edge = reflection::findVPITraversal(
+        static_cast<uint32_t>(reflection::VPIObjectKind::RefObj),
+        relation.getSelector(), mode);
+    if (!edge ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::
+                                       DefinitionMemberInstanceRelation ||
+        !reflection::vpiObjectSetContains(
+            edge->targets,
+            static_cast<uint32_t>(reflection::VPIObjectKind::Port)))
+      return relation.emitOpError(
+          "relation is not legal for a generated RefObj traversal");
+    uint64_t targetScope = port->second.getScopeId();
+    if (relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Port) &&
+        targetScope != relation.getScopeId())
+      return relation.emitOpError(
+          "vpiPort target must belong to the RefObj instance");
+    if (relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::PortInstRel) &&
+        !isStrictDescendantScope(targetScope, relation.getScopeId()))
+      return relation.emitOpError(
+          "vpiPortInst target must belong to a descendant instance");
+    uint32_t inverseSelector = edge->inverseSelector;
+    if (inverseSelector == 0)
+      return relation.emitOpError(
+          "generated RefObj traversal has no inverse selector");
+    if (inverseSelector ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel) &&
+        port->second.getDirection() != PortDirection::InOut)
+      return relation.emitOpError(
+          "owning ref port must have inout execution direction");
+    if (!memberRelationInverseKeys.insert({targetId, inverseSelector}).second)
+      return relation.emitOpError(
+          "target port already has a reference connection");
+    auto key = memberRelationKey(
+        relation.getScopeId(), Attribute(relation.getMemberAttr()),
+        relation.getSelector(), static_cast<uint32_t>(relation.getMode()));
+    auto [sameOrdinal, insertedOrdinal] =
+        memberRelationOrdinals[key].try_emplace(relation.getOrdinal(),
+                                                relation);
+    if (!insertedOrdinal)
+      return relation.emitOpError("duplicates an ordinal in the same relation");
+    if (!memberRelationTargets[key].insert(targetId).second)
+      return relation.emitOpError("duplicates a target in the same relation");
+  }
+  for (const auto &entry : memberRelationOrdinals) {
+    const auto &ordinals = entry.second;
+    for (uint64_t ordinal = 0; ordinal != ordinals.size(); ++ordinal)
+      if (!ordinals.contains(ordinal))
+        return emitOpError(
+            "VPI definition-member relation ordinals must be dense");
+  }
+
+  llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors)
+    anchorsBySymbol[FlatSymbolRefAttr::get(anchor.getSymNameAttr())] = anchor;
+
+  llvm::DenseMap<Operation *, llvm::DenseSet<uint32_t>> arrayMemberOrdinals;
+  llvm::DenseMap<Operation *, uint32_t> arrayElementCounts;
+  llvm::DenseMap<Operation *, llvm::DenseMap<int64_t, uint32_t>> sparseOrdinals;
+  for (SimVPIObjectAnchorOp array : vpiAnchors) {
+    uint64_t count = 0;
+    if (DenseI64ArrayAttr ranges = array.getIndexRangesAttr()) {
+      count = 1;
+      ArrayRef<int64_t> bounds = ranges.asArrayRef();
+      for (size_t dimension = 0; dimension != bounds.size(); dimension += 2) {
+        uint64_t distance =
+            bounds[dimension] >= bounds[dimension + 1]
+                ? static_cast<uint64_t>(bounds[dimension]) -
+                      static_cast<uint64_t>(bounds[dimension + 1])
+                : static_cast<uint64_t>(bounds[dimension + 1]) -
+                      static_cast<uint64_t>(bounds[dimension]);
+        count *= distance + 1;
+      }
+    } else if (DenseI64ArrayAttr sparse = array.getSparseIndicesAttr()) {
+      count = sparse.size();
+      auto &ordinals = sparseOrdinals[array.getOperation()];
+      for (auto [ordinal, value] : llvm::enumerate(sparse.asArrayRef()))
+        ordinals.try_emplace(value, static_cast<uint32_t>(ordinal));
+    } else {
+      continue;
+    }
+    arrayElementCounts[array.getOperation()] = static_cast<uint32_t>(count);
+  }
+  for (SimVPIObjectAnchorOp member : vpiAnchors) {
+    FlatSymbolRefAttr parent = member.getParentAttr();
+    if (!parent)
+      continue;
+    auto parentIt = anchorsBySymbol.find(parent);
+    if (parentIt == anchorsBySymbol.end())
+      continue;
+    SimVPIObjectAnchorOp array = parentIt->second;
+    auto countIt = arrayElementCounts.find(array.getOperation());
+    if (countIt == arrayElementCounts.end())
+      continue;
+    DenseI64ArrayAttr memberAttr = member.getMemberIndicesAttr();
+    if (!memberAttr)
+      return member.emitOpError(
+          "array member must carry its exact source indices");
+    ArrayRef<int64_t> indices = memberAttr.asArrayRef();
+    uint64_t ordinal = 0;
+    if (DenseI64ArrayAttr ranges = array.getIndexRangesAttr()) {
+      ArrayRef<int64_t> bounds = ranges.asArrayRef();
+      if (indices.size() * 2 != bounds.size())
+        return member.emitOpError(
+            "array member index rank does not match its parent");
+      for (size_t dimension = 0; dimension != indices.size(); ++dimension) {
+        int64_t left = bounds[dimension * 2];
+        int64_t right = bounds[dimension * 2 + 1];
+        if (indices[dimension] < std::min(left, right) ||
+            indices[dimension] > std::max(left, right))
+          return member.emitOpError(
+              "array member index is outside its parent range");
+        uint64_t extent = left >= right ? static_cast<uint64_t>(left) -
+                                              static_cast<uint64_t>(right) + 1
+                                        : static_cast<uint64_t>(right) -
+                                              static_cast<uint64_t>(left) + 1;
+        uint64_t coordinate =
+            left >= right ? static_cast<uint64_t>(left) -
+                                static_cast<uint64_t>(indices[dimension])
+                          : static_cast<uint64_t>(indices[dimension]) -
+                                static_cast<uint64_t>(left);
+        ordinal = ordinal * extent + coordinate;
+      }
+    } else {
+      auto &ordinals = sparseOrdinals[array.getOperation()];
+      auto found =
+          indices.size() == 1 ? ordinals.find(indices.front()) : ordinals.end();
+      if (found == ordinals.end())
+        return member.emitOpError(
+            "generate-array member index is absent from its parent");
+      ordinal = found->second;
+    }
+    if (ordinal >= countIt->second ||
+        !arrayMemberOrdinals[array.getOperation()]
+             .insert(static_cast<uint32_t>(ordinal))
+             .second)
+      return member.emitOpError(
+          "duplicates a source coordinate in its VPI array parent");
+  }
+  for (const auto &[array, count] : arrayElementCounts)
+    if (arrayMemberOrdinals[array].size() != count)
+      return cast<SimVPIObjectAnchorOp>(array).emitOpError(
+          "does not have exactly one child for every source coordinate");
+
+  llvm::DenseSet<Attribute> delegatedAnchors;
+  for (SimStorageDeclOp storage : storages) {
+    auto delegated = storage->getAttrOfType<FlatSymbolRefAttr>(
+        metadata::vpiIdentityDelegated);
+    if (!delegated)
+      continue;
+    SimVPIObjectAnchorOp anchor =
+        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(storage,
+                                                                  delegated);
+    if (!anchor ||
+        anchor.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::NamedEventArray))
+      return storage.emitOpError(
+          "delegated VPI identity must reference a named-event-array anchor");
+    if (storage.getScopeId() != anchor.getEnclosingScopeId() ||
+        !storage.getHierarchicalName() ||
+        *storage.getHierarchicalName() != anchor.getHierarchicalName())
+      return storage.emitOpError(
+          "delegated VPI identity disagrees with its anchor scope or name");
+    SmallVector<int64_t> ranges;
+    VPITypeSemanticsAttr semantic = storage.getVpiTypeAttr();
+    while (semantic && semantic.getKind() == VPITypeKind::UnpackedArray) {
+      llvm::append_range(ranges, semantic.getRange().asArrayRef());
+      semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+    }
+    if (!semantic || semantic.getKind() != VPITypeKind::Event ||
+        !anchor.getIndexRangesAttr() ||
+        !llvm::equal(ranges, anchor.getIndexRangesAttr().asArrayRef()))
+      return storage.emitOpError(
+          "delegated VPI identity disagrees with its anchor array shape");
+    if (!delegatedAnchors.insert(delegated).second)
+      return storage.emitOpError(
+          "multiple storages delegate the same public VPI identity");
+  }
+
+  llvm::DenseMap<Attribute, SmallVector<SimVPITypespecDeclOp>>
+      interfaceTypespecs;
+  llvm::DenseMap<uint64_t, SimVPITypespecDeclOp> anonymousEnumTypespecs;
+  for (SimVPITypespecDeclOp typespec : typespecs) {
+    VPITypeSemanticsAttr target = typespec.getTargetType();
+    if (typespec.getOrigin() == VPITypespecOrigin::Interface &&
+        target.getKind() == VPITypeKind::VirtualInterface) {
+      Attribute specializationOwner = ArrayAttr::get(
+          getContext(), {typespec.getOwnerAttr(), target.getName()});
+      interfaceTypespecs[specializationOwner].push_back(typespec);
+    }
+    if (typespec.getOrigin() == VPITypespecOrigin::AnonymousEnum) {
+      auto [entry, inserted] = anonymousEnumTypespecs.try_emplace(
+          *typespec.getSourceTypeIdentity(), typespec);
+      if (!inserted)
+        return typespec.emitOpError(
+            "duplicates an anonymous enum source type identity");
+    }
+  }
+  for (const auto &entry : interfaceTypespecs) {
+    llvm::SmallDenseSet<Attribute, 4> modports;
+    bool hasBase = false;
+    for (SimVPITypespecDeclOp typespec : entry.second) {
+      StringAttr modport = typespec.getTargetType().getModport();
+      if (!modports.insert(modport).second)
+        return typespec.emitOpError(
+            "duplicates an interface/modport typespec specialization");
+      hasBase |= modport.getValue().empty();
+    }
+    if (!hasBase && llvm::any_of(entry.second, [](SimVPITypespecDeclOp op) {
+          return !op.getTargetType().getModport().getValue().empty();
+        }))
+      return SimVPITypespecDeclOp(entry.second.front())
+          .emitOpError(
+              "modport typespec requires its parent interface typespec");
+  }
+
+  llvm::SmallDenseSet<Attribute, 8> classVPIIdentities;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    VPIObjectBackingAttr backing = anchor.getBackingAttr();
+    if (backing && backing.getKind() == VPIObjectBackingKind::Class &&
+        backing.getSymbol())
+      classVPIIdentities.insert(backing.getSymbol());
+  }
+
+  std::function<LogicalResult(Operation *, VPITypeSemanticsAttr)>
+      verifyTypeReferences =
+          [&](Operation *owner,
+              VPITypeSemanticsAttr semantic) -> LogicalResult {
+    if (ArrayAttr aliases = semantic.getTypedefAliases()) {
+      for (Attribute alias : aliases) {
+        auto reference = cast<SymbolRefAttr>(alias);
+        SimVPITypespecDeclOp target =
+            symbolTable.lookupNearestSymbolFrom<SimVPITypespecDeclOp>(
+                owner, reference);
+        if (!target || target.getOrigin() != VPITypespecOrigin::Typedef)
+          return owner->emitError()
+                 << "VPI typedef alias " << reference
+                 << " does not reference a typedef typespec declaration";
+      }
+    }
+    if (semantic.getKind() == VPITypeKind::VirtualInterface &&
+        !semantic.getSymbol())
+      return owner->emitError(
+          "VPI virtual-interface semantics require an exact typespec identity");
+    if (semantic.getKind() == VPITypeKind::VirtualInterface) {
+      SimVPITypespecDeclOp target =
+          symbolTable.lookupNearestSymbolFrom<SimVPITypespecDeclOp>(
+              owner, semantic.getSymbol());
+      if (!target)
+        return owner->emitError()
+               << "VPI virtual-interface identity " << semantic.getSymbol()
+               << " does not reference a typespec declaration";
+      VPITypeSemanticsAttr targetType = target.getTargetType();
+      if (target.getOrigin() != VPITypespecOrigin::Interface ||
+          targetType.getKind() != VPITypeKind::VirtualInterface ||
+          targetType.getName() != semantic.getName() ||
+          targetType.getModport() != semantic.getModport())
+        return owner->emitError()
+               << "VPI virtual-interface identity " << semantic.getSymbol()
+               << " references a different interface specialization";
+    }
+    if (semantic.getKind() == VPITypeKind::Class &&
+        (!semantic.getSymbol() ||
+         !classVPIIdentities.contains(FlatSymbolRefAttr::get(
+             getContext(),
+             semantic.getSymbol().getRootReference().getValue()))))
+      return owner->emitError()
+             << "VPI class semantics require a class-definition identity "
+                "anchor for "
+             << semantic.getSymbol();
+    for (Attribute child : semantic.getChildren())
+      if (failed(
+              verifyTypeReferences(owner, cast<VPITypeSemanticsAttr>(child))))
+        return failure();
+    return success();
+  };
+  for (SimVPITypespecDeclOp typespec : typespecs)
+    if (failed(verifyTypeReferences(typespec, typespec.getTargetType())))
+      return failure();
+  for (SimVPINettypeDeclOp nettype : nettypes)
+    if (failed(verifyTypeReferences(nettype, nettype.getTargetType())))
+      return failure();
+
+  // Validate the whole direct-alias forest once. Memoizing completed paths
+  // keeps a long legal alias chain linear rather than retraversing every
+  // suffix from every declaration.
+  llvm::DenseMap<Operation *, uint8_t> nettypeAliasState;
+  std::function<LogicalResult(SimVPINettypeDeclOp)> verifyNettypeAlias =
+      [&](SimVPINettypeDeclOp nettype) -> LogicalResult {
+    uint8_t &state = nettypeAliasState[nettype];
+    if (state == 2)
+      return success();
+    if (state == 1)
+      return nettype.emitOpError("direct nettype aliases contain a cycle");
+    state = 1;
+    if (FlatSymbolRefAttr alias = nettype.getDirectAliasAttr()) {
+      SimVPINettypeDeclOp target =
+          symbolTable.lookupNearestSymbolFrom<SimVPINettypeDeclOp>(nettype,
+                                                                   alias);
+      if (target && failed(verifyNettypeAlias(target)))
+        return failure();
+    }
+    state = 2;
+    return success();
+  };
+  for (SimVPINettypeDeclOp nettype : nettypes)
+    if (failed(verifyNettypeAlias(nettype)))
+      return failure();
+  for (Operation &op : getBody().front()) {
+    VPITypeSemanticsAttr semantic;
+    if (auto storage = dyn_cast<SimStorageDeclOp>(op))
+      semantic = storage.getVpiTypeAttr();
+    else if (auto net = dyn_cast<SimNetDeclOp>(op))
+      semantic = net.getVpiTypeAttr();
+    else if (auto identity = dyn_cast<SimVPINetIdentityDeclOp>(op))
+      semantic = identity.getVpiTypeAttr();
+    else if (auto port = dyn_cast<SimPortDeclOp>(op))
+      semantic = port.getVpiTypeAttr();
+    else if (auto specialization =
+                 dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op))
+      semantic = specialization.getEffectiveTypeAttr();
+    if (!semantic)
+      continue;
+    if (failed(verifyTypeReferences(&op, semantic)))
+      return failure();
+    if (semantic.getKind() == VPITypeKind::Enum &&
+        !semantic.getTypedefAliases()) {
+      auto identity =
+          op.getAttrOfType<IntegerAttr>(metadata::vpiSourceTypeIdentity);
+      if (!identity)
+        return op.emitError(
+            "anonymous enum VPI value requires an exact source type "
+            "identity");
+      if (!anonymousEnumTypespecs.contains(identity.getValue().getZExtValue()))
+        return op.emitError(
+            "anonymous enum VPI value has no matching typespec identity");
+    }
+  }
+  llvm::DenseMap<Attribute, llvm::DenseSet<uint64_t>> enumOrdinals;
+  for (SimVPIEnumConstDeclOp enumConstant : enumConstants) {
+    Attribute key = enumConstant.getEnumTypespecAttr();
+    auto &ordinals = enumOrdinals[key];
+    if (!ordinals.insert(enumConstant.getOrdinal()).second)
+      return enumConstant.emitOpError(
+          "duplicates an ordinal in the same enum typespec");
+  }
+  for (const auto &entry : enumOrdinals)
+    for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
+      if (!entry.second.contains(ordinal))
+        return emitOpError(
+            "VPI enum-constant ordinals must be dense declaration order");
 
   llvm::DenseMap<uint64_t, uint8_t> statementSiteMasks;
   for (SimStatementSiteDeclOp site : statementSites) {
@@ -1836,8 +3358,8 @@ LogicalResult SimDesignOp::verifyRegions() {
             0)
           return relation.emitOpError(
               "scope source VPI kind is not a scope object");
-        if (source->second.getInterfaceType().has_value() !=
-            (StringRef(sourceKind->apiName) == "vpiInterface"))
+        if (source->second.getInterfaceType() &&
+            StringRef(sourceKind->apiName) != "vpiInterface")
           return relation.emitOpError(
               "interface scope metadata and source VPI kind disagree");
         if (effectiveScopeVPIKind(source->second) !=
@@ -1907,6 +3429,29 @@ LogicalResult SimDesignOp::verifyRegions() {
             target->second.getScopeId() != source->second.getScopeId())
           return relation.emitOpError(
               "statement source does not match the target's structural parent");
+        break;
+      }
+      case VPIStatementSourceKind::Anchor: {
+        auto source = vpiAnchorsById.find(relation.getSourceId());
+        if (source == vpiAnchorsById.end())
+          return relation.emitOpError(
+              "references an unknown source VPI anchor inventory ID");
+        if (source->second.getVpiKind() != relation.getSourceVpiKind())
+          return relation.emitOpError(
+              "source VPI kind does not match the anchor declaration");
+        if (source->second.getBackingAttr())
+          return relation.emitOpError(
+              "backed anchor source must use its canonical scope or "
+              "code-unit ID");
+        if ((sourceKind->families &
+             reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) ==
+            0)
+          return relation.emitOpError(
+              "anchor source VPI kind is not a scope object");
+        if (target->second.getCodeUnitId() || target->second.getParentId() ||
+            target->second.getScopeId() != source->second.getEnclosingScopeId())
+          return relation.emitOpError(
+              "anchor source does not own the root scope-owned statement");
         break;
       }
       }
@@ -2031,6 +3576,199 @@ LogicalResult SimDesignOp::verifyRegions() {
             "is missing its semantic VPI statement-containment relation");
   }
 
+  llvm::StringMap<Operation *> declaredNetNames;
+  for (auto [id, net] : nets)
+    if (auto hierarchy = net.getHierarchicalName())
+      declaredNetNames.try_emplace(*hierarchy, net);
+  for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
+    if (!scopeIds.count(identity.getScopeId()))
+      return identity.emitOpError("references an unknown scope ID");
+    auto backing = nets.find(identity.getBackingNetId());
+    if (backing == nets.end())
+      return identity.emitOpError("references an unknown backing net ID");
+    std::optional<uint64_t> backingWidth =
+        getProvenanceSpan(backing->second.getType());
+    std::optional<uint64_t> identityWidth =
+        getProvenanceSpan(identity.getType());
+    if (!backingWidth || !identityWidth || *backingWidth != *identityWidth)
+      return identity.emitOpError(
+          "net identity width does not match its backing net");
+    auto [sameName, inserted] =
+        declaredNetNames.try_emplace(identity.getHierarchicalName(), identity);
+    if (!inserted)
+      return identity.emitOpError()
+             << "duplicates declared net hierarchy owned by "
+             << sameName->second->getName();
+  }
+
+  // General relations describe immutable, non-containment graph edges. Their
+  // exact endpoint kinds are derived from inventory declarations so stale or
+  // hand-authored metadata cannot smuggle a mismatched kind into the image.
+  struct GeneralRelation {
+    uint32_t sourceTag;
+    uint64_t sourceId;
+    uint32_t selector;
+    uint32_t mode;
+    uint64_t ordinal;
+    uint32_t targetTag;
+    uint64_t targetId;
+    SimVPIRelationDeclOp relation;
+  };
+  SmallVector<GeneralRelation> generalRelations;
+  generalRelations.reserve(vpiRelations.size());
+  for (SimVPIRelationDeclOp relation : vpiRelations) {
+    auto resolveKind = [&](VPIObjectRefAttr reference,
+                           StringRef endpoint) -> FailureOr<uint32_t> {
+      uint64_t id = reference.getId().getValue().getZExtValue();
+      auto missing = [&]() -> FailureOr<uint32_t> {
+        relation.emitOpError()
+            << "references an unknown " << endpoint << " "
+            << stringifyVPIObjectRefKind(reference.getKind()) << " ID " << id;
+        return failure();
+      };
+      uint32_t kind = 0;
+      switch (reference.getKind()) {
+      case VPIObjectRefKind::Statement: {
+        auto found = statements.find(id);
+        if (found == statements.end())
+          return missing();
+        kind = found->second.getVpiKind();
+        break;
+      }
+      case VPIObjectRefKind::Storage: {
+        auto found = storagesById.find(id);
+        if (found == storagesById.end())
+          return missing();
+        kind = vpiKindForStorage(found->second.getVpiTypeAttr());
+        break;
+      }
+      case VPIObjectRefKind::Net: {
+        auto found = nets.find(id);
+        if (found == nets.end())
+          return missing();
+        kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        break;
+      }
+      case VPIObjectRefKind::NetIdentity: {
+        auto found = vpiNetIdentitiesById.find(id);
+        if (found == vpiNetIdentitiesById.end())
+          return missing();
+        kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        break;
+      }
+      case VPIObjectRefKind::Port: {
+        auto found = portsById.find(id);
+        if (found == portsById.end())
+          return missing();
+        kind = static_cast<uint32_t>(reflection::VPIObjectKind::Port);
+        break;
+      }
+      }
+      const auto *object = reflection::findVPIObjectKind(kind);
+      if (!kind || !object ||
+          object->role != reflection::VPIObjectRole::Concrete) {
+        relation.emitOpError()
+            << endpoint << " " << stringifyVPIObjectRefKind(reference.getKind())
+            << " ID " << id << " is not VPI-visible";
+        return failure();
+      }
+      return kind;
+    };
+
+    FailureOr<uint32_t> sourceKind =
+        resolveKind(relation.getSource(), "source");
+    if (failed(sourceKind))
+      return failure();
+    FailureOr<uint32_t> targetKind =
+        resolveKind(relation.getTarget(), "target");
+    if (failed(targetKind))
+      return failure();
+    auto mode = static_cast<reflection::VPITraversalMode>(
+        static_cast<uint32_t>(relation.getMode()));
+    const auto *edge =
+        reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
+    if (!edge || edge->statementContainment ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        !reflection::vpiObjectSetContains(edge->targets, *targetKind))
+      return relation.emitOpError(
+          "is not a legal non-containment traversal in the generated VPI "
+          "model");
+
+    uint64_t sourceId = relation.getSource().getId().getValue().getZExtValue();
+    uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    if (relation.getSource().getKind() == VPIObjectRefKind::Port &&
+        memberRelationInverseKeys.contains(
+            {sourceId, static_cast<uint32_t>(relation.getSelector())}))
+      return relation.emitOpError(
+          "port connection is already supplied by a synthetic RefObj");
+    generalRelations.push_back(
+        {static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
+         static_cast<uint32_t>(relation.getSelector()),
+         static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
+         static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
+         relation});
+  }
+  llvm::sort(generalRelations, [](const GeneralRelation &left,
+                                  const GeneralRelation &right) {
+    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode,
+                    left.ordinal, left.targetTag, left.targetId) <
+           std::tie(right.sourceTag, right.sourceId, right.selector, right.mode,
+                    right.ordinal, right.targetTag, right.targetId);
+  });
+  auto sameGeneralGroup = [](const GeneralRelation &left,
+                             const GeneralRelation &right) {
+    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode) ==
+           std::tie(right.sourceTag, right.sourceId, right.selector,
+                    right.mode);
+  };
+  constexpr uint32_t simNetSelector =
+      static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel);
+  llvm::DenseMap<uint64_t, GeneralRelation *> identitySimNets;
+  for (size_t begin = 0; begin != generalRelations.size();) {
+    size_t end = begin + 1;
+    while (end != generalRelations.size() &&
+           sameGeneralGroup(generalRelations[begin], generalRelations[end]))
+      ++end;
+    if (generalRelations[begin].mode ==
+            static_cast<uint32_t>(VPIRelationMode::Handle) &&
+        end - begin > 1)
+      return generalRelations[end - 1].relation.emitOpError(
+          "vpi_handle relation may expose at most one target");
+    llvm::DenseSet<std::pair<uint32_t, uint64_t>> targets;
+    for (size_t index = begin; index != end; ++index) {
+      GeneralRelation &entry = generalRelations[index];
+      if (!targets.insert({entry.targetTag, entry.targetId}).second)
+        return entry.relation.emitOpError(
+            "duplicates a target in the same source, selector, and access "
+            "mode");
+      uint64_t expectedOrdinal = index - begin;
+      if (entry.ordinal != expectedOrdinal)
+        return entry.relation.emitOpError(
+            entry.ordinal < expectedOrdinal
+                ? "overlaps another target at the same source, selector, "
+                  "mode, and ordinal"
+                : "ordinals must be dense from zero for each source, "
+                  "selector, and access mode");
+      if (entry.sourceTag ==
+              static_cast<uint32_t>(VPIObjectRefKind::NetIdentity) &&
+          entry.selector == simNetSelector &&
+          entry.mode == static_cast<uint32_t>(VPIRelationMode::Handle))
+        identitySimNets[entry.sourceId] = &entry;
+    }
+    begin = end;
+  }
+  for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
+    auto found = identitySimNets.find(identity.getId());
+    if (found == identitySimNets.end())
+      return identity.emitOpError(
+          "requires one vpiSimNet relation to its backing net");
+    GeneralRelation *simNet = found->second;
+    if (simNet->targetTag != static_cast<uint32_t>(VPIObjectRefKind::Net) ||
+        simNet->targetId != identity.getBackingNetId())
+      return simNet->relation.emitOpError(
+          "vpiSimNet target does not match the net identity's backing net");
+  }
+
   struct ElementShape {
     Type type;
     uint32_t kind;
@@ -2103,12 +3841,132 @@ LogicalResult SimDesignOp::verifyRegions() {
     return success();
   };
   if (failed(verifyDense(scopeIds, "scope")) ||
+      failed(verifyDense(vpiAnchorIds, "VPI object anchor")) ||
+      failed(verifyDense(vpiNetIdentityIds, "VPI net identity")) ||
+      failed(verifyDense(nettypeIds, "VPI nettype")) ||
+      failed(verifyDense(typespecIds, "VPI typespec")) ||
+      failed(verifyDense(enumConstIds, "VPI enum constant")) ||
       failed(verifyDense(storageIds, "storage")) ||
       failed(verifyDense(netIds, "net")) ||
       failed(verifyDense(driverIds, "driver")) ||
       failed(verifyDense(portIds, "port")) ||
       failed(verifyDense(connectionIds, "net connection")))
     return failure();
+
+  llvm::DenseMap<Attribute, llvm::DenseSet<uint64_t>> anchorOrdinals;
+  llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> backedAnchors;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    if (!scopeIds.count(anchor.getEnclosingScopeId()))
+      return anchor.emitOpError("references an unknown enclosing scope ID");
+    Attribute parent = anchor.getParentAttr();
+    if (!parent)
+      parent = UnitAttr::get(getContext());
+    if (!anchorOrdinals[parent].insert(anchor.getOwnerOrdinal()).second)
+      return anchor.emitOpError(
+          "duplicates an ordinal under the same lexical parent");
+
+    VPIObjectBackingAttr backing = anchor.getBackingAttr();
+    if (!backing)
+      continue;
+    Attribute key = ArrayAttr::get(
+        getContext(),
+        {IntegerAttr::get(IntegerType::get(getContext(), 32),
+                          static_cast<uint32_t>(backing.getKind())),
+         backing.getId() ? Attribute(backing.getId())
+                         : Attribute(backing.getSymbol())});
+    if (auto [it, inserted] = backedAnchors.try_emplace(key, anchor); !inserted)
+      return anchor.emitOpError() << "duplicates physical backing used by "
+                                  << it->second.getSymNameAttr();
+    switch (backing.getKind()) {
+    case VPIObjectBackingKind::Scope:
+      if (!scopeIds.count(backing.getId().getValue().getZExtValue()))
+        return anchor.emitOpError("references an unknown backing scope ID");
+      if (backing.getId().getValue().getZExtValue() !=
+          anchor.getEnclosingScopeId())
+        return anchor.emitOpError(
+            "backing scope must equal the anchor's enclosing scope");
+      if (SimScopeDeclOp scope =
+              scopes.lookup(backing.getId().getValue().getZExtValue());
+          effectiveScopeVPIKind(scope) != anchor.getVpiKind())
+        return anchor.emitOpError(
+            "VPI anchor kind does not match its backing scope kind");
+      if (SimScopeDeclOp scope =
+              scopes.lookup(backing.getId().getValue().getZExtValue());
+          scope.getHierarchicalNameAttr() != anchor.getHierarchicalNameAttr())
+        return anchor.emitOpError(
+            "backing scope hierarchy must equal the anchor hierarchy");
+      break;
+    case VPIObjectBackingKind::Class:
+      break;
+    case VPIObjectBackingKind::Net: {
+      uint64_t id = backing.getId().getValue().getZExtValue();
+      auto found = nets.find(id);
+      if (found == nets.end())
+        return anchor.emitOpError("references an unknown backing net ID");
+      SimNetDeclOp net = found->second;
+      if (anchor.getEnclosingScopeId() != net.getScopeId())
+        return anchor.emitOpError(
+            "backing net scope must equal the anchor's enclosing scope");
+      if (!net.getHierarchicalName() ||
+          *net.getHierarchicalName() != anchor.getHierarchicalName())
+        return anchor.emitOpError(
+            "backing net hierarchy must equal the anchor hierarchy");
+      if (!net.getVpiTypeAttr())
+        return anchor.emitOpError(
+            "backing interconnect net requires VPI type semantics");
+      if (!hasNetSubtype(net, 16)) // vpiInterconnect
+        return anchor.emitOpError(
+            "backing interconnect net requires vpiInterconnect subtype");
+      break;
+    }
+    case VPIObjectBackingKind::CodeUnit: {
+      if (!codeUnitIds.count(backing.getId().getValue().getZExtValue()))
+        return anchor.emitOpError("references an unknown backing code-unit ID");
+      SimCodeUnitDeclOp codeUnit =
+          codeUnits.lookup(backing.getId().getValue().getZExtValue());
+      if (codeUnit.getInternalAttr() ||
+          codeUnit->hasAttr("obelisk_sim.dpi_import") ||
+          !isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
+        return anchor.emitOpError(
+            "backing code unit must be a VPI-visible task or function");
+      if (codeUnit.getScopeId() != anchor.getEnclosingScopeId())
+        return anchor.emitOpError(
+            "backing code-unit scope must equal the anchor's enclosing "
+            "scope");
+      if (codeUnit.getHierarchicalNameAttr() !=
+          anchor.getHierarchicalNameAttr())
+        return anchor.emitOpError(
+            "backing code-unit hierarchy must equal the anchor hierarchy");
+      if ((anchor.getVpiKind() ==
+               static_cast<uint32_t>(reflection::VPIObjectKind::Task) &&
+           codeUnit.getCodeUnitKind() != EntryKind::Task) ||
+          (anchor.getVpiKind() ==
+               static_cast<uint32_t>(reflection::VPIObjectKind::Function) &&
+           codeUnit.getCodeUnitKind() != EntryKind::Function))
+        return anchor.emitOpError(
+            "VPI anchor kind does not match its backing code-unit kind");
+      break;
+    }
+    }
+  }
+  for (const auto &entry : anchorOrdinals)
+    for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
+      if (!entry.second.contains(ordinal))
+        return emitOpError(
+            "VPI anchor ordinals must be dense under each lexical parent");
+
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    llvm::SmallPtrSet<Operation *, 8> path;
+    for (SimVPIObjectAnchorOp cursor = anchor; cursor;) {
+      if (!path.insert(cursor).second)
+        return anchor.emitOpError("lexical parent relation contains a cycle");
+      FlatSymbolRefAttr parent = cursor.getParentAttr();
+      cursor = parent
+                   ? symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+                         cursor, parent)
+                   : SimVPIObjectAnchorOp{};
+    }
+  }
   for (uint64_t id = 1; id <= classIds.size(); ++id)
     if (!classIds.count(id))
       return emitOpError() << "class IDs must be dense from one; missing "
@@ -2241,6 +4099,12 @@ LogicalResult SimDesignOp::verifyRegions() {
               statement->second.getVpiKind(), phase))
         return site.emitOpError(
             "phase is not legal for the statement's Table 38-6 policy");
+    } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
+      if (!scopeIds.count(typespec.getScopeId()))
+        return typespec.emitOpError("references an unknown scope ID");
+    } else if (auto nettype = dyn_cast<SimVPINettypeDeclOp>(op)) {
+      if (!scopeIds.count(nettype.getScopeId()))
+        return nettype.emitOpError("references an unknown scope ID");
     } else if (auto storage = dyn_cast<SimStorageDeclOp>(op)) {
       if (!scopeIds.count(storage.getScopeId()))
         return storage.emitOpError("references an unknown scope ID");

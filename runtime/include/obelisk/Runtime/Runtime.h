@@ -1521,7 +1521,9 @@ enum {
   OBELISK_RT_DESIGN_RECORD_PROCESS = 5,
   OBELISK_RT_DESIGN_RECORD_TYPE = 6,
   OBELISK_RT_DESIGN_RECORD_FUNCTION = 7,
-  OBELISK_RT_DESIGN_RECORD_PORT = 8
+  OBELISK_RT_DESIGN_RECORD_PORT = 8,
+  // Immutable source object with no executable descriptor or live state.
+  OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT = 9
 };
 
 typedef uint32_t obelisk_rt_design_capability;
@@ -1536,6 +1538,22 @@ enum {
   // Marks a VPI-profile port whose lower connection is an unselected whole
   // storage or net object. Its vpiLowConn relation is mandatory.
   OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE = UINT32_C(1) << 6,
+  // Distinguishes a user-defined typedef typespec, whose vpiName is defined,
+  // from unnamed built-in and anonymous static typespec records.
+  OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC = UINT32_C(1) << 7,
+  // The same record-kind-specific bit identifies a physical port whose IEEE
+  // direction is ref. Its execution-facing input/output bits remain available
+  // to the scheduler and waveform backends.
+  OBELISK_RT_DESIGN_CAP_PORT_REF = UINT32_C(1) << 7,
+  // The same record-kind-specific bit marks a process, function, or generic
+  // interconnect net whose lexical VPI owner is supplied by generated
+  // relations instead of its physical executable scope. These kinds cannot be
+  // typespec records.
+  OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
+  // Definition-backed vpiIODecl views use these record-kind-specific bits
+  // for the exact IEEE direction, including vpiRef and undefined.
+  OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
+  OBELISK_RT_DESIGN_CAP_IO_DIRECTION_MASK = UINT32_C(7) << 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK = UINT32_C(0xffffff) << 8
 };
@@ -1584,6 +1602,106 @@ typedef struct obelisk_rt_design_type_info_v1 {
   uint64_t tag_bits;
   uint64_t packed_offset;
 } obelisk_rt_design_type_info_v1;
+
+typedef uint32_t obelisk_rt_design_semantic_type_flags;
+typedef uint32_t obelisk_rt_design_semantic_type_kind;
+enum {
+  OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN = 0,
+  OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL = 1,
+  OBELISK_RT_DESIGN_SEMANTIC_BIT = 2,
+  OBELISK_RT_DESIGN_SEMANTIC_LOGIC = 3,
+  OBELISK_RT_DESIGN_SEMANTIC_REG = 4,
+  OBELISK_RT_DESIGN_SEMANTIC_BYTE = 5,
+  OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT = 6,
+  OBELISK_RT_DESIGN_SEMANTIC_INT = 7,
+  OBELISK_RT_DESIGN_SEMANTIC_LONG_INT = 8,
+  OBELISK_RT_DESIGN_SEMANTIC_INTEGER = 9,
+  OBELISK_RT_DESIGN_SEMANTIC_ENUM = 10,
+  OBELISK_RT_DESIGN_SEMANTIC_TIME = 11,
+  OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL = 12,
+  OBELISK_RT_DESIGN_SEMANTIC_REAL = 13,
+  OBELISK_RT_DESIGN_SEMANTIC_REALTIME = 14,
+  OBELISK_RT_DESIGN_SEMANTIC_STRING = 15,
+  OBELISK_RT_DESIGN_SEMANTIC_CHANDLE = 16,
+  OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY = 17,
+  OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY = 18,
+  OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT = 19,
+  OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT = 20,
+  OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION = 21,
+  OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION = 22,
+  OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY = 23,
+  OBELISK_RT_DESIGN_SEMANTIC_QUEUE = 24,
+  OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY = 25,
+  OBELISK_RT_DESIGN_SEMANTIC_CLASS = 26,
+  OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE = 27,
+  OBELISK_RT_DESIGN_SEMANTIC_EVENT = 28,
+  OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY = 29,
+  OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY = 30,
+  OBELISK_RT_DESIGN_SEMANTIC_PROCESS = 31,
+  OBELISK_RT_DESIGN_SEMANTIC_COVERGROUP = 32,
+  OBELISK_RT_DESIGN_SEMANTIC_MAILBOX = 33,
+  OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE = 34,
+  OBELISK_RT_DESIGN_SEMANTIC_VOID = 35,
+  OBELISK_RT_DESIGN_SEMANTIC_UNTYPED = 36,
+  OBELISK_RT_DESIGN_SEMANTIC_SEQUENCE = 37,
+  OBELISK_RT_DESIGN_SEMANTIC_PROPERTY = 38
+};
+enum {
+  OBELISK_RT_DESIGN_SEMANTIC_SIGNED = UINT32_C(1) << 8,
+  OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE = UINT32_C(1) << 9,
+  OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE = UINT32_C(1) << 10,
+  OBELISK_RT_DESIGN_SEMANTIC_TAGGED = UINT32_C(1) << 11,
+  OBELISK_RT_DESIGN_SEMANTIC_SOFT = UINT32_C(1) << 12,
+  OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX = UINT32_C(1) << 13
+};
+enum {
+  OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT = 16,
+  OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK = UINT32_C(0xffff) << 16
+};
+
+typedef uint32_t obelisk_rt_design_semantic_edge_role;
+enum {
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE = 1,
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT = 2,
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX = 3,
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER = 4
+};
+
+typedef uint32_t obelisk_rt_design_semantic_edge_flags;
+enum {
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM = 1,
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM = 2,
+  OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC = 3
+};
+
+typedef struct obelisk_rt_design_semantic_type_info_v1 {
+  uint32_t kind;
+  obelisk_rt_design_semantic_type_flags flags;
+  uint32_t public_vpi_kind;
+  uint32_t first_edge;
+  uint32_t edge_count;
+  obelisk_rt_design_cursor_v1 alias_object;
+  obelisk_rt_design_cursor_v1 identity_target;
+  const uint8_t *name;
+  uint64_t name_size;
+  const uint8_t *modport;
+  uint64_t modport_size;
+  uint32_t queue_bound;
+  int64_t range_left;
+  int64_t range_right;
+  uint64_t bit_width;
+  uint64_t tag_bits;
+} obelisk_rt_design_semantic_type_info_v1;
+
+typedef struct obelisk_rt_design_semantic_type_edge_v1 {
+  obelisk_rt_design_cursor_v1 child;
+  obelisk_rt_design_semantic_edge_role role;
+  uint32_t flags;
+  uint32_t ordinal;
+  const uint8_t *name;
+  uint64_t name_size;
+  uint64_t packed_offset;
+} obelisk_rt_design_semantic_type_edge_v1;
 
 #define OBELISK_RT_DESIGN_STATEMENT_PROTECTED (UINT32_C(1) << 0)
 #define OBELISK_RT_DESIGN_STATEMENT_SCOPE (UINT32_C(1) << 1)
@@ -2952,6 +3070,17 @@ obelisk_rt_status obelisk_rt_v1_design_force(obelisk_rt_context *context,
 obelisk_rt_status
 obelisk_rt_v1_design_release(obelisk_rt_context *context,
                              obelisk_rt_design_cursor_v1 cursor);
+
+// Immutable generated VPI object-model schema embedded in the runtime image.
+// This descriptor is passive: obtaining it does not initialize VPI or alter
+// scheduler observability. The fingerprint is the checksum of the complete
+// canonical image with its checksum field (bytes 16..23) treated as zero.
+typedef struct obelisk_rt_vpi_object_model_v1 {
+  const uint8_t *data;
+  uint64_t size;
+  uint64_t fingerprint;
+} obelisk_rt_vpi_object_model_v1;
+const obelisk_rt_vpi_object_model_v1 *obelisk_rt_v1_vpi_object_model(void);
 
 // Activate the single-context VPI shim and invoke startup tables belonging to
 // already loaded DT_NEEDED modules. Module names are runtime loader identities

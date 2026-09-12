@@ -120,9 +120,11 @@ void ObeliskSimFinalizePass::runOnOperation() {
 
   llvm::StringSet<> executableSymbols;
   module.walk([&](Operation *op) {
-    if (!isa<sim::SimCovergroupDeclOp, sim::SimClassDeclOp,
-             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
+    if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
+             sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
+             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
+             sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
@@ -185,8 +187,45 @@ void ObeliskSimFinalizePass::runOnOperation() {
         bool executableReference =
             reference.getNestedReferences().empty() &&
             executableSymbols.contains(reference.getRootReference());
+        bool definitionReference =
+            ((isa<sim::SimScopeDeclOp>(op) &&
+              named.getName() == sim::SimScopeDeclOp::getVpiDefinitionAttrName(
+                                     op->getName())) ||
+             (isa<sim::SimVPIDefinitionMemberDeclOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIDefinitionMemberDeclOp::getDefinitionAttrName(
+                      op->getName())) ||
+             (isa<sim::SimVPIDefinitionSpecializationDeclOp>(op) &&
+              named.getName() == sim::SimVPIDefinitionSpecializationDeclOp::
+                                     getDefinitionAttrName(op->getName()))) &&
+            reference.getNestedReferences().empty();
+        bool specializationReference =
+            ((isa<sim::SimScopeDeclOp>(op) &&
+              named.getName() ==
+                  sim::SimScopeDeclOp::getVpiSpecializationAttrName(
+                      op->getName())) ||
+             (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIDefinitionMemberSpecializationOp::
+                      getSpecializationAttrName(op->getName()))) &&
+            reference.getNestedReferences().empty();
+        bool definitionMemberReference =
+            isa<sim::SimVPIDefinitionMemberSpecializationOp,
+                sim::SimVPIDefinitionMemberInstanceBindingOp,
+                sim::SimVPIDefinitionMemberInstanceRelationOp>(op) &&
+            named.getName() ==
+                (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op)
+                     ? sim::SimVPIDefinitionMemberSpecializationOp::
+                           getMemberAttrName(op->getName())
+                 : isa<sim::SimVPIDefinitionMemberInstanceBindingOp>(op)
+                     ? sim::SimVPIDefinitionMemberInstanceBindingOp::
+                           getMemberAttrName(op->getName())
+                     : sim::SimVPIDefinitionMemberInstanceRelationOp::
+                           getMemberAttrName(op->getName())) &&
+            reference.getNestedReferences().empty();
         bool allowed = callTarget || observerTarget || graphReference ||
-                       executableReference;
+                       executableReference || definitionReference ||
+                       specializationReference || definitionMemberReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;

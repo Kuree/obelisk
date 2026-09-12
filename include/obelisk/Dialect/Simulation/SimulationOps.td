@@ -78,19 +78,139 @@ def SimDesignOp : SimOp<"design", [
   let hasRegionVerifier = 1;
 }
 
-def SimScopeDeclOp : SimOp<"scope.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
-  let summary = "immutable numeric hierarchy and coverage descriptor";
+def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source definition identity for VPI instances";
+  let description = [{
+    Preserves one source module, interface, or program definition independently
+    of its elaborated instances. Definition-invariant VPI metadata can therefore
+    be serialized once and reached through compact instance bindings. This is
+    reflection inventory only and never participates in executable scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$vpi_kind,
+                       StrAttr:$definition_name,
+                       OptionalAttr<LocationAttr>:$definition_loc);
+  let assemblyFormat = [{
+    $sym_name `type` $vpi_kind `name` $definition_name
+    (`definition_loc` $definition_loc^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source declaration owned by a VPI definition";
+  let description = [{
+    Stores definition-invariant declaration identity once. Elaborated scopes
+    reach the member through their definition binding; specialization-specific
+    type and value metadata is carried by separate compact bindings. These ops
+    are cold reflection inventory and never participate in scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition, I32Attr:$vpi_kind,
+                       I32Attr:$ordinal, StrAttr:$member_name,
+                       OptionalAttr<SimVPIIODirection>:$direction);
+  let assemblyFormat = [{
+    $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
+    `name` $member_name (`direction` $direction^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionSpecializationDeclOp
+    : SimOp<"vpi_definition_specialization.decl", [
+        Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "shared elaborated specialization of a VPI definition";
+  let description = [{
+    Names one unique ordered set of effective member types and immutable
+    values. Any number of elaborated scopes may reference the specialization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$sym_name `of` $definition attr-dict";
+}
+
+def SimVPIDefinitionMemberSpecializationOp
+    : SimOp<"vpi_definition_member.specialize", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "effective type of one member in a shared specialization";
+  let arguments = (ins FlatSymbolRefAttr:$specialization,
+                       FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$effective_type);
+  let assemblyFormat = [{
+    $specialization `member` $member `type` $effective_type attr-dict
+  }];
+}
+
+def SimVPIDefinitionMemberInstanceBindingOp
+    : SimOp<"vpi_definition_member.bind", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific endpoint of a shared VPI member";
+  let description = [{
+    Associates a definition-owned member with its elaborated expression
+    endpoint in one numeric scope. The image stores these as a dense compact
+    slice per definition binding; no declaration or type metadata is cloned.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       SimVPIObjectRefAttr:$expr_target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `expr` $expr_target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionMemberInstanceRelationOp
+    : SimOp<"vpi_definition_member.relation", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific relation from a synthetic VPI member";
+  let description = [{
+    Preserves a sparse relation whose source is the allocation-free VPI
+    cursor formed from `scope_id` and `member`.  This keeps high-connection
+    provenance distinct even when multiple reference formals ultimately alias
+    the same simulated storage.  The inventory is cold and never participates
+    in executable scheduling.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       I32Attr:$selector, SimVPIRelationMode:$mode,
+                       I64Attr:$ordinal, SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `selector` $selector $mode
+    `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimScopeDeclOp : SimOp<"scope.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable numeric hierarchy, coverage, and VPI descriptor";
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
                        OptionalAttr<StrAttr>:$definition_name,
                        OptionalAttr<I64Attr>:$coverage_id,
                        OptionalAttr<StrAttr>:$interface_type,
-                       OptionalAttr<I32Attr>:$vpi_kind);
+                       OptionalAttr<I32Attr>:$vpi_kind,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_definition,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_specialization);
   let assemblyFormat = [{$id (`parent` $parent^)?
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
-    (`definition` $definition_name^)? (`coverage_id` $coverage_id^)?
-    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)? attr-dict}];
+    (`source_definition` $definition_name^)? (`coverage_id` $coverage_id^)?
+    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)?
+    (`definition` $vpi_definition^)?
+    (`specialization` $vpi_specialization^)? attr-dict}];
   let hasVerifier = 1;
 }
 
@@ -123,10 +243,13 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
     Describes one elaborated statement occurrence independently of executable
     fragments and bytecode. The exact callback sites are separate inventory
     records because one statement (notably `for`) may have multiple semantic
-    cbStmt points. `scope_id` is the exact elaborated hierarchy scope. The
+    cbStmt points. `scope_id` is the physical/runtime enclosing scope. The
     optional code-unit ID owns behavioral statements; scope-owned static
-    statement objects omit it and are owned by `scope_id`. Statement nesting
-    is represented only by `parent_id`.
+    statement objects omit it, and their incoming containment relation is the
+    authoritative exact lexical owner (for example, an unbacked generate
+    scope). Statement nesting is represented only by `parent_id`. Source
+    provenance is retained when the frontend provides it, but does not control
+    whether the statement exists.
   }];
   let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$code_unit_id,
                        I64Attr:$scope_id, I32Attr:$vpi_kind,
@@ -160,10 +283,12 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let summary = "immutable VPI statement-containment relation";
   let description = [{
     Records one semantic incoming containment edge for a statement. The source
-    is a stable tagged scope, code-unit, or statement ID. `mode_mask` uses bit
-    zero for `vpi_handle` and bit one for `vpi_iterate`; when both access modes
-    expose the same semantic child they are merged into one record. `ordinal`
-    is dense independently for each source, selector, and access mode.
+    is a stable tagged scope, code-unit, statement, or VPI-anchor inventory ID.
+    Anchor sources retain lexical scopes, such as generate scopes, which do not
+    have an executable `scope.decl`. `mode_mask` uses bit zero for `vpi_handle`
+    and bit one for `vpi_iterate`; when both access modes expose the same
+    semantic child they are merged into one record. `ordinal` is dense
+    independently for each source, selector, and access mode.
 
     This is static reflection inventory. It does not register callbacks or add
     work to the scheduler.
@@ -178,19 +303,190 @@ def SimVPIStatementRelationDeclOp : SimOp<
   let hasVerifier = 1;
 }
 
+def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable general VPI object relation";
+  let description = [{
+    Records one non-containment VPI graph edge between stable logical object
+    identities. Exact endpoint VPI kinds and traversal legality are derived
+    from the referenced declarations and the generated IEEE object model.
+    Each declaration represents one access mode so singular handle edges and
+    dense iterator ordering remain explicit. This metadata never participates
+    in scheduling or executable lowering.
+  }];
+  let arguments = (ins SimVPIObjectRefAttr:$source, I32Attr:$selector,
+                       SimVPIRelationMode:$mode, I64Attr:$ordinal,
+                       SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    $source `selector` $selector $mode `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPINetIdentityDeclOp : SimOp<"vpi_net_identity.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "declared net identity sharing a collapsed physical net";
+  let description = [{
+    Preserves a distinct source-declared net after executable topology has
+    collapsed it onto `backing_net_id`. The reflection object retains its own
+    name, scope, source type, optional user-defined nettype identity, and fixed
+    properties while value access shares the backing net's state offset. This
+    metadata is immutable and never participates in scheduling or executable
+    lowering.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$backing_net_id,
+                       I64Attr:$scope_id, TypeAttr:$type,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
+  let assemblyFormat = [{
+    $id `backed_by` $backing_net_id `in` $scope_id `:` $type
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "canonical source identity for a persistent VPI object";
+  let description = [{
+    Separates source-language identity from executable descriptor identity.
+    `parent` preserves exact lexical ownership even when the display hierarchy
+    is ambiguous, as it is for multiple compilation units.  A backing maps the
+    anchor onto an existing scope, class, or code-unit record; otherwise the
+    serializer materializes a static-only reflection object.  Anchors never
+    participate in scheduling or executable lowering. Relation-backed arrays
+    carry either declared `index_ranges` or exact `sparse_indices`; each child
+    carries its coordinates within the immediate parent. Optional
+    `index_dimension_flags` contains one 0/1 unpacked/packed flag per range.
+    `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
+    primitive anchors.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$inventory_id,
+                       I32Attr:$vpi_kind, I64Attr:$enclosing_scope_id,
+                       OptionalAttr<FlatSymbolRefAttr>:$parent,
+                       I64Attr:$owner_ordinal,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       OptionalAttr<UnitAttr>:$is_compilation_unit,
+                       OptionalAttr<SimVPIObjectBackingAttr>:$backing,
+                       OptionalAttr<DenseI64ArrayAttr>:$index_ranges,
+                       OptionalAttr<DenseI64ArrayAttr>:$index_dimension_flags,
+                       OptionalAttr<DenseI64ArrayAttr>:$sparse_indices,
+                       OptionalAttr<DenseI64ArrayAttr>:$member_indices,
+                       OptionalAttr<I64Attr>:$primitive_input_count);
+  let assemblyFormat = [{
+    $sym_name `id` $inventory_id `type` $vpi_kind
+    `in` $enclosing_scope_id (`parent` $parent^)?
+    `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPINettypeDeclOp : SimOp<"vpi_nettype.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable user-defined nettype inventory";
+  let description = [{
+    Preserves one source `nettype` declaration after semantic IR is erased.
+    `owner` is its exact lexical VPI anchor, `target_type` is the declared data
+    type, `direct_alias` retains only the immediately named nettype declaration,
+    and `resolution_function` names the effective resolver's function anchor.
+    The declaration is cold reflection inventory and never participates in
+    scheduling or executable lowering.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$direct_alias,
+                       OptionalAttr<FlatSymbolRefAttr>:$resolution_function);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable named VPI typespec inventory";
+  let description = [{
+    Preserves a source typespec as a resolvable symbol after semantic IR is
+    erased. For typedefs and anonymous enums, `owner` is the exact source VPI
+    anchor and, unlike `scope_id`, does not collapse lexical package,
+    compilation-unit, class, subroutine, property, or sequence scopes. An
+    interface typespec uses its enclosing persistent anchor as an image
+    namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
+    traversal. `target_type` retains the complete canonical source shape,
+    optional interface/modport identity, and ordered typedef-alias layers. The
+    declaration is reflection inventory only and never participates in
+    executable type conversion or scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type,
+                       DefaultValuedAttr<SimVPITypespecOrigin,
+                         "::obelisk::sim::VPITypespecOrigin::Typedef">:$origin,
+                       OptionalAttr<I64Attr>:$source_type_identity);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner
+    `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable VPI enum-constant inventory";
+  let description = [{
+    Preserves one enum member in declaration order after semantic IR is
+    erased. `enum_typespec` is an exact symbol relation to the owning enum
+    typespec, so escaped names and identically named compilation-unit enums
+    cannot collide. `value` retains the source four-state constant spelling
+    for later reflection-image encoding. This declaration never participates
+    in execution or scheduling.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$ordinal,
+                       FlatSymbolRefAttr:$enum_typespec,
+                       StrAttr:$name, StrAttr:$value);
+  let assemblyFormat = [{
+    $id `enum` $enum_typespec `ordinal` $ordinal
+    `name` $name `value` $value attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "immutable mutable-storage descriptor";
   let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
                        SimLifetime:$lifetime,
                        OptionalAttr<StrAttr>:$hierarchical_name,
                        OptionalAttr<StrAttr>:$debug_name,
-                       OptionalAttr<SimComputeObservabilityKind>:$observability);
+                       OptionalAttr<SimComputeObservabilityKind>:$observability,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
 }
 
-def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+def SimNetDeclOp : SimOp<"net.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
   let summary = "immutable resolved-net descriptor";
   let description = [{
     Declares the immutable metadata for a resolved net. `propagation_delays`
@@ -210,7 +506,9 @@ def SimNetDeclOp : SimOp<"net.decl", [MemoryEffects<[MemWrite<SimInventoryResour
                          "::obelisk::sim::NetResolutionKind::Wire">:$resolution_kind,
                        OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
                        OptionalAttr<SimStrength>:$charge_strength,
-                       OptionalAttr<UnitAttr>:$internal);
+                       OptionalAttr<UnitAttr>:$internal,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
   let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
     (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
   let hasVerifier = 1;
@@ -341,7 +639,8 @@ def SimPortDeclOp : SimOp<"port.decl", [MemoryEffects<[MemWrite<SimInventoryReso
                        I64Attr:$source_low, TypeAttr:$type,
                        SimPortDirection:$direction, I64Attr:$ordinal,
                        StrAttr:$hierarchical_name,
-                       OptionalAttr<StrAttr>:$debug_name);
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
   let assemblyFormat = [{$id `in` $scope_id `source` $source_id
     `net` `=` $source_is_net `at` $source_low `:` $type $direction
     `ordinal` $ordinal `hierarchy` $hierarchical_name

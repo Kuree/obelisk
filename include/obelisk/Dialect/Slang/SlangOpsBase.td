@@ -122,6 +122,20 @@ class SlangSymbolTableASTNodeOp<string mnemonic, dag symbolArgs = (ins),
         !listconcat([SymbolTable, IsolatedFromAbove], traits),
         symbolArgs>;
 
+class SlangInstanceArrayASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_range)> {
+  let description = [{
+    The body contains one element per source index in ascending numeric index
+    order, independent of the declared direction in `array_range`. Nested
+    instance-array nodes repeat this contract for the next dimension.
+  }];
+}
+
+class SlangGenerateBlockArrayASTNodeOp<string mnemonic>
+    : SlangSymbolTableASTNodeOp<mnemonic,
+        (ins OptionalAttr<DenseI64ArrayAttr>:$array_indices)>;
+
 class SlangRootASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic,
         [SymbolTable, IsolatedFromAbove, SlangSemanticReferenceRootNode,
@@ -433,6 +447,10 @@ class SlangNetSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins
         SlangNetKind:$net_kind,
         BoolAttr:$is_implicit,
+        DefaultValuedAttr<SlangNetExpansionHint,
+          "::obelisk::slangir::NetExpansionHint::None">:$expansion_hint,
+        OptionalAttr<SymbolRefAttr>:$nettype_symbol,
+        OptionalAttr<StrAttr>:$nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path,
         OptionalAttr<SlangDriveStrength>:$drive_strength0,
@@ -464,6 +482,8 @@ class SlangNetTypeASTNodeOp<string mnemonic>
         SlangNetKind:$net_kind,
         TypeAttr:$data_type,
         BoolAttr:$is_builtin,
+        OptionalAttr<SymbolRefAttr>:$aliased_nettype_symbol,
+        OptionalAttr<StrAttr>:$aliased_nettype_path,
         OptionalAttr<SymbolRefAttr>:$resolution_function_symbol,
         OptionalAttr<StrAttr>:$resolution_function_path
       )>;

@@ -43,6 +43,11 @@ ABI_SIZE_ALIGN(obelisk_rt_buffer_v1, 16, 8);
 ABI_OFFSET(obelisk_rt_buffer_v1, data, 0);
 ABI_OFFSET(obelisk_rt_buffer_v1, size, 8);
 
+ABI_SIZE_ALIGN(obelisk_rt_vpi_object_model_v1, ABI_PTR(24, 24), 8);
+ABI_OFFSET(obelisk_rt_vpi_object_model_v1, data, 0);
+ABI_OFFSET(obelisk_rt_vpi_object_model_v1, size, 8);
+ABI_OFFSET(obelisk_rt_vpi_object_model_v1, fingerprint, 16);
+
 ABI_SIZE_ALIGN(obelisk_rt_trace_entry_v1, 40, 8);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, offset, 0);
 ABI_OFFSET(obelisk_rt_trace_entry_v1, stride, 8);
@@ -1190,6 +1195,8 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_error,
              obelisk_rt_status (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_report_status,
              void (*)(obelisk_rt_context *, obelisk_rt_status));
+ABI_FUNCTION(obelisk_rt_v1_vpi_object_model,
+             const obelisk_rt_vpi_object_model_v1 *(*)(void));
 ABI_FUNCTION(obelisk_rt_v1_vpi_startup,
              obelisk_rt_status (*)(obelisk_rt_context *, const char *const *,
                                    uint64_t));

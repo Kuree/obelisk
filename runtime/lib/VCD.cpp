@@ -555,14 +555,18 @@ uint64_t typeElement(const DesignDatabaseCache &database, uint64_t typeOffset) {
   return read64(database.data + typeOffset + 32);
 }
 
-// f64 storage is serialized as a scalar type named "real"; nothing else in the
-// type record distinguishes it from a 64-bit packed value.
+// Real storage is serialized as a non-packed scalar named "real" or
+// "shortreal". Nothing else in the type record distinguishes those payloads
+// from ordinary 64-bit and 32-bit bit vectors.
 bool typeIsReal(const DesignDatabaseCache &database, uint64_t typeOffset) {
   if (!isTypeOffset(database, typeOffset))
     return false;
   std::string_view name;
-  return getString(database, read64(database.data + typeOffset + 72), name) &&
-         name == "real";
+  if (!getString(database, read64(database.data + typeOffset + 72), name))
+    return false;
+  uint64_t width = typeWidth(database, typeOffset);
+  return (name == "real" && width == 64) ||
+         (name == "shortreal" && width == 32);
 }
 
 bool typeFourState(const DesignDatabaseCache &database, uint64_t typeOffset) {
@@ -892,7 +896,14 @@ void emitValue(VCDTraceState &state, const TraceVariable &variable,
       if (bitAt(valuePlane, variable.sourceBit + index))
         word |= uint64_t{1} << index;
     double value = 0;
-    std::memcpy(&value, &word, sizeof(value));
+    if (variable.width == 32) {
+      uint32_t shortBits = static_cast<uint32_t>(word);
+      float shortValue = 0;
+      std::memcpy(&shortValue, &shortBits, sizeof(shortValue));
+      value = shortValue;
+    } else {
+      std::memcpy(&value, &word, sizeof(value));
+    }
     char text[40];
     int length = std::snprintf(text, sizeof(text), "r%.16g", value);
     if (length > 0)

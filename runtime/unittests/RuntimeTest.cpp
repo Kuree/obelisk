@@ -4463,6 +4463,7 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(arguments)), arguments),
             OBELISK_RT_OK);
+  EXPECT_TRUE(context->vpiArguments.empty());
 
   auto query = [&](std::string_view prefix, std::string &tail,
                    uint32_t &found) {
@@ -4504,6 +4505,7 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(replacement)), replacement),
             OBELISK_RT_OK);
+  EXPECT_TRUE(context->vpiArguments.empty());
   query("A", tail, found);
   EXPECT_EQ(found, 0u);
   query("NEW=", tail, found);

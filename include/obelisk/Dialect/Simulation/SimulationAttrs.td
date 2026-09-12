@@ -14,6 +14,87 @@ class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
   let mnemonic = attrMnemonic;
 }
 
+def SimVPIPropertyAttr : SimAttr<"VPIProperty", "vpi_property"> {
+  let summary = "one typed immutable VPI property value";
+  let parameters = (ins "::mlir::IntegerAttr":$selector,
+      "::mlir::Attribute":$value);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimVPIPropertySetAttr : SimAttr<"VPIPropertySet", "vpi_properties"> {
+  let summary = "sorted unique immutable VPI property values";
+  let parameters = (ins "::mlir::ArrayAttr":$properties);
+  let assemblyFormat = "`<` $properties `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimVPIObjectRefAttr : SimAttr<"VPIObjectRef", "vpi_ref"> {
+  let summary = "stable logical reference to a VPI-visible design object";
+  let description = [{
+    Identifies an existing immutable design-inventory declaration without
+    exposing its eventual reflection-image table index. Each reference kind
+    has its own stable ID namespace. The serializer resolves references only
+    after physical object records have been sorted.
+  }];
+  let parameters = (ins EnumParameter<SimVPIObjectRefKind>:$kind,
+      "::mlir::IntegerAttr":$id);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimVPIObjectBackingAttr
+    : SimAttr<"VPIObjectBacking", "vpi_backing"> {
+  let summary = "physical executable descriptor backing a source VPI object";
+  let description = [{
+    Maps one immutable source-object anchor to an already materialized scope,
+    class, code-unit, or net descriptor. Scope, code-unit, and net backings use
+    `id`; class backings use `symbol`. An anchor without this attribute is
+    itself serialized as a static-only reflection object.
+  }];
+  let parameters = (ins EnumParameter<SimVPIObjectBackingKind>:$kind,
+      OptionalParameter<"::mlir::IntegerAttr">:$id,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$symbol);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimVPITypeSemanticsAttr
+    : SimAttr<"VPITypeSemantics", "vpi_type"> {
+  let summary = "source-semantic type retained for VPI reflection";
+  let description = [{
+    Preserves source type identity after executable lowering normalizes
+    integer flavors, enums, time, and managed values. `children` contains the
+    enum base type, array/container element type, associative key and element,
+    or declaration-ordered aggregate fields as appropriate. Aggregate layout,
+    container bounds, wildcard indexing, virtual-interface modports, symbolic
+    declaration identity, and typedef layers are retained in typed optional
+    payloads. This attribute is immutable inventory only and must not
+    participate in executable type conversion or scheduler decisions.
+  }];
+  let parameters = (ins EnumParameter<SimVPITypeKind>:$kind,
+      "bool":$isSigned, "bool":$isFourState,
+      OptionalParameter<"::mlir::StringAttr">:$name,
+      OptionalParameter<"::mlir::SymbolRefAttr">:$symbol,
+      OptionalParameter<"::mlir::StringAttr">:$modport,
+      "::mlir::DenseI64ArrayAttr":$range, "::mlir::ArrayAttr":$children,
+      "::mlir::ArrayAttr":$childNames,
+      OptionalParameter<"::mlir::BoolAttr">:$isTagged,
+      OptionalParameter<"::mlir::BoolAttr">:$isSoft,
+      OptionalParameter<"::mlir::IntegerAttr">:$bitWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$selectableWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$bitstreamWidth,
+      OptionalParameter<"::mlir::IntegerAttr">:$tagBits,
+      OptionalParameter<"::mlir::IntegerAttr">:$queueBound,
+      OptionalParameter<"::mlir::BoolAttr">:$wildcardIndex,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childOrdinals,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childPackedOffsets,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childRandTypes,
+      OptionalParameter<"::mlir::ArrayAttr">:$typedefAliases);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Prepared unit boundary
 //===----------------------------------------------------------------------===//

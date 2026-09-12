@@ -1122,7 +1122,7 @@ module {
 module {
   obelisk_sim.design @empty_scope_definition {
     // expected-error @+1 {{module definition name cannot be empty}}
-    obelisk_sim.scope.decl 0 definition ""
+    obelisk_sim.scope.decl 0 source_definition ""
   }
 }
 
@@ -1131,7 +1131,7 @@ module {
 module {
   obelisk_sim.design @root_scope_definition {
     // expected-error @+1 {{root scope cannot carry a module definition name}}
-    obelisk_sim.scope.decl 0 definition "top"
+    obelisk_sim.scope.decl 0 source_definition "top"
   }
 }
 
@@ -1141,7 +1141,7 @@ module {
   obelisk_sim.design @interface_scope_definition {
     obelisk_sim.scope.decl 0
     // expected-error @+1 {{only module scopes may carry a module definition name}}
-    obelisk_sim.scope.decl 1 parent 0 definition "I" vpi_kind 601
+    obelisk_sim.scope.decl 1 parent 0 source_definition "I" vpi_kind 601
   }
 }
 
@@ -1151,7 +1151,7 @@ module {
   obelisk_sim.design @program_scope_definition {
     obelisk_sim.scope.decl 0
     // expected-error @+1 {{only module scopes may carry a module definition name}}
-    obelisk_sim.scope.decl 1 parent 0 definition "P" vpi_kind 602
+    obelisk_sim.scope.decl 1 parent 0 source_definition "P" vpi_kind 602
   }
 }
 

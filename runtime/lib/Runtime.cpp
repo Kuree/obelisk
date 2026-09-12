@@ -262,10 +262,14 @@ obelisk_rt_context::obelisk_rt_context() {
   managedHeap = obelisk_rt_managed_heap_create(this);
   mcd[0].stream = stdout;
   mcd[0].writable = true;
+  mcd[0].name = "stdout";
   files.resize(3);
   files[0] = {stdin, 0, false};
   files[1] = {stdout, 0, true};
   files[2] = {stderr, 0, true};
+  files[0].name = "stdin";
+  files[1].name = "stdout";
+  files[2].name = "stderr";
   for (uint32_t bit = 30; bit >= 1; --bit)
     freeMCDs.push_back(bit);
   obelisk_rt_random_seed_context_unlocked(this, 1);
@@ -925,6 +929,7 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
 
   return guarded(context, [&] {
     std::vector<std::string> plusargs;
+    std::vector<std::string> vpiArguments;
     std::vector<PlusargIndexNode> nodes;
     std::vector<PlusargIndexEdge> edges;
     size_t plusargCount = 0;
@@ -1001,6 +1006,15 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     }
     plusargs.reserve(plusargCount);
 
+    const bool retainVPIArguments =
+        context->execution &&
+        (context->execution->flags & OBELISK_RT_EXECUTION_VPI_READ) != 0;
+    if (retainVPIArguments) {
+      vpiArguments.reserve(static_cast<size_t>(argc));
+      for (int index = 0; index < argc; ++index)
+        vpiArguments.emplace_back(argv[index] ? argv[index] : "obelisk");
+    }
+
     for (int index = 1; index < argc; ++index) {
       std::string_view argument(argv[index]);
       if (argument.empty() || argument.front() != '+')
@@ -1068,6 +1082,7 @@ obelisk_rt_v1_context_configure_argv(obelisk_rt_context *context, int argc,
     if (haveSeed)
       seedContextUnlocked(context, configuredSeed);
     context->plusargs.swap(plusargs);
+    context->vpiArguments.swap(vpiArguments);
     context->plusargIndexNodes.swap(nodes);
     context->plusargIndexEdges.swap(edges);
     context->plusargIndexBuilt = false;

@@ -125,6 +125,7 @@
 // FUSED-SSA-NOT: obelisk_sim.ref.store
 // READ-FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
 // READ-FUSED-SSA-COUNT-2: obelisk_sim.ref.store
+// READ-FUSED-SSA-NOT: obelisk.eval.discardable_store
 // FOUR-STATE: obelisk_sim.func private @__obelisk_fused_
 // FOUR-STATE-COUNT-2: obelisk_sim.ref.store
 // CALLEE-WRITE-IR: obelisk_sim.func private @__obelisk_fused_

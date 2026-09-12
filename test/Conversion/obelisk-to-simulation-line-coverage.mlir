@@ -11,7 +11,7 @@ module attributes {
 } {
   obelisk_sim.design @coverage {
     obelisk_sim.scope.decl 0 hierarchy "$root"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" definition "DUT"
+    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT"
     obelisk_sim.code_unit.decl 7 in 1 initial hierarchy "top.initial"
 
     obelisk_sim.func @unit(
@@ -96,7 +96,7 @@ module attributes {
 // INVENTORY: module attributes {
 // INVENTORY-SAME: obelisk.coverage.line_point_count = 4 : i64
 // INVENTORY-SAME: obelisk.execution.coverage_schema_blob = array<i8:
-// INVENTORY: obelisk_sim.scope.decl 1 parent 0 hierarchy "top" definition "DUT" coverage_id {{-?[1-9][0-9]*}}
+// INVENTORY: obelisk_sim.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT" coverage_id {{-?[1-9][0-9]*}}
 // INVENTORY-COUNT-4: obelisk.coverage.line_point_index = {{[0-3]}} : i64
 
 // SCHEMA: scope id={{[1-9][0-9]*}} parent={{[1-9][0-9]*}} name=top kind=0 definition=DUT

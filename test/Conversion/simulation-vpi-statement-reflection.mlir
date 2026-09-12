@@ -1,16 +1,20 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s --check-prefix=DATABASE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s --check-prefix=WAVEFORM
+// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.read \
+// RUN:   OBELISK_TEST_VPI=read %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s --check-prefix=DATABASE < %t.read
+// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.off \
+// RUN:   OBELISK_TEST_VPI=off %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s --check-prefix=WAVEFORM < %t.off
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @statement_reflection {
-    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32
+    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {
+      definition_loc = loc("definition.sv":27:4)
+    } loc("use.sv":3:2)
     // An omitted intrinsic kind is derived from interface metadata.
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.bus" interface "@bus"
     obelisk_sim.code_unit.decl 10 in 0 initial hierarchy "top.initial"
@@ -78,6 +82,10 @@ module attributes {
 // DATABASE-NEXT: statement id=200 owner=0 scope=0 parent=1 type=15 flags=0x0 source=test.sv:9:3 name=
 // DATABASE-NEXT: statement id=250 owner=0 scope=0 parent=3 type=38 flags=0x0 source=test.sv:9:9 name=
 // DATABASE-NEXT: statement id=300 owner=6 scope=0 parent=4294967295 type=38 flags=0x0 source=test.sv:11:3 name=
+// DATABASE: fixed_property source_table=0 source=0 selector=15 kind=3 value=definition.sv
+// DATABASE-NEXT: fixed_property source_table=0 source=0 selector=16 kind=1 value=27
+// DATABASE-NEXT: fixed_property source_table=1 source=1 selector=624 kind=1 value=1
+// DATABASE-NEXT: fixed_property source_table=2 source=1 selector=74 kind=0 value=true
 // DATABASE-NEXT: statement_site id=1000 statement=1 phase=0 flags=0x0
 // DATABASE-NEXT: statement_site id=1100 statement=3 phase=1 flags=0x0
 // DATABASE-NEXT: statement_site id=1200 statement=3 phase=2 flags=0x0
@@ -123,3 +131,4 @@ module attributes {
 
 // WAVEFORM-NOT: statement
 // WAVEFORM-NOT: relation
+// WAVEFORM-NOT: fixed_property

@@ -11,6 +11,14 @@ foreach(vpi_header vpi_user.h sv_vpi_user.h vpi_compatibility.h)
     "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800/${vpi_header}"
     "${OBELISK_RESOURCE_DIR}/include/${vpi_header}" COPYONLY)
 endforeach()
+file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include/obelisk")
+configure_file(
+  "${PROJECT_SOURCE_DIR}/runtime/include/obelisk/vpi_user_compat.h"
+  "${OBELISK_RESOURCE_DIR}/include/obelisk/vpi_user_compat.h" COPYONLY)
+# Keep the canonical SDK filename while layering prototype-era 2023 constants
+# over the vendored IEEE header. No generated SDK file is checked into source.
+file(APPEND "${OBELISK_RESOURCE_DIR}/include/sv_vpi_user.h"
+  "\n#include \"obelisk/vpi_user_compat.h\"\n")
 
 set(LLVM_LINK_COMPONENTS
   Analysis

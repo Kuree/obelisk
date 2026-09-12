@@ -275,14 +275,11 @@ const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
   return *current;
 }
 
-/// Slang exposes the resolver written directly on a nettype declaration but
-/// currently returns null for the LRM alias form `nettype original alias;`.
-/// Resolve that named base explicitly so imported net symbols retain the
-/// original resolution function through arbitrarily long alias chains.
-const slang::ast::SubroutineSymbol *
-getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
-  if (const auto *function = netType.getResolutionFunction())
-    return function;
+/// Resolve the declaration named by the LRM alias form
+/// `nettype original alias;`. Slang exposes the canonical data type but not
+/// this direct VPI identity edge.
+const slang::ast::NetType *
+getDirectAliasedNetType(const slang::ast::NetType &netType) {
   const auto *syntax = netType.getSyntax();
   const auto *scope = netType.getParentScope();
   if (!syntax || !scope ||
@@ -303,8 +300,18 @@ getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
   if (!result.found || result.found == &netType ||
       result.found->kind != slang::ast::SymbolKind::NetType)
     return nullptr;
-  return getEffectiveResolutionFunction(
-      result.found->as<slang::ast::NetType>());
+  return &result.found->as<slang::ast::NetType>();
+}
+
+/// Slang exposes the resolver written directly on a nettype declaration but
+/// currently returns null for aliases. Follow the direct declaration chain so
+/// executable nets retain the effective resolution function.
+const slang::ast::SubroutineSymbol *
+getEffectiveResolutionFunction(const slang::ast::NetType &netType) {
+  if (const auto *function = netType.getResolutionFunction())
+    return function;
+  const auto *aliased = getDirectAliasedNetType(netType);
+  return aliased ? getEffectiveResolutionFunction(*aliased) : nullptr;
 }
 
 // Slang's canonical PackedArrayType inherits signedness from its element type.
@@ -769,6 +776,14 @@ convertEnum(slang::ast::CoverageBinSymbol::TransRangeList::RepeatKind kind) {
       static_cast<int>(kind));
 }
 
+slangir::NetExpansionHint
+convertEnum(slang::ast::NetSymbol::ExpansionHint hint) {
+  static_assert(static_cast<int>(slang::ast::NetSymbol::None) == 0 &&
+                static_cast<int>(slang::ast::NetSymbol::Vectored) == 1 &&
+                static_cast<int>(slang::ast::NetSymbol::Scalared) == 2);
+  return static_cast<slangir::NetExpansionHint>(static_cast<int>(hint));
+}
+
 slangir::AssertionUnaryOperator
 convertEnum(slang::ast::UnaryAssertionOperator op) {
   static_assert(
@@ -980,6 +995,10 @@ public:
                     StringAttr::get(context, "packed_offset"),
                     IntegerAttr::get(IntegerType::get(context, 64),
                                      isPacked ? field.bitOffset : 0)),
+                NamedAttribute(
+                    StringAttr::get(context, "rand_mode"),
+                    IntegerAttr::get(IntegerType::get(context, 32),
+                                     static_cast<uint32_t>(field.randMode))),
             }));
       }
       result = slangir::AggregateType::get(
@@ -1278,14 +1297,24 @@ private:
   /// The number this type shares with every type it matches under IEEE
   /// 1800-2017 6.22.1. Matching is not an equivalence Slang exposes as a key,
   /// so representatives are collected and each new type is matched against
-  /// them; a compilation names few distinct types this way.
+  /// them. Cache exact AST type pointers so all members of the same enum and
+  /// repeated uses of a typedef pay for matching only once.
   int64_t matchingTypeIdentity(const slang::ast::Type &type) {
+    if (auto found = matchingTypeIdentities.find(&type);
+        found != matchingTypeIdentities.end())
+      return found->second;
     for (auto [index, representative] :
          llvm::enumerate(matchingTypeRepresentatives))
-      if (type.isMatching(*representative))
-        return static_cast<int64_t>(index);
+      if (type.isMatching(*representative)) {
+        int64_t identity = static_cast<int64_t>(index);
+        matchingTypeIdentities.try_emplace(&type, identity);
+        return identity;
+      }
     matchingTypeRepresentatives.push_back(&type);
-    return static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
+    int64_t identity =
+        static_cast<int64_t>(matchingTypeRepresentatives.size()) - 1;
+    matchingTypeIdentities.try_emplace(&type, identity);
+    return identity;
   }
 
   /// slang represents code it deliberately never elaborates - the unselected
@@ -1598,6 +1627,144 @@ private:
     ArrayAttr result = builder.getArrayAttr(dimensions);
     arrayQueryDimensionCache.try_emplace(&type, result);
     return result;
+  }
+
+  /// Freeze every typedef layer before SlangTypeConverter canonicalizes the
+  /// type. Each descriptor names the VPI semantic-child path and the ordered
+  /// alias chain written at that layer. Keeping paths separate from the type
+  /// payload handles aliases nested below arrays and aggregate fields without
+  /// introducing executable wrapper types.
+  ArrayAttr getVPITypedefLayers(const slang::ast::Type &root) {
+    if (auto found = vpiTypedefLayerCache.find(&root);
+        found != vpiTypedefLayerCache.end())
+      return found->second;
+
+    SmallVector<Attribute> layers;
+    SmallVector<int64_t, 8> path;
+    llvm::SmallPtrSet<const slang::ast::Type *, 8> active;
+    std::function<bool(const slang::ast::Type &)> collect =
+        [&](const slang::ast::Type &type) -> bool {
+      using SK = slang::ast::SymbolKind;
+      if (!active.insert(&type).second)
+        return false;
+      SmallVector<Attribute, 2> aliases;
+      const slang::ast::Type *current = &type;
+      while (current->kind == SK::TypeAlias) {
+        const auto &alias = current->as<slang::ast::TypeAliasType>();
+        aliases.push_back(getSemanticSymbolReference(alias));
+        current = &alias.targetType.getType();
+        if (!active.insert(current).second) {
+          active.erase(&type);
+          return false;
+        }
+      }
+      if (!aliases.empty()) {
+        NamedAttrList descriptor;
+        descriptor.set("path", builder.getDenseI64ArrayAttr(path));
+        descriptor.set("aliases", builder.getArrayAttr(aliases));
+        layers.push_back(builder.getDictionaryAttr(descriptor));
+      }
+
+      auto descend = [&](int64_t child, const slang::ast::Type &nested) {
+        path.push_back(child);
+        bool complete = collect(nested);
+        path.pop_back();
+        return complete;
+      };
+      bool complete = true;
+      switch (current->kind) {
+      case SK::EnumType:
+        complete = descend(0, current->as<slang::ast::EnumType>().baseType);
+        break;
+      case SK::PackedArrayType:
+        complete =
+            descend(0, current->as<slang::ast::PackedArrayType>().elementType);
+        break;
+      case SK::FixedSizeUnpackedArrayType:
+        complete = descend(
+            0,
+            current->as<slang::ast::FixedSizeUnpackedArrayType>().elementType);
+        break;
+      case SK::DynamicArrayType:
+        complete =
+            descend(0, current->as<slang::ast::DynamicArrayType>().elementType);
+        break;
+      case SK::DPIOpenArrayType:
+        complete =
+            descend(0, current->as<slang::ast::DPIOpenArrayType>().elementType);
+        break;
+      case SK::QueueType:
+        complete = descend(0, current->as<slang::ast::QueueType>().elementType);
+        break;
+      case SK::AssociativeArrayType: {
+        const auto &array = current->as<slang::ast::AssociativeArrayType>();
+        if (array.indexType)
+          complete = descend(0, *array.indexType);
+        if (complete)
+          complete = descend(1, array.elementType);
+        break;
+      }
+      case SK::PackedStructType:
+      case SK::UnpackedStructType:
+      case SK::PackedUnionType:
+      case SK::UnpackedUnionType: {
+        const slang::ast::Scope *scope = nullptr;
+        if (current->kind == SK::PackedStructType)
+          scope = &current->as<slang::ast::PackedStructType>();
+        else if (current->kind == SK::UnpackedStructType)
+          scope = &current->as<slang::ast::UnpackedStructType>();
+        else if (current->kind == SK::PackedUnionType)
+          scope = &current->as<slang::ast::PackedUnionType>();
+        else
+          scope = &current->as<slang::ast::UnpackedUnionType>();
+        for (const slang::ast::FieldSymbol &field :
+             scope->membersOfType<slang::ast::FieldSymbol>()) {
+          if (!descend(field.fieldIndex, field.getType())) {
+            complete = false;
+            break;
+          }
+        }
+        break;
+      }
+      default:
+        break;
+      }
+      // The alias walk inserts every node it crosses; remove the whole chain
+      // before returning so a legal repeated type in a sibling field is not
+      // mistaken for recursion.
+      current = &type;
+      active.erase(current);
+      while (current->kind == SK::TypeAlias) {
+        current =
+            &current->as<slang::ast::TypeAliasType>().targetType.getType();
+        active.erase(current);
+      }
+      return complete;
+    };
+    if (!collect(root) || layers.empty()) {
+      vpiTypedefLayerCache.try_emplace(&root, ArrayAttr{});
+      return {};
+    }
+    ArrayAttr result = builder.getArrayAttr(layers);
+    vpiTypedefLayerCache.try_emplace(&root, result);
+    return result;
+  }
+
+  template <typename Node>
+  const slang::ast::Type *getUncanonicalizedSemanticType(const Node &node) {
+    if constexpr (std::derived_from<Node, slang::ast::Type>) {
+      return &node;
+    } else if constexpr (std::derived_from<Node, slang::ast::Expression>) {
+      return node.type;
+    } else if constexpr (requires { node.getType(); }) {
+      if constexpr (std::same_as<std::remove_cvref_t<decltype(node.getType())>,
+                                 slang::ast::Type>)
+        return &node.getType();
+    } else if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
+      if (const auto *declaredType = node.getDeclaredType())
+        return &declaredType->getType();
+    }
+    return nullptr;
   }
 
   template <typename Node>
@@ -3092,6 +3259,16 @@ private:
                   typeConverter.getVirtualInterfaceIdentity(
                       node, *node.parentInstance));
       if (node.parentInstance) {
+        const slang::ast::DefinitionSymbol &definition = node.getDefinition();
+        attrs.set("obelisk_sim.vpi_definition_name",
+                  builder.getStringAttr(definition.name));
+        attrs.set("obelisk_sim.vpi_top",
+                  builder.getBoolAttr(node.parentInstance->isTopLevel()));
+        attrs.set("obelisk_sim.vpi_automatic",
+                  builder.getBoolAttr(definition.defaultLifetime ==
+                                      slang::ast::VariableLifetime::Automatic));
+        attrs.set("obelisk_sim.vpi_cell_instance",
+                  builder.getBoolAttr(definition.cellDefine));
         using VPIKind = reflection::VPIObjectKind;
         VPIKind scopeKind = VPIKind::Module;
         switch (node.parentInstance->getDefinition().definitionKind) {
@@ -3116,6 +3293,43 @@ private:
           attrs.set("is_virtual_interface_type_instance",
                     builder.getBoolAttr(true));
       }
+    }
+
+    if constexpr (std::same_as<T, slang::ast::PackageSymbol>) {
+      attrs.set("obelisk_sim.vpi_definition_name",
+                builder.getStringAttr(node.name));
+      attrs.set("obelisk_sim.vpi_automatic",
+                builder.getBoolAttr(node.defaultLifetime ==
+                                    slang::ast::VariableLifetime::Automatic));
+    }
+
+    if constexpr (std::same_as<T, slang::ast::CompilationUnitSymbol>)
+      attrs.set("obelisk_sim.vpi_definition_name",
+                builder.getStringAttr("$unit"));
+
+    if constexpr (std::same_as<T, slang::ast::InstanceArraySymbol>) {
+      SET_OP_ATTR(ArrayRange, builder.getDenseI64ArrayAttr(
+                                  {node.range.left, node.range.right}));
+    }
+
+    if constexpr (std::same_as<T, slang::ast::GenerateBlockArraySymbol>) {
+      SmallVector<int64_t> indices;
+      indices.reserve(node.entries.size());
+      bool valid = true;
+      for (const slang::ast::GenerateBlockSymbol *entry : node.entries) {
+        const slang::SVInt *index = entry->getArrayIndex();
+        std::optional<int64_t> value =
+            index ? index->as<int64_t>() : std::nullopt;
+        if (!value) {
+          emitError(sourceLocation(entry->location))
+              << "generate block index is not representable as signed i64";
+          valid = false;
+          continue;
+        }
+        indices.push_back(*value);
+      }
+      if (valid)
+        SET_OP_ATTR(ArrayIndices, builder.getDenseI64ArrayAttr(indices));
     }
 
     if constexpr (std::same_as<T, slang::ast::PrimitiveSymbol> ||
@@ -3870,6 +4084,14 @@ private:
                   slangir::NetKindAttr::get(builder.getContext(),
                                             convertEnum(node.netType.netKind)));
       SET_OP_ATTR(IsImplicit, builder.getBoolAttr(node.isImplicit));
+      if (node.expansionHint != slang::ast::NetSymbol::None)
+        SET_OP_ATTR(ExpansionHint,
+                    slangir::NetExpansionHintAttr::get(
+                        builder.getContext(), convertEnum(node.expansionHint)));
+      if (node.netType.netKind == slang::ast::NetType::UserDefined)
+        setSymbolReference(attrs, node.netType,
+                           Op::getNettypeSymbolAttrName(operationName),
+                           Op::getNettypePathAttrName(operationName));
       if (const auto *resolutionFunction =
               getEffectiveResolutionFunction(node.netType))
         setSymbolReference(
@@ -4419,6 +4641,10 @@ private:
       SET_OP_ATTR(DataType,
                   TypeAttr::get(typeConverter.convert(node.getDataType())));
       SET_OP_ATTR(IsBuiltin, builder.getBoolAttr(node.isBuiltIn()));
+      if (const auto *aliased = getDirectAliasedNetType(node))
+        setSymbolReference(attrs, *aliased,
+                           Op::getAliasedNettypeSymbolAttrName(operationName),
+                           Op::getAliasedNettypePathAttrName(operationName));
       if (const auto *resolutionFunction = getEffectiveResolutionFunction(node))
         setSymbolReference(
             attrs, *resolutionFunction,
@@ -5125,6 +5351,7 @@ private:
   }
 
   template <typename Op, typename Node> void importNode(const Node &node) {
+    using BareNode = std::remove_cvref_t<Node>;
     if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
       if (emittedSymbolPaths.contains(&node))
         return;
@@ -5184,6 +5411,25 @@ private:
         llvm_unreachable(
             "semantic type produced for an operation without a type field");
       }
+      if (const slang::ast::Type *source = getUncanonicalizedSemanticType(node))
+        if (ArrayAttr layers = getVPITypedefLayers(*source))
+          attrs.set("vpi_typedef_layers", layers);
+      // A display name is not an enum identity: separate compilation units may
+      // each legally declare `$unit::state_t`. Freeze Slang's exact matching
+      // type identity on aliases, constants, and enum-bearing values that must
+      // reconnect to one persistent typespec after the AST is erased.
+      if (const slang::ast::Type *source =
+              getUncanonicalizedSemanticType(node)) {
+        const slang::ast::Type &identityType = unwrapTypeAliases(*source);
+        bool retainIdentity = identityType.isEnum();
+        if constexpr (std::same_as<BareNode, slang::ast::TypeAliasType> ||
+                      std::same_as<BareNode, slang::ast::EnumValueSymbol>)
+          retainIdentity = true;
+        if (retainIdentity)
+          attrs.set(
+              "vpi_source_type_identity",
+              builder.getI64IntegerAttr(matchingTypeIdentity(identityType)));
+      }
     }
     if constexpr (std::derived_from<Node, slang::ast::Expression>)
       attrs.set("is_signed", builder.getBoolAttr(isEffectivelySigned(node)));
@@ -5210,7 +5456,7 @@ private:
 
     OpBuilder::InsertionGuard guard{builder};
     builder.setInsertionPointToStart(&body);
-    using T = std::remove_cvref_t<Node>;
+    using T = BareNode;
     if constexpr (std::derived_from<Node, slang::ast::Scope>)
       currentScopes.push_back(&node);
     bool pushedProcedure = false;
@@ -5656,6 +5902,11 @@ private:
       attrs.set("direction", slangir::ArgumentDirectionAttr::get(
                                  builder.getContext(), convertEnum(direction)));
       attrs.set("formal_type", TypeAttr::get(formalType));
+      if (formal.kind == slang::ast::SymbolKind::Port) {
+        const auto &port = formal.as<slang::ast::PortSymbol>();
+        if (ArrayAttr layers = getVPITypedefLayers(port.getType()))
+          attrs.set("vpi_typedef_layers", layers);
+      }
       attrs.set("is_net", builder.getBoolAttr(isNet));
       attrs.set("is_ansi", builder.getBoolAttr(isAnsi));
       bool actualIsConstant = false;
@@ -5863,6 +6114,7 @@ private:
   const SDFAnnotationDatabase &sdfAnnotations;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> arrayQueryDimensionCache;
+  llvm::DenseMap<const slang::ast::Type *, ArrayAttr> vpiTypedefLayerCache;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> resolvedSymbolPaths;
   llvm::StringMap<const slang::ast::Symbol *> claimedVariablePaths;
@@ -5894,6 +6146,7 @@ private:
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;
   SmallVector<PendingReferenceSeed, 2> currentPendingReferences;
   SmallVector<PendingReferenceArraySeed, 2> currentPendingReferenceArrays;
+  llvm::DenseMap<const slang::ast::Type *, int64_t> matchingTypeIdentities;
   SmallVector<const slang::ast::Type *, 4> matchingTypeRepresentatives;
   int64_t nextNodeId = 0;
   uint64_t nextAnonymousSymbolId = 0;

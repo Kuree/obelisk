@@ -39,6 +39,16 @@ inline constexpr llvm::StringLiteral descriptorPackedLow =
     "obelisk_sim.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
     "obelisk_sim.hierarchical_name";
+/// Exact frontend enum identity retained solely to reconnect a value object
+/// to its anonymous enum typespec in the immutable VPI relation image.
+inline constexpr llvm::StringLiteral vpiSourceTypeIdentity =
+    "obelisk_sim.vpi_source_type_identity";
+/// FlatSymbolRefAttr naming the immutable relation-backed anchor that owns the
+/// public VPI identity of executable named-event-array storage. The storage
+/// remains in the execution layout but is omitted from the VPI object
+/// inventory.
+inline constexpr llvm::StringLiteral vpiIdentityDelegated =
+    "obelisk_sim.vpi_identity_delegated";
 /// Marks a storage descriptor that a subroutine owns. Its writers are the
 /// subroutine's callers rather than drivers of a design variable.
 inline constexpr llvm::StringLiteral subroutineStorage =
@@ -293,6 +303,13 @@ inline constexpr llvm::StringLiteral evalCompactNBAMetadata =
 /// coordinator that happens to contain the operation.
 inline constexpr llvm::StringLiteral evalSourceOwner =
     "obelisk.eval.source_owner";
+/// Inter-pass proof marker for a read-observable canonical store that a
+/// dormant Tier-1 eval specialization may omit.  MaterializeComputeFusion
+/// attaches it only after proving private dominating-store promotion;
+/// SimulationToLLVMCoroutine consumes it while cloning the eval-private call
+/// closure and removes it before dialect lowering.
+inline constexpr llvm::StringLiteral evalDiscardableStore =
+    "obelisk.eval.discardable_store";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   return name == captureKind || name == descriptorId ||
@@ -310,11 +327,11 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == randomCycleKeyField || name == randomCyclePositionField ||
          name == randomModeField || name == classBitstreamMember ||
          name == classBitstreamVisibility || name == staticBodyFusion ||
-         name == staticFusion || name == computeKernels ||
-         name == threeTierSchedule || name == staticSpecialization ||
-         name == staticSuperstep || name == topLevelWildcardWait ||
-         name == proceduralEventWait || name == repeatingAlwaysWait ||
-         name == dpiElidedInputs;
+         name == evalDiscardableStore || name == staticFusion ||
+         name == computeKernels || name == threeTierSchedule ||
+         name == staticSpecialization || name == staticSuperstep ||
+         name == topLevelWildcardWait || name == proceduralEventWait ||
+         name == repeatingAlwaysWait || name == dpiElidedInputs;
 }
 
 } // namespace obelisk::sim::metadata

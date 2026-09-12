@@ -15,8 +15,30 @@ OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
 
 using namespace obelisk::reflection;
 
-static_assert(vpiObjectModelImageTraversalSize == 8);
-static_assert(vpiObjectModelImagePropertySize == 8);
+static_assert(vpiObjectModelImageHeaderSize == 120);
+static_assert(vpiObjectModelImageTraversalSize == 12);
+static_assert(vpiObjectModelImagePropertySize == 6);
+static_assert(vpiObjectModelImageValuePolicySize == 8);
+static_assert(vpiObjectModelImageArrayValuePolicySize == 4);
+static_assert(vpiObjectModelImageIndexedAccessSize == 12);
+static_assert(vpiObjectModelImageIndexedTypeResultSize == 8);
+static_assert(vpiObjectModelImageIntegerPropertyValueSize == 12);
+static_assert(findVPIIntegerPropertyValue(vpiNetType, vpiTriReg)->value ==
+              vpiTriReg);
+static_assert(findVPIIntegerPropertyValue(vpiChargeStrength, vpiMediumCharge)
+                  ->symbolicName[0] == '\0');
+static_assert(findVPIIndexedAccess(vpiPort)->terminalResult == vpiPortBit);
+static_assert(!findVPIIndexedAccess(vpiPort)->mapSemanticType);
+static_assert(findVPIIndexedAccess(vpiRegArray)->unpackedFallback ==
+              vpiRegArray);
+static_assert(findVPIIndexedAccess(vpiInterconnectArray)->packedFallback ==
+              vpiInterconnectNet);
+static_assert(findVPIIndexedTypeResult(VPIIndexedAccessKind::VariableElement,
+                                       vpiIntTypespec)
+                  ->resultType == vpiIntVar);
+static_assert(findVPIIndexedTypeResult(VPIIndexedAccessKind::NetElement,
+                                       vpiLogicTypespec)
+                  ->resultType == vpiNet);
 static_assert(findVPIProperty(vpiPort, vpiDirection)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiPort, vpiScalar)->valueKind ==
@@ -28,6 +50,36 @@ static_assert(findVPIProperty(vpiNet, vpiVector)->valueKind ==
 static_assert(findVPIProperty(vpiPortBit, vpiPortIndex)->valueKind ==
               VPIPropertyValueKind::Integer);
 static_assert(findVPIProperty(vpiReg, vpiDirection) == nullptr);
+
+static_assert(static_cast<uint8_t>(VPIValueFormat::BinStr) == vpiBinStrVal);
+static_assert(static_cast<uint8_t>(VPIValueFormat::ObjType) == vpiObjTypeVal);
+static_assert(findVPIValuePolicy(vpiReg)->defaultFormat ==
+              VPIValueDefaultFormat::ScalarOrVector);
+static_assert(findVPIValuePolicy(vpiIntVar)->defaultFormat ==
+              VPIValueDefaultFormat::Integer);
+static_assert(findVPIValuePolicy(vpiRealVar)->defaultFormat ==
+              VPIValueDefaultFormat::Real);
+static_assert(findVPIValuePolicy(vpiStringVar)->defaultFormat ==
+              VPIValueDefaultFormat::String);
+static_assert(findVPIValuePolicy(vpiTimeVar)->defaultFormat ==
+              VPIValueDefaultFormat::Time);
+static_assert(findVPIValuePolicy(vpiOperation)->readSemantics ==
+              VPIValueReadSemantics::Evaluate);
+static_assert(findVPIValuePolicy(vpiNet)->readSemantics ==
+              VPIValueReadSemantics::Snapshot);
+static_assert(acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
+                                    vpiStringVal));
+static_assert(!acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),
+                                     vpiIntVal));
+static_assert(findVPIValuePolicy(vpiPort) == nullptr);
+static_assert(findVPIValuePolicy(vpiPortBit) == nullptr);
+static_assert(findVPIValuePolicy(vpiRegArray) == nullptr);
+static_assert(findVPIValuePolicy(vpiClassVar) == nullptr);
+static_assert(findVPIValuePolicy(vpiVirtualInterfaceVar) == nullptr);
+static_assert(acceptsVPIArrayValueFormat(vpiVectorVal, vpiLogicVar));
+static_assert(acceptsVPIArrayValueFormat(vpiRawFourStateVal, vpiEnumVar));
+static_assert(!acceptsVPIArrayValueFormat(vpiShortIntVal, vpiShortIntNet));
+static_assert(!acceptsVPIArrayValueFormat(vpiVectorVal, vpiRealVar));
 
 static_assert(findVPIObjectKind(vpiModule)->role == VPIObjectRole::Concrete);
 static_assert(findVPIObjectKind(vpiReturn) == nullptr);
@@ -335,9 +387,18 @@ static_assert(hasVPITraversal(vpiTypeParameter, vpiScope,
 static_assert(vpiObjectSetContains(
     findVPITraversal(vpiTaskCall, vpiScope, VPITraversalMode::Handle)->targets,
     vpiClassObj));
-static_assert(vpiObjectSetContains(
+static_assert(!vpiObjectSetContains(
     findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
     vpiClassObj));
+static_assert(vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNet));
+static_assert(vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNetArray));
+static_assert(!vpiObjectSetContains(
+    findVPITraversal(vpiFrame, vpiOrigin, VPITraversalMode::Handle)->targets,
+    vpiNetBit));
 static_assert(vpiObjectSetContains(
     findVPITraversal(vpiRefObj, vpiActual, VPITraversalMode::Handle)->targets,
     vpiNetArray));

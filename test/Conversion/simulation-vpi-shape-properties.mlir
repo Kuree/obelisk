@@ -1,6 +1,7 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' \
-// RUN:   | %python %S/Inputs/dump-design-database.py \
-// RUN:   | FileCheck %s
+// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.dump \
+// RUN:   OBELISK_TEST_VPI=read %obj_root/test/obelisk-design-database-dump-test \
+// RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
+// RUN: FileCheck %s < %t.dump
 
 !packed_one = !obelisk_sim.packed_array<0 : 0 x i1>
 !unpacked_scalar = !obelisk_sim.unpacked_array<1 : 0 x i1>

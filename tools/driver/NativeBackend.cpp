@@ -104,7 +104,7 @@ LogicalResult linkELFExecutable(
     StringRef supportRoot, StringRef driverExecutablePath,
     StringRef thinLTOCacheDir, ArrayRef<NativeLinkInput> nativeLinkInputs,
     ArrayRef<SharedLibraryInput> sharedLibraryInputs, uint32_t optLevel,
-    bool noLTO, uint32_t linkThreads, bool thinLTO, bool dpi) {
+    bool noLTO, uint32_t linkThreads, bool thinLTO, bool dpi, bool vpiEnabled) {
   bool fullLTO = optLevel != 0 && !noLTO && !thinLTO;
   FailureOr<HostCRuntimeInputs> hostRuntime =
       discoverHostCRuntime(kTargetTriple, driverExecutablePath);
@@ -150,7 +150,10 @@ LogicalResult linkELFExecutable(
   owned.push_back("-pie");
   if (dpi)
     owned.push_back("--export-dynamic-symbol=sv*");
-  owned.push_back("--export-dynamic-symbol=vpi*");
+  if (vpiEnabled) {
+    owned.push_back("--export-dynamic-symbol=vpi*");
+    owned.push_back("--export-dynamic-symbol=obelisk_rt_v1_vpi_object_model");
+  }
   owned.push_back((Twine("--threads=") + Twine(linkThreads)).str());
   if (fullLTO) {
     owned.push_back("--lto=full");
@@ -363,7 +366,7 @@ public:
         modulePaths, outputPath, supportRoot, options.executablePath,
         options.thinLTOCacheDir, options.nativeLinkInputs,
         options.sharedLibraryInputs, options.optLevel, options.noLTO,
-        options.compileThreads, thinLTO, options.dpi);
+        options.compileThreads, thinLTO, options.dpi, options.vpi != "off");
   }
 };
 
