@@ -61,6 +61,53 @@ module attributes {
         <kind = storage, id = 0 : i64>
     obelisk_sim.vpi_definition_member.bind scope 3 member @d_ref expr
         <kind = storage, id = 3 : i64>
+    // A separate definition exercises value delegation for every scalar
+    // semantic category without inflating the shared port fixture above.
+    obelisk_sim.vpi_definition.decl @values_def type 32 name "values"
+    obelisk_sim.vpi_definition_member.decl @values_scalar of @values_def
+        type 28 ordinal 0 name "scalar_ref" direction ref
+        loc("values.sv":2:10)
+    obelisk_sim.vpi_definition_member.decl @values_int of @values_def
+        type 28 ordinal 1 name "int_ref" direction ref loc("values.sv":3:10)
+    obelisk_sim.vpi_definition_member.decl @values_time of @values_def
+        type 28 ordinal 2 name "time_ref" direction ref loc("values.sv":4:10)
+    obelisk_sim.vpi_definition_member.decl @values_real of @values_def
+        type 28 ordinal 3 name "real_ref" direction ref loc("values.sv":5:10)
+    obelisk_sim.vpi_definition_member.decl @values_string of @values_def
+        type 28 ordinal 4 name "string_ref" direction ref
+        loc("values.sv":6:10)
+    obelisk_sim.vpi_definition_specialization.decl @values_spec
+        of @values_def
+    obelisk_sim.vpi_definition_member.specialize @values_spec
+        member @values_scalar type
+        #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @values_spec
+        member @values_int type
+        #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @values_spec
+        member @values_time type
+        #obelisk_sim.vpi_type<kind = time, isSigned = false,
+          isFourState = true, range = [63, 0], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @values_spec
+        member @values_real type
+        #obelisk_sim.vpi_type<kind = real, isSigned = false,
+          isFourState = false, range = [], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.specialize @values_spec
+        member @values_string type
+        #obelisk_sim.vpi_type<kind = string, isSigned = false,
+          isFourState = false, range = [], children = [], childNames = []>
+    obelisk_sim.vpi_definition_member.bind scope 5 member @values_scalar expr
+        <kind = storage, id = 6 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 5 member @values_int expr
+        <kind = storage, id = 7 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 5 member @values_time expr
+        <kind = storage, id = 8 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 5 member @values_real expr
+        <kind = storage, id = 9 : i64>
+    obelisk_sim.vpi_definition_member.bind scope 5 member @values_string expr
+        <kind = storage, id = 10 : i64>
     obelisk_sim.scope.decl 1 parent 0 hierarchy "top.d" vpi_kind 32
         definition @d_def specialization @d_spec
     // A second instance deliberately shares the definition and complete type
@@ -70,6 +117,8 @@ module attributes {
     obelisk_sim.scope.decl 3 parent 2 hierarchy "top.e.child" vpi_kind 32
         definition @d_def specialization @d_spec
     obelisk_sim.scope.decl 4 parent 1 hierarchy "top.d.child" vpi_kind 32
+    obelisk_sim.scope.decl 5 parent 0 hierarchy "top.values" vpi_kind 32
+        definition @values_def specialization @values_spec
     obelisk_sim.vpi_object.anchor @top_d id 0 type 32 in 1 ordinal 0
         hierarchy "top.d" debug "d" {
       backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>
@@ -124,6 +173,30 @@ module attributes {
     obelisk_sim.net.decl 1 in 2 : !obelisk_sim.logic<1> design hierarchy "top.e.io" {
       vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
           isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 6 in 5 : !obelisk_sim.logic<1> design
+        hierarchy "top.values.scalar" {
+      vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+          isFourState = true, range = [0, 0], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 7 in 5 : i32 design
+        hierarchy "top.values.int" {
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 8 in 5 : !obelisk_sim.logic<64> design
+        hierarchy "top.values.time" {
+      vpi_type = #obelisk_sim.vpi_type<kind = time, isSigned = false,
+          isFourState = true, range = [63, 0], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 9 in 5 : f64 design hierarchy "top.values.real" {
+      vpi_type = #obelisk_sim.vpi_type<kind = real, isSigned = false,
+          isFourState = false, range = [], children = [], childNames = []>
+    }
+    obelisk_sim.storage.decl 10 in 5 : !obelisk_sim.string design
+        hierarchy "top.values.string" {
+      vpi_type = #obelisk_sim.vpi_type<kind = string, isSigned = false,
+          isFourState = false, range = [], children = [], childNames = []>
     }
     obelisk_sim.port.decl 0 in 1 source 0 net = false at 0 : i8 input ordinal 0 hierarchy "top.d.a" debug "a"
     obelisk_sim.port.decl 1 in 1 source 0 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 1 hierarchy "top.d.io" debug "io"
@@ -221,6 +294,7 @@ module attributes {
 // VPI-NEXT: object name=top.d.child.q kind=8 vpi_kind=44
 // VPI-NEXT: object name=top.d.child.zouter kind=2 vpi_kind=48
 // VPI-NEXT: object name=top.d.child.zouter kind=8 vpi_kind=44
+// VPI: object name=top.values.string kind=2 vpi_kind=616 caps=0x1 id=10 scope=top.values width=64 range=[63:0] state={{[0-9]+}} type_kind=1 type_flags=0x0
 
 // Per-instance expression endpoints and reverse relations reuse the shared
 // definition members. The inverse is a four-byte permutation sorted by its
@@ -228,6 +302,7 @@ module attributes {
 // VPI: definition_binding source_table=0 source=1 definition=0 specialization=0 source_name=top.d first_member_endpoint=0
 // VPI-NEXT: definition_binding source_table=0 source=2 definition=0 specialization=0 source_name=top.e first_member_endpoint=5
 // VPI-NEXT: definition_binding source_table=0 source=3 definition=0 specialization=0 source_name=top.e.child first_member_endpoint=10
+// VPI-NEXT: definition_binding source_table=0 source=5 definition=1 specialization=1 source_name=top.values first_member_endpoint=15
 // VPI-NEXT: definition_member_endpoint index=0 binding=0 member=0 member_name=a target_table=1 target=3 target_name=top.d.a
 // VPI-NEXT: definition_member_endpoint index=1 binding=0 member=1 member_name=io target_table=1 target=8 target_name=top.d.io
 // VPI-NEXT: definition_member_endpoint index=2 binding=0 member=2 member_name=slice target=none
@@ -243,6 +318,11 @@ module attributes {
 // VPI-NEXT: definition_member_endpoint index=12 binding=2 member=2 member_name=slice target=none
 // VPI-NEXT: definition_member_endpoint index=13 binding=2 member=3 member_name=r target_table=1 target=13 target_name=top.e.a
 // VPI-NEXT: definition_member_endpoint index=14 binding=2 member=4 member_name=iface target=none
+// VPI-NEXT: definition_member_endpoint index=15 binding=3 member=5 member_name=scalar_ref target_table=1 target=23 target_name=top.values.scalar
+// VPI-NEXT: definition_member_endpoint index=16 binding=3 member=6 member_name=int_ref target_table=1 target=21 target_name=top.values.int
+// VPI-NEXT: definition_member_endpoint index=17 binding=3 member=7 member_name=time_ref target_table=1 target=25 target_name=top.values.time
+// VPI-NEXT: definition_member_endpoint index=18 binding=3 member=8 member_name=real_ref target_table=1 target=22 target_name=top.values.real
+// VPI-NEXT: definition_member_endpoint index=19 binding=3 member=9 member_name=string_ref target_table=1 target=24 target_name=top.values.string
 // VPI-NEXT: definition_member_instance_relation index=0 binding=0 member=3 member_name=r selector=44 mode=1 targets=[0:1)
 // VPI-NEXT: definition_member_instance_relation index=1 binding=0 member=3 member_name=r selector=98 mode=1 targets=[1:3)
 // VPI-NEXT: definition_member_instance_relation index=2 binding=1 member=3 member_name=r selector=44 mode=1 targets=[3:4)

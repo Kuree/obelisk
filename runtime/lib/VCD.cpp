@@ -148,13 +148,8 @@ uint64_t objectTypeOffset(const uint8_t *record) { return read64(record + 48); }
 uint64_t objectBitWidth(const uint8_t *record) { return read64(record + 56); }
 uint64_t objectStateBit(const uint8_t *record) { return read64(record + 80); }
 
-bool traceableObject(uint32_t kind, const uint8_t *record) {
-  if (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-      kind != OBELISK_RT_DESIGN_RECORD_NET)
-    return false;
-  return (read32(record + 4) & OBELISK_RT_DESIGN_CAP_READ) != 0 &&
-         objectBitWidth(record) != 0;
-}
+bool traceableObject(const DesignDatabaseCache &database, uint32_t kind,
+                     const uint8_t *record);
 
 bool bitAt(const uint8_t *plane, uint64_t bit) {
   return (plane[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
@@ -481,7 +476,7 @@ bool resolveSelection(const DesignDatabaseCache &database,
           !getString(database, nameOffset(record), name) || name != wanted)
         continue;
       if (candidateKind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
-          !traceableObject(candidateKind, record))
+          !traceableObject(database, candidateKind, record))
         continue;
       offset = candidate;
       kind = candidateKind;
@@ -520,7 +515,7 @@ void collectScope(const DesignDatabaseCache &database, uint64_t scopeOffset,
       if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
         if (levels == 0 || frame.depth < levels)
           pending.push_back({child, frame.depth + 1});
-      } else if (traceableObject(childKind, childRecord)) {
+      } else if (traceableObject(database, childKind, childRecord)) {
         objects.insert(child);
       }
       child = nextSiblingOffset(childRecord, childKind);
@@ -584,6 +579,52 @@ bool typeIsUnpackedArray(const DesignDatabaseCache &database,
   return isTypeOffset(database, typeOffset) &&
          typeKind(database, typeOffset) == OBELISK_RT_DESIGN_TYPE_ARRAY &&
          (typeFlags(database, typeOffset) & OBELISK_RT_DESIGN_TYPE_PACKED) == 0;
+}
+
+// A managed SystemVerilog string occupies a 64-bit GC word in the canonical
+// state plane, but that word is not a waveform value. The physical type name
+// is an image-level classification (as it already is for real/shortreal).
+// Follow aggregate element/field links so arrays or records containing a
+// managed string are excluded as a whole instead of exposing handle bits.
+bool typeContainsManagedString(const DesignDatabaseCache &database,
+                               uint64_t typeOffset, uint64_t depth = 0) {
+  if (!isTypeOffset(database, typeOffset) || depth > database.typeCount)
+    return true;
+  const uint32_t kind = typeKind(database, typeOffset);
+  if (kind == OBELISK_RT_DESIGN_TYPE_SCALAR) {
+    std::string_view name;
+    if (!getString(database, read64(database.data + typeOffset + 72), name))
+      return true;
+    return name == "string";
+  }
+  switch (kind) {
+  case OBELISK_RT_DESIGN_TYPE_ARRAY:
+  case OBELISK_RT_DESIGN_TYPE_FIELD:
+    return typeContainsManagedString(
+        database, typeElement(database, typeOffset), depth + 1);
+  case OBELISK_RT_DESIGN_TYPE_STRUCT:
+  case OBELISK_RT_DESIGN_TYPE_UNION: {
+    uint64_t firstChild = read64(database.data + typeOffset + 40);
+    uint64_t childCount = read64(database.data + typeOffset + 48);
+    for (uint64_t child = 0; child != childCount; ++child)
+      if (typeContainsManagedString(
+              database, firstChild + child * kTypeRecordSize, depth + 1))
+        return true;
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+bool traceableObject(const DesignDatabaseCache &database, uint32_t kind,
+                     const uint8_t *record) {
+  if (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+      kind != OBELISK_RT_DESIGN_RECORD_NET)
+    return false;
+  return (read32(record + 4) & OBELISK_RT_DESIGN_CAP_READ) != 0 &&
+         objectBitWidth(record) != 0 &&
+         !typeContainsManagedString(database, objectTypeOffset(record));
 }
 
 // Write the `$scope`/`$var`/`$upscope` structure and assign identifier codes.

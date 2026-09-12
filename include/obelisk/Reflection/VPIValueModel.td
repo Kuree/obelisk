@@ -51,6 +51,10 @@ class VPIValueReadSemantics<string cppName_, int value_> {
 
 def SnapshotValueRead : VPIValueReadSemantics<"Snapshot", 0>;
 def EvaluateValueRead : VPIValueReadSemantics<"Evaluate", 1>;
+// Evaluate the vpiActual target at query time. This is intentionally a
+// generated policy distinction: RefObj value formats, shapes, and managed
+// lifetime requirements are those of the current actual object.
+def EvaluateActualValueRead : VPIValueReadSemantics<"EvaluateActual", 2>;
 
 // Values are bit flags because more than one dynamic restriction can apply to
 // an exact object kind.  These are checked only by an explicit query and add
@@ -168,6 +172,7 @@ def AggregateVariableValues
         [RejectWholeUnpackedValue, RejectClassDefinitionOriginValue,
          RejectNonStaticClassTypespecOriginValue], "37.17; 37.26; 38.15">;
 
+def RefObjectValueObjects : VPIObjectSet<"RefObjectValueObjects", [RefObj]>;
 def EvaluatedValueObjects : VPIObjectSet<"EvaluatedValueObjects",
   [VarSelect, BitSelect, PartSelect, IndexedPartSelect, Operation,
    FuncCall, MethodFuncCall, SysFuncCall, LetExpr]>;
@@ -180,6 +185,11 @@ def FsmStateValueObjects : VPIObjectSet<"FsmStateValueObjects", [FsmHandle]>;
 def TableEntryValueObjects : VPIObjectSet<"TableEntryValueObjects",
   [TableEntry]>;
 
+def RefObjectValues : OrdinaryVPIValuePolicy<RefObjectValueObjects,
+  SemanticValueDefault, EvaluateActualValueRead,
+  [RejectClassDefinitionOriginValue,
+   RejectNonStaticClassTypespecOriginValue],
+  "37.15; 37.58; 37.59; 38.15">;
 def EvaluatedValues : OrdinaryVPIValuePolicy<EvaluatedValueObjects,
   SemanticValueDefault, EvaluateValueRead,
   [RejectClassDefinitionOriginValue,

@@ -97,8 +97,8 @@ struct DesignImage {
     const std::string strings = std::string(
         "top\0top.sub\0top.clk\0top.data\0top.bus\0top.sub.count\0top.rv\0top."
         "\\x.y \0top.st\0top.mem\0logic\0real\0pair\0hi\0lo\0nibbles\0"
-        "shortreal\0",
-        123);
+        "shortreal\0string\0",
+        130);
     // Name offsets stored in records are absolute image offsets.
     const uint64_t topName = stringOffset + 0;
     const uint64_t subName = stringOffset + 4;
@@ -285,6 +285,31 @@ struct DesignImage {
       put64(bytes, indexOffset + entry * 24 + 8, index[entry].nameOffset);
       put64(bytes, indexOffset + entry * 24 + 16, index[entry].record);
     }
+    put64(bytes, 32, imageChecksum(bytes));
+  }
+
+  void makeRealObjectAString() {
+    constexpr uint64_t scopeOffset = 176;
+    constexpr uint64_t objectOffset = scopeOffset + 2 * 64;
+    constexpr uint64_t realOffset = objectOffset + 384;
+    constexpr uint64_t typeOffset = objectOffset + 768;
+    constexpr uint64_t realType = typeOffset + 240;
+    constexpr uint64_t stringOffset = typeOffset + 640;
+    constexpr uint64_t stringTypeName = stringOffset + 123;
+    put32(bytes, realOffset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiStringVar));
+    put64(bytes, realType + 72, stringTypeName);
+    put64(bytes, 32, imageChecksum(bytes));
+  }
+
+  void makeStructFieldNamedString() {
+    constexpr uint64_t scopeOffset = 176;
+    constexpr uint64_t objectOffset = scopeOffset + 2 * 64;
+    constexpr uint64_t typeOffset = objectOffset + 768;
+    constexpr uint64_t field0Type = typeOffset + 400;
+    constexpr uint64_t stringOffset = typeOffset + 640;
+    constexpr uint64_t stringName = stringOffset + 123;
+    put64(bytes, field0Type + 72, stringName);
     put64(bytes, 32, imageChecksum(bytes));
   }
 };
@@ -921,6 +946,33 @@ TEST(VCD, ScopeSelectionRestrictsTheTracedSet) {
   // The enclosing scope is still declared so the path stays well formed.
   EXPECT_NE(text.find("$scope module top $end"), std::string::npos);
   EXPECT_NE(text.find("$scope module sub $end"), std::string::npos);
+}
+
+TEST(VCD, ManagedStringStorageIsNotTracedAsItsGCHandleBits) {
+  Fixture fixture;
+  fixture.image.makeRealObjectAString();
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.advanceTo(10);
+  std::string text = fixture.read();
+
+  EXPECT_TRUE(identifierFor(text, "rv").empty());
+  EXPECT_FALSE(identifierFor(text, "data").empty());
+}
+
+TEST(VCD, FieldNamedStringDoesNotHideAnOrdinaryPackedStruct) {
+  Fixture fixture;
+  fixture.image.makeStructFieldNamedString();
+  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  fixture.advanceTo(10);
+  std::string text = fixture.read();
+
+  EXPECT_FALSE(identifierFor(text, "st").empty());
 }
 
 TEST(VCD, VariableSelectionRestrictsTheTracedSetWithoutEnablingVPI) {

@@ -157,6 +157,8 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   EXPECT_EQ(vpi_get(vpiType, inputBit), vpiPortBit);
   EXPECT_EQ(vpi_get(vpiSize, inputBit), 1);
   EXPECT_EQ(vpi_get_str(vpiName, inputBit), nullptr);
+  EXPECT_EQ(vpi_get(vpiPortIndex, inputBit), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_STREQ(vpi_get_str(vpiFullName, inputBit), "top.d.a[7]");
   EXPECT_EQ(vpi_handle(vpiIndex, inputBit), nullptr);
   vpiHandle inputBitParent = vpi_handle(vpiParent, inputBit);
@@ -306,6 +308,18 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       EXPECT_EQ(vpi_compare_objects(actual, secondDirectInput), 1);
       EXPECT_EQ(vpi_compare_objects(actual, expression), 0);
       EXPECT_EQ(integerValue(expression), 0);
+      s_vpi_error_info valueError{};
+      EXPECT_EQ(vpi_chk_error(&valueError), 0)
+          << (valueError.message ? valueError.message : "unknown VPI error");
+      s_vpi_value defaultValue{};
+      defaultValue.format = vpiObjTypeVal;
+      vpi_get_value(expression, &defaultValue);
+      EXPECT_EQ(defaultValue.format, vpiVectorVal);
+      ASSERT_NE(defaultValue.value.vector, nullptr);
+      EXPECT_EQ(defaultValue.value.vector[0].aval, 0u);
+      EXPECT_EQ(defaultValue.value.vector[0].bval, 0u);
+      EXPECT_EQ(vpi_chk_error(&valueError), 0)
+          << (valueError.message ? valueError.message : "unknown VPI error");
       EXPECT_EQ(vpi_release_handle(actual), 1);
 
       vpiHandle ownPorts = vpi_iterate(vpiPort, expression);
@@ -481,14 +495,14 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
       dumpDescriptor.execution->design_database +
           dumpDescriptor.execution->design_database_size);
   uint32_t directory = read32(database, 12);
-  EXPECT_EQ(read64(database, directory + 184), 1u);  // definitions
-  EXPECT_EQ(read64(database, directory + 200), 3u);  // instance bindings
-  EXPECT_EQ(read64(database, directory + 216), 5u);  // member templates
-  EXPECT_EQ(read64(database, directory + 232), 1u);  // relation ranges
-  EXPECT_EQ(read64(database, directory + 248), 5u);  // relation targets
-  EXPECT_EQ(read64(database, directory + 264), 1u);  // specializations
-  EXPECT_EQ(read64(database, directory + 280), 5u);  // type bindings
-  EXPECT_EQ(read64(database, directory + 296), 15u); // instance endpoints
+  EXPECT_EQ(read64(database, directory + 184), 2u);  // definitions
+  EXPECT_EQ(read64(database, directory + 200), 4u);  // instance bindings
+  EXPECT_EQ(read64(database, directory + 216), 10u); // member templates
+  EXPECT_EQ(read64(database, directory + 232), 2u);  // relation ranges
+  EXPECT_EQ(read64(database, directory + 248), 10u); // relation targets
+  EXPECT_EQ(read64(database, directory + 264), 2u);  // specializations
+  EXPECT_EQ(read64(database, directory + 280), 10u); // type bindings
+  EXPECT_EQ(read64(database, directory + 296), 20u); // instance endpoints
   EXPECT_EQ(read64(database, directory + 312), 5u);  // sparse relation ranges
   EXPECT_EQ(read64(database, directory + 328), 6u);  // relation targets
   EXPECT_EQ(read64(database, directory + 344), 6u);  // inverse targets
@@ -510,6 +524,174 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
+  ASSERT_NE(dumpDescriptor.execution, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
+            OBELISK_RT_OK);
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+                                                    &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+
+  auto store = [&](const char *name, uint64_t value, uint64_t unknown,
+                   uint64_t width) {
+    obelisk_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(
+        obelisk_rt_v1_design_lookup(dumpDescriptor.execution,
+                                    reinterpret_cast<const uint8_t *>(name),
+                                    std::strlen(name), &cursor),
+        OBELISK_RT_OK);
+    uint64_t stateOffset = 0;
+    ASSERT_EQ(obelisk_rt_design_state_offset(context, cursor, 0, &stateOffset),
+              OBELISK_RT_OK);
+    ASSERT_LE(stateOffset + width,
+              static_cast<uint64_t>(context->stateValue.size()) * 64);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    for (uint64_t bit = 0; bit != width; ++bit) {
+      const uint64_t absolute = stateOffset + bit;
+      const uint64_t mask = uint64_t{1} << (absolute % 64);
+      uint64_t &valueWord = context->stateValue[absolute / 64];
+      uint64_t &unknownWord = context->stateUnknown[absolute / 64];
+      valueWord = ((value >> bit) & 1) ? valueWord | mask : valueWord & ~mask;
+      unknownWord =
+          ((unknown >> bit) & 1) ? unknownWord | mask : unknownWord & ~mask;
+    }
+  };
+
+  store("top.values.scalar", 1, 1, 1);
+  store("top.values.int", static_cast<uint32_t>(-42), 0, 32);
+  constexpr uint64_t timeBits = UINT64_C(0x1234567887654321);
+  store("top.values.time", timeBits, 0, 64);
+  double real = 3.25;
+  uint64_t realBits = 0;
+  static_assert(sizeof(real) == sizeof(realBits));
+  std::memcpy(&realBits, &real, sizeof(realBits));
+  store("top.values.real", realBits, 0, 64);
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  constexpr char stringText[] = "heap-backed-ref-value";
+  obelisk_rt_string_v1 string = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, stringText,
+                                        sizeof(stringText) - 1, &string),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 stringRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &stringRoot, &string),
+            OBELISK_RT_OK);
+  store("top.values.string", string, 0, 64);
+
+  char moduleName[] = "top.values";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiIODecl, module);
+  ASSERT_NE(iterator, nullptr);
+  constexpr std::array<const char *, 5> memberNames{
+      "scalar_ref", "int_ref", "time_ref", "real_ref", "string_ref"};
+  constexpr std::array<const char *, 5> actualNames{
+      "top.values.scalar", "top.values.int", "top.values.time",
+      "top.values.real", "top.values.string"};
+  constexpr std::array<PLI_INT32, 5> actualTypes{
+      vpiLogicVar, vpiIntVar, vpiTimeVar, vpiRealVar, vpiStringVar};
+  constexpr std::array<PLI_INT32, 5> defaultFormats{
+      vpiScalarVal, vpiIntVal, vpiTimeVal, vpiRealVal, vpiStringVal};
+
+  const char *detachedString = nullptr;
+  for (size_t index = 0; index != memberNames.size(); ++index) {
+    vpiHandle declaration = vpi_scan(iterator);
+    ASSERT_NE(declaration, nullptr);
+    EXPECT_STREQ(vpi_get_str(vpiName, declaration), memberNames[index]);
+    vpiHandle reference = vpi_handle(vpiExpr, declaration);
+    ASSERT_NE(reference, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, reference), vpiRefObj);
+    EXPECT_EQ(vpi_get(vpiSigned, reference), index == 1 ? 1 : 0);
+    vpiHandle actual = vpi_handle(vpiActual, reference);
+    ASSERT_NE(actual, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, actual), actualTypes[index]);
+    EXPECT_STREQ(vpi_get_str(vpiFullName, actual), actualNames[index]);
+    EXPECT_EQ(vpi_compare_objects(reference, actual), 0);
+
+    s_vpi_value value{};
+    value.format = vpiObjTypeVal;
+    vpi_get_value(reference, &value);
+    s_vpi_error_info error{};
+    const PLI_INT32 errorLevel = vpi_chk_error(&error);
+    EXPECT_EQ(errorLevel, 0)
+        << (error.message ? error.message : "unknown VPI error");
+    if (errorLevel != 0) {
+      EXPECT_EQ(vpi_release_handle(actual), 1);
+      EXPECT_EQ(vpi_release_handle(reference), 1);
+      EXPECT_EQ(vpi_release_handle(declaration), 1);
+      continue;
+    }
+    EXPECT_EQ(value.format, defaultFormats[index]);
+    if (index == 0)
+      EXPECT_EQ(value.value.scalar, vpiZ);
+    else if (index == 1)
+      EXPECT_EQ(value.value.integer, -42);
+    else if (index == 2) {
+      ASSERT_NE(value.value.time, nullptr);
+      EXPECT_EQ(value.value.time->type, vpiSimTime);
+      EXPECT_EQ(value.value.time->high,
+                static_cast<PLI_UINT32>(timeBits >> 32));
+      EXPECT_EQ(value.value.time->low, static_cast<PLI_UINT32>(timeBits));
+    } else if (index == 3) {
+      EXPECT_DOUBLE_EQ(value.value.real, real);
+    } else {
+      ASSERT_NE(value.value.str, nullptr);
+      EXPECT_STREQ(value.value.str, stringText);
+      detachedString = value.value.str;
+      EXPECT_EQ(vpi_get(vpiSize, actual), sizeof(stringText) - 1);
+      EXPECT_EQ(vpi_get(vpiSize, reference), sizeof(stringText) - 1);
+    }
+    EXPECT_EQ(vpi_release_handle(actual), 1);
+    EXPECT_EQ(vpi_release_handle(reference), 1);
+    EXPECT_EQ(vpi_release_handle(declaration), 1);
+  }
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+
+  // The VPI scratch result owns its bytes. Reclaiming the actual heap string
+  // after the query must neither leak it nor invalidate the returned copy.
+  store("top.values.string", 0, 0, 64);
+  vpiHandle emptyIterator = vpi_iterate(vpiIODecl, module);
+  ASSERT_NE(emptyIterator, nullptr);
+  for (size_t index = 0; index != memberNames.size(); ++index) {
+    vpiHandle declaration = vpi_scan(emptyIterator);
+    ASSERT_NE(declaration, nullptr);
+    if (index + 1 == memberNames.size()) {
+      vpiHandle reference = vpi_handle(vpiExpr, declaration);
+      ASSERT_NE(reference, nullptr);
+      vpiHandle actual = vpi_handle(vpiActual, reference);
+      ASSERT_NE(actual, nullptr);
+      EXPECT_EQ(vpi_get(vpiSize, actual), 0);
+      EXPECT_EQ(vpi_get(vpiSize, reference), 0);
+      EXPECT_EQ(vpi_release_handle(actual), 1);
+      EXPECT_EQ(vpi_release_handle(reference), 1);
+    }
+    EXPECT_EQ(vpi_release_handle(declaration), 1);
+  }
+  EXPECT_EQ(vpi_scan(emptyIterator), nullptr);
+  obelisk_rt_object_v1 *stringObject =
+      obelisk_rt_object_from_managed_word(string);
+  ASSERT_NE(stringObject, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &stringRoot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_validate_string(context, string),
+            OBELISK_RT_INVALID_HANDLE);
+  ASSERT_NE(detachedString, nullptr);
+  EXPECT_STREQ(detachedString, stringText);
+
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   const auto *execution = dumpDescriptor.execution;
   ASSERT_NE(execution, nullptr);
@@ -528,14 +710,14 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   uint64_t instanceRelation = read64(original, directory + 304);
   uint64_t instanceRelationTarget = read64(original, directory + 320);
   uint64_t instanceRelationInverse = read64(original, directory + 336);
-  ASSERT_EQ(read64(original, directory + 184), 1u);
-  ASSERT_EQ(read64(original, directory + 200), 3u);
-  ASSERT_EQ(read64(original, directory + 216), 5u);
-  ASSERT_EQ(read64(original, directory + 232), 1u);
-  ASSERT_EQ(read64(original, directory + 248), 5u);
-  ASSERT_EQ(read64(original, directory + 264), 1u);
-  ASSERT_EQ(read64(original, directory + 280), 5u);
-  ASSERT_EQ(read64(original, directory + 296), 15u);
+  ASSERT_EQ(read64(original, directory + 184), 2u);
+  ASSERT_EQ(read64(original, directory + 200), 4u);
+  ASSERT_EQ(read64(original, directory + 216), 10u);
+  ASSERT_EQ(read64(original, directory + 232), 2u);
+  ASSERT_EQ(read64(original, directory + 248), 10u);
+  ASSERT_EQ(read64(original, directory + 264), 2u);
+  ASSERT_EQ(read64(original, directory + 280), 10u);
+  ASSERT_EQ(read64(original, directory + 296), 20u);
   ASSERT_EQ(read64(original, directory + 312), 5u);
   ASSERT_EQ(read64(original, directory + 328), 6u);
   ASSERT_EQ(read64(original, directory + 344), 6u);

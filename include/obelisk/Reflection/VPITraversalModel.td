@@ -444,6 +444,8 @@ def ClassIdentityObjects : VPIObjectSet<"ClassIdentityObjects",
 def DirectionPropertyObjects : VPIObjectSet<"DirectionPropertyObjects",
   [IODecl, Port, PortBit, PrimTerm, PathTerm, ClockingIODecl,
    PropFormalDecl, SeqFormalDecl]>;
+def PortIndexPropertyObjects : VPIObjectSet<"PortIndexPropertyObjects",
+  [Port]>;
 
 def TypeProperty : VPIProperty<"vpiType", 1, IntegerProperty,
   AllConcreteObjects, "37.3.2", StaticProperty, AllowedWhenProtected, 1>;
@@ -470,7 +472,7 @@ def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
   DirectionPropertyObjects,
   "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53">;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
-  PortObjects, "37.14">;
+  PortIndexPropertyObjects, "37.14">;
 def PortTypeProperty : VPIProperty<"vpiPortType", 611, IntegerProperty,
   PortObjects, "37.14">;
 def SelectObjects : VPIObjectSet<"SelectObjects",
