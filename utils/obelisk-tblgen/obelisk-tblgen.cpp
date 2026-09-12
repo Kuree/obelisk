@@ -924,7 +924,7 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       {"Semantic", 0}, {"ScalarOrVector", 1}, {"Integer", 2},
       {"Real", 3},     {"String", 4},         {"Time", 5}};
   const std::pair<StringRef, uint32_t> supportedValueReadSemantics[] = {
-      {"Snapshot", 0}, {"Evaluate", 1}};
+      {"Snapshot", 0}, {"Evaluate", 1}, {"EvaluateActual", 2}};
   const std::pair<StringRef, uint32_t> supportedValueRequirements[] = {
       {"RejectWholeUnpacked", 1},
       {"RejectClassDefinitionOrigin", 2},
@@ -3685,7 +3685,8 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
     if ((index != 0 && source <= previousSource) || !concrete ||
         formats == 0 || (formats & ~validValueFormats) != 0 ||
         record[4] > static_cast<uint8_t>(VPIValueDefaultFormat::Time) ||
-        record[5] > static_cast<uint8_t>(VPIValueReadSemantics::Evaluate) ||
+        record[5] >
+            static_cast<uint8_t>(VPIValueReadSemantics::EvaluateActual) ||
         (record[6] & ~validValueRequirements) != 0 || record[7] != 0)
       return false;
     previousSource = source;

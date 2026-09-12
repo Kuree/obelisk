@@ -828,6 +828,92 @@ valuePolicyFor(__vpiHandle *handle) {
   return policy;
 }
 
+struct VPIRefActualValueSource {
+  obelisk_rt_design_cursor_v1 cursor{};
+  uint32_t exactType = 0;
+  obelisk_rt_design_info_v1 info{};
+};
+
+bool refActualValueSource(__vpiHandle *handle,
+                          VPIRefActualValueSource &source) {
+  if (handle->form != VPIObjectForm::Design ||
+      handle->exactVpiType != vpiRefObj) {
+    setError(handle->owner, "invalid VPI RefObj actual source", vpiInternal);
+    return false;
+  }
+  VPIRelationRange range{};
+  bool statement = false;
+  if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+                                           handle->cursor, vpiActual, false,
+                                           &range) != OBELISK_RT_OK ||
+      range.count != 1 ||
+      obelisk_rt_cached_vpi_relation_target(handle->owner->context, range.first,
+                                            &source.cursor, &source.exactType,
+                                            &statement) != OBELISK_RT_OK ||
+      statement ||
+      obelisk_rt_cached_design_info(handle->owner->context, source.cursor,
+                                    &source.info) != OBELISK_RT_OK) {
+    setError(handle->owner, "VPI RefObj actual cannot be resolved",
+             vpiInternal);
+    return false;
+  }
+  return true;
+}
+
+struct VPIValueSource {
+  VPIObjectForm form = VPIObjectForm::Design;
+  obelisk_rt_design_cursor_v1 cursor{};
+  obelisk_rt_design_cursor_v1 semanticCursor{};
+  obelisk_rt_design_info_v1 info{};
+  uint64_t selectionBitOffset = 0;
+  uint32_t exactType = 0;
+  bool hasSemanticCursor = false;
+  const obelisk::reflection::VPIValuePolicyDescriptor *policy = nullptr;
+};
+
+bool valueSourceFor(
+    __vpiHandle *handle,
+    const obelisk::reflection::VPIValuePolicyDescriptor &queryPolicy,
+    VPIValueSource &source) {
+  source = {};
+  source.form = handle->form;
+  source.cursor = handle->cursor;
+  source.selectionBitOffset = handle->selectionBitOffset;
+  source.exactType = static_cast<uint32_t>(vpiTypeForHandle(handle));
+  source.policy = &queryPolicy;
+  if (handle->form == VPIObjectForm::IntegralConstant) {
+    source.info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    source.info.bit_width = 64;
+  } else if (!infoFor(handle, source.info)) {
+    return false;
+  }
+
+  if (queryPolicy.readSemantics ==
+      obelisk::reflection::VPIValueReadSemantics::EvaluateActual) {
+    VPIRefActualValueSource actual{};
+    if (!refActualValueSource(handle, actual))
+      return false;
+    source.form = VPIObjectForm::Design;
+    source.cursor = actual.cursor;
+    source.info = actual.info;
+    source.exactType = actual.exactType;
+    source.selectionBitOffset = 0;
+    source.policy = obelisk::reflection::findVPIValuePolicy(source.exactType);
+    if (!source.policy) {
+      setError(handle->owner,
+               "vpi_get_value is not defined for the VPI RefObj actual",
+               vpiNotice);
+      return false;
+    }
+    source.hasSemanticCursor = obelisk_rt_cached_design_semantic_root(
+                                   handle->owner->context, source.cursor,
+                                   &source.semanticCursor) == OBELISK_RT_OK;
+  } else {
+    source.hasSemanticCursor = semanticCursorFor(handle, source.semanticCursor);
+  }
+  return true;
+}
+
 bool valueRequirementsSatisfied(
     __vpiHandle *handle, const obelisk_rt_design_info_v1 &objectInfo,
     const obelisk::reflection::VPIValuePolicyDescriptor &policy) {
@@ -873,12 +959,11 @@ bool valueRequirementsSatisfied(
   return true;
 }
 
-bool resolveObjectTypeValueFormat(
-    __vpiHandle *handle, const obelisk_rt_design_info_v1 &objectInfo,
-    const obelisk::reflection::VPIValuePolicyDescriptor &policy,
-    PLI_INT32 &format) {
+bool resolveObjectTypeValueFormat(__vpiHandle *handle,
+                                  const VPIValueSource &source,
+                                  PLI_INT32 &format) {
   using Default = obelisk::reflection::VPIValueDefaultFormat;
-  switch (policy.defaultFormat) {
+  switch (source.policy->defaultFormat) {
   case Default::Integer:
     format = vpiIntVal;
     return true;
@@ -892,13 +977,12 @@ bool resolveObjectTypeValueFormat(
     format = vpiTimeVal;
     return true;
   case Default::ScalarOrVector: {
-    const PLI_INT32 type = vpiTypeForHandle(handle);
-    if (type == vpiNetBit || type == vpiRegBit) {
+    if (source.exactType == vpiNetBit || source.exactType == vpiRegBit) {
       format = vpiScalarVal;
       return true;
     }
     VPIValueShape shape = VPIValueShape::Neither;
-    if (!valueShapeFor(handle, objectInfo, shape))
+    if (!valueShapeFor(handle, source.info, shape))
       return false;
     if (shape == VPIValueShape::Scalar)
       format = vpiScalarVal;
@@ -912,8 +996,7 @@ bool resolveObjectTypeValueFormat(
     return true;
   }
   case Default::Semantic: {
-    obelisk_rt_design_cursor_v1 cursor{};
-    if (!semanticCursorFor(handle, cursor)) {
+    if (!source.hasSemanticCursor) {
       // Integral constants synthesized by traversal do not carry a semantic
       // type record; their closest representation is an integer.
       if (handle->form == VPIObjectForm::IntegralConstant) {
@@ -925,7 +1008,7 @@ bool resolveObjectTypeValueFormat(
       return false;
     }
     obelisk_rt_design_semantic_type_info_v1 semantic{};
-    if (!semanticTypeInfo(handle, cursor, semantic))
+    if (!semanticTypeInfo(handle, source.semanticCursor, semantic))
       return false;
     switch (semantic.kind) {
     case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
@@ -950,7 +1033,7 @@ bool resolveObjectTypeValueFormat(
       break;
     }
     VPIValueShape shape = VPIValueShape::Neither;
-    if (!valueShapeFor(handle, objectInfo, shape))
+    if (!valueShapeFor(handle, source.info, shape))
       return false;
     if (shape == VPIValueShape::Scalar) {
       format = vpiScalarVal;
@@ -2974,8 +3057,9 @@ bool encodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
   return false;
 }
 
-bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
+bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
+  const auto &info = source.info;
   if (info.bit_width == 0 || info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
              "VPI value access requires readable storage or net");
@@ -2994,41 +3078,13 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
-  if (handle->form == VPIObjectForm::IntegralConstant) {
+  if (source.form == VPIObjectForm::IntegralConstant) {
     value[0] = static_cast<uint64_t>(handle->integralValue);
     return true;
   }
-  if (handle->form == VPIObjectForm::Design &&
-      vpiTypeForHandle(handle) == vpiRefObj) {
-    VPIRelationRange range{};
-    obelisk_rt_design_cursor_v1 actual{};
-    uint32_t actualType = 0;
-    bool actualStatement = false;
-    obelisk_rt_design_info_v1 actualInfo{};
-    if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
-                                             handle->cursor, vpiActual, false,
-                                             &range) != OBELISK_RT_OK ||
-        obelisk_rt_cached_vpi_relation_target(
-            handle->owner->context, range.first, &actual, &actualType,
-            &actualStatement) != OBELISK_RT_OK ||
-        actualStatement ||
-        obelisk_rt_cached_design_info(handle->owner->context, actual,
-                                      &actualInfo) != OBELISK_RT_OK ||
-        actualInfo.bit_width != info.bit_width) {
-      setError(handle->owner, "VPI RefObj actual cannot be read", vpiInternal);
-      return false;
-    }
-    if (obelisk_rt_v1_design_read(handle->owner->context, actual, value.data(),
-                                  unknown.data(),
-                                  info.bit_width) != OBELISK_RT_OK) {
-      setError(handle->owner, "VPI RefObj actual read failed");
-      return false;
-    }
-    return true;
-  }
-  if (handle->form == VPIObjectForm::Indexed) {
+  if (source.form == VPIObjectForm::Indexed) {
     if (obelisk_rt_read_design_slice(
-            handle->owner->context, handle->cursor, handle->selectionBitOffset,
+            handle->owner->context, source.cursor, source.selectionBitOffset,
             info.bit_width, value.data(), unknown.data()) != OBELISK_RT_OK) {
       setError(handle->owner, "VPI indexed design read failed");
       return false;
@@ -3036,7 +3092,7 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
     return true;
   }
   obelisk_rt_status status =
-      obelisk_rt_v1_design_read(handle->owner->context, handle->cursor,
+      obelisk_rt_v1_design_read(handle->owner->context, source.cursor,
                                 value.data(), unknown.data(), info.bit_width);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "VPI design read failed");
@@ -3045,30 +3101,30 @@ bool readValue(__vpiHandle *handle, const obelisk_rt_design_info_v1 &info,
   return true;
 }
 
-bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
-  obelisk_rt_design_info_v1 info{};
-  if (!infoFor(handle, info))
-    return false;
+bool readManagedStateWord(__vpiHandle *handle,
+                          const obelisk_rt_design_info_v1 &info,
+                          VPIObjectForm form,
+                          obelisk_rt_design_cursor_v1 cursor,
+                          uint64_t selectionBitOffset, uint64_t &word) {
   obelisk_rt_design_type_info_v1 type{};
   if (info.type_offset == 0 ||
       obelisk_rt_cached_design_type_info(
           handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK ||
       type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
       info.bit_width != 64 ||
-      (handle->form != VPIObjectForm::Design &&
-       handle->form != VPIObjectForm::Indexed)) {
+      (form != VPIObjectForm::Design && form != VPIObjectForm::Indexed)) {
     setError(handle->owner, "invalid managed VPI storage representation",
              vpiInternal);
     return false;
   }
   uint64_t unknown = 0;
   obelisk_rt_status status =
-      handle->form == VPIObjectForm::Indexed
-          ? obelisk_rt_read_design_slice(handle->owner->context, handle->cursor,
-                                         handle->selectionBitOffset, 64, &word,
+      form == VPIObjectForm::Indexed
+          ? obelisk_rt_read_design_slice(handle->owner->context, cursor,
+                                         selectionBitOffset, 64, &word,
                                          &unknown)
-          : obelisk_rt_v1_design_read(handle->owner->context, handle->cursor,
-                                      &word, &unknown, 64);
+          : obelisk_rt_v1_design_read(handle->owner->context, cursor, &word,
+                                      &unknown, 64);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "managed VPI state read failed", vpiInternal);
     return false;
@@ -3084,6 +3140,20 @@ bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
     return false;
   }
   return true;
+}
+
+bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info))
+    return false;
+  return readManagedStateWord(handle, info, handle->form, handle->cursor,
+                              handle->selectionBitOffset, word);
+}
+
+bool readManagedStateWord(__vpiHandle *handle, const VPIValueSource &source,
+                          uint64_t &word) {
+  return readManagedStateWord(handle, source.info, source.form, source.cursor,
+                              source.selectionBitOffset, word);
 }
 
 class ScopedManagedWordRoot {
@@ -3106,6 +3176,42 @@ private:
   obelisk_rt_status status = OBELISK_RT_INVALID_HANDLE;
 };
 
+bool managedStringLength(__vpiHandle *handle,
+                         const obelisk_rt_design_info_v1 &info,
+                         VPIObjectForm form, obelisk_rt_design_cursor_v1 cursor,
+                         uint64_t selectionBitOffset, PLI_INT32 &length) {
+  ContextTransaction transaction(handle->owner->context);
+  ManagedExecutionScope managed(handle->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+    setError(handle->owner, "managed string VPI query cannot enter GC scope",
+             vpiInternal);
+    return false;
+  }
+  uint64_t string = 0;
+  if (!readManagedStateWord(handle, info, form, cursor, selectionBitOffset,
+                            string))
+    return false;
+  if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, string,
+                                      OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
+      string) {
+    setError(handle->owner, "invalid managed string in VPI design state",
+             vpiInternal);
+    return false;
+  }
+  ScopedManagedWordRoot root(managed.getLane(), &string);
+  if (root.getStatus() != OBELISK_RT_OK ||
+      obelisk_rt_validate_string(handle->owner->context, string) !=
+          OBELISK_RT_OK) {
+    setError(handle->owner, "invalid managed string in VPI design state",
+             vpiInternal);
+    return false;
+  }
+  length = static_cast<PLI_INT32>(std::min<uint64_t>(
+      obelisk_rt_v1_string_length(static_cast<obelisk_rt_string_v1>(string)),
+      INT32_MAX));
+  return true;
+}
+
 bool logicBit(const std::vector<uint64_t> &plane, uint64_t bit) {
   return (plane[static_cast<size_t>(bit / 64)] & (uint64_t{1} << (bit % 64))) !=
          0;
@@ -3116,16 +3222,16 @@ void setLogicBit(std::vector<uint64_t> &plane, uint64_t bit) {
 }
 
 bool valueSigned(__vpiHandle *handle,
-                 const obelisk_rt_design_info_v1 &objectInfo) {
-  const PLI_INT32 type = vpiTypeForHandle(handle);
+                 const obelisk_rt_design_info_v1 &objectInfo, PLI_INT32 type,
+                 bool hasSemanticCursor,
+                 obelisk_rt_design_cursor_v1 semanticCursor) {
   if (type == vpiNetBit || type == vpiRegBit || type == vpiBitSelect ||
       type == vpiPartSelect || type == vpiIndexedPartSelect)
     return false;
-  obelisk_rt_design_cursor_v1 semantic{};
-  if (semanticCursorFor(handle, semantic)) {
+  if (hasSemanticCursor) {
     obelisk_rt_design_semantic_type_info_v1 info{};
     if (obelisk_rt_cached_design_semantic_type_info(
-            handle->owner->context, semantic, &info) == OBELISK_RT_OK)
+            handle->owner->context, semanticCursor, &info) == OBELISK_RT_OK)
       return (info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
   }
   if (objectInfo.type_offset != 0) {
@@ -3154,6 +3260,20 @@ bool valueSigned(__vpiHandle *handle,
   default:
     return false;
   }
+}
+
+bool valueSigned(__vpiHandle *handle,
+                 const obelisk_rt_design_info_v1 &objectInfo) {
+  obelisk_rt_design_cursor_v1 semanticCursor{};
+  const bool hasSemanticCursor = semanticCursorFor(handle, semanticCursor);
+  return valueSigned(handle, objectInfo, vpiTypeForHandle(handle),
+                     hasSemanticCursor, semanticCursor);
+}
+
+bool valueSigned(__vpiHandle *handle, const VPIValueSource &source) {
+  return valueSigned(handle, source.info,
+                     static_cast<PLI_INT32>(source.exactType),
+                     source.hasSemanticCursor, source.semanticCursor);
 }
 
 bool hasUnknownBits(const std::vector<uint64_t> &unknown, uint64_t width) {
@@ -3329,10 +3449,10 @@ void decodeStrengthRange(uint16_t range, PLI_INT32 &strength0,
   strength1 = strengthCode(high <= 7 ? 7 - high : high - 7);
 }
 
-bool readNetStrength(__vpiHandle *handle, uint64_t bitOffset, uint16_t &range) {
+bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
+                     uint64_t bitOffset, uint16_t &range) {
   uint64_t stateOffset = 0;
-  if (obelisk_rt_design_state_offset(handle->owner->context, handle->cursor,
-                                     bitOffset,
+  if (obelisk_rt_design_state_offset(handle->owner->context, cursor, bitOffset,
                                      &stateOffset) != OBELISK_RT_OK) {
     setError(handle->owner, "VPI net strength offset is unavailable",
              vpiInternal);
@@ -4699,36 +4819,33 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiProtected)
     return 0;
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
-  if (property == vpiSize && objectType == vpiStringVar) {
-    ContextTransaction transaction(handle->owner->context);
-    ManagedExecutionScope managed(handle->owner->context);
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
-      setError(handle->owner, "managed string VPI query cannot enter GC scope",
-               vpiInternal);
+  if (property == vpiSize &&
+      (objectType == vpiStringVar || objectType == vpiRefObj)) {
+    obelisk_rt_design_info_v1 info{};
+    VPIObjectForm form = handle->form;
+    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    uint64_t selectionBitOffset = handle->selectionBitOffset;
+    uint32_t sourceType = objectType;
+    if (objectType == vpiRefObj) {
+      VPIRefActualValueSource actual{};
+      if (!refActualValueSource(handle, actual))
+        return vpiUndefined;
+      info = actual.info;
+      form = VPIObjectForm::Design;
+      cursor = actual.cursor;
+      selectionBitOffset = 0;
+      sourceType = actual.exactType;
+    } else if (!infoFor(handle, info)) {
       return vpiUndefined;
     }
-    uint64_t string = 0;
-    if (!readManagedStateWord(handle, string))
-      return vpiUndefined;
-    if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, string,
-                                        OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
-        string) {
-      setError(handle->owner, "invalid managed string in VPI design state",
-               vpiInternal);
-      return vpiUndefined;
-    }
-    ScopedManagedWordRoot root(managed.getLane(), &string);
-    if (root.getStatus() != OBELISK_RT_OK ||
-        obelisk_rt_validate_string(handle->owner->context, string) !=
-            OBELISK_RT_OK) {
-      setError(handle->owner, "invalid managed string in VPI design state",
-               vpiInternal);
-      return vpiUndefined;
-    }
-    // Match the other vpiSize handlers at the signed 32-bit VPI ABI boundary.
-    return static_cast<PLI_INT32>(std::min<uint64_t>(
-        obelisk_rt_v1_string_length(static_cast<obelisk_rt_string_v1>(string)),
-        INT32_MAX));
+    if (sourceType != vpiStringVar)
+      return static_cast<PLI_INT32>(
+          std::min<uint64_t>(info.bit_width, INT32_MAX));
+    PLI_INT32 length = vpiUndefined;
+    return managedStringLength(handle, info, form, cursor, selectionBitOffset,
+                               length)
+               ? length
+               : vpiUndefined;
   }
   if (handle->kind == VPIHandleKind::Object &&
       handle->form == VPIObjectForm::IntegralConstant) {
@@ -4757,9 +4874,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     if (objectType == vpiNetBit || objectType == vpiRegBit)
       return 0;
     obelisk_rt_design_cursor_v1 semanticCursor{};
-    bool usesSemanticSignedness = handle->form != VPIObjectForm::Design ||
-                                  objectType == vpiIODecl ||
-                                  isTypespecVPIKind(objectType);
+    bool usesSemanticSignedness =
+        handle->form != VPIObjectForm::Design || objectType == vpiIODecl ||
+        objectType == vpiRefObj || isTypespecVPIKind(objectType);
     if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
       obelisk_rt_design_semantic_type_info_v1 semantic{};
       if (obelisk_rt_cached_design_semantic_type_info(
@@ -5452,29 +5569,26 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   const auto *policy = valuePolicyFor(handle);
   if (!policy)
     return;
-  obelisk_rt_design_info_v1 info{};
-  if (handle->form == VPIObjectForm::IntegralConstant) {
-    info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
-    info.bit_width = 64;
-  } else if (!infoFor(handle, info)) {
+  VPIValueSource source{};
+  if (!valueSourceFor(handle, *policy, source))
     return;
-  }
   if (destination->format == vpiObjTypeVal &&
       handle->form == VPIObjectForm::IntegralConstant)
     destination->format = vpiIntVal;
   else if (destination->format == vpiObjTypeVal)
-    if (!resolveObjectTypeValueFormat(handle, info, *policy,
-                                      destination->format))
+    if (!resolveObjectTypeValueFormat(handle, source, destination->format))
       return;
   if (!obelisk::reflection::acceptsVPIValueFormat(
-          *policy, static_cast<uint32_t>(destination->format))) {
+          *source.policy, static_cast<uint32_t>(destination->format))) {
     setError(handle->owner, "value format is not valid for this VPI object",
              vpiNotice);
     return;
   }
-  if (!valueRequirementsSatisfied(handle, info, *policy))
+  if (!valueRequirementsSatisfied(handle, source.info, *policy) ||
+      (source.policy != policy &&
+       !valueRequirementsSatisfied(handle, source.info, *source.policy)))
     return;
-  const PLI_INT32 exactType = vpiTypeForHandle(handle);
+  const PLI_INT32 exactType = static_cast<PLI_INT32>(source.exactType);
   const bool managedStringSource = exactType == vpiStringVar;
   std::optional<ContextTransaction> stringTransaction;
   std::optional<ManagedExecutionScope> stringManaged;
@@ -5493,7 +5607,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   obelisk_rt_managed_word_v1 rootedString = 0;
   std::optional<ScopedManagedWordRoot> stringRoot;
   if (managedStringSource) {
-    if (!readManagedStateWord(handle, rootedString))
+    if (!readManagedStateWord(handle, source, rootedString))
       return;
     if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, rootedString,
                                         OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
@@ -5510,16 +5624,16 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                vpiInternal);
       return;
     }
-  } else if (!readValue(handle, info, value, unknown)) {
+  } else if (!readValue(handle, source, value, unknown)) {
     return;
   }
-  uint64_t width = info.bit_width;
+  uint64_t width = source.info.bit_width;
   uint32_t semanticKind = OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN;
-  obelisk_rt_design_cursor_v1 semanticCursor{};
-  if (semanticCursorFor(handle, semanticCursor)) {
+  if (source.hasSemanticCursor) {
     obelisk_rt_design_semantic_type_info_v1 semantic{};
-    if (obelisk_rt_cached_design_semantic_type_info(
-            handle->owner->context, semanticCursor, &semantic) == OBELISK_RT_OK)
+    if (obelisk_rt_cached_design_semantic_type_info(handle->owner->context,
+                                                    source.semanticCursor,
+                                                    &semantic) == OBELISK_RT_OK)
       semanticKind = semantic.kind;
   }
   const bool realSource =
@@ -5621,7 +5735,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       return;
     }
   }
-  const bool isSigned = valueSigned(handle, info) || realSource;
+  const bool isSigned = valueSigned(handle, source) || realSource;
   OBELISK_RT_TRY {
     switch (destination->format) {
     case vpiVectorVal: {
@@ -5656,12 +5770,13 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       bool v = width != 0 && logicBit(value, 0);
       bool u = width != 0 && logicBit(unknown, 0);
       destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
-      if (width != 0 && info.kind == OBELISK_RT_DESIGN_RECORD_NET && u && !v) {
-        const uint64_t offset = handle->form == VPIObjectForm::Indexed
-                                    ? handle->selectionBitOffset
+      if (width != 0 && source.info.kind == OBELISK_RT_DESIGN_RECORD_NET && u &&
+          !v) {
+        const uint64_t offset = source.form == VPIObjectForm::Indexed
+                                    ? source.selectionBitOffset
                                     : 0;
         uint16_t range = 0;
-        if (!readNetStrength(handle, offset, range))
+        if (!readNetStrength(handle, source.cursor, offset, range))
           return;
         constexpr uint16_t lowMask = (uint16_t{1} << 7) - 1;
         constexpr uint16_t highZ = uint16_t{1} << 7;
@@ -5755,7 +5870,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         return;
       }
       handle->owner->strengthScratch.resize(static_cast<size_t>(width));
-      const bool net = info.kind == OBELISK_RT_DESIGN_RECORD_NET;
+      const bool net = source.info.kind == OBELISK_RT_DESIGN_RECORD_NET;
       for (uint64_t bit = 0; bit != width; ++bit) {
         const bool v = logicBit(value, bit);
         const bool u = logicBit(unknown, bit);
@@ -5766,8 +5881,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         strength.s1 = vpiStrongDrive;
         if (net) {
           uint16_t range = 0;
-          const uint64_t base = handle->form == VPIObjectForm::Indexed
-                                    ? handle->selectionBitOffset
+          const uint64_t base = source.form == VPIObjectForm::Indexed
+                                    ? source.selectionBitOffset
                                     : 0;
           if (bit > UINT64_MAX - base) {
             setError(handle->owner, "VPI net strength offset is out of range",
@@ -5775,7 +5890,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
             return;
           }
           const uint64_t offset = base + bit;
-          if (!readNetStrength(handle, offset, range))
+          if (!readNetStrength(handle, source.cursor, offset, range))
             return;
           decodeStrengthRange(range, strength.s0, strength.s1);
         }

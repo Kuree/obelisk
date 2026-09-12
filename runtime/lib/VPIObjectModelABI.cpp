@@ -47,8 +47,7 @@ static_assert(findVPIProperty(vpiReg, vpiScalar)->valueKind ==
               VPIPropertyValueKind::Boolean);
 static_assert(findVPIProperty(vpiNet, vpiVector)->valueKind ==
               VPIPropertyValueKind::Boolean);
-static_assert(findVPIProperty(vpiPortBit, vpiPortIndex)->valueKind ==
-              VPIPropertyValueKind::Integer);
+static_assert(findVPIProperty(vpiPortBit, vpiPortIndex) == nullptr);
 static_assert(findVPIProperty(vpiReg, vpiDirection) == nullptr);
 
 static_assert(static_cast<uint8_t>(VPIValueFormat::BinStr) == vpiBinStrVal);
@@ -65,6 +64,8 @@ static_assert(findVPIValuePolicy(vpiTimeVar)->defaultFormat ==
               VPIValueDefaultFormat::Time);
 static_assert(findVPIValuePolicy(vpiOperation)->readSemantics ==
               VPIValueReadSemantics::Evaluate);
+static_assert(findVPIValuePolicy(vpiRefObj)->readSemantics ==
+              VPIValueReadSemantics::EvaluateActual);
 static_assert(findVPIValuePolicy(vpiNet)->readSemantics ==
               VPIValueReadSemantics::Snapshot);
 static_assert(acceptsVPIValueFormat(*findVPIValuePolicy(vpiTableEntry),

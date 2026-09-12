@@ -338,7 +338,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   std::function<bool(Type)> isReflectableType = [&](Type type) {
     if (!simulationWidth(type))
       return false;
-    if (isa<IntegerType, sim::LogicType>(type) || type.isF32() || type.isF64())
+    if (isa<IntegerType, sim::LogicType, sim::StringType>(type) ||
+        type.isF32() || type.isF64())
       return true;
     if (auto array = dyn_cast<sim::PackedArrayType>(type))
       return isReflectableType(array.getElementType());
@@ -1370,7 +1371,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
             !sim::areEquivalentVPIRefTypes(effective->second,
                                            storage.getVpiTypeAttr())) {
           endpoint.emitOpError(
-              "ref actual type does not match its specialized member type");
+              "ref actual type does not match its specialized member "
+              "type: formal ")
+              << (effective == effectiveMemberTypes.end()
+                      ? Attribute{}
+                      : Attribute(effective->second))
+              << ", actual "
+              << (storage ? Attribute(storage.getVpiTypeAttr()) : Attribute{});
           return {};
         }
       }
@@ -2455,6 +2462,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       record.kind = 1;
       record.flags |= 4;
       record.name = "logic";
+    } else if (isa<sim::StringType>(type)) {
+      record.kind = 1;
+      record.name = "string";
     } else if (auto packed = dyn_cast<sim::PackedArrayType>(type)) {
       record.kind = 2;
       record.flags |= 4;

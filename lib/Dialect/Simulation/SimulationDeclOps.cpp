@@ -2791,7 +2791,12 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (effective == specializedMemberTypes.end() ||
           !areEquivalentVPIRefTypes(effective->second, targetType))
         return binding.emitOpError(
-            "ref actual type does not match its specialized member type");
+                   "ref actual type does not match its specialized member "
+                   "type: formal ")
+               << (effective == specializedMemberTypes.end()
+                       ? Attribute{}
+                       : Attribute(effective->second))
+               << ", actual " << Attribute(targetType);
     }
     // An ordinary formal resolves inside its elaborated instance. A ref
     // formal instead resolves to the caller's actual and is normally owned by

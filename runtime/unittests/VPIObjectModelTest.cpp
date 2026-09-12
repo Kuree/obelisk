@@ -79,10 +79,10 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
 constexpr size_t kExpectedTraversalCount = 1894;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
-constexpr size_t kExpectedPropertyCount = 2338;
+constexpr size_t kExpectedPropertyCount = 2337;
 static_assert(sizeof(vpiProperties) / sizeof(vpiProperties[0]) ==
               kExpectedPropertyCount);
-constexpr size_t kExpectedValuePolicyCount = 56;
+constexpr size_t kExpectedValuePolicyCount = 57;
 static_assert(sizeof(vpiValuePolicies) / sizeof(vpiValuePolicies[0]) ==
               kExpectedValuePolicyCount);
 constexpr size_t kExpectedArrayValuePolicyCount = 9;
@@ -318,7 +318,8 @@ std::map<uint32_t, KindSet> buildReadPropertyApplicabilityOracle() {
       {vpiBitTypespec, vpiLogicTypespec, vpiPackedArrayTypespec});
   add(vectorObjects, {vpiVector});
   const KindSet ports{vpiPort, vpiPortBit};
-  add(ports, {vpiExplicitName, vpiPortIndex, vpiPortType});
+  add(ports, {vpiExplicitName, vpiPortType});
+  add({vpiPort}, {vpiPortIndex});
 
   const KindSet structuralSize{vpiIODecl,
                                vpiPort,
@@ -1874,6 +1875,9 @@ TEST(VPIObjectModel, ValuePoliciesExactlyMatchTheIndependentLrmOracle) {
       ValueRead::Snapshot, rejectWholeUnpacked | rejectNonRuntimeOrigin,
       "37.17; 37.26; 38.15");
 
+  add({vpiRefObj}, fullFormats, ValueDefault::Semantic,
+      ValueRead::EvaluateActual, rejectNonRuntimeOrigin,
+      "37.15; 37.58; 37.59; 38.15");
   add({vpiVarSelect, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect,
        vpiOperation, vpiFuncCall, vpiMethodFuncCall, vpiSysFuncCall,
        vpiLetExpr},
@@ -2236,9 +2240,13 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
     EXPECT_EQ(descriptor->valueKind, property.kind);
     EXPECT_STREQ(descriptor->clause, "37.14");
     const auto *bitDescriptor = findVPIProperty(vpiPortBit, property.value);
-    ASSERT_NE(bitDescriptor, nullptr);
-    EXPECT_EQ(bitDescriptor->valueKind, property.kind);
-    EXPECT_STREQ(bitDescriptor->clause, "37.14");
+    if (property.value == vpiPortIndex) {
+      EXPECT_EQ(bitDescriptor, nullptr);
+    } else {
+      ASSERT_NE(bitDescriptor, nullptr);
+      EXPECT_EQ(bitDescriptor->valueKind, property.kind);
+      EXPECT_STREQ(bitDescriptor->clause, "37.14");
+    }
     EXPECT_EQ(findVPIProperty(vpiModule, property.value), nullptr);
     EXPECT_EQ(findVPIProperty(vpiReg, property.value), nullptr);
     EXPECT_EQ(findVPIProperty(vpiNet, property.value), nullptr);
@@ -2247,9 +2255,14 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
     ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage, vpiPort,
                                                 property.value, imageProperty));
     EXPECT_EQ(imageProperty.valueKind, property.kind);
-    ASSERT_TRUE(findVPIObjectModelImageProperty(vpiObjectModelImage, vpiPortBit,
-                                                property.value, imageProperty));
-    EXPECT_EQ(imageProperty.valueKind, property.kind);
+    if (property.value == vpiPortIndex) {
+      EXPECT_FALSE(findVPIObjectModelImageProperty(
+          vpiObjectModelImage, vpiPortBit, property.value, imageProperty));
+    } else {
+      ASSERT_TRUE(findVPIObjectModelImageProperty(
+          vpiObjectModelImage, vpiPortBit, property.value, imageProperty));
+      EXPECT_EQ(imageProperty.valueKind, property.kind);
+    }
     EXPECT_FALSE(findVPIObjectModelImageProperty(
         vpiObjectModelImage, vpiReg, property.value, imageProperty));
   }
@@ -2836,7 +2849,7 @@ TEST(VPIObjectModel, CompactImageValidationRejectsCorruptionAndTruncation) {
 
   reset();
   damaged[valuePolicyOffset + 5] =
-      static_cast<uint8_t>(VPIValueReadSemantics::Evaluate) + 1;
+      static_cast<uint8_t>(VPIValueReadSemantics::EvaluateActual) + 1;
   refreshImageChecksum(damaged);
   EXPECT_FALSE(
       validateVPIObjectModelImageStructure(damaged.data(), damaged.size()));
