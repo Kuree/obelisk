@@ -521,6 +521,120 @@ button, select, input { font: inherit; color: inherit; }
 .handle { background: var(--rule); cursor: col-resize; }
 .handle:hover, .handle:focus-visible { background: var(--signal); }
 
+/* =================================================================== embed */
+
+.embedDialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  box-shadow: 0 24px 64px #0008;
+}
+.embedDialog[open] { display: flex; flex-direction: column; }
+.embedDialog::backdrop { background: #0009; }
+
+.embedHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.embedHead h2 { margin: 0; font-size: 14px; font-weight: 600; }
+
+.embedFormats {
+  display: flex;
+  gap: 18px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.embedFormats button {
+  position: relative;
+  padding: 9px 0;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.embedFormats button:hover { color: var(--fg-mid); }
+.embedFormats button[aria-selected="true"] { color: var(--signal); }
+.embedFormats button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: var(--signal);
+}
+
+.embedSnippet {
+  flex: 1 1 auto;
+  min-height: 80px;
+  max-height: 50vh;
+  margin: 14px 16px 0;
+  padding: 11px 13px;
+  overflow: auto;
+  background: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  font: 400 12px/1.55 var(--mono);
+  color: var(--fg-mid);
+  white-space: pre;
+  scrollbar-width: thin;
+}
+
+/* Prose the reader acts on, so it takes the readable secondary ink rather
+   than the comment purple used for labels. */
+.embedNote {
+  margin: 12px 16px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-mid);
+}
+
+.embedFoot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 14px 16px;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  margin-right: auto;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.segmented[hidden] { display: none; }
+.segmentedLabel {
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.segmented button {
+  padding: 6px 11px;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  background: transparent;
+  color: var(--fg-mid);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.segmented button:hover { background: var(--raised); color: var(--fg); }
+.segmented button[aria-checked="true"] { background: var(--raised); color: var(--signal); }
+
 /* ============================================================== responsive */
 
 @media (max-width: 860px) {
@@ -554,7 +668,7 @@ button, select, input { font: inherit; color: inherit; }
   .identity { height: 27px; align-items: flex-end; gap: 9px; }
   .actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
   }
   .actions > button { justify-content: center; min-width: 0; }

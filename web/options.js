@@ -56,7 +56,7 @@ export function splitFlags(text) {
 }
 
 /** Re-quote for display only, so the preview stays copy-pasteable. */
-function quoteForDisplay(argument) {
+export function quoteForDisplay(argument) {
   return /\s/.test(argument) ? `'${argument}'` : argument;
 }
 

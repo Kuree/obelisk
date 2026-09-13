@@ -36,7 +36,7 @@ assert.match(style, /\.pipeline\s+li\s*{[^}]*flex:\s*none;[^}]*padding:\s*0\s+13
 assert.match(style, /\.stage\s*{[^}]*padding:\s*0;/s);
 assert.match(style, /\.pipeline\.canDrag,\s*\.pipeline\.canDrag\s+\.stage\s*{\s*cursor:\s*grab;/);
 assert.match(style, /@media\s*\(max-width:\s*860px\)[\s\S]*grid-template-columns:\s*1fr;[\s\S]*grid-template-rows:[^;]*8px/s);
-assert.match(style, /@media\s*\(max-width:\s*600px\)[\s\S]*--masthead:\s*94px;[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
+assert.match(style, /@media\s*\(max-width:\s*600px\)[\s\S]*--masthead:\s*94px;[\s\S]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/s);
 assert.match(style, /height:\s*calc\(100dvh\s*-\s*var\(--masthead\)\)/);
 assert.match(style, /\.waveform\s*{[^}]*overflow:\s*auto;/s);
 assert.match(style, /\.waveform iframe\s*{[^}]*min-width:\s*600px;/s);

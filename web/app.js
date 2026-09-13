@@ -7,6 +7,9 @@ import { loadWaveform, saveWaveform } from './waveform-storage.js';
 import { EXAMPLES } from './examples.js';
 import { STAGES, DEFAULT_STAGE, findStage } from './stages.js';
 import {
+  COLOR_CHOICES, htmlSnippet, markdownSnippet, snippetSource, tokensFromListing,
+} from './embed-snippet.js';
+import {
   DEFAULTS, buildArgs, formatCommand, toPermalink, loadState, saveState,
 } from './options.js';
 
@@ -24,6 +27,9 @@ const ui = {
   scheduleToggle: el('scheduleToggle'),
   waveformView: el('waveformView'), waveformEmpty: el('waveformEmpty'),
   surfer: el('surfer'), downloadWaveform: el('downloadWaveform'),
+  embed: el('embed'), embedDialog: el('embedDialog'), embedHtml: el('embedHtml'),
+  embedMarkdown: el('embedMarkdown'), embedCode: el('embedCode'),
+  embedNote: el('embedNote'), copyEmbed: el('copyEmbed'), embedColors: el('embedColors'),
 };
 
 const OPTION_FIELDS = [
@@ -40,6 +46,7 @@ let scheduleSourceHighlight = null;
 const session = new CompilerSession();
 let job = null;
 let compilerUnavailable = false;
+let compilerReady = false;
 let options = { ...DEFAULTS };
 let activeStage = DEFAULT_STAGE;
 let busy = false;
@@ -204,6 +211,19 @@ function finishRecording(statusText, statusKind) {
 
 function compileStage(stageId) {
   if (busy) return;
+  // A token listing for the Embed dialog holds the session for a moment.
+  if (tokenJob) {
+    const waiting = deferredStage !== null;
+    deferredStage = stageId;
+    if (!waiting) {
+      tokenJob.then(() => {
+        const id = deferredStage;
+        deferredStage = null;
+        compileStage(id);
+      });
+    }
+    return;
+  }
   const stage = findStage(stageId);
   showConsole();
   busy = true;
@@ -710,6 +730,7 @@ function initChrome(initialSource) {
     history.replaceState(null, '', link);
     copy(link, ui.share);
   });
+  initEmbed();
 
   for (const [index, example] of EXAMPLES.entries()) {
     const option = document.createElement('option');
@@ -739,6 +760,141 @@ function initChrome(initialSource) {
 
   initHandle();
   initPipelineScroll();
+}
+
+const EMBED_NOTES = {
+  light: 'Colors are built in, so the block looks the same on any site. ' +
+    'Include the script once per page.',
+  dark: 'Colors are built in, for sites with a dark background. ' +
+    'Include the script once per page.',
+  plain: 'No built-in colors: your site\'s highlighter styles the block, or ' +
+    'the script colors it to match the page. Include the script once per page.',
+  markdown: 'For Jekyll, Hugo, MkDocs, and other site generators that allow ' +
+    'raw HTML. Include the script once, in your layout. GitHub strips ' +
+    'scripts, so Run does not appear there.',
+};
+
+const EMBED_STORAGE_KEY = 'obelisk.embed';
+
+// Baked snippet colors come from the compiler's own lexer, so they agree with
+// how Obelisk reads the design. Listing tokens is a short job on the shared
+// session once the compiler has loaded; while it is still downloading, when a
+// run holds the session, or when the compiler is unavailable, it resolves to
+// null and the built-in tokenizer colors the snippet instead.
+let tokenJob = null;
+let deferredStage = null;
+
+function listTokens(source, std) {
+  if (!compilerReady || busy || session.busy) return Promise.resolve(null);
+  tokenJob = new Promise((resolve) => {
+    session.run({
+      type: 'compile',
+      source,
+      args: ['-dump-tokens', `--std=${std}`],
+      stage: 'tokens',
+      kind: 'text',
+    }, (message) => {
+      if (message.type === 'compiled') {
+        resolve(message.ok ? tokensFromListing(source, message.text) : null);
+      } else if (message.type === 'failed' || message.type === 'stopped') {
+        resolve(null);
+      }
+    });
+  }).finally(() => { tokenJob = null; });
+  return tokenJob;
+}
+
+function initEmbed() {
+  let format = 'html';
+  let colors = 'light';
+  try {
+    const saved = JSON.parse(localStorage.getItem(EMBED_STORAGE_KEY) ?? 'null');
+    if (COLOR_CHOICES.includes(saved?.colors)) colors = saved.colors;
+  } catch {
+    // Unreadable storage: keep the default.
+  }
+
+  // Listings are cached per language version and source; the dialog is modal,
+  // so neither changes while it is open.
+  let listed = { key: null, tokens: null, pending: false };
+
+  const render = () => {
+    const source = editor.getValue();
+    const html = format === 'html';
+    const baked = html && colors !== 'plain';
+    const key = `${options.std}\n${snippetSource(source)}`;
+    if (baked && listed.key !== key) {
+      listed = { key, tokens: null, pending: true };
+      const request = listed;
+      listTokens(snippetSource(source), options.std).then((tokens) => {
+        if (listed !== request) return;
+        listed = { key, tokens, pending: false };
+        render();
+      });
+    }
+    const input = {
+      source,
+      options,
+      runnerUrl: new URL('runner.js', window.location.href).href,
+      colors,
+      tokens: listed.key === key ? listed.tokens : null,
+    };
+    const pending = baked && listed.pending;
+    ui.embedCode.textContent = html ? htmlSnippet(input) : markdownSnippet(input);
+    ui.embedNote.textContent = pending
+      ? 'Coloring with the compiler\'s lexer…'
+      : EMBED_NOTES[html ? colors : 'markdown'];
+    ui.copyEmbed.disabled = pending;
+    ui.embedHtml.setAttribute('aria-selected', String(html));
+    ui.embedMarkdown.setAttribute('aria-selected', String(!html));
+    // A Markdown fence cannot carry colors.
+    ui.embedColors.hidden = !html;
+    for (const button of ui.embedColors.querySelectorAll('[data-colors]')) {
+      button.setAttribute('aria-checked', String(button.dataset.colors === colors));
+    }
+  };
+  const choose = (next) => { format = next; render(); };
+
+  ui.embedColors.addEventListener('click', (event) => {
+    const choice = event.target.closest('[data-colors]')?.dataset.colors;
+    if (!choice) return;
+    colors = choice;
+    render();
+    try {
+      localStorage.setItem(EMBED_STORAGE_KEY, JSON.stringify({ colors }));
+    } catch {
+      // Private browsing or a full quota: the choice just is not remembered.
+    }
+  });
+
+  ui.embed.addEventListener('click', () => {
+    // A listing that fell back (busy or failed compiler) is retried on open.
+    if (!listed.pending && !listed.tokens) listed = { key: null, tokens: null, pending: false };
+    render();
+    ui.embedDialog.showModal();
+  });
+  ui.embedHtml.addEventListener('click', () => choose('html'));
+  ui.embedMarkdown.addEventListener('click', () => choose('markdown'));
+  ui.copyEmbed.addEventListener('click', () =>
+    copy(ui.embedCode.textContent, ui.copyEmbed));
+  // Clicks on the backdrop are dispatched to the dialog itself, as are clicks
+  // in its own margins, so tell them apart by position. The press must start
+  // there too: a text selection dragged out of the snippet can end with a
+  // click on the dialog.
+  const onBackdrop = (event) => {
+    if (event.target !== ui.embedDialog) return false;
+    const box = ui.embedDialog.getBoundingClientRect();
+    return event.clientX < box.left || event.clientX > box.right ||
+      event.clientY < box.top || event.clientY > box.bottom;
+  };
+  let pressedBackdrop = false;
+  ui.embedDialog.addEventListener('pointerdown', (event) => {
+    pressedBackdrop = onBackdrop(event);
+  });
+  ui.embedDialog.addEventListener('click', (event) => {
+    if (pressedBackdrop && onBackdrop(event)) ui.embedDialog.close();
+    pressedBackdrop = false;
+  });
 }
 
 function initPipelineScroll() {
@@ -907,6 +1063,7 @@ async function main() {
     write(`\n${error.message}\n`, 'stderr');
     return;
   }
+  compilerReady = true;
   if (busy) return;
   setBusyLabel(false);
   if (findStage(activeStage).kind === 'waveform') showWaveform();

@@ -28,6 +28,7 @@
       <svg class="chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
     </button>
     <button id="share" class="ghost" title="Copy a link that restores this source and these options">Copy link</button>
+    <button id="embed" class="ghost" title="Get a snippet that makes this design runnable on another website">Embed</button>
     <button id="run" class="run" disabled>
       <span id="runLabel">Loading</span>
       <kbd>⌘⏎</kbd>
@@ -151,6 +152,30 @@
     </div>
   </section>
 </main>
+
+<!-- Embed snippets for runner.js, which makes code blocks on any website
+     runnable against this deployment. -->
+<dialog id="embedDialog" class="embedDialog" aria-labelledby="embedTitle">
+  <form method="dialog" class="embedHead">
+    <h2 id="embedTitle">Embed this design</h2>
+    <button class="ghost tiny" aria-label="Close">Close</button>
+  </form>
+  <div class="embedFormats" role="tablist" aria-label="Snippet format">
+    <button id="embedHtml" role="tab" aria-selected="true">HTML</button>
+    <button id="embedMarkdown" role="tab" aria-selected="false">Markdown</button>
+  </div>
+  <pre class="embedSnippet" tabindex="0"><code id="embedCode"></code></pre>
+  <p id="embedNote" class="embedNote"></p>
+  <div class="embedFoot">
+    <div id="embedColors" class="segmented" role="radiogroup" aria-label="Colors">
+      <span class="segmentedLabel" aria-hidden="true">Colors</span>
+      <button role="radio" data-colors="light" aria-checked="true">Light</button>
+      <button role="radio" data-colors="dark" aria-checked="false">Dark</button>
+      <button role="radio" data-colors="plain" aria-checked="false">Plain</button>
+    </div>
+    <button id="copyEmbed" class="run">Copy snippet</button>
+  </div>
+</dialog>
 
 <script type="module" src="./app.js"></script>
 </body>
