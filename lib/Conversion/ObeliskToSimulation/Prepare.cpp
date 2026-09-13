@@ -439,12 +439,17 @@ static bool typeContainsEvent(Type type) {
   return false;
 }
 
-static bool isProgramCodeUnit(Operation *op) {
+static bool isProgramCodeUnit(
+    Operation *op, const llvm::StringMap<bool> &programDefinitionsByName,
+    llvm::DenseMap<Operation *, bool> &programInstances) {
   if (op->getParentOfType<semantic::SVAnonymousProgramSymbolOp>())
     return true;
   auto instance = op->getParentOfType<semantic::SVInstanceSymbolOp>();
   if (!instance)
     return false;
+  auto [cached, inserted] = programInstances.try_emplace(instance, false);
+  if (!inserted)
+    return cached->second;
   auto reference = instance->getAttrOfType<SymbolRefAttr>("referenced_symbol");
   if (!reference)
     return false;
@@ -452,23 +457,16 @@ static bool isProgramCodeUnit(Operation *op) {
       SymbolTable::lookupNearestSymbolFrom<semantic::SVDefinitionSymbolOp>(
           instance, reference);
   if (definition)
-    return definition.getDefinitionKind() ==
-           semantic::SVDefinitionKind::Program;
+    return cached->second = definition.getDefinitionKind() ==
+                            semantic::SVDefinitionKind::Program;
 
   // Elaborated instance references use the frontend's stable symbol spelling,
   // which may be flat even when parsed as a nested SymbolRefAttr. Resolve the
   // source definition name as a deterministic fallback.
   auto referencedPath = instance->getAttrOfType<StringAttr>("referenced_path");
-  ModuleOp module = op->getParentOfType<ModuleOp>();
-  bool program = false;
-  if (referencedPath && module)
-    module.walk([&](semantic::SVDefinitionSymbolOp candidate) {
-      auto name = candidate->getAttrOfType<StringAttr>("name");
-      if (name && name == referencedPath)
-        program = candidate.getDefinitionKind() ==
-                  semantic::SVDefinitionKind::Program;
-    });
-  return program;
+  return cached->second =
+             referencedPath &&
+             programDefinitionsByName.lookup(referencedPath.getValue());
 }
 
 class ObeliskSimPreparePass
@@ -9208,6 +9206,16 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::DenseMap<Operation *, unsigned> sourceUseCounts;
   llvm::SmallPtrSet<Operation *, 32> unitSources;
   llvm::SmallPtrSet<Operation *, 32> sourcesWithNestedUnits;
+  // Definition references may use the frontend's flat elaborated spelling.
+  // Inventory fallback names once, not with a whole-module walk for every
+  // executable unit. Cache exact nearest-symbol lookup per instance as well.
+  llvm::StringMap<bool> programDefinitionsByName;
+  llvm::DenseMap<Operation *, bool> programInstances;
+  module.walk([&](semantic::SVDefinitionSymbolOp definition) {
+    if (auto name = definition->getAttrOfType<StringAttr>("name"))
+      programDefinitionsByName[name.getValue()] =
+          definition.getDefinitionKind() == semantic::SVDefinitionKind::Program;
+  });
   for (PreparedUnit &unit : units) {
     ++sourceUseCounts[unit.source];
     unitSources.insert(unit.source);
@@ -10182,7 +10190,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Keep the shared event-list monitor in the design domain even when the
     // clocking block is declared lexically inside a program.
     bool programCodeUnit =
-        !clockingEventMonitor && isProgramCodeUnit(unit.source);
+        !clockingEventMonitor &&
+        isProgramCodeUnit(unit.source, programDefinitionsByName,
+                          programInstances);
     bool invariantAssertionMonitor = false;
     if (programCodeUnit && unit.entryKind == sim::EntryKind::Always)
       unit.source->walk([&](semantic::SVConcurrentAssertionStatementOp) {
