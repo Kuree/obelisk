@@ -1,5 +1,5 @@
 // RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test \
-// RUN:   --gtest_filter=GeneratedDesignDatabase.CompactStaticQueries
+// RUN:   --gtest_filter=GeneratedDesignDatabase.CompactStaticQueries:GeneratedDesignDatabase.RejectsMalformedFrozenParameterImage
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -29,6 +29,23 @@ module attributes {
         ordinal 2 hierarchy "top.gate" debug "gate" {
       primitive_input_count = 2 : i64
     }
+    obelisk_sim.vpi_object.anchor @max_width id 7 type 41 in 0 parent @pkg
+        ordinal 0 hierarchy "pkg::UVM_HDL_MAX_WIDTH"
+        debug "UVM_HDL_MAX_WIDTH" {
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [1536 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    } loc("compact_static.sv":8:9)
+    // An equal value must share one immutable pool row while retaining an
+    // independent declaration identity and package traversal edge.
+    obelisk_sim.vpi_object.anchor @same_width id 8 type 41 in 0 parent @pkg
+        ordinal 1 hierarchy "pkg::SAME_WIDTH" debug "SAME_WIDTH" {
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [1536 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    } loc("compact_static.sv":9:9)
 
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "__root"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context

@@ -1545,6 +1545,12 @@ struct DesignDatabaseCache {
   uint64_t definitionMemberInstanceRelationTargetCount = 0;
   uint64_t definitionMemberInstanceRelationInverses = 0;
   uint64_t definitionMemberInstanceRelationInverseCount = 0;
+  uint64_t frozenValues = 0;
+  uint64_t frozenValueCount = 0;
+  uint64_t frozenValueBindings = 0;
+  uint64_t frozenValueBindingCount = 0;
+  uint64_t frozenValuePayload = 0;
+  uint64_t frozenValuePayloadSize = 0;
   uint64_t stateBitCount = 0;
   bool validated = false;
 };
@@ -1574,6 +1580,13 @@ struct VPIFixedPropertyValue {
   uint64_t payload = 0;
   const uint8_t *stringData = nullptr;
   uint64_t stringSize = 0;
+};
+
+struct VPIFrozenValue {
+  uint32_t kindAndFlags = 0;
+  uint64_t bitWidth = 0;
+  const uint8_t *payload = nullptr;
+  uint64_t payloadSize = 0;
 };
 
 struct VPINetDelayValue {
@@ -3205,6 +3218,10 @@ obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 cursor,
+                                   VPIFrozenValue *outValue) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept;

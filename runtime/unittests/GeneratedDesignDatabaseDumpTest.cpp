@@ -77,6 +77,28 @@ std::string hex(uint64_t value) {
   return std::string(result.rbegin(), result.rend());
 }
 
+void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
+  ASSERT_LE(offset + 4, bytes.size());
+  for (unsigned byte = 0; byte != 4; ++byte)
+    bytes[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+}
+
+void put64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value) {
+  ASSERT_LE(offset + 8, bytes.size());
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytes[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+}
+
+uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (size_t index = 0; index != bytes.size(); ++index) {
+    uint8_t value = index >= 32 && index < 40 ? 0 : bytes[index];
+    hash ^= value;
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
 } // namespace
 
 TEST(GeneratedDesignDatabase, Dump) {
@@ -958,6 +980,12 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
       obelisk::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
+  const HeaderView imageHeader(encoded->designDatabase.data());
+  ASSERT_NE(imageHeader.getReserved(), 0u);
+  const SemanticDirectoryView imageDirectory(encoded->designDatabase.data() +
+                                             imageHeader.getReserved());
+  EXPECT_EQ(imageDirectory.getFrozenValueCount(), 1u);
+  EXPECT_EQ(imageDirectory.getFrozenValueBindingCount(), 2u);
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
@@ -997,6 +1025,60 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_STREQ(vpi_get_str(vpiFullName, package), "pkg::");
   EXPECT_STREQ(vpi_get_str(vpiFile, package), "compact_static.sv");
   EXPECT_EQ(vpi_get(vpiLineNo, package), 3);
+
+  PLI_BYTE8 parameterAbsoluteName[] = "pkg::UVM_HDL_MAX_WIDTH";
+  PLI_BYTE8 sameWidthName[] = "pkg::SAME_WIDTH";
+  PLI_BYTE8 parameterRelativeName[] = "UVM_HDL_MAX_WIDTH";
+  vpiHandle parameter = vpi_handle_by_name(parameterAbsoluteName, nullptr);
+  vpiHandle relativeParameter =
+      vpi_handle_by_name(parameterRelativeName, package);
+  vpiHandle sameWidth = vpi_handle_by_name(sameWidthName, nullptr);
+  ASSERT_NE(parameter, nullptr);
+  ASSERT_NE(relativeParameter, nullptr);
+  ASSERT_NE(sameWidth, nullptr);
+  EXPECT_EQ(vpi_compare_objects(parameter, relativeParameter), 1);
+  EXPECT_EQ(vpi_get(vpiType, parameter), vpiParameter);
+  EXPECT_STREQ(vpi_get_str(vpiName, parameter), "UVM_HDL_MAX_WIDTH");
+  EXPECT_STREQ(vpi_get_str(vpiFullName, parameter), "pkg::UVM_HDL_MAX_WIDTH");
+  EXPECT_STREQ(vpi_get_str(vpiFile, parameter), "compact_static.sv");
+  EXPECT_EQ(vpi_get(vpiLineNo, parameter), 8);
+  EXPECT_EQ(vpi_get(vpiSize, parameter), 32);
+  EXPECT_EQ(vpi_get(vpiSigned, parameter), 1);
+  EXPECT_EQ(vpi_get(vpiConstType, parameter), vpiIntConst);
+  EXPECT_EQ(vpi_get(vpiConstantSelect, parameter), 1);
+
+  s_vpi_value parameterValue{};
+  parameterValue.format = vpiIntVal;
+  vpi_get_value(parameter, &parameterValue);
+  EXPECT_EQ(parameterValue.value.integer, 1536);
+  parameterValue = {};
+  parameterValue.format = vpiVectorVal;
+  vpi_get_value(parameter, &parameterValue);
+  ASSERT_NE(parameterValue.value.vector, nullptr);
+  EXPECT_EQ(parameterValue.value.vector[0].aval, 1536u);
+  EXPECT_EQ(parameterValue.value.vector[0].bval, 0u);
+  parameterValue = {};
+  parameterValue.format = vpiHexStrVal;
+  vpi_get_value(parameter, &parameterValue);
+  ASSERT_NE(parameterValue.value.str, nullptr);
+  EXPECT_STREQ(parameterValue.value.str, "00000600");
+
+  vpiHandle parameterScope = vpi_handle(vpiScope, parameter);
+  ASSERT_NE(parameterScope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(package, parameterScope), 1);
+  vpiHandle parameterTypespec = vpi_handle(vpiTypespec, parameter);
+  ASSERT_NE(parameterTypespec, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, parameterTypespec), vpiIntTypespec);
+
+  vpiHandle parameters = vpi_iterate(vpiParameter, package);
+  ASSERT_NE(parameters, nullptr);
+  vpiHandle traversedParameter = vpi_scan(parameters);
+  vpiHandle traversedSameWidth = vpi_scan(parameters);
+  ASSERT_NE(traversedParameter, nullptr);
+  ASSERT_NE(traversedSameWidth, nullptr);
+  EXPECT_EQ(vpi_compare_objects(parameter, traversedParameter), 1);
+  EXPECT_EQ(vpi_compare_objects(sameWidth, traversedSameWidth), 1);
+  EXPECT_EQ(vpi_scan(parameters), nullptr);
 
   vpiHandle clocking = vpi_handle_by_name(clockingName, top);
   vpiHandle generated = vpi_handle_by_name(generateName, top);
@@ -1044,6 +1126,13 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_EQ(vpi_release_handle(clockingScope), 1);
   EXPECT_EQ(vpi_release_handle(sequenceScope), 1);
   EXPECT_EQ(vpi_release_handle(propertyScope), 1);
+  EXPECT_EQ(vpi_release_handle(traversedParameter), 1);
+  EXPECT_EQ(vpi_release_handle(traversedSameWidth), 1);
+  EXPECT_EQ(vpi_release_handle(parameterTypespec), 1);
+  EXPECT_EQ(vpi_release_handle(parameterScope), 1);
+  EXPECT_EQ(vpi_release_handle(relativeParameter), 1);
+  EXPECT_EQ(vpi_release_handle(sameWidth), 1);
+  EXPECT_EQ(vpi_release_handle(parameter), 1);
   EXPECT_EQ(vpi_release_handle(traversedSequence), 1);
   EXPECT_EQ(vpi_release_handle(traversedProperty), 1);
   EXPECT_EQ(vpi_release_handle(sequence), 1);
@@ -1053,7 +1142,106 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_EQ(vpi_release_handle(clocking), 1);
   EXPECT_EQ(vpi_release_handle(top), 1);
   EXPECT_EQ(vpi_release_handle(package), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_FALSE(runtime->nativeScheduleDeoptimized);
+  EXPECT_FALSE(runtime->vpiObservationDemand);
   obelisk_rt_v1_context_destroy(runtime);
+}
+
+TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module) << "failed to parse " << inputPath;
+  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  module->walk(
+      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+  ASSERT_EQ(designs.size(), 1u);
+
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
+      obelisk::encodeSimulationDesign(designs.front(), options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  ASSERT_GE(encoded->bytecode.size(), 40u);
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+
+  const HeaderView header(encoded->designDatabase.data());
+  ASSERT_NE(header.getReserved(), 0u);
+  const uint64_t directoryOffset = header.getReserved();
+  const SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                        directoryOffset);
+  ASSERT_EQ(directory.getFrozenValueCount(), 1u);
+  ASSERT_EQ(directory.getFrozenValueBindingCount(), 2u);
+  const uint64_t valueOffset = directory.getFrozenValueOffset();
+  const uint64_t bindingOffset = directory.getFrozenValueBindingOffset();
+  const uint64_t payloadOffset = directory.getFrozenValuePayloadOffset();
+  const FrozenValueBindingView firstBinding(encoded->designDatabase.data() +
+                                            bindingOffset);
+
+  auto expectRejected = [&](std::vector<uint8_t> image) {
+    put64(image, field::HeaderChecksum, imageChecksum(image));
+    const obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                                       encoded->executionFlags,
+                                                       0,
+                                                       encoded->bytecode.data(),
+                                                       encoded->bytecode.size(),
+                                                       image.data(),
+                                                       image.size(),
+                                                       encoded->stateBitCount,
+                                                       bytecodeChecksum};
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+
+  std::vector<uint8_t> malformed(encoded->designDatabase.begin(),
+                                 encoded->designDatabase.end());
+  put32(malformed, valueOffset + field::FrozenValueReserved, 1);
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put32(malformed, valueOffset + field::FrozenValueKindAndFlags, 0);
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put64(malformed, valueOffset + field::FrozenValuePayloadOffset,
+        directory.getFrozenValuePayloadSize());
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  // The value is two-state i32, so any bit in its unknown plane is invalid.
+  malformed[payloadOffset + 4] = 1;
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put32(malformed, bindingOffset + field::FrozenValueBindingValue, 1);
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put32(malformed,
+        bindingOffset + FrozenValueBindingLayout.size +
+            field::FrozenValueBindingSourceIndexAndTable,
+        firstBinding.getSourceIndexAndTable());
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put64(malformed,
+        directoryOffset + field::SemanticDirectoryFrozenValueBindingCount, 0);
+  expectRejected(malformed);
 }
 
 TEST(GeneratedDesignDatabase, InterModPathQueries) {

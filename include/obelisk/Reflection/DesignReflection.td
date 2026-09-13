@@ -176,6 +176,30 @@ def StaticObject : ReflectionLayout<"StaticObject", 32,
    StaticObjectName, StaticObjectSourceLine, StaticObjectSourceColumn,
    StaticObjectVPIKind, StaticObjectFlags]>;
 
+// Hash-consed immutable values. PayloadOffset is relative to the dedicated
+// payload byte section. Packed values store little-endian value bytes followed
+// by an equally sized unknown plane; the generic kind/flags field leaves the
+// representation extensible to real, string, and aggregate constants without
+// changing static object identities. A separate sparse binding table lets
+// definition specializations and package declarations share one value.
+def FrozenValueKindAndFlags
+    : ReflectionField<"KindAndFlags", 0, U32LE>;
+def FrozenValueReserved : ReflectionField<"Reserved", 4, U32LE>;
+def FrozenValueBitWidth : ReflectionField<"BitWidth", 8, U64LE>;
+def FrozenValuePayloadOffset
+    : ReflectionField<"PayloadOffset", 16, U64LE>;
+def FrozenValuePayloadSize
+    : ReflectionField<"PayloadSize", 24, U64LE>;
+def FrozenValue : ReflectionLayout<"FrozenValue", 32,
+  [FrozenValueKindAndFlags, FrozenValueReserved,
+   FrozenValueBitWidth, FrozenValuePayloadOffset, FrozenValuePayloadSize]>;
+
+def FrozenValueBindingSourceIndexAndTable
+    : ReflectionField<"SourceIndexAndTable", 0, U32LE>;
+def FrozenValueBindingValue : ReflectionField<"Value", 4, U32LE>;
+def FrozenValueBinding : ReflectionLayout<"FrozenValueBinding", 8,
+  [FrozenValueBindingSourceIndexAndTable, FrozenValueBindingValue]>;
+
 def StatementSiteID : ReflectionField<"ID", 0, U64LE>;
 def StatementSiteStatementIndex
     : ReflectionField<"StatementIndex", 8, U32LE>;
@@ -550,7 +574,19 @@ def SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset
     : ReflectionField<"DefinitionMemberInstanceRelationInverseOffset", 336, U64LE>;
 def SemanticDirectoryDefinitionMemberInstanceRelationInverseCount
     : ReflectionField<"DefinitionMemberInstanceRelationInverseCount", 344, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 352,
+def SemanticDirectoryFrozenValueOffset
+    : ReflectionField<"FrozenValueOffset", 352, U64LE>;
+def SemanticDirectoryFrozenValueCount
+    : ReflectionField<"FrozenValueCount", 360, U64LE>;
+def SemanticDirectoryFrozenValueBindingOffset
+    : ReflectionField<"FrozenValueBindingOffset", 368, U64LE>;
+def SemanticDirectoryFrozenValueBindingCount
+    : ReflectionField<"FrozenValueBindingCount", 376, U64LE>;
+def SemanticDirectoryFrozenValuePayloadOffset
+    : ReflectionField<"FrozenValuePayloadOffset", 384, U64LE>;
+def SemanticDirectoryFrozenValuePayloadSize
+    : ReflectionField<"FrozenValuePayloadSize", 392, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 400,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -591,7 +627,13 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 352,
    SemanticDirectoryDefinitionMemberInstanceRelationTargetOffset,
    SemanticDirectoryDefinitionMemberInstanceRelationTargetCount,
    SemanticDirectoryDefinitionMemberInstanceRelationInverseOffset,
-   SemanticDirectoryDefinitionMemberInstanceRelationInverseCount]>;
+   SemanticDirectoryDefinitionMemberInstanceRelationInverseCount,
+   SemanticDirectoryFrozenValueOffset,
+   SemanticDirectoryFrozenValueCount,
+   SemanticDirectoryFrozenValueBindingOffset,
+   SemanticDirectoryFrozenValueBindingCount,
+   SemanticDirectoryFrozenValuePayloadOffset,
+   SemanticDirectoryFrozenValuePayloadSize]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

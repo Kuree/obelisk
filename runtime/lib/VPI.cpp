@@ -10,6 +10,7 @@
 #include "ProcessContext.h"
 #include "VPIHandleToken.h"
 #include "VPIInternal.h"
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 // VPI startup loads a caller-provided shared object and reads the ELF symbol
@@ -919,6 +920,11 @@ bool valueRequirementsSatisfied(
     const obelisk::reflection::VPIValuePolicyDescriptor &policy) {
   using Requirement = obelisk::reflection::VPIValueRequirement;
   if (handle->form == VPIObjectForm::IntegralConstant)
+    return true;
+  VPIFrozenValue frozen{};
+  if (handle->form == VPIObjectForm::Design &&
+      obelisk_rt_cached_vpi_frozen_value(handle->owner->context, handle->cursor,
+                                         &frozen) == OBELISK_RT_OK)
     return true;
   obelisk_rt_design_type_info_v1 type{};
   if (objectInfo.type_offset == 0 ||
@@ -3090,6 +3096,30 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
     value[0] = static_cast<uint64_t>(handle->integralValue);
     return true;
   }
+  if (source.form == VPIObjectForm::Design) {
+    VPIFrozenValue frozen{};
+    obelisk_rt_status frozenStatus = obelisk_rt_cached_vpi_frozen_value(
+        handle->owner->context, source.cursor, &frozen);
+    if (frozenStatus == OBELISK_RT_OK) {
+      if ((frozen.kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+              static_cast<uint32_t>(
+                  obelisk::reflection::FrozenValueKind::Packed) ||
+          frozen.bitWidth != info.bit_width ||
+          frozen.payloadSize != ((info.bit_width + 7) / 8) * 2) {
+        setError(handle->owner, "invalid immutable VPI value metadata",
+                 vpiInternal);
+        return false;
+      }
+      uint64_t planeBytes = frozen.payloadSize / 2;
+      for (uint64_t byte = 0; byte != planeBytes; ++byte) {
+        size_t word = static_cast<size_t>(byte / 8);
+        unsigned shift = static_cast<unsigned>((byte % 8) * 8);
+        value[word] |= uint64_t{frozen.payload[byte]} << shift;
+        unknown[word] |= uint64_t{frozen.payload[planeBytes + byte]} << shift;
+      }
+      return true;
+    }
+  }
   if (source.form == VPIObjectForm::Indexed) {
     if (obelisk_rt_read_design_slice(
             handle->owner->context, source.cursor, source.selectionBitOffset,
@@ -4907,7 +4937,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     obelisk_rt_design_cursor_v1 semanticCursor{};
     bool usesSemanticSignedness =
         handle->form != VPIObjectForm::Design || objectType == vpiIODecl ||
-        objectType == vpiRefObj || isTypespecVPIKind(objectType);
+        objectType == vpiRefObj || objectType == vpiParameter ||
+        objectType == vpiSpecParam || isTypespecVPIKind(objectType);
     if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
       obelisk_rt_design_semantic_type_info_v1 semantic{};
       if (obelisk_rt_cached_design_semantic_type_info(
@@ -4999,6 +5030,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       setError(handle->owner, "unsupported semantic VPI property", vpiNotice);
       return vpiUndefined;
     }
+  }
+  if (handle->kind == VPIHandleKind::Object && property == vpiConstType &&
+      (objectType == vpiParameter || objectType == vpiSpecParam)) {
+    // Frozen packed parameters are normalized binary planes in the image.
+    // Their closest scalar VPI constant representation is an integer; source
+    // literal radix is intentionally not guessed after elaboration.
+    return vpiIntConst;
   }
   if (handle->kind != VPIHandleKind::Object) {
     setError(handle->owner, "unsupported property for VPI handle kind",

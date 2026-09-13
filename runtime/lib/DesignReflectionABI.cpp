@@ -78,7 +78,16 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 352);
+static_assert(SemanticDirectoryLayout.size == 400);
+static_assert(FrozenValueLayout.size == 32);
+static_assert(field::FrozenValueKindAndFlags == 0);
+static_assert(field::FrozenValueReserved == 4);
+static_assert(field::FrozenValueBitWidth == 8);
+static_assert(field::FrozenValuePayloadOffset == 16);
+static_assert(field::FrozenValuePayloadSize == 24);
+static_assert(FrozenValueBindingLayout.size == 8);
+static_assert(field::FrozenValueBindingSourceIndexAndTable == 0);
+static_assert(field::FrozenValueBindingValue == 4);
 static_assert(field::SemanticDirectoryStaticObjectOffset == 160);
 static_assert(field::SemanticDirectoryStaticObjectCount == 168);
 static_assert(field::SemanticDirectoryDefinitionOffset == 176);
@@ -116,6 +125,12 @@ static_assert(
 static_assert(
     field::SemanticDirectoryDefinitionMemberInstanceRelationInverseCount ==
     344);
+static_assert(field::SemanticDirectoryFrozenValueOffset == 352);
+static_assert(field::SemanticDirectoryFrozenValueCount == 360);
+static_assert(field::SemanticDirectoryFrozenValueBindingOffset == 368);
+static_assert(field::SemanticDirectoryFrozenValueBindingCount == 376);
+static_assert(field::SemanticDirectoryFrozenValuePayloadOffset == 384);
+static_assert(field::SemanticDirectoryFrozenValuePayloadSize == 392);
 static_assert(DefinitionLayout.size == 32);
 static_assert(field::DefinitionVPIKind == 0);
 static_assert(field::DefinitionFlags == 2);
