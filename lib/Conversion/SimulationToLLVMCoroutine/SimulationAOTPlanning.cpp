@@ -25,19 +25,9 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
     const DenseMap<Operation *, uint32_t> &actorSlots) {
   SmallVector<NativePeriodicClock> clocks;
-  // Generated run_until owns the scheduler clock directly and completes whole
-  // time slots without re-entering the runtime, so the once-per-slot waveform
-  // difference would never run. Waveform collection is decided at compile
-  // time, so decline the tier here rather than deoptimizing mid-run.
-  bool dumping = false;
-  module.walk([&](Operation *operation) {
-    if (isa<sim::SimDumpOpenOp, sim::SimDumpOpenStringOp, sim::SimDumpVarsOp,
-            sim::SimDumpAllOp, sim::SimDumpControlOp, sim::SimDumpFlushOp,
-            sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>(operation))
-      dumping = true;
-  });
-  if (dumping)
-    return clocks;
+  // Dump operations may be in an untaken plusarg-controlled branch. Keep the
+  // periodic plan: runtime preparation/checkpoints reject it when waveform
+  // collection is actually active and needs once-per-slot publication.
   WalkResult result = module.walk([&](sim::SimFuncOp function) {
     auto actor = actorSlots.find(function.getOperation());
     if (actor == actorSlots.end() || function.isExternal() ||

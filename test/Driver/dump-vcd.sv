@@ -7,6 +7,13 @@
 // RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
 // RUN:   < %t/waves.vcd
 //
+// Force the periodic plan: an active dump must hand off to native fragments
+// and canonical NBA publication instead of spinning at the first clock edge.
+// RUN: cd %t && obelisk -fno-lto --native-scheduler=eval design.sv -o %t/eval.sim
+// RUN: cd %t && %t/eval.sim
+// RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' \
+// RUN:   < %t/waves.vcd
+//
 // RUN: cd %t && obelisk -fno-lto --execution-tier=bytecode design.sv \
 // RUN:   -o %t/bytecode.sim
 // RUN: cd %t && %t/bytecode.sim
@@ -84,7 +91,7 @@ endmodule
 // The declaration order follows the design hierarchy, and every declared
 // object carries its own name.
 // VCD-DAG: $var {{.*}} clk $end
-// VCD-DAG: $var {{.*}} counter [3:0] $end
+// VCD-DAG: $var reg 4 [[COUNTER:[^ ]+]] counter [3:0] $end
 // Unpacked arrays expand per element, and each element's declared range
 // describes its own bits rather than the element bounds.
 // VCD-DAG: $var reg 2 {{.*}} slot[0] [1:0] $end
@@ -98,10 +105,16 @@ endmodule
 // VCD: $end
 // Only changed variables appear afterwards.
 // VCD: #5
+// VCD: b1 [[COUNTER]]
+// VCD: #15
+// VCD: b10 [[COUNTER]]
 // VCD: #22
 // VCD-NEXT: $dumpoff
 // VCD: #32
 // VCD-NEXT: $dumpon
+// VCD: b11 [[COUNTER]]
+// VCD: #35
+// VCD: b100 [[COUNTER]]
 
 //--- positive-timescale.sv
 module positive_timescale;

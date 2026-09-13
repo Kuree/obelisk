@@ -1885,6 +1885,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         context, /*allowBytecode=*/staticEvalIsland);
     if (status != OBELISK_RT_OK)
       return status;
+    // Startup actors can enable waveform collection during the drain above.
+    // Recheck before the periodic loop takes ownership of the clock.
+    if (obelisk_rt_dump_active_unlocked(context))
+      return OBELISK_RT_TIER_UNAVAILABLE;
     // Tier-3 initialization and finite synchronous stimulus must reach a
     // quiescent handoff before generated run_until takes ownership of the
     // periodic sources.  Execute one trusted generic action at a time while a
@@ -2269,6 +2273,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       if (status != OBELISK_RT_OK)
         return status;
     }
+
+    // A finite clocked bootstrap prefix can also enable waveform collection.
+    if (obelisk_rt_dump_active_unlocked(context))
+      return OBELISK_RT_TIER_UNAVAILABLE;
 
     // Check cleanliness only after the finite Tier-3/bootstrap prefix has
     // drained. Initialization and transient deposits legitimately enter with
