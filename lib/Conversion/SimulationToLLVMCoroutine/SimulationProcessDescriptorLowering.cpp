@@ -23,8 +23,12 @@ bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
   auto scalar = [](Type type) {
     if (auto ref = dyn_cast<sim::RefType>(type))
       type = ref.getElementType();
+    if (auto net = dyn_cast<sim::NetType>(type))
+      type = net.getElementType();
     return isa<IntegerType, FloatType, sim::LogicType, sim::ContextType,
-               sim::ProcessType, sim::TimeType, sim::BytesType>(type);
+               sim::ProcessType, sim::TimeType, sim::BytesType,
+               sim::PackedArrayType, sim::PackedStructType,
+               sim::PackedUnionType>(type);
   };
   // Deliberately conservative: calls and non-scalar values need the ordinary
   // scope, even if a future interprocedural analysis could prove otherwise.

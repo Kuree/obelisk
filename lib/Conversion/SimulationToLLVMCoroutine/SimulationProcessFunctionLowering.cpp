@@ -168,7 +168,7 @@ preparePlainNativeProcess(sim::SimFuncOp function,
                     static_cast<uint32_t>(function.getEntryKind())));
   body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
   copyNativePartition(function, body);
-  bool unmanagedNative = isUnmanagedNativeProcess(function);
+  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
   body.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : body.getBody())

@@ -3173,6 +3173,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           continuations.end());
     }
   }
+  // Certify before packed lowering turns scalar storage accesses into runtime
+  // ABI calls and pointers. Those implementation details are not managed heap
+  // use. Generated bodies added later conservatively retain a managed scope.
+  module.walk([&](sim::SimFuncOp function) {
+    function->removeAttr("obelisk.native.unmanaged");
+    if (detail::isUnmanagedNativeProcess(function))
+      function->setAttr("obelisk.native.unmanaged", UnitAttr::get(context));
+  });
   // Root records are native implementation details, not canonical process
   // state. Insert them only after suspension-live semantic values have been
   // threaded and the shared native/bytecode frame has been analyzed. LLVM

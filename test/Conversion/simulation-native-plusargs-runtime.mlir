@@ -34,6 +34,7 @@ module attributes {
 } {
   obelisk_sim.design @plusargs {
     obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>> design
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "initial"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "resumed"
@@ -42,11 +43,17 @@ module attributes {
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %a = obelisk_sim.spawn @initial(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
       %b = obelisk_sim.spawn @resumed(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      %c = obelisk_sim.spawn @scalar(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
+      %dst = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+      %c = obelisk_sim.spawn @scalar(%ctx, %dst) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.process
       obelisk_sim.return
     }
-    obelisk_sim.func @scalar(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    obelisk_sim.func @scalar(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %dst: !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %bits = obelisk_sim.logic.constant 5 : i4, 0 : i4 : !obelisk_sim.logic<4>
+      %value = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<4>) -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
+      obelisk_sim.ref.store %value to %dst : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
       obelisk_sim.return
     }
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})

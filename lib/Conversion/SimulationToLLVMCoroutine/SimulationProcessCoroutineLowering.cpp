@@ -615,7 +615,7 @@ prepareSuspendableProcess(sim::SimFuncOp function,
       builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
   copyNativePartition(function, ramp);
   addFrameAttributes(ramp, analysis, builder);
-  bool unmanagedNative = isUnmanagedNativeProcess(function);
+  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
   ramp.getBody().takeBody(function.getBody());
   function.erase();
 
