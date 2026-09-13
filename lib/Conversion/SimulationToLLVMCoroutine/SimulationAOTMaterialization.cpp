@@ -4541,6 +4541,17 @@ FailureOr<bool> makeNativeEvalPlan(
     Value active =
         arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
                               valid, llvmConstant(builder, location, i32, 0));
+    // An empty dynamic slot has no publication, including on post-NBA
+    // fixpoint iterations. Avoid even reading its stale offset/value planes.
+    Block *commitDynamic = new Block;
+    Block *nextDynamic = new Block;
+    nbaCommit.getBody().getBlocks().insert(Region::iterator(genericNBACommit),
+                                          commitDynamic);
+    nbaCommit.getBody().getBlocks().insert(Region::iterator(genericNBACommit),
+                                          nextDynamic);
+    cf::CondBranchOp::create(builder, location, active, commitDynamic,
+                             ValueRange{}, nextDynamic, ValueRange{});
+    builder.setInsertionPointToStart(commitDynamic);
     Value dynamicBit = LLVM::LoadOp::create(
         builder, location, i64,
         LLVM::AddressOfOp::create(builder, location, pointer, entry.offsetName),
@@ -4967,6 +4978,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                                  selectedActivation),
                             activationAddress, 8);
     }
+    cf::BranchOp::create(builder, location, nextDynamic);
+    builder.setInsertionPointToStart(nextDynamic);
   }
 
   SmallVector<Block *> wordBlocks(nbaDirtyWordCount);

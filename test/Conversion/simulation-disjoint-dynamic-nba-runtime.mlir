@@ -1,5 +1,39 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=GUARD < %t.llvm.mlir
+// Empty dynamic slots must bypass stale address/value/unknown loads in all
+// three commit variants. The runtime checks below cover independent slots,
+// aliasing lanes, and negative/out-of-range/unknown indices.
+// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_v1(
+// GUARD: %[[ADDR0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: %[[VALID0:.*]] = llvm.load %[[ADDR0]] {{.*}} : !llvm.ptr -> i32
+// GUARD-NEXT: %[[ZERO0:.*]] = llvm.mlir.constant(0 : i32)
+// GUARD-NEXT: %[[ACTIVE0:.*]] = llvm.icmp "ne" %[[VALID0]], %[[ZERO0]] : i32
+// GUARD-NEXT: llvm.cond_br %[[ACTIVE0]], ^[[WORK0:bb[0-9]+]], ^[[NEXT0:bb[0-9]+]]
+// GUARD: ^[[WORK0]]:
+// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: ^[[NEXT0]]:
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_two_state_v1(
+// GUARD: %[[ADDR1:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: %[[VALID1:.*]] = llvm.load %[[ADDR1]] {{.*}} : !llvm.ptr -> i32
+// GUARD-NEXT: %[[ZERO1:.*]] = llvm.mlir.constant(0 : i32)
+// GUARD-NEXT: %[[ACTIVE1:.*]] = llvm.icmp "ne" %[[VALID1]], %[[ZERO1]] : i32
+// GUARD-NEXT: llvm.cond_br %[[ACTIVE1]], ^[[WORK1:bb[0-9]+]], ^[[NEXT1:bb[0-9]+]]
+// GUARD: ^[[WORK1]]:
+// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: ^[[NEXT1]]:
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_two_state_fast_v1(
+// GUARD: %[[ADDR2:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: %[[VALID2:.*]] = llvm.load %[[ADDR2]] {{.*}} : !llvm.ptr -> i32
+// GUARD-NEXT: %[[ZERO2:.*]] = llvm.mlir.constant(0 : i32)
+// GUARD-NEXT: %[[ACTIVE2:.*]] = llvm.icmp "ne" %[[VALID2]], %[[ZERO2]] : i32
+// GUARD-NEXT: llvm.cond_br %[[ACTIVE2]], ^[[WORK2:bb[0-9]+]], ^[[NEXT2:bb[0-9]+]]
+// GUARD: ^[[WORK2]]:
+// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: ^[[NEXT2]]:
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
 // RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
