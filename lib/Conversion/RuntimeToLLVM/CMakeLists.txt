@@ -9,6 +9,8 @@ add_mlir_library(ObeliskRuntimeToLLVM
 
   LINK_LIBS PUBLIC
   ObeliskRuntimeIR
+  ObeliskSimulationAnalysis
+  ObeliskSimulationIR
   MLIRFuncDialect
   MLIRFuncTransforms
   MLIRIR
