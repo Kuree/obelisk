@@ -484,6 +484,22 @@ void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
                                         const ScheduledProcess &process) {
   if (process.suspendKind != OBELISK_RT_SUSPEND_DELAY || process.phase != 0)
     return;
+  // AOT advances its own calendar and need not query the generic heap, so
+  // lazy deletion on nextScheduledProcessDelayUnlocked alone is unbounded.
+  // Rebuild amortized O(1) per insertion, retaining exactly the live calendar
+  // needed if execution hands back to the generic scheduler. Do not touch the
+  // ready queues or advance time here (IEEE 1800-2023 4.5).
+  auto &heap = context->scheduledProcessDelayHeap;
+  if (heap.size() > 64 &&
+      heap.size() / 2 > context->scheduledProcesses.size()) {
+    heap.clear();
+    for (const ScheduledProcess &live : context->scheduledProcesses)
+      if (live.instance && live.started && live.phase == 0 &&
+          live.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        heap.emplace_back(live.wakeTime, live.token);
+    std::make_heap(heap.begin(), heap.end(), std::greater<>());
+    return;
+  }
   context->scheduledProcessDelayHeap.emplace_back(process.wakeTime,
                                                   process.token);
   std::push_heap(context->scheduledProcessDelayHeap.begin(),

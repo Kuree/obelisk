@@ -5120,6 +5120,43 @@ TEST(Scheduler, AOTTiedDeadlinesUseFixedHeapAndDeterministicNodeOrder) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, AOTDelayIndexStaysBoundedWithoutGenericCalendarQueries) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 instances[3]{};
+  context->scheduledProcesses.resize(3);
+  for (unsigned index = 0; index != 3; ++index) {
+    auto &process = context->scheduledProcesses[index];
+    process.instance = &instances[index];
+    process.token = index + 1;
+    process.started = true;
+    process.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+    process.wakeTime = 1000000;
+    context->scheduledProcessIndices[process.token] = index;
+    indexScheduledProcessDelayUnlocked(context, process);
+  }
+  auto &frequent = context->scheduledProcesses[0];
+  // Include a terminated actor and a live far-future actor while repeatedly
+  // replacing one deadline, without ever consulting the generic calendar.
+  context->scheduledProcesses[2].instance = nullptr;
+  for (unsigned time = 1; time != 10000; ++time) {
+    frequent.wakeTime = time;
+    indexScheduledProcessDelayUnlocked(context, frequent);
+    ASSERT_LE(context->scheduledProcessDelayHeap.size(), 65u);
+  }
+  const auto &heap = context->scheduledProcessDelayHeap;
+  EXPECT_NE(std::find(heap.begin(), heap.end(),
+                      std::make_pair(uint64_t{9999}, frequent.token)),
+            heap.end());
+  EXPECT_NE(std::find(heap.begin(), heap.end(),
+                      std::make_pair(uint64_t{1000000}, uint64_t{2})),
+            heap.end());
+  EXPECT_TRUE(std::none_of(heap.begin(), heap.end(),
+                           [](auto entry) { return entry.second == 3; }));
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTZeroDelayTransactionallyFallsBackBeforeRegionBoundary) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
