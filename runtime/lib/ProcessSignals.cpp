@@ -1737,8 +1737,9 @@ bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
     const uint8_t changedBits = 1;
     const uint8_t newValueBits = newValue ? 1 : 0;
     const uint8_t newUnknownBits = newUnknown ? 1 : 0;
-    obelisk_rt_coverage_record_transition_unlocked(
-        context, bitOffset, 1, &changedBits, &newValueBits, &newUnknownBits);
+    if (context->coverage)
+      obelisk_rt_coverage_record_transition_unlocked(
+          context, bitOffset, 1, &changedBits, &newValueBits, &newUnknownBits);
     if (!obelisk_rt_publish_signal_occurrence_unlocked(context, bitOffset, 1,
                                                        edges, &sequence))
       return false;

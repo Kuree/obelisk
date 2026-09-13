@@ -400,8 +400,9 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
     // The exact static-AOT deposit path returns before the ordinary native
     // publisher. Keep coverage at the same semantic commit point as every
     // other transition observer.
-    obelisk_rt_coverage_record_transition_unlocked(
-        context, stableID, bitWidth, changed, newValue, newUnknown);
+    if (context->coverage)
+      obelisk_rt_coverage_record_transition_unlocked(
+          context, stableID, bitWidth, changed, newValue, newUnknown);
     obelisk_rt_invalidate_signal_snapshots_unlocked(context, stableID,
                                                     bitWidth);
     if (++context->schedulerEpoch == 0)

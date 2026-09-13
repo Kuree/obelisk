@@ -1704,8 +1704,9 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     uint64_t edgeBitOffset, uint64_t *outSequence, const uint8_t *oldValue,
     const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown) {
-  obelisk_rt_coverage_record_transition_unlocked(context, stableID, bitWidth,
-                                                 changed, newValue, newUnknown);
+  if (context->coverage)
+    obelisk_rt_coverage_record_transition_unlocked(
+        context, stableID, bitWidth, changed, newValue, newUnknown);
   ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
   if ((!feature || feature->waits.empty()) && !context->covergroupClockEvents &&
       edgeBitOffset == 0) {
@@ -2147,10 +2148,11 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   uint64_t handle = obelisk_rt_stable_handle_encode(
       OBELISK_RT_STABLE_HANDLE_STATIC, staticState,
       static_cast<int64_t>(lowBit));
-  obelisk_rt_coverage_record_transition_unlocked(
-      context, handle, bitWidth, reinterpret_cast<const uint8_t *>(&changed),
-      reinterpret_cast<const uint8_t *>(&newValue),
-      reinterpret_cast<const uint8_t *>(&newUnknown));
+  if (context->coverage)
+    obelisk_rt_coverage_record_transition_unlocked(
+        context, handle, bitWidth, reinterpret_cast<const uint8_t *>(&changed),
+        reinterpret_cast<const uint8_t *>(&newValue),
+        reinterpret_cast<const uint8_t *>(&newUnknown));
   uint8_t edgeKinds = 0;
   if (staticState < context->nativeScheduleStaticStateFanoutEdges.size()) {
     edgeKinds = context->nativeScheduleStaticStateFanoutEdges[staticState];
@@ -2172,7 +2174,8 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     if (context->covergroupClockEvents || (edgeKinds & negedgeKinds) != 0)
       negedge = ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
   }
-  if (!publishCovergroupClockTransitionUnlocked(
+  if (context->covergroupClockEvents &&
+      !publishCovergroupClockTransitionUnlocked(
           context, handle, bitWidth,
           reinterpret_cast<const uint8_t *>(&changed),
           reinterpret_cast<const uint8_t *>(&posedge),

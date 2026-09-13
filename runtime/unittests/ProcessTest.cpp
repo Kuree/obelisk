@@ -5030,6 +5030,58 @@ TEST(Coverage, GenericScalarNetPublicationRecordsToggleTransition) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Coverage, TransitionFastPathsObserveLateToggleBinding) {
+  for (bool staticAOT : {false, true}) {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    execution.state_bit_count = 1;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+              OBELISK_RT_OK);
+    context->stateValue[0] = context->stateUnknown[0] = 0;
+    AOTTestState state;
+    auto plan = makeAOTPlan(state, 1);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+                 OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+    auto publish = [&](uint8_t oldValue, uint8_t newValue) {
+      if (staticAOT) {
+        NativeAOTContextScope active(context);
+        NativeAOTMutexScope locked(context);
+        obelisk_rt_v1_scheduler_static_transition(context, 1, 0, 1, oldValue, 0,
+                                                  newValue, 0);
+      } else {
+        obelisk_rt_v1_scheduler_signal_transition(context, handle, 1, &oldValue,
+                                                  nullptr, &newValue, nullptr);
+      }
+    };
+    publish(0, 1);
+    publish(1, 0);
+    EXPECT_EQ(context->coverage, nullptr);
+    constexpr uint8_t zero = 0;
+    ASSERT_EQ(obelisk_rt_v1_coverage_finalize(context, 0, 1, &zero, &zero,
+                                              OBELISK_RT_COVERAGE_PERSIST_ALL),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, handle),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+    publish(0, 1);
+    publish(1, 0);
+    uint64_t covered = 0, total = 0;
+    double percentage = 0;
+    ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+                                           &covered, &total, &percentage),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 2u);
+    EXPECT_EQ(total, 2u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(Scheduler, AOTTiedDeadlinesUseFixedHeapAndDeterministicNodeOrder) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
