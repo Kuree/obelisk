@@ -931,7 +931,9 @@ bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
       bit > uint64_t{INT64_MAX})
     return false;
   obelisk_rt_stable_handle_v1 loaded;
-  if (!obelisk_rt_stable_handle_decode(stableID, &loaded) || loaded.offset < 0)
+  // A partially out-of-range view may start below zero and still overlap a
+  // valid publication. Match the selected bit, not just the view's base.
+  if (!obelisk_rt_stable_handle_decode(stableID, &loaded))
     return false;
   for (const ClockConditionPublicationView *publication =
            context->conditionPublication;

@@ -2445,6 +2445,26 @@ TEST(RuntimeInternals, ClockConditionPublicationViewMergesOnlyCapturedOverlap) {
   EXPECT_EQ(value, publishedValue);
   EXPECT_EQ(unknown, publishedUnknown);
 
+  // A negative view base must not hide its in-bounds publication overlap.
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
+            OBELISK_RT_OK);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  publication.stableID = obelisk_rt_v1_native_handle_offset(root, 16);
+  std::array<uint8_t, 4> partialValue{}, partialUnknown{};
+  uint64_t partial = obelisk_rt_v1_native_handle_offset(root, -3);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, globalPlane, 64, partial, 32, 0, 0,
+                partialValue.data()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                context, globalPlane, 64, partial, 32, 1, 1,
+                partialUnknown.data()),
+            OBELISK_RT_OK);
+  EXPECT_EQ(loadPackedBytes(partialValue.data(), 0, 32),
+            uint64_t{publishedValue} << 19);
+  EXPECT_EQ(loadPackedBytes(partialUnknown.data(), 0, 32),
+            (uint64_t{publishedUnknown} << 19) | 7);
+
   context->conditionPublication = nullptr;
   context->observerForcesCanonicalPlane = false;
   context->clockOccurrences.reset();
@@ -8453,6 +8473,67 @@ TEST(Scheduler, AOTObserverPlaneAuthorityIsExplicitNotDepthDerived) {
   EXPECT_EQ(state.canonicalObserverLoad, UINT8_C(0x3c));
   EXPECT_EQ(context->observerDepth, 0u);
   EXPECT_FALSE(context->observerForcesCanonicalPlane);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, PackedCanonicalReadMergesOnlyOverriddenBits) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 256;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53, 130),
+            OBELISK_RT_OK);
+  context->observerForcesCanonicalPlane = true;
+  context->stateValue.assign(4, UINT64_C(0x96e1a5c387f0b42d));
+  context->stateUnknown.assign(4, UINT64_C(0x1042088102044080));
+  std::array<uint8_t, 32> global;
+  global.fill(0x5a);
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  for (uint32_t masks = 0; masks != 4; ++masks) {
+    context->forceMask.clear();
+    context->assignMask.clear();
+    if (masks & 1)
+      context->forceMask.assign(4, UINT64_C(0x1111111111111111));
+    if (masks & 2)
+      context->assignMask.assign(4, UINT64_C(0x4848484848484848));
+    for (uint32_t plane = 0; plane != 2; ++plane) {
+      const auto &canonical =
+          plane ? context->stateUnknown : context->stateValue;
+      for (uint32_t width = 1; width <= 64; ++width) {
+        for (int64_t offset : {-3, 0, 1, 63, 129, 130}) {
+          for (uint32_t fallback = 0; fallback != 2; ++fallback) {
+            SCOPED_TRACE(testing::Message()
+                         << masks << "," << plane << "," << width << ","
+                         << offset << "," << fallback);
+            std::array<uint8_t, 8> actual{}, expected{};
+            for (uint32_t bit = 0; bit != width; ++bit) {
+              int64_t coordinate = offset + bit;
+              bool v = fallback;
+              if (coordinate >= 0 && coordinate < 130) {
+                uint64_t source = 53 + coordinate;
+                uint64_t mask = uint64_t{1} << (source % 64);
+                bool overridden = (!context->forceMask.empty() &&
+                                   (context->forceMask[source / 64] & mask)) ||
+                                  (!context->assignMask.empty() &&
+                                   (context->assignMask[source / 64] & mask));
+                v = overridden ? ((global[source / 8] >> (source % 8)) & 1)
+                               : (canonical[source / 64] & mask) != 0;
+              }
+              expected[bit / 8] |= static_cast<uint8_t>(v) << (bit % 8);
+            }
+            ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                          context, global.data(), 256,
+                          obelisk_rt_v1_native_handle_offset(root, offset),
+                          width, plane, fallback, actual.data()),
+                      OBELISK_RT_OK);
+            EXPECT_EQ(actual, expected);
+          }
+        }
+      }
+    }
+  }
   obelisk_rt_v1_context_destroy(context);
 }
 
