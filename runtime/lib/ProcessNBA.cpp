@@ -3152,7 +3152,13 @@ commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
   if (!context->nativeSchedulePlan)
     return OBELISK_RT_OK;
   obelisk_rt_status status = OBELISK_RT_OK;
-  if (context->nativeSchedulePlan->nba_commit) {
+  // A compiled barrier publishes through its Tier-1 state/fanout contract.
+  // After whole-plan fallback, native fragments can still stage generated
+  // accumulators, but their commits must use canonical runtime publication.
+  // Re-entering the compiled barrier here can clear the dirty index without
+  // consuming an accumulator and leave the fine scheduler spinning forever.
+  if (context->nativeSchedulePlan->nba_commit &&
+      !context->nativeScheduleDeoptimized) {
     uint32_t callbackChanged = changed ? 1u : 0u;
     status = context->nativeSchedulePlan->nba_commit(
         context->nativeSchedulePlan->mutable_state, context, barrierRegion,

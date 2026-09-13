@@ -5878,6 +5878,67 @@ TEST(Scheduler, GeneratedNBAScalarRecordsCoveredTransitionsExactlyOnce) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, DeoptimizedNBACommitDoesNotReenterGeneratedBarrier) {
+  AOTTestState state;
+  obelisk_rt_generated_nba_accumulator_256 generated{};
+  const obelisk_rt_static_nba_root roots[] = {{17, 1, 4, &generated}};
+  std::array<uint8_t, 8> valuePlane{};
+  std::array<uint8_t, 8> unknownPlane{};
+  uint64_t dirtyRoots = 1;
+  uint64_t dirtySummary = 1;
+  auto plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA;
+  plan.state_value = valuePlane.data();
+  plan.state_unknown = unknownPlane.data();
+  plan.state_bit_count = 4;
+  plan.nba_roots = roots;
+  plan.nba_root_count = std::size(roots);
+  plan.nba_dirty_roots = &dirtyRoots;
+  plan.nba_dirty_word_count = 1;
+  plan.nba_dirty_summary = &dirtySummary;
+  plan.nba_dirty_summary_word_count = 1;
+  // The compiled barrier owns Tier-1 publication and may only run while its
+  // plan is valid. Use a sentinel rather than an infinite scheduler loop if
+  // the fine scheduler accidentally calls it after deoptimization.
+  plan.nba_commit = [](void *, obelisk_rt_context *, uint32_t, uint32_t *) {
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  };
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 4),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  generated.value[0] = 5;
+  generated.unknown[0] = 2;
+  generated.write_mask[0] = 15;
+  generated.valid = 1;
+  generated.exec_region = OBELISK_RT_REGION_NBA;
+
+  bool changed = false;
+  EXPECT_EQ(commitStaticNBAAccumulatorsUnlocked(
+                context, OBELISK_RT_REGION_NBA, changed),
+            OBELISK_RT_TIER_UNAVAILABLE);
+  EXPECT_EQ(generated.valid, 1u);
+  context->nativeScheduleDeoptimized = true;
+  ASSERT_EQ(commitStaticNBAAccumulatorsUnlocked(
+                context, OBELISK_RT_REGION_NBA, changed),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(valuePlane[0], 5u);
+  EXPECT_EQ(unknownPlane[0], 2u);
+  EXPECT_EQ(context->stateValue[0] & 15, 5u);
+  EXPECT_EQ(context->stateUnknown[0] & 15, 2u);
+  EXPECT_EQ(generated.valid, 0u);
+  EXPECT_EQ(dirtyRoots, 0u);
+  EXPECT_EQ(dirtySummary, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   constexpr uint32_t rootCount = 65;
   AOTTestState state;
