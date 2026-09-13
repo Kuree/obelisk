@@ -185,18 +185,23 @@ char groupDigit(const LogicView &view, uint64_t lowBit, unsigned groupBits) {
   static constexpr char digits[] = "0123456789abcdef";
   unsigned validBits =
       static_cast<unsigned>(std::min<uint64_t>(groupBits, view.width - lowBit));
-  unsigned value = 0;
-  unsigned unknown = 0;
-  for (unsigned index = 0; index < validBits; ++index) {
-    uint64_t bit = lowBit + index;
-    if (valueBit(view, bit))
-      value |= 1u << index;
-    if (unknownBit(view, bit))
-      unknown |= 1u << index;
-  }
+  unsigned mask = (1u << validBits) - 1;
+  auto extract = [&](const uint64_t *plane) -> unsigned {
+    if (!plane)
+      return 0;
+    uint64_t word = lowBit / 64;
+    unsigned shift = lowBit % 64;
+    uint64_t bits = plane[word] >> shift;
+    // Octal groups can straddle a word. validBits excludes padding in the
+    // final limb, so the second load is present only when that limb exists.
+    if (shift + validBits > 64)
+      bits |= plane[word + 1] << (64 - shift);
+    return static_cast<unsigned>(bits) & mask;
+  };
+  unsigned value = extract(view.value);
+  unsigned unknown = extract(view.unknown);
   if (!unknown)
     return digits[value];
-  unsigned mask = (1u << validBits) - 1;
   if (unknown == mask && value == 0)
     return 'x';
   if (unknown == mask && value == mask)
@@ -208,11 +213,10 @@ char groupDigit(const LogicView &view, uint64_t lowBit, unsigned groupBits) {
 
 std::string baseDigits(const LogicView &view, unsigned groupBits) {
   uint64_t groups = (view.width + groupBits - 1) / groupBits;
-  std::string result;
-  if (groups <= std::numeric_limits<size_t>::max())
-    result.reserve(static_cast<size_t>(groups));
+  std::string result(static_cast<size_t>(groups), '\0');
   for (uint64_t group = groups; group > 0; --group)
-    result.push_back(groupDigit(view, (group - 1) * groupBits, groupBits));
+    result[groups - group] =
+        groupDigit(view, (group - 1) * groupBits, groupBits);
 
   size_t leading = 0;
   while (leading + 1 < result.size() && result[leading] == '0')

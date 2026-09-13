@@ -1442,6 +1442,61 @@ TEST_F(RuntimeTest, FormatsExactFourStateRadices) {
   EXPECT_EQ(leadingOutput, "0x 0x 000x 0x00");
 }
 
+TEST_F(RuntimeTest, FormatsRadixGroupsAcrossWordAndPartialLimbBoundaries) {
+  LogicValue padded(65, {UINT64_MAX, UINT64_MAX}, {0, UINT64_MAX});
+  EXPECT_EQ(format("%b", {padded.arg()}).second, "z" + std::string(64, '1'));
+  EXPECT_EQ(format("%o", {padded.arg()}).second, "Z" + std::string(21, '7'));
+  EXPECT_EQ(format("%h", {padded.arg()}).second, "z" + std::string(16, 'f'));
+  LogicValue one(1, {UINT64_MAX}, {UINT64_MAX ^ 1});
+  EXPECT_EQ(format("%b %o %h", {one.arg(), one.arg(), one.arg()}).second,
+            "1 1 1");
+  for (unsigned width = 1; width <= 193; ++width) {
+    for (std::string_view pattern :
+         {"0", "1", "x", "z", "001101", "01xz", "00z11", "xx001"}) {
+      std::string bits;
+      for (unsigned bit = 0; bit != width; ++bit)
+        bits.push_back(pattern[bit % pattern.size()]);
+      LogicValue value(bits);
+      for (unsigned groupBits : {1u, 3u, 4u}) {
+        std::string expected;
+        for (unsigned begin = 0; begin != width;) {
+          unsigned size = begin == 0 && width % groupBits != 0
+                              ? width % groupBits
+                              : groupBits;
+          std::string group = bits.substr(begin, size);
+          begin += size;
+          if (group == std::string(size, 'x'))
+            expected += 'x';
+          else if (group == std::string(size, 'z'))
+            expected += 'z';
+          else if (group.find('x') != std::string::npos)
+            expected += 'X';
+          else if (group.find('z') != std::string::npos)
+            expected += 'Z';
+          else {
+            unsigned digit = 0;
+            for (char bit : group)
+              digit = digit * 2 + (bit == '1');
+            expected += "0123456789abcdef"[digit];
+          }
+        }
+        std::string specifier = groupBits == 1   ? "%b"
+                                : groupBits == 3 ? "%o"
+                                                 : "%h";
+        auto [status, output] = format(specifier, {value.arg()});
+        ASSERT_EQ(status, OBELISK_RT_OK);
+        ASSERT_EQ(output, expected)
+            << "width=" << width << " bits=" << bits << " format=" << specifier;
+        if (bits.find_first_of("xz") == std::string::npos) {
+          auto known = value.arg();
+          known.unknown = nullptr;
+          ASSERT_EQ(format(specifier, {known}).second, expected);
+        }
+      }
+    }
+  }
+}
+
 TEST_F(RuntimeTest, FormatsUnknownAndSignedDecimal) {
   LogicValue allX("xxxxxxxx");
   LogicValue allZ("zzzzzzzz");
