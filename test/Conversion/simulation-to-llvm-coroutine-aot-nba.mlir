@@ -5,6 +5,9 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
 // RUN: obelisk-opt %s \
+// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
+// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
 // RUN: sed 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' %s \
@@ -180,6 +183,8 @@ module attributes {
 // PERIODIC: llvm.insertvalue {{.*}}[1]
 
 // DIRECT: llvm.func @__obelisk_aot_static_nba_commit_v1
+// Writable capability alone must not remove the generated scalar barrier.
+// The runtime guard below rejects dirty roots, live observers, and handoffs.
 // DIRECT: llvm.call @obelisk_rt_v1_static_nba_direct_commit_guard
 // DIRECT: llvm.mlir.addressof @__obelisk_state_value
 // DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1

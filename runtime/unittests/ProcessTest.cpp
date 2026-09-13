@@ -5955,6 +5955,48 @@ TEST(Scheduler, GeneratedNBA256SnapshotsAndPreservesGenericLastWrite) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, WritableNBADirectCommitRequiresCleanLockedBoundary) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags =
+      OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  uint32_t fast = 1;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP;
+  plan.specialization_fast = &fast;
+  context->nativeSchedulePlan = &plan;
+  context->nativeScheduleGuardedFanoutActive = true;
+  EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+  {
+    NativeAOTContextScope active(context);
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+    NativeAOTMutexScope locked(context);
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 1u);
+    for (bool *condition : {&context->nativeScheduleExternalWritePending,
+                            &context->nativeScheduleDirtyRootsPresent,
+                            &context->nativeScheduleDeoptimized}) {
+      *condition = true;
+      EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+      *condition = false;
+    }
+    context->nativeDynamicSignalSubscriptions = 1;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+    context->nativeDynamicSignalSubscriptions = 0;
+    context->activeComputedObserverWaiterCount = 1;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+    context->activeComputedObserverWaiterCount = 0;
+    fast = 0;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 0u);
+    fast = 1;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_direct_commit_guard(context), 1u);
+  }
+  context->nativeSchedulePlan = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   AOTTestState state;
   obelisk_rt_generated_nba_accumulator_256 generated{};

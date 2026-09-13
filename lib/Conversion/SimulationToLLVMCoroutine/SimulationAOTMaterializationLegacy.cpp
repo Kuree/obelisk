@@ -387,7 +387,6 @@ LogicalResult makeNativeAOTPlanLegacy(
 
   bool generateScalarCommits =
       cleanSuperstepEnabled && enableDirectState &&
-      !guardedSpecializationEnabled &&
       staticNBAPlan.generatedOffsets.size() == nbaRoots.size();
   SmallVector<SmallVector<uint32_t>> scalarRootsByWord(nbaDirtyWordCount);
   uint64_t planeBytes = (stateLayout.bitCount + 7) / 8;
