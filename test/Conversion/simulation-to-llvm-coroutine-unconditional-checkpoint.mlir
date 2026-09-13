@@ -2,18 +2,18 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 // RUN: sed 's/native_scheduler = 0/native_scheduler = 3/' %s \
-// RUN:   | not obelisk-opt \
+// RUN:   | obelisk-opt \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=EVAL-DIAG
+// RUN:   | FileCheck %s --check-prefix=EVAL
 
 // An owner whose activation reaches its checkpoint leaf unconditionally has
 // no generated path to guard: the route probe can only ever answer
 // "checkpoint".  Fracturing it into a path dispatcher reduces the whole
 // activation to a bare checkpoint publication, dropping both the NBA staging
 // that precedes the leaf and the edge qualification that selected the
-// activation.  Such an owner is genuinely runtime-owned: `auto` must fall
-// back, and an explicit `eval` request must be diagnosed rather than
-// silently miscompiled.
+// activation. Such an owner is runtime-owned, but need not withdraw the
+// whole clock evaluator: explicit eval checkpoints exactly this actor and
+// resumes the generated clock plan after the runtime executes its full body.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -121,4 +121,13 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // CHECK: llvm.call @obelisk_rt_v1_display
 
-// EVAL-DIAG: an eval owner keeps an unguarded runtime leaf
+// EVAL-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute.checkpoint(
+// EVAL: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
+// EVAL: llvm.return
+// EVAL-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(
+// EVAL-NOT: llvm.call
+// EVAL: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
+// EVAL: llvm.return
+// EVAL-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
+// EVAL: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// EVAL: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint

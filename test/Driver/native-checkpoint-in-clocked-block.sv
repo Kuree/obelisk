@@ -4,6 +4,9 @@
 // RUN: %t.auto > %t.auto.out
 // RUN: diff -u %t.generic.out %t.auto.out
 // RUN: FileCheck %s < %t.auto.out
+// RUN: obelisk -fno-lto -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: %t.eval > %t.eval.out
+// RUN: diff -u %t.generic.out %t.eval.out
 
 // A `$display` inside a clocked block is a runtime leaf reached on every
 // activation, so the owner has no generated path a route probe could guard.

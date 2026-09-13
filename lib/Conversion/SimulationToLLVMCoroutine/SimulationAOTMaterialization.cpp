@@ -42,6 +42,7 @@ static std::optional<uint64_t> constantU64(Value value) {
 static bool isGeneratedEvalBody(sim::SimFuncOp function) {
   return !function->hasAttr(evalRuntimeNBARequiredAttr) &&
          (function->hasAttr("obelisk.eval.raw_captures") ||
+          function->hasAttr("obelisk.eval.path_known_predicate") ||
           function->hasAttr("obelisk.eval.selected_two_state"));
 }
 
@@ -1637,6 +1638,7 @@ FailureOr<bool> makeNativeEvalPlan(
     auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
       return !function->hasAttr("obelisk.eval.runtime_nba_required") &&
              (function->hasAttr("obelisk.eval.raw_captures") ||
+              function->hasAttr("obelisk.eval.path_known_predicate") ||
               function->hasAttr("obelisk.eval.selected_two_state"));
     };
     struct GeneratedTransition {
@@ -3334,7 +3336,15 @@ FailureOr<bool> makeNativeEvalPlan(
                                   llvmConstant(builder, location, i64, 0)));
       }
     }
-    cf::BranchOp::create(builder, location, dispatchStep);
+    // A cold checkpoint can return with the clock high. Its next edge is
+    // then a silent falling edge, even though steady execution normally
+    // consumes that edge in silentFall. Do not run the constant rising-owner
+    // sequence on re-entry until an actual rising edge has produced ingress.
+    if (canCompressSilentFall)
+      cf::CondBranchOp::create(builder, location, hasIngress, dispatchStep,
+                               ValueRange{}, loop, ValueRange{});
+    else
+      cf::BranchOp::create(builder, location, dispatchStep);
 
     builder.setInsertionPointToStart(dispatchStep);
     // Promotion is selected in two monotonic stages. Once the physical clock

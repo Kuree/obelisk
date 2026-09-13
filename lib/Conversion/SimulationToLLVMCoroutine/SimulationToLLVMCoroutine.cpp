@@ -899,6 +899,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // nor belong to the generated evaluator's call closure.
       if (coldCheckpointBlocks.contains(operation->getBlock()))
         return;
+      if (isa<sim::SimCoveragePointHitOp>(operation))
+        return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
         supported = false;
         return;
@@ -956,8 +958,12 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     }
     for (Block &sourceBlock : source.getBody()) {
       builder.setInsertionPointToEnd(mapping.lookup(&sourceBlock));
-      for (Operation &operation : sourceBlock)
-        builder.clone(operation, mapping);
+      for (Operation &operation : sourceBlock) {
+        // Probes observe control flow without executing source statements.
+        // Count a line only in the selected body or its cold callback.
+        if (!isa<sim::SimCoveragePointHitOp>(operation))
+          builder.clone(operation, mapping);
+      }
     }
 
     llvm::SmallPtrSet<Block *, 4> checkpointBlocks;
@@ -1058,6 +1064,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         hasGeneratedExit = true;
     });
     if (!hasGeneratedExit) {
+      // Resume the canonical actor for this activation. Unlike restarting an
+      // outlined body, that preserves the selected edge and any NBA prefix.
+      source->setAttr("obelisk.eval.checkpoint_only", builder.getUnitAttr());
       probe.erase();
       return sim::SimFuncOp{};
     }
@@ -1798,8 +1807,10 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       bool runtimeCheckpoint =
           codeUnit && runtimeCheckpointContinuations.contains(
                           {codeUnit.getUInt(), continuationID});
-      if (bytecode != bytecodeContinuations.end() &&
-          llvm::is_contained(bytecode->second, continuationID)) {
+      runtimeCheckpoint |= evalBody->hasAttr("obelisk.eval.checkpoint_only");
+      if (runtimeCheckpoint ||
+          (bytecode != bytecodeContinuations.end() &&
+           llvm::is_contained(bytecode->second, continuationID))) {
         if (runtimeCheckpoint) {
           SmallString<96> wrapperName;
           (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
@@ -3869,6 +3880,13 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
 }
 
 LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
+  // Variants are prepared before the final coordinator eligibility proof.
+  // A declined plan has no generated callers or same-slot resume target.
+  if (!module->hasAttr("obelisk.eval.generated")) {
+    module->removeAttr("obelisk.eval.path_probe_routes");
+    module->removeAttr(sim::metadata::evalCheckpointRoutes);
+    return success();
+  }
   llvm::StringMap<std::string> pathKnownProbes;
   llvm::StringMap<std::string> checkpointPathProbes;
   llvm::StringMap<std::pair<uint32_t, uint32_t>> checkpointOwners;
@@ -4083,7 +4101,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         llvm::MapVector<Block *, Operation *> checkpointBlocks;
         function.walk([&](LLVM::CallOp call) {
           if (std::optional<StringRef> callee = call.getCallee();
-              callee && callee->starts_with("obelisk_rt_"))
+              callee && callee->starts_with("obelisk_rt_") &&
+              *callee != "obelisk_rt_v1_coverage_point_hit")
             checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
         });
         if (checkpointBlocks.empty())
@@ -4249,9 +4268,41 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
                              publishedStatus);
       builder.setInsertionPointToStart(returnResumeStatus);
+      // The cold body and same-slot coordinator commit into generated planes.
+      // Publish those commits before the runtime drains the slot and exports
+      // its canonical image, otherwise that export restores pre-checkpoint
+      // values (and the next activation repeats the same checkpoint forever).
+      auto syncCheckpointState = [&] {
+        auto stateBits = module->getAttrOfType<IntegerAttr>(
+            "obelisk.execution.state_bits");
+        detail::getOrDeclareLLVMFunction(
+            module, "obelisk_rt_v1_native_state_sync", builder.getI32Type(),
+            {pointer, pointer, pointer, builder.getI64Type()});
+        return LLVM::CallOp::create(
+            builder, route.fourState.getLoc(), TypeRange{builder.getI32Type()},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_sync"),
+            ValueRange{
+                callbackEntry->getArgument(0),
+                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                          pointer, "__obelisk_state_value"),
+                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                          pointer, "__obelisk_state_unknown"),
+                detail::llvmConstant(builder, route.fourState.getLoc(),
+                                     builder.getI64Type(), stateBits.getUInt())})
+            .getResult();
+      };
+      Value syncStatus = syncCheckpointState();
+      Value resumeOK = LLVM::ICmpOp::create(
+          builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
+          returnResumeStatus->getArgument(0),
+          detail::llvmConstant(builder, route.fourState.getLoc(),
+                               builder.getI32Type(), OBELISK_RT_OK));
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
-                             returnResumeStatus->getArgument(0));
+                             LLVM::SelectOp::create(
+                                 builder, route.fourState.getLoc(), resumeOK,
+                                 syncStatus, returnResumeStatus->getArgument(0)));
       builder.setInsertionPointToStart(returnBodyStatus);
+      (void)syncCheckpointState();
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
                              returnBodyStatus->getArgument(0));
 
