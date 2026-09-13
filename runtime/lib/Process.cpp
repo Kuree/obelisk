@@ -3125,12 +3125,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               considerNativeToken(token);
           } else {
             std::vector<CachedNativeReady> batch;
-            for (const ScheduledProcess &candidate :
-                 context->scheduledProcesses) {
-              uint64_t token = candidate.token;
-              if (!candidate.instance ||
-                  !context->nativePollCandidates.count(token))
-                continue;
+            auto appendCandidate = [&](uint64_t token) {
               bool signalResume = false;
               size_t index = SIZE_MAX;
               auto ready = classifyNativeToken(token, signalResume, index);
@@ -3145,6 +3140,30 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
                 batch.push_back(*ready);
               else
                 cachedNativeSlowCandidates.push_back(token);
+            };
+            // A publication invalidates this cache whenever it wakes another
+            // actor. In a large, mostly sleeping design, walking the complete
+            // process inventory at every such publication is quadratic in
+            // unrelated actors. Enumerate the indexed candidates when sparse;
+            // retain the contiguous, usually already ordered walk when dense.
+            // The complete scheduler key below makes either traversal order
+            // equivalent, including urgent-distance and token tie breakers.
+            if (context->nativePollCandidates.size() <
+                context->scheduledProcesses.size() / 4) {
+              for (uint64_t token : context->nativePollCandidates)
+                appendCandidate(token);
+              if (context->signalDiagnosticsEnabled)
+                context->signalDiagnostics.candidateInventoryVisits +=
+                    context->nativePollCandidates.size();
+            } else {
+              for (const ScheduledProcess &candidate :
+                   context->scheduledProcesses)
+                if (candidate.instance &&
+                    context->nativePollCandidates.count(candidate.token))
+                  appendCandidate(candidate.token);
+              if (context->signalDiagnosticsEnabled)
+                context->signalDiagnostics.candidateInventoryVisits +=
+                    context->scheduledProcesses.size();
             }
             if (batch.size() > minCachedSignalCohort) {
               nativeUrgentDistance = SIZE_MAX;

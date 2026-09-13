@@ -1260,6 +1260,7 @@ struct SignalSubscriptionDiagnostics {
   uint64_t subscribersExamined = 0;
   uint64_t readinessCalls = 0;
   uint64_t candidateScans = 0;
+  uint64_t candidateInventoryVisits = 0;
   uint64_t schedulerIterations = 0;
   uint64_t fallbackRescans = 0;
   uint64_t aotNodeExecutions = 0;
