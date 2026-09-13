@@ -15,6 +15,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -126,10 +127,30 @@ public:
     //
     // Mark these clones so compute-graph cost remains invariant when a graph
     // was built before this pass and verified afterward.
+    // Packed representation casts of literal bits are constants too. Carrying
+    // them in the frame turns an otherwise stateless clock/reset actor into a
+    // loop-carried process and prevents whole-clock-group evaluation. Only
+    // duplicate these pure representation casts, never loads or computations
+    // that sample state before the event. Bound the chain to keep cloning cheap.
+    auto collectConstantChain = [](Operation *op,
+                                   SmallVectorImpl<Operation *> &chain) {
+      while (op && chain.size() < 16) {
+        if (op->getNumResults() != 1)
+          return false;
+        chain.push_back(op);
+        if (op->hasTrait<OpTrait::ConstantLike>() &&
+            op->getNumOperands() == 0)
+          return true;
+        if (!isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(op))
+          return false;
+        op = op->getOperand(0).getDefiningOp();
+      }
+      return false;
+    };
     SmallVector<OpResult> constants;
     function.walk([&](Operation *op) {
-      if (!op->hasTrait<OpTrait::ConstantLike>() || op->getNumOperands() != 0 ||
-          op->getNumResults() != 1)
+      SmallVector<Operation *, 4> chain;
+      if (!collectConstantChain(op, chain))
         return;
       constants.push_back(cast<OpResult>(op->getResult(0)));
     });
@@ -139,10 +160,16 @@ public:
         Operation *consumer = use.getOwner();
         if (consumer->getBlock() == definition->getBlock())
           continue;
+        SmallVector<Operation *, 4> chain;
+        if (!collectConstantChain(definition, chain))
+          continue;
         OpBuilder builder(consumer);
-        Operation *clone = builder.clone(*definition);
-        clone->setAttr("obelisk_sim.rematerialized", builder.getUnitAttr());
-        use.set(clone->getResult(0));
+        IRMapping mapping;
+        for (Operation *part : llvm::reverse(chain)) {
+          Operation *clone = builder.clone(*part, mapping);
+          clone->setAttr("obelisk_sim.rematerialized", builder.getUnitAttr());
+        }
+        use.set(mapping.lookup(constant));
       }
     }
 

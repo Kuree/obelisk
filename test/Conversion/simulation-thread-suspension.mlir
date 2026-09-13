@@ -19,6 +19,7 @@ module {
     obelisk_sim.code_unit.decl 9000015 in 0 always hierarchy "test.threading.self_loop_side_next.9000015"
     obelisk_sim.code_unit.decl 9000016 in 0 initial hierarchy "test.threading.control_body_restored.9000016"
     obelisk_sim.code_unit.decl 9000017 in 0 initial hierarchy "test.threading.observer_state.9000017"
+    obelisk_sim.code_unit.decl 9000018 in 0 always hierarchy "test.threading.loop_sampled_expression.9000018"
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>> design
@@ -282,18 +283,45 @@ module {
       obelisk_sim.return
     }
 
-    // A suspension operand derived from a constant is still ordinary SSA.
-    // When the continuation loops back to the suspending block, merge the
-    // restored value with the entry value instead of reusing cleared scratch.
+    // A packed cast of a literal is rematerialized inside the activation.
+    // It must not create loop-carried frame state and disable Tier 1.
     // CHECK-LABEL: obelisk_sim.func @loop_constant_expression
-    // CHECK: %[[DERIVED:.*]] = obelisk_sim.packed.unflatten
-    // CHECK: cf.br ^[[WAIT:.*]](%[[DERIVED]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
-    // CHECK: ^[[WAIT]](%[[CURRENT:.*]]: !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>):
-    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[BODY:.*]](%[[CURRENT]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
-    // CHECK: ^[[BODY]](%[[RESTORED:.*]]: !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>):
-    // CHECK: cf.br ^[[WAIT]](%[[RESTORED]] : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>)
+    // CHECK: cf.br ^[[WAIT:bb[0-9]+]]{{$}}
+    // CHECK: ^[[WAIT]]:
+    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[BODY:bb[0-9]+]] :
+    // CHECK: ^[[BODY]]:
+    // CHECK: %[[BITS:.*]] = obelisk_sim.logic.constant 1 : i8, 0 : i8
+    // CHECK: %[[DERIVED:.*]] = obelisk_sim.packed.unflatten %[[BITS]]
+    // CHECK: obelisk_sim.ref.store %[[DERIVED]]
+    // CHECK: cf.br ^[[WAIT]]{{$}}
     obelisk_sim.func @loop_constant_expression(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 9000013 : i64} {
       %bits = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %derived = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<8>) -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.change %ref to ^body : !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
+    ^body:
+      obelisk_sim.ref.store %derived to %ref : !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
+      cf.br ^wait
+    }
+
+    // In contrast, a cast of a pre-event load is a snapshot, not a constant.
+    // Retain the original loop-carried regression for this non-rematerializable
+    // case: replaying the load after the event would observe the wrong value.
+    // CHECK-LABEL: obelisk_sim.func @loop_sampled_expression
+    // CHECK: %[[SAMPLED:.*]] = obelisk_sim.packed.unflatten
+    // CHECK: cf.br ^[[WAIT:bb[0-9]+]](%[[SAMPLED]] :
+    // CHECK: ^[[WAIT]](%[[CURRENT:[a-zA-Z0-9_]+]]:
+    // CHECK: obelisk_sim.suspend.change %{{.*}} to ^[[BODY:bb[0-9]+]](%[[CURRENT]] :
+    // CHECK: ^[[BODY]](%[[RESTORED:[a-zA-Z0-9_]+]]:
+    // CHECK: obelisk_sim.ref.store %[[RESTORED]]
+    // CHECK: cf.br ^[[WAIT]](%[[RESTORED]] :
+    obelisk_sim.func @loop_sampled_expression(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %bits_ref: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
+        %ref: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 3 : i32, code_unit_id = 9000018 : i64} {
+      %bits = obelisk_sim.ref.load %bits_ref : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       %derived = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<8>) -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
       cf.br ^wait
     ^wait:
