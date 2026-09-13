@@ -648,10 +648,12 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   context->scheduledProcessIndices.clear();
   context->nativePollCandidates.clear();
+  context->scheduledProcessDelayHeap.clear();
   std::fill(context->nativeScheduleActorIndices.begin(),
             context->nativeScheduleActorIndices.end(), SIZE_MAX);
   context->scheduledProcessIndices.reserve(context->scheduledProcesses.size());
   context->nativePollCandidates.reserve(context->scheduledProcesses.size());
+  context->scheduledProcessDelayHeap.reserve(context->scheduledProcesses.size());
   for (size_t index = 0; index != context->scheduledProcesses.size(); ++index) {
     const ScheduledProcess &process = context->scheduledProcesses[index];
     context->scheduledProcessIndices[process.token] = index;
@@ -659,7 +661,16 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
       context->nativeScheduleActorIndices[process.aotActorSlot] = index;
     if (process.instance && !indexedSignalBlocked(process))
       context->nativePollCandidates.insert(process.token);
+    // Periodic evaluation updates detached deadlines without maintaining the
+    // generic calendar. Rebuild it from the restored actors at handoff too,
+    // otherwise stale heap entries can hide every future clock edge.
+    if (process.instance && process.started && process.phase == 0 &&
+        process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+      context->scheduledProcessDelayHeap.emplace_back(process.wakeTime,
+                                                      process.token);
   }
+  std::make_heap(context->scheduledProcessDelayHeap.begin(),
+                 context->scheduledProcessDelayHeap.end(), std::greater<>());
 }
 
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(

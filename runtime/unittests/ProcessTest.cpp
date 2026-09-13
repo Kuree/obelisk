@@ -5878,6 +5878,32 @@ TEST(Scheduler, GeneratedNBAScalarRecordsCoveredTransitionsExactlyOnce) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, RebuiltCalendarRetainsDetachedPeriodicDeadline) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(42);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerWaitDelay = 5;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  auto *instance = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_prime(context, instance), OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  ASSERT_EQ(context->scheduledProcesses.front().wakeTime, 5u);
+  // The generated loop advances its detached source without maintaining the
+  // generic calendar. Whole-plan fallback restores the actor's next edge,
+  // then rebuilds the scheduler indices. A stale heap entry for time 5 must
+  // not make the scheduler exit at time 20 with a live deadline at time 25.
+  context->schedulerTime = 20;
+  context->scheduledProcesses.front().wakeTime = 25;
+  rebuildNativeSchedulerIndexUnlocked(context);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->schedulerTime, 25u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, DeoptimizedNBACommitDoesNotReenterGeneratedBarrier) {
   AOTTestState state;
   obelisk_rt_generated_nba_accumulator_256 generated{};
